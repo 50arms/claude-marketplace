@@ -2,6 +2,11 @@
 # The mantra — ships with the `danxbot` plugin. DX-3347, gated DX-3275,
 # text sourced from the reminder registry as of DX-3366.
 #
+# DX-3387: mantra.md is the single hand-maintained source of the mantra
+# text — danxbot's own seed.yaml derives its default from this exact file
+# via the synced plugin marketplace cache at boot; do not hand-copy this
+# text anywhere else.
+#
 # Fires on SessionStart, matcher "startup|resume|compact" ONLY (DX-3052
 # problem 1602, plan PLN-11 rule R-12: the mantra is injected at session
 # start, resume and compaction — never on every message, never on `clear`
