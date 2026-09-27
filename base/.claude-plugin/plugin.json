@@ -1,7 +1,7 @@
 {
   "name": "base",
   "description": "Universal discipline: shell discipline (exit capture, polling, tool choice, process kill), live time injection, safety deny-guards. DX-3347: the operating contract and craft mandate moved to the danxbot plugin's mantra.md. DX-3350/DX-3340: convey/tool-discipline/current-time SessionStart mandates and their catalog-only scripts retired the same way; sub-agent-delegation absorbed into danxbot:plan-workflow. Install on every claude instance.",
-  "version": "0.4.40",
+  "version": "0.4.41",
   "author": {
     "name": "Dan Newman",
     "email": "newms87@gmail.com"

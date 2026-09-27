@@ -1,5 +1,5 @@
 {
-  "description": "Live time injection (UserPromptSubmit + PostToolUse — the model has no other clock). Post-compaction skill-reload gate (SessionStart, source=compact only). Destructive-DB-operation and destructive-git deny guards (PreToolUse Bash), unsafe recursive-delete / mirror-sync target guard (PreToolUse Bash|PowerShell), whole-disk / whole-home tree-walking scan guard for find/grep -r/rg/ls -R/du/dir /s/Get-ChildItem -Recurse (PreToolUse Bash|PowerShell). DX-3347: the operating contract and craft mandate no longer live here — both are folded into the danxbot plugin's mantra.md, printed once at session start/resume/compaction by that plugin's own hook. DX-3350/DX-3340: the convey, tool-discipline and current-time SessionStart mandates are retired the same way — folded into mantra.md as one line each (or dropped where already covered); `convey-mandate.sh`, `tool-discipline-mandate.sh` and `plugin-skill-mandate.sh` are deleted outright now that danxbot's production catalog importer no longer names them.",
+  "description": "Live time injection (UserPromptSubmit + PostToolUse — the model has no other clock). Post-compaction skill-reload gate (SessionStart, source=compact only). Destructive-DB-operation and destructive-git deny guards, unsafe recursive-delete / mirror-sync target guard, and whole-disk / whole-home tree-walking scan guard for find/grep -r/rg/ls -R/du/dir /s/Get-ChildItem -Recurse (all four PreToolUse Bash|PowerShell — DX-3396: PowerShell is this machine's primary shell and was previously unguarded for the db/git pair). DX-3347: the operating contract and craft mandate no longer live here — both are folded into the danxbot plugin's mantra.md, printed once at session start/resume/compaction by that plugin's own hook. DX-3350/DX-3340: the convey, tool-discipline and current-time SessionStart mandates are retired the same way — folded into mantra.md as one line each (or dropped where already covered); `convey-mandate.sh`, `tool-discipline-mandate.sh` and `plugin-skill-mandate.sh` are deleted outright now that danxbot's production catalog importer no longer names them.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -34,7 +34,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
@@ -43,12 +43,7 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/deny-destructive-git.mjs"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/deny-unsafe-recursive-delete.mjs"

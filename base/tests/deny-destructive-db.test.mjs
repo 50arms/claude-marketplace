@@ -25,9 +25,9 @@ const SCRIPT = path.join(here, "..", "scripts", "deny-destructive-db.mjs");
 const SOURCE = fs.readFileSync(SCRIPT, "utf8");
 
 /** Runs the REAL hook exactly as Claude Code invokes it. Returns "deny" | "allow". */
-function decide(command) {
+function decide(command, toolName = "Bash") {
   const result = spawnSync("node", [SCRIPT], {
-    input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }),
+    input: JSON.stringify({ tool_name: toolName, tool_input: { command } }),
     encoding: "utf8",
   });
   assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
@@ -104,4 +104,15 @@ describe("reversible operations stay allowed", () => {
   test("a plain migrate", () => assert.equal(decide("php artisan migrate --force"), "allow"));
   test("a table-level drop is out of scope, as before", () =>
     assert.equal(decide('psql -c "DROP TABLE users"'), "allow"));
+});
+
+// DX-3396 — this guard was registered for the Bash tool only, so on this
+// machine's primary shell (PowerShell) the same commands went unchecked. The
+// script's own tokenizer already branches on `toolName === "PowerShell"`;
+// only the hooks.json matcher was missing.
+describe("DX-3396 — PowerShell tool input", () => {
+  test("migrate:fresh from the PowerShell tool is denied", () =>
+    assert.equal(decide("php artisan migrate:fresh", "PowerShell"), "deny"));
+  test("an ordinary command from the PowerShell tool is allowed", () =>
+    assert.equal(decide("php artisan migrate --force", "PowerShell"), "allow"));
 });

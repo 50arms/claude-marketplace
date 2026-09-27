@@ -30,9 +30,9 @@ const SOURCE = fs.readFileSync(SCRIPT, "utf8");
  * invokes it: JSON on stdin, `tool_input.command` carrying the candidate.
  * Returns "deny" | "allow".
  */
-function decide(command) {
+function decide(command, toolName = "Bash") {
   const result = spawnSync("node", [SCRIPT], {
-    input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }),
+    input: JSON.stringify({ tool_name: toolName, tool_input: { command } }),
     encoding: "utf8",
   });
   assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
@@ -144,4 +144,20 @@ describe("DX-3223 — command position, not raw text", () => {
 
   test("a real invocation after a harmless first command is still refused", () =>
     assert.equal(decide("echo starting && git clean -fd"), "deny"));
+});
+
+// DX-3396 — this guard was registered for the Bash tool only, so on this
+// machine's primary shell (PowerShell) the same commands went unchecked. The
+// script's own tokenizer (simpleCommands in lib/shell-commands.mjs) already
+// branches on `toolName === "PowerShell"`; only the hooks.json matcher was
+// missing. These cases pass `tool_name: "PowerShell"` to prove the script side
+// was already correct, and the hooks.json fix (Bash|PowerShell matcher) is
+// what actually wires it in.
+describe("DX-3396 — PowerShell tool input", () => {
+  test("git reset --hard from the PowerShell tool is denied", () =>
+    assert.equal(decide("git reset --hard origin/main", "PowerShell"), "deny"));
+  test("git stash from the PowerShell tool is denied", () =>
+    assert.equal(decide("git stash", "PowerShell"), "deny"));
+  test("an ordinary git command from the PowerShell tool is allowed", () =>
+    assert.equal(decide("git status", "PowerShell"), "allow"));
 });
