@@ -18,8 +18,8 @@ agent miss anything? Write it first. This skill is the procedure for actually do
 | Re-fires `SessionStart` `matcher:"compact"` — the only hook point whose stdout still reaches the model after a compaction | Preserve YOUR reasoning about *why* something is in flight — only what got written down survives |
 
 **Sub-agents keep running through a compaction** — a background `Agent()` spawn is a real process
-the harness tracks independently of your context (`base:sub-agent-delegation`). Know which of your
-dispatches are still alive before writing the handoff; don't assume either state.
+the harness tracks independently of your context (see `danxbot:plan-workflow`'s Sub-agents section).
+Know which of your dispatches are still alive before writing the handoff; don't assume either state.
 
 **Nothing injects "compaction is imminent" ahead of time.** `PreCompact`/`PostCompact` hook stdout
 never reaches the model — only the `SessionStart`/`compact` matcher does. Invoke this skill

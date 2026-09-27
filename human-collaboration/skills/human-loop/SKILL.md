@@ -93,8 +93,7 @@ the way → stop, present it as a separate option. One approval = one scope.
 
 ## Never Substitute a "Better" Approach
 
-See `pipeline:pipe-start` Rule 12 — present an alternative, never substitute it; the user
-may have reasons.
+Present an alternative, never substitute it; the user may have reasons.
 
 ## Context Management Is Not Your Concern
 

@@ -23,7 +23,6 @@ DEV MANDATE — four core principles default for every plan, investigation, fix,
 SELF-TRIGGER GATES — invoke the skill via Skill tool BEFORE the offending action:
   • dev:code-quality — every code edit/refactor/solution proposal, AND any KEEP-vs-DELETE verdict on existing code (dead-code audit, deciding a comment/test/guard stays or goes) — CP2 decides retention, not your judgement.
   • dev:debugging — any bug, failing test, error, investigation, or factual assertion about system behavior, OR drafting a bug report (Phase 12 Affects/Env/Scenario/Expected/Actual format required). Read-only by default; fix mode only on an explicit instruction to fix (a dispatched card counts as that instruction).
-  • dev:testing — first test action (run / write / fix / delete / mock / coverage reasoning).
   • dev:git-discipline — ANY AND ALL git ops REQUIRE this skill loaded at least once THIS SESSION before the op. Not loaded yet → load NOW, then act. "Just a quick git command" is the exact documented failure — load anyway.
 EOF
 

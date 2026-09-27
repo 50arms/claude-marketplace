@@ -9,17 +9,12 @@
     {
       "name": "base",
       "source": "./base",
-      "description": "Universal discipline: bash exit capture, sub-agent delegation, tool usage, process kill, monitor polling. Install everywhere."
+      "description": "Universal discipline: shell discipline (exit capture, polling, tool choice, process kill), live time injection, safety deny-guards. Install everywhere."
     },
     {
       "name": "dev",
       "source": "./dev",
-      "description": "Code-writing discipline: TDD, read-only-by-default debugging/investigation with a fix-mode switch, code quality, git safety. Install on instances that write code."
-    },
-    {
-      "name": "pipeline",
-      "source": "./pipeline",
-      "description": "Autonomous dev pipeline: pipe-start, pipe-review, pipe-quality, pipe-commit, pipe-finish. Phase-by-phase code-writing flow that runs identically in human-loop and dispatched-worker contexts. Post-commit reports + session wrap-up both live in pipe-finish. All output follows base:convey. Install on every code-writing instance."
+      "description": "Code-writing discipline: read-only-by-default debugging/investigation with a fix-mode switch (TDD included), code quality, git safety. Install on instances that write code."
     },
     {
       "name": "human-collaboration",
@@ -29,7 +24,7 @@
     {
       "name": "danxbot",
       "source": "./danxbot",
-      "description": "Danxbot orchestrator: dispatch architecture, runtime modes, deploy, issue-card workflow (YAML schema, tracker contract, danx-issue MCP), autonomous issue-worker skills (danx-start, danx-next, danx-ideate, danx-triage-card), issue-blocker, halt-flag, comment-style. Single home for everything danxbot-related — install on every danxbot-aware instance + workspace."
+      "description": "Danxbot orchestrator: dispatch architecture, runtime modes, deploy, the shared issue-card-workflow skill (used by dispatched workers and operator sub-agents alike), danx-chat/danx-ideate, issue-blocker. Single home for everything danxbot-related — install on every danxbot-aware instance + workspace."
     }
   ]
 }

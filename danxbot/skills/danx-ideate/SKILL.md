@@ -14,9 +14,9 @@ Current repo only — `/danx-ideate` takes no arguments.
 ## /loop and ScheduleWakeup — narrow contract
 
 Ideation is a single-shot dispatch (explore → score → draft → complete) —
-you have no legitimate use for `/loop` or `ScheduleWakeup` in this skill.
-Full contract: `danx-start`'s "/loop and ScheduleWakeup — FORBIDDEN in a
-dispatch" section.
+you have no legitimate use for `/loop` or `ScheduleWakeup` in this skill. You
+run as `claude -p` with stdin ignored, so a scheduled wakeup can never fire;
+arming one and ending your turn silently abandons the ideation run.
 
 ## Steps
 

@@ -11,9 +11,10 @@ each a directory with `.claude-plugin/plugin.json` + `skills/<name>/SKILL.md` (+
 loader auto-updates a plugin ONLY when its `plugin.json` `version` changes — source edits
 without a bump never reach consumers. `scripts/publish.sh` automates the bump+commit+push.
 
-Plugins: `base` (universal discipline), `investigate` (read-only diagnosis), `dev`
-(code-writing discipline), `pipeline` (autonomous dev flow), `human-collaboration`
-(human-in-loop), `danxbot` (orchestrator domain — 25 skills, the largest).
+Plugins: `base` (universal discipline), `dev` (code-writing discipline),
+`human-collaboration` (human-in-loop), `danxbot` (orchestrator domain, the largest).
+`investigate` and `pipeline` were retired (DX-3331, DX-3328/DX-3340) — their
+surviving content folded into `dev:debugging` and the danxbot/base skills respectively.
 
 ---
 

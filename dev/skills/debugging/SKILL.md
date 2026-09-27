@@ -47,7 +47,7 @@ Forbidden: hedging, a unilateral fix as the first option, "do nothing," "investi
 
 **6. Solution quality**, decided before writing code: (1) mechanism not symptom, (2) textbook for the platform, (3) fixes the class not the instance. Tier 1 (mechanism/textbook) > Tier 2 (architectural) > Tier 3 (observability, co-ships with T1) > Tier 4 (defense, under T1 only). Forbidden: symptom-only patch, retry as the primary fix, a local patch without naming other call sites, "later" with no artifact.
 
-**7. Write the failing test** — TDD non-negotiable; it describes the bug, not the fix (`dev:testing`).
+**7. Write the failing test** — TDD non-negotiable; it describes the bug, not the fix.
 
 **8. Implement.** Fix the producer (case 1/4), plan a data fix (case 2), fix the expectation (case 3). Minimal — no fallback/consumer-tolerant patch (`??`, `try/catch`) papering over the bug (`dev:ideal-solution-mindset` #2/#2c).
 

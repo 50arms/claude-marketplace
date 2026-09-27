@@ -111,7 +111,7 @@ Agents write card state via `mcp__danx-dashboard__issue_*` tools only. Trello mi
 
 ## Pre-dispatch worktree git (worker-owned, DX-1154 / DX-1156)
 
-The work dispatch is **zero-prep** — the task body is `/danx-next <id>` alone (DX-1156 retired the `danx-prep` skill, `danxbot_prep_verdict`, the `prep` DispatchKind, and `agentDefaults.prepMode`). The worker brings the agent's worktree to `origin/main` deterministically BEFORE spawning (`src/dispatch/worktree-ff.ts`); a true conflict escalates to a `worktree-maintenance` dispatch instead. Conflict / dependency detection is the Dependency PRE quality gate (DX-1180). Full contract: `danxbot/.claude/rules/agent-dispatch.md` + CLAUDE.md Core Principle 4.
+The work dispatch is **zero-prep** — the task body is `Work card <id>: <title>` alone (DX-1156 retired the `danx-prep` skill, `danxbot_prep_verdict`, the `prep` DispatchKind, and `agentDefaults.prepMode`; DX-3328 retired the `/danx-next <id>` task body in favor of this one). The worker brings the agent's worktree to `origin/main` deterministically BEFORE spawning (`src/dispatch/worktree-ff.ts`); a true conflict escalates to a `worktree-maintenance` dispatch instead. Conflict / dependency detection is the Dependency PRE quality gate (DX-1180). Full contract: `danxbot/.claude/rules/agent-dispatch.md` + CLAUDE.md Core Principle 4.
 
 ## External Dispatch API
 

@@ -28,8 +28,9 @@ For every turn (first message OR resumed):
 ## /loop and ScheduleWakeup
 
 Chat is one-turn-per-message — you have no legitimate use for `/loop` or
-`ScheduleWakeup` in this skill. Full contract: `danx-start`'s "/loop and
-ScheduleWakeup — FORBIDDEN in a dispatch" section.
+`ScheduleWakeup` in this skill. You run as `claude -p` with stdin ignored, so a
+scheduled wakeup can never fire; arming one and ending your turn silently
+abandons the chat message.
 
 ## Reading the card
 
@@ -41,7 +42,7 @@ Use the MCP tools to mutate the card. The dashboard DB is the canonical source; 
 
 When you edit, follow the DB schema rules — see `danxbot:issue-card-workflow` skill for the full schema. The most common chat-driven edits:
 
-- **Status flip** — call `issue_transition({id, action: 'ready'|'pickup'|'complete'|'cancel'|'block'|'archive'|'reopen'})`. Six legal terminal values via transitions: `Review` | `ToDo` | `In Progress` | `Blocked` | `Done` | `Cancelled`. Setting `Blocked` or `Done` or `Cancelled` from chat is unusual — those are terminal moves the agent's own danx-next workflow normally owns. Confirm with the user before flipping to a terminal state.
+- **Status flip** — call `issue_transition({id, action: 'ready'|'pickup'|'complete'|'cancel'|'block'|'archive'|'reopen'})`. Six legal terminal values via transitions: `Review` | `ToDo` | `In Progress` | `Blocked` | `Done` | `Cancelled`. Setting `Blocked` or `Done` or `Cancelled` from chat is unusual — those are terminal moves the ordinary work-dispatch flow (`danxbot:issue-card-workflow`) normally owns. Confirm with the user before flipping to a terminal state.
 - **AC edit** — call `issue_edit({id, ac: [...]})`. Append a new item or flip an existing item's `checked` field.
 - **Description rewrite** — call `issue_edit({id, description: "..."})`. Preserve the markdown structure.
 - **Comment append** — call `issue_comment({id, action: 'add', text: "..."})`. Server stamps `author` + `timestamp`.
@@ -70,7 +71,7 @@ with "I read your message and considered…" — the user knows.
 
 - MCP `issue_get` returns `{ok: false, body: {error}}` → `danxbot_complete({status: "failed", summary: "Failed to load <PREFIX>-N: <error>"})`. Card may not exist in DB.
 - MCP tool mutation returns `{ok: false, body: {error}}` → read `body.error` + re-route. Common errors: invariant violations, non-existent target, closed card. Surface the error in a reply and ask the operator to clarify.
-- MCP tool itself errors (server unreachable, tool not registered) → `danxbot_complete({status: "critical_failure", summary: "..."})` per `danxbot:halt-flag`.
+- MCP tool itself errors (server unreachable, tool not registered) → `danxbot_complete({status: "critical_failure", summary: "..."})` — this is ONLY for an environment-wide blocker that would break any dispatch on this host, never your own card's state.
 
 ## Boundaries
 
@@ -80,7 +81,7 @@ You read + write **exactly one** card, via the `mcp__danx-dashboard__issue_*` to
 - **Do NOT touch other cards** — your authority extends only to the `<PREFIX>-N` named in the dispatch; cross-card edits during a chat turn cascade silently into other dispatches' working state.
 - **Do NOT dispatch other agents** or call `make launch-*` / `make deploy*` — the target repo's own `.claude/rules` (R-17) forbids this for a dispatched agent too, no exception.
 - **Do NOT alter** `dispatch`, `parent_id`, `children[]`, `external_id`, `schema_version`, `tracker`, `id` — owned by other lifecycle paths.
-- **Do NOT implement the work the card describes** — chat is conversation + spec mutation, not code change. If the user asks "please implement this card now," reply that the dashboard's pickup flow handles implementation; you can rewrite the AC or split into phases here, and the next `/danx-next` dispatch ships the code.
+- **Do NOT implement the work the card describes** — chat is conversation + spec mutation, not code change. If the user asks "please implement this card now," reply that the dashboard's pickup flow handles implementation; you can rewrite the AC or split into phases here, and the next work dispatch ships the code.
 
 The chat dispatch's TTL is the worker's standard inactivity timeout. Long
 replies are fine; abandoning the turn without `danxbot_complete` is not —

@@ -146,7 +146,7 @@ Post-create, add or remove a gate with `issue_quality_gate({id, gate, action: 'a
 - `triage_enabled: true` — ONLY when you intend the card to enter the automatic triage/dispatch pipeline WITHOUT further human review (a fully-specified card you'd be comfortable seeing auto-readied and auto-dispatched).
 - `triage_enabled: false` — scoping/draft cards, operator-held cards, cards awaiting discussion, anything filed as a durable record rather than an immediate work request.
 
-This flag gates ONLY the automatic dispatcher trigger. Operator-directed triage (`POST /api/triage`, `/danx-triage-card`, direct `issue_triage` calls) remains flag-independent, and `issue_edit({triage_enabled})` is the post-create way to opt a card in or out.
+This flag gates ONLY the automatic dispatcher trigger. Operator-directed triage (`POST /api/triage`, a manual `triage`-profile dispatch, direct `issue_triage` calls) remains flag-independent, and `issue_edit({triage_enabled})` is the post-create way to opt a card in or out.
 
 **When a planning session should opt a card in (operator D2 answer, DX-2730):** set `triage_enabled: true` ONLY when it is fine for THIS specific card to be readied and picked up by the danxbot worker without the session's own further involvement. A `keep` or `defer` verdict reaches the session as a `problem_added` event on the card (via the plan event bridge, if connected) — so the session isn't blind to it, even when opted in. An `approve` verdict is silent (no notification): the card may be built by danxbot entirely on its own, with no session involvement at all. Weigh that asymmetry, not just "is this card fully specified."
 
