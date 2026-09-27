@@ -18,6 +18,10 @@ Before every Bash call: does the chain read stdin with nothing attached (bare
 and nothing after runs. Redirect closed (`< /dev/null`) or write files with `Write`. No
 output past ~2 minutes in the background means hung, not "still working."
 
+## Never run interactive-prompt commands in background shells
+
+Commands that prompt interactively (`sudo`, `ssh` without `-o BatchMode=yes`, `git credential`, `npm login`, or anything asking for user input) hang forever in a non-TTY shell — the background task never exits and silently pins the session as busy. Use the non-interactive form (`sudo -n`, `ssh -o BatchMode=yes`, git stored credentials) or fail fast. (DX-3403: a 5-hour hung `sudo rm -rf` in a background shell delayed dispatch cleanup detection until timeout.)
+
 ## Capture full output up front if you'll need to search it later
 
 Redirect to a file when you'll need to grep the full output afterward — `tail -N`/`head
