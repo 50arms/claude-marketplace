@@ -9,16 +9,12 @@
 //   1. Frontmatter block (--- ... ---) exists and parses as real YAML
 //      (js-yaml — not a regex approximation).
 //   2. `name` and `description` keys are present (non-empty strings).
-//
-// DX-2986 scopes this lint to parse-validity + required keys only. A
-// description-length ceiling (the Claude Code skill-listing limit) is
-// DELIBERATELY NOT enforced here — human-loop's own description is
-// currently over that limit and known-red; shortening it is scoped to
-// DX-2979's apply phase (content rewrite, awaiting separate approval),
-// which is expected to add the length rule to this lint as its own AC
-// once the content itself is fixed. Adding it here first would ship a
-// publish gate that is red at merge time, which is exactly what this
-// lint exists to prevent.
+//   3. SKILL.md only (DX-2979): `description` + `when_to_use` combined
+//      length must not exceed 1,536 characters — the Claude Code
+//      skill-listing limit. Exceeding it truncates the listing entry
+//      rather than failing loud, so this is enforced here instead.
+//      `when_to_use` is optional; a file without it is measured on
+//      `description` alone.
 //
 // Exit 0 = every file clean. Exit 1 = at least one failure, each printed
 // as "<path>: <error>" so the failing file and reason are both visible
@@ -29,6 +25,10 @@
 const fs = require("fs");
 const path = require("path");
 const yaml = require("js-yaml");
+
+// DX-2979 — Claude Code's skill-listing entry truncates (doesn't error)
+// once description + when_to_use exceeds this many characters.
+const MAX_DESCRIPTION_LENGTH = 1536;
 
 function findTargetFiles(root) {
   const targets = [];
@@ -87,6 +87,15 @@ function lintFile(filePath, root) {
 
   if (typeof doc.description !== "string" || doc.description.trim() === "") {
     return `${rel}: frontmatter missing required "description" key`;
+  }
+
+  const isSkill = /(^|\/)skills\/[^/]+\/SKILL\.md$/.test(rel);
+  if (isSkill) {
+    const whenToUse = typeof doc.when_to_use === "string" ? doc.when_to_use : "";
+    const combinedLength = doc.description.length + whenToUse.length;
+    if (combinedLength > MAX_DESCRIPTION_LENGTH) {
+      return `${rel}: description + when_to_use is ${combinedLength} characters, exceeds the ${MAX_DESCRIPTION_LENGTH}-character skill-listing limit`;
+    }
   }
 
   return null;

@@ -104,6 +104,65 @@ describe("lintRepo — missing name key", () => {
   });
 });
 
+describe("lintRepo — description + when_to_use under the 1,536-char cap", () => {
+  test("passes at exactly the cap and comfortably under it", () => {
+    const root = makeFixtureDir();
+    const description = "d".repeat(800);
+    const whenToUse = "w".repeat(736); // 800 + 736 = 1536, exactly the cap
+    writeSkill(
+      root,
+      "at-cap",
+      `name: at-cap\ndescription: "${description}"\nwhen_to_use: "${whenToUse}"`,
+    );
+
+    const { errors } = lintRepo(root);
+
+    assert.deepEqual(errors, []);
+  });
+});
+
+describe("lintRepo — description + when_to_use over the 1,536-char cap", () => {
+  test("fails and names the file with the actual combined length", () => {
+    const root = makeFixtureDir();
+    const description = "d".repeat(800);
+    const whenToUse = "w".repeat(737); // 800 + 737 = 1537, one over the cap
+    writeSkill(
+      root,
+      "over-cap",
+      `name: over-cap\ndescription: "${description}"\nwhen_to_use: "${whenToUse}"`,
+    );
+
+    const { errors } = lintRepo(root);
+
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /^skills\/over-cap\/SKILL\.md:/);
+    assert.match(errors[0], /description \+ when_to_use is 1537 characters/);
+    assert.match(errors[0], /exceeds the 1536-character skill-listing limit/);
+  });
+
+  test("description alone (no when_to_use) is also measured against the cap", () => {
+    const root = makeFixtureDir();
+    const description = "d".repeat(1537);
+    writeSkill(root, "long-description-only", `name: long-description-only\ndescription: "${description}"`);
+
+    const { errors } = lintRepo(root);
+
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /^skills\/long-description-only\/SKILL\.md:/);
+    assert.match(errors[0], /description \+ when_to_use is 1537 characters/);
+  });
+
+  test("an agent .md file is NOT subject to the cap (agents have no when_to_use)", () => {
+    const root = makeFixtureDir();
+    const description = "d".repeat(2000);
+    writeAgent(root, "long-agent", `name: long-agent\ndescription: "${description}"`);
+
+    const { errors } = lintRepo(root);
+
+    assert.deepEqual(errors, []);
+  });
+});
+
 describe("lintRepo — ignores non-skill/agent markdown", () => {
   test("a stray README.md under the fixture root is not linted", () => {
     const root = makeFixtureDir();
