@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Background-work report hook — danxbot plugin. DX-3367.
+// Background-work report hook — danxbot plugin. DX-3367 (+ review fix-up).
 //
 // WHY THIS EXISTS. A plan-connected session's idle-nudge ("this session has
 // been idle N minutes with work waiting") fires even when the session's own
@@ -16,14 +16,16 @@
 // `evaluateIdleNudge` reads it to suppress the nudge while a positive count
 // is fresh (within a 60-minute ceiling, dashboard-side).
 //
-// Five modes, driven by `process.argv[2]`:
+// Five modes, driven by `process.argv[2]` (see `dispatchMode`):
 //   stop / subagent-stop — read `input.background_tasks`, compute a count
-//     (see `countFromSnapshot`), report it, and persist `{count, reportedAt}`
-//     to this session's local state file (the heartbeat mode's refresh
-//     source, and a human-readable debug trail of what was last reported).
+//     (see `countFromSnapshot`), report it, and persist `{count, reportedAt,
+//     outcome}` to this session's local state file (the heartbeat mode's
+//     refresh source, and a human-readable debug trail of what was last
+//     reported — see `nextReportState` for why a FAILED report never
+//     advances `count`/`reportedAt`).
 //   session-start / stop-failure — always report "clear" (no snapshot to
 //     trust — a fresh session, or one that just hit an API error) and drop
-//     the local state file.
+//     the local state file, UNLESS the clear itself fails (see `runClear`).
 //   heartbeat — a PostToolUse(`.*`) no-op almost always. Only acts when
 //     `input.agent_id` is present (this tool call belongs to a background
 //     sub-agent, i.e. one is still alive) AND the per-session throttle stamp
@@ -33,7 +35,22 @@
 //     count already on record (refreshing the server's
 //     `background_reported_at` so a long-running sub-agent's positive report
 //     doesn't cross the ceiling while genuinely still running) — never
-//     invents a count, and does nothing when none is on record.
+//     invents a count, and does nothing when none is on record. The throttle
+//     stamp is claimed BEFORE the spawn and the state file write is a
+//     compare-and-set AFTER it (see `runHeartbeat`) — DX-3367 review finding
+//     5: a slow heartbeat spawn must never let a stale re-report clobber a
+//     fresher Stop/SubagentStop write that landed while it was in flight.
+//
+// PLAN-CONNECTION GATE (DX-3367 review finding 1). Every mode checks
+// `isPlanConnected` (shared with `plan-connect-mantra.mjs` /
+// `plan-workflow-autoload.mjs` via `lib/plan-connection.mjs`) BEFORE doing
+// anything else — in particular before any spawn. This plugin loads in
+// EVERY Claude Code session on this machine, most of which never touch a
+// danxbot plan; a session that was never `plan_connect`-ed has no
+// `plan_sessions` row for this feature to suppress a nudge on, so reporting
+// for it is pure cost (an `npx -y` spawn, a local state-dir mkdir) with zero
+// effect. `isValidSessionId` is likewise imported from that same module
+// rather than re-implemented, so the two checks can never drift apart.
 //
 // A hook script bug must never surface as a failed/blocked tool call or
 // turn — every mode body runs inside main()'s top-level try/catch, mirroring
@@ -43,8 +60,32 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isPlanConnected, isValidSessionId } from "./lib/plan-connection.mjs";
+// DX-3367 review finding 6: reuse the bridge's own env builder (strips the
+// session's messaging-inbox token/socket before handing the env to a
+// subcommand that has no business reading them) rather than a second,
+// driftable copy of the same logic.
+import { childEnv } from "./plan-event-bridge.mjs";
 
-/** The ONE place a future version bump changes (mirrors plan-event-bridge.mjs's own constant). */
+export { isValidSessionId, childEnv };
+
+/**
+ * The ONE place THIS script's MCP package pin changes.
+ *
+ * DX-3367 review finding 7: `plan-event-bridge.mjs` pins its OWN
+ * `DASHBOARD_MCP_PACKAGE` independently (currently 0.1.95), and the two are
+ * NOT the same constant on purpose, not by oversight. `bridge.ts` /
+ * `listen.ts` (the subcommands the bridge pins) picked up real behavior
+ * changes after 0.1.95 — DX-3274, DX-3099, DX-3028 all touched one or both
+ * files on `origin/main` since that version — so bumping the bridge's pin to
+ * match this one is a SEPARATE change that needs its own verification the
+ * bridge still behaves identically at the new version; it is not safe to do
+ * as a side effect of this fix-up, and the card this comment lives on
+ * explicitly says to leave it alone rather than guess. If a future change
+ * proves the two subcommands' contracts move together, unify them then —
+ * until it does, two independent pins is the correct (not merely
+ * expedient) state, not something to "fix".
+ */
 export const DASHBOARD_MCP_PACKAGE = "@thehammer/danx-dashboard-mcp@0.1.136";
 
 /** How long the subcommand's own hard timeout is documented to take; this script's spawn timeout sits a bit above it. */
@@ -53,15 +94,34 @@ export const REPORT_SPAWN_TIMEOUT_MS = 8_000;
 /** Heartbeat no-op throttle — re-report at most this often per session. */
 export const HEARTBEAT_THROTTLE_MS = 60_000;
 
-/** `background_tasks[].type` values that count as "still working" for the nudge's purposes. A monitor/teammate/cloud-session/MCP-task is a deliberate long-lived watcher, not transient work — counting it would silence the nudge forever. */
+/**
+ * The FULL set of `background_tasks[].type` values Claude Code documents
+ * (https://code.claude.com/docs/en/hooks.md, Stop input, "Each entry in
+ * background_tasks..."): "Friendly task-type label such as `shell`,
+ * `subagent`, `monitor`, `workflow`, `teammate`, `cloud session`, or `MCP
+ * task`. ... Falls back to the raw discriminant for unrecognized types."
+ * An entry whose `type` is OUTSIDE this set (or missing/null) means either a
+ * malformed payload or a Claude Code build that has grown a type this
+ * script has never seen — `countFromSnapshot` treats the WHOLE snapshot as
+ * unknown (`null`) rather than silently under-counting one entry, per
+ * DX-3367 review finding 4.
+ */
+const KNOWN_TASK_TYPES = new Set(["shell", "subagent", "monitor", "workflow", "teammate", "cloud session", "MCP task"]);
+
+/** `background_tasks[].type` values that count as "still working" for the nudge's purposes. A monitor/teammate/cloud-session/MCP-task is a deliberate long-lived watcher, and counting it would silence the nudge forever. */
 const COUNTED_TYPES = new Set(["shell", "subagent", "workflow"]);
 
-const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-
-/** Whether `sessionId` is safe to use as a path segment (same idiom as plan-tab-watch.mjs's isValidSessionId). */
-export function isValidSessionId(sessionId) {
-  return typeof sessionId === "string" && SESSION_ID_PATTERN.test(sessionId);
-}
+/**
+ * DX-3367 review finding 4: the SAME docs page documents `status` only as
+ * "Current task status" — no enumerated value list anywhere on the page.
+ * The single worked example shows `"status": "running"`. Rather than assume
+ * some other unseen value (`"pending"`, `"backgrounded"`, ...) also means
+ * "still working", this counts ONLY the literal string the docs actually
+ * demonstrate. That is a deliberately conservative (can under-count, never
+ * over-count) reading — "never assume" cuts against guessing a broader
+ * enum just as much as against guessing a narrower one.
+ */
+const RUNNING_STATUS = "running";
 
 /** `${CLAUDE_PLUGIN_DATA}/background-work/` — a new state dir, sibling to plan-event-bridge.mjs's own `stateDir()`. */
 export function stateDir(env = process.env) {
@@ -98,22 +158,42 @@ export function readJsonFile(file) {
   }
 }
 
+/** Read a file's exact bytes, or `null` if it does not exist / cannot be read — the compare token `runHeartbeat`'s compare-and-set write needs (see there). */
+function readRawFile(file) {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write `text` to `file` ONLY IF its current bytes still equal `expectedRaw`
+ * — a poor-man's compare-and-set for a single JSON file with no external
+ * lock (DX-3367 review finding 5). Returns whether the write happened.
+ */
+function compareAndSetFile(file, expectedRaw, text) {
+  if (readRawFile(file) !== expectedRaw) return false;
+  writeFileAtomic(file, text);
+  return true;
+}
+
 /**
  * The count derived from a `background_tasks` snapshot.
  *
- * `null` ("unknown") when the field is absent — an older Claude Code build
- * that doesn't send it, or a malformed payload — NEVER guessed as `0`.
- * Otherwise the number of entries whose `type` is shell/subagent/workflow,
- * including an empty array (a real, trusted "zero background work" answer).
+ * `null` ("unknown") when the field is absent, not an array, or contains ANY
+ * entry whose `type` falls outside `KNOWN_TASK_TYPES` (including a missing
+ * `type`) — an older or newer Claude Code build sending a shape this script
+ * cannot fully classify, never guessed as `0` (DX-3367 review finding 4).
+ * Otherwise, a real, trusted count of entries whose `type` is
+ * shell/subagent/workflow AND whose `status` is exactly `"running"`
+ * (RUNNING_STATUS) — including an empty array, or an array whose entries
+ * are all known-but-not-counted, both legitimately `0`.
  */
 export function countFromSnapshot(backgroundTasks) {
   if (!Array.isArray(backgroundTasks)) return null;
-  return backgroundTasks.filter((task) => COUNTED_TYPES.has(task?.type)).length;
-}
-
-/** The dashboard subcommand's environment: the session id it needs, nothing else added or removed (mirrors plan-event-bridge.mjs's childEnv). */
-export function childEnv(env, sessionId) {
-  return { ...env, CLAUDE_CODE_SESSION_ID: sessionId };
+  if (backgroundTasks.some((task) => !KNOWN_TASK_TYPES.has(task?.type))) return null;
+  return backgroundTasks.filter((task) => COUNTED_TYPES.has(task?.type) && task?.status === RUNNING_STATUS).length;
 }
 
 /**
@@ -131,17 +211,52 @@ export function reportCommand({ countOrClear, platform = process.platform, execP
 }
 
 /**
- * Spawns the subcommand synchronously and ignores its outcome entirely — it
- * always exits 0 within its own ~5s hard timeout and prints one `{ok,...}`
- * JSON line this script has no need to parse. A spawn failure (missing npx,
- * timeout, non-zero exit) must never throw out of this script.
+ * Parse the subcommand's ONE JSON stdout line into its `{ok, ...}` outcome
+ * (see `packages/danx-dashboard-mcp/src/background-work.ts`'s own contract
+ * doc: "print EXACTLY ONE JSON line on stdout, and ALWAYS exit 0"). Anything
+ * that isn't that shape — no output, a spawn that never ran, malformed JSON
+ * — is `{ok:false, reason:"..."}`, never treated as success (DX-3367 review
+ * finding 3).
+ */
+function parseSubcommandOutcome(result) {
+  if (!result) return { ok: false, reason: "no_result" };
+  if (result.error) return { ok: false, reason: `spawn_error: ${result.error.message}` };
+  if (typeof result.stdout !== "string" || result.stdout.trim() === "") return { ok: false, reason: "no_output" };
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    return { ok: false, reason: "unparseable_output" };
+  }
+  if (parsed && typeof parsed === "object" && typeof parsed.ok === "boolean") return parsed;
+  return { ok: false, reason: "unparseable_output" };
+}
+
+/**
+ * Spawns the subcommand synchronously and returns its real `{ok, ...}`
+ * outcome — never throws out of this function (a spawn failure, e.g. npx
+ * missing, becomes `{ok:false, reason:...}` too, per DX-3367 review finding
+ * 3: "failures leave evidence" requires the caller to actually SEE the
+ * outcome rather than this function swallowing it). `stdio` pipes stdout so
+ * the one JSON line the subcommand promises to print can be read; stdin is
+ * ignored (nothing to send) and stderr is ignored (human diagnostics only,
+ * per the subcommand's own contract doc).
  */
 export function reportToDashboard({ countOrClear, sessionId, env = process.env, spawnFn = spawnSync, platform, execPath, exists, timeoutMs = REPORT_SPAWN_TIMEOUT_MS }) {
   try {
     const { command, args } = reportCommand({ countOrClear, platform, execPath, exists });
-    spawnFn(command, args, { env: childEnv(env, sessionId), stdio: "ignore", timeout: timeoutMs, windowsHide: true });
-  } catch {
-    // A report failure is never fatal to the hook — see module docblock.
+    const result = spawnFn(command, args, {
+      env: childEnv(env, sessionId),
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: timeoutMs,
+      windowsHide: true,
+      encoding: "utf8",
+    });
+    return parseSubcommandOutcome(result);
+  } catch (err) {
+    // A report failure is never fatal to the hook — see module docblock —
+    // but it must still come back as a real outcome, not vanish silently.
+    return { ok: false, reason: `spawn_threw: ${err.message}` };
   }
 }
 
@@ -158,36 +273,83 @@ function readStdinJson() {
   }
 }
 
-/** `stop` / `subagent-stop`: compute the count, report it, and persist the debug trail. */
-export function runReport(input, { env, spawnFn, now, platform, execPath, exists } = {}) {
-  const sessionId = input?.session_id;
-  if (!isValidSessionId(sessionId)) return;
-  const count = countFromSnapshot(input?.background_tasks);
-  reportToDashboard({ countOrClear: countArg(count), sessionId, env, spawnFn, platform, execPath, exists });
-  const dir = stateDir(env);
-  const { state } = sessionPaths(dir, sessionId);
-  writeFileAtomic(state, JSON.stringify({ count, reportedAt: new Date(now ? now() : Date.now()).toISOString() }));
+/** Whether `sessionId` is currently plan-connected, resolving `home` the same way `plan-connect-mantra.mjs` does (env override for tests, real homedir in production). */
+function sessionIsConnected(sessionId, env, isConnected) {
+  return isConnected(sessionId, env?.DANXBOT_PLAN_SESSIONS_HOME || undefined);
 }
 
-/** `session-start` / `stop-failure`: no snapshot to trust — always clear, and drop the local record. */
-export function runClear(input, { env, spawnFn, platform, execPath, exists } = {}) {
+/**
+ * Fold one report attempt's outcome into the previous state (DX-3367 review
+ * finding 3). A SUCCESSFUL report (`outcome.ok === true`) is the only thing
+ * allowed to advance `count`/`reportedAt` — those two fields mean "the
+ * dashboard has this count, as of this time", and a failed PUT never made
+ * that true. A FAILED report still leaves evidence (`outcome` always
+ * reflects the real `{ok, reason}` the subcommand returned) without lying
+ * about what got stored: `count`/`reportedAt` fall back to whatever was
+ * already on record (or `null` if there was never a successful report at
+ * all) rather than advancing to the just-attempted, never-confirmed value.
+ */
+function nextReportState(previous, { count, outcome, now }) {
+  if (outcome.ok) {
+    return { count, reportedAt: new Date(now).toISOString(), outcome };
+  }
+  return { count: previous?.count ?? null, reportedAt: previous?.reportedAt ?? null, outcome };
+}
+
+/** `stop` / `subagent-stop`: compute the count, report it, and persist the debug trail. */
+export function runReport(input, { env, spawnFn, now, platform, execPath, exists, isConnected = isPlanConnected } = {}) {
   const sessionId = input?.session_id;
   if (!isValidSessionId(sessionId)) return;
-  reportToDashboard({ countOrClear: "clear", sessionId, env, spawnFn, platform, execPath, exists });
+  if (!sessionIsConnected(sessionId, env, isConnected)) return; // DX-3367 review finding 1 — never spawn for an unconnected session
+  const count = countFromSnapshot(input?.background_tasks);
+  const outcome = reportToDashboard({ countOrClear: countArg(count), sessionId, env, spawnFn, platform, execPath, exists });
   const dir = stateDir(env);
   const { state } = sessionPaths(dir, sessionId);
-  fs.rmSync(state, { force: true });
+  const previous = readJsonFile(state);
+  const nowMs = now ? now() : Date.now();
+  writeFileAtomic(state, JSON.stringify(nextReportState(previous, { count, outcome, now: nowMs })));
+}
+
+/** `session-start` / `stop-failure`: no snapshot to trust — always clear, and drop the local record ONLY once the clear itself is confirmed. */
+export function runClear(input, { env, spawnFn, platform, execPath, exists, isConnected = isPlanConnected } = {}) {
+  const sessionId = input?.session_id;
+  if (!isValidSessionId(sessionId)) return;
+  if (!sessionIsConnected(sessionId, env, isConnected)) return; // DX-3367 review finding 1
+  const outcome = reportToDashboard({ countOrClear: "clear", sessionId, env, spawnFn, platform, execPath, exists });
+  const dir = stateDir(env);
+  const { state } = sessionPaths(dir, sessionId);
+  if (outcome.ok) {
+    fs.rmSync(state, { force: true });
+    return;
+  }
+  // DX-3367 review finding 3: a FAILED clear must not look identical to a
+  // successful one — dropping the file here would silently claim the
+  // dashboard's count was reset when it was not. Keep whatever was last
+  // actually confirmed (nextReportState falls back to `previous` on
+  // failure) and record the failure itself as evidence.
+  const previous = readJsonFile(state);
+  writeFileAtomic(state, JSON.stringify(nextReportState(previous, { count: null, outcome })));
 }
 
 /**
  * `heartbeat`: a PostToolUse(`.*`) no-op almost always. Only acts when
  * `agent_id` proves a background sub-agent is alive AND the throttle window
  * has elapsed, and only ever RE-reports a count already on record.
+ *
+ * DX-3367 review finding 5 (the heartbeat race): the throttle stamp is
+ * claimed BEFORE the spawn (so a second tick starting while this one's
+ * spawn is still in flight sees the throttle already claimed and no-ops),
+ * and the state-file write AFTER the spawn is a compare-and-set against the
+ * exact bytes read before the spawn started — if a fresher Stop/SubagentStop
+ * write landed on the state file while this heartbeat's (synchronous, but
+ * potentially slow) subcommand call was running, that fresher write is kept
+ * and this tick's stale refresh is discarded rather than clobbering it.
  */
-export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, execPath, exists, throttleMs = HEARTBEAT_THROTTLE_MS } = {}) {
+export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, execPath, exists, throttleMs = HEARTBEAT_THROTTLE_MS, isConnected = isPlanConnected } = {}) {
   const sessionId = input?.session_id;
   if (!isValidSessionId(sessionId)) return;
   if (input?.agent_id === undefined || input?.agent_id === null) return;
+  if (!sessionIsConnected(sessionId, env, isConnected)) return; // DX-3367 review finding 1
 
   const dir = stateDir(env);
   const { state, heartbeat } = sessionPaths(dir, sessionId);
@@ -200,21 +362,45 @@ export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, ex
   }
   if (throttleAge < throttleMs) return;
 
-  const stored = readJsonFile(state);
+  const stateRaw = readRawFile(state);
+  let stored = null;
+  if (stateRaw !== null) {
+    try {
+      stored = JSON.parse(stateRaw);
+    } catch {
+      stored = null;
+    }
+  }
   if (typeof stored?.count !== "number") return; // nothing honest to refresh
 
-  reportToDashboard({ countOrClear: countArg(stored.count), sessionId, env, spawnFn, platform, execPath, exists });
-  writeFileAtomic(state, JSON.stringify({ count: stored.count, reportedAt: new Date(nowMs).toISOString() }));
+  // Claim the throttle stamp BEFORE spawning — see the finding-5 doc comment above.
   writeFileAtomic(heartbeat, JSON.stringify({ lastTickAt: new Date(nowMs).toISOString() }));
-  // DX-3367 (mirrors plan-event-bridge.mjs's watchdogTick): stamp the
-  // throttle file's own mtime to the INJECTED `now`, not whatever the real
-  // OS clock was at write time — the throttle compare above is against this
-  // same injected `now()`, so it must be too, for a deterministic test clock.
   try {
     fs.utimesSync(heartbeat, new Date(nowMs), new Date(nowMs));
   } catch {
     /* removed concurrently — nothing to touch */
   }
+
+  const outcome = reportToDashboard({ countOrClear: countArg(stored.count), sessionId, env, spawnFn, platform, execPath, exists });
+
+  // Compare-and-set: only refresh `reportedAt` if the state file is still
+  // exactly what it was before the spawn — a fresher write in the meantime
+  // wins unconditionally.
+  compareAndSetFile(state, stateRaw, JSON.stringify(nextReportState(stored, { count: stored.count, outcome, now: nowMs })));
+}
+
+/**
+ * The routing table from a hook's `mode` argv string to the handler it
+ * dispatches to — exported so mode routing itself is unit-tested without a
+ * spawned process (DX-3367 review finding 8). `hooks/hooks.json` is the
+ * single source of which event sends which literal mode string; a test
+ * parses that file directly rather than duplicating the strings here.
+ */
+export function dispatchMode(mode, input, options) {
+  if (mode === "stop" || mode === "subagent-stop") return runReport(input, options);
+  if (mode === "session-start" || mode === "stop-failure") return runClear(input, options);
+  if (mode === "heartbeat") return runHeartbeat(input, options);
+  return undefined; // unknown mode — silent no-op, matches the CLI-robustness contract
 }
 
 function main() {
@@ -223,9 +409,7 @@ function main() {
   if (!input) return; // malformed/empty stdin — never block or guess
   const env = process.env;
   try {
-    if (mode === "stop" || mode === "subagent-stop") runReport(input, { env });
-    else if (mode === "session-start" || mode === "stop-failure") runClear(input, { env });
-    else if (mode === "heartbeat") runHeartbeat(input, { env });
+    dispatchMode(mode, input, { env });
   } catch {
     // A hook bug must never surface as a failed/blocked tool call or turn.
   }
