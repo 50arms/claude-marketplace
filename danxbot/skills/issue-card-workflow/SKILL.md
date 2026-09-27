@@ -123,6 +123,9 @@ onto it.
   `children[]`, via `issue_edit({parent_id})`.
 - Never manually append `## Retro` — use `issue_retro`. Never escape markdown.
 - Durable work-records live on a card, never a repo `.md` or TaskCreate/TaskList.
+- Work owned by another plan or agent session: hand it over as a card (full context and
+  instructions, right plan, readied, `depends_on` from yours) and wait. Never monitor or
+  investigate another session's cards unless the operator explicitly asks.
 
 See `references/lifecycle-states.md` (state machine, triage, gates),
 `references/phases-epics.md` (`children[]` mechanics), and

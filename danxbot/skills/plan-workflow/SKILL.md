@@ -59,6 +59,12 @@ goal by goal, side work labeled as such. Asked "does this serve the goal?" → a
 read, admit drift. Said "stop if X" → stop when X. Never one open card on two plans with two
 owners.
 
+**Your lane only.** This session is not responsible for monitoring, investigating or unsticking
+another plan's cards or another agent session — unless the operator explicitly asks. Work that
+belongs to another plan or session goes to them as a card: full context and instructions for a
+zero-context reader, on the right plan, readied, and linked `depends_on` from your waiting card.
+Then wait. That handoff done well IS your job; watching them is not.
+
 **Split plan:** `plan_create`, write the new plan's goals/rules/caveats/architecture for its theme
 only (copy shared rules, move theme caveats, never session history), move cards via id-scoped HTTP
 (`POST /api/plans/:id/records|architecture/sections|cards`, `DELETE /records/:rid` — never
