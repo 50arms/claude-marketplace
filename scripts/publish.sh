@@ -342,10 +342,10 @@ if [ -z "${DANX_AGENT_WORKTREE:-}" ] && [ -x "${REPO_ROOT}/scripts/update-plugin
   
   if [ "$DELIVERY_FAILED" -eq 1 ]; then
     err "Plugin delivery verification FAILED — the bump was pushed to origin/main, but at"
-    err "least one plugin above is NOT running the published version on this machine."
-    err "Run '${REPO_ROOT}/scripts/update-plugins.sh' again, or"
-    err "'\$CLAUDE_CODE_EXECPATH plugin update <plugin> --scope user -y' by hand, then"
-    err "re-run publish.sh (or just this machine's delivery) to confirm."
+    err "least one plugin above is NOT running the published version on this machine, in"
+    err "some scope (see the row-level MISMATCH above for exactly which scope/project)."
+    err "Re-run '${REPO_ROOT}/scripts/update-plugins.sh' — it handles every scope (user AND"
+    err "project) — then re-run publish.sh (or just this machine's delivery) to confirm."
     exit 1
   fi
 fi
