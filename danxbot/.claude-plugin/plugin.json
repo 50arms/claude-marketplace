@@ -1,7 +1,7 @@
 {
   "name": "danxbot",
   "description": "Danxbot orchestrator domain: dispatch architecture, runtime modes, deploy. Install on danxbot-aware instances.",
-  "version": "0.7.61",
+  "version": "0.7.62",
   "author": {
     "name": "Dan Newman",
     "email": "newms87@gmail.com"
