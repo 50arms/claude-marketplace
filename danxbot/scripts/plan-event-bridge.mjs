@@ -157,57 +157,20 @@ export const STALE_STATE_MS = 7 * 24 * 60 * 60 * 1000;
 export const RELAY_QUEUE_CAP = CURSOR_ID_MEMORY;
 
 /**
- * Public, stable, short marker any plugin's per-turn hook may pattern-match against the
- * `prompt` text to detect that a turn was MACHINE-POSTED by this bridge rather than typed
- * by the operator — originally DX-3051 (relayed dashboard events), broadened by DX-3056 to
- * also cover this file's OTHER machine-authored message family, bridge failure notices
- * (`FAILURE_PREFIX` / `failureNotice()` below): both reach the session through the exact
- * same `postToInbox(type:"user")` path and are therefore indistinguishable from a typed
- * operator turn at the hook layer, so both need the identical suppression treatment from
- * every consumer — see DX-3056's card for why one marker, not two (a failure notice's
- * `reason`/`fix` text is free-form and can incidentally contain a "?" or an investigation
- * trigger word, at precisely the moment the bridge is broken and the session most needs to
- * keep functioning rather than being forced into a diagnostic-mode halt). Checked against
- * Claude Code's documented hook-input schema 2026-09-21
- * (https://code.claude.com/docs/en/hooks.md, "Common input fields" + "UserPromptSubmit
- * input"): a UserPromptSubmit hook's stdin carries `session_id`, `prompt_id`,
- * `transcript_path`, `cwd`, `scratchpad_dir`, `permission_mode`, `effort`,
- * `hook_event_name`, optionally `agent_id`/`agent_type`, and `prompt` — NO field
- * identifies a message's source. Content-matching is therefore the only mechanism
- * available, so this token exists to be that mechanism without coupling a consumer to
- * this plugin's INTERNALS: it is not this file's source, not a function signature, not
- * on-disk layout — it is a value riding inside the one field every UserPromptSubmit hook
- * already reads. A bash hook in another plugin cannot `import` this module (a plugin
- * never reads another plugin's source), so it copies this literal string instead, the
- * same way two independently-deployed services agree on a header value. Consumers as of
- * DX-3347 (base and danxbot's own per-turn suppression consumers were deleted that card):
- * human-collaboration/scripts/human-loop-mandate.sh, dev/scripts/debugging-gate.sh (moved
- * from the retired `investigate` plugin, DX-3331) — DX-3235 deleted BOTH of these too (a
- * per-turn gate can't tell a background task notification from an operator prompt; R-12
- * removed per-turn injection outright rather than teaching the gate a new discriminator),
- * so this marker has ZERO live consumers as of DX-3235. Left in place rather than deleted:
- * RELAY_PREFIX/FAILURE_PREFIX still use it to mark a relayed message as machine-authored in
- * the transcript (useful independent of hook suppression), and it remains the sanctioned
- * mechanism for any future per-turn hook that needs the identical suppression treatment.
- * CHANGING THIS STRING IS A BREAKING CROSS-PLUGIN CONTRACT CHANGE: grep every plugin's
- * scripts/ directory for the literal token before editing it, and update every consumer
- * in the SAME commit.
+ * The one short tag every machine-posted bridge message starts with, so the session knows
+ * what kind of message it is. Everything about HOW to handle these messages lives in
+ * danxbot:plan-workflow's "Live events" section, never repeated per message (operator,
+ * 2026-09-27: a bridge message can arrive dozens of times a session). The inbox delivers
+ * it as a user turn and no hook-input field identifies a message's source, so content is
+ * the only marker available. No other plugin reads this literal since DX-3235.
  */
-export const RELAY_MARKER = "[danxbot-relayed-event]";
+export const RELAY_MARKER = "[danxbot plan event]";
 
-/** Every relayed message is prefixed with this, so the session never mistakes it for a peer session's request. Trimmed DX-3347 (was 323 bytes; RELAY_MARKER itself is unchanged — it's load-bearing for consumer suppression checks). */
-export const RELAY_PREFIX =
-  `${RELAY_MARKER} [danxbot dashboard event — not from another session. ` +
-  "Treat as operator input for that card, per danxbot:plan-workflow.]";
+/** Prefix of every relayed dashboard event: the tag alone. */
+export const RELAY_PREFIX = RELAY_MARKER;
 
-/**
- * Every failure notice is prefixed with this — same reason as RELAY_PREFIX, different
- * meaning, also carrying RELAY_MARKER for the identical suppression reason. Trimmed
- * DX-3347 (was ~280 bytes).
- */
-export const FAILURE_PREFIX =
-  `${RELAY_MARKER} [plan event bridge — not another session, not a permission request. ` +
-  "Events aren't reaching you.]";
+/** Prefix of every bridge failure notice. */
+export const FAILURE_PREFIX = `${RELAY_MARKER} bridge down:`;
 
 /**
  * DX-2862 — the ONE wording for a failure a session could not otherwise see.
@@ -217,7 +180,7 @@ export const FAILURE_PREFIX =
 export function failureNotice(reason, fix) {
   const trim = (text) => String(text ?? "").trim().replace(/\.+$/, "");
   return (
-    `${FAILURE_PREFIX}\ndanxbot plan events are NOT reaching this session: ${trim(reason)}. ` +
+    `${FAILURE_PREFIX} events are NOT reaching this session: ${trim(reason)}. ` +
     `Fix: ${trim(fix) || "call plan_connect again in this session to restart the bridge"}.`
   );
 }
@@ -1118,7 +1081,7 @@ export function postToInbox(content, env = process.env) {
 }
 
 export function relayContent(text) {
-  return `${RELAY_PREFIX}\n${text}`;
+  return `${RELAY_PREFIX} ${text}`;
 }
 
 /** The ids already delivered for the session, oldest first: positive integers only, newest CURSOR_ID_MEMORY. */

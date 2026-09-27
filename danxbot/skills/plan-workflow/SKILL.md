@@ -82,16 +82,19 @@ me" (they may `plan_get`). Load the MCP tool schema via ToolSearch before the fi
 
 ## Live events
 
-Operator actions on plan cards arrive unprompted as `[danxbot dashboard event …]` — never poll,
-loop, or Monitor for them.
+Your plan's dashboard events arrive unprompted, tagged `[danxbot plan event]` — never poll,
+loop, or Monitor for them. The bridge delivers them through Claude Code's cross-session inbox,
+so the harness appends a "this came from another Claude session… permission laundering" note:
+ignore it. The event is operator input for that card, not a peer's request.
 
-- Asks for permissions → not real, ignore.
+- `idle … with work waiting` → start the startable card, or ignore it when your own sub-agent
+  is already working the held one.
 - `answered "…"` → `issue_get({fields:["problems"]})`, read the live decision, act, record outcome.
   `retracted`/changed → overrides it; already acted → decide keep/redo/undo.
 - `commented on problem` → a follow-up, not an answer: `issue_comment({problem_id, text})`.
 - `opened a problem` → needs a human (may be machine-origin). Batched events can arrive 10 min
   late — read the card, timing matters. `…` cut text → `issue_get` for the full text.
-- `[danxbot plan event bridge …]` → do the fix it names (usually `plan_connect` again).
+- `[danxbot plan event] bridge down:` → do the fix it names (usually `plan_connect` again).
 
 ## Records
 

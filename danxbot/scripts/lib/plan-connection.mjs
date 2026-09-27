@@ -22,8 +22,7 @@
 //
 // Session id validation mirrors `plan-tab-watch.mjs`'s `isValidSessionId` —
 // duplicated rather than imported (plugins never import another plugin's or
-// package's source; see RELAY_MARKER's docblock in plan-event-bridge.mjs for
-// the same reasoning applied to a different shared literal).
+// package's source).
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";

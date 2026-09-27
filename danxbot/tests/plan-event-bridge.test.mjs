@@ -46,35 +46,21 @@ const noSleep = async () => {};
 // ---------------------------------------------------------- 0. relay marker (DX-3051)
 
 describe("RELAY_MARKER", () => {
-  test("is exported and embedded at the start of RELAY_PREFIX", () => {
-    assert.equal(bridge.RELAY_MARKER, "[danxbot-relayed-event]");
-    assert.ok(
-      bridge.RELAY_PREFIX.startsWith(bridge.RELAY_MARKER),
-      "RELAY_PREFIX must start with RELAY_MARKER — other plugins' hooks pattern-match on this literal",
-    );
+  // Operator 2026-09-27: one short tag per message; handling rules live in plan-workflow.
+  test("is one short tag, and is the whole relay prefix", () => {
+    assert.equal(bridge.RELAY_MARKER, "[danxbot plan event]");
+    assert.equal(bridge.RELAY_PREFIX, bridge.RELAY_MARKER);
   });
 
-  test("relayContent output carries the marker other plugins detect (DX-3051)", () => {
-    const content = bridge.relayContent("dan commented: is this firing on every turn?");
-    assert.ok(content.includes(bridge.RELAY_MARKER));
+  test("relayContent is the tag, a space, then the event text, nothing else", () => {
+    assert.equal(bridge.relayContent("dan commented: hi"), "[danxbot plan event] dan commented: hi");
   });
 
-  // DX-3056: FAILURE_PREFIX / failureNotice() reach the session through the exact same
-  // postToInbox(type:"user") path as a relayed event, but were left out of DX-3051's
-  // scope — they must carry the same marker so the same six consumer hooks suppress on
-  // a failure notice too.
-  test("is also embedded at the start of FAILURE_PREFIX (DX-3056)", () => {
-    assert.ok(
-      bridge.FAILURE_PREFIX.startsWith(bridge.RELAY_MARKER),
-      "FAILURE_PREFIX must start with RELAY_MARKER — a bridge failure notice reaches the " +
-        "session through the same postToInbox(type:\"user\") path as a relayed event and " +
-        "must be suppressed by the same six per-turn hooks (DX-3056)",
-    );
-  });
-
-  test("failureNotice() output carries the marker other plugins detect (DX-3056)", () => {
+  test("a failure notice starts with the tag and says the bridge is down", () => {
     const notice = bridge.failureNotice("the bridge could not start (missing CLAUDE_PLUGIN_DATA)", "reinstall the plugin");
-    assert.ok(notice.includes(bridge.RELAY_MARKER));
+    assert.ok(notice.startsWith(bridge.FAILURE_PREFIX));
+    assert.ok(bridge.FAILURE_PREFIX.startsWith(bridge.RELAY_MARKER));
+    assert.match(notice, /bridge down: events are NOT reaching this session: .*. Fix: reinstall the plugin.$/);
   });
 });
 
@@ -1214,7 +1200,7 @@ describe("failure notices", () => {
   test("a notice names the reason and the fix, and cannot be mistaken for a peer session's message", () => {
     const notice = bridge.failureNotice("the bridge could not start (missing X).", "do Y.");
     assert.ok(notice.startsWith(bridge.FAILURE_PREFIX));
-    assert.match(notice, /plan events are NOT reaching this session: the bridge could not start \(missing X\)\. Fix: do Y\./);
+    assert.match(notice, /events are NOT reaching this session: the bridge could not start \(missing X\)\. Fix: do Y\./);
   });
 
   test("a notice always carries a fix, even when the caller had none", () => {
