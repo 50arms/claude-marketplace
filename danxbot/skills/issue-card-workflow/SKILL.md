@@ -126,10 +126,6 @@ onto it.
 - Work owned by another plan or agent session: hand it over as a card (full context and
   instructions, right plan, readied, `depends_on` from yours) and wait. Never monitor or
   investigate another session's cards unless the operator explicitly asks.
-- A plugin change is done once published and installed. NEVER test, verify, or write AC/problems
-  for a published plugin reaching or loading in a new session — that is the Claude Code
-  harness's job, it works, and it is not ours (operator, 2026-09-27).
-
 See `references/lifecycle-states.md` (state machine, triage, gates),
 `references/phases-epics.md` (`children[]` mechanics), and
 `references/card-creation-and-reference.md` (taxonomy, DB schema, MCP reference).

@@ -46,7 +46,9 @@ a second copy.
 
 Apply the edit yourself (`Edit`/`Write`). A plugin edit isn't done until published: bump
 the version and push (`scripts/publish.sh` if present) — publishing is standing,
-pre-authorized, never needs approval.
+pre-authorized, never needs approval. Published = done: NEVER test, verify, or file AC or
+problems about a published plugin reaching or loading in a new session — that is the Claude
+Code harness's job, it works, and it is not ours.
 
 ## 4. End state
 

@@ -74,3 +74,5 @@ Before declaring any plugin work done, answer both:
 2. Did `update-claude-plugins` run after that push (or did `publish.sh` run it for you)? No → this machine is still loading the old version.
 
 "I'll update later" / "the consumer will pick it up" / "it's only a small edit" are the rationalizations both checks exist to block.
+
+Both yes → done. **NEVER test, verify, or file AC or problems about the published version reaching or loading in a new session** (operator, 2026-09-27) — that is the Claude Code harness's job, it works, and it is not ours.
