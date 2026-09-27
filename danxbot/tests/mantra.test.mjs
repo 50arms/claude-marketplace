@@ -1,14 +1,22 @@
-// mantra.sh — danxbot plugin. DX-3347, gated DX-3275.
+// mantra.sh — danxbot plugin. DX-3347, gated DX-3275, registry-backed as of
+// DX-3366.
 // Not connected to a plan: prints only the short plan-workflow nudge.
-// Connected (session connection record present): prints danxbot/mantra.md
-// verbatim. No-ops on anything else (this hook is wired only to matcher
+// Connected (session connection record present): fetches the effective
+// mantra text from the dashboard's reminder registry via the published
+// `@thehammer/danx-dashboard-mcp` package's `mantra` subcommand — never the
+// real `npx`/network in these tests, which stub it out via a fake `npx` on
+// PATH (see `makeFakeNpx` below) so every case here stays deterministic and
+// offline. Any registry-fetch failure (including a reported-clean exit with
+// empty stdout — never trusted as a silent success) falls back to printing
+// `danxbot/mantra.md` verbatim, plus exactly one short notice line. No-ops
+// on anything else (this hook is wired only to matcher
 // "startup|resume|compact", but the script itself also refuses any
 // non-SessionStart event name defensively).
 // Run with `npm test` (node --test, no dependencies).
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,12 +40,53 @@ function connect(sessionId) {
   writeFileSync(path.join(dir, `${sessionId}.json`), JSON.stringify({ schemaVersion: 1 }));
 }
 
-function runHook(event, sessionId = "test-session") {
+function runHook(event, sessionId = "test-session", extraEnv = {}) {
   return spawnSync("bash", [SCRIPT, event], {
     input: JSON.stringify({ session_id: sessionId }),
     encoding: "utf8",
-    env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, DANXBOT_PLAN_SESSIONS_HOME: home },
+    env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, DANXBOT_PLAN_SESSIONS_HOME: home, ...extraEnv },
   });
+}
+
+// A fake `npx` placed FIRST on PATH so mantra.sh's registry-fetch step
+// (`npx -y @thehammer/danx-dashboard-mcp@... mantra`) resolves to this
+// script instead of the real one — no test here ever touches the network.
+// Modes:
+//   "success" -> prints $FAKE_MANTRA_NPX_TEXT to stdout, exit 0
+//   "empty"   -> prints nothing, exit 0 (the "reported-clean but empty"
+//                case mantra.sh must still treat as a failure)
+//   "fail"    -> prints to stderr only, exit 1
+function makeFakeNpx() {
+  const binDir = mkdtempSync(path.join(tmpdir(), "mantra-fake-npx-"));
+  const scriptPath = path.join(binDir, "npx");
+  writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "# Fake npx for mantra.sh tests (DX-3366) — never touches the network.",
+      'case "${FAKE_MANTRA_NPX_MODE:-fail}" in',
+      '  success) printf \'%s\' "${FAKE_MANTRA_NPX_TEXT:-}" ;;',
+      "  empty)   exit 0 ;;",
+      '  *) echo "fake npx: forced failure" >&2; exit 1 ;;',
+      "esac",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(scriptPath, 0o755);
+  return binDir;
+}
+
+function runHookWithFakeNpx(mode, { event = "SessionStart", sessionId = "connected-session", text = "" } = {}) {
+  const fakeBinDir = makeFakeNpx();
+  try {
+    return runHook(event, sessionId, {
+      PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH}`,
+      FAKE_MANTRA_NPX_MODE: mode,
+      FAKE_MANTRA_NPX_TEXT: text,
+    });
+  } finally {
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
 }
 
 describe("mantra.sh", () => {
@@ -55,12 +104,38 @@ describe("mantra.sh", () => {
     );
   });
 
-  test("connected: prints mantra.md verbatim", () => {
+  test("connected + registry reachable: prints the fetched effective text, not the committed file (AC 35446)", () => {
     connect("connected-session");
-    const result = runHook("SessionStart", "connected-session");
+    const result = runHookWithFakeNpx("success", { text: "LIVE REGISTRY MANTRA TEXT" });
     assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
-    const expected = readFileSync(MANTRA_FILE, "utf8");
-    assert.equal(result.stdout, expected);
+    assert.equal(result.stdout, "LIVE REGISTRY MANTRA TEXT\n");
+    assert.doesNotMatch(result.stdout, /reminder registry/i);
+    const fileContent = readFileSync(MANTRA_FILE, "utf8");
+    assert.notEqual(result.stdout, fileContent);
+  });
+
+  test("connected + registry fetch fails (nonzero exit): falls back to committed mantra.md plus exactly one notice line (AC 35447)", () => {
+    connect("connected-session");
+    const result = runHookWithFakeNpx("fail");
+    assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
+    assert.match(result.stdout, /Could not reach the reminder registry/i);
+    const fileContent = readFileSync(MANTRA_FILE, "utf8");
+    assert.ok(result.stdout.endsWith(fileContent), "expected fallback output to end with mantra.md's exact content");
+    const notice = result.stdout.slice(0, result.stdout.length - fileContent.length);
+    assert.equal(
+      notice.split("\n").filter(Boolean).length,
+      1,
+      `expected exactly one notice line, got: ${JSON.stringify(notice)}`,
+    );
+  });
+
+  test("connected + registry fetch reports a clean exit but empty stdout: never trusted as a silent success, falls back (AC 35447)", () => {
+    connect("connected-session");
+    const result = runHookWithFakeNpx("empty");
+    assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
+    assert.match(result.stdout, /Could not reach the reminder registry/i);
+    const fileContent = readFileSync(MANTRA_FILE, "utf8");
+    assert.ok(result.stdout.endsWith(fileContent), "expected fallback output to end with mantra.md's exact content");
   });
 
   test("mantra.md merges the operating contract, craft and danxbot mantra, and names all three", () => {
