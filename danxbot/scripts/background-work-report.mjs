@@ -18,11 +18,17 @@
 //
 // Five modes, driven by `process.argv[2]` (see `dispatchMode`):
 //   stop / subagent-stop — read `input.background_tasks`, compute a count
-//     (see `countFromSnapshot`), report it, and persist `{count, reportedAt,
-//     outcome}` to this session's local state file (the heartbeat mode's
-//     refresh source, and a human-readable debug trail of what was last
-//     reported — see `nextReportState` for why a FAILED report never
-//     advances `count`/`reportedAt`).
+//     (see `countFromSnapshot`), report it, and persist `{count, counted,
+//     ignoredTypes, reportedAt, outcome}` to this session's local state file
+//     (the heartbeat mode's refresh source, and a human-readable debug trail
+//     of what was last reported — see `nextReportState` for why a FAILED
+//     report never advances `count`/`counted`/`ignoredTypes`/`reportedAt`).
+//     `counted` (DX-3367 comment 7171) is the COUNTED entries themselves —
+//     `{id, type, status, description}`, description truncated, `command`
+//     never included — so a stuck count is debuggable: which task is still
+//     being counted, not just how many. `ignoredTypes` is a small
+//     `{type: count}` map of entries skipped by type or status, so an
+//     unexpected snapshot shape is visible too.
 //   session-start / stop-failure — always report "clear" (no snapshot to
 //     trust — a fresh session, or one that just hit an API error) and drop
 //     the local state file, UNLESS the clear itself fails (see `runClear`).
@@ -122,6 +128,66 @@ const COUNTED_TYPES = new Set(["shell", "subagent", "workflow"]);
  * enum just as much as against guessing a narrower one.
  */
 const RUNNING_STATUS = "running";
+
+/**
+ * DX-3367 comment 7171: the debug file recorded only a COUNT, which could
+ * not answer "which task is being counted" — exactly the question that
+ * surfaced a still-`running` entry in production 60 minutes after every
+ * sub-agent this session dispatched had actually finished. `runReport`
+ * persists the COUNTED entries themselves alongside the count, so the next
+ * report shows exactly what is being counted.
+ *
+ * Truncated to keep the debug file small; ~120 chars is enough to identify
+ * a task, not enough to be a transcript.
+ */
+const DESCRIPTION_MAX_LENGTH = 120;
+
+/** `description`, truncated to `DESCRIPTION_MAX_LENGTH` — `undefined` (dropped by JSON.stringify) when absent or not a string, never coerced to a literal "undefined"/"null" string. */
+function truncateDescription(description) {
+  if (typeof description !== "string") return undefined;
+  return description.length > DESCRIPTION_MAX_LENGTH ? description.slice(0, DESCRIPTION_MAX_LENGTH) : description;
+}
+
+/**
+ * The entries `countFromSnapshot` actually counted, as `{id, type, status,
+ * description}` — built as a NEW object per entry (never spread from the
+ * source task), so a `command` field a shell entry carries (DX-3367 review
+ * finding: never write anything secret) can never reach the debug file no
+ * matter what Claude Code's snapshot contains. `null` under the exact same
+ * "unknown snapshot" rule as `countFromSnapshot`, so the two never disagree
+ * about whether the snapshot was trustworthy.
+ */
+export function countedEntriesFromSnapshot(backgroundTasks) {
+  if (!Array.isArray(backgroundTasks)) return null;
+  if (backgroundTasks.some((task) => !KNOWN_TASK_TYPES.has(task?.type))) return null;
+  return backgroundTasks
+    .filter((task) => COUNTED_TYPES.has(task?.type) && task?.status === RUNNING_STATUS)
+    .map((task) => {
+      const entry = { id: task.id, type: task.type, status: task.status };
+      const description = truncateDescription(task.description);
+      if (description !== undefined) entry.description = description;
+      return entry;
+    });
+}
+
+/**
+ * A small `{type: count}` map of entries `countFromSnapshot` skipped —
+ * either because the type isn't a counted one (monitor/teammate/cloud
+ * session/MCP task) or because a counted type wasn't `"running"`. Visible
+ * alongside `counted` so an unexpected shape (e.g. everything skipped) shows
+ * up in the debug file rather than just a flat, unexplained low count.
+ * `null` under the same "unknown snapshot" rule as `countFromSnapshot`.
+ */
+export function ignoredTypesFromSnapshot(backgroundTasks) {
+  if (!Array.isArray(backgroundTasks)) return null;
+  if (backgroundTasks.some((task) => !KNOWN_TASK_TYPES.has(task?.type))) return null;
+  const ignored = {};
+  for (const task of backgroundTasks) {
+    const isCounted = COUNTED_TYPES.has(task?.type) && task?.status === RUNNING_STATUS;
+    if (!isCounted) ignored[task.type] = (ignored[task.type] ?? 0) + 1;
+  }
+  return ignored;
+}
 
 /** `${CLAUDE_PLUGIN_DATA}/background-work/` — a new state dir, sibling to plan-event-bridge.mjs's own `stateDir()`. */
 export function stateDir(env = process.env) {
@@ -289,11 +355,17 @@ function sessionIsConnected(sessionId, env, isConnected) {
  * already on record (or `null` if there was never a successful report at
  * all) rather than advancing to the just-attempted, never-confirmed value.
  */
-function nextReportState(previous, { count, outcome, now }) {
+function nextReportState(previous, { count, counted, ignoredTypes, outcome, now }) {
   if (outcome.ok) {
-    return { count, reportedAt: new Date(now).toISOString(), outcome };
+    return { count, counted: counted ?? null, ignoredTypes: ignoredTypes ?? null, reportedAt: new Date(now).toISOString(), outcome };
   }
-  return { count: previous?.count ?? null, reportedAt: previous?.reportedAt ?? null, outcome };
+  return {
+    count: previous?.count ?? null,
+    counted: previous?.counted ?? null,
+    ignoredTypes: previous?.ignoredTypes ?? null,
+    reportedAt: previous?.reportedAt ?? null,
+    outcome,
+  };
 }
 
 /** `stop` / `subagent-stop`: compute the count, report it, and persist the debug trail. */
@@ -301,13 +373,16 @@ export function runReport(input, { env, spawnFn, now, platform, execPath, exists
   const sessionId = input?.session_id;
   if (!isValidSessionId(sessionId)) return;
   if (!sessionIsConnected(sessionId, env, isConnected)) return; // DX-3367 review finding 1 — never spawn for an unconnected session
-  const count = countFromSnapshot(input?.background_tasks);
+  const backgroundTasks = input?.background_tasks;
+  const count = countFromSnapshot(backgroundTasks);
+  const counted = countedEntriesFromSnapshot(backgroundTasks);
+  const ignoredTypes = ignoredTypesFromSnapshot(backgroundTasks);
   const outcome = reportToDashboard({ countOrClear: countArg(count), sessionId, env, spawnFn, platform, execPath, exists });
   const dir = stateDir(env);
   const { state } = sessionPaths(dir, sessionId);
   const previous = readJsonFile(state);
   const nowMs = now ? now() : Date.now();
-  writeFileAtomic(state, JSON.stringify(nextReportState(previous, { count, outcome, now: nowMs })));
+  writeFileAtomic(state, JSON.stringify(nextReportState(previous, { count, counted, ignoredTypes, outcome, now: nowMs })));
 }
 
 /** `session-start` / `stop-failure`: no snapshot to trust — always clear, and drop the local record ONLY once the clear itself is confirmed. */
@@ -386,7 +461,16 @@ export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, ex
   // Compare-and-set: only refresh `reportedAt` if the state file is still
   // exactly what it was before the spawn — a fresher write in the meantime
   // wins unconditionally.
-  compareAndSetFile(state, stateRaw, JSON.stringify(nextReportState(stored, { count: stored.count, outcome, now: nowMs })));
+  // DX-3367 comment 7171: a heartbeat re-report carries the counted list
+  // (and ignoredTypes) forward UNCHANGED — it re-confirms the same snapshot
+  // that produced `stored.count`, and has no new snapshot of its own to
+  // derive a list from. Fabricating one here would silently disagree with
+  // what was actually reported.
+  compareAndSetFile(
+    state,
+    stateRaw,
+    JSON.stringify(nextReportState(stored, { count: stored.count, counted: stored.counted, ignoredTypes: stored.ignoredTypes, outcome, now: nowMs })),
+  );
 }
 
 /**

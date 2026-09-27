@@ -29,6 +29,8 @@ import {
   HEARTBEAT_THROTTLE_MS,
   isValidSessionId,
   countFromSnapshot,
+  countedEntriesFromSnapshot,
+  ignoredTypesFromSnapshot,
   reportCommand,
   childEnv,
   stateDir,
@@ -235,6 +237,68 @@ describe("plan-connection gate — NEVER spawn for a session that isn't plan-con
   });
 });
 
+// ------------------------------------------- countedEntriesFromSnapshot / ignoredTypesFromSnapshot (DX-3367 comment 7171)
+
+describe("countedEntriesFromSnapshot — the entries countFromSnapshot actually counted, minus anything secret", () => {
+  test("unknown snapshot (unrecognized type) is null, mirroring countFromSnapshot", () => {
+    assert.equal(countedEntriesFromSnapshot(undefined), null);
+    assert.equal(countedEntriesFromSnapshot([{ type: "future-type-nobody-has-heard-of", status: "running" }]), null);
+  });
+
+  test("returns exactly the counted entries as {id, type, status, description} — no extra fields", () => {
+    const tasks = [
+      { id: "t1", type: "shell", status: "running", description: "npm test", command: "npm test --workspace=frontend" },
+      { id: "t2", type: "monitor", status: "running", description: "watching something" }, // not a counted type
+      { id: "t3", type: "shell", status: "pending", description: "not running yet" }, // counted type, wrong status
+    ];
+    assert.deepEqual(countedEntriesFromSnapshot(tasks), [{ id: "t1", type: "shell", status: "running", description: "npm test" }]);
+  });
+
+  test("command is NEVER present on a counted entry, even though the source task carries one — proven by injecting a shell task with a command", () => {
+    const tasks = [{ id: "t1", type: "shell", status: "running", description: "ls -la", command: "rm -rf /some/secret/path --token=abc123" }];
+    const [entry] = countedEntriesFromSnapshot(tasks);
+    assert.equal(Object.hasOwn(entry, "command"), false);
+    assert.deepEqual(Object.keys(entry).sort(), ["description", "id", "status", "type"]);
+  });
+
+  test("description longer than ~120 chars is truncated", () => {
+    const long = "x".repeat(200);
+    const [entry] = countedEntriesFromSnapshot([{ id: "t1", type: "shell", status: "running", description: long }]);
+    assert.ok(entry.description.length <= 120, `expected <=120 chars, got ${entry.description.length}`);
+    assert.equal(entry.description, long.slice(0, 120));
+  });
+
+  test("a missing description is simply absent from the entry, not null/undefined-as-string", () => {
+    const [entry] = countedEntriesFromSnapshot([{ id: "t1", type: "shell", status: "running" }]);
+    assert.equal(Object.hasOwn(entry, "description"), false);
+  });
+
+  test("empty snapshot is a trusted empty list", () => {
+    assert.deepEqual(countedEntriesFromSnapshot([]), []);
+  });
+});
+
+describe("ignoredTypesFromSnapshot — a small visibility count of entries skipped by type or status", () => {
+  test("unknown snapshot is null, mirroring countFromSnapshot", () => {
+    assert.equal(ignoredTypesFromSnapshot(undefined), null);
+    assert.equal(ignoredTypesFromSnapshot([{ type: "future-type-nobody-has-heard-of", status: "running" }]), null);
+  });
+
+  test("counts skipped entries by their type, both non-counted types and counted-types-with-wrong-status", () => {
+    const tasks = [
+      { type: "shell", status: "running" }, // counted, not ignored
+      { type: "monitor", status: "running" },
+      { type: "teammate", status: "running" },
+      { type: "shell", status: "pending" }, // counted type, wrong status → still ignored
+    ];
+    assert.deepEqual(ignoredTypesFromSnapshot(tasks), { monitor: 1, teammate: 1, shell: 1 });
+  });
+
+  test("empty snapshot yields an empty object, not null", () => {
+    assert.deepEqual(ignoredTypesFromSnapshot([]), {});
+  });
+});
+
 // ------------------------------------------------------------- runReport (stop / subagent-stop)
 
 describe("runReport — stop / subagent-stop", () => {
@@ -326,6 +390,52 @@ describe("runReport — stop / subagent-stop", () => {
     runReport({ session_id: "sess-6", background_tasks: [] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
     assert.equal(calls[0].opts.timeout, REPORT_SPAWN_TIMEOUT_MS);
     assert.deepEqual(calls[0].opts.stdio, ["ignore", "pipe", "ignore"]);
+  });
+
+  test("DX-3367 comment 7171: the counted entries are persisted to the state file alongside count", () => {
+    connect("sess-23");
+    const calls = [];
+    runReport(
+      {
+        session_id: "sess-23",
+        background_tasks: [
+          { id: "task-a", type: "shell", status: "running", description: "npm test" },
+          { id: "task-b", type: "monitor", status: "running", description: "watching" },
+        ],
+      },
+      { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) },
+    );
+    const state = JSON.parse(readFileSync(stateFile("sess-23"), "utf8"));
+    assert.equal(state.count, 1);
+    assert.deepEqual(state.counted, [{ id: "task-a", type: "shell", status: "running", description: "npm test" }]);
+    assert.deepEqual(state.ignoredTypes, { monitor: 1 });
+  });
+
+  test("DX-3367 comment 7171: a shell entry's `command` field is never written to the state file, even though the raw snapshot carries one", () => {
+    connect("sess-24");
+    const calls = [];
+    runReport(
+      {
+        session_id: "sess-24",
+        background_tasks: [{ id: "task-a", type: "shell", status: "running", description: "ls", command: "cat ~/.ssh/id_rsa" }],
+      },
+      { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) },
+    );
+    const raw = readFileSync(stateFile("sess-24"), "utf8");
+    assert.equal(raw.includes("id_rsa"), false);
+    assert.equal(raw.includes("command"), false);
+    const state = JSON.parse(raw);
+    assert.equal(Object.hasOwn(state.counted[0], "command"), false);
+  });
+
+  test("DX-3367 comment 7171: an unknown-count report (null) persists counted:null and ignoredTypes:null, never an empty list", () => {
+    connect("sess-25");
+    const calls = [];
+    runReport({ session_id: "sess-25" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
+    const state = JSON.parse(readFileSync(stateFile("sess-25"), "utf8"));
+    assert.equal(state.count, null);
+    assert.equal(state.counted, null);
+    assert.equal(state.ignoredTypes, null);
   });
 });
 
@@ -487,6 +597,27 @@ describe("runHeartbeat — PostToolUse(.*) no-op almost always", () => {
     // The fresher Stop write (count:0) survives — the heartbeat's stale
     // compare-and-set must have refused to overwrite it.
     assert.equal(after.count, 0);
+  });
+
+  test("DX-3367 comment 7171: a heartbeat re-report carries the counted list forward UNCHANGED — never fabricates one", () => {
+    connect("sess-26");
+    const calls = [];
+    runReport(
+      {
+        session_id: "sess-26",
+        background_tasks: [{ id: "task-a", type: "shell", status: "running", description: "npm test" }],
+      },
+      { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 0 },
+    );
+    const before = JSON.parse(readFileSync(stateFile("sess-26"), "utf8"));
+    assert.deepEqual(before.counted, [{ id: "task-a", type: "shell", status: "running", description: "npm test" }]);
+
+    runHeartbeat({ session_id: "sess-26", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
+
+    const after = JSON.parse(readFileSync(stateFile("sess-26"), "utf8"));
+    assert.deepEqual(after.counted, before.counted); // carried forward, byte-identical
+    assert.deepEqual(after.ignoredTypes, before.ignoredTypes);
+    assert.notEqual(after.reportedAt, before.reportedAt); // the timestamp DOES refresh
   });
 
   test("the throttle stamp is claimed BEFORE the spawn runs (a spawn that reads the stamp mid-call already sees it claimed)", () => {
