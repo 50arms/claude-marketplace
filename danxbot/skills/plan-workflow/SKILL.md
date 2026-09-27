@@ -184,9 +184,11 @@ Non-overlapping files only — partition before fanning out, run independent car
 serialized. State a time-box; never background a long test run and end the turn — wait bounded in
 the foreground, or `rollback_pickup` and report what's left. Run tests once, after the sub-agent's
 edits land, never inside parallel dispatches on the same suite. Stop a dispatch once you've
-consumed its report (a "completed" spawn otherwise stays resumable and visible as running). Verify
+consumed its report (a "completed" spawn otherwise stays resumable and visible as running). Every
+brief requires the sub-agent to stop each background task it started before reporting, or name any
+still running — a leaked one keeps the sub-agent registered as running (DX-3403). Verify
 before repeating a report as fact: read the diff, confirm the push landed, check leftovers
-(worktrees removed, no stray commits) — what comes back is a LEAD, not a finding, since a
+(worktrees removed, no stray commits, no background tasks left) — what comes back is a LEAD, not a finding, since a
 `SubagentStop` hook's stdout never reaches this session (only `UserPromptSubmit`/
 `UserPromptExpansion`/`SessionStart`/`PostModelSwitch` do).
 
