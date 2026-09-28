@@ -2,8 +2,7 @@
 // Shared "is this session connected to a plan" detection: a local file stat
 // against ~/.config/danxbot/plan-sessions/<session>.json, the same record
 // packages/danx-dashboard-mcp's session-connection.ts writes on a
-// successful plan_connect (see plan-tab-watch.mjs, its prior documented
-// consumer). Run with `npm test` (node --test, no dependencies).
+// successful plan_connect. Run with `npm test` (node --test, no dependencies).
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

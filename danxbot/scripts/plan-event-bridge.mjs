@@ -1,94 +1,43 @@
 #!/usr/bin/env node
 /**
- * danxbot plan event bridge (DX-2784) — delivers a danxbot Plan's dashboard events
- * into the Claude Code session connected to it.
+ * danxbot plan event bridge — relays a danxbot plan's dashboard events into the Claude
+ * Code session connected to it, through the session's own inbox socket
+ * (`CLAUDE_CODE_MESSAGING_SOCKET`), which starts a turn in an idle session. A long-lived
+ * process is the delivery path because Monitor stops after 30 minutes, plugin `monitors/`
+ * are skipped without a TTY, and MCP channels need a launch flag.
  *
- * WHY. Operators answer questions and comment on the cards of a danxbot Plan in the
- * dashboard, and the session working that plan must hear each event at once. Monitor
- * stops after 30 minutes, plugin `monitors/` are skipped without a TTY (Desktop), and
- * MCP channels need a launch flag — so a process that lives as long as the session
- * relays each event into the session's own inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`),
- * which starts a turn in an idle session.
+ * SPLIT OF RESPONSIBILITY. This script owns process lifecycle (one bridge per session),
+ * the delivered-id cursor and the inbox post. The pinned `danx-dashboard-mcp bridge`
+ * subcommand owns everything about the dashboard: it resolves the credential this
+ * session's own MCP server recorded at connect (never this process's ambient env, which
+ * can belong to a different dashboard), mints the ticket, checks every board of the plan,
+ * streams, re-mints, and ends with one stop record naming why and how to fix it.
  *
- * WHAT THIS SCRIPT OWNS, AND WHAT IT DOES NOT. It owns process lifecycle (one bridge per
- * session, start / stop / yield), the delivered-id cursor, and the inbox post. It knows
- * NOTHING about the dashboard's HTTP contract — and, since DX-2862, nothing about its
- * CREDENTIAL either: `danx-dashboard-mcp bridge` (the MCP package, pinned below) reads
- * the connection this session's own danx-dashboard MCP server recorded when it connected
- * the plan, resolves that same credential, mints the ticket, proves it can read every
- * board of the plan, streams, re-mints, and ends with one machine-readable stop record
- * naming why and how to fix it. That contract is written and tested once, in the danxbot
- * repo, beside the MCP server that already speaks it.
+ * FAIL LOUD, IN THE SESSION. A failure the session cannot otherwise see is posted into
+ * its inbox as one plain message with the reason and the fix. When the inbox itself is
+ * missing, `start` exits 2 with the notice on stderr, which `asyncRewake` shows Claude.
  *
- * WHY THE CREDENTIAL MOVED THERE. This process runs in the SESSION's environment, which
- * is not the MCP server's. Using its own ambient `DANXBOT_DISPATCH_TOKEN` meant that on a
- * machine where those two differ, the bridge signed in as somebody else: the stream was
- * admitted, nothing errored, `sessionListenerAttached` read true, and every operator
- * comment was dropped (DX-2862).
+ * WHEN IT RUNS. `plan_connect` (PostToolUse) always runs `start`. SessionStart runs it
+ * only for a plan-connected session (`lib/plan-connection.mjs`, see `hookMayStart`).
  *
- * FAIL LOUD, IN THE SESSION. A failure a session cannot otherwise see is posted into its
- * inbox as one plain message naming the reason and the fix. When the inbox itself is what
- * is missing, `start` exits 2 with the notice on stderr, which `asyncRewake` shows Claude.
- * A log line alone is not a report — nobody is reading that file.
- *
- * WHEN IT RUNS. PostToolUse on `plan_connect` and SessionStart run `start`. A session
- * that is not connected to a plan gets a bridge that exits at once: the subcommand's
- * first mint answers `not_connected`, which is terminal, and which a session start
- * passes over in silence unless this session has had events before.
- *
- * LIVENESS AUTHORITY (DX-2894). The bridge's own periodic check of its Claude process
- * (`CLAUDE_PID`) is the SOLE authority on whether the session it serves is still alive.
- * `SessionEnd` only makes shutdown faster when it fires — nothing depends on it, because
- * the official docs say it does not run on a crash or kill. `CLAUDE_PID` itself is an
- * OBSERVED, UNDOCUMENTED dependency (it does not appear on
- * https://code.claude.com/docs/en/hooks); a bridge that cannot see a valid, readable
- * `CLAUDE_PID` at startup refuses to start rather than silently running unsupervised — and
- * so does a bridge on a platform this liveness check does not support at all.
- *
- * TWO CADENCES. A cheap `isAlive(pid)` runs every PARENT_CHECK_MS (5s) — no subprocess,
- * nothing to time out — and ends the bridge with a normal (non-fatal) stop the instant the
- * pid itself is gone. Pid-REUSE detection is a heavier, async, timeout-bounded OS query
- * (Windows CIM / darwin `ps`), so it runs on the much slower START_KEY_CHECK_MS (60s)
- * instead: it records the parent's start time at startup and treats a DIFFERENT process now
- * answering for the same pid as reuse (also a normal stop). A single unreadable start-key
- * read is explicitly NOT treated as "gone" — it is logged and tolerated up to
- * START_KEY_UNREADABLE_LIMIT CONSECUTIVE attempts (a successful read resets the count); only
- * exhausting that limit is a FATAL stop, worded as "liveness could not be verified", never
- * "gone". The start-key cadence runs on a self-rescheduling `setTimeout`, never a plain
- * `setInterval` — the next check is armed only once the current one (and any `tellSession`
- * await on a fatal verdict) has fully settled, so two checks can never be in flight at once,
- * and the reschedule chain is `.catch`-guarded so a bug in the tick itself cannot vanish as
- * an unhandled rejection. The darwin start key is pinned to UTC/`C` the same way the win32
- * one is. Every fatal liveness notice — startup AND periodic — names the last underlying
- * read error, not just that the limit was hit.
+ * LIVENESS. The bridge's own check of its Claude process (`CLAUDE_PID`, observed but
+ * undocumented) is the sole authority on whether the session is alive; SessionEnd only
+ * speeds shutdown. A cheap `isAlive(pid)` runs every PARENT_CHECK_MS; pid-reuse detection
+ * (an async, timeout-bounded OS query) runs every START_KEY_CHECK_MS, tolerating up to
+ * START_KEY_UNREADABLE_LIMIT consecutive unreadable reads before a fatal stop.
  *
  * MODES
- *   start    — the hooks (SessionStart, `plan_connect`, and the DX-2953 watchdog when it
- *              decides to restart). Under an exclusive-create lock: a live holder with a
- *              fresh heartbeat → no-op; otherwise spawn `run` and record its pid.
- *   run      — the bridge itself: supervises the subcommand, relays its events, and is
- *              itself supervised by the CLAUDE_PID liveness check above.
+ *   start    — the hooks. Under an exclusive-create lock: a live holder with a fresh
+ *              heartbeat → no-op (a connect replaces it); otherwise spawn `run`.
+ *   run      — the bridge: supervises the subcommand and relays its events.
  *   stop     — SessionEnd. Signals a live holder, whose SIGTERM handler ends its child.
- *   watchdog — DX-2953: PostToolUse (all tools) and Stop. Throttled file stats that
- *              restart a stale bridge for a session known to be connected, through the
- *              SAME `start` path above — see `watchdogTick` and `shouldWatchdogRestart`.
+ *   watchdog — PostToolUse (all tools) and Stop: throttled file stats that restart a
+ *              stale bridge for a connected session through the same `start`.
  *
- * STATE lives under `${CLAUDE_PLUGIN_DATA}/plan-event-bridge/`, one set per session:
- * `<session>.pid.json` (`{pid, sessionId, heartbeatAt}`), `<session>.lock` (held only
- * during `start`), `<session>.cursor.json` (`{deliveredIds}`, kept across SessionEnd so
- * a resumed session continues), `<session>.log` (no secrets), `<session>.stopped.json`
- * (the most recent stop record — DX-3028), and the DX-2953 watchdog trio:
- * `<session>.started.json` (written only by `start()`, under its lock — `lastStartedInstance`,
- * `startInputs`, `restartGeneration`, `consumedStopInstance`, `startedAt`),
- * `<session>.connected.json` (written only by the run process — `connected`, `instanceId`,
- * `at`) and `<session>.watchdog.json` (the watchdog's own once-per-WATCHDOG_THROTTLE_MS
- * throttle stamp). Two markers, not one, because `start()` releases `.lock` before
- * awaiting the bridge's own verdict — see `sessionPaths` and `buildStartedRecord` for why
- * a single shared marker would lose an update under that race. Every write is
- * write-then-rename. Files untouched for STALE_STATE_MS are pruned — the dashboard
- * keeps only a week of events, so an older cursor cannot resume anything; the watchdog's
- * own tick `utimesSync`-es `.started.json`/`.connected.json` so a live session's markers
- * are never pruned out from under it (see `watchdogTick`).
+ * STATE lives under `${CLAUDE_PLUGIN_DATA}/plan-event-bridge/`, per session: pid, lock,
+ * cursor, log, the last stop record, and the watchdog's started/connected/throttle
+ * markers (see `sessionPaths`). Every write is write-then-rename; files untouched for
+ * STALE_STATE_MS are pruned.
  */
 
 import { spawn, spawnSync, execFile } from "node:child_process";
@@ -97,13 +46,11 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { DASHBOARD_MCP_PACKAGE } from "./lib/dashboard-mcp-package.mjs";
+import { isPlanConnected } from "./lib/plan-connection.mjs";
 
-/**
- * The ONE place the MCP package version this plugin runs is named. DX-2784: it must be
- * the version published with the `bridge` subcommand; move it to the version that
- * release actually publishes.
- */
-export const DASHBOARD_MCP_PACKAGE = "@thehammer/danx-dashboard-mcp@0.1.95";
+export { DASHBOARD_MCP_PACKAGE };
 export const BRIDGE_SUBCOMMAND = "bridge";
 
 export const HEARTBEAT_MS = 30_000;
@@ -1890,6 +1837,16 @@ export function intentFromHookEvent(hookEventName) {
   return hookEventName === "PostToolUse" ? CONNECT_INTENT : RESUME_INTENT;
 }
 
+/**
+ * Whether a hook's `start` may spawn anything (DX-3392 problems 1762/1764, PLN-11
+ * R-10). A `plan_connect` always may; a SessionStart only for a session already
+ * plan-connected, so the many sessions that never touch a plan spawn nothing.
+ */
+export function hookMayStart({ intent, sessionId, env = process.env, connected = isPlanConnected }) {
+  if (intent === CONNECT_INTENT) return true;
+  return connected(sessionId, env.DANXBOT_PLAN_SESSIONS_HOME || homedir());
+}
+
 /** The hook's stdin JSON carries `session_id`, `hook_event_name` and `transcript_path`; a hand run has none. */
 async function readHookInput() {
   const fallback = { sessionId: process.env.CLAUDE_CODE_SESSION_ID ?? null, intent: RESUME_INTENT, transcriptPath: null };
@@ -2011,6 +1968,7 @@ if (isMain) {
   const modes = {
     start: async () => {
       const hook = await readHookInput();
+      if (!hookMayStart({ intent: hook.intent, sessionId: hook.sessionId })) process.exit(0);
       const result = await start({ sessionId: hook.sessionId, intent: hook.intent, transcriptPath: hook.transcriptPath });
       process.exit(result.exitCode ?? 0);
     },

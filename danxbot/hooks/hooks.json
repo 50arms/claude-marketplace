@@ -1,5 +1,5 @@
 {
-  "description": "DX-3275 / PLN-11 R-10: before a plan is connected, SessionStart shows only mantra.sh's short plan-workflow nudge — plan-workflow-autoload.sh's full skill-body dump stays silent until the session's connection record exists. Once plan_connect succeeds, plan-connect-mantra.mjs surfaces the full mantra immediately (PostToolUse), and the next SessionStart brings in the full mantra + skill-body autoload. Also runs the plan event bridge (relays a connected Plan's dashboard events into the session inbox) plus its watchdog, a plan-link auto-connect hook (fires only when the prompt contains a plan URL), and captures the plan tab id on connect. DX-3367: background-work-report.mjs also reports a session's in-flight background-task count (Stop/SubagentStop/SessionStart/StopFailure/PostToolUse heartbeat) so the dashboard's idle-nudge is suppressed while a background sub-agent or shell is genuinely still working. Each script's own header comment documents its exact trigger and behavior. Also: inject-time.sh stamps the clock with its UTC offset on every prompt and tool call; compaction-skill-reload.sh (SessionStart compact) makes the agent reload truncated skills.",
+  "description": "mantra.sh: plan-workflow nudge, or the registry mantra once plan-connected. plan-workflow-autoload.sh: plan-workflow body for a connected session. plan-event-bridge.mjs: relays the connected plan's events into the session. background-work-report.mjs: reports running background work to quiet the idle nudge. inject-time.sh: wall clock with UTC offset. compaction-skill-reload.sh: reload truncated skills after compaction.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -9,23 +9,11 @@
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/inject-time.sh UserPromptSubmit"
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-link-connect.mjs\""
-          }
-        ]
       }
     ],
     "SessionStart": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-workflow-autoload.sh SessionStart"
-          },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/background-work-report.mjs\" session-start",
@@ -36,6 +24,10 @@
       {
         "matcher": "startup|resume|compact",
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-workflow-autoload.sh SessionStart"
+          },
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/mantra.sh SessionStart"
@@ -80,14 +72,6 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-event-bridge.mjs\" start",
             "async": true,
             "asyncRewake": true
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-tab-watch.mjs\" capture"
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-connect-mantra.mjs\""
           }
         ]
       },

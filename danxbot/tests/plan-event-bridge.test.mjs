@@ -3249,3 +3249,36 @@ describe("watchdogTick — throttle, marker liveness, orchestration (DX-2953)", 
     assert.equal(written.written, true, "no restart capability was lost by the prune — the new bridge can still record connected:true");
   });
 });
+
+describe("hookMayStart — SessionStart spawns nothing for an unconnected session (DX-3392 1762/1764)", () => {
+  test("plan_connect always may start, without consulting the connection record", () => {
+    const connected = () => assert.fail("a connect must not consult the connection record");
+    assert.equal(bridge.hookMayStart({ intent: bridge.CONNECT_INTENT, sessionId: SESSION, env: {}, connected }), true);
+  });
+
+  test("a session start follows the connection record, read under DANXBOT_PLAN_SESSIONS_HOME", () => {
+    const seen = [];
+    const connected = (sessionId, home) => {
+      seen.push([sessionId, home]);
+      return sessionId === "on-a-plan";
+    };
+    const env = { DANXBOT_PLAN_SESSIONS_HOME: "/fake-home" };
+    assert.equal(bridge.hookMayStart({ intent: bridge.RESUME_INTENT, sessionId: "on-a-plan", env, connected }), true);
+    assert.equal(bridge.hookMayStart({ intent: bridge.RESUME_INTENT, sessionId: "no-plan", env, connected }), false);
+    assert.deepEqual(seen, [["on-a-plan", "/fake-home"], ["no-plan", "/fake-home"]]);
+  });
+
+  test("the real record decides: absent → no start, present → start", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-gate-"));
+    try {
+      const env = { DANXBOT_PLAN_SESSIONS_HOME: home };
+      assert.equal(bridge.hookMayStart({ intent: bridge.RESUME_INTENT, sessionId: SESSION, env }), false);
+      const dir = path.join(home, ".config", "danxbot", "plan-sessions");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
+      assert.equal(bridge.hookMayStart({ intent: bridge.RESUME_INTENT, sessionId: SESSION, env }), true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

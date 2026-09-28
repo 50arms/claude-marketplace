@@ -27,9 +27,8 @@
 // per-turn gates (debugging-gate.sh's "why"/"investigate"/"audit" regex and
 // human-loop-mandate.sh's "?" check) — a per-turn gate cannot tell a
 // background task notification from an operator prompt, so both fired on
-// agent report text. The remaining conditional UserPromptSubmit hook is
-// danxbot's plan-link-connect.mjs (fires only on a pasted plan URL), so the
-// composite prompt below carries a plan URL instead. A hook whose plain-prompt
+// agent report text. No UserPromptSubmit hook is conditional today; the two
+// runs stay so a future one is classified, never summed. A hook whose plain-prompt
 // byte count is 0 and whose trigger-prompt
 // count is >0 is conditional; its plain-prompt (0) count is what's added to
 // the unconditional per-turn total, and its trigger count is reported
@@ -66,10 +65,8 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const JSON_MODE = process.argv.includes("--json");
 
-// Composite trigger prompt: DX-3235 removed the last two vocabulary-triggered
-// UserPromptSubmit gates, so the remaining (and only) conditional hook in this
-// repo is danxbot's plan-link-connect.mjs, whose trigger is a pasted plan URL
-// (read from its own PLAN_URL_PATTERN, not guessed).
+// Composite trigger prompt: a question plus a plan URL, the shapes past
+// conditional UserPromptSubmit hooks keyed on (none remains — see above).
 const TRIGGER_PROMPT =
   "Why is this failing? See https://danxbot.sageus.ai/plans/11 for context.";
 const PLAIN_PROMPT = "Please rename this variable to something clearer.";

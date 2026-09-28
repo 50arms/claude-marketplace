@@ -1,28 +1,11 @@
 #!/usr/bin/env node
-// Shared plan-connection detection — danxbot plugin. DX-3275.
-//
-// WHY THIS EXISTS. Plan rule R-10 (PLN-11): the danxbot plugin stays quiet
-// until a session is actually connected to a danxbot plan. Three consumers
-// need the identical yes/no answer to "is THIS session connected right now":
-// `mantra.sh` (SessionStart — full mantra vs. the plan-workflow nudge),
-// `plan-workflow-autoload.sh` (SessionStart — full skill body vs. silence),
-// and `plan-connect-mantra.mjs` (PostToolUse on plan_connect — surface the
-// mantra the instant a connect succeeds). This module is the ONE place that
-// answer is computed, so all three read the same detection instead of each
-// growing its own copy that can drift.
-//
-// THE DETECTION ITSELF IS NOT NEW. `plan-tab-watch.mjs` already documented
-// it (DX-2995): a successful `plan_connect` MCP call writes
-// `~/.config/danxbot/plan-sessions/<session-id>.json`, owned by
-// `packages/danx-dashboard-mcp`'s `session-connection.ts` (danxbot repo,
-// `sessionConnectionPath`) — see that file for the exact schema. This module
-// only checks the record's PRESENCE (a local file stat, no network call per
-// turn, per R-12/AC 35059) — it never reads or interprets the record's
-// contents, which belong entirely to the MCP package.
-//
-// Session id validation mirrors `plan-tab-watch.mjs`'s `isValidSessionId` —
-// duplicated rather than imported (plugins never import another plugin's or
-// package's source).
+// Is this session connected to a danxbot plan? The ONE answer (PLN-11 R-10: the
+// plugin stays quiet until a plan is connected), shared by mantra.sh,
+// plan-workflow-autoload.sh, background-work-report.mjs and the plan event
+// bridge's SessionStart start. A successful `plan_connect` makes the
+// danx-dashboard MCP server write `~/.config/danxbot/plan-sessions/<session>.json`
+// (its `session-connection.ts` owns the schema); this only checks the file
+// exists. A local stat, never a network call.
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -43,9 +26,8 @@ export function sessionConnectionPath(sessionId, home = homedir()) {
 
 /**
  * Whether `sessionId` currently has a live plan connection — a local file
- * stat only, never a dashboard call. `home` defaults to the real home dir;
- * tests override it (matches `plan-tab-watch.mjs`'s
- * `DANXBOT_PLAN_TAB_WATCH_HOME` convention) via `DANXBOT_PLAN_SESSIONS_HOME`.
+ * stat only. `home` defaults to the real home dir; tests override it via
+ * `DANXBOT_PLAN_SESSIONS_HOME`.
  */
 export function isPlanConnected(sessionId, home = homedir()) {
   if (!isValidSessionId(sessionId)) return false;
