@@ -36,8 +36,8 @@ the plan; a card on its 3rd review round still finding high severity → Task ca
 narrow/split options. Report goal by goal. Said "stop if X" → stop when X.
 
 **Your lane only.** Never monitor, investigate or unstick another plan's cards or another
-session unless the operator asks. Their work goes to them as a card: full context for a
-zero-context reader, on the right plan, readied, `depends_on` from your waiting card. Then wait.
+session unless the operator asks. Their work goes to them as a card on the right plan,
+readied, `depends_on` from your waiting card. Then wait.
 
 ## Before a plan is ready
 

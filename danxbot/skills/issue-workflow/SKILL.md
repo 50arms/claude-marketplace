@@ -36,15 +36,12 @@ worktree, DB resets) live only in danxbot's `work` profile.
 
 Never wait on a human you don't have to: reversible → decide, do it, note it in a comment.
 
-## Question versus action
+## Needing a human
 
-Genuinely need a human → open a problem; never `AskUserQuestion` or a plan-mode pause. Test:
-could I do this myself if I tried harder, and only a decision is missing? Yes →
-`type:"question"`: statement = the question, solutions = candidate answers with pro/con.
-No (access, credentials, hardware, a human's authority) → `type:"action"`: statement = the
-deed, never a question; `summary` REQUIRED — why it's needed and why you can't do it;
-solutions = routes, each with steps. A card needs a human exactly while it has an open
-problem; removing its last open problem closes that need.
+Genuinely need a human → open a problem with `issue_problem`, whose description holds the
+writing standard and the question-versus-action test; never `AskUserQuestion` or a
+plan-mode pause. A card needs a human exactly while it has an open problem; removing its
+last open problem closes that need.
 
 ## Claiming
 
@@ -72,8 +69,8 @@ card status — it never moves where the card sits.
 
 - **AC/checklists** — `issue_get` returns each item's id under `checklists[].items[]`; flip
   with `issue_checklist({action:'update_item', checklist_id, item_id, status:'passing'})`.
-- **Comments** — `issue_comment({id, action:'add', text})`, markdown `##` headers, narrative
-  only; a durable decision goes on a card, never a comment alone.
+- **Comments** — `issue_comment({id, action:'add', text})`, narrative only; a durable
+  decision goes on a card, never a comment alone.
 - **Dependencies** — `issue_dependency({kind:'depends_on'|'conflict_on', target_id})` for a
   card already known, never a discovery scan.
 - Never write a `status:` literal; `issue_transition` derives it.
