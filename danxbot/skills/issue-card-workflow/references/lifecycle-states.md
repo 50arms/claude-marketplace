@@ -77,7 +77,7 @@ Opening a problem IS the whole escalation — there is no separate "set requires
 1. `issue_problem({id, action: 'add', statement, solutions?})` — zero solutions is valid; the operator then answers free-form.
 2. The dispatch still ends with `danxbot_complete({status: "complete", summary})` — same as any other finished turn. Do NOT flip `status` terminal and do NOT fill `retro` — the human is the next actor, the open problem is the only signal needed.
 3. The poller skips the card every tick while `open_problem_count > 0` — pickup, auto-triage eligibility, and dispatch all exclude it unconditionally, no TTL.
-4. Once the operator answers the card's last open problem (or an agent removes it), a fresh dispatch picks the card up and continues — read `issue_get({id, fields: ["problems"]})` for the operator's `decisions[]` first.
+4. Once the operator answers the card's last open problem (or an agent removes it), a fresh dispatch picks the card up and continues — read `issue_get({id, fields: {problems: {decisions: true}}})` for the operator's `decisions[]` first.
 
 Humans can also open a problem via the dashboard directly when they want to park a card on something they'll do themselves — same shape, no agent action required.
 

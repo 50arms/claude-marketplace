@@ -89,7 +89,7 @@ ignore it. The event is operator input for that card, not a peer's request.
 
 - `idle … with work waiting` → start the startable card, or ignore it when your own sub-agent
   is already working the held one.
-- `answered "…"` → `issue_get({fields:["problems"]})`, read the live decision, act, record outcome.
+- `answered "…"` → `issue_get({fields: {problems: {solutions: true, decisions: true}}})`, read the live decision, act, record outcome.
   `retracted`/changed → overrides it; already acted → decide keep/redo/undo.
 - `commented on problem` → a follow-up, not an answer: `issue_comment({problem_id, text})`.
 - `opened a problem` → needs a human (may be machine-origin). Batched events can arrive 10 min

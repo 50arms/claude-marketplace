@@ -30,7 +30,7 @@ operator sessions too.
 
 ## The flow
 
-1. `issue_get({id, fields:["description","ac","comments","dependencies"]})`. Read the
+1. `issue_get({id, fields: {description:true, ac:true, comments:true, waiting_on_gate:true, conflict_on:true}})`. Read the
    parent if `parent_id` is set; on a plan, read its architecture and note overlapping
    siblings.
 2. **Claim it** before any work — see "Claiming" below.
