@@ -40,9 +40,9 @@ On later turns the conversation history already carries the prior card state —
 
 Use the MCP tools to mutate the card. The dashboard DB is the canonical source; all changes flow exclusively through the `mcp__danx-dashboard__issue_*` tools.
 
-When you edit, follow the DB schema rules — see `danxbot:issue-card-workflow` skill for the full schema. The most common chat-driven edits:
+When you edit, follow the DB schema rules — see the `danxbot:issue-workflow` skill. The most common chat-driven edits:
 
-- **Status flip** — call `issue_transition({id, action: 'ready'|'pickup'|'complete'|'cancel'|'block'|'archive'|'reopen'})`. Six legal terminal values via transitions: `Review` | `ToDo` | `In Progress` | `Blocked` | `Done` | `Cancelled`. Setting `Blocked` or `Done` or `Cancelled` from chat is unusual — those are terminal moves the ordinary work-dispatch flow (`danxbot:issue-card-workflow`) normally owns. Confirm with the user before flipping to a terminal state.
+- **Status flip** — call `issue_transition({id, action: 'ready'|'pickup'|'complete'|'cancel'|'block'|'archive'|'reopen'})`. Six legal terminal values via transitions: `Review` | `ToDo` | `In Progress` | `Blocked` | `Done` | `Cancelled`. Setting `Blocked` or `Done` or `Cancelled` from chat is unusual — those are terminal moves the ordinary work-dispatch flow (`danxbot:issue-workflow`) normally owns. Confirm with the user before flipping to a terminal state.
 - **AC edit** — call `issue_edit({id, ac: [...]})`. Append a new item or flip an existing item's `checked` field.
 - **Description rewrite** — call `issue_edit({id, description: "..."})`. Preserve the markdown structure.
 - **Comment append** — call `issue_comment({id, action: 'add', text: "..."})`. Server stamps `author` + `timestamp`.

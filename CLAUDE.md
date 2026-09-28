@@ -29,11 +29,10 @@ them were converted to plain stdout on 2026-09-05.
   stdout to the model's context for `SessionStart`, `UserPromptSubmit`, `UserPromptExpansion`
   and `PostModelSwitch` — no JSON envelope needed.
 - **To PARSE the stdin payload:** use `node` (it ships with Claude Code), copying the proven
-  idiom already in `base/scripts/deny-destructive-git.sh`. Never `jq`.
+  idiom already in `danxbot/scripts/inject-time.sh`. Never `jq`.
 
-A hook that fails this way is worse than no hook, because it is trusted: the same absence made
-`deny-destructive-db.sh` fail OPEN for its entire life, letting through every command it existed
-to block.
+A hook that fails this way is worse than no hook, because it is trusted: the same absence once
+made a deny guard fail OPEN for its entire life, letting through every command it existed to block.
 
 ## Publishing is TWO steps, and the second one is not optional
 

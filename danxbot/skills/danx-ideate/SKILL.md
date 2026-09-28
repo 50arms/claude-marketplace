@@ -30,7 +30,7 @@ arming one and ending your turn silently abandons the ideation run.
    - Checks for duplicates via `issue_list({filter: {type: 'Feature'}})` (search by title / keywords).
    - Generates 3-5 prioritized feature drafts.
    - For each draft, calls `issue_create({type: 'Feature'|'Bug', title: "...", description: "...", ac: [...], triage_enabled: true})` with the draft content.
-     - `triage_enabled: true` is explicit and intentional — ideator drafts exist to be evaluated by the automatic triage pipeline; the server default is `false` (see `issue-card-workflow`'s "Auto-Triage Opt-In").
+     - `triage_enabled: true` is explicit and intentional — ideator drafts exist to be evaluated by the automatic triage pipeline; the server default is `false` (see `danxbot:issue-workflow` → `references/card-creation-and-reference.md` "Triage opt-in").
      - Do NOT set `id` (server assigns the next `<PREFIX>-N`).
      - Do NOT set `parent_id`, `children`, `dispatch`, `status`, `triage`, `comments`, `retro` — server sets defaults.
    - Captures the returned `id` from each successful creation.

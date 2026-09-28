@@ -1,9 +1,0 @@
-{
-  "name": "human-collaboration",
-  "description": "Human-in-the-loop discipline: read-only-default, diagnostic-mode-on-question, docs (diagnose then fix). Install on instances where a human drives the prompts. Do NOT install on autonomous dispatched workers.",
-  "version": "0.5.4",
-  "author": {
-    "name": "Dan Newman",
-    "email": "newms87@gmail.com"
-  }
-}

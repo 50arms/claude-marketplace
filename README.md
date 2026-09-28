@@ -1,17 +1,7 @@
 # newms-plugins
 
-Personal Claude Code plugin set. Discipline, dev pipeline, danxbot orchestration, issue-worker autonomy.
-
-## Plugins
-
-| Plugin | Purpose |
-|---|---|
-| `base` | Universal discipline. Install everywhere. |
-| `dev` | Code-writing: TDD, read-only-by-default debugging/investigation with a fix-mode switch, code quality, git safety. |
-| `pipeline` | Human-in-loop dev: flow-* skills, plan mode, collaboration. |
-| `issues` | Issue card workflow + tracker contract. |
-| `danxbot` | Danxbot orchestrator domain knowledge. |
-| `issue-worker` | Autonomous issue-worker skills (danx-*). |
+Personal Claude Code plugin set: one plugin, `danxbot` — the plan and issue workflows,
+every dev rule used while working a card, and the hooks that serve them.
 
 ## Install
 
@@ -24,29 +14,16 @@ claude plugin marketplace add github:newms87/claude-plugins
 # path out of any doc.
 # claude plugin marketplace add /path/to/your/claude-plugins
 
-# Install plugins
-claude plugin install base@newms-plugins
-claude plugin install dev@newms-plugins
-# etc
+claude plugin install danxbot@newms-plugins
 ```
 
 Or declare in a project's `.claude/settings.json`:
 
 ```json
 {
-  "plugins": ["base@newms-plugins", "dev@newms-plugins"]
+  "plugins": ["danxbot@newms-plugins"]
 }
 ```
-
-## Install matrix
-
-| Env | base | dev | pipeline | issues | danxbot | issue-worker |
-|---|---|---|---|---|---|---|
-| Global default | ✓ | | | | | |
-| Repo dev session | ✓ | ✓ | ✓ | ✓ | ✓ | |
-| issue-worker workspace | ✓ | ✓ | | ✓ | ✓ | ✓ |
-| slack-worker workspace | ✓ | | | ✓ | ✓ | |
-| system-test workspace | ✓ | | | | ✓ | |
 
 ## Editing a plugin — MANDATORY version bump
 
@@ -55,5 +32,3 @@ Or declare in a project's `.claude/settings.json`:
 ## Design notes
 
 - **No `rules/` directory.** Plugins don't ship prose rule files — rule content lives inside `skills/<name>/SKILL.md` body, with the skill description handling auto-invocation via Claude's skill matcher.
-- **Always-on rules** (e.g. read-only collaboration mode, host-machine paths) → skills with MANDATORY-style descriptions (same pattern as `testing` and `debugging` skills).
-- **Discoverable via skill matcher** — every behavioural constraint becomes a skill that triggers on its actual context (running bash, killing process, editing code, opening plan mode, etc.).

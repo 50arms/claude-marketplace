@@ -33,12 +33,6 @@
 //                                         PostToolUse); ~18x under the
 //                                         pre-DX-3347 3,715B/turn total.
 //   SESSION_START_CEILING_BYTES = 32000 — ~21% over the measured 26,373B.
-//
-// DX-3235 is deleting two more per-turn gates (human-collaboration, dev)
-// concurrently with this card. If that lands first, re-run this script —
-// it always measures live, never a cached number, so a lower post-DX-3235
-// total is picked up automatically and these ceilings still hold (they are
-// upper bounds, not exact-match assertions).
 export const CEILING_DECISION_CARD = "DX-3347";
 export const PER_TURN_CEILING_BYTES = 200;
 export const SESSION_START_CEILING_BYTES = 32000;

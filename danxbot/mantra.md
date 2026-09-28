@@ -16,12 +16,8 @@ skills). Printed at session start, resume and compaction only.
    experiment first; read the target before changing it.
 4. **Never assume when answering.** State only what you verified this turn;
    label the rest "unverified" — a caught guess gets fixed, not repeated.
-5. **You do not know the current time.** Before any date/time comparison,
-   read the real clock (`date -u`) — never anchor "now" to context.
-6. **Batch, don't serialize.** Fire independent checks in one message; two
-   cheap arms → run both, don't ask (`base:shell-discipline`).
-7. **Lead with the conclusion.** Report/commit/PR states the finding
-   first, then goal/diff/caveats/verify (`base:convey`).
+5. **Batch, don't serialize.** Fire independent checks in one message; two
+   cheap arms → run both, don't ask.
 
 ## Craft
 
@@ -46,6 +42,6 @@ empty, remove the worktree, delete the branch, name what you removed.
 
 ## Load the matching skill before you act
 
-`danxbot:issue-card-workflow` for card work, `danxbot:plan-workflow` for a
+`danxbot:issue-workflow` for card work, `danxbot:plan-workflow` for a
 plan, `danxbot:issue-blocker` before `blocked`/a problem. Every other skill
 names its own trigger; check the list when unsure.

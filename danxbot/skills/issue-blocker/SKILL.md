@@ -77,7 +77,7 @@ costs more than running this checklist.
 
 Against working-tree state you did not personally write this dispatch: `git stash`,
 `git checkout --`/`git restore`, `git reset --hard`, `git clean`. Full ban →
-`dev:git-discipline`; listed here only because items 2–3 depend on it. Never use any of
+`danxbot:issue-workflow`; listed here only because items 2–3 depend on it. Never use any of
 these to "check" whether a failure pre-existed your changes (item 3).
 
 ### Field selection — `blocked` vs an open problem vs `waiting_on` vs `conflict_on[]`
@@ -179,8 +179,7 @@ see Part A's field table.
    commands), **Outcomes** (success and failure branch, always both). An irreversible
    step you hand the operator (deploy, destructive command, credential rotation) needs
    its premise verified, or say plainly you couldn't.
-5. **Output — only if step 3 found genuine human-only blockers** (`base:convey`
-   scaffold, instantiated; ≤20 lines total):
+5. **Output — only if step 3 found genuine human-only blockers** (≤20 lines total):
 
    ```
    ## <ISS-N> — <one-line title> (≤12 words)
@@ -211,7 +210,7 @@ branches; skipping the operator-action section because it seems obvious; stampin
 `blocked.at` without `blocked.reason` (both move together — `deriveStatus` reads `.at`,
 the operator reads `.reason`).
 
-**Boundary with `issue-card-workflow`:** that skill is the full lifecycle
+**Boundary with `danxbot:issue-workflow`:** that skill is the full lifecycle
 (create/save/move/retro); Part B here is a read-only summary of one stuck card. They
 compose — Part B produces the report; once the operator confirms an outcome, resume
 via the normal card workflow to update AC and close.

@@ -1,7 +1,15 @@
 {
-  "description": "DX-3275 / PLN-11 R-10: before a plan is connected, SessionStart shows only mantra.sh's short plan-workflow nudge — plan-workflow-autoload.sh's full skill-body dump stays silent until the session's connection record exists. Once plan_connect succeeds, plan-connect-mantra.mjs surfaces the full mantra immediately (PostToolUse), and the next SessionStart brings in the full mantra + skill-body autoload. Also runs the plan event bridge (relays a connected Plan's dashboard events into the session inbox) plus its watchdog, a plan-link auto-connect hook (fires only when the prompt contains a plan URL), and captures the plan tab id on connect. DX-3367: background-work-report.mjs also reports a session's in-flight background-task count (Stop/SubagentStop/SessionStart/StopFailure/PostToolUse heartbeat) so the dashboard's idle-nudge is suppressed while a background sub-agent or shell is genuinely still working. Each script's own header comment documents its exact trigger and behavior.",
+  "description": "DX-3275 / PLN-11 R-10: before a plan is connected, SessionStart shows only mantra.sh's short plan-workflow nudge — plan-workflow-autoload.sh's full skill-body dump stays silent until the session's connection record exists. Once plan_connect succeeds, plan-connect-mantra.mjs surfaces the full mantra immediately (PostToolUse), and the next SessionStart brings in the full mantra + skill-body autoload. Also runs the plan event bridge (relays a connected Plan's dashboard events into the session inbox) plus its watchdog, a plan-link auto-connect hook (fires only when the prompt contains a plan URL), and captures the plan tab id on connect. DX-3367: background-work-report.mjs also reports a session's in-flight background-task count (Stop/SubagentStop/SessionStart/StopFailure/PostToolUse heartbeat) so the dashboard's idle-nudge is suppressed while a background sub-agent or shell is genuinely still working. Each script's own header comment documents its exact trigger and behavior. Also: inject-time.sh stamps the clock with its UTC offset on every prompt and tool call; compaction-skill-reload.sh (SessionStart compact) makes the agent reload truncated skills.",
   "hooks": {
     "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/inject-time.sh UserPromptSubmit"
+          }
+        ]
+      },
       {
         "hooks": [
           {
@@ -44,9 +52,26 @@
             "asyncRewake": true
           }
         ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/compaction-skill-reload.sh SessionStart"
+          }
+        ]
       }
     ],
     "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/inject-time.sh PostToolUse"
+          }
+        ]
+      },
       {
         "matcher": "^(mcp__danx_dashboard__plan_connect|mcp__danx-dashboard__plan_connect)$",
         "hooks": [

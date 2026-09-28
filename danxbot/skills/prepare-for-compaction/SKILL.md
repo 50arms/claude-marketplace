@@ -1,6 +1,6 @@
 ---
 name: prepare-for-compaction
-description: 'Operationalizes plan-workflow''s zero-context rule into a mechanical checklist for the moment BEFORE a compaction. Load when: the operator asks to prepare for/wrap up before compaction; context is visibly running low and work is unfinished; handing off a session; about to stop with sub-agents still dispatched or a dirty tree. Does not cover ongoing plan hygiene (danxbot:plan-workflow) or git safety (dev:git-discipline).'
+description: 'Operationalizes plan-workflow''s zero-context rule into a mechanical checklist for the moment BEFORE a compaction. Load when: the operator asks to prepare for/wrap up before compaction; context is visibly running low and work is unfinished; handing off a session; about to stop with sub-agents still dispatched or a dirty tree. Does not cover ongoing plan hygiene (danxbot:plan-workflow) or git safety (danxbot:issue-workflow).'
 ---
 
 # Prepare for Compaction
@@ -44,7 +44,7 @@ unreviewed changesets into one commit.
 ### 3. Resolve a stopped agent's uncommitted work by COMMITTING it — never discarding it
 
 `git checkout --`/`restore`/`reset --hard`/`clean` on someone else's uncommitted work is forbidden
-outright (`dev:git-discipline`) — compaction pressure is not an exception.
+outright (`danxbot:issue-workflow`) — compaction pressure is not an exception.
 
 The sanctioned pattern: (1) commit as an explicit WIP —
 `wip(<CARD-ID>): <what, incomplete> — DO NOT SHIP AS-IS`, body states what it is, why it's real,
@@ -78,7 +78,8 @@ actually has one.
 
 ### 7. Two dashboard-API gotchas (HTTP fallback only)
 
-Only relevant when calling the `danx_dashboard` HTTP API directly (MCP down) — both silent:
+Only relevant when calling a dashboard route directly (MCP down, or no MCP tool) with a scoped
+token minted by the dashboard MCP's token tool — both silent:
 `GET /api/issues/<id>` omits `description`/`comments`/checklist unless `?fields=description`
 (`?include=`/`?full=1` return something smaller, not equivalent); `GET /api/plans/<id>?fields=cards`
 returns `cards: []` even for a plan with cards attached — they live at `/api/plans/<id>/cards`.
@@ -100,7 +101,6 @@ exactly as they were.
 ## Non-goals
 
 Plan record/note/card mechanics, hash-guarded writes, "keep 3 in flight", live-event handling —
-all `danxbot:plan-workflow`. Git safety (destructive ops, branch discipline) — `dev:git-discipline`.
-Handoff prose phrasing — `base:convey`'s scaffold applies to the card comment/description you
-write in steps 3-5. This skill is only the ordered checklist for the one moment right before a
+all `danxbot:plan-workflow`. Git safety (destructive ops, branch discipline) — `danxbot:issue-workflow`.
+This skill is only the ordered checklist for the one moment right before a
 compaction.

@@ -12,11 +12,8 @@ not print answers to stdout for a Slack user to see — there is nobody
 reading your stdout. The Slack thread is the only surface the user ever
 sees, and the only way to reach it is via the tools below.
 
-**Format the reply text using `base:convey`** — concept-first headline,
-caveats list, optional verify pointer. Slack reply budget is **≤12
-lines** under convey. Lead with the answer, not the investigation
-narrative. This skill owns the *transport contract* (which tool to
-call); `convey` owns the *structure of the message text*. Both apply.
+Slack reply budget is **≤12 lines**. Lead with the answer, not the
+investigation narrative.
 
 **Slack does NOT render GFM/markdown tables.** A `| col | col |` pipe
 table posts as literal unreadable pipes — never emit one. For anything
@@ -27,7 +24,7 @@ fitting the content).
 
 ## Editing code in this dispatch → read issue-refs first
 
-If this dispatch touches code, the issue-ref comment convention applies exactly as for any agent — load `danxbot:issue-card-workflow` → `references/card-creation-and-reference.md` "Issue-Ref Comment Protocol" for the grep pattern, the `issue_get` call, and the comment format before editing.
+If this dispatch touches code, the issue-ref comment convention applies exactly as for any agent — load `danxbot:issue-workflow` (Mechanics → "Issue-ref comments") for the grep pattern and comment format before editing.
 
 ## Required tool calls
 

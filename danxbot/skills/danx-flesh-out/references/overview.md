@@ -8,7 +8,7 @@ to `Review` (the card entering Review for the first time), stamp triage
 `issue_triage({id, confidence, reason})` — a single 0–5 confidence plus a
 reason string; the server computes the verdict from board thresholds
 (cancel/defer/keep/approve bands) and stamps `ready_at` on approve, or
-opens a problem (auto-triage escalation, see `issue-card-workflow`) for a
+opens a problem (auto-triage escalation, see `danxbot:issue-workflow`) for a
 keep/defer verdict. `triage_expires_at` / ICE / history stamping do not
 exist — never a raw write to a `triage{}` object.
 

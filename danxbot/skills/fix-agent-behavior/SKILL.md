@@ -1,5 +1,5 @@
 ---
-name: docs
+name: fix-agent-behavior
 description: 'Diagnose a wrong agent action, then fix it by briefly refining an existing rule/skill/hook/MCP description, expanding documentation, or escalating — never by adding a new skill.'
 ---
 

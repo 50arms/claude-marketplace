@@ -16,9 +16,7 @@ Do not look for one.
 layout instead:
 
 ```
-<plugin>/                       # one dir per plugin: base, dev, danxbot,
-                                 # pipeline, investigate, human-collaboration,
-                                 # claude-projects, docs
+<plugin>/                       # one dir per plugin: danxbot
   .claude-plugin/plugin.json    # name + version (the auto-update trigger)
   skills/<skill>/SKILL.md       # skill bodies
   rules/*.md                    # always-on rule files

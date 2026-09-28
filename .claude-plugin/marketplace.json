@@ -7,24 +7,9 @@
   "description": "Personal plugin set: discipline, dev pipeline, danxbot orchestration",
   "plugins": [
     {
-      "name": "base",
-      "source": "./base",
-      "description": "Universal discipline: shell discipline (exit capture, polling, tool choice, process kill), live time injection, safety deny-guards. Install everywhere."
-    },
-    {
-      "name": "dev",
-      "source": "./dev",
-      "description": "Code-writing discipline: read-only-by-default debugging/investigation with a fix-mode switch (TDD included), code quality, git safety. Install on instances that write code."
-    },
-    {
-      "name": "human-collaboration",
-      "source": "./human-collaboration",
-      "description": "Human-in-the-loop discipline: read-only-default (human-loop skill), diagnostic behaviour-fix skill (docs). Install only where a human drives prompts. Do NOT install on autonomous dispatched workers (diagnostic-mode-on-question would deadlock)."
-    },
-    {
       "name": "danxbot",
       "source": "./danxbot",
-      "description": "Danxbot orchestrator: dispatch architecture, runtime modes, deploy, the shared issue-card-workflow skill (used by dispatched workers and operator sub-agents alike), danx-chat/danx-ideate, issue-blocker. Single home for everything danxbot-related — install on every danxbot-aware instance + workspace."
+      "description": "Danxbot orchestrator: dispatch architecture, runtime modes, deploy, the shared issue-workflow skill (used by dispatched workers and operator sub-agents alike), danx-chat/danx-ideate, issue-blocker. Single home for everything danxbot-related — install on every danxbot-aware instance + workspace."
     }
   ]
 }

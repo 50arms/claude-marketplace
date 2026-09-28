@@ -50,7 +50,7 @@
 #
 # Argv: $1 = "SessionStart" (any other value is a no-op — this hook is never
 # wired to fire on anything else). Stdin: the hook's JSON payload, read once
-# for `session_id` (node, not jq — see base/scripts/inject-time.sh for why).
+# for `session_id` (node, not jq — see scripts/inject-time.sh for why).
 # The same payload is reused below (DX-3366) to resolve the session id the
 # `mantra` subcommand needs — stdin is a pipe, so it is read exactly once
 # into $PAYLOAD and threaded from there, never re-read.
