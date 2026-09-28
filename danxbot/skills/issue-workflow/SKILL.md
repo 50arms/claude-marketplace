@@ -69,10 +69,8 @@ sub-agent you run is still your card: pickup first, drive the terminal transitio
 - **Issue-ref comments** — `// CARD-ID: <reason>` on any non-obvious decision a card forced.
   Before editing a file, grep its anchored refs
   (`grep -rnE '(//|#|--|<!--|/\*|\*)[[:space:]]*[A-Z]+-[0-9]+' <files>`) and load each card.
-- One card at a time as a dispatched worker — no orchestrator, no sub-agents.
 - AC lives in `ac[]`; sub-cards are their own cards via `parent_id`; never hand-append
   `## Retro`; never escape markdown.
-- `references/phases-epics.md` — `children[]` mechanics.
 
 ## Building
 
@@ -154,8 +152,6 @@ Every user-facing bug report, one block per bug:
 - Shared index: commit straight from the tree, `git commit -m "<msg>" -- <paths>`, so
   nobody's staged work lands in your commit or yours in theirs. Commit your own work
   without asking; ask only about foreign changes you can't separate from yours by path.
-- Dispatched worker in its own worktree: `git add` a new file the turn you create it —
-  autosave stages only tracked files.
 - Before cherry-pick/apply/rebase/merge: `git log --oneline <source>..HEAD`. A stale source
   that then changes files → diff each against HEAD and ask; never "fix" by reverting. A
   sub-agent worktree forks at its start — rebase it before integrating.
