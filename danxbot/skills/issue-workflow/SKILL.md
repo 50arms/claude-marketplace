@@ -55,6 +55,19 @@ but you (incl. `null`) is a failed claim: retry once, then stop. The hold clears
 explicit transition from your session (`complete`/`cancel`/`block`/`rollback_pickup`). A
 sub-agent you run is still your card: pickup first, drive the terminal transition yourself.
 
+## When to block
+
+Block only when truly stuck — you've read the code, tried the obvious fix, and genuinely
+cannot proceed. Not just uncertain. `blocked` is a dispatch HOLD (prevents pickup), not a
+card status — it never moves where the card sits.
+
+- Waiting on another card to finish first → `issue_dependency({kind:'depends_on'})`, not
+  `block`.
+- Two cards that can't run together → `issue_dependency({kind:'conflict_on'})`.
+- Need an operator's decision or an action only a human can take → open a problem
+  (`issue_problem`) — that's what puts the card in front of a human. `block` alone does not.
+- Otherwise, the actual transition: `issue_transition({action:'block', reason})`.
+
 ## Mechanics
 
 - **AC/checklists** — `issue_get` returns each item's id under `checklists[].items[]`; flip

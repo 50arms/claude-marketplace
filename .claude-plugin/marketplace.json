@@ -9,7 +9,7 @@
     {
       "name": "danxbot",
       "source": "./danxbot",
-      "description": "Danxbot orchestrator: dispatch architecture, runtime modes, deploy, the shared issue-workflow skill (used by dispatched workers and operator sub-agents alike), danx-chat/danx-ideate, issue-blocker. Single home for everything danxbot-related — install on every danxbot-aware instance + workspace."
+      "description": "Danxbot orchestrator: dispatch architecture, runtime modes, deploy, the shared issue-workflow skill (used by dispatched workers and operator sub-agents alike), danx-chat/danx-ideate. Single home for everything danxbot-related — install on every danxbot-aware instance + workspace."
     }
   ]
 }

@@ -43,5 +43,4 @@ empty, remove the worktree, delete the branch, name what you removed.
 ## Load the matching skill before you act
 
 `danxbot:issue-workflow` for card work, `danxbot:plan-workflow` for a
-plan, `danxbot:issue-blocker` before `blocked`/a problem. Every other skill
-names its own trigger; check the list when unsure.
+plan. Every other skill names its own trigger; check the list when unsure.
