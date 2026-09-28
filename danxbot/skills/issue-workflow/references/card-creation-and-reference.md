@@ -49,10 +49,11 @@ Feature → Story/Bug/Chore; leaves have none.
 
 ## Effort
 
-`effort_level` is the reasoning depth the work needs, not its importance. Pick the lowest
-level that can plausibly finish it; go down for full specs, prior art or mechanical work,
-up only for novel multi-file design or subtle concurrency. `max` is for the hardest code in
-the repo, never for a hard decision.
+`effort_level` is the reasoning depth the work needs, set by the kind of work, never its size
+or importance. Planning, architecture, and skill or prose rewrites are `max` (Opus): small in
+text, but they need the best thinking; reviewing them is `very_high`. Code on a planned card
+is `high` or below, lower for full specs, prior art or mechanical work. A code card that seems
+to need `max` is under-planned: plan more instead of raising the effort.
 
 ## Ordering
 

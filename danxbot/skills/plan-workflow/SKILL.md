@@ -5,7 +5,8 @@ description: 'THE planning workflow when a human is in the loop beyond a quick c
 
 # Plan Workflow
 
-The plan in the dashboard DB is the record; chat is not.
+The plan in the dashboard DB is the record; chat is not. The mantra's rules apply
+throughout; this skill is the plan mechanics.
 
 ## Start (every new, resumed or compacted session)
 
@@ -25,15 +26,6 @@ actionable work; AC item = a step finishing an existing card; card comment = pro
 evidence, status, local state; Task card + problem = operator question; plan note = real
 milestone; `plan_remove_card` = wrong-plan card; `plan_rename` = stale name.
 
-Never: plan file, repo `.md`, HTML page, `.junk/`, TaskCreate, scratchpad, sub-agent
-context, chat, "do it after X".
-
-## Zero-context rule
-
-Before every reply, dispatch or stop, and before compaction or ending: "Session wiped now —
-would a new agent miss any work, cleanup, decision, in-flight agent, worktree, branch,
-unpushed SHA?" Yes → write it to a card or the plan first.
-
 ## Scope
 
 Before `plan_add_card`, name the `G-n` it advances — can't → not this plan. A bug found while
@@ -50,9 +42,9 @@ zero-context reader, on the right plan, readied, `depends_on` from your waiting 
 ## Before a plan is ready
 
 One sentence goal in the system's nouns → the one ideal shape → reuse audit (cite paths) →
-what it makes obsolete (delete in scope) → simplest correct shape? → a quick experiment that
-confirms or kills it, run for real → anything merely unfinished being removed? → did "faster
-to ship" shape it? Any step changes the plan → restart. Ready when a pass changes nothing.
+what it makes obsolete (delete in scope) → simplest correct shape? → anything merely
+unfinished being removed? → did "faster to ship" shape it? Any step changes the plan →
+restart. Ready when a pass changes nothing.
 
 ## Connection
 
@@ -77,15 +69,15 @@ operator input for that card.
 
 ## Records
 
-Write for a stranger: define domain words, cite ids, SHAs, paths and timestamps, mark each
-claim VERIFIED (how) or UNVERIFIED. Changed fact → edit; no longer true → delete.
+Write for a stranger: define domain words, cite ids, SHAs, paths and timestamps. Changed
+fact → edit; no longer true → delete.
 
 ## Card state always true
 
 Delegated pickup → tell the sub-agent its own `CLAUDE_CODE_SESSION_ID` is real (MCP 403 →
 HTTP route with `x-danx-session-id`). A "fresh worktree" brief → `git worktree list` first;
 the card may carry unpushed prior work. Nobody working a card you hold →
-`rollback_pickup({keep_assignment:true})`. Before reporting "N in flight", `issue_get` each
+`rollback_pickup({keep_assignment:true})`. Before reporting a card in flight, `issue_get` it
 and confirm In Progress.
 
 ## Notes and hashes
@@ -93,55 +85,34 @@ and confirm In Progress.
 `plan_update_note` link lists replace per kind — resend them all. A stale-hash refusal carries
 the current value: merge into it and retry with its hash.
 
-## Operator questions
-
-Scan every reply for "should I / want me to / needs your word / options" — real → a card, not
-real → decide it yourself. Operator-only: domain intent, business or UX judgment,
-scope/authority, an action only they can do. Not questions: status, self-corrections,
-blockers you can run, implementation choices (`danxbot:issue-workflow` decides), how you
-should work. File a real one as a Task card on the repo board with a problem, on the plan;
-chat says "`<ID>` needs your call".
-
 ## Actionable work
 
 Create via `danxbot:issue-workflow` (load before choosing a type) — but `ready` the card AND
 build it here; the plan never waits on a worker.
 
-## Keep 3 in flight
+## Stopping
 
-Before EVERY reply: fewer than 3 sub-agents and an unblocked, non-overlapping card exists →
-dispatch it this message, then report. Never ask to dispatch. A deploy, build or test running
-is time to dispatch, not wait. A readied card waiting on a worker is not blocked — build it.
-Before stopping or saying "blocked": re-read every open plan card and write each real blocker
-(card id, open problem, operator action) to a card comment.
+Before stopping or saying "blocked", re-read every open plan card and write each real
+blocker (card id, open problem, operator action) to a card comment.
 
 ## Sub-agents
 
 Delegate by card id: `Agent({subagent_type:"danxbot:worker-<tier>", prompt:"<CARD-ID>"})` is
 the whole brief — each tier loads `danxbot:issue-workflow` itself. Add the mantra's worktree
-paragraph only when the card wouldn't cover it. Set `effort_level` first, pick the tier whose
-description matches it, never `general-purpose`.
+rule only when the card wouldn't cover it. Set `effort_level` first, by the kind of work
+(issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
+never `general-purpose`.
 
-Partition files before fanning out; run independent cards in parallel. State a time-box;
-never background a long test run and end the turn — wait bounded, or `rollback_pickup` and
-report. Run tests once, after the edits land. Every brief makes the sub-agent stop each
-background task it started before reporting, or name it. Stop a dispatch once its report is
-consumed. A report is a lead, not a finding: read the diff, confirm the push, check for
-leftover worktrees, commits or background tasks.
+Partition files before fanning out. State a time-box; never background a long test run and
+end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits
+land. Every brief makes the sub-agent stop each background task it started before reporting,
+or name it. Stop a dispatch once its report is consumed. A report is a lead, not a finding:
+read the diff, confirm the push, check for leftover worktrees, commits or background tasks.
 
 ## Liveness
 
 "Running" needs a counter (e.g. `tokensOut`) read twice ≥60s apart with both timestamps, or
-the JSONL last-entry age — name the source. A status field alone is a guess.
-
-## Chat
-
-The operator reads only the card unless they asked a question. Budget: ≤3 lines, no headings,
-tables, bullets or fences — more goes on the card. Already wrote it to a card this turn? Give
-the id, not the content.
-
-Only: an answer to a question asked, one line starting a deploy/dispatch/publish, a real
-failure or correction, `<CARD-ID>` pointers. Never findings, options, status or summaries.
+the JSONL last-entry age — name the source.
 
 ## Handoff
 

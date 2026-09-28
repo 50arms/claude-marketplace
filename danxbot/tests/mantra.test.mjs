@@ -95,7 +95,7 @@ describe("mantra.sh", () => {
     assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
     assert.match(result.stdout, /danxbot:plan-workflow/);
     assert.match(result.stdout, /ASK the operator/);
-    assert.doesNotMatch(result.stdout, /Operating contract/i);
+    assert.doesNotMatch(result.stdout, /\*\*Orchestrate\.\*\*/);
     // ~0.5 KB target (AC 35058) — a hard byte ceiling would be brittle, so this
     // asserts the class of size rather than an exact count.
     assert.ok(
@@ -138,12 +138,12 @@ describe("mantra.sh", () => {
     assert.ok(result.stdout.endsWith(fileContent), "expected fallback output to end with mantra.md's exact content");
   });
 
-  test("mantra.md merges the operating contract, craft and danxbot mantra, and names all three", () => {
+  test("mantra.md is the canonical rule list (PLN-11 R-22) and names no sub-agent count (R-23)", () => {
     const text = readFileSync(MANTRA_FILE, "utf8");
-    assert.match(text, /Operating contract/i);
-    assert.match(text, /Craft/i);
-    assert.match(text, /zero-context/i);
-    assert.match(text, /session start, resume and compaction only/i);
+    for (const rule of ["Orchestrate", "Evidence", "Decide, don't wait", "A question is not a stop", "Zero context", "Worktrees", "Craft", "Chat"]) {
+      assert.ok(text.includes(`**${rule}`), `missing rule: ${rule}`);
+    }
+    assert.doesNotMatch(text, /\b(cap|keep)\s+\d|\d+\s+(sub-agents|in flight)/i);
   });
 
   test("any non-SessionStart event is a silent no-op, connected or not", () => {

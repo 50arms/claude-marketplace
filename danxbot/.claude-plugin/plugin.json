@@ -1,6 +1,6 @@
 {
   "name": "danxbot",
-  "description": "Danxbot orchestrator domain: dispatch architecture, runtime modes, deploy. Install on danxbot-aware instances.",
+  "description": "Danxbot's way of working: plan-workflow, issue-workflow, worker tiers, plan event hooks and the mantra.",
   "version": "0.7.68",
   "author": {
     "name": "Dan Newman",

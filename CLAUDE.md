@@ -1,21 +1,19 @@
 # claude-plugins
 
-Source of truth for the `newms-plugins` marketplace. Every plugin here is consumed by every Claude Code session on this machine — the operator's main sessions, host-mode dispatched workers, and container workers.
+Source of truth for the `newms-plugins` marketplace. Its plugins reach every Claude Code session on this machine and danxbot's container workers (through danxbot's catalog).
 
-## The mantra is canon — exactly one copy, and this is where it lives
+## The mantra is the one home for every rule it states (PLN-11 R-22)
 
-`danxbot/mantra.md` holds the operating contract's four standing principles, the craft bar, and
-the danxbot zero-context rule — orchestrate by default / never act without verified evidence /
-validate a proposal by experiment / never assume when answering the operator; build the ideal
-version not the fast one; nothing lives only in a session. It is printed verbatim by
-`danxbot/scripts/mantra.sh`, wired in `danxbot/hooks/hooks.json` on `SessionStart` with
-**matcher `startup|resume|compact`** (DX-3347) — no other event, and no per-turn pointer.
+`danxbot/mantra.md` is the mantra's single hand-maintained text: danxbot seeds the reminder
+registry row `mantra.session_start` from it, `danxbot/scripts/mantra.sh` prints that row's
+effective text at `SessionStart` (matcher `startup|resume|compact`) once a plan is connected,
+`plan_connect`'s response carries it, and the file is the offline fallback.
 
-**Nothing else may restate this text** — not a `CLAUDE.md`, not a rule file, not a `SKILL.md`, not
-another hook. A skill may only POINT at the mantra or EXPAND it with concrete situation-specific
-procedure (a mechanical checklist, a worked incident, named commands/tables). To change a
-principle, edit `danxbot/mantra.md` and publish `danxbot`. If you find a second copy, delete it
-and leave a pointer.
+**Nothing else restates a mantra rule** — no `SKILL.md`, hook text, `CLAUDE.md` or rule file.
+A skill may point at the mantra or add procedure the mantra doesn't state. To change a rule,
+edit `mantra.md` and publish. The mantra reaches only the main session, so a rule a sub-agent
+or dispatched worker needs lives in the text that reaches it (`issue-workflow`, the worker
+tiers), phrased for that reader. No prose states how many sub-agents to run (R-23).
 
 ## Hook scripts must never depend on `jq` — it is not installed
 

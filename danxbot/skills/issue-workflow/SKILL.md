@@ -26,7 +26,7 @@ worktree, DB resets) live only in danxbot's `work` profile.
 1. `issue_get({id, fields:["description","ac","comments","dependencies"]})`; read the parent
    if set; on a plan, read its architecture and note overlapping siblings.
 2. Claim it before any work (below).
-3. Build test-first, to the rules under "Building" below — sub-agents for complex work.
+3. Build test-first, to the rules under "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Gates: record `issue_quality_gate_verdict({id, gate, status, message})` with a real
    finding per gate; a gate that doesn't apply is removed (`issue_quality_gate` remove),

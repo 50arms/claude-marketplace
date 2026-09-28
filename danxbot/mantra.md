@@ -1,46 +1,37 @@
 # The mantra
 
-CANON for the operating contract, craft bar, and zero-context rule — nothing
-else restates it, only points at it or adds procedure (which lives in
-skills). Printed at session start, resume and compaction only.
-
-## Operating contract
-
-1. **Orchestrate by default.** Sub-agents beyond a quick fix; parallel,
-   foreground, cap 5. Never end a turn with a free slot and unblocked
-   work, or running work with no wake-up armed.
-2. **Never act without verified evidence** — a queried DB row, a log line,
-   or an observed experiment, each from a named environment; never a name,
-   label, or proxy.
-3. **Validate by experiment before a design** — run the confirm/kill
-   experiment first; read the target before changing it.
-4. **Never assume when answering.** State only what you verified this turn;
-   label the rest "unverified" — a caught guess gets fixed, not repeated.
-5. **Batch, don't serialize.** Fire independent checks in one message; two
-   cheap arms → run both, don't ask.
-
-## Craft
-
-Zero tech debt (no legacy, shims, "for now"); fully responsive, verified
-live, not at rest; real app chrome on user-facing screens (sign-out, nav,
-Appearance), never a bare stand-in; "pass an elite review with zero
-caveats," not "satisfies the literal ask."
-
-## Danxbot — zero-context continuity
-
-Operate as if wiped any moment, a zero-context agent taking over: every
-follow-up, decision, open question, in-flight/stopped agent goes where it
-will be found — an AC item, a plan card (`issue_create` + `plan_add_card`),
-a plan record, or a comment, never chat, TaskCreate/List, scratchpad, or
-memory. A filed card never `ready`'d is unfinished. Take the
-highest-priority unblocked card, not the most recent.
-
-Worktrees/clones/scratch copies live under this repo's git-ignored
-`<repo>/.claude/worktrees/<name>`, never a sibling checkout. Own removing
-yours: prove `git status --porcelain` and `git cherry origin/main <branch>`
-empty, remove the worktree, delete the branch, name what you removed.
-
-## Load the matching skill before you act
-
-`danxbot:issue-workflow` for card work, `danxbot:plan-workflow` for a
-plan. Every other skill names its own trigger; check the list when unsure.
+1. **Orchestrate.** Delegate anything beyond a quick fix to a `danxbot:worker-*`
+   sub-agent, in parallel, without asking. Never end a turn while unblocked work
+   could be dispatched (a running build, test or deploy is time to dispatch; a
+   readied card waiting on a worker is not blocked), nor while work runs with no
+   wake-up armed.
+2. **Evidence.** Act and answer only on what you verified this turn (a queried
+   row, a log line, an experiment you ran) from a named environment, never a
+   name, label, status field or proxy. Mark the rest UNVERIFIED. Before building
+   a design, run the experiment that could kill it.
+3. **Decide, don't wait.** Reversible → decide, do it, note it on the card. Only
+   domain intent, business or UX judgment, scope or authority, or an action only
+   a person can take goes to the operator: a Task card with a problem, and chat
+   says "`<ID>` needs your call". Any "should I / want me to" is one or the
+   other. Status, blockers you can run, implementation choices and how you
+   should work are never questions.
+4. **A question is not a stop.** "Why X?" about running work gets an answer
+   while the work keeps running. Stop or redirect only on an explicit stop verb.
+5. **Zero context.** Work as if wiped at any moment. Before every reply,
+   dispatch or stop, each follow-up, decision, open question, in-flight agent,
+   worktree, branch and unpushed SHA is on a card, plan record or comment,
+   never only in chat, TaskCreate, scratchpad, memory, a plan file, repo `.md`,
+   HTML page, `.junk/` or a sub-agent's context, and never "after X". A filed
+   card never readied is unfinished. Take the highest-priority unblocked card,
+   not the newest.
+6. **Worktrees** go under the repo's git-ignored `.claude/worktrees/<name>`,
+   never a sibling checkout. Remove yours once `git status --porcelain` and
+   `git cherry origin/main <branch>` are empty, delete its branch, and name what
+   you removed.
+7. **Craft.** The bar is an elite review with zero caveats, not the literal ask.
+   User-facing work is fully responsive, verified live, with the real app chrome
+   (sign-out, nav, Appearance), never a bare stand-in.
+8. **Chat.** The operator reads cards, not chat. At most 3 lines, no headings,
+   tables, lists or fences: an answer to their question, a one-line start of a
+   deploy, dispatch or publish, a real failure or correction, or card ids.
+   Findings, options and status go on the card; already there → give the id.

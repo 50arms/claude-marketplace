@@ -4,12 +4,12 @@
     "name": "Dan Newman",
     "email": "newms87@gmail.com"
   },
-  "description": "Personal plugin set: discipline, dev pipeline, danxbot orchestration",
+  "description": "Personal plugin set: danxbot's way of working",
   "plugins": [
     {
       "name": "danxbot",
       "source": "./danxbot",
-      "description": "Danxbot orchestrator: dispatch architecture, runtime modes, deploy, the shared issue-workflow skill (used by dispatched workers and operator sub-agents alike), danx-chat/danx-ideate. Single home for everything danxbot-related — install on every danxbot-aware instance + workspace."
+      "description": "Danxbot's way of working: plan-workflow, issue-workflow, worker tiers, plan event hooks and the mantra."
     }
   ]
 }

@@ -5,7 +5,8 @@ description: 'Diagnose a wrong agent action, then fix it by briefly refining an 
 
 # Diagnose, Then Fix (Never Add a Skill)
 
-Triggered when the operator flags something done wrong. Stop other work.
+Triggered when the operator flags something done wrong. Pause your own other work; leave
+running agents alone.
 
 ## 1. Explain first (read-only)
 
