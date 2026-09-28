@@ -150,13 +150,7 @@ export const STARTUP_VERDICT_MS = 45_000;
 export const CONNECT_INTENT = "connect";
 export const RESUME_INTENT = "resume";
 
-// DX-3028 (AC3) — `.stopped.json` added alongside the existing suffixes so
-// `pruneStale` reaches it too (see `sessionPaths`'s `stopped` path below).
-// DX-2953 (AC3/AC4) — `.started.json` / `.connected.json` (the two marker
-// files) and `.watchdog.json` (the throttle stamp) are added the same way,
-// for the same reason: pruneStale must reach every state file, and the
-// watchdog's own 60s tick is what keeps a LIVE session's markers from aging
-// past STALE_STATE_MS (see the watchdog tick below).
+// DX-3028/DX-2953: every state-file suffix must be listed here so `pruneStale` reaches it.
 const STATE_SUFFIXES = [".pid.json", ".lock", ".cursor.json", ".log", ".stopped.json", ".started.json", ".connected.json", ".watchdog.json", ".tmp"];
 
 // ------------------------------------------------------------------ state files
@@ -179,29 +173,14 @@ export function sessionPaths(dir, sessionId) {
     lock: `${base}.lock`,
     cursor: `${base}.cursor.json`,
     log: `${base}.log`,
-    // DX-3028 (AC3) — the MCP child's `stopped` record (reason, detail, fix,
-    // paths, instanceId, degraded), persisted here by `run()` the moment the
-    // child reports one, whether or not it then stays alive in degraded
-    // mode. DX-2953's watchdog reads this file, its `reasons` and its
-    // `instanceId` — it did not exist before this card.
+    // DX-3028: the MCP child's stopped record, read by the watchdog.
     stopped: `${base}.stopped.json`,
-    // DX-2953 — the two-marker-file split (see the module docblock addendum
-    // above `start()`). `started`: written ONLY by `start()`, under
-    // `paths.lock`, at the mint site — `lastStartedInstance`, `startInputs`,
-    // `restartGeneration`, `consumedStopInstance`, `startedAt`. `connected`:
-    // written ONLY by the run process — `connected`, `instanceId`, `at`.
-    // Splitting them (instead of one shared marker) removes the lost-update
-    // race a single file would have: `start()` releases `.lock` in its
-    // `finally` BEFORE awaiting the bridge's own verdict, so a `plan_connect`
-    // start can race the previous child's ready write; two files with one
-    // writer each can never lose either field to that race.
+    // DX-2953: split into two single-writer files (started by start(), connected by
+    // the run process) so a start racing the previous child's ready write can't lose a field.
     started: `${base}.started.json`,
     connected: `${base}.connected.json`,
-    // DX-2953 — the watchdog's own once-per-WATCHDOG_THROTTLE_MS throttle
-    // stamp. Its own mtime IS its content (no fields read besides existence),
-    // and it doubles as the reference tick that also refreshes the two
-    // marker files' mtimes so `pruneStale` never reclaims a live session's
-    // markers (see the watchdog tick below).
+    // DX-2953: watchdog throttle stamp — mtime IS its content; also refreshes the
+    // marker files' mtimes so pruneStale never reclaims a live session.
     watchdog: `${base}.watchdog.json`,
   };
 }
@@ -830,13 +809,9 @@ export async function start({
   post = postToInbox,
   waitVerdict = waitForVerdict,
   verdictTimeoutMs = STARTUP_VERDICT_MS,
-  // DX-2953 — the hook's own `transcript_path`, recorded into `.started.json`'s
-  // `startInputs` so a watchdog restart starts the bridge with exactly the
-  // same inputs (DX-2954 relies on this). Never CLAUDE_PID — see the card.
+  // DX-2953: recorded into .started.json's startInputs so a watchdog restart reuses it.
   transcriptPath = null,
-  // DX-2953 — set by the watchdog's own call, never by SessionStart or
-  // plan_connect. Selects the generation-bump / consumed-instance behavior
-  // in `buildStartedRecord` — see its doc comment.
+  // DX-2953: set only by the watchdog's own call; selects generation-bump behavior in buildStartedRecord.
   restartTrigger,
   consumeStopInstance = null,
 } = {}) {
@@ -866,19 +841,11 @@ export async function start({
       kill(held.pid);
       fs.rmSync(paths.pid, { force: true });
     }
-    // DX-3028 (AC2/AC3) — this instance's own identity, minted here (under
-    // the lock, AFTER the fresh-holder check, IMMEDIATELY before spawning —
-    // a `start` that returns above without reaching this line never mints
-    // one), carried into the run process's env so it reaches every
-    // heartbeat/stop record it and its MCP child produce for this spawn.
+    // DX-3028: this instance's identity, minted under the lock right before spawning.
     const instanceId = randomUUID();
     const nowMs = now();
-    // DX-2953 (AC3) — a `spawnRun` throw is caught HERE, inside the lock,
-    // rather than left to propagate: this instance was still minted and
-    // "started" for bookkeeping purposes (`.started.json` gets it either
-    // way), and the failure must be visible to the watchdog as a
-    // `bridge_failed` record — nothing else will ever report it, since no
-    // run() process came into being to report anything itself.
+    // DX-2953: a spawnRun throw is caught here (inside the lock) so the failure is still
+    // visible to the watchdog as a bridge_failed record — no run() process exists to report it otherwise.
     try {
       child = spawnRun(sessionId, { ...env, DANX_BRIDGE_INSTANCE_ID: instanceId }, intent);
     } catch (err) {
@@ -906,9 +873,7 @@ export async function start({
       return { started: false, reason: `spawnRun failed: ${err.message}`, exitCode: 2 };
     }
     writeFileAtomic(paths.pid, JSON.stringify(pidRecord(child.pid, sessionId, nowMs, instanceId)));
-    // DX-2953 (AC3) — written under the SAME lock, right after the pid
-    // record, on the successful path too: `.started.json` is start()'s own
-    // marker regardless of whether the resulting bridge ever reaches ready.
+    // DX-2953: .started.json is start()'s own marker, written under the same lock either way.
     writeFileAtomic(
       paths.started,
       JSON.stringify(
@@ -1084,12 +1049,7 @@ export function parseRecord(line) {
     return { kind: "event", id: Number.isSafeInteger(record.id) && record.id > 0 ? record.id : null, text: record.text };
   }
   if (record?.type === "stopped" && typeof record.reason === "string") {
-    // DX-3028 (AC3) — `paths` and `instanceId` are new on the child's own
-    // stop record; `degraded` decides whether THIS parseRecord's caller
-    // should treat the record as the child having exited (see `runChildOnce`
-    // below) — a record missing it (an older, pre-DX-3028 subcommand)
-    // defaults to `false` (exit), matching the ONLY behavior that existed
-    // before this card.
+    // DX-3028: a record missing `degraded` (pre-DX-3028 subcommand) defaults to false (exit).
     return {
       kind: "stopped",
       reason: record.reason,
@@ -1100,20 +1060,9 @@ export function parseRecord(line) {
       degraded: record.degraded === true,
     };
   }
-  // DX-2862 — the subcommand says once, before any event, that it minted a
-  // ticket AND proved its credential can read every board of the connected
-  // plan. That is what `start` waits for, so a hook can report a failed start
-  // rather than exiting 0 over a bridge that never worked.
-  // DX-3059 — `cardCount`/`degraded` ride alongside `boards` now (DX-2970's
-  // `fetchPlanInventory`, published `@thehammer/danx-dashboard-mcp@0.1.94`).
-  // `boards === null` is kept distinct from `boards: []` — the published
-  // shape (`BridgeReady`, bridge.ts) sends `null` ONLY when the inventory
-  // read itself failed, and `[]` when the read succeeded but found no
-  // boards; `onReady` below needs to tell those apart to name the right
-  // problem. A pre-DX-2970 subcommand never sends `boards` at all
-  // (`undefined`), which — like every other unrecognized shape here —
-  // degrades to the same "[]" this parser already produced before this
-  // card, not a new failure mode.
+  // DX-2862: "ready" is what `start` waits for, so a hook can report a failed start rather
+  // than exiting 0 over a bridge that never worked. DX-3059: `boards === null` (inventory
+  // read failed) is kept distinct from `boards: []` (read succeeded, none visible).
   if (record?.type === "ready") {
     return {
       kind: "ready",
@@ -1126,29 +1075,11 @@ export function parseRecord(line) {
 }
 
 /**
- * DX-3059 — the "ready" log line, split into the three outcomes DX-2970's
- * `boards`/`cardCount`/`degraded` were added to distinguish. The server's own
- * `degraded` flag is deliberately NOT used as-is here: `bridge.ts` sets it
- * true both when the credential can't see any board (a real problem) AND
- * when the boards are known and reachable but the plan simply has zero cards
- * yet (not a problem at all) — see `BridgeReady` in `bridge.ts`. Telling
- * those apart needs `boards` itself, not just the flag:
- *
- *   - `boards === null` — the one best-effort inventory read failed
- *     (network/timeout/non-2xx/malformed body). Nothing is known.
- *   - `boards.length === 0` (array, but empty) — the read succeeded and
- *     this session's credential can see NO board of the connected plan.
- *   - `boards.length > 0` — real, reachable boards are known. If
- *     `cardCount === 0` too, that is a genuinely empty plan: benign, and
- *     the ONLY case allowed to print the pre-DX-2970 "no cards" text.
- *
- * A pre-DX-2970 subcommand (or the DX-2920 gap this card's parent exists to
- * close) sends none of these fields — `boards` parses to `[]`, `cardCount`
- * to `null`, `degraded` to `false` — which falls into the same "no boards
- * known, not flagged degraded" shape as a real empty-boards problem. That is
- * intentional: an old subcommand's silence about its own boards is exactly
- * the failure DX-2970 exists to stop being silent about, so it is treated as
- * the same problem here rather than defaulting to benign.
+ * DX-3059: the server's own `degraded` flag conflates "no board visible" (real problem)
+ * with "boards known but plan has 0 cards" (benign) — this reads `boards` itself to tell
+ * them apart: `null` = inventory read failed, `[]` = read ok but no board visible,
+ * non-empty = real boards known (an old subcommand sending none of these fields falls
+ * into the same "no boards known" shape on purpose, matching the failure DX-2970 closes).
  */
 export function describeReadyRecord(record) {
   const boards = record.boards;
@@ -1357,22 +1288,14 @@ function runChildOnce({ spawnChild, relay, log, onReady, onStopped = () => {}, o
         const record = parseRecord(line);
         if (record.kind === "event") {
           relay.push({ id: record.id, text: record.text });
-          // DX-2953 — a real relayed event is the only proof available that a
-          // previously-degraded child has recovered to streaming (bridge.ts
-          // never emits a second "ready" on recovery — see the module
-          // docblock's marker-liveness section). Clearing here is what makes
-          // "a bridge that degraded, recovered, then was hard-killed IS
-          // restarted" work: its own stale degraded record is gone by then.
+          // DX-2953: a real relayed event is the only proof a degraded child recovered
+          // (bridge.ts never re-emits "ready"); clearing here lets a later hard-kill restart.
           onEvent();
         } else if (record.kind === "stopped") {
           const full = { reason: record.reason, detail: record.detail, fix: record.fix, paths: record.paths, instanceId: record.instanceId, degraded: record.degraded };
           onStopped(full);
-          // DX-3028 (AC2) — a DEGRADED record does NOT end this promise: the
-          // child stays alive (heartbeating, retrying per its own policy),
-          // so `stopped` is deliberately left `null` and this call keeps
-          // waiting on the real `child.on("close")` below — which a live
-          // degraded child never fires until it is actually killed or later
-          // reaches a genuinely terminal reason.
+          // DX-3028: a DEGRADED record does not end this promise — the child stays alive,
+          // so this keeps waiting on the real `child.on("close")` below.
           if (!record.degraded) stopped = full;
         } else if (record.kind === "ready") onReady(record);
         else log(`ignored non-record output from the bridge subcommand (${line.length} chars)`);
@@ -1407,38 +1330,20 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * The process exit code for a shutdown, so a FATAL condition (a relay-queue overflow, a
- * subcommand that never produced a stop record) is distinguishable from a normal stop
- * (SessionEnd, yielding to a fresher bridge, the parent process ending, a clean stop record
- * like `not_connected`) by anything watching this process's exit code alone. The ONE call
- * site (`shutdown`, in `run()`) decides `fatal` from where it was called, never duplicating
- * this mapping.
- */
+/** Exit code for a shutdown — FATAL vs a normal stop, distinguishable by exit code alone. */
 export function exitCodeForShutdown(fatal) {
   return fatal ? 1 : 0;
 }
 
-/**
- * `run()`'s two terminal events, mapped to the `{why, fatal}` it hands `shutdown()`. There are
- * exactly two: the relay queue's overflow (`createRelayQueue` only ever calls `onOverflow` on
- * cap breach, and that is always fatal — the events behind it are undelivered, not lost, only
- * because the process is about to die and let the next run's resume replay them) and
- * `superviseBridge`'s own resolution (fatal exactly when `classifyChildExit` decided so).
- * `run()`'s two `shutdown(...)` call sites are built from this one function instead of each
- * inlining the fatal decision, so the wiring is exercised by a test with nothing to spawn.
- */
+/** `run()`'s two terminal events (relay-queue overflow, always fatal; or superviseBridge's
+ * own resolution), mapped to `{why, fatal}` for `shutdown()`. */
 export function terminalShutdown(event) {
   if ("overflow" in event) return { why: event.overflow, fatal: true };
   return { why: event.supervised.reason, fatal: event.supervised.fatal };
 }
 
-/**
- * The real bridge subcommand child, built from `bridgeCommand()` — the only piece of
- * `run()` that actually spawns the dashboard-talking process. Injectable (`run()`'s
- * `spawnSubcommand`) so tests can replace it with a stand-in that never touches the
- * network; see `danxbot/tests/fixtures/run-bridge.mjs`.
- */
+/** The real bridge subcommand child. Injectable (`run()`'s `spawnSubcommand`) so tests can
+ * replace it with a stand-in that never touches the network. */
 function defaultSpawnSubcommand({ resumeIds, env }) {
   const { command, args } = bridgeCommand({ resumeIds });
   return spawn(command, args, {
@@ -1472,10 +1377,8 @@ export async function run(
     /* no log yet */
   }
   const log = (message) => fs.appendFileSync(paths.log, `${new Date().toISOString()} ${message}\n`);
-  // DX-2862 — whether this session is KNOWN to want plan events decides whether a
-  // failure is put in front of it or only logged. A `plan_connect` says yes
-  // outright; a session start says yes only if this session has been delivered
-  // events before.
+  // DX-2862: whether this session is known to want plan events decides whether a failure
+  // is put in front of it or only logged.
   const relevant = intent === CONNECT_INTENT || readCursor(paths.cursor).length > 0;
   const parentPid = Number(env.CLAUDE_PID);
   let child = null;
@@ -1512,9 +1415,8 @@ export async function run(
     if (stopping) return;
     stopping = true;
     log(`exiting: ${why}`);
-    // DX-2894: clear the self-rescheduling start-key timer explicitly — process.exit() below
-    // ends the process either way, but this keeps "shutdown stops every timer" true as an
-    // invariant of the function itself, not an accident of how Node tears down on exit.
+    // DX-2894: clear the self-rescheduling start-key timer so "shutdown stops every timer" is
+    // an invariant of the function, not an accident of how Node tears down on exit.
     if (startKeyTimer) clearTimeout(startKeyTimer);
     if (child) killTree(child.pid);
     if (readJsonFile(paths.pid)?.pid === process.pid) fs.rmSync(paths.pid, { force: true });
@@ -1522,15 +1424,8 @@ export async function run(
   };
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, () => shutdown(`received ${signal}`));
 
-  // DX-2953 — this run process's own identity. `start()` is the ONLY sanctioned
-  // spawner (:741-ish, "carries a minted instanceId into the run process's own
-  // env as DANX_BRIDGE_INSTANCE_ID") and always sets this var, so a missing one
-  // means a real bug in THIS plugin, not a session condition — refuse loudly
-  // rather than silently minting a fresh randomUUID() here. A phantom identity
-  // would poison `writingInstanceId`, which the watchdog's whole restart-match
-  // design depends on being genuine (a stop record it can never match against
-  // `.started.json`'s `lastStartedInstance` would restart a `not_connected`
-  // session every 60s forever — see the module docblock's drift section).
+  // DX-2953: `start()` always sets DANX_BRIDGE_INSTANCE_ID, so a missing one is a plugin bug,
+  // not a session condition — refuse loudly rather than minting a fresh id here.
   const declaredInstanceId = typeof env.DANX_BRIDGE_INSTANCE_ID === "string" ? env.DANX_BRIDGE_INSTANCE_ID.trim() : "";
   if (declaredInstanceId === "") {
     await tellSession(
@@ -1542,16 +1437,9 @@ export async function run(
   }
   const instanceId = declaredInstanceId;
 
-  /** DX-2953 — every "run fails a startup check before it is ready" fatal path
-   * (CLAUDE_PID missing, unsupported platform, unreadable start key) writes a
-   * bridge_failed record naming its instance BEFORE it exits — the ONLY way
-   * the watchdog can ever learn this instance never got anywhere, and so
-   * apply its one-restart-then-stop crash-loop guard instead of restarting
-   * every 60s forever. Deliberately NOT persisted via the onStopped path
-   * below (that is for records the MCP CHILD reports; these are the RUN
-   * process's own pre-mint refusals) and deliberately never touches
-   * `.connected.json` (see CONNECTED_WRITE_SKIP_REASONS — a pre-mint
-   * bridge_failed never proves the session is bound to a plan). */
+  /** DX-2953: every pre-ready fatal startup path writes a bridge_failed record naming its
+   * instance before exiting — the only way the watchdog learns this instance never got
+   * anywhere and applies its crash-loop guard instead of restarting every 60s forever. */
   const persistBridgeFailed = (detail, fix) => {
     try {
       persistStopRecord(paths.stopped, { reason: "bridge_failed", detail, fix: fix ?? "", paths: [], instanceId: "", degraded: false }, instanceId, Date.now());
@@ -1560,15 +1448,10 @@ export async function run(
     }
   };
 
-  // DX-2894 — the bridge's own check of its Claude process is the SOLE liveness
-  // authority (SessionEnd only makes shutdown faster; nothing depends on it firing,
-  // and it does not run on a crash or kill). CLAUDE_PID is an observed, undocumented
-  // dependency (not on https://code.claude.com/docs/en/hooks) — a missing or invalid
-  // value is a loud refusal to start, never a silent "rely on SessionEnd" fallback.
-  //
-  // Every check below runs BEFORE the first heartbeat write (`beat()`) or any other state
-  // that claims this bridge for the session — a doomed bridge that is about to refuse and
-  // exit must never touch `paths.pid` first.
+  // DX-2894: the bridge's own check of its Claude process is the SOLE liveness authority
+  // (SessionEnd only makes shutdown faster). CLAUDE_PID is undocumented — a missing/invalid
+  // value is a loud refusal to start. Every check below runs BEFORE any state that claims
+  // this bridge for the session.
   if (!Number.isSafeInteger(parentPid) || parentPid <= 0) {
     persistBridgeFailed("CLAUDE_PID is missing or not a valid process id");
     await tellSession(
@@ -1585,21 +1468,14 @@ export async function run(
     shutdown(reason, { fatal: true });
     return;
   }
-  // DX-2894: a parent already dead at startup takes the same normal "exited" stop the
-  // periodic isAlive check takes below — never the "could not read start time" fatal
-  // refusal, which is reserved for a LIVE pid whose start time genuinely could not be read.
+  // DX-2894: a parent already dead at startup takes the normal "exited" stop, never the
+  // "could not read start time" fatal refusal (reserved for a LIVE unreadable pid).
   if (!alive(parentPid)) {
     shutdown(`Claude Code process ${parentPid} exited`);
     return;
   }
-  // Record the parent's start time now, so a LATER pid reuse (an unrelated process
-  // that lands on this same pid after the real Claude process exits) is detectable —
-  // a bare `kill(pid, 0)` cannot tell the two apart. Unreadable at startup is refused
-  // loudly, never a silent skip of the guard. Async + timeout-bounded like every other
-  // start-key read (see `readProcessStartKey`).
-  //
-  // DX-2894: track the real underlying error so the fatal session notice below can name it
-  // — the session sees only this notice, never the log file.
+  // Record the parent's start time so a later pid reuse is detectable — a bare kill(pid, 0)
+  // can't tell the two apart. Track the real error so the fatal notice below can name it.
   let lastStartKeyError = null;
   const parentStartKey = await readStartKey(parentPid, {
     platform,
@@ -1610,11 +1486,8 @@ export async function run(
     },
   });
   if (parentStartKey === null) {
-    // DX-2894: the parent can die in the window between the `alive(parentPid)` check above and
-    // this read returning — a dead parent makes every OS start-time query fail the same way an
-    // unreadable-but-live one does, so an unqualified null here would misreport an ordinary
-    // "the session ended while we were starting up" as the fatal "could not verify" refusal.
-    // Re-check liveness before deciding which of the two this is.
+    // DX-2894: the parent can die between the alive() check above and this read returning —
+    // re-check liveness so an ordinary "session ended" isn't misreported as a fatal refusal.
     if (!alive(parentPid)) {
       shutdown(`Claude Code process ${parentPid} exited`);
       return;
@@ -1631,9 +1504,7 @@ export async function run(
     return;
   }
 
-  // DX-2953 — `instanceId` is resolved once, loudly, near the top of this
-  // function now (see the DANX_BRIDGE_INSTANCE_ID refusal above) — no second
-  // resolution here.
+  // DX-2953: `instanceId` was resolved once, loudly, near the top of this function.
   const beat = () => {
     try {
       heartbeatTick({ paths, selfPid: process.pid, sessionId, shutdown, instanceId });
@@ -1651,16 +1522,11 @@ export async function run(
   }, parentCheckMs);
 
   // The heavier pid-reuse verification (every startKeyCheckMs, default 60s) — see
-  // `verifyStartKeyTick` for the full decision table. `unreadableCount` is this closure's
-  // own running tally across ticks; a successful read resets it to zero.
+  // `verifyStartKeyTick` for the full decision table.
   //
-  // DX-2894: a self-rescheduling `setTimeout`, never a plain `setInterval`, keeps checks
-  // strictly non-overlapping — the NEXT check is armed only once the current one (and any
-  // `await tellSession` on a fatal verdict) has fully settled (`finally`, so a
-  // thrown/rejected tick still reschedules rather than silently going quiet). A plain
-  // `setInterval` would re-fire regardless of whether the previous tick's async OS read had
-  // settled, letting two reads overlap and mutate the same `unreadableCount` closure
-  // variable concurrently.
+  // DX-2894: a self-rescheduling `setTimeout`, never `setInterval`, keeps checks strictly
+  // non-overlapping — a plain interval could let two async OS reads race the same
+  // `unreadableCount` closure variable.
   let unreadableCount = 0;
   const runStartKeyCheck = async () => {
     const { action, unreadableCount: nextCount } = await verifyStartKeyTick(parentPid, parentStartKey, {
@@ -1693,17 +1559,11 @@ export async function run(
     startKeyTimer = setTimeout(() => {
       runStartKeyCheck()
         .catch(async (err) => {
-          // DX-2894: a bug in the tick itself (never a start-key READ failure, which
-          // `verifyStartKeyTick` already turns into "unverifiable" rather than throwing) must
-          // end the bridge the same way every other fatal liveness path does — reported to
-          // the session, not just logged. The shutdown must still happen even if telling the
-          // session itself fails, so that failure is swallowed here rather than left to skip
-          // the shutdown below.
+          // DX-2894: a bug in the tick itself (never an ordinary start-key read failure) must
+          // still end the bridge and reach the session; swallow a tellSession failure so it
+          // never skips the shutdown below.
           const reason = `start-key verification failed unexpectedly: ${describeProcessError(err)}`;
           await tellSession(reason, "restart the session so the plugin can observe CLAUDE_PID again").catch((tellErr) => {
-            // DX-2894: this failure must never be silent — the session was never told, and the
-            // log is the only remaining record. Guard the logging itself: it is best-effort
-            // here, and must not stop the fatal shutdown below from running.
             try {
               log(`could NOT tell the session about the start-key verification failure: ${tellErr?.message ?? tellErr}`);
             } catch {
@@ -1731,13 +1591,8 @@ export async function run(
     },
   });
 
-  // DX-2953 — `.connected.json` is this run process's OWN marker (see
-  // `sessionPaths`). Fenced on `.pid.json`'s `instanceId` still equalling
-  // this process's own, reusing the same yield rule `heartbeatTick` already
-  // applies: `.pid.json`'s `instanceId` is set only by `start()` under the
-  // lock and merely preserved by the heartbeat, so a superseded run process
-  // (one `start()` has already replaced) can never clobber a fresher one's
-  // marker with this check in place — free of ABA for the same reason.
+  // DX-2953: `.connected.json` is this run process's own marker, fenced on `.pid.json`'s
+  // instanceId still matching this process's — a superseded run can never clobber a fresher one.
   const writeConnected = (connected) => {
     try {
       const result = writeConnectedIfCurrent(paths, { connected, instanceId, now: Date.now() });
@@ -1746,10 +1601,8 @@ export async function run(
       log(`could not write the connected marker: ${err.message}`);
     }
   };
-  /** DX-2953 — a bridge reaching ready, or returning to streaming from degraded
-   * mode (see the `onEvent` wiring below), deletes every stop record for its
-   * session, its own included — otherwise its own now-resolved degraded
-   * record would linger as "applicable" for a later, unrelated hard kill. */
+  /** DX-2953: a bridge reaching ready, or recovering from degraded, deletes its own stop
+   * record — otherwise a resolved degraded record would linger as "applicable" later. */
   const clearStopRecord = () => {
     try {
       fs.rmSync(paths.stopped, { force: true });
@@ -1770,22 +1623,15 @@ export async function run(
     log,
     sleep,
     onReady: (record) => {
-      // DX-3059 — `describeReadyRecord` tells a degraded ready record (the
-      // bridge cannot see what it should) apart from a genuinely empty plan
-      // (benign) and a populated one; see its own doc comment for why the
-      // server's coarse `degraded` flag alone can't make that call.
+      // DX-3059: describeReadyRecord tells degraded/empty/populated apart — see its own doc comment.
       log(describeReadyRecord(record));
-      // DX-2953 — reaching ready proves this session is bound to a plan
-      // (connected:true) and retires whatever stop record was sitting here.
+      // DX-2953: reaching ready proves the session is bound to a plan; retire any stop record.
       clearStopRecord();
       writeConnected(true);
       sendVerdict({ verdict: "ready" });
     },
-    // DX-3028 (AC3) — persisted the MOMENT the child reports it, before this
-    // process knows whether the child will stay alive (degraded) or exit —
-    // DX-2953's watchdog reads this file, its `reasons` and its
-    // `instanceId`, so it must exist as soon as the child says so, not only
-    // once this run process itself terminates.
+    // DX-3028: persisted the moment the child reports it (not only once this process
+    // terminates), since DX-2953's watchdog reads this file as soon as the child says so.
     onStopped: (record) => {
       log(`bridge subcommand reported ${record.reason}${record.degraded ? " (degraded — staying alive)" : ""}: ${record.detail}`);
       try {
@@ -1793,20 +1639,13 @@ export async function run(
       } catch (err) {
         log(`could not persist the stop record: ${err.message}`);
       }
-      // DX-2953 — cross-repo instance-id drift detection: `record.instanceId`
-      // is the MCP CHILD's own (bridge.ts's `resolveInstanceId`), which
-      // silently mints a fresh randomUUID() on its own when its env var has
-      // drifted — see the module docblock's drift section. The watchdog
-      // never trusts this field (it matches on `writingInstanceId` alone);
-      // this just makes a real drift visible instead of silently harmless.
+      // DX-2953: instance-id drift detection — the watchdog never trusts this field (it
+      // matches on writingInstanceId alone); this just makes real drift visible in the log.
       if (record.instanceId && record.instanceId !== instanceId) {
         log(`instance id drift: the stop record's own instanceId (${record.instanceId}) differs from this run process's writingInstanceId (${instanceId})`);
       }
-      // DX-2953 — the connected marker: see CONNECTED_WRITE_SKIP_REASONS for
-      // which reasons never touch it. `not_connected` writes connected:false;
-      // every other non-skipped reason proves the session IS bound, so it
-      // writes connected:true (this includes a degraded reason like
-      // board_unreadable — see the module docblock's "what connected means").
+      // DX-2953: not_connected writes connected:false; every other non-skipped reason
+      // (CONNECTED_WRITE_SKIP_REASONS) proves the session IS bound, so it writes connected:true.
       if (!CONNECTED_WRITE_SKIP_REASONS.has(record.reason)) {
         writeConnected(record.reason !== "not_connected");
       }
@@ -1862,11 +1701,7 @@ async function readHookInput() {
   try {
     const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     const id = typeof parsed.session_id === "string" && parsed.session_id !== "" ? parsed.session_id : fallback.sessionId;
-    // DX-2953 — `transcript_path` rides the same stdin JSON every hook event
-    // already carries (confirmed against the documented UserPromptSubmit
-    // input shape — see the module docblock's RELAY_MARKER comment); recorded
-    // into `.started.json`'s `startInputs` so a watchdog restart starts the
-    // bridge with exactly the same inputs the triggering hook received.
+    // DX-2953: recorded into .started.json's startInputs so a watchdog restart reuses it.
     const transcriptPath = typeof parsed.transcript_path === "string" && parsed.transcript_path !== "" ? parsed.transcript_path : null;
     return { sessionId: id, intent: intentFromHookEvent(parsed.hook_event_name), transcriptPath };
   } catch {
@@ -1916,11 +1751,8 @@ export async function watchdogTick({
     return { ticked: false, restarted: false, exitCode: 0 };
   }
   writeFileAtomic(paths.watchdog, JSON.stringify({ lastTickAt: new Date(nowMs).toISOString() }));
-  // DX-2953: stamp the throttle file's own mtime to the INJECTED now, not
-  // whatever the real OS clock was at write time — the throttle compare
-  // below is against this same injected `now()`, and every other timing
-  // decision in this module (heartbeat staleness, restartGeneration) is
-  // fully deterministic under an injected clock; the throttle must be too.
+  // DX-2953: stamp mtimes to the injected `now`, not the real OS clock, so every timing
+  // decision in this module stays deterministic under an injected clock.
   const touch = (file) => {
     try {
       fs.utimesSync(file, new Date(nowMs), new Date(nowMs));

@@ -16,8 +16,7 @@ compaction, and nothing warns before one, so run this deliberately.
    the SHA on its card.
 4. **Live requirements onto the card.** Anything the operator said only in chat or a
    screenshot goes on the card, in their priority order, marked done (and how you know),
-   partly done (finished / started / untouched) or not started. MCP down → curl the
-   dashboard route with a scoped token minted by the dashboard MCP's token tool.
+   partly done (finished / started / untouched) or not started.
 5. **Re-verify before saying ready.** Re-run `git status`, re-read every card you wrote,
    re-check which sub-agents are still running.
 6. **Say what compaction affects**, in the handoff: context is replaced by a summary; the
