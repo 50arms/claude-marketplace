@@ -15,7 +15,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 |---|---|---|
 | Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | danxbot claims | `pickup` with `manual:true` (below) |
-| Gates | danxbot dispatches them | runs a tier worker per gate, records each verdict |
+| Gates | the profile instruction carries them | one sub-agent per gate ("Gates" below) |
 | Merge + end | the `work` profile instruction | commit, push to main; `complete` + retro; report |
 
 Dispatched-only mechanics (`danxbot_complete`, halt, `agent-finalize.sh`, the pre-synced
@@ -26,12 +26,30 @@ worktree, DB resets) live only in danxbot's `work` profile.
 1. Read the card with its description, AC, comments and dependencies; read the parent if
    set; on a plan, read its architecture and note overlapping siblings.
 2. Claim it before any work (below).
-3. Build test-first, to the rules under "Building" below.
+3. Pass its PRE gates ("Gates" below), then build test-first, to the rules under
+   "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
-5. Gates: record each gate's verdict with a real finding; a gate that doesn't apply is
-   removed, never rubber-stamped.
+5. Pass its POST gates.
 6. Transition `complete` with a summary, then write the retro (last — it 409s until
    terminal). A phase card leaves `Notes from Phase N` on the next phase card.
+
+## Gates
+
+A quality gate is a review a card must pass: PRE gates (`plan-*`) check the plan before the
+build, POST gates (`code-*`) check the finished diff. The card's `quality_gates` lists the
+ones it carries, and each board keeps its own text for what a gate checks. For each gate not
+yet `pass`, dispatch one sub-agent — `danxbot:worker-opus-high` for an architecture gate,
+`danxbot:worker-sonnet-high` for the rest — briefed to:
+
+1. Fetch the board's gate text through `danxbot_api`:
+   `GET /api/quality-gates/<gate>/instruction?board=<the card's board_id>`.
+2. Review the card against that text alone.
+3. Record the verdict through `danxbot_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`
+   with `{status: "pass"|"fail", message: "<the real finding>"}`.
+
+Fix a `fail`, then review again. A gate that doesn't apply to the card is removed
+(`POST` the same card route with `{action: "remove"}`) with a card comment saying why —
+never passed to get it out of the way.
 
 ## Needing a human
 
