@@ -22,8 +22,10 @@
    worktree, branch and unpushed SHA is on a card, plan record or comment,
    never only in chat, TaskCreate, scratchpad, memory, a plan file, repo `.md`,
    HTML page, `.junk/` or a sub-agent's context, and never "after X". A filed
-   card never readied is unfinished. Take the highest-priority unblocked card,
-   not the newest.
+   card never readied is unfinished. Every card you file (Task cards for the
+   operator included) gets a priority set against the plan's open cards, by
+   what it blocks; re-rank when that changes. Take the highest-priority
+   unblocked card, not the newest.
 6. **Worktrees** you create go under the repo's git-ignored
    `.claude/worktrees/<name>`, never a sibling checkout. Remove each once
    `git status --porcelain` and `git cherry origin/main <branch>` are empty,
