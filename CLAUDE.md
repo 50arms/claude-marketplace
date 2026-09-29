@@ -8,18 +8,30 @@ Source of truth for the `newms-plugins` marketplace. Its plugins reach every Cla
 registry row `mantra.session_start` from it, and every agent receives that row's effective
 text, never a copy:
 
-- the main session: `danxbot/scripts/mantra.sh` at `SessionStart` (matcher
-  `startup|resume|compact`) once a plan is connected, and `plan_connect`'s response;
-- every sub-agent, any type or plugin (DX-3384 final sweep widened this from `danxbot:worker-*`
-  only): the same script at `SubagentStart` (additionalContext, matcher `.*`);
+- the main session: `danxbot/scripts/event-hook.sh` at `SessionStart` (matcher
+  `startup|resume|compact`), ONLY once a plan is connected — DX-3421 (PLN-11 R-12/R-22): an
+  unconnected session gets no danxbot text at all, at session start, resume or compaction,
+  not even a one-line nudge; the trigger to connect a plan is `danxbot:plan-workflow`'s own
+  skill description, not a hook line. Connected, the same script asks danxbot for the
+  EFFECTIVE text of one of four events (`session_start` | `session_resume` |
+  `after_compaction` | `sub_agent_start`, `GET /api/reminders/event/:event`) — each a
+  registry row composed from `{{reminder:mantra.session_start}}` plus a short event-specific
+  line, never a hand-typed duplicate of the mantra body;
+- every sub-agent, any type or plugin, of a plan-CONNECTED session (DX-3384 final sweep
+  widened this from `danxbot:worker-*` only; DX-3421 added the "connected" gate — a sub-agent
+  of an unconnected session gets nothing either): the same script at `SubagentStart`
+  (additionalContext, matcher `.*`), event `sub_agent_start`;
 - every dispatched worker: its profile's `{{reminder:mantra.session_start}}`, resolved by
   danxbot per dispatch.
 
-The file is the fallback when the registry can't be reached. **Nothing else restates a
-mantra rule** — no `SKILL.md`, agent body, hook text, `CLAUDE.md`, rule file or profile. A
-skill may point at the mantra or add procedure the mantra doesn't state. To change a rule,
-edit `mantra.md` and publish; phrase each rule so it holds for every one of those readers.
-No prose states how many sub-agents to run (R-23).
+`mantra.md` is the git source `resolveReminderSeedItems` derives the `mantra.session_start`
+registry row's default from at dashboard-seed time — it is NOT a runtime fallback any more
+(DX-3421: a registry fetch failure prints one line naming the failure and telling the agent
+to tell the operator; the hook never re-reads this file). **Nothing else restates a mantra
+rule** — no `SKILL.md`, agent body, hook text, `CLAUDE.md`, rule file or profile. A skill may
+point at the mantra or add procedure the mantra doesn't state. To change a rule, edit
+`mantra.md` and publish; phrase each rule so it holds for every one of those readers. No
+prose states how many sub-agents to run (R-23).
 
 ## Hook scripts must never depend on `jq` — it is not installed
 

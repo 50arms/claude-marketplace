@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Is this session connected to a danxbot plan? The ONE answer (PLN-11 R-10: the
-// plugin stays quiet until a plan is connected), shared by mantra.sh,
-// plan-workflow-autoload.sh, background-work-report.mjs and the plan event
-// bridge's SessionStart start. A successful `plan_connect` makes the
+// plugin stays quiet until a plan is connected), shared by event-hook.sh,
+// background-work-report.mjs and the plan event bridge's SessionStart start.
+// A successful `plan_connect` makes the
 // danx-dashboard MCP server write `~/.config/danxbot/plan-sessions/<session>.json`
 // (its `session-connection.ts` owns the schema); this only checks the file
 // exists. A local stat, never a network call.
@@ -47,7 +47,7 @@ function readStdinJson() {
 }
 
 /**
- * CLI mode for bash consumers (`mantra.sh`, `plan-workflow-autoload.sh`):
+ * CLI mode for bash consumers (`event-hook.sh`):
  * reads the hook's stdin JSON, falls back to `CLAUDE_CODE_SESSION_ID` when
  * stdin carries no `session_id` (mirrors `plan-event-bridge.mjs`'s
  * `readHookInput` fallback), and prints exactly `1` or `0` — nothing else,

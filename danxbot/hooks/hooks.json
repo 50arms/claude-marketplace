@@ -1,5 +1,5 @@
 {
-  "description": "mantra.sh: plan-workflow nudge, or the registry mantra once plan-connected; the mantra for every sub-agent (any type, any plugin) at SubagentStart. plan-workflow-autoload.sh: plan-workflow body for a connected session. plan-event-bridge.mjs: relays the connected plan's events into the session. background-work-report.mjs: reports running background work to quiet the idle nudge. inject-time.sh: wall clock with UTC offset. compaction-skill-reload.sh: reload truncated skills after compaction.",
+  "description": "event-hook.sh: for a plan-connected session, the registry's effective text for SessionStart (startup/resume/compaction) and for every sub-agent (any type, any plugin) at SubagentStart; silent when not connected (DX-3421). plan-event-bridge.mjs: relays the connected plan's events into the session. background-work-report.mjs: reports running background work to quiet the idle nudge. inject-time.sh: wall clock with UTC offset.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -26,11 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-workflow-autoload.sh SessionStart"
-          },
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/mantra.sh SessionStart"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/event-hook.sh SessionStart"
           }
         ]
       },
@@ -44,15 +40,6 @@
             "asyncRewake": true
           }
         ]
-      },
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/compaction-skill-reload.sh SessionStart"
-          }
-        ]
       }
     ],
     "SubagentStart": [
@@ -61,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/mantra.sh SubagentStart"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/event-hook.sh SubagentStart"
           }
         ]
       }
