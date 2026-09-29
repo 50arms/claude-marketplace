@@ -1,5 +1,5 @@
 {
-  "description": "mantra.sh: plan-workflow nudge, or the registry mantra once plan-connected; the mantra for every danxbot:worker-* sub-agent at SubagentStart. plan-workflow-autoload.sh: plan-workflow body for a connected session. plan-event-bridge.mjs: relays the connected plan's events into the session. background-work-report.mjs: reports running background work to quiet the idle nudge. inject-time.sh: wall clock with UTC offset. compaction-skill-reload.sh: reload truncated skills after compaction.",
+  "description": "mantra.sh: plan-workflow nudge, or the registry mantra once plan-connected; the mantra for every sub-agent (any type, any plugin) at SubagentStart. plan-workflow-autoload.sh: plan-workflow body for a connected session. plan-event-bridge.mjs: relays the connected plan's events into the session. background-work-report.mjs: reports running background work to quiet the idle nudge. inject-time.sh: wall clock with UTC offset. compaction-skill-reload.sh: reload truncated skills after compaction.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -57,7 +57,7 @@
     ],
     "SubagentStart": [
       {
-        "matcher": "^danxbot:worker-",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",

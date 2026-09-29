@@ -9,9 +9,9 @@
 // offline. Any registry-fetch failure (including a reported-clean exit with
 // empty stdout — never trusted as a silent success) falls back to printing
 // `danxbot/mantra.md` verbatim, plus exactly one short notice line.
-// SubagentStart (DX-3384, matcher "^danxbot:worker-"): the same text as an
-// `additionalContext` JSON envelope; not connected, mantra.md itself. No-ops
-// on any other event.
+// SubagentStart (DX-3384, matcher ".*" — every sub-agent, any type/plugin):
+// the same text as an `additionalContext` JSON envelope; not connected,
+// mantra.md itself. No-ops on any other event.
 // Run with `npm test` (node --test, no dependencies).
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -154,8 +154,8 @@ describe("mantra.sh", () => {
   });
 });
 
-// DX-3384 (DX-3478 problem 1769) — every danxbot:worker-* sub-agent receives
-// the same registry mantra through SubagentStart's additionalContext.
+// DX-3384 (DX-3478 problem 1769) — every sub-agent, any type or plugin,
+// receives the same registry mantra through SubagentStart's additionalContext.
 describe("mantra.sh SubagentStart", () => {
   function additionalContext(result) {
     assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
@@ -187,7 +187,7 @@ describe("mantra.sh SubagentStart", () => {
     assert.equal(rest.join("\n"), mantraFileText());
   });
 
-  test("hooks.json wires SubagentStart to mantra.sh with a matcher covering every worker tier and nothing else", () => {
+  test("hooks.json wires SubagentStart to mantra.sh with a matcher covering every sub-agent (DX-3384 final sweep: widened from worker-tier-only)", () => {
     const hooks = JSON.parse(readFileSync(path.join(PLUGIN_ROOT, "hooks", "hooks.json"), "utf8")).hooks;
     assert.equal(hooks.SubagentStart.length, 1);
     const [group] = hooks.SubagentStart;
@@ -199,8 +199,12 @@ describe("mantra.sh SubagentStart", () => {
       const scoped = `danxbot:${file.replace(/\.md$/, "")}`;
       assert.ok(matcher.test(scoped), `${scoped} is not matched`);
     }
+    // DX-3384 final sweep: the operator's verdict said "every agent" — rule
+    // 1's own scoping ("Orchestrate (main session)") already covers
+    // sub-agents, so the matcher is no longer restricted to danxbot worker
+    // tiers.
     for (const other of ["general-purpose", "Explore", "other-plugin:worker-x"]) {
-      assert.ok(!matcher.test(other), `${other} must not match`);
+      assert.ok(matcher.test(other), `${other} must match`);
     }
   });
 });

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The mantra, for two events (PLN-11 R-12 / R-22):
 #   SessionStart (matcher "startup|resume|compact") — the main session.
-#   SubagentStart (matcher "^danxbot:worker-") — every worker-tier sub-agent.
-#     DX-3384 / DX-3478 problem 1769: every agent receives the mantra.
+#   SubagentStart (matcher ".*") — every sub-agent, any type or plugin.
+#     DX-3384 / DX-3478 problem 1769: every agent receives the mantra;
+#     final sweep widened the matcher from worker-tier-only to all agents.
 #
 # Plan-connected (lib/plan-connection.mjs, a local stat of the payload's session
 # id — for SubagentStart, the PARENT session's): the EFFECTIVE mantra (override ??

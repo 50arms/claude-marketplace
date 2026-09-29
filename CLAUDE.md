@@ -10,7 +10,8 @@ text, never a copy:
 
 - the main session: `danxbot/scripts/mantra.sh` at `SessionStart` (matcher
   `startup|resume|compact`) once a plan is connected, and `plan_connect`'s response;
-- every `danxbot:worker-*` sub-agent: the same script at `SubagentStart` (additionalContext);
+- every sub-agent, any type or plugin (DX-3384 final sweep widened this from `danxbot:worker-*`
+  only): the same script at `SubagentStart` (additionalContext, matcher `.*`);
 - every dispatched worker: its profile's `{{reminder:mantra.session_start}}`, resolved by
   danxbot per dispatch.
 
