@@ -1,12 +1,12 @@
 # Creating and sizing a card
 
-Load before any `issue_create`, or before choosing a card's type, slices or effort.
+Load before creating a card, or before choosing a card's type, slices or effort.
 
 ## A decomposition drafted before this loaded is void
 
 Picked a type, slice list or effort before reading this? Discard it and re-derive from the
-gates below — they are the input to the decision, never a stamp on a draft. Before any
-Feature/Epic `issue_create`, print the Slice Plan (below) in your message; no plan, no create.
+gates below — they are the input to the decision, never a stamp on a draft. Before creating any
+Feature/Epic, print the Slice Plan (below) in your message; no plan, no create.
 
 ## Types
 
@@ -57,15 +57,15 @@ to need `max` is under-planned: plan more instead of raising the effort.
 
 ## Ordering
 
-The moment you know B needs A first — at creation or later — add
-`issue_dependency({id: B, action:'add', kind:'depends_on', target_id: A})`. `phase_children[]`
+The moment you know B needs A first — at creation or later — add a `depends_on`
+dependency from B to A. `phase_children[]`
 wires no order, and leaving B in Review is not a hold. A card known to need work is readied
 right after filing; Review is triage-only.
 
 ## Quality gates
 
 A card carries its board's default gates for its type; `quality_gates` adds more, each with a
-`note` saying why. Add later with `issue_quality_gate`. Add when the card…
+`note` saying why, at creation or later. Add when the card…
 
 | Gate | Phase | …when the card |
 |---|---|---|

@@ -10,12 +10,12 @@ throughout; this skill is the plan mechanics.
 
 ## Start (every new, resumed or compacted session)
 
-1. Plan link in the prompt → that plan. Else `plan_list`; `session.planId` right → step 3.
-   Else find it in `plans[]`; none → `plan_create({name})`.
+1. Plan link in the prompt → that plan. Else list plans; your session's plan right → step 3.
+   Else find it in the list; none → create one.
 2. The session title must name what you're doing — generic or stale → rename first, then
    `plan_connect({plan_id, title})`. Renamed later → connect again.
-3. Orient from the connect briefing, else `plan_get({fields:["records","architecture","cards"]})`
-   plus one `issue_get({ids})` for In-Progress/open-problem cards and the newest handoff comment.
+3. Orient from the connect briefing, else read the plan's records, architecture and cards,
+   plus one batch read of its In-Progress/open-problem cards and the newest handoff comment.
 4. Follow `plan_connect`'s browser instruction as written.
 
 ## Where things go
@@ -24,20 +24,21 @@ Goal record = outcome measured against; rule record = constraint; caveat record 
 trade-off; architecture section (one per concern) = design; card (on the board it changes) =
 actionable work; AC item = a step finishing an existing card; card comment = progress,
 evidence, status, local state; Task card + problem = operator question; plan note = real
-milestone; `plan_remove_card` = wrong-plan card; `plan_rename` = stale name.
+milestone; remove a wrong-plan card from the plan; rename a stale plan.
 
 ## Scope
 
-Before `plan_add_card`, name the `G-n` it advances — can't → not this plan. A bug found while
-working goes to the plan whose goal it serves, or none. Enabling work joins only while it
+Before adding a card to the plan, name the `G-n` it advances — can't → not this plan. A bug
+found while working goes to the plan whose goal it serves, or none. Enabling work joins only while it
 blocks a goal today. Drift audit at start, after each card lands and in every status report:
 idle goal cards while side work got effort → stop the side work; a goalless cluster → split
 the plan; a card on its 3rd review round still finding high severity → Task card with
 narrow/split options. Report goal by goal. Said "stop if X" → stop when X.
 
 **Your lane only.** Never monitor, investigate or unstick another plan's cards or another
-session unless the operator asks. Their work goes to them as a card on the right plan,
-readied, `depends_on` from your waiting card. Then wait.
+session unless the operator asks. Their work goes to them as a card on the right plan
+(create it with `plan: null`, then `POST /api/plans/:id/cards`), readied, `depends_on` from
+your waiting card. Then wait.
 
 ## Before a plan is ready
 
@@ -48,8 +49,8 @@ restart. Ready when a pass changes nothing.
 
 ## Connection
 
-One writer: the main session. Sub-agent briefs say "no `plan_*` write tool; return findings to
-me" (they may `plan_get`).
+One writer: the main session. Sub-agent briefs say "no plan writes; return findings to me"
+(they may read the plan).
 
 ## Live events
 
@@ -60,30 +61,28 @@ operator input for that card.
 
 - `idle … with work waiting` → start the startable card, or ignore it if your own sub-agent
   already works the held one.
-- `answered "…"` → `issue_get({fields:["problems"]})`, act on the live decision, record the
-  outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
-- `commented on problem` → a follow-up, not an answer: `issue_comment({problem_id, text})`.
+- `answered "…"` → read the card's problems, act on the live decision, record the outcome.
+  Retracted or changed → it overrides; already acted → keep, redo or undo.
+- `commented on problem` → a follow-up, not an answer: reply with a comment on that problem.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
-  `issue_get` for the full text.
+  read it for the full text.
 - `bridge down:` → do the fix it names (usually `plan_connect` again).
 
 ## Records
 
-Write for a stranger: define domain words, cite ids, SHAs, paths and timestamps. Changed
-fact → edit; no longer true → delete.
+Changed fact → edit; no longer true → delete.
 
 ## Card state always true
 
-Delegated pickup → tell the sub-agent its own `CLAUDE_CODE_SESSION_ID` is real (MCP 403 →
-HTTP route with `x-danx-session-id`). A "fresh worktree" brief → `git worktree list` first;
-the card may carry unpushed prior work. Nobody working a card you hold →
-`rollback_pickup({keep_assignment:true})`. Before reporting a card in flight, `issue_get` it
-and confirm In Progress.
+Delegated pickup → tell the sub-agent its own `CLAUDE_CODE_SESSION_ID` is real (`danxbot_api`
+forwards it; a curl fallback sends it as `x-danx-session-id`). A "fresh worktree" brief →
+`git worktree list` first; the card may carry unpushed prior work. Nobody working a card you
+hold → `rollback_pickup` with `keep_assignment:true`. Before reporting a card in flight,
+re-read it and confirm In Progress.
 
-## Notes and hashes
+## Notes
 
-`plan_update_note` link lists replace per kind — resend them all. A stale-hash refusal carries
-the current value: merge into it and retry with its hash.
+A note edit replaces its link list per kind — resend them all.
 
 ## Actionable work
 

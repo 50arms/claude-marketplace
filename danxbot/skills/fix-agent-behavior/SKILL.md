@@ -20,12 +20,12 @@ No code edits, no investigation in the project codebase yet.
 1. **Missing context** (agent didn't know a needed fact) → expand the documentation
    agents reference. Never a rule or skill change.
 2. **No rule exists for this behaviour** → add it briefly to the existing skill, rule,
-   hook, or MCP tool description that owns the subject. Read every related item first so
-   nothing is duplicated.
+   hook, MCP server instructions or route spec text that owns the subject. Read every
+   related item first so nothing is duplicated.
 3. **The rule exists and was still broken** → sharpen it with one concise, generalised
    example. Never a bullet list of cases.
 4. **Text can't fix it** → say so and escalate to the operator with a proposed system
-   change (MCP tool response reminder, the janitor, or code) instead of more prose.
+   change (a route reminder, the janitor, or code) instead of more prose.
 
 **Never create a new skill.** A persisting bad behaviour is cheaper than another skill
 nobody needed — that habit is what bloated this plugin set before.
@@ -33,8 +33,9 @@ nobody needed — that habit is what bloated this plugin set before.
 ## 3. Locate the target and edit it
 
 Fix the surface that actually produced the behaviour — a loaded skill body, an injected
-description/frontmatter, a hook, or an MCP tool's response text. If the failure came from
-a description/frontmatter, fix that, not just the body.
+description/frontmatter, a hook, the MCP server instructions, or a route's spec or
+reminder text. If the failure came from a description/frontmatter, fix that, not just the
+body.
 
 Resolve the plugin source checkout (never `~/.claude/plugins/cache/`, read-only) by
 remote, not by guessing a path: check `~/.claude/plugins/known_marketplaces.json` first,

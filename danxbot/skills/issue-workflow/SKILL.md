@@ -5,8 +5,8 @@ description: 'The one workflow for working a card, and every dev rule that appli
 
 # Issue Workflow
 
-Dashboard Postgres is the only source of card truth; the `mcp__danx-dashboard__issue_*`
-tools (resolve your real prefix once) are the whole surface — never file operations.
+Dashboard Postgres is the only source of card truth; `danxbot_api` is the whole surface
+(routes: `danxbot_api_list`; contracts: `danxbot_api_spec`) — never file operations.
 Creating or slicing a card: load `references/card-creation-and-reference.md` first.
 
 ## Two callers
@@ -15,36 +15,35 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 |---|---|---|
 | Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | danxbot claims | `pickup` with `manual:true` (below) |
-| Gates | danxbot dispatches them | runs a tier worker per gate, records `issue_quality_gate_verdict` |
-| Merge + end | the `work` profile instruction | commit, push to main; `complete` + `issue_retro`; report |
+| Gates | danxbot dispatches them | runs a tier worker per gate, records each verdict |
+| Merge + end | the `work` profile instruction | commit, push to main; `complete` + retro; report |
 
 Dispatched-only mechanics (`danxbot_complete`, halt, `agent-finalize.sh`, the pre-synced
 worktree, DB resets) live only in danxbot's `work` profile.
 
 ## Flow
 
-1. `issue_get({id, fields:["description","ac","comments","dependencies"]})`; read the parent
-   if set; on a plan, read its architecture and note overlapping siblings.
+1. Read the card with its description, AC, comments and dependencies; read the parent if
+   set; on a plan, read its architecture and note overlapping siblings.
 2. Claim it before any work (below).
 3. Build test-first, to the rules under "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
-5. Gates: record `issue_quality_gate_verdict({id, gate, status, message})` with a real
-   finding per gate; a gate that doesn't apply is removed (`issue_quality_gate` remove),
-   never rubber-stamped.
-6. `issue_transition({action:'complete', summary})`, then `issue_retro` (last — it 409s
-   until terminal). A phase card leaves `Notes from Phase N` on the next phase card.
+5. Gates: record each gate's verdict with a real finding; a gate that doesn't apply is
+   removed, never rubber-stamped.
+6. Transition `complete` with a summary, then write the retro (last — it 409s until
+   terminal). A phase card leaves `Notes from Phase N` on the next phase card.
 
 ## Needing a human
 
-Genuinely need a human → open a problem with `issue_problem`, whose description holds the
-writing standard and the question-versus-action test; never `AskUserQuestion` or a
-plan-mode pause. A card needs a human exactly while it has an open problem; removing its
+Genuinely need a human → open a problem on the card: an `action` when only a person can do
+it (access, credentials, hardware, authority), else a `question`. Never `AskUserQuestion` or
+a plan-mode pause. A card needs a human exactly while it has an open problem; removing its
 last open problem closes that need.
 
 ## Claiming
 
 A `ToDo` card is an open dispatch request — working it unclaimed races a worker onto it.
-`issue_transition({id, action:'pickup', manual:true, assigned_agent:'<your identity>'})`;
+Transition `pickup` with `manual:true` and `assigned_agent:'<your identity>'`;
 `manual:true` stops anything auto-transitioning it. Read `assigned_agent` back — anything
 but you (incl. `null`) is a failed claim: retry once, then stop. The hold clears only by an
 explicit transition from your session (`complete`/`cancel`/`block`/`rollback_pickup`). A
@@ -59,25 +58,22 @@ card sits, and automation may unblock it without a human. Ending a dispatch `fai
 not block — if the cause is card-specific (e.g. a branch that can't be reconciled), block
 first, then end `failed`.
 
-- Waiting on another card to finish first → `issue_dependency({kind:'depends_on'})`, not
-  `block`.
-- Two cards that can't run together → `issue_dependency({kind:'conflict_on'})`.
+- Waiting on another card to finish first → a `depends_on` dependency, not `block`.
+- Two cards that can't run together → a `conflict_on` dependency.
 - A human is 100% required (a decision, or an action only a person can take) → open a
-  problem with solutions (`issue_problem`) — that holds the card for human review before it
-  can be dispatched or completed. `block` alone does not.
-- Otherwise, the actual transition: `issue_transition({action:'block', reason})`.
+  problem with solutions — that holds the card for human review before it can be
+  dispatched or completed. `block` alone does not.
+- Otherwise, transition `block` with a reason.
 
 ## Mechanics
 
-- **AC/checklists** — `issue_get` returns each item's id under `checklists[].items[]`; flip
-  with `issue_checklist({action:'update_item', checklist_id, item_id, status:'passing'})`.
-- **Comments** — `issue_comment({id, action:'add', text})`, narrative only; a durable
-  decision goes on a card, never a comment alone.
-- **Dependencies** — `issue_dependency({kind:'depends_on'|'conflict_on', target_id})` for a
-  card already known, never a discovery scan.
-- Never write a `status:` literal; `issue_transition` derives it.
-- **MCP down, or an operation with no MCP tool** → curl the dashboard route with a scoped
-  token minted by the dashboard MCP's token tool.
+- **AC/checklists** — each item's id is under the card's `checklists[].items[]`; set it
+  `passing` on its checklist item.
+- **Comments** — narrative only; a durable decision goes on a card, never a comment alone.
+- **Dependencies** — only for a card already known, never a discovery scan.
+- Never write a `status:` literal; transitions derive it.
+- **MCP down** → curl the same route with the credential the dashboard MCP's config names,
+  plus `x-danx-session-id`.
 - **Issue-ref comments** — `// CARD-ID: <reason>` on any non-obvious decision a card forced.
   Before editing a file, grep its anchored refs
   (`grep -rnE '(//|#|--|<!--|/\*|\*)[[:space:]]*[A-Z]+-[0-9]+' <files>`) and load each card.
