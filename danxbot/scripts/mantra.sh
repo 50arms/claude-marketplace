@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# The mantra — SessionStart, matcher "startup|resume|compact" only (PLN-11 R-12).
+# The mantra, for two events (PLN-11 R-12 / R-22):
+#   SessionStart (matcher "startup|resume|compact") — the main session.
+#   SubagentStart (matcher "^danxbot:worker-") — every worker-tier sub-agent.
+#     DX-3384 / DX-3478 problem 1769: every agent receives the mantra.
 #
-# Not plan-connected (lib/plan-connection.mjs, a local stat): print only the short
-# plan-workflow nudge (R-10); nothing reaches the network.
-# Connected: print the EFFECTIVE mantra (override ?? default) of the reminder
-# registry row `mantra.session_start`, fetched with the pinned danx-dashboard-mcp
-# `mantra` subcommand, so a dashboard edit needs no plugin publish. The row's
-# default is derived from `danxbot/mantra.md` at seed time; that file is also the
-# offline fallback printed here, with a notice line, when the registry can't be
-# reached. `plan_connect`'s response carries the same registry text.
+# Plan-connected (lib/plan-connection.mjs, a local stat of the payload's session
+# id — for SubagentStart, the PARENT session's): the EFFECTIVE mantra (override ??
+# default) of the reminder registry row `mantra.session_start`, fetched with the
+# pinned danx-dashboard-mcp `mantra` subcommand, so a dashboard edit needs no
+# plugin publish. The row's default is derived from `danxbot/mantra.md` at seed
+# time; that file is the fallback, with a notice line, when the registry can't
+# be reached.
+# Not connected: SessionStart prints only the plan-workflow nudge (R-10);
+# SubagentStart prints `mantra.md` itself — with no connection there is no
+# registry to consult, and that file IS the registry row's default source.
 #
-# This is the only hook that prints mantra text. Plain stdout: SessionStart stdout
-# reaches the model on exit 0. Stdin (the hook JSON) is read once into $PAYLOAD.
+# This is the only hook that prints mantra text; `plan_connect`'s response and
+# danxbot's dispatch profiles resolve the same registry row. SessionStart stdout
+# reaches the model as plain text; SubagentStart honours only
+# `hookSpecificOutput.additionalContext` (code.claude.com/docs/en/hooks,
+# "SubagentStart decision control"), so that event emits JSON, built with node,
+# never jq. Stdin (the hook JSON) is read once into $PAYLOAD.
 
 set -euo pipefail
 
@@ -23,11 +32,38 @@ MANTRA_FETCH_TIMEOUT_SECS="8"
 
 NUDGE="If this session will line up or run work, load \`danxbot:plan-workflow\` and connect a plan. Anything that sounds like work being lined up (multi-step work, \"let's plan...\", a list of things to do) and no plan is connected yet: ASK the operator whether to load plan-workflow and start planning — don't guess. Nothing else from the danxbot plugin (the mantra, plan mechanics, the event bridge) applies until a plan is connected."
 
-if [ "$EVENT" != "SessionStart" ]; then
-  exit 0
-fi
+case "$EVENT" in
+  SessionStart|SubagentStart) ;;
+  *) exit 0 ;;
+esac
 
 PAYLOAD="$(cat)"
+
+# One block of text for this event: plain stdout for SessionStart, the
+# additionalContext JSON envelope for SubagentStart.
+emit() {
+  if [ "$EVENT" = "SubagentStart" ]; then
+    printf '%s' "$1" | node -e '
+      let text = "";
+      process.stdin.on("data", (chunk) => { text += chunk; });
+      process.stdin.on("end", () => {
+        process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "SubagentStart", additionalContext: text } }));
+      });
+    '
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+# The committed mantra.md, or a fail-loud line when even that is missing: a
+# corrupt plugin install is worth surfacing, never a silent skip.
+mantra_file_text() {
+  if [ ! -f "$MANTRA_FILE" ]; then
+    printf '%s' "⚠ MANTRA LOAD FAILED: expected $MANTRA_FILE, not found. The plugin install may be corrupt."
+    return
+  fi
+  cat "$MANTRA_FILE"
+}
 
 CONNECTED="0"
 if [ -f "$CONNECTION_LIB" ]; then
@@ -35,24 +71,13 @@ if [ -f "$CONNECTION_LIB" ]; then
 fi
 
 if [ "$CONNECTED" != "1" ]; then
-  printf '%s\n' "$NUDGE"
+  if [ "$EVENT" = "SubagentStart" ]; then
+    emit "$(mantra_file_text)"
+  else
+    emit "$NUDGE"
+  fi
   exit 0
 fi
-
-# Prints the offline fallback: the git-committed mantra.md (or the
-# fail-loud "install may be corrupt" line if even that is missing) plus one
-# short notice line marking it as a fallback, so it is never mistaken for
-# live registry text.
-print_fallback() {
-  if [ ! -f "$MANTRA_FILE" ]; then
-    # Fail loud rather than silently skipping — a missing file here means the
-    # plugin install is corrupt, which is itself worth surfacing.
-    printf '%s\n' "⚠ MANTRA LOAD FAILED: expected $MANTRA_FILE, not found. The plugin install may be corrupt."
-    return
-  fi
-  printf '%s\n' "⚠ Could not reach the reminder registry — printing the committed mantra.md fallback (may be stale)."
-  cat "$MANTRA_FILE"
-}
 
 # DX-3366: the `mantra` subcommand reads CLAUDE_CODE_SESSION_ID from ITS OWN
 # env (never stdin) to resolve `~/.config/danxbot/plan-sessions/<session>.json`
@@ -106,8 +131,10 @@ fi
 # reported-clean exit is treated as a failure too, never trusted as a
 # silent "success" (AC 35447).
 if [ "$FETCH_OK" = "1" ] && [ -n "$MANTRA_TEXT" ]; then
-  printf '%s\n' "$MANTRA_TEXT"
+  emit "$MANTRA_TEXT"
   exit 0
 fi
 
-print_fallback
+# The fallback carries a notice line so it is never mistaken for live registry text.
+emit "⚠ Could not reach the reminder registry — printing the committed mantra.md fallback (may be stale).
+$(mantra_file_text)"

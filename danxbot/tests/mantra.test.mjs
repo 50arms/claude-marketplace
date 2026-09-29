@@ -8,15 +8,15 @@
 // PATH (see `makeFakeNpx` below) so every case here stays deterministic and
 // offline. Any registry-fetch failure (including a reported-clean exit with
 // empty stdout — never trusted as a silent success) falls back to printing
-// `danxbot/mantra.md` verbatim, plus exactly one short notice line. No-ops
-// on anything else (this hook is wired only to matcher
-// "startup|resume|compact", but the script itself also refuses any
-// non-SessionStart event name defensively).
+// `danxbot/mantra.md` verbatim, plus exactly one short notice line.
+// SubagentStart (DX-3384, matcher "^danxbot:worker-"): the same text as an
+// `additionalContext` JSON envelope; not connected, mantra.md itself. No-ops
+// on any other event.
 // Run with `npm test` (node --test, no dependencies).
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,7 +95,7 @@ describe("mantra.sh", () => {
     assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
     assert.match(result.stdout, /danxbot:plan-workflow/);
     assert.match(result.stdout, /ASK the operator/);
-    assert.doesNotMatch(result.stdout, /\*\*Orchestrate\.\*\*/);
+    assert.doesNotMatch(result.stdout, /\*\*Orchestrate\*\*/);
     // ~0.5 KB target (AC 35058) — a hard byte ceiling would be brittle, so this
     // asserts the class of size rather than an exact count.
     assert.ok(
@@ -146,10 +146,61 @@ describe("mantra.sh", () => {
     assert.doesNotMatch(text, /\b(cap|keep)\s+\d|\d+\s+(sub-agents|in flight)/i);
   });
 
-  test("any non-SessionStart event is a silent no-op, connected or not", () => {
+  test("any event but SessionStart/SubagentStart is a silent no-op, connected or not", () => {
     connect("test-session");
     const result = runHook("UserPromptSubmit");
     assert.equal(result.status, 0);
     assert.equal(result.stdout, "");
+  });
+});
+
+// DX-3384 (DX-3478 problem 1769) — every danxbot:worker-* sub-agent receives
+// the same registry mantra through SubagentStart's additionalContext.
+describe("mantra.sh SubagentStart", () => {
+  function additionalContext(result) {
+    assert.equal(result.status, 0, `hook exited ${result.status}: ${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.hookSpecificOutput.hookEventName, "SubagentStart");
+    return parsed.hookSpecificOutput.additionalContext;
+  }
+  const mantraFileText = () => readFileSync(MANTRA_FILE, "utf8").replace(/\n+$/, "");
+
+  test("not connected: the committed mantra.md itself, never the nudge", () => {
+    const context = additionalContext(runHook("SubagentStart", "not-connected-session"));
+    assert.equal(context, mantraFileText());
+    assert.doesNotMatch(context, /ASK the operator/);
+  });
+
+  test("connected + registry reachable: the fetched effective text", () => {
+    connect("connected-session");
+    const context = additionalContext(
+      runHookWithFakeNpx("success", { event: "SubagentStart", text: "LIVE REGISTRY MANTRA TEXT" }),
+    );
+    assert.equal(context, "LIVE REGISTRY MANTRA TEXT");
+  });
+
+  test("connected + registry fetch fails: one notice line, then mantra.md", () => {
+    connect("connected-session");
+    const context = additionalContext(runHookWithFakeNpx("fail", { event: "SubagentStart" }));
+    const [notice, ...rest] = context.split("\n");
+    assert.match(notice, /Could not reach the reminder registry/i);
+    assert.equal(rest.join("\n"), mantraFileText());
+  });
+
+  test("hooks.json wires SubagentStart to mantra.sh with a matcher covering every worker tier and nothing else", () => {
+    const hooks = JSON.parse(readFileSync(path.join(PLUGIN_ROOT, "hooks", "hooks.json"), "utf8")).hooks;
+    assert.equal(hooks.SubagentStart.length, 1);
+    const [group] = hooks.SubagentStart;
+    assert.equal(group.hooks[0].command, "bash ${CLAUDE_PLUGIN_ROOT}/scripts/mantra.sh SubagentStart");
+    const matcher = new RegExp(group.matcher);
+    const agents = readdirSync(path.join(PLUGIN_ROOT, "agents")).filter((f) => f.endsWith(".md"));
+    assert.ok(agents.length > 0);
+    for (const file of agents) {
+      const scoped = `danxbot:${file.replace(/\.md$/, "")}`;
+      assert.ok(matcher.test(scoped), `${scoped} is not matched`);
+    }
+    for (const other of ["general-purpose", "Explore", "other-plugin:worker-x"]) {
+      assert.ok(!matcher.test(other), `${other} must not match`);
+    }
   });
 });

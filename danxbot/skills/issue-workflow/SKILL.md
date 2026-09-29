@@ -16,7 +16,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 | Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | danxbot claims | `pickup` with `manual:true` (below) |
 | Gates | danxbot dispatches them | runs a tier worker per gate, records `issue_quality_gate_verdict` |
-| Merge + end | the `work` profile instruction | commit, push to main, remove its worktree, prove nothing unpushed; `complete` + `issue_retro`; report |
+| Merge + end | the `work` profile instruction | commit, push to main; `complete` + `issue_retro`; report |
 
 Dispatched-only mechanics (`danxbot_complete`, halt, `agent-finalize.sh`, the pre-synced
 worktree, DB resets) live only in danxbot's `work` profile.
@@ -33,8 +33,6 @@ worktree, DB resets) live only in danxbot's `work` profile.
    never rubber-stamped.
 6. `issue_transition({action:'complete', summary})`, then `issue_retro` (last — it 409s
    until terminal). A phase card leaves `Notes from Phase N` on the next phase card.
-
-Never wait on a human you don't have to: reversible → decide, do it, note it in a comment.
 
 ## Needing a human
 
@@ -119,8 +117,7 @@ must name the invariant it enforces.
 searched. "Can't reuse it because <constraint>" is a guess until you cite the `file:line`
 that enforces it.
 
-**Verify, never guess.** Read the source before using it. Existing comments are
-authoritative on WHY but were true only when written: confirm the producer or mechanism
+**Existing code.** Comments are authoritative on WHY but were true only when written: confirm the producer or mechanism
 they name still exists, follow a cited docblock to code. Before choosing where state lives
 (DB row, file, env), trace the seed and load path to what is authoritative at runtime.
 Recurring jobs are incremental (delta + high-water mark): the 10th run costs what the 1st

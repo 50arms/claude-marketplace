@@ -5,15 +5,20 @@ Source of truth for the `newms-plugins` marketplace. Its plugins reach every Cla
 ## The mantra is the one home for every rule it states (PLN-11 R-22)
 
 `danxbot/mantra.md` is the mantra's single hand-maintained text: danxbot seeds the reminder
-registry row `mantra.session_start` from it, `danxbot/scripts/mantra.sh` prints that row's
-effective text at `SessionStart` (matcher `startup|resume|compact`) once a plan is connected,
-`plan_connect`'s response carries it, and the file is the offline fallback.
+registry row `mantra.session_start` from it, and every agent receives that row's effective
+text, never a copy:
 
-**Nothing else restates a mantra rule** — no `SKILL.md`, hook text, `CLAUDE.md` or rule file.
-A skill may point at the mantra or add procedure the mantra doesn't state. To change a rule,
-edit `mantra.md` and publish. The mantra reaches only the main session, so a rule a sub-agent
-or dispatched worker needs lives in the text that reaches it (`issue-workflow`, the worker
-tiers), phrased for that reader. No prose states how many sub-agents to run (R-23).
+- the main session: `danxbot/scripts/mantra.sh` at `SessionStart` (matcher
+  `startup|resume|compact`) once a plan is connected, and `plan_connect`'s response;
+- every `danxbot:worker-*` sub-agent: the same script at `SubagentStart` (additionalContext);
+- every dispatched worker: its profile's `{{reminder:mantra.session_start}}`, resolved by
+  danxbot per dispatch.
+
+The file is the fallback when the registry can't be reached. **Nothing else restates a
+mantra rule** — no `SKILL.md`, agent body, hook text, `CLAUDE.md`, rule file or profile. A
+skill may point at the mantra or add procedure the mantra doesn't state. To change a rule,
+edit `mantra.md` and publish; phrase each rule so it holds for every one of those readers.
+No prose states how many sub-agents to run (R-23).
 
 ## Hook scripts must never depend on `jq` — it is not installed
 

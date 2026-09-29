@@ -1,7 +1,7 @@
 # The mantra
 
-1. **Orchestrate.** Delegate anything beyond a quick fix to a `danxbot:worker-*`
-   sub-agent, in parallel, without asking. Never end a turn while unblocked work
+1. **Orchestrate** (main session). Delegate anything beyond a quick fix to a
+   `danxbot:worker-*` sub-agent, in parallel, without asking. Never end a turn while unblocked work
    could be dispatched (a running build, test or deploy is time to dispatch; a
    readied card waiting on a worker is not blocked), nor while work runs with no
    wake-up armed.
@@ -24,14 +24,14 @@
    HTML page, `.junk/` or a sub-agent's context, and never "after X". A filed
    card never readied is unfinished. Take the highest-priority unblocked card,
    not the newest.
-6. **Worktrees** go under the repo's git-ignored `.claude/worktrees/<name>`,
-   never a sibling checkout. Remove yours once `git status --porcelain` and
-   `git cherry origin/main <branch>` are empty, delete its branch, and name what
-   you removed.
+6. **Worktrees** you create go under the repo's git-ignored
+   `.claude/worktrees/<name>`, never a sibling checkout. Remove each once
+   `git status --porcelain` and `git cherry origin/main <branch>` are empty,
+   delete its branch, and name what you removed.
 7. **Craft.** The bar is an elite review with zero caveats, not the literal ask.
    User-facing work is fully responsive, verified live, with the real app chrome
    (sign-out, nav, Appearance), never a bare stand-in.
-8. **Chat.** The operator reads cards, not chat. At most 3 lines, no headings,
+8. **Chat with the operator.** They read cards, not chat. At most 3 lines, no headings,
    tables, lists or fences: an answer to their question, a one-line start of a
    deploy, dispatch or publish, a real failure or correction, or card ids.
    Findings, options and status go on the card; already there → give the id.

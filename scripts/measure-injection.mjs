@@ -58,6 +58,7 @@
 // gate and imports the per-turn total from --json output).
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -125,20 +126,17 @@ function representativeToolName(matcher) {
   return first || "Bash";
 }
 
-let sessionCounter = 0;
-
 function freshSessionId() {
   // A fresh session_id per invocation — several hooks (inject-time.sh)
   // keep per-session state on disk (e.g. /tmp/claude-time-hook-<sid>) so a
   // reused id lets one measurement's state leak into the next one's byte
-  // count (observed: reusing an id made inject-time.sh's PostToolUse
-  // reading print a short "already primed" form instead of its real
-  // first-fire form). Every row gets its own id so every measurement is a fresh
-  // first-fire — the same steady state a real session hits once and only
-  // once per (host, session), and the one that matches DX-3049's manual
-  // baseline (each event run as its own fresh process).
-  sessionCounter += 1;
-  return `measure-injection-${process.pid}-${sessionCounter}`;
+  // count. Every row gets its own id so every measurement is a fresh
+  // first-fire, matching DX-3049's manual baseline.
+  // DX-3384 (comment 7550): unique across RUNS too, not just within one. The
+  // old `<pid>-<counter>` id collided when a PID recycled (routine under Git
+  // Bash), so a stale state file from an earlier run turned inject-time.sh's
+  // "+0" into "+12h 34m 56s" and the baseline read 4448 instead of 4438.
+  return `measure-injection-${randomUUID()}`;
 }
 
 function stdinFor(event, matcher) {
