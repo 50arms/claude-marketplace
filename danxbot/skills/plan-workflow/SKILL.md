@@ -14,7 +14,7 @@ Plan = the record, in the dashboard DB. Survives compaction, restart, handoff. C
 2. Session title (`get_session({session_id:"self"}).title`, or `/rename`; never the repo folder)
    must name what you're DOING — generic/stale/reused → rename first, then
    `plan_connect({plan_id, title})`. Renamed later → connect again.
-3. Orient from the connect reply's briefing, else `plan_get({fields:["records","architecture","cards"]})`
+3. Orient from the connect reply's briefing, else `plan_get({fields: {records: true, architecture_sections: true, cards: true}})`
    plus one `issue_get({ids})` for In-Progress/open-problem cards plus any newest handoff comment.
 4. `sessionListenerAttached` false >1 min → tell the operator. Never poll instead.
 5. Follow `plan_connect`'s browser instruction (canonical wording — don't re-derive it): open the
@@ -124,11 +124,11 @@ rounds. Terse: what + why, linked. `plan_update_note` link lists REPLACE per kin
 
 Pass the hash from the immediately-prior read. A stale refusal carries the current value — merge
 into it, retry with its hash; never resend the old one. Record `content_hash`
-(`plan_get records:<kind>`, refusal `stale_plan_record`); note `content_hash`
-(`stale_plan_note`); architecture section `base_hash` (`plan_get architecture`; update sends only
-changed fields; delete → confirm it's still right first; reorder = every live id once, no hash);
-problem `base_hash` (`issue_get problems`, `stale_problem`); solution `base_hash` + `problem_id`
-(`stale_solution`).
+(`plan_get({fields:{records:{kind:"<kind>"}}})`, refusal `stale_plan_record`); note `content_hash`
+(`stale_plan_note`); architecture section `base_hash` (`plan_get({fields:{architecture_sections:true}})`;
+update sends only changed fields; delete → confirm it's still right first; reorder = every live id
+once, no hash); problem `base_hash` (`issue_get problems`, `stale_problem`); solution `base_hash` +
+`problem_id` (`stale_solution`).
 
 ## Operator questions
 
@@ -219,11 +219,18 @@ steps, summaries of finished work.
 
 ## Reading
 
-Bare `plan_get` = scalars only; add `fields`: `cards` (page `cards_limit` ≤1000 default 200,
-`cards_offset`), `records`/`records:goal|rule|caveat`, `architecture`, `sessions`, `notes`. Before
-a hash edit, read only the group holding the hash. Many cards: one `issue_get({ids:[…≤100]})`,
-global, unknown → `not_found`, no `board` with `ids`. Plan status is computed on read:
-`complete`/`awaiting-session`/`building`/`planning`.
+Bare `plan_get` = scalars only (`id, ref, name, boards, card_count, bucket_counts, status, ...`).
+`fields` is a nested field TREE, same shape as `issue_get`/`issue_list`, not the old flat
+field-group list: `{"cards": true}` (member cards — the ISSUE resource itself, so any of
+`issue_get`'s own fields/relations nest under it too, e.g. `{"cards": {"title": true}}`;
+cursor-paged via `{"limit": N, "before": "<cursor>"}`, response carries a sibling `cards_page:
+{limit, total, next_cursor}`), `{"records": true}` (every kind) or `{"records": {"kind": "goal"}}`
+/ `{"kind": ["goal","rule"]}` (narrow, cheaper), `{"architecture_sections": true}`, `{"sessions":
+true}`, `{"notes": true}` (latest page), `{"events": {...}}` (durable ledger, cursor-paged, filters
+`kinds`/`origin`/`writer`). Call `resource_fields({resource:"plan"})` for the full, current list —
+never guess a name. Before a hash edit, read only the relation holding the hash. Many cards: one
+`issue_get({ids:[…≤100]})`, global, unknown → `not_found`, no `board` with `ids`. Plan status is
+computed on read: `complete`/`awaiting-session`/`building`/`planning`.
 
 ## Handoff
 

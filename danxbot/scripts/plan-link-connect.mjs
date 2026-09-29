@@ -47,7 +47,7 @@ export function buildDirective(planId) {
     `danxbot:plan-workflow: call get_session({session_id:"self"}) for this session's own title, ` +
     `then plan_connect({plan_id: ${planId}, title: <that title>}) — never the repo folder name. ` +
     `Read whatever the reply gives you to orient on the plan (a compact briefing when the dashboard ` +
-    `returns one; otherwise plan_get({fields:["records","architecture","cards"]}) for the same ` +
+    `returns one; otherwise plan_get({fields: {records: true, architecture_sections: true, cards: true}}) for the same ` +
     `information), and check the reply's event-listener/bridge health — if it reports anything other ` +
     `than healthy and attached, follow the fix it names; never poll for this or set up your own ` +
     `manual watch loop instead. This hook only detected the link; it made no dashboard call and ` +
