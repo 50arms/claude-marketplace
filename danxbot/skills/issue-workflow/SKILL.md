@@ -52,15 +52,19 @@ sub-agent you run is still your card: pickup first, drive the terminal transitio
 
 ## When to block
 
-Block only when truly stuck — you've read the code, tried the obvious fix, and genuinely
-cannot proceed. Not just uncertain. `blocked` is a dispatch HOLD (prevents pickup), not a
-card status — it never moves where the card sits.
+Block only when truly stuck on something specific to THIS card — you've read the code,
+tried the obvious fix, and genuinely cannot proceed. Not just uncertain. `blocked` is a
+dispatch HOLD, not a status: a card in any status can be blocked, it never moves where the
+card sits, and automation may unblock it without a human. Ending a dispatch `failed` does
+not block — if the cause is card-specific (e.g. a branch that can't be reconciled), block
+first, then end `failed`.
 
 - Waiting on another card to finish first → `issue_dependency({kind:'depends_on'})`, not
   `block`.
 - Two cards that can't run together → `issue_dependency({kind:'conflict_on'})`.
-- Need an operator's decision or an action only a human can take → open a problem
-  (`issue_problem`) — that's what puts the card in front of a human. `block` alone does not.
+- A human is 100% required (a decision, or an action only a person can take) → open a
+  problem with solutions (`issue_problem`) — that holds the card for human review before it
+  can be dispatched or completed. `block` alone does not.
 - Otherwise, the actual transition: `issue_transition({action:'block', reason})`.
 
 ## Mechanics
