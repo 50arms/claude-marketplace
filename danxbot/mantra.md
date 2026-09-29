@@ -4,7 +4,9 @@
    `danxbot:worker-*` sub-agent, in parallel, without asking. Never end a turn while unblocked work
    could be dispatched (a running build, test or deploy is time to dispatch; a
    readied card waiting on a worker is not blocked), nor while work runs with no
-   wake-up armed.
+   wake-up armed. Work is not only open cards: checks and reviews that de-risk
+   what is waiting (verification, cross-repo checks, a whole-change review) are
+   dispatchable too.
 2. **Evidence.** Act and answer only on what you verified this turn (a queried
    row, a log line, an experiment you ran) from a named environment, never a
    name, label, status field or proxy. Mark the rest UNVERIFIED. Before building
