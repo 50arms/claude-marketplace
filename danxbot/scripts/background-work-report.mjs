@@ -13,9 +13,9 @@
 //   stop / subagent-stop — count the snapshot, report it, and keep a local debug
 //     record of what was counted (never a shell `command`).
 //   session-start / stop-failure — report "clear" (no snapshot to trust).
-//   heartbeat — PostToolUse(.*): only when `agent_id` shows a live background
-//     sub-agent and the throttle has passed, re-report the count already on record
-//     so a long run doesn't age past the dashboard's ceiling. Compare-and-set, so a
+//   heartbeat — PostToolUse(.*): only when `agent_id` shows a sub-agent running a
+//     tool and the throttle has passed, re-report the count on record, at least 1
+//     (DX-3676), so a long run — foreground or background — doesn't look idle. Compare-and-set, so a
 //     slow re-report never overwrites a fresher Stop write.
 //
 // Every mode first checks `isPlanConnected` (lib/plan-connection.mjs) and does
@@ -310,8 +310,11 @@ export function runClear(input, { env, spawnFn, platform, execPath, exists, isCo
 
 /**
  * `heartbeat`: a PostToolUse(`.*`) no-op almost always. Only acts when
- * `agent_id` proves a background sub-agent is alive AND the throttle window
- * has elapsed, and only ever RE-reports a count already on record.
+ * `agent_id` proves a sub-agent is running a tool right now AND the throttle
+ * window has elapsed. It re-reports the count on record, raised to at least 1
+ * (DX-3676): that tool call is itself proof one sub-agent is working, even
+ * when it runs in the foreground or started after a Stop that saw nothing
+ * running — otherwise the dashboard's idle nudge fires while it builds.
  *
  * The throttle stamp is
  * claimed BEFORE the spawn (so a second tick starting while this one's
@@ -348,7 +351,8 @@ export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, ex
       stored = null;
     }
   }
-  if (typeof stored?.count !== "number") return; // nothing honest to refresh
+  // DX-3676 — this tool call proves at least one sub-agent is running.
+  const count = Math.max(typeof stored?.count === "number" ? stored.count : 0, 1);
 
   // Claim the throttle stamp BEFORE spawning (see above).
   writeFileAtomic(heartbeat, JSON.stringify({ lastTickAt: new Date(nowMs).toISOString() }));
@@ -358,7 +362,7 @@ export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, ex
     /* removed concurrently — nothing to touch */
   }
 
-  const outcome = reportToDashboard({ countOrClear: countArg(stored.count), sessionId, env, spawnFn, platform, execPath, exists });
+  const outcome = reportToDashboard({ countOrClear: countArg(count), sessionId, env, spawnFn, platform, execPath, exists });
 
   // Compare-and-set: only refresh `reportedAt` if the state file is still
   // exactly what it was before the spawn — a fresher write in the meantime
@@ -367,7 +371,7 @@ export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, ex
   compareAndSetFile(
     state,
     stateRaw,
-    JSON.stringify(nextReportState(stored, { count: stored.count, counted: stored.counted, ignoredTypes: stored.ignoredTypes, outcome, now: nowMs })),
+    JSON.stringify(nextReportState(stored, { count, counted: stored?.counted ?? null, ignoredTypes: stored?.ignoredTypes ?? null, outcome, now: nowMs })),
   );
 }
 

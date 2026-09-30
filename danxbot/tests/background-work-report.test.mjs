@@ -501,24 +501,41 @@ describe("runHeartbeat — PostToolUse(.*) no-op almost always", () => {
     assert.equal(readFileSync(stateFile("sess-11"), "utf8"), before);
   });
 
-  test("no-op when nothing was ever stored (agent_id present, no state file)", () => {
+  // DX-3676 — a PostToolUse carrying agent_id is a sub-agent running a tool
+  // RIGHT NOW. A foreground sub-agent (or one started after a Stop that saw
+  // nothing running) left no positive count on record, so re-reporting only
+  // the stored value made a session with a working sub-agent look idle to the
+  // dashboard's nudge. The tick reports at least 1.
+  test("DX-3676: reports 1 when nothing was ever stored — the sub-agent's own tool call proves one is running", () => {
     connect("sess-12");
     const calls = [];
-    runHeartbeat({ session_id: "sess-12", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
-    assert.equal(calls.length, 0);
-    assert.equal(existsSync(heartbeatStampFile("sess-12")), false);
+    runHeartbeat({ session_id: "sess-12", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args.slice(-1), ["1"]);
+    assert.equal(JSON.parse(readFileSync(stateFile("sess-12"), "utf8")).count, 1);
   });
 
-  test("no-op when last-cleared (state removed by session-start), even with agent_id present", () => {
+  test("DX-3676: reports 1 after a session-start clear, when a sub-agent is running a tool", () => {
     connect("sess-13");
     const calls = [];
     runReport({ session_id: "sess-13", background_tasks: [{ type: "shell", status: "running" }] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
     runClear({ session_id: "sess-13" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
     calls.length = 0;
 
-    runHeartbeat({ session_id: "sess-13", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
-    assert.equal(calls.length, 0);
-    assert.equal(existsSync(heartbeatStampFile("sess-13")), false);
+    runHeartbeat({ session_id: "sess-13", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args.slice(-1), ["1"]);
+  });
+
+  test("DX-3676: a stored 0 is raised to 1 while a sub-agent is running a tool", () => {
+    connect("sess-13b");
+    const calls = [];
+    runReport({ session_id: "sess-13b", background_tasks: [] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 0 });
+    calls.length = 0;
+
+    runHeartbeat({ session_id: "sess-13b", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args.slice(-1), ["1"]);
   });
 
   test("re-reports the stored count when due (no prior throttle stamp) and refreshes reportedAt", () => {
@@ -656,7 +673,7 @@ describe("dispatchMode — routes a hook's mode string to the right handler (rev
     }
   });
 
-  test("heartbeat routes to runHeartbeat (no-op without a stored count, ticks with one)", () => {
+  test("heartbeat routes to runHeartbeat (ticks with a stored count)", () => {
     connect("sess-21");
     const primeCalls = [];
     dispatchMode("stop", { session_id: "sess-21", background_tasks: [{ type: "shell", status: "running" }] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(primeCalls), now: () => 0 });
