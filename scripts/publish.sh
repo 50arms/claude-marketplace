@@ -32,7 +32,6 @@
 # EXAMPLES
 #   ./scripts/publish.sh patch
 #   ./scripts/publish.sh minor danxbot
-#   ./scripts/publish.sh major dev pipeline
 #
 set -euo pipefail
 

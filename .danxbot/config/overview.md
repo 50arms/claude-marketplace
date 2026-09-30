@@ -7,7 +7,7 @@ auto-update to whatever VERSION each plugin advertises.
 ## Layout
 
 ```
-<plugin>/                       # one dir per plugin (base, dev, danxbot, ...)
+<plugin>/                       # one dir per plugin (currently just danxbot)
   .claude-plugin/plugin.json    # name + VERSION (the auto-update trigger)
   skills/<skill>/SKILL.md       # skill bodies
   rules/*.md                    # always-on rule files
