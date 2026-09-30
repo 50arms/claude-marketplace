@@ -85,8 +85,9 @@ function fakeSpawn(calls, { stdout } = {}) {
   return (command, args, opts) => {
     calls.push({ command, args, opts });
     if (stdout !== undefined) return { status: 0, stdout, stderr: "" };
-    const countArg = args[args.length - 1];
-    const echoed = { ok: true, count: countArg === "clear" ? null : Number(countArg) };
+    // DX-3676 — argv ends <count|clear> <event-at>; the subcommand echoes the count and whether it was applied.
+    const countArg = args[args.length - 2];
+    const echoed = { ok: true, count: countArg === "clear" ? null : Number(countArg), applied: true };
     return { status: 0, stdout: JSON.stringify(echoed), stderr: "" };
   };
 }
@@ -150,21 +151,23 @@ describe("countFromSnapshot — pure logic", () => {
   });
 });
 
+const EVENT_AT = "2026-09-30T00:00:00.000Z";
+
 describe("reportCommand — spawn shape (mirrors plan-event-bridge.mjs's bridgeCommand)", () => {
   test("non-windows spawns npx directly with the pinned package + subcommand + count", () => {
-    assert.deepEqual(reportCommand({ countOrClear: "3", platform: "linux" }), {
+    assert.deepEqual(reportCommand({ countOrClear: "3", eventAt: EVENT_AT, platform: "linux" }), {
       command: "npx",
-      args: ["-y", DASHBOARD_MCP_PACKAGE, "background-work", "3"],
+      args: ["-y", DASHBOARD_MCP_PACKAGE, "background-work", "3", EVENT_AT],
     });
   });
   test("windows routes through node_modules/npm/bin/npx-cli.js next to execPath", () => {
     const execPath = "C:\\node\\node.exe";
     const npxCli = path.join("C:\\node", "node_modules", "npm", "bin", "npx-cli.js");
-    const result = reportCommand({ countOrClear: "clear", platform: "win32", execPath, exists: (p) => p === npxCli });
-    assert.deepEqual(result, { command: execPath, args: [npxCli, "-y", DASHBOARD_MCP_PACKAGE, "background-work", "clear"] });
+    const result = reportCommand({ countOrClear: "clear", eventAt: EVENT_AT, platform: "win32", execPath, exists: (p) => p === npxCli });
+    assert.deepEqual(result, { command: execPath, args: [npxCli, "-y", DASHBOARD_MCP_PACKAGE, "background-work", "clear", EVENT_AT] });
   });
   test("windows throws loud when npx-cli.js is missing, rather than spawning something broken", () => {
-    assert.throws(() => reportCommand({ countOrClear: "1", platform: "win32", execPath: "C:\\node\\node.exe", exists: () => false }), /npx not found/);
+    assert.throws(() => reportCommand({ countOrClear: "1", eventAt: EVENT_AT, platform: "win32", execPath: "C:\\node\\node.exe", exists: () => false }), /npx not found/);
   });
 });
 
@@ -310,20 +313,20 @@ describe("runReport — stop / subagent-stop", () => {
       { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_700_000_000_000 },
     );
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args, ["-y", DASHBOARD_MCP_PACKAGE, "background-work", "2"]);
+    assert.deepEqual(calls[0].args, ["-y", DASHBOARD_MCP_PACKAGE, "background-work", "2", new Date(1_700_000_000_000).toISOString()]);
     assert.equal(calls[0].opts.env.CLAUDE_CODE_SESSION_ID, "sess-1");
 
     const state = JSON.parse(readFileSync(stateFile("sess-1"), "utf8"));
     assert.equal(state.count, 2);
     assert.equal(state.reportedAt, new Date(1_700_000_000_000).toISOString());
-    assert.deepEqual(state.outcome, { ok: true, count: 2 });
+    assert.deepEqual(state.outcome, { ok: true, count: 2, applied: true });
   });
 
   test("missing background_tasks field reports+persists count:null as literal 'clear' (unknown, never guessed 0)", () => {
     connect("sess-2");
     const calls = [];
     runReport({ session_id: "sess-2" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
-    assert.deepEqual(calls[0].args.slice(-1), ["clear"]);
+    assert.deepEqual(calls[0].args.slice(-2, -1), ["clear"]);
     const state = JSON.parse(readFileSync(stateFile("sess-2"), "utf8"));
     assert.equal(state.count, null);
   });
@@ -332,7 +335,7 @@ describe("runReport — stop / subagent-stop", () => {
     connect("sess-3");
     const calls = [];
     runReport({ session_id: "sess-3", background_tasks: [] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
-    assert.deepEqual(calls[0].args.slice(-1), ["0"]);
+    assert.deepEqual(calls[0].args.slice(-2, -1), ["0"]);
     const state = JSON.parse(readFileSync(stateFile("sess-3"), "utf8"));
     assert.equal(state.count, 0);
   });
@@ -446,7 +449,7 @@ describe("runClear — session-start / stop-failure", () => {
     connect("sess-7");
     const calls = [];
     runClear({ session_id: "sess-7" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
-    assert.deepEqual(calls[0].args.slice(-1), ["clear"]);
+    assert.deepEqual(calls[0].args.slice(-2, -1), ["clear"]);
   });
 
   test("removes an existing state file on a SUCCESSFUL clear", () => {
@@ -511,7 +514,7 @@ describe("runHeartbeat — PostToolUse(.*) no-op almost always", () => {
     const calls = [];
     runHeartbeat({ session_id: "sess-12", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(-1), ["1"]);
+    assert.deepEqual(calls[0].args.slice(-2, -1), ["1"]);
     assert.equal(JSON.parse(readFileSync(stateFile("sess-12"), "utf8")).count, 1);
   });
 
@@ -524,7 +527,7 @@ describe("runHeartbeat — PostToolUse(.*) no-op almost always", () => {
 
     runHeartbeat({ session_id: "sess-13", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(-1), ["1"]);
+    assert.deepEqual(calls[0].args.slice(-2, -1), ["1"]);
   });
 
   test("DX-3676: a stored 0 is raised to 1 while a sub-agent is running a tool", () => {
@@ -535,7 +538,7 @@ describe("runHeartbeat — PostToolUse(.*) no-op almost always", () => {
 
     runHeartbeat({ session_id: "sess-13b", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(-1), ["1"]);
+    assert.deepEqual(calls[0].args.slice(-2, -1), ["1"]);
   });
 
   test("re-reports the stored count when due (no prior throttle stamp) and refreshes reportedAt", () => {
@@ -551,7 +554,7 @@ describe("runHeartbeat — PostToolUse(.*) no-op almost always", () => {
 
     runHeartbeat({ session_id: "sess-14", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_700_000_100_000 });
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(-1), ["2"]); // same count, re-reported — never invented
+    assert.deepEqual(calls[0].args.slice(-2, -1), ["2"]); // same count, re-reported — never invented
     assert.equal(existsSync(heartbeatStampFile("sess-14")), true);
 
     const after = JSON.parse(readFileSync(stateFile("sess-14"), "utf8"));
@@ -660,7 +663,7 @@ describe("dispatchMode — routes a hook's mode string to the right handler (rev
     for (const mode of ["stop", "subagent-stop"]) {
       const calls = [];
       dispatchMode(mode, { session_id: "sess-19", background_tasks: [{ type: "shell", status: "running" }] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
-      assert.deepEqual(calls[0].args.slice(-1), ["1"], `mode ${mode} should report a count`);
+      assert.deepEqual(calls[0].args.slice(-2, -1), ["1"], `mode ${mode} should report a count`);
     }
   });
 
@@ -669,7 +672,7 @@ describe("dispatchMode — routes a hook's mode string to the right handler (rev
     for (const mode of ["session-start", "stop-failure"]) {
       const calls = [];
       dispatchMode(mode, { session_id: "sess-20" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
-      assert.deepEqual(calls[0].args.slice(-1), ["clear"], `mode ${mode} should clear`);
+      assert.deepEqual(calls[0].args.slice(-2, -1), ["clear"], `mode ${mode} should clear`);
     }
   });
 
@@ -681,7 +684,7 @@ describe("dispatchMode — routes a hook's mode string to the right handler (rev
     const calls = [];
     dispatchMode("heartbeat", { session_id: "sess-21", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(-1), ["1"]);
+    assert.deepEqual(calls[0].args.slice(-2, -1), ["1"]);
   });
 
   test("an unknown mode does nothing and does not throw", () => {
@@ -777,5 +780,52 @@ describe("CLI robustness — malformed input never reaches a spawn, never throws
     const r = runCli("stop", { session_id: "not valid!!", background_tasks: [] });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(existsSync(path.join(pluginData, "background-work")), false);
+  });
+});
+
+// ------------------------------------------ DX-3676: out-of-order async hooks
+
+describe("DX-3676 — every report carries the time its hook fired", () => {
+  test("a clear the dashboard refused as out of order keeps the local record", () => {
+    connect("sess-ev-5");
+    runReport({ session_id: "sess-ev-5", background_tasks: [{ type: "shell", status: "running" }] }, { env: env(), platform: "linux", spawnFn: fakeSpawn([]), now: () => 1_700_000_003_000 });
+    const refused = fakeSpawn([], { stdout: JSON.stringify({ ok: true, count: null, applied: false }) });
+    runClear({ session_id: "sess-ev-5" }, { env: env(), platform: "linux", spawnFn: refused, now: () => 1_700_000_002_000 });
+    assert.equal(JSON.parse(readFileSync(stateFile("sess-ev-5"), "utf8")).count, 1);
+  });
+
+  test("stop reports the event time captured when the hook ran", () => {
+    connect("sess-ev-1");
+    const calls = [];
+    runReport({ session_id: "sess-ev-1", background_tasks: [] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_700_000_000_000 });
+    assert.deepEqual(calls[0].args.slice(-2), ["0", new Date(1_700_000_000_000).toISOString()]);
+  });
+
+  test("session-start clear reports its event time too, so a late older report cannot resurrect a count", () => {
+    connect("sess-ev-2");
+    const calls = [];
+    runClear({ session_id: "sess-ev-2" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_700_000_000_500 });
+    assert.deepEqual(calls[0].args.slice(-2), ["clear", new Date(1_700_000_000_500).toISOString()]);
+  });
+
+  test("the heartbeat reports the time of the tool call that triggered it", () => {
+    connect("sess-ev-3");
+    const calls = [];
+    runHeartbeat({ session_id: "sess-ev-3", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_700_000_001_000 });
+    assert.deepEqual(calls[0].args.slice(-2), ["1", new Date(1_700_000_001_000).toISOString()]);
+  });
+
+  test("a report the dashboard refused as out of order (applied:false) never advances the local record", () => {
+    connect("sess-ev-4");
+    runReport({ session_id: "sess-ev-4", background_tasks: [] }, { env: env(), platform: "linux", spawnFn: fakeSpawn([]), now: () => 1_700_000_002_000 });
+    const before = JSON.parse(readFileSync(stateFile("sess-ev-4"), "utf8"));
+    assert.equal(before.count, 0);
+
+    const refused = fakeSpawn([], { stdout: JSON.stringify({ ok: true, count: 1, applied: false }) });
+    runHeartbeat({ session_id: "sess-ev-4", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: refused, now: () => 1_700_000_001_500 });
+    const after = JSON.parse(readFileSync(stateFile("sess-ev-4"), "utf8"));
+    assert.equal(after.count, 0);
+    assert.equal(after.reportedAt, before.reportedAt);
+    assert.deepEqual(after.outcome, { ok: true, count: 1, applied: false });
   });
 });

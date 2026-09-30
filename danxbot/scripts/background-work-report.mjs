@@ -5,7 +5,7 @@
 //
 // Claude Code's Stop / SubagentStop input carries a `background_tasks` snapshot.
 // This script reports a count from it via the pinned `danx-dashboard-mcp
-// background-work <count|clear>` subcommand (PUT /api/plan-sessions/me/background-work);
+// background-work <count|clear> <event-at>` subcommand (PUT /api/plan-sessions/me/background-work);
 // the dashboard suppresses the nudge while a positive count is fresh. It injects
 // nothing into the session.
 //
@@ -178,8 +178,11 @@ export function countFromSnapshot(backgroundTasks) {
  * JS entry with this node instead; elsewhere `npx` is an executable and is
  * spawned directly. Mirrors plan-event-bridge.mjs's `bridgeCommand`.
  */
-export function reportCommand({ countOrClear, platform = process.platform, execPath = process.execPath, exists = fs.existsSync }) {
-  const args = ["-y", DASHBOARD_MCP_PACKAGE, "background-work", countOrClear];
+export function reportCommand({ countOrClear, eventAt, platform = process.platform, execPath = process.execPath, exists = fs.existsSync }) {
+  // DX-3676 — the hook's own event time rides every report; the dashboard keeps
+  // only a report newer than the one it holds, so async hooks that finish out
+  // of order cannot overwrite a newer count.
+  const args = ["-y", DASHBOARD_MCP_PACKAGE, "background-work", countOrClear, eventAt];
   if (platform !== "win32") return { command: "npx", args };
   const npxCli = path.join(path.dirname(execPath), "node_modules", "npm", "bin", "npx-cli.js");
   if (!exists(npxCli)) throw new Error(`npx not found: expected ${npxCli} next to ${execPath}`);
@@ -215,9 +218,9 @@ function parseSubcommandOutcome(result) {
  * ignored (nothing to send) and stderr is ignored (human diagnostics only,
  * per the subcommand's own contract doc).
  */
-export function reportToDashboard({ countOrClear, sessionId, env = process.env, spawnFn = spawnSync, platform, execPath, exists, timeoutMs = REPORT_SPAWN_TIMEOUT_MS }) {
+export function reportToDashboard({ countOrClear, eventAt, sessionId, env = process.env, spawnFn = spawnSync, platform, execPath, exists, timeoutMs = REPORT_SPAWN_TIMEOUT_MS }) {
   try {
-    const { command, args } = reportCommand({ countOrClear, platform, execPath, exists });
+    const { command, args } = reportCommand({ countOrClear, eventAt, platform, execPath, exists });
     const result = spawnFn(command, args, {
       env: childEnv(env, sessionId),
       stdio: ["ignore", "pipe", "ignore"],
@@ -252,7 +255,9 @@ function sessionIsConnected(sessionId, env, isConnected) {
 }
 
 /**
- * Fold one report attempt's outcome into the previous state. A SUCCESSFUL report (`outcome.ok === true`) is the only thing
+ * Fold one report attempt's outcome into the previous state. A report the dashboard STORED
+ * (`outcome.ok && outcome.applied` — DX-3676: `applied:false` is an out-of-order report it
+ * refused because a newer one was already on file) is the only thing
  * allowed to advance `count`/`reportedAt` — those two fields mean "the
  * dashboard has this count, as of this time", and a failed PUT never made
  * that true. A FAILED report still leaves evidence (`outcome` always
@@ -262,7 +267,7 @@ function sessionIsConnected(sessionId, env, isConnected) {
  * all) rather than advancing to the just-attempted, never-confirmed value.
  */
 function nextReportState(previous, { count, counted, ignoredTypes, outcome, now }) {
-  if (outcome.ok) {
+  if (outcome.ok && outcome.applied) {
     return { count, counted: counted ?? null, ignoredTypes: ignoredTypes ?? null, reportedAt: new Date(now).toISOString(), outcome };
   }
   return {
@@ -283,27 +288,30 @@ export function runReport(input, { env, spawnFn, now, platform, execPath, exists
   const count = countFromSnapshot(backgroundTasks);
   const counted = countedEntriesFromSnapshot(backgroundTasks);
   const ignoredTypes = ignoredTypesFromSnapshot(backgroundTasks);
-  const outcome = reportToDashboard({ countOrClear: countArg(count), sessionId, env, spawnFn, platform, execPath, exists });
+  // DX-3676 — captured when the hook runs, BEFORE the (slow) report, so it orders this event.
+  const nowMs = now ? now() : Date.now();
+  const outcome = reportToDashboard({ countOrClear: countArg(count), eventAt: new Date(nowMs).toISOString(), sessionId, env, spawnFn, platform, execPath, exists });
   const dir = stateDir(env);
   const { state } = sessionPaths(dir, sessionId);
   const previous = readJsonFile(state);
-  const nowMs = now ? now() : Date.now();
   writeFileAtomic(state, JSON.stringify(nextReportState(previous, { count, counted, ignoredTypes, outcome, now: nowMs })));
 }
 
 /** `session-start` / `stop-failure`: no snapshot to trust — always clear, and drop the local record ONLY once the clear itself is confirmed. */
-export function runClear(input, { env, spawnFn, platform, execPath, exists, isConnected = isPlanConnected } = {}) {
+export function runClear(input, { env, spawnFn, now = Date.now, platform, execPath, exists, isConnected = isPlanConnected } = {}) {
   const sessionId = input?.session_id;
   if (!isValidSessionId(sessionId)) return;
   if (!sessionIsConnected(sessionId, env, isConnected)) return;
-  const outcome = reportToDashboard({ countOrClear: "clear", sessionId, env, spawnFn, platform, execPath, exists });
+  const eventAt = new Date(now()).toISOString(); // DX-3676 — a clear is ordered like any report
+  const outcome = reportToDashboard({ countOrClear: "clear", eventAt, sessionId, env, spawnFn, platform, execPath, exists });
   const dir = stateDir(env);
   const { state } = sessionPaths(dir, sessionId);
-  if (outcome.ok) {
+  if (outcome.ok && outcome.applied) {
     fs.rmSync(state, { force: true });
     return;
   }
-  // A failed clear keeps the last confirmed record and records the failure.
+  // A failed clear — or one refused as older than a report already on file
+  // (DX-3676) — keeps the last confirmed record and records the outcome.
   const previous = readJsonFile(state);
   writeFileAtomic(state, JSON.stringify(nextReportState(previous, { count: null, outcome })));
 }
@@ -362,7 +370,7 @@ export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, ex
     /* removed concurrently — nothing to touch */
   }
 
-  const outcome = reportToDashboard({ countOrClear: countArg(count), sessionId, env, spawnFn, platform, execPath, exists });
+  const outcome = reportToDashboard({ countOrClear: countArg(count), eventAt: new Date(nowMs).toISOString(), sessionId, env, spawnFn, platform, execPath, exists });
 
   // Compare-and-set: only refresh `reportedAt` if the state file is still
   // exactly what it was before the spawn — a fresher write in the meantime
