@@ -158,6 +158,48 @@ describe("single-instance lock", () => {
     assert.equal(pidRecord.instanceId, capturedEnv.DANX_BRIDGE_INSTANCE_ID);
   });
 
+  // DX-2954 (danxbot) — the hook input's `transcript_path` reaches the bridge
+  // subcommand as DANX_BRIDGE_TRANSCRIPT_PATH, so it can collect the session's
+  // stats. `run()` hands its own env to the subcommand (`childEnv`), so the run
+  // process's env is where it must be set.
+  test("carries the hook's transcript_path into the run process's env as DANX_BRIDGE_TRANSCRIPT_PATH", async () => {
+    const dataDir = tmpDir();
+    let capturedEnv = null;
+    const transcriptPath = path.join(dataDir, "projects", "C--x", `${SESSION}.jsonl`);
+    const result = await bridge.start({
+      env: env(dataDir),
+      sessionId: SESSION,
+      transcriptPath,
+      spawnRun: (sessionId, spawnEnv) => {
+        capturedEnv = spawnEnv;
+        return { pid: 4343 };
+      },
+      stderr: () => {},
+      waitVerdict: noVerdict,
+    });
+    assert.equal(result.started, true);
+    assert.equal(capturedEnv.DANX_BRIDGE_TRANSCRIPT_PATH, transcriptPath);
+    // ...and on to the subcommand, which is spawned with `childEnv(runEnv)`.
+    assert.equal(bridge.childEnv(capturedEnv, SESSION).DANX_BRIDGE_TRANSCRIPT_PATH, transcriptPath);
+  });
+
+  test("with no transcript_path (a hand run) it sets none, and never passes on one inherited from its own env", async () => {
+    const dataDir = tmpDir();
+    let capturedEnv = null;
+    const result = await bridge.start({
+      env: { ...env(dataDir), DANX_BRIDGE_TRANSCRIPT_PATH: "/stale/other-session.jsonl" },
+      sessionId: SESSION,
+      spawnRun: (sessionId, spawnEnv) => {
+        capturedEnv = spawnEnv;
+        return { pid: 4444 };
+      },
+      stderr: () => {},
+      waitVerdict: noVerdict,
+    });
+    assert.equal(result.started, true);
+    assert.equal("DANX_BRIDGE_TRANSCRIPT_PATH" in capturedEnv, false);
+  });
+
   test("mints a DIFFERENT instanceId for each successive start (never reused across spawns)", async () => {
     const dataDir = tmpDir();
     const seen = [];

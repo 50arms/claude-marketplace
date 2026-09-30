@@ -847,7 +847,7 @@ export async function start({
     // DX-2953: a spawnRun throw is caught here (inside the lock) so the failure is still
     // visible to the watchdog as a bridge_failed record — no run() process exists to report it otherwise.
     try {
-      child = spawnRun(sessionId, { ...env, DANX_BRIDGE_INSTANCE_ID: instanceId }, intent);
+      child = spawnRun(sessionId, runEnv(env, instanceId, transcriptPath), intent);
     } catch (err) {
       writeFileAtomic(
         paths.started,
@@ -919,6 +919,21 @@ export function startExit(verdict, stderr = () => {}) {
     return { verdict: "failed", exitCode: 2 };
   }
   return { verdict: "failed", exitCode: 0 };
+}
+
+/**
+ * The run process's environment: `start()`'s own env plus this instance's id and,
+ * when the hook input carried one, the session's `transcript_path` as
+ * DANX_BRIDGE_TRANSCRIPT_PATH — danxbot DX-2954: the bridge subcommand (which gets
+ * this env through `childEnv`) tails that transcript and sends the session's
+ * stats in its dashboard heartbeat. A path inherited from this process's own env
+ * is never passed on: it belongs to whatever session set it, not this one.
+ */
+export function runEnv(env, instanceId, transcriptPath) {
+  const out = { ...env, DANX_BRIDGE_INSTANCE_ID: instanceId };
+  delete out.DANX_BRIDGE_TRANSCRIPT_PATH;
+  if (transcriptPath) out.DANX_BRIDGE_TRANSCRIPT_PATH = transcriptPath;
+  return out;
 }
 
 function spawnRunProcess(sessionId, env, intent) {
