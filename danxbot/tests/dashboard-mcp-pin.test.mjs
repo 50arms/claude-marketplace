@@ -1,7 +1,7 @@
 // DX-3673 — the pinned `@thehammer/danx-dashboard-mcp` version
 // (danxbot/scripts/lib/dashboard-mcp-package.mjs) must actually support every
 // subcommand this plugin's scripts invoke on it: `bridge` (plan-event-bridge.mjs),
-// `background-work` (background-work-report.mjs) and `event-text` (event-hook.sh).
+// `background-work` (background-work-report.mjs), `activity` (activity-report.mjs, DX-3284) and `event-text` (event-hook.sh).
 // `npx -y` never re-checks the registry once a version is cached, so a stale pin
 // fails silently at runtime, in production, the next time the npx cache is cold —
 // never at review time (this is exactly how DX-3673 happened: the plugin shipped
@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 import { DASHBOARD_MCP_PACKAGE } from "../scripts/lib/dashboard-mcp-package.mjs";
 import { BRIDGE_SUBCOMMAND } from "../scripts/plan-event-bridge.mjs";
 import { reportCommand } from "../scripts/background-work-report.mjs";
+import { ACTIVITY_SUBCOMMAND } from "../scripts/activity-report.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const EVENT_HOOK_SH = path.join(here, "..", "scripts", "event-hook.sh");
@@ -55,7 +56,7 @@ test(
   "the pinned danx-dashboard-mcp version supports every subcommand this plugin invokes",
   { timeout: NPX_TIMEOUT_MS + 10_000 },
   () => {
-    const required = [BRIDGE_SUBCOMMAND, backgroundWorkSubcommandFromSource(), eventTextSubcommandFromSource()];
+    const required = [BRIDGE_SUBCOMMAND, backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, eventTextSubcommandFromSource()];
 
     // An unknown subcommand makes the real published `dist/index.js` refuse with its
     // own "the only ones are ..." message, which names every subcommand the pinned

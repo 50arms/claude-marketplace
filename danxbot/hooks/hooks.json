@@ -1,5 +1,5 @@
 {
-  "description": "event-hook.sh: for a plan-connected session, the registry's effective text for SessionStart (startup/resume/compaction) and for every sub-agent (any type, any plugin) at SubagentStart; silent when not connected (DX-3421). ensure-dashboard-mcp.sh: installs the pinned danx-dashboard-mcp into the plugin data dir once, so the fetch runs it with node, never a cold npx (DX-3811). plan-event-bridge.mjs: relays the connected plan's events into the session. background-work-report.mjs: reports running background work to quiet the idle nudge. inject-time.sh: wall clock with UTC offset.",
+  "description": "event-hook.sh: for a plan-connected session, the registry's effective text for SessionStart (startup/resume/compaction) and for every sub-agent (any type, any plugin) at SubagentStart; silent when not connected (DX-3421). ensure-dashboard-mcp.sh: installs the pinned danx-dashboard-mcp into the plugin data dir once, so the fetch runs it with node, never a cold npx (DX-3811). plan-event-bridge.mjs: relays the connected plan's events into the session. background-work-report.mjs: reports running background work to quiet the idle nudge. activity-report.mjs: tells the dashboard when a sub-agent starts or finishes and when a background Bash call starts, so the session's running count closes (DX-3284). inject-time.sh: wall clock with UTC offset.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -54,6 +54,11 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/event-hook.sh SubagentStart"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/activity-report.mjs\" subagent-start",
+            "async": true
           }
         ]
       }
@@ -93,6 +98,16 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/activity-report.mjs\" background-bash",
+            "async": true
+          }
+        ]
       }
     ],
     "Stop": [
@@ -118,6 +133,11 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/background-work-report.mjs\" subagent-stop",
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/activity-report.mjs\" subagent-stop",
             "async": true
           }
         ]
