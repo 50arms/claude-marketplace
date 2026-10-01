@@ -238,6 +238,14 @@ for plugin in "${TARGETS[@]}"; do
     fs.writeFileSync(path, JSON.stringify(j, null, 2) + '\n');
   " "$manifest" "$next"
 
+  # DX-3997 — a plugin that ships its own integrity launcher gets its hash manifest
+  # rewritten HERE, after the bump (the bumped plugin.json is one of the hashed files)
+  # and before the commit, so the manifest in every published version matches that
+  # version's tree byte for byte.
+  if [ -f "${plugin}/scripts/launch.mjs" ]; then
+    node "${REPO_ROOT}/scripts/write-integrity-manifest.mjs" "$plugin"
+  fi
+
   # Stage + commit JUST the plugin's tree + manifest. Other plugins'
   # untouched manifests stay out of this commit.
   git add "$manifest" "$plugin/"

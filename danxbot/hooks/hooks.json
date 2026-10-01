@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/inject-time.sh UserPromptSubmit"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/inject-time.sh UserPromptSubmit || echo \"[danxbot plugin] the hook launcher failed to run, so the plugin install may be corrupt and danxbot hooks may be dead. Fix: delete the plugin cache directory, run update-claude-plugins, restart the session.\""
           }
         ]
       }
@@ -16,12 +16,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/background-work-report.mjs\" session-start",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/background-work-report.mjs session-start",
             "async": true
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/ensure-dashboard-mcp.sh --prewarm",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/ensure-dashboard-mcp.sh --prewarm",
             "async": true
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/event-hook.sh SessionStart"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/event-hook.sh SessionStart || echo \"[danxbot plugin] the hook launcher failed to run, so the plugin install may be corrupt and danxbot hooks may be dead. Fix: delete the plugin cache directory, run update-claude-plugins, restart the session.\""
           }
         ]
       },
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-event-bridge.mjs\" start",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via rewake scripts/plan-event-bridge.mjs start",
             "async": true,
             "asyncRewake": true
           }
@@ -53,11 +53,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/event-hook.sh SubagentStart"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/event-hook.sh SubagentStart"
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/activity-report.mjs\" subagent-start",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/activity-report.mjs subagent-start",
             "async": true
           }
         ]
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/inject-time.sh PostToolUse"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/inject-time.sh PostToolUse"
           }
         ]
       },
@@ -77,7 +77,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-event-bridge.mjs\" start",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via rewake scripts/plan-event-bridge.mjs start",
             "async": true,
             "asyncRewake": true
           }
@@ -88,13 +88,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-event-bridge.mjs\" watchdog",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via rewake scripts/plan-event-bridge.mjs watchdog",
             "async": true,
             "asyncRewake": true
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/background-work-report.mjs\" heartbeat",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/background-work-report.mjs heartbeat",
             "async": true
           }
         ]
@@ -104,7 +104,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/activity-report.mjs\" background-bash",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/activity-report.mjs background-bash",
             "async": true
           }
         ]
@@ -115,13 +115,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-event-bridge.mjs\" watchdog",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via rewake scripts/plan-event-bridge.mjs watchdog",
             "async": true,
             "asyncRewake": true
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/background-work-report.mjs\" stop",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/background-work-report.mjs stop",
             "async": true
           }
         ]
@@ -132,12 +132,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/background-work-report.mjs\" subagent-stop",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/background-work-report.mjs subagent-stop",
             "async": true
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/activity-report.mjs\" subagent-stop",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/activity-report.mjs subagent-stop",
             "async": true
           }
         ]
@@ -148,7 +148,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/background-work-report.mjs\" stop-failure",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/background-work-report.mjs stop-failure",
             "async": true
           }
         ]
@@ -159,7 +159,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-event-bridge.mjs\" stop",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/plan-event-bridge.mjs stop",
             "timeout": 5
           }
         ]

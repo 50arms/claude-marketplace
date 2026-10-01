@@ -1,0 +1,3 @@
+# DX-3997: a plugin's files are hashed byte for byte (danxbot/integrity-manifest.json), so git must
+# never rewrite their line endings on any machine's checkout.
+danxbot/** -text
