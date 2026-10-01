@@ -14,7 +14,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 | | Dispatched worker | Operator-session sub-agent |
 |---|---|---|
 | Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
-| Claim | danxbot claims | `pickup` with `manual:true` (below) |
+| Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
 | Gates | the profile instruction carries them | one sub-agent per gate ("Gates" below) |
 | Merge + end | the `work` profile instruction | commit, push to main; `complete` + retro; report |
 
@@ -25,7 +25,8 @@ worktree, DB resets) live only in danxbot's `work` profile.
 
 1. Read the card with its description, AC, comments and dependencies; read the parent if
    set; on a plan, read its architecture and note overlapping siblings.
-2. Claim it before any work (below).
+2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip
+   this step, the card is already yours.
 3. Pass its PRE gates ("Gates" below), then build test-first, to the rules under
    "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
@@ -58,12 +59,17 @@ it (access, credentials, hardware, authority), else a `question`. Never `AskUser
 a plan-mode pause. A card needs a human exactly while it has an open problem; removing its
 last open problem closes that need.
 
-## Claiming
+## Claiming (operator-session sub-agents only)
+
+A dispatched worker never claims: danxbot picked the card up before spawning it
+(`In Progress`, `dispatch_id` set), so a `pickup` from it is refused 409
+`dispatch_id (already dispatched)`.
 
 A `ToDo` card is an open dispatch request — working it unclaimed races a worker onto it.
-Transition `pickup` with `manual:true` and `assigned_agent:'<your identity>'`;
-`manual:true` stops anything auto-transitioning it. Read `assigned_agent` back — anything
-but you (incl. `null`) is a failed claim: retry once, then stop. The hold clears only by an
+Transition `pickup` with `manual:true`, which stops anything auto-transitioning it. The
+server stamps your session id (`$CLAUDE_CODE_SESSION_ID`) as `assigned_agent` and ignores
+any name you send. Read `assigned_agent` back — anything but your session id (incl.
+`null`) is a failed claim: retry once, then stop. The hold clears only by an
 explicit transition from your session (`complete`/`cancel`/`block`/`rollback_pickup`). A
 sub-agent you run is still your card: pickup first, drive the terminal transition yourself.
 
