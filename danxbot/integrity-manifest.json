@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "c1e5a22c9a22aa6e62e3ea67d3417f901847400fbae63c942960df208cd92167",
+    ".claude-plugin/plugin.json": "09a332bfa61dfa5ef42a8664d062f0ba574cc46181bc0846fee950eb82f43fee",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -20,7 +20,7 @@
     "scripts/launch.mjs": "86531ed3b6f9475ea990f2735676b89cb041c4e8496a51523847a00cecc54df0",
     "scripts/lib/bridge-restart-decision.mjs": "f5be8445c9356cf5d0b9a83be3ca3a10ab4552910782bf6339763c0a2ef2b7d4",
     "scripts/lib/bridge-state.mjs": "df98141d8ebcbcba08252489d864c8948be980a9508c161e0efb2043058f7743",
-    "scripts/lib/dashboard-mcp-package.mjs": "dd3d2ca3cfbe4009e7c00b58163c3cb03fb8b3bcacadf4a8df6a11412de48220",
+    "scripts/lib/dashboard-mcp-package.mjs": "0538329bcf01fcdaff390f9a831a85db3f60308027badd98c60321e202c4bfc5",
     "scripts/lib/failure-notice.mjs": "022bbbc907440f4dfea75c2cc9ab9ee2cfea2ead7188408e41bdbb76bee08dd5",
     "scripts/lib/hook-input.mjs": "4ee05e236faf87a5bc1ff6a180afbe7b123631336a076105575a3e14f4481b33",
     "scripts/lib/plan-connection.mjs": "3b6560c21170630b9c9c3effaaafd568eaa13c930109274e96135ad69b3e9051",
