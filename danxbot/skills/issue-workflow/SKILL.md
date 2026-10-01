@@ -31,8 +31,10 @@ worktree, DB resets) live only in danxbot's `work` profile.
    "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Pass its POST gates.
-6. Transition `complete` with a summary, then write the retro (last — it 409s until
-   terminal). A phase card leaves `Notes from Phase N` on the next phase card.
+6. Merge first: a dispatched worker runs its profile's end order, `agent-finalize.sh`
+   first; an operator-session sub-agent commits and pushes to main. Only then transition
+   `complete` with a summary and write the retro, citing the sha now on `origin/main` (last
+   — it 409s until terminal). A phase card leaves `Notes from Phase N` on the next phase card.
 
 ## Gates
 
