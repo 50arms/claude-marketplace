@@ -12,7 +12,7 @@
 
 import { fileURLToPath } from "node:url";
 
-export const DASHBOARD_MCP_PACKAGE = "@thehammer/danx-dashboard-mcp@0.1.187";
+export const DASHBOARD_MCP_PACKAGE = "@thehammer/danx-dashboard-mcp@0.1.190";
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   process.stdout.write(DASHBOARD_MCP_PACKAGE);
