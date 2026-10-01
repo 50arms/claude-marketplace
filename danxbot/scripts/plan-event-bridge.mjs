@@ -151,7 +151,8 @@ export const CONNECT_INTENT = "connect";
 export const RESUME_INTENT = "resume";
 
 // DX-3028/DX-2953: every state-file suffix must be listed here so `pruneStale` reaches it.
-const STATE_SUFFIXES = [".pid.json", ".lock", ".cursor.json", ".log", ".stopped.json", ".started.json", ".connected.json", ".watchdog.json", ".tmp"];
+// DX-3284: also the suffix of activity-report.mjs's failure trace, which prunes its own directory with this.
+export const STATE_SUFFIXES = [".pid.json", ".lock", ".cursor.json", ".log", ".stopped.json", ".started.json", ".connected.json", ".watchdog.json", ".last-failure.json", ".tmp"];
 
 // ------------------------------------------------------------------ state files
 

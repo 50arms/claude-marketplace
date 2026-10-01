@@ -9,7 +9,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, utimesSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -229,6 +229,38 @@ describe("runActivity — failures leave a trace, successes and the ordinary 'no
     connect();
     runActivity("subagent-start", startPayload, { env: env(), now: () => EVENT_AT_MS, ...fakes({ spawnResult: { status: 1, stdout: "", stderr: "" } }) });
     assert.equal(trace().reason, "no_output");
+  });
+
+  test("stale traces are pruned (the bridge's own pruning), fresh ones and other files are kept; no tmp file is left behind", () => {
+    connect();
+    const dir = stateDir(env());
+    const old = path.join(dir, "11111111-1111-4111-8111-111111111111.last-failure.json");
+    const oldTmp = path.join(dir, "11111111-1111-4111-8111-111111111111.last-failure.json.99.1.tmp");
+    const fresh = path.join(dir, "22222222-2222-4222-8222-222222222222.last-failure.json");
+    for (const f of [old, oldTmp, fresh]) writeFileSync(f, "{}");
+    const eightDaysAgo = new Date(EVENT_AT_MS - 8 * 24 * 60 * 60 * 1000);
+    utimesSync(old, eightDaysAgo, eightDaysAgo);
+    utimesSync(oldTmp, eightDaysAgo, eightDaysAgo);
+    utimesSync(fresh, new Date(EVENT_AT_MS), new Date(EVENT_AT_MS));
+
+    runActivity("subagent-stop", stopPayload, { env: env(), now: () => EVENT_AT_MS, ...fakes({ outcome: { ok: false, reason: "unauthorized" } }) });
+
+    assert.equal(existsSync(old), false);
+    assert.equal(existsSync(oldTmp), false);
+    assert.equal(existsSync(fresh), true);
+    assert.deepEqual(readdirSync(dir).filter((n) => n.endsWith(".tmp")), []);
+    assert.equal(trace().reason, "unauthorized");
+  });
+
+  test("a SUCCESSFUL report still prunes stale traces: pruning does not wait for the next failure", () => {
+    connect();
+    const dir = stateDir(env());
+    const old = path.join(dir, "11111111-1111-4111-8111-111111111111.last-failure.json");
+    writeFileSync(old, "{}");
+    const eightDaysAgo = new Date(EVENT_AT_MS - 8 * 24 * 60 * 60 * 1000);
+    utimesSync(old, eightDaysAgo, eightDaysAgo);
+    runActivity("subagent-start", startPayload, { env: env(), now: () => EVENT_AT_MS, ...fakes() });
+    assert.equal(existsSync(old), false);
   });
 
   test("not-on-a-plan answers are the expected case and leave no trace", () => {

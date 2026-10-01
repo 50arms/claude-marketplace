@@ -37,14 +37,15 @@
 //
 // Failure trace: `${CLAUDE_PLUGIN_DATA}/activity/<session>.last-failure.json` holds the most
 // recent failed report ({at, mode, reason}); a success never writes. It is the only way a
-// failure here is ever visible.
+// failure here is ever visible. It is written with the bridge's `writeFileAtomic` and pruned
+// with the bridge's `pruneStale` (7 days; `.last-failure.json` is in its STATE_SUFFIXES).
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPlanConnected, isValidSessionId } from "./lib/plan-connection.mjs";
-import { childEnv } from "./plan-event-bridge.mjs";
+import { childEnv, pruneStale, writeFileAtomic } from "./plan-event-bridge.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -61,8 +62,12 @@ export const MODE_EVENTS = {
 /** Bounds the report; the subcommand's own fetch timeout is 5 s and the package starts in well under a second. */
 export const REPORT_SPAWN_TIMEOUT_MS = 12_000;
 
-/** Bounds the install check, which on a cold first call is a real `npm install` (the script bounds that at 60 s). */
-export const ENSURE_SPAWN_TIMEOUT_MS = 90_000;
+/**
+ * Bounds the install check, which on a cold first call is a real `npm install`. ensure-dashboard-mcp.sh
+ * bounds that install at its own INSTALL_TIMEOUT_SECS (60 s); this sits 5 s above it, so the script's
+ * own `timeout:` verdict is the one reported, never this spawn's kill.
+ */
+export const ENSURE_SPAWN_TIMEOUT_MS = 65_000;
 
 /**
  * Whether a PostToolUse payload is a Bash call that was started in the background. The
@@ -134,9 +139,8 @@ const EXPECTED_REASONS = new Set(["no_connection_record", "session_not_connected
 
 function recordFailure(env, sessionId, mode, outcome, now) {
   const file = failureFile(stateDir(env), sessionId);
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ at: new Date(now).toISOString(), mode, reason: outcome.reason }));
-  fs.renameSync(tmp, file);
+  // The bridge's own writer: a unique tmp name, so two hooks failing at once never share one.
+  writeFileAtomic(file, JSON.stringify({ at: new Date(now).toISOString(), mode, reason: outcome.reason }));
 }
 
 /**
@@ -159,6 +163,10 @@ export function runActivity(mode, rawPayload, { env = process.env, spawnFn = spa
   if (!isValidSessionId(sessionId)) return null;
   if (mode === "background-bash" && !isBackgroundBash(input)) return null; // before any file read: this fires for every Bash call
   if (!isConnected(sessionId, env.DANXBOT_PLAN_SESSIONS_HOME || undefined)) return null; // never spawn for an unconnected session
+
+  // The bridge's own pruning (a trace nothing has touched for a week goes), run on every report
+  // rather than only a failing one, so a clean stretch cannot leave old traces behind forever.
+  pruneStale(stateDir(env), eventAtMs);
 
   const record = (outcome) => {
     if (!outcome.ok && !EXPECTED_REASONS.has(outcome.reason)) recordFailure(env, sessionId, mode, outcome, eventAtMs);
