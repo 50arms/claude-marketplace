@@ -700,7 +700,7 @@ function backgroundWorkHooksFor(event) {
   const found = [];
   for (const group of groups) {
     for (const hook of group.hooks ?? []) {
-      const match = /background-work-report\.mjs"\s+([a-z-]+)/.exec(hook.command ?? "");
+      const match = /background-work-report\.mjs\s+([a-z-]+)/.exec(hook.command ?? "");
       if (match) found.push({ mode: match[1], async: hook.async === true, command: hook.command });
     }
   }

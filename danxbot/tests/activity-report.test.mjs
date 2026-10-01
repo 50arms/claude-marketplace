@@ -279,7 +279,7 @@ function activityHooksFor(event) {
   const found = [];
   for (const group of HOOKS_JSON.hooks[event] ?? []) {
     for (const hook of group.hooks ?? []) {
-      const match = /activity-report\.mjs"\s+([a-z-]+)/.exec(hook.command ?? "");
+      const match = /activity-report\.mjs\s+([a-z-]+)/.exec(hook.command ?? "");
       if (match) found.push({ mode: match[1], matcher: group.matcher, async: hook.async === true, asyncRewake: hook.asyncRewake, command: hook.command });
     }
   }
