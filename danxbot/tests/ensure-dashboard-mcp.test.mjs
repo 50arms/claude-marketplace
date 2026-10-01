@@ -7,7 +7,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,6 +100,36 @@ describe("ensure-dashboard-mcp.sh", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /CLAUDE_PLUGIN_DATA is not set/);
     assert.deepEqual(npmCalls(), []);
+  });
+
+  test("losing a race to a concurrent install uses the winner's and nests nothing inside it", () => {
+    const result = runEnsure({ npmMode: "race" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(path.normalize(result.stdout), path.normalize(installedBinPath(dataDir)));
+    const finalDir = path.join(dataDir, "dashboard-mcp", PKG_VERSION);
+    assert.deepEqual(readdirSync(finalDir), ["node_modules"], "the loser's staged copy must not be moved inside the winner's install");
+    assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp")), [PKG_VERSION], "the loser's staging directory is discarded");
+  });
+
+  test("removes a staging directory orphaned by a killed install, and keeps a recent one (a concurrent caller's)", () => {
+    const root = path.join(dataDir, "dashboard-mcp");
+    const orphan = path.join(root, ".stage-orphan");
+    const recent = path.join(root, ".stage-recent");
+    mkdirSync(orphan, { recursive: true });
+    mkdirSync(recent, { recursive: true });
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(orphan, twoHoursAgo, twoHoursAgo);
+    runEnsure();
+    assert.ok(!existsSync(orphan), "the stale staging directory is removed");
+    assert.ok(existsSync(recent), "a fresh staging directory is left alone");
+  });
+
+  test("the SessionStart hook entry runs the prewarm, async, so a failure can never block a session", () => {
+    const hooks = JSON.parse(readFileSync(path.join(PLUGIN_ROOT, "hooks", "hooks.json"), "utf8"));
+    const entries = hooks.hooks.SessionStart.flatMap((group) => group.hooks).filter((h) => h.command.includes("ensure-dashboard-mcp.sh"));
+    assert.equal(entries.length, 1);
+    assert.match(entries[0].command, /ensure-dashboard-mcp.sh --prewarm$/);
+    assert.equal(entries[0].async, true);
   });
 
   test("--prewarm installs the same way but prints nothing", () => {

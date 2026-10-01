@@ -24,8 +24,11 @@
 #
 # CONCURRENT CALLERS. Several sub-agents can spawn at once. Each installs into its
 # own staging directory and only a COMPLETE, verified install is renamed to the
-# final path, so no caller ever sees a half-written install, and the loser of a
-# race simply discards its copy.
+# final path, so no caller ever sees a half-written install. The rename is
+# `fs.renameSync`, which REFUSES a destination that already holds an install (unlike
+# `mv`, which would nest the stage directory inside it), so the loser of a race
+# discards its copy and uses the winner's. A staging directory orphaned by a killed
+# install is removed once it is over an hour old (never a concurrent caller's).
 #
 # Prints the path to stdout (no newline) and exits 0; on failure prints ONE line
 # naming the reason to stderr and exits 1.
@@ -63,6 +66,7 @@ if [ -f "${FINAL}/${BIN_REL}" ]; then
 fi
 
 mkdir -p "$INSTALL_ROOT"
+find "$INSTALL_ROOT" -maxdepth 1 -name '.stage-*' -mmin +60 -exec rm -rf {} + 2>/dev/null || true
 STAGE="$(mktemp -d "${INSTALL_ROOT}/.stage-XXXXXX")"
 LOG="$(mktemp)"
 trap 'rm -rf "$STAGE" "$LOG"' EXIT
@@ -84,10 +88,9 @@ fi
 
 [ -f "${STAGE}/${BIN_REL}" ] || fail "install_incomplete: npm install ${SPEC} succeeded but left no ${BIN_REL}"
 
-# A concurrent caller may have finished first: its install is just as good, ours is discarded.
-if [ ! -d "$FINAL" ]; then
-  mv "$STAGE" "$FINAL" 2>/dev/null || true
-fi
+# A concurrent caller may have finished first: the rename then fails, its install is
+# just as good, and ours is discarded by the exit trap.
+node -e 'try { require("fs").renameSync(process.argv[1], process.argv[2]); } catch {}' "$STAGE" "$FINAL"
 [ -f "${FINAL}/${BIN_REL}" ] || fail "install_incomplete: could not move the verified install into ${FINAL}"
 
 printf '%s' "${FINAL}/${BIN_REL}"

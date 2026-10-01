@@ -173,6 +173,8 @@ describe("event-hook.sh — fetch failure: always reported, never silent, no man
     const result = runHookWithFakeMcp("empty", { source: "startup" });
     assert.equal(result.status, 0);
     assert.match(result.stdout, /Could not load the "session_start" event text/);
+    assert.match(result.stdout, /empty_response/, "names the empty response, never an unknown error");
+    assert.doesNotMatch(result.stdout, /unknown error/);
   });
 
   test("SubagentStart fetch failure still emits a plain failure line (not wrapped in the JSON envelope) — same contract as SessionStart's notice", () => {
@@ -212,6 +214,13 @@ describe("event-hook.sh — DX-3811: the fetch never depends on a cold npx", () 
     assert.equal(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, "The mantra alone.");
   });
 
+  test("a cold install that outlasts the fetch budget does not eat it: the mantra is still delivered", () => {
+    // The install (2 s here) runs BEFORE the fetch's 1 s budget starts. Were the install
+    // inside the `timeout`, this would end in a timeout notice.
+    const result = runHookWithFakeMcp("success", { event: "SubagentStart", text: "The mantra alone.", installed: false, npmMode: "slow", fetchTimeoutSecs: 1 });
+    assert.equal(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, "The mantra alone.");
+  });
+
   test("when the install fails, the notice carries the install failure's own reason", () => {
     const result = runHookWithFakeMcp("success", { event: "SubagentStart", installed: false, npmMode: "fail" });
     assert.equal(result.status, 0);
@@ -239,12 +248,6 @@ describe("event-hook.sh — a failure always names its reason (DX-3811)", () => 
     const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
     assert.match(context, /exit_3/);
     assert.doesNotMatch(context, /unknown error/);
-  });
-
-  test("an empty text on a clean exit names the empty response", () => {
-    const result = runHookWithFakeMcp("empty", { source: "startup" });
-    assert.match(result.stdout, /empty_response/);
-    assert.doesNotMatch(result.stdout, /unknown error/);
   });
 });
 

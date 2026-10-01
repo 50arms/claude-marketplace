@@ -66,8 +66,13 @@ export const NPX_TRIPWIRE = 'echo "npx was called: $*" >> "$FAKE_NPX_CALLS_FILE"
 
 /**
  * `npm` standing in for `npm install --prefix <dir> ... <spec>`: records the call, then
- * `$FAKE_NPM_MODE` decides — "ok" lays down the fake bin under <dir>, "no-bin" exits 0
- * leaving nothing, "fail" prints a message and exits 1, "hang" never returns.
+ * `$FAKE_NPM_MODE` decides:
+ *   ok     lays down the fake bin under <dir>
+ *   slow   does so after 2 s (a cold install longer than the fetch budget)
+ *   race   does so while ANOTHER caller completes the final install, so the rename loses
+ *   no-bin exits 0 leaving nothing
+ *   hang   never returns
+ *   other  prints a registry error and exits 1
  */
 export const fakeNpm = () => `
 echo "$*" >> "$FAKE_NPM_CALLS_FILE"
@@ -76,11 +81,14 @@ while [ $# -gt 0 ]; do
   if [ "$1" = "--prefix" ]; then PREFIX="$2"; shift; fi
   shift
 done
+lay_down() {
+  mkdir -p "$1/node_modules/${PKG_NAME}/dist"
+  cp "$FAKE_BIN_SOURCE_FILE" "$1/node_modules/${PKG_NAME}/dist/index.js"
+}
 case "\${FAKE_NPM_MODE:-ok}" in
-  ok)
-    mkdir -p "$PREFIX/node_modules/${PKG_NAME}/dist"
-    cp "$FAKE_BIN_SOURCE_FILE" "$PREFIX/node_modules/${PKG_NAME}/dist/index.js"
-    ;;
+  ok) lay_down "$PREFIX" ;;
+  slow) sleep 2; lay_down "$PREFIX" ;;
+  race) lay_down "$(dirname "$PREFIX")/${PKG_VERSION}"; lay_down "$PREFIX" ;;
   no-bin) ;;
   hang) exec sleep 30 ;;
   *) echo "npm error code E404" >&2; echo "npm error 404 Not Found - registry unreachable" >&2; exit 1 ;;

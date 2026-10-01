@@ -33,6 +33,7 @@ import { reportCommand } from "../scripts/background-work-report.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const EVENT_HOOK_SH = path.join(here, "..", "scripts", "event-hook.sh");
+const ENSURE_SH = path.join(here, "..", "scripts", "ensure-dashboard-mcp.sh");
 const NPX_TIMEOUT_MS = 30_000;
 
 /** The literal subcommand token event-hook.sh passes to the installed pin: `node "$MCP_BIN" <token> "$DANX_EVENT"` (DX-3811 — run from the plugin-data install, no longer via npx). */
@@ -83,5 +84,29 @@ test(
           `danxbot release. Published subcommands: [${listed.join(", ")}]`
       );
     }
+  }
+);
+
+// DX-3811 — ensure-dashboard-mcp.sh installs the pin and event-hook.sh runs its `dist/index.js`
+// with `node`. That path is spelled out in the script, so a pin that moved the package's
+// `bin` would make every install end in "install_incomplete". Ask the registry what the
+// pinned version's `bin` really is.
+test(
+  "the entry point ensure-dashboard-mcp.sh runs is the pinned package's published bin",
+  { timeout: NPX_TIMEOUT_MS + 10_000 },
+  () => {
+    const m = readFileSync(ENSURE_SH, "utf8").match(/^BIN_REL="node_modules\/\$\{PKG_NAME\}\/(\S+)"$/m);
+    assert.ok(m, "ensure-dashboard-mcp.sh no longer spells BIN_REL the expected way — update this test's extraction regex");
+    const view = spawnSync("npm", ["view", DASHBOARD_MCP_PACKAGE, "bin", "--json"], {
+      encoding: "utf8",
+      timeout: NPX_TIMEOUT_MS,
+      shell: process.platform === "win32", // npm is a .cmd shim on Windows
+    });
+    assert.equal(view.status, 0, `npm view failed: ${view.stderr}`);
+    const bins = Object.values(JSON.parse(view.stdout));
+    assert.ok(
+      bins.includes(m[1]),
+      `pinned ${DASHBOARD_MCP_PACKAGE} publishes bin ${JSON.stringify(bins)}, but ensure-dashboard-mcp.sh runs ${m[1]}`
+    );
   }
 );
