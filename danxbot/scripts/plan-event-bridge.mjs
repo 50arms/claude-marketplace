@@ -29,10 +29,20 @@
  * MODES
  *   start    — the hooks. Under an exclusive-create lock: a live holder with a fresh
  *              heartbeat → no-op (a connect replaces it); otherwise spawn `run`.
+ *              The watchdog (`bridge-watchdog.mjs`, DX-3997) runs it as a subprocess
+ *              with `--restart-trigger=watchdog [--consume-stop-instance=<id>]`: that
+ *              forces the resume intent, skips the plan-connection gate (the watchdog
+ *              already decided from the session's own `.connected.json`), and has
+ *              `start` record the restart for the crash-loop guard (see
+ *              `parseStartFlags` / `resolveStartRequest`).
  *   run      — the bridge: supervises the subcommand and relays its events.
  *   stop     — SessionEnd. Signals a live holder, whose SIGTERM handler ends its child.
- *   watchdog — PostToolUse (all tools) and Stop: throttled file stats that restart a
- *              stale bridge for a connected session through the same `start`.
+ *
+ * THE WATCHDOG IS NOT HERE. The PostToolUse/Stop restart check lives in
+ * `bridge-watchdog.mjs` and never imports this file: the code that restarts a dead
+ * bridge must not share a failure with it (a corrupted copy of this file once silenced
+ * both). This file writes the state the watchdog reads; the shared state-file plumbing
+ * is `lib/bridge-state.mjs`, the pure restart decision `lib/bridge-restart-decision.mjs`.
  *
  * STATE lives under `${CLAUDE_PLUGIN_DATA}/plan-event-bridge/`, per session: pid, lock,
  * cursor, log, the last stop record, and the watchdog's started/connected/throttle
@@ -49,12 +59,15 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { DASHBOARD_MCP_PACKAGE } from "./lib/dashboard-mcp-package.mjs";
 import { isPlanConnected } from "./lib/plan-connection.mjs";
+import { HEALTHY_RUN_MS, HEARTBEAT_STALE_MS, readJsonFile, sessionPaths, stateDir, writeFileAtomic } from "./lib/bridge-state.mjs";
+import { effectiveRestartGeneration } from "./lib/bridge-restart-decision.mjs";
+import { parseHookPayload, readStdinText } from "./lib/hook-input.mjs";
+import { RELAY_MARKER, failureNotice } from "./lib/failure-notice.mjs";
 
 export { DASHBOARD_MCP_PACKAGE };
 export const BRIDGE_SUBCOMMAND = "bridge";
 
 export const HEARTBEAT_MS = 30_000;
-export const HEARTBEAT_STALE_MS = 90_000;
 /** The cheap per-tick liveness check (DX-2894): `isAlive(pid)` only — no subprocess, nothing to time out. */
 const PARENT_CHECK_MS = 5_000;
 /**
@@ -80,14 +93,6 @@ export const LOCK_STALE_MS = 30_000;
 export const SOCKET_POST_ATTEMPTS = 3;
 const REDELIVERY_INITIAL_BACKOFF_MS = 1_000;
 const REDELIVERY_MAX_BACKOFF_MS = 60_000;
-/** A subcommand that ran this long before dying without a stop record is restarted; a quicker death is terminal. */
-export const HEALTHY_RUN_MS = 60_000;
-/**
- * DX-2953 — the watchdog's own tick cadence: how often a PostToolUse/Stop
- * hook invocation actually DOES anything, throttled by a timestamp file
- * (`sessionPaths(...).watchdog`). Every tick in between is a no-op file stat.
- */
-export const WATCHDOG_THROTTLE_MS = 60_000;
 const RESTART_DELAY_MS = 1_000;
 const DRAIN_ON_EXIT_MS = 10_000;
 const LOG_MAX_BYTES = 1_000_000;
@@ -103,34 +108,8 @@ export const STALE_STATE_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export const RELAY_QUEUE_CAP = CURSOR_ID_MEMORY;
 
-/**
- * The one short tag every machine-posted bridge message starts with, so the session knows
- * what kind of message it is. Everything about HOW to handle these messages lives in
- * danxbot:plan-workflow's "Live events" section, never repeated per message (operator,
- * 2026-09-27: a bridge message can arrive dozens of times a session). The inbox delivers
- * it as a user turn and no hook-input field identifies a message's source, so content is
- * the only marker available. No other plugin reads this literal since DX-3235.
- */
-export const RELAY_MARKER = "[danxbot plan event]";
-
 /** Prefix of every relayed dashboard event: the tag alone. */
 export const RELAY_PREFIX = RELAY_MARKER;
-
-/** Prefix of every bridge failure notice. */
-export const FAILURE_PREFIX = `${RELAY_MARKER} bridge down:`;
-
-/**
- * DX-2862 — the ONE wording for a failure a session could not otherwise see.
- * Every path that ends a bridge without events flowing goes through this, so a
- * session is never left to infer silence from the absence of messages.
- */
-export function failureNotice(reason, fix) {
-  const trim = (text) => String(text ?? "").trim().replace(/\.+$/, "");
-  return (
-    `${FAILURE_PREFIX} events are NOT reaching this session: ${trim(reason)}. ` +
-    `Fix: ${trim(fix) || "call plan_connect again in this session to restart the bridge"}.`
-  );
-}
 
 /**
  * What the process needs before a bridge can do anything useful.
@@ -155,51 +134,7 @@ export const RESUME_INTENT = "resume";
 export const STATE_SUFFIXES = [".pid.json", ".lock", ".cursor.json", ".log", ".stopped.json", ".started.json", ".connected.json", ".watchdog.json", ".last-failure.json", ".tmp"];
 
 // ------------------------------------------------------------------ state files
-
-export function stateDir(env = process.env) {
-  if (!env.CLAUDE_PLUGIN_DATA) throw new Error("CLAUDE_PLUGIN_DATA is not set — the bridge only runs from the danxbot plugin's hooks");
-  const dir = path.join(env.CLAUDE_PLUGIN_DATA, "plan-event-bridge");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-/** The session's state files. A missing or odd session id is refused, never turned into a path. */
-export function sessionPaths(dir, sessionId) {
-  if (typeof sessionId !== "string" || !/^[A-Za-z0-9_-]+$/.test(sessionId)) {
-    throw new Error("session id is missing or has unexpected characters");
-  }
-  const base = path.join(dir, sessionId);
-  return {
-    pid: `${base}.pid.json`,
-    lock: `${base}.lock`,
-    cursor: `${base}.cursor.json`,
-    log: `${base}.log`,
-    // DX-3028: the MCP child's stopped record, read by the watchdog.
-    stopped: `${base}.stopped.json`,
-    // DX-2953: split into two single-writer files (started by start(), connected by
-    // the run process) so a start racing the previous child's ready write can't lose a field.
-    started: `${base}.started.json`,
-    connected: `${base}.connected.json`,
-    // DX-2953: watchdog throttle stamp — mtime IS its content; also refreshes the
-    // marker files' mtimes so pruneStale never reclaims a live session.
-    watchdog: `${base}.watchdog.json`,
-  };
-}
-
-export function readJsonFile(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-/** Write-then-rename: a reader sees the old file or the new one, never a torn write. */
-export function writeFileAtomic(file, text) {
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, text);
-  fs.renameSync(tmp, file);
-}
+// DX-3997: stateDir / sessionPaths / readJsonFile / writeFileAtomic live in lib/bridge-state.mjs.
 
 /**
  * DX-3028 (AC3) — the ONE writer of `paths.stopped`. Fires for every stop
@@ -253,7 +188,7 @@ export function isFreshHolder(record, { isAlive: alive = isAlive, now = Date.now
   return Boolean(record) && alive(record.pid) && now - Date.parse(record.heartbeatAt ?? "") < HEARTBEAT_STALE_MS;
 }
 
-// ------------------------------------------------------------- DX-2953: watchdog
+// ------------------------------------------- DX-2953: the markers the watchdog reads
 
 /**
  * DX-2953 — write the `.connected.json` marker. The run process is the ONLY
@@ -298,16 +233,6 @@ export function writeConnectedIfCurrent(paths, { connected, instanceId, now = Da
 export const CONNECTED_WRITE_SKIP_REASONS = new Set(["no_connection_record", "session_is_worker", "bridge_failed"]);
 
 /**
- * DX-2953 — stop reasons that ALWAYS forbid a watchdog restart, regardless
- * of `restartGeneration` or `consumedStopInstance`: the session is either
- * definitively not connected, or another listener already has (or will)
- * cover it. `bridge_failed` is handled separately (see
- * `shouldWatchdogRestart`) — it forbids a restart only once already
- * consumed, or while `restartGeneration` has not reset.
- */
-export const FORBID_RESTART_ALWAYS = new Set(["no_connection_record", "not_connected", "superseded", "replaced", "session_is_worker"]);
-
-/**
  * DX-2953 — write the `.started.json` marker's full record. `start()` is the
  * ONLY caller (always under `paths.lock`, at the mint site). Pure so the
  * generation/consumed-instance arithmetic is unit-tested without a lock, a
@@ -332,95 +257,6 @@ export function buildStartedRecord({ instanceId, sessionId, intent, transcriptPa
     restartGeneration,
     consumedStopInstance: isWatchdog ? (consumeStopInstance ?? null) : null,
     startedAt: new Date(now).toISOString(),
-  };
-}
-
-/**
- * DX-2953 — the crash-loop guard: how many watchdog-triggered restarts this
- * "unhealthy streak" has already spent. `.started.json`'s `restartGeneration`
- * is a literal, start()-written integer (single-writer, per the card), but
- * ITS RESET is computed lazily here rather than written by a third party
- * (which the two-marker design forbids): once the CURRENT `lastStartedInstance`
- * has been alive at least HEALTHY_RUN_MS — measured from `startedAt` to
- * either its OWN applicable stop record's `recordedAt` (it died, but lived
- * long enough first) or `now` (it might still be alive/healthy right now) —
- * the streak is over and the effective generation reads as 0, even though
- * the stored value stays whatever it was until the NEXT `start()` call
- * persists the collapsed value (the sole writer catching up on its own next
- * write). Mirrors `classifyChildExit`'s existing `ranMs >= HEALTHY_RUN_MS`
- * pattern for the analogous subcommand-restart decision.
- */
-export function effectiveRestartGeneration({ startedRecord, stoppedRecord = null, now, healthyRunMs = HEALTHY_RUN_MS }) {
-  const stored = startedRecord?.restartGeneration ?? 0;
-  if (stored <= 0) return 0;
-  const startedAt = Date.parse(startedRecord?.startedAt ?? "");
-  if (!Number.isFinite(startedAt)) return stored;
-  const appliesToCurrent = stoppedRecord && stoppedRecord.writingInstanceId === startedRecord.lastStartedInstance;
-  const recordedAt = appliesToCurrent ? Date.parse(stoppedRecord.recordedAt ?? "") : NaN;
-  const ranUntil = Number.isFinite(recordedAt) ? recordedAt : now;
-  return ranUntil - startedAt >= healthyRunMs ? 0 : stored;
-}
-
-/** A `.pid.json` record the watchdog considers stale: missing, or heartbeatAt older than heartbeatStaleMs. */
-export function isMarkerStale({ pidRecord, now, heartbeatStaleMs = HEARTBEAT_STALE_MS }) {
-  if (!pidRecord) return true;
-  const heartbeatAt = Date.parse(pidRecord.heartbeatAt ?? "");
-  if (!Number.isFinite(heartbeatAt)) return true;
-  return now - heartbeatAt > heartbeatStaleMs;
-}
-
-/**
- * DX-2953 — the watchdog's whole restart decision, pure (no fs, no clock
- * besides the injected `now`) so every branch in the card's checklist is
- * unit-tested without a spawned process. Reads exactly the four inputs the
- * card names: `.pid.json` (staleness), `.started.json` (`lastStartedInstance`
- * / `restartGeneration` / `consumedStopInstance`), `.connected.json`
- * (whether this session is known to want a bridge at all), and
- * `.stopped.json` (why the last one ended) — NEVER the stopped record's
- * `paths` field, which is the live child's own watched-path retry input,
- * not the watchdog's concern.
- *
- * Matches a stop record to the CURRENT instance on `writingInstanceId` ONLY
- * — never `instanceId`, which `bridge.ts` stamps independently and which
- * silently drifts to a fresh `randomUUID()` there on its own (see
- * `resolveInstanceId` in `bridge.ts`, and the module docblock's drift
- * section). A record from any other (superseded) instance is not
- * "applicable" and never forbids or gates anything.
- */
-export function shouldWatchdogRestart({ pidRecord, startedRecord, connectedRecord, stoppedRecord, now, heartbeatStaleMs = HEARTBEAT_STALE_MS }) {
-  if (!connectedRecord || connectedRecord.connected !== true) {
-    return { restart: false, reason: "this session is not known to be connected to a plan" };
-  }
-  if (!isMarkerStale({ pidRecord, now, heartbeatStaleMs })) {
-    return { restart: false, reason: "the bridge is not stale" };
-  }
-  const lastStartedInstance = startedRecord?.lastStartedInstance ?? null;
-  const applicable = stoppedRecord && lastStartedInstance && stoppedRecord.writingInstanceId === lastStartedInstance ? stoppedRecord : null;
-  if (applicable) {
-    if (FORBID_RESTART_ALWAYS.has(applicable.reason)) {
-      return { restart: false, reason: `an applicable stop record forbids a restart: ${applicable.reason}` };
-    }
-    if (applicable.reason === "bridge_failed") {
-      const consumedInstance = applicable.writingInstanceId;
-      if (startedRecord?.consumedStopInstance === consumedInstance) {
-        return { restart: false, reason: "this bridge_failed record was already consumed by an earlier watchdog restart" };
-      }
-      if (effectiveRestartGeneration({ startedRecord, stoppedRecord, now }) > 0) {
-        return { restart: false, reason: "restartGeneration has not reset since the last watchdog restart" };
-      }
-      return { restart: true, reason: `restarting after bridge_failed: ${applicable.detail}`, consumeStopInstance: consumedInstance };
-    }
-    // Every other applicable reason (a degraded reason left by a bridge
-    // killed while degraded, revoked, refused, scope_narrowed, ...) does not
-    // forbid a restart on its own — see the module docblock's "restart
-    // decision reads the stop record" section.
-  }
-  if (effectiveRestartGeneration({ startedRecord, stoppedRecord, now }) > 0) {
-    return { restart: false, reason: "restartGeneration has not reset since the last watchdog restart" };
-  }
-  return {
-    restart: true,
-    reason: applicable ? `restarting: an applicable stop record (${applicable.reason}) does not forbid it` : "the bridge is stale with no applicable stop record",
   };
 }
 
@@ -812,7 +648,7 @@ export async function start({
   verdictTimeoutMs = STARTUP_VERDICT_MS,
   // DX-2953: recorded into .started.json's startInputs so a watchdog restart reuses it.
   transcriptPath = null,
-  // DX-2953: set only by the watchdog's own call; selects generation-bump behavior in buildStartedRecord.
+  // DX-2953 / DX-3997: set only by `start --restart-trigger=watchdog` (run by bridge-watchdog.mjs); selects generation-bump behavior in buildStartedRecord.
   restartTrigger,
   consumeStopInstance = null,
 } = {}) {
@@ -1704,110 +1540,53 @@ export function hookMayStart({ intent, sessionId, env = process.env, connected =
 
 /** The hook's stdin JSON carries `session_id`, `hook_event_name` and `transcript_path`; a hand run has none. */
 async function readHookInput() {
-  const fallback = { sessionId: process.env.CLAUDE_CODE_SESSION_ID ?? null, intent: RESUME_INTENT, transcriptPath: null };
-  if (process.stdin.isTTY) return fallback;
-  const chunks = [];
-  await new Promise((resolve) => {
-    process.stdin.on("data", (c) => chunks.push(c));
-    process.stdin.on("end", resolve);
-    process.stdin.on("error", resolve);
-    setTimeout(resolve, 500);
-  });
-  process.stdin.pause();
-  try {
-    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    const id = typeof parsed.session_id === "string" && parsed.session_id !== "" ? parsed.session_id : fallback.sessionId;
-    // DX-2953: recorded into .started.json's startInputs so a watchdog restart reuses it.
-    const transcriptPath = typeof parsed.transcript_path === "string" && parsed.transcript_path !== "" ? parsed.transcript_path : null;
-    return { sessionId: id, intent: intentFromHookEvent(parsed.hook_event_name), transcriptPath };
-  } catch {
-    return fallback;
+  const hook = parseHookPayload(await readStdinText());
+  // DX-2953: transcriptPath is recorded into .started.json's startInputs so a watchdog restart reuses it.
+  return { sessionId: hook.sessionId, intent: intentFromHookEvent(hook.hookEventName), transcriptPath: hook.transcriptPath };
+}
+
+/** DX-3997: the only restart trigger `start` accepts — `bridge-watchdog.mjs` runs `start` as a subprocess with it. */
+export const WATCHDOG_TRIGGER = "watchdog";
+
+/**
+ * DX-3997 — the CLI surface the watchdog's subprocess uses: `start --restart-trigger=watchdog
+ * [--consume-stop-instance=<id>]`. Fails loud on anything else (a typo here would otherwise
+ * silently start the bridge as a plain connect and reset the crash-loop guard).
+ */
+export function parseStartFlags(args) {
+  const flags = { restartTrigger: undefined, consumeStopInstance: null };
+  for (const arg of args) {
+    const match = /^--(restart-trigger|consume-stop-instance)=(.+)$/.exec(arg);
+    if (!match) throw new Error(`unknown start argument ${JSON.stringify(arg)}`);
+    if (match[1] === "restart-trigger") {
+      if (match[2] !== WATCHDOG_TRIGGER) throw new Error(`--restart-trigger only accepts ${WATCHDOG_TRIGGER}, got ${JSON.stringify(match[2])}`);
+      flags.restartTrigger = match[2];
+    } else {
+      flags.consumeStopInstance = match[2];
+    }
   }
+  if (flags.consumeStopInstance !== null && flags.restartTrigger !== WATCHDOG_TRIGGER) {
+    throw new Error("--consume-stop-instance needs --restart-trigger=watchdog");
+  }
+  return flags;
 }
 
 /**
- * DX-2953 — the watchdog tick: what `PostToolUse` (all tools) and `Stop` run.
- * Throttled to once per `throttleMs` via `paths.watchdog`'s own mtime — every
- * tick in between does exactly one `fs.statSync` and returns. On an actual
- * tick: refresh the throttle stamp, `utimesSync` both marker files (the named
- * toucher that keeps `pruneStale` from reclaiming a live session's markers —
- * see the module docblock), read the four state files, and hand them to the
- * pure `shouldWatchdogRestart`. Only when it says to restart does this call
- * `startFn` (the injected `start`) — the healthy path never spawns anything.
+ * What `start` mode hands to `start()`. A watchdog restart is ALWAYS the resume intent (the
+ * hook payload it is run with is a PostToolUse/Stop one, whose event name would otherwise read
+ * as a plan_connect) and skips the plan-connection gate: the watchdog already decided from the
+ * session's own `.connected.json`, as the in-process call did before DX-3997.
  */
-export async function watchdogTick({
-  env = process.env,
-  sessionId,
-  transcriptPath = null,
-  now = Date.now,
-  isAlive: alive = isAlive,
-  killTree: kill = killTree,
-  stderr = (message) => process.stderr.write(message),
-  post = postToInbox,
-  waitVerdict = waitForVerdict,
-  verdictTimeoutMs = STARTUP_VERDICT_MS,
-  spawnRun = spawnRunProcess,
-  startFn = start,
-  throttleMs = WATCHDOG_THROTTLE_MS,
-  heartbeatStaleMs = HEARTBEAT_STALE_MS,
-} = {}) {
-  if (!env.CLAUDE_PLUGIN_DATA || typeof sessionId !== "string" || sessionId === "") {
-    return { ticked: false, restarted: false, exitCode: 0 };
-  }
-  const dir = stateDir(env);
-  const paths = sessionPaths(dir, sessionId);
-  const nowMs = now();
-  let throttleAge = Infinity;
-  try {
-    throttleAge = nowMs - fs.statSync(paths.watchdog).mtimeMs;
-  } catch {
-    /* never ticked before — a fresh tick is due */
-  }
-  if (throttleAge < throttleMs) {
-    return { ticked: false, restarted: false, exitCode: 0 };
-  }
-  writeFileAtomic(paths.watchdog, JSON.stringify({ lastTickAt: new Date(nowMs).toISOString() }));
-  // DX-2953: stamp mtimes to the injected `now`, not the real OS clock, so every timing
-  // decision in this module stays deterministic under an injected clock.
-  const touch = (file) => {
-    try {
-      fs.utimesSync(file, new Date(nowMs), new Date(nowMs));
-    } catch {
-      /* does not exist yet, or was removed concurrently — nothing to touch */
-    }
+export function resolveStartRequest({ hook, flags }) {
+  const isWatchdog = flags.restartTrigger === WATCHDOG_TRIGGER;
+  return {
+    sessionId: hook.sessionId,
+    intent: isWatchdog ? RESUME_INTENT : hook.intent,
+    transcriptPath: hook.transcriptPath,
+    restartTrigger: flags.restartTrigger,
+    consumeStopInstance: flags.consumeStopInstance,
+    gated: !isWatchdog,
   };
-  touch(paths.watchdog);
-  touch(paths.started);
-  touch(paths.connected);
-
-  const decision = shouldWatchdogRestart({
-    pidRecord: readJsonFile(paths.pid),
-    startedRecord: readJsonFile(paths.started),
-    connectedRecord: readJsonFile(paths.connected),
-    stoppedRecord: readJsonFile(paths.stopped),
-    now: nowMs,
-    heartbeatStaleMs,
-  });
-  if (!decision.restart) {
-    return { ticked: true, restarted: false, reason: decision.reason, exitCode: 0 };
-  }
-  const result = await startFn({
-    env,
-    sessionId,
-    intent: RESUME_INTENT,
-    transcriptPath,
-    restartTrigger: "watchdog",
-    consumeStopInstance: decision.consumeStopInstance,
-    spawnRun,
-    isAlive: alive,
-    killTree: kill,
-    now,
-    stderr,
-    post,
-    waitVerdict,
-    verdictTimeoutMs,
-  });
-  return { ticked: true, restarted: result.started === true, reason: decision.reason, startResult: result, exitCode: result.exitCode ?? 0 };
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -1815,9 +1594,12 @@ if (isMain) {
   const [mode, arg, intentArg] = process.argv.slice(2);
   const modes = {
     start: async () => {
+      const flags = parseStartFlags(process.argv.slice(3));
       const hook = await readHookInput();
-      if (!hookMayStart({ intent: hook.intent, sessionId: hook.sessionId })) process.exit(0);
-      const result = await start({ sessionId: hook.sessionId, intent: hook.intent, transcriptPath: hook.transcriptPath });
+      const request = resolveStartRequest({ hook, flags });
+      if (request.gated && !hookMayStart({ intent: request.intent, sessionId: request.sessionId })) process.exit(0);
+      const { gated: _gated, ...startArgs } = request;
+      const result = await start(startArgs);
       process.exit(result.exitCode ?? 0);
     },
     stop: async () => {
@@ -1825,17 +1607,11 @@ if (isMain) {
       stop({ sessionId: hook.sessionId });
       process.exit(0);
     },
-    // DX-2953 — the watchdog: PostToolUse (all tools) and Stop both run this.
-    watchdog: async () => {
-      const hook = await readHookInput();
-      const result = await watchdogTick({ sessionId: hook.sessionId, transcriptPath: hook.transcriptPath });
-      process.exit(result.exitCode ?? 0);
-    },
     run: () => run(arg, intentArg),
   };
   const main = modes[mode];
   if (!main) {
-    process.stderr.write("usage: plan-event-bridge.mjs start|stop|watchdog|run <session-id>\n");
+    process.stderr.write("usage: plan-event-bridge.mjs start|stop|run <session-id>\n");
     process.exit(2);
   }
   Promise.resolve()
