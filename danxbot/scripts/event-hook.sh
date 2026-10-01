@@ -22,8 +22,8 @@
 #   SubagentStart                -> sub_agent_start
 # — and asks the dashboard for that event's EFFECTIVE text (the reminder
 # registry's `event.<name>` row, `GET /api/reminders/event/<name>`) via the
-# pinned `danx-dashboard-mcp event-text` subcommand, then prints exactly
-# that text.
+# pinned `danx-dashboard-mcp event-text` subcommand (run with `node` from the
+# plugin-data install, DX-3811), then prints exactly that text.
 #
 # Fetch failure: prints ONE line saying the event text could not be loaded,
 # naming the reason, and telling the agent to tell the operator — never
@@ -44,7 +44,8 @@ set -euo pipefail
 EVENT="${1:-SessionStart}"
 CONNECTION_LIB="${CLAUDE_PLUGIN_ROOT}/scripts/lib/plan-connection.mjs"
 
-EVENT_TEXT_FETCH_TIMEOUT_SECS="8"
+# The fetch budget (DX-3811): covers the fetch only; the env override is a test seam.
+EVENT_TEXT_FETCH_TIMEOUT_SECS="${EVENT_TEXT_FETCH_TIMEOUT_SECS:-8}"
 
 case "$EVENT" in
   SessionStart|SubagentStart) ;;
@@ -131,34 +132,50 @@ SESSION_ID="$(printf '%s' "$PAYLOAD" | node -e '
   });
 ' 2>/dev/null || true)"
 
-# Plain `npx` resolved off PATH — NOT `plan-event-bridge.mjs`'s
-# `bridgeCommand()` win32 workaround (resolving `npx-cli.js` and invoking it
-# via `node`). That workaround exists because Node's `child_process.spawn`
-# cannot execute a Windows `.cmd` shim without `shell: true`. This script is
-# bash, not Node: bash's own exec/PATH resolution already runs `node`
-# directly for $CONNECTION_LIB above with no such boundary, and it resolves
-# `npx` the same way any other shell resolves a command on PATH.
+# DX-3811: the fetch runs the pinned package with plain `node` from a copy
+# installed ONCE into the plugin data dir (ensure-dashboard-mcp.sh), never through
+# `npx -y`. A cold or contended `npx` took 4-15 s here and was killed by the
+# fetch timeout before it wrote a word, so about 1 in 9 sub-agents got the failure
+# notice instead of the mantra. The install step runs OUTSIDE the fetch's budget
+# (it is a file check once installed); the budget covers only the fetch itself.
 #
-# `timeout` bounds the whole fetch so a hung/unreachable dashboard can never
-# wedge SessionStart. Falls back to an unbounded call only when no `timeout`
-# binary exists at all (stock macOS ships none).
-EVENT_TEXT_MCP_PACKAGE="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/lib/dashboard-mcp-package.mjs")"
+# `timeout` bounds the fetch so a hung/unreachable dashboard can never wedge
+# SessionStart. Falls back to an unbounded call only when no `timeout` binary
+# exists at all (stock macOS ships none).
 FETCH_OK="0"
+FETCH_RC="0"
 EVENT_TEXT=""
+FETCH_ERR=""
 # `mktemp` (not a hardcoded /tmp path) so this resolves correctly on every
 # host this bash runs on, Windows/Git-Bash included. `&&`/`||` right after
-# the assignment (not a bare `STATUS=$?` on the next line) is required under
+# each assignment (not a bare `STATUS=$?` on the next line) is required under
 # `set -e`: a failing command substitution NOT followed by `&&`/`||` aborts
 # the script immediately, before the failure could ever be handled below —
 # mirrors mantra.sh's original DX-3366 idiom.
 ERR_FILE="$(mktemp)"
-if command -v timeout >/dev/null 2>&1; then
-  EVENT_TEXT="$(CLAUDE_CODE_SESSION_ID="$SESSION_ID" timeout "${EVENT_TEXT_FETCH_TIMEOUT_SECS}s" npx -y "$EVENT_TEXT_MCP_PACKAGE" event-text "$DANX_EVENT" 2>"$ERR_FILE")" && FETCH_OK="1" || FETCH_OK="0"
-else
-  EVENT_TEXT="$(CLAUDE_CODE_SESSION_ID="$SESSION_ID" npx -y "$EVENT_TEXT_MCP_PACKAGE" event-text "$DANX_EVENT" 2>"$ERR_FILE")" && FETCH_OK="1" || FETCH_OK="0"
+MCP_BIN="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-dashboard-mcp.sh" 2>"$ERR_FILE")" && ENSURE_OK="1" || ENSURE_OK="0"
+if [ "$ENSURE_OK" = "1" ]; then
+  if command -v timeout >/dev/null 2>&1; then
+    EVENT_TEXT="$(CLAUDE_CODE_SESSION_ID="$SESSION_ID" timeout "${EVENT_TEXT_FETCH_TIMEOUT_SECS}s" node "$MCP_BIN" event-text "$DANX_EVENT" 2>"$ERR_FILE")" && FETCH_OK="1" || FETCH_RC="$?"
+  else
+    EVENT_TEXT="$(CLAUDE_CODE_SESSION_ID="$SESSION_ID" node "$MCP_BIN" event-text "$DANX_EVENT" 2>"$ERR_FILE")" && FETCH_OK="1" || FETCH_RC="$?"
+  fi
 fi
 FETCH_ERR="$(cat "$ERR_FILE" 2>/dev/null || true)"
 rm -f "$ERR_FILE"
+
+# A failure always names its reason. `timeout` kills the process before it can
+# write one (rc 124, empty stderr), so that case is named here — the old
+# "(unknown error)" text hid exactly this timeout.
+if [ -z "$FETCH_ERR" ]; then
+  if [ "$FETCH_RC" = "124" ]; then
+    FETCH_ERR="timeout: no response within ${EVENT_TEXT_FETCH_TIMEOUT_SECS}s"
+  elif [ "$FETCH_RC" != "0" ]; then
+    FETCH_ERR="exit_${FETCH_RC}: the fetch exited without a message"
+  else
+    FETCH_ERR="empty_response: the dashboard returned an empty text"
+  fi
+fi
 
 # Success requires BOTH exit 0 AND non-empty stdout — an empty string on a
 # reported-clean exit is treated as a failure too, never trusted as a
@@ -171,4 +188,4 @@ fi
 # Fetch failure: ALWAYS reported, never silent, and never a mantra.md reread
 # (DX-3421 — no offline fallback any more). Tell the agent to tell the
 # operator.
-emit "⚠ Could not load the \"$DANX_EVENT\" event text from the danxbot reminder registry (${FETCH_ERR:-unknown error}). Tell the operator this event hook fetch failed."
+emit "⚠ Could not load the \"$DANX_EVENT\" event text from the danxbot reminder registry (${FETCH_ERR}). Tell the operator this event hook fetch failed."

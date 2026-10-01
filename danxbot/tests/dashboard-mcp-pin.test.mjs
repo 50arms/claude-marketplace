@@ -35,11 +35,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const EVENT_HOOK_SH = path.join(here, "..", "scripts", "event-hook.sh");
 const NPX_TIMEOUT_MS = 30_000;
 
-/** The literal subcommand token event-hook.sh passes to `npx -y "$EVENT_TEXT_MCP_PACKAGE" <token>`. */
+/** The literal subcommand token event-hook.sh passes to the installed pin: `node "$MCP_BIN" <token> "$DANX_EVENT"` (DX-3811 — run from the plugin-data install, no longer via npx). */
 function eventTextSubcommandFromSource() {
   const src = readFileSync(EVENT_HOOK_SH, "utf8");
-  const m = src.match(/npx -y "\$EVENT_TEXT_MCP_PACKAGE" (\S+)/);
-  assert.ok(m, "event-hook.sh no longer calls npx the expected way — update this test's extraction regex");
+  const m = src.match(/node "\$MCP_BIN" (\S+) "\$DANX_EVENT"/);
+  assert.ok(m, "event-hook.sh no longer calls the installed package the expected way — update this test's extraction regex");
   return m[1];
 }
 

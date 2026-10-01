@@ -19,6 +19,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { NPX_TRIPWIRE, fakeNpm, installFakeMcp, makeFakeBinDir, writeFakeBinSourceFile } from "./fixtures/fake-dashboard-mcp.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.join(here, "..");
@@ -48,63 +49,49 @@ function runHook(event, { sessionId = "test-session", source, extraEnv = {} } = 
   });
 }
 
-// A fake `npx` placed FIRST on PATH so event-hook.sh's registry-fetch step
-// (`npx -y @thehammer/danx-dashboard-mcp@... event-text <event>`) resolves
-// to this script instead of the real one — no test here ever touches the
-// network. Records the args it was called with (minus the leading `-y
-// <package>`) into $FAKE_NPX_ARGS_FILE so a test can assert which event name
-// the hook actually requested. Modes (`$FAKE_EVENT_HOOK_NPX_MODE`):
-//   "success" -> prints $FAKE_EVENT_HOOK_NPX_TEXT to stdout, exit 0
-//   "empty"   -> prints nothing, exit 0 (the "reported-clean but empty"
-//                case the hook must still treat as a failure)
-//   "fail"    -> prints $FAKE_EVENT_HOOK_NPX_STDERR (or a default) to
-//                stderr only, exit 1
-function makeFakeNpx() {
-  const binDir = mkdtempSync(path.join(tmpdir(), "event-hook-fake-npx-"));
-  const scriptPath = path.join(binDir, "npx");
-  writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "# Fake npx for event-hook.sh tests (DX-3421) — never touches the network.",
-      'if [ -n "${FAKE_NPX_ARGS_FILE:-}" ]; then printf \'%s\\n\' "$*" > "$FAKE_NPX_ARGS_FILE"; fi',
-      'case "${FAKE_EVENT_HOOK_NPX_MODE:-fail}" in',
-      '  success) printf \'%s\' "${FAKE_EVENT_HOOK_NPX_TEXT:-}" ;;',
-      "  empty)   exit 0 ;;",
-      '  *) echo "${FAKE_EVENT_HOOK_NPX_STDERR:-fake npx: forced failure}" >&2; exit 1 ;;',
-      "esac",
-      "",
-    ].join("\n"),
-  );
-  spawnSync("chmod", ["755", scriptPath]);
-  return binDir;
-}
-
-function runHookWithFakeNpx(mode, { event = "SessionStart", sessionId = "connected-session", source = "startup", text = "", stderrText } = {}) {
-  const fakeBinDir = makeFakeNpx();
+// The registry fetch runs the pinned package's installed bin with `node` (DX-3811), so
+// these tests install a FAKE bin where ensure-dashboard-mcp.sh would (fixtures/
+// fake-dashboard-mcp.mjs) — no test here touches the network. A tripwire `npx` sits first
+// on PATH: the hook must never reach it. Modes (`mode`): "success" prints the text,
+// "empty" prints nothing and exits 0, "fail" prints stderr and exits 1, "silent-fail"
+// exits 3 with no output, "hang" never returns.
+function runHookWithFakeMcp(
+  mode,
+  { event = "SessionStart", sessionId = "connected-session", source = "startup", text = "", stderrText, installed = true, fetchTimeoutSecs, npmMode } = {},
+) {
+  const fakeBinDir = makeFakeBinDir({ npx: NPX_TRIPWIRE, npm: fakeNpm() });
+  const dataDir = mkdtempSync(path.join(tmpdir(), "event-hook-plugin-data-"));
   const argsFile = path.join(fakeBinDir, "args.txt");
+  const npxCallsFile = path.join(fakeBinDir, "npx-calls.txt");
+  const npmCallsFile = path.join(fakeBinDir, "npm-calls.txt");
+  if (installed) installFakeMcp(dataDir);
   connect(sessionId);
   try {
-    const result = runHook(event, {
-      sessionId,
-      source,
-      extraEnv: {
-        PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH}`,
-        FAKE_EVENT_HOOK_NPX_MODE: mode,
-        FAKE_EVENT_HOOK_NPX_TEXT: text,
-        FAKE_EVENT_HOOK_NPX_STDERR: stderrText ?? "",
-        FAKE_NPX_ARGS_FILE: argsFile,
-      },
-    });
-    let calledArgs = null;
-    try {
-      calledArgs = readFileSync(argsFile, "utf8").trim();
-    } catch {
-      /* fake npx never ran */
-    }
-    return { ...result, calledArgs };
+    const extraEnv = {
+      PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH}`,
+      CLAUDE_PLUGIN_DATA: dataDir,
+      FAKE_MCP_MODE: mode,
+      FAKE_MCP_TEXT: text,
+      FAKE_MCP_STDERR: stderrText ?? "",
+      FAKE_MCP_ARGS_FILE: argsFile,
+      FAKE_NPX_CALLS_FILE: npxCallsFile,
+      FAKE_NPM_CALLS_FILE: npmCallsFile,
+      FAKE_BIN_SOURCE_FILE: writeFakeBinSourceFile(),
+    };
+    if (fetchTimeoutSecs !== undefined) extraEnv.EVENT_TEXT_FETCH_TIMEOUT_SECS = String(fetchTimeoutSecs);
+    if (npmMode !== undefined) extraEnv.FAKE_NPM_MODE = npmMode;
+    const result = runHook(event, { sessionId, source, extraEnv });
+    const readOrNull = (file) => {
+      try {
+        return readFileSync(file, "utf8").trim();
+      } catch {
+        return null; // never written: the fake never ran
+      }
+    };
+    return { ...result, calledArgs: readOrNull(argsFile), npxCalls: readOrNull(npxCallsFile), npmCalls: readOrNull(npmCallsFile) };
   } finally {
     rmSync(fakeBinDir, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   }
 }
 
@@ -136,28 +123,28 @@ describe("event-hook.sh — not connected to a plan: silent, both events", () =>
 
 describe("event-hook.sh — connected: resolves the right danxbot event and prints its text", () => {
   test("SessionStart(startup) requests session_start, prints the fetched text plain", () => {
-    const result = runHookWithFakeNpx("success", { source: "startup", text: "The start text." });
+    const result = runHookWithFakeMcp("success", { source: "startup", text: "The start text." });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, "The start text.\n");
     assert.match(result.calledArgs, /event-text session_start$/);
   });
 
   test("SessionStart(resume) requests session_resume", () => {
-    const result = runHookWithFakeNpx("success", { source: "resume", text: "The resume text." });
+    const result = runHookWithFakeMcp("success", { source: "resume", text: "The resume text." });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, "The resume text.\n");
     assert.match(result.calledArgs, /event-text session_resume$/);
   });
 
   test("SessionStart(compact) requests after_compaction", () => {
-    const result = runHookWithFakeNpx("success", { source: "compact", text: "The compaction text." });
+    const result = runHookWithFakeMcp("success", { source: "compact", text: "The compaction text." });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, "The compaction text.\n");
     assert.match(result.calledArgs, /event-text after_compaction$/);
   });
 
   test("SubagentStart requests sub_agent_start, wraps the text in the additionalContext JSON envelope", () => {
-    const result = runHookWithFakeNpx("success", { event: "SubagentStart", text: "The mantra alone." });
+    const result = runHookWithFakeMcp("success", { event: "SubagentStart", text: "The mantra alone." });
     assert.equal(result.status, 0);
     assert.match(result.calledArgs, /event-text sub_agent_start$/);
     const parsed = JSON.parse(result.stdout);
@@ -166,16 +153,16 @@ describe("event-hook.sh — connected: resolves the right danxbot event and prin
   });
 
   test("an unrecognized SessionStart source (defensive: the matcher should never let this through) is silent, never fetches", () => {
-    const result = runHookWithFakeNpx("success", { source: "clear", text: "should never print" });
+    const result = runHookWithFakeMcp("success", { source: "clear", text: "should never print" });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, "");
-    assert.equal(result.calledArgs, null, "expected the hook to never invoke npx for an unrecognized source");
+    assert.equal(result.calledArgs, null, "expected the hook to never fetch for an unrecognized source");
   });
 });
 
 describe("event-hook.sh — fetch failure: always reported, never silent, no mantra.md fallback", () => {
   test("a hard failure (network/auth/etc.) prints ONE line naming the event and the reason, exit 0", () => {
-    const result = runHookWithFakeNpx("fail", { source: "startup", stderrText: "not_found: could not fetch the effective \"session_start\" text from the dashboard" });
+    const result = runHookWithFakeMcp("fail", { source: "startup", stderrText: "not_found: could not fetch the effective \"session_start\" text from the dashboard" });
     assert.equal(result.status, 0);
     assert.match(result.stdout, /Could not load the "session_start" event text/);
     assert.match(result.stdout, /not_found/);
@@ -183,13 +170,13 @@ describe("event-hook.sh — fetch failure: always reported, never silent, no man
   });
 
   test("a reported-clean exit with EMPTY stdout is still treated as a failure, never a silent success", () => {
-    const result = runHookWithFakeNpx("empty", { source: "startup" });
+    const result = runHookWithFakeMcp("empty", { source: "startup" });
     assert.equal(result.status, 0);
     assert.match(result.stdout, /Could not load the "session_start" event text/);
   });
 
   test("SubagentStart fetch failure still emits a plain failure line (not wrapped in the JSON envelope) — same contract as SessionStart's notice", () => {
-    const result = runHookWithFakeNpx("fail", { event: "SubagentStart", stderrText: "timeout" });
+    const result = runHookWithFakeMcp("fail", { event: "SubagentStart", stderrText: "timeout" });
     assert.equal(result.status, 0);
     // SubagentStart's `emit` wraps EVERY string it's given (success or
     // failure alike) in the additionalContext envelope — the failure
@@ -197,6 +184,67 @@ describe("event-hook.sh — fetch failure: always reported, never silent, no man
     const parsed = JSON.parse(result.stdout);
     assert.match(parsed.hookSpecificOutput.additionalContext, /Could not load the "sub_agent_start" event text/);
     assert.match(parsed.hookSpecificOutput.additionalContext, /timeout/);
+  });
+});
+
+describe("event-hook.sh — DX-3811: the fetch never depends on a cold npx", () => {
+  // Regression for DX-3811: the hook used to run `timeout 8s npx -y <pin> event-text …`; a
+  // cold or contended npx outlived the 8 s and about 1 in 9 sub-agents got the failure
+  // notice instead of the mantra. Against that code the tripwire npx below is called
+  // and the hook reports a failure, so these tests fail there.
+  test("SubagentStart delivers the mantra from the installed package and never calls npx", () => {
+    const result = runHookWithFakeMcp("success", { event: "SubagentStart", text: "The mantra alone." });
+    assert.equal(result.npxCalls, null, `the hook must not run npx, but it did: ${result.npxCalls}`);
+    assert.equal(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, "The mantra alone.");
+    assert.equal(result.npmCalls, null, "an already-installed package is not installed again");
+  });
+
+  test("SessionStart never calls npx either", () => {
+    const result = runHookWithFakeMcp("success", { source: "startup", text: "The start text." });
+    assert.equal(result.npxCalls, null);
+    assert.equal(result.stdout, "The start text.\n");
+  });
+
+  test("when the package is not installed yet, the hook installs it once and then delivers the mantra", () => {
+    const result = runHookWithFakeMcp("success", { event: "SubagentStart", text: "The mantra alone.", installed: false });
+    assert.equal(result.npxCalls, null);
+    assert.equal(result.npmCalls.split("\n").length, 1, "exactly one install");
+    assert.equal(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, "The mantra alone.");
+  });
+
+  test("when the install fails, the notice carries the install failure's own reason", () => {
+    const result = runHookWithFakeMcp("success", { event: "SubagentStart", installed: false, npmMode: "fail" });
+    assert.equal(result.status, 0);
+    const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /Could not load the "sub_agent_start" event text/);
+    assert.match(context, /install_failed/);
+    assert.match(context, /registry unreachable/);
+    assert.doesNotMatch(context, /unknown error/);
+    assert.equal(result.calledArgs, null, "no fetch is attempted without an installed package");
+  });
+});
+
+describe("event-hook.sh — a failure always names its reason (DX-3811)", () => {
+  test("a fetch that never returns is reported as a timeout, never as an unknown error", () => {
+    const result = runHookWithFakeMcp("hang", { event: "SubagentStart", fetchTimeoutSecs: 1 });
+    assert.equal(result.status, 0);
+    const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /Could not load the "sub_agent_start" event text/);
+    assert.match(context, /timeout: no response within 1s/);
+    assert.doesNotMatch(context, /unknown error/);
+  });
+
+  test("a fetch that dies silently names its exit code instead of an unknown error", () => {
+    const result = runHookWithFakeMcp("silent-fail", { event: "SubagentStart" });
+    const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /exit_3/);
+    assert.doesNotMatch(context, /unknown error/);
+  });
+
+  test("an empty text on a clean exit names the empty response", () => {
+    const result = runHookWithFakeMcp("empty", { source: "startup" });
+    assert.match(result.stdout, /empty_response/);
+    assert.doesNotMatch(result.stdout, /unknown error/);
   });
 });
 
