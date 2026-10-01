@@ -36,7 +36,9 @@ const START_DELIBERATE_FAILURE_EXIT = 2;
 /** How much of the subprocess's stderr the loud notice quotes. */
 export const STDERR_QUOTE_CHARS = 300;
 
-export const CORRUPT_INSTALL_FIX = "the danxbot plugin install may be corrupt: run `update-claude-plugins` and restart the session";
+// Same instruction as INTEGRITY_FIX in launch.mjs, without its "Fix: " prefix (failureNotice adds it); launch.test.mjs pins them together.
+export const CORRUPT_INSTALL_FIX =
+  "run `git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`, then restart the session";
 
 /**
  * Run `plan-event-bridge.mjs start --restart-trigger=watchdog ...` as a subprocess with the

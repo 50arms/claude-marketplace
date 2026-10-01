@@ -25,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+// Also in danxbot/scripts/launch.mjs, which may import only node builtins; launch.test.mjs pins the two copies together.
 export const MANIFEST_FILE = "integrity-manifest.json";
 export const MANIFEST_SCHEMA_VERSION = 1;
 /** Directories under a plugin that are never part of the runtime install a hook depends on. */

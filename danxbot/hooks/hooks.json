@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/inject-time.sh UserPromptSubmit || echo \"[danxbot plugin] the hook launcher failed to run, so the plugin install may be corrupt and danxbot hooks may be dead. Fix: delete the plugin cache directory, run update-claude-plugins, restart the session.\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/inject-time.sh UserPromptSubmit || echo '[danxbot plugin] a danxbot hook failed to run, so the plugin install may be corrupt. Fix: run `git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`, then restart the session.'"
           }
         ]
       }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/event-hook.sh SessionStart || echo \"[danxbot plugin] the hook launcher failed to run, so the plugin install may be corrupt and danxbot hooks may be dead. Fix: delete the plugin cache directory, run update-claude-plugins, restart the session.\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/event-hook.sh SessionStart || echo '[danxbot plugin] a danxbot hook failed to run, so the plugin install may be corrupt. Fix: run `git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`, then restart the session.'"
           }
         ]
       },

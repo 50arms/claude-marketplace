@@ -12,13 +12,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildManifest, MANIFEST_FILE, listPluginFiles } from "../../scripts/write-integrity-manifest.mjs";
+import * as generator from "../../scripts/write-integrity-manifest.mjs";
+import { CORRUPT_INSTALL_FIX } from "../scripts/bridge-watchdog.mjs";
+
+const { buildManifest, MANIFEST_FILE, listPluginFiles } = generator;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REAL_PLUGIN = path.resolve(HERE, "..");
 const REPO_ROOT = path.resolve(REAL_PLUGIN, "..");
 const REAL_LAUNCHER = path.join(REAL_PLUGIN, "scripts", "launch.mjs");
-const { verifyAndRepair, WARN_INTERVAL_MS, claimWarning } = await import(pathToFileURL(REAL_LAUNCHER).href);
+const launcher = await import(pathToFileURL(REAL_LAUNCHER).href);
+const { verifyAndRepair, WARN_INTERVAL_MS, claimWarning, INTEGRITY_FIX } = launcher;
 
 const temps = [];
 function tmpDir(prefix) {
@@ -326,4 +330,47 @@ describe("the real plugin", () => {
     }
     assert.ok(seen >= 10);
   });
+
+  test("the committed integrity-manifest.json is current: regenerate it with node scripts/write-integrity-manifest.mjs danxbot", () => {
+    const committed = JSON.parse(fs.readFileSync(path.join(REAL_PLUGIN, MANIFEST_FILE), "utf8"));
+    assert.deepEqual(committed, buildManifest(REAL_PLUGIN, listPluginFiles(REPO_ROOT, "danxbot")));
+  });
+
+  test("the launcher and the generator agree on the manifest file name and schema (the launcher cannot import them)", () => {
+    assert.equal(launcher.MANIFEST_FILE, generator.MANIFEST_FILE);
+    assert.equal(launcher.MANIFEST_SCHEMA_VERSION, generator.MANIFEST_SCHEMA_VERSION);
+  });
+
+  test("every integrity message gives the same repair instruction: launcher, watchdog notice, and both hooks.json fallback lines", () => {
+    assert.equal(INTEGRITY_FIX, `Fix: ${CORRUPT_INSTALL_FIX}.`);
+    const hooks = JSON.parse(fs.readFileSync(path.join(REAL_PLUGIN, "hooks", "hooks.json"), "utf8")).hooks;
+    const fallbacks = Object.values(hooks)
+      .flat()
+      .flatMap((group) => group.hooks)
+      .map((hook) => hook.command)
+      .filter((command) => command.includes(" || echo "));
+    assert.equal(fallbacks.length, 2, "the two model-visible hooks carry a fallback");
+    for (const command of fallbacks) assert.ok(command.includes(INTEGRITY_FIX), `fallback lacks the repair instruction: ${command}`);
+  });
+
+  test("a zeroed launch.mjs cannot repair itself, so the model-visible hook prints its own fallback line and exits 0; healthy, it prints none", () => {
+    const { cache } = realPluginInstall();
+    const hooks = JSON.parse(fs.readFileSync(path.join(REAL_PLUGIN, "hooks", "hooks.json"), "utf8")).hooks;
+    const command = hooks.UserPromptSubmit[0].hooks[0].command;
+    const runHook = () =>
+      spawnSync("bash", ["-c", command], {
+        input: JSON.stringify({ session_id: "launch-test-fallback" }),
+        encoding: "utf8",
+        env: { ...process.env, CLAUDE_PLUGIN_ROOT: cache },
+      });
+    const healthy = runHook();
+    assert.equal(healthy.status, 0);
+    assert.equal(healthy.stdout.includes("[danxbot plugin]"), false, healthy.stdout);
+    zero(path.join(cache, "scripts", "launch.mjs"));
+    const damaged = runHook();
+    assert.equal(damaged.status, 0);
+    assert.ok(damaged.stdout.includes("[danxbot plugin] a danxbot hook failed to run"), damaged.stdout);
+    assert.ok(damaged.stdout.includes(INTEGRITY_FIX));
+  });
 });
+

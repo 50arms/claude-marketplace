@@ -36,6 +36,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+// These two constants are also in scripts/write-integrity-manifest.mjs (the launcher may import only node
+// builtins, so it cannot share them); launch.test.mjs pins the two copies together.
 export const MANIFEST_FILE = "integrity-manifest.json";
 export const MANIFEST_SCHEMA_VERSION = 1;
 /** One warning per distinct problem per window, however many hooks fire in it. */
@@ -145,7 +147,7 @@ export function verifyAndRepair({ root }) {
     if (hashFile(path.join(root, rel)) === expected) continue;
     (restoreFromClone(root, clone, rel, expected) ? restored : unrestorable).push(rel);
   }
-  return { manifestOk: true, restored, unrestorable };
+  return { manifestOk: true, files: manifest.files, restored, unrestorable };
 }
 
 /**
@@ -169,16 +171,17 @@ export function claimWarning(signature, { dir = os.tmpdir(), now = Date.now() } 
   return true;
 }
 
-const FIX =
-  "Fix: delete this plugin's cache directory, run `claude plugin marketplace update newms-plugins` and `update-claude-plugins`, then restart the session.";
+/** The one repair instruction every integrity message carries; hooks.json's fallback line and bridge-watchdog.mjs say the same (launch.test.mjs pins all three). */
+export const INTEGRITY_FIX =
+  "Fix: run `git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`, then restart the session.";
 
 function warningText(root, result) {
   const head = "[danxbot plugin] INTEGRITY FAILURE:";
   if (!result.manifestOk) {
-    return `${head} the integrity manifest is unreadable (${result.error}), so no plugin file in ${root} could be verified; danxbot hooks may be silently broken. ${FIX}`;
+    return `${head} the integrity manifest is unreadable (${result.error}), so no plugin file in ${root} could be verified; danxbot hooks may be silently broken. ${INTEGRITY_FIX}`;
   }
   const names = result.unrestorable.slice(0, 5).join(", ") + (result.unrestorable.length > 5 ? `, and ${result.unrestorable.length - 5} more` : "");
-  return `${head} ${result.unrestorable.length} plugin file(s) are corrupt and could not be restored from the marketplace clone (${names}); danxbot hooks, including the plan event bridge, may not work and plan events may not reach this session. ${FIX}`;
+  return `${head} ${result.unrestorable.length} plugin file(s) are corrupt and could not be restored from the marketplace clone (${names}); danxbot hooks, including the plan event bridge, may not work and plan events may not reach this session. ${INTEGRITY_FIX}`;
 }
 
 function parseArgs(argv) {
@@ -214,7 +217,7 @@ export async function main(argv, { root = path.resolve(path.dirname(fileURLToPat
   if (result.restored.length > 0) {
     process.stderr.write(`[danxbot plugin] repaired ${result.restored.length} corrupt plugin file(s) from the marketplace clone: ${result.restored.join(", ")}\n`);
   }
-  if (result.manifestOk && loadManifest(path.join(root, MANIFEST_FILE)).files[rel] === undefined) {
+  if (result.manifestOk && result.files[rel] === undefined) {
     process.stderr.write(`launch.mjs: ${rel} is not in the integrity manifest, refusing to run it\n`);
     return 1;
   }
