@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "files": {
+    ".claude-plugin/plugin.json": "54427d2592163a3713799781e6fbe5a32c7cfc91b8174c860221f14608f87fc3",
+    "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
+    "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
+    "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
+    "agents/worker-opus-high.md": "fccb99720e4aeb833313f2f28e2cefdaf5edbee84439ed506f9ddb30e7e086ef",
+    "agents/worker-sonnet-high.md": "8a11fefd2a9291eed571c045af77b40607f8cb2341d7ca4de001da4a698656b4",
+    "agents/worker-sonnet-low.md": "c3cd31490d50f9e51e54d00717d443445bc361c2d64bc6eb484d881c4af0398b",
+    "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
+    "hooks/hooks.json": "a27b5e5776f4d3a5bc9e77908ec7a4b4710a9b685b05f2eddf447b99db864656",
+    "mantra.md": "f4b373bd4a3bc579b4139fffb0f00d7bc17352e592251df40b7216576e02096a",
+    "scripts/activity-report.mjs": "e5387e0ef4373d3120da330dc513d9d6b69568ced3eba3fa0121cd5c07ed069a",
+    "scripts/background-work-report.mjs": "0a838569357e45f6768911118516c1cdd0cbc2c00f6b828c9e80f9ab6cbd2473",
+    "scripts/ensure-dashboard-mcp.sh": "759400a73823b33331971db7a4802d1cf153ca276e1fb3a5d52c4d7a3f9ba4bd",
+    "scripts/event-hook.sh": "f6dab2e508dc7ae7f1bd879e0b2554af536389e6a30c83661596198f8ce69e54",
+    "scripts/inject-time.sh": "94ffac64d7424ef31181bd86bca6d594ab5f755e26c028545f65cbdf439527ae",
+    "scripts/launch.mjs": "987c0177585f9d6438553fea71e1ba3b02d899183334a738842e8292c4a55ed6",
+    "scripts/lib/dashboard-mcp-package.mjs": "c8f34754478411ba9deff8e3ec5f40bb0d903ef749764f809d9c2c2dead762ff",
+    "scripts/lib/plan-connection.mjs": "3b6560c21170630b9c9c3effaaafd568eaa13c930109274e96135ad69b3e9051",
+    "scripts/plan-event-bridge.mjs": "0c676bbae02c005529d15bb4235ba72da876d47f99f86f0c2a97b8396d8681b8",
+    "skills/fix-agent-behavior/SKILL.md": "b069b95f01a9225f87ed2d87a4ae588bcf312411be0e8f4d97532640824f0a56",
+    "skills/issue-workflow/SKILL.md": "4161a8585b8db2ff38ece02616c6b0dc308b9891bebdaec8a248eb2849df2437",
+    "skills/issue-workflow/references/card-creation-and-reference.md": "9c05a4d0a6c13f66dcb8fe19b35efa3dfe07d7fa775e51c0ff415768f5c74167",
+    "skills/plan-workflow/SKILL.md": "c6438a3fe0d8e0136ff94a2cf351975316b754c286822d60cb3890944d758373",
+    "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a"
+  }
+}
