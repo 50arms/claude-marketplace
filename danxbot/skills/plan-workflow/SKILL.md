@@ -91,6 +91,19 @@ A note edit replaces its link list per kind — resend them all.
 Create via `danxbot:issue-workflow` (load before choosing a type) — but `ready` the card AND
 build it here; the plan never waits on a worker.
 
+## Closing a plan
+
+Every plan card Done or Cancelled → verify each goal, rule and caveat end to end against the
+running system and the shipped code (the mantra's evidence rule):
+
+- Holds → `PUT /api/plans/mine/records/:recordId/agent-verification` `{verdict, note,
+  content_hash}`: `implemented` (as designed) or `accepted` (a deviation we live with), the
+  note citing the evidence. Fails → a card on the plan, not a verification.
+- Then `PUT /api/plans/mine/agent-verification` `{note}`: what you checked. A 409
+  `plan_agent_verification_blocked` lists the open cards and unverified records — work
+  them, never around them. A record edit or reopened card clears a verification: redo it.
+- Never tick or clear a human sign-off: the server refuses it; it is the operator's call.
+
 ## Stopping
 
 Before stopping or saying "blocked", re-read every open plan card and write each real
