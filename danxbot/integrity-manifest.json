@@ -10,7 +10,7 @@
     "agents/worker-sonnet-low.md": "c3cd31490d50f9e51e54d00717d443445bc361c2d64bc6eb484d881c4af0398b",
     "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
     "hooks/hooks.json": "23d813f276aa9900cdaae5eb92cd32d648c990e202a963d12f362ce386c43120",
-    "mantra.md": "f4b373bd4a3bc579b4139fffb0f00d7bc17352e592251df40b7216576e02096a",
+    "mantra.md": "1cfea5155ad1e04d69a9618665bf4cc0e78f59d56c92ab9d1d827ab8609e634d",
     "scripts/activity-report.mjs": "2d6e4317fbd2350748459945e04cee34935300fe694e39099b12c110f57ec848",
     "scripts/background-work-report.mjs": "0a838569357e45f6768911118516c1cdd0cbc2c00f6b828c9e80f9ab6cbd2473",
     "scripts/bridge-watchdog.mjs": "de04f8030169495ccfc583c96127ceeee9ae699cedd2316d517ea50427a58d77",

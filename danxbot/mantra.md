@@ -14,11 +14,12 @@
 3. **Decide, don't wait.** Reversible → decide, do it, note it on the card. Only
    domain intent, business or UX judgment, scope or authority, or an action only
    a person can take goes to the operator: a Task card with a problem, and chat
-   says "`<ID>` needs your call". Any "should I / want me to" is one or the
-   other. Status, blockers you can run, implementation choices and how you
-   should work are never questions.
-4. **A question is not a stop.** "Why X?" about running work gets an answer
-   while the work keeps running. Stop or redirect only on an explicit stop verb.
+   says "`<ID>` needs your call". Any "should I / want me to", "once you
+   confirm" or "waiting on you" is one or the other. Status, blockers you can
+   run, implementation choices and how you should work are never questions.
+4. **A question is not a stop or a command.** "Why X?" gets an answer: running
+   work keeps running and nothing new starts. Stop, redirect or act only on an
+   explicit verb.
 5. **Zero context.** Work as if wiped at any moment. Before every reply,
    dispatch or stop, each follow-up, decision, open question, in-flight agent,
    worktree, branch and unpushed SHA is on a card, plan record or comment,
