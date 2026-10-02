@@ -5,8 +5,8 @@ Source of truth for the `newms-plugins` marketplace. Its plugins reach every Cla
 ## The mantra is the one home for every rule it states (PLN-11 R-22)
 
 `danxbot/mantra.md` is the mantra's single hand-maintained text: danxbot seeds the reminder
-registry row `mantra.session_start` from it, and every agent receives that row's effective
-text, never a copy:
+registry row `mantra` from it, and every agent receives that row's effective text (or the
+board's override of it, DX-4144), never a copy:
 
 - the main session: `danxbot/scripts/event-hook.sh` at `SessionStart` (matcher
   `startup|resume|compact`), ONLY once a plan is connected — DX-3421 (PLN-11 R-12/R-22): an
@@ -14,17 +14,17 @@ text, never a copy:
   not even a one-line nudge; the trigger to connect a plan is `danxbot:plan-workflow`'s own
   skill description, not a hook line. Connected, the same script asks danxbot for the
   EFFECTIVE text of one of four events (`session_start` | `session_resume` |
-  `after_compaction` | `sub_agent_start`, `GET /api/reminders/event/:event`) — each a
-  registry row composed from `{{reminder:mantra.session_start}}` plus a short event-specific
-  line, never a hand-typed duplicate of the mantra body;
+  `after_compaction` | `sub_agent_start`, `GET /api/reminders/event/:event`) — the mantra
+  (plan override, else the session's board override, else the row) followed by that event's
+  own short lines, never a hand-typed duplicate of the mantra body;
 - every sub-agent, any type or plugin, of a plan-CONNECTED session (DX-3384 final sweep
   widened this from `danxbot:worker-*` only; DX-3421 added the "connected" gate — a sub-agent
   of an unconnected session gets nothing either): the same script at `SubagentStart`
   (additionalContext, matcher `.*`), event `sub_agent_start`;
-- every dispatched worker: its profile's `{{reminder:mantra.session_start}}`, resolved by
-  danxbot per dispatch.
+- every dispatched worker: its profile's `{{reminder:mantra}}`, resolved by danxbot per
+  dispatch against the card's board (DX-4144: one mantra; the dispatch fork is gone).
 
-`mantra.md` is the git source `resolveReminderSeedItems` derives the `mantra.session_start`
+`mantra.md` is the git source `resolveReminderSeedItems` derives the `mantra`
 registry row's default from at dashboard-seed time — it is NOT a runtime fallback any more
 (DX-3421: a registry fetch failure prints one line naming the failure and telling the agent
 to tell the operator; the hook never re-reads this file). **Nothing else restates a mantra

@@ -31,7 +31,7 @@
 # AC: "No mantra.md offline fallback: delete the fallback reading. The
 # registry seed is the only source."). `danxbot/mantra.md` still exists —
 # it is the git source `resolveReminderSeedItems` derives the
-# `mantra.session_start` registry row's default from at dashboard-seed time —
+# `mantra` registry row's default from at dashboard-seed time —
 # this hook just never reads it itself any more.
 #
 # SessionStart stdout reaches the model as plain text; SubagentStart honours

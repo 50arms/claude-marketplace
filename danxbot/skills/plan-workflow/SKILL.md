@@ -23,8 +23,18 @@ throughout; this skill is the plan mechanics.
 Goal record = outcome measured against; rule record = constraint; caveat record = lasting
 trade-off; architecture section (one per concern) = design; card (on the board it changes) =
 actionable work; AC item = a step finishing an existing card; card comment = progress,
-evidence, status, local state; Task card + problem = operator question; plan note = real
-milestone; remove a wrong-plan card from the plan; rename a stale plan.
+evidence, status, local state; problem on the card it concerns = operator question; plan
+note = real milestone; remove a wrong-plan card from the plan; rename a stale plan.
+
+## The operator
+
+They read cards, not chat. A chat reply is at most 3 lines, no headings, tables, lists or
+fences: an answer to their question, a one-line start of a deploy, dispatch or publish, a
+real failure or correction, or card ids. Findings, options and status go on the card;
+already there → give the id.
+
+A question is not a stop or a command. "Why X?" gets an answer: running work keeps running
+and nothing new starts. Stop, redirect or act only on an explicit verb.
 
 ## Scope
 
@@ -115,8 +125,8 @@ blocker (card id, open problem, operator action) to a card comment.
 ## Sub-agents
 
 Delegate by card id: `Agent({subagent_type:"danxbot:worker-<tier>", prompt:"<CARD-ID>"})` is
-the whole brief — each tier loads `danxbot:issue-workflow` itself. Add the mantra's worktree
-rule only when the card wouldn't cover it. Set `effort_level` first, by the kind of work
+the whole brief — each tier loads `danxbot:issue-workflow` itself. Add the worktree rule
+below only when the card wouldn't cover it. Set `effort_level` first, by the kind of work
 (issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
 never `general-purpose`.
 
@@ -125,6 +135,15 @@ end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, 
 land. Every brief makes the sub-agent stop each background task it started before reporting,
 or name it. Stop a dispatch once its report is consumed. A report is a lead, not a finding:
 read the diff, confirm the push, check for leftover worktrees, commits or background tasks.
+
+Never end a turn while unblocked work could be dispatched (a running build, test or deploy
+is time to dispatch; a readied card waiting on a worker is not blocked), nor while work runs
+with no wake-up armed. Checks and reviews that de-risk waiting work (verification,
+cross-repo checks, a whole-change review) are dispatchable too.
+
+Worktrees you create go under the repo's git-ignored `.claude/worktrees/<name>`, never a
+sibling checkout. Remove each once `git status --porcelain` and `git cherry origin/main
+<branch>` are empty, delete its branch, and name what you removed.
 
 ## Liveness
 
