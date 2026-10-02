@@ -39,8 +39,9 @@ function connect(sessionId) {
   writeFileSync(path.join(dir, `${sessionId}.json`), JSON.stringify({ schemaVersion: 1 }));
 }
 
-function runHook(event, { sessionId = "test-session", source, extraEnv = {} } = {}) {
+function runHook(event, { sessionId = "test-session", source, cwd, extraEnv = {} } = {}) {
   const payload = { session_id: sessionId };
+  if (cwd !== undefined) payload.cwd = cwd;
   if (source !== undefined) payload.source = source;
   return spawnSync("bash", [SCRIPT, event], {
     input: JSON.stringify(payload),
@@ -57,7 +58,7 @@ function runHook(event, { sessionId = "test-session", source, extraEnv = {} } = 
 // exits 3 with no output, "hang" never returns.
 function runHookWithFakeMcp(
   mode,
-  { event = "SessionStart", sessionId = "connected-session", source = "startup", text = "", stderrText, installed = true, fetchTimeoutSecs, npmMode } = {},
+  { event = "SessionStart", sessionId = "connected-session", source = "startup", text = "", stderrText, installed = true, fetchTimeoutSecs, npmMode, connected = true, cwd } = {},
 ) {
   const fakeBinDir = makeFakeBinDir({ npx: NPX_TRIPWIRE, npm: fakeNpm() });
   const dataDir = mkdtempSync(path.join(tmpdir(), "event-hook-plugin-data-"));
@@ -65,7 +66,7 @@ function runHookWithFakeMcp(
   const npxCallsFile = path.join(fakeBinDir, "npx-calls.txt");
   const npmCallsFile = path.join(fakeBinDir, "npm-calls.txt");
   if (installed) installFakeMcp(dataDir);
-  connect(sessionId);
+  if (connected) connect(sessionId);
   try {
     const extraEnv = {
       PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH}`,
@@ -80,7 +81,7 @@ function runHookWithFakeMcp(
     };
     if (fetchTimeoutSecs !== undefined) extraEnv.EVENT_TEXT_FETCH_TIMEOUT_SECS = String(fetchTimeoutSecs);
     if (npmMode !== undefined) extraEnv.FAKE_NPM_MODE = npmMode;
-    const result = runHook(event, { sessionId, source, extraEnv });
+    const result = runHook(event, { sessionId, source, cwd, extraEnv });
     const readOrNull = (file) => {
       try {
         return readFileSync(file, "utf8").trim();
@@ -96,14 +97,16 @@ function runHookWithFakeMcp(
 }
 
 describe("event-hook.sh — not connected to a plan: silent, both events", () => {
-  test("SessionStart(startup), not connected: empty stdout, exit 0", () => {
-    const result = runHook("SessionStart", { source: "startup" });
+  test("SessionStart(startup), not connected, no earlier connected session in the project: empty stdout, exit 0", () => {
+    // DX-3928: the restart-notice lookup runs here and finds nothing (exit 0, empty).
+    const result = runHookWithFakeMcp("empty", { source: "startup", connected: false });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, "");
   });
 
-  test("SessionStart(resume), not connected: empty stdout, exit 0", () => {
-    const result = runHook("SessionStart", { source: "resume" });
+  test("SessionStart(resume), not connected, no earlier connected session in the project: empty stdout, exit 0", () => {
+    // DX-3928: the restart-notice lookup runs here and finds nothing (exit 0, empty).
+    const result = runHookWithFakeMcp("empty", { source: "resume", connected: false });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, "");
   });
@@ -248,6 +251,77 @@ describe("event-hook.sh — a failure always names its reason (DX-3811)", () => 
     const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
     assert.match(context, /exit_3/);
     assert.doesNotMatch(context, /unknown error/);
+  });
+});
+
+describe("event-hook.sh — DX-3928: the restart notice for a not-connected session", () => {
+  const notice = "Your previous session here was on plan PLN-2; 3 events are waiting. Run plan_connect.";
+
+  for (const source of ["startup", "resume"]) {
+    test(`SessionStart(${source}), not connected: prints the registry notice from restart-notice, never event-text`, () => {
+      const result = runHookWithFakeMcp("success", { source, text: notice, connected: false, cwd: "proj-dir" });
+      assert.equal(result.status, 0);
+      assert.equal(result.stdout, `${notice}\n`);
+      assert.match(result.calledArgs, /^restart-notice --cwd proj-dir$/);
+      assert.equal(result.npxCalls, null);
+    });
+  }
+
+  test("exit 0 with empty stdout (no earlier connected session in this project): completely silent", () => {
+    const result = runHookWithFakeMcp("empty", { source: "startup", connected: false });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "");
+    assert.match(result.calledArgs, /^restart-notice/);
+  });
+
+  test("a non-zero exit prints one could-not-load line carrying stderr's reason", () => {
+    const result = runHookWithFakeMcp("fail", { source: "startup", connected: false, stderrText: "dashboard unreachable: ECONNREFUSED" });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Could not load the restart notice/);
+    assert.match(result.stdout, /ECONNREFUSED/);
+    assert.equal(result.stdout.trim().split("\n").length, 1);
+  });
+
+  test("a silent non-zero exit still names its exit code", () => {
+    const result = runHookWithFakeMcp("silent-fail", { source: "startup", connected: false });
+    assert.match(result.stdout, /Could not load the restart notice \(exit_3/);
+  });
+
+  test("a lookup that never returns is reported as a timeout", () => {
+    const result = runHookWithFakeMcp("hang", { source: "startup", connected: false, fetchTimeoutSecs: 1 });
+    assert.match(result.stdout, /Could not load the restart notice \(timeout: no response within 1s/);
+  });
+
+  test("a failed install of the pinned package is reported, no lookup attempted", () => {
+    const result = runHookWithFakeMcp("success", { source: "startup", connected: false, installed: false, npmMode: "fail" });
+    assert.match(result.stdout, /Could not load the restart notice/);
+    assert.match(result.stdout, /install_failed/);
+    assert.equal(result.calledArgs, null);
+  });
+
+  test("no cwd in the payload: the subcommand runs without --cwd", () => {
+    const result = runHookWithFakeMcp("success", { source: "startup", text: notice, connected: false });
+    assert.equal(result.calledArgs, "restart-notice");
+  });
+
+  test("compact and unrecognised sources never ask for a notice", () => {
+    for (const source of ["compact", "clear"]) {
+      const result = runHookWithFakeMcp("success", { source, text: notice, connected: false });
+      assert.equal(result.stdout, "");
+      assert.equal(result.calledArgs, null);
+    }
+  });
+
+  test("SubagentStart of a not-connected session stays silent and never looks up a notice", () => {
+    const result = runHookWithFakeMcp("success", { event: "SubagentStart", text: notice, connected: false });
+    assert.equal(result.stdout, "");
+    assert.equal(result.calledArgs, null);
+  });
+
+  test("a connected session gets only its registry event text, never the restart notice", () => {
+    const result = runHookWithFakeMcp("success", { source: "startup", text: "The start text." });
+    assert.equal(result.stdout, "The start text.\n");
+    assert.match(result.calledArgs, /^event-text session_start$/);
   });
 });
 

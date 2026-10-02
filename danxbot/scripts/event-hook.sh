@@ -70,6 +70,59 @@ emit() {
   fi
 }
 
+# Reads one string field from the hook payload ($1 = field name; "" when absent).
+payload_field() {
+  printf '%s' "$PAYLOAD" | FIELD="$1" node -e '
+    let data = "";
+    process.stdin.on("data", (chunk) => { data += chunk; });
+    process.stdin.on("end", () => {
+      try {
+        const value = JSON.parse(data)[process.env.FIELD];
+        process.stdout.write(typeof value === "string" ? value : "");
+      } catch {
+        process.stdout.write("");
+      }
+    });
+  ' 2>/dev/null || true
+}
+
+# DX-3928: the restart notice for a NOT-connected session (see the call site).
+restart_notice() {
+  case "$(payload_field source)" in
+    startup|resume) ;;
+    *) return 0 ;;
+  esac
+  local session_id project_dir notice_err notice_out notice_rc="0" mcp_bin
+  session_id="$(payload_field session_id)"
+  session_id="${session_id:-${CLAUDE_CODE_SESSION_ID:-}}"
+  project_dir="$(payload_field cwd)"
+  notice_err="$(mktemp)"
+  notice_out=""
+  if mcp_bin="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-dashboard-mcp.sh" 2>"$notice_err")"; then
+    local cwd_args=()
+    if [ -n "$project_dir" ]; then cwd_args=(--cwd "$project_dir"); fi
+    if command -v timeout >/dev/null 2>&1; then
+      notice_out="$(CLAUDE_CODE_SESSION_ID="$session_id" timeout "${EVENT_TEXT_FETCH_TIMEOUT_SECS}s" node "$mcp_bin" restart-notice ${cwd_args[@]+"${cwd_args[@]}"} 2>"$notice_err")" || notice_rc="$?"
+    else
+      notice_out="$(CLAUDE_CODE_SESSION_ID="$session_id" node "$mcp_bin" restart-notice ${cwd_args[@]+"${cwd_args[@]}"} 2>"$notice_err")" || notice_rc="$?"
+    fi
+  else
+    notice_rc="1"
+  fi
+  local reason
+  reason="$(cat "$notice_err" 2>/dev/null || true)"
+  rm -f "$notice_err"
+  if [ "$notice_rc" != "0" ]; then
+    if [ -z "$reason" ]; then
+      if [ "$notice_rc" = "124" ]; then reason="timeout: no response within ${EVENT_TEXT_FETCH_TIMEOUT_SECS}s"; else reason="exit_${notice_rc}: the lookup exited without a message"; fi
+    fi
+    emit "⚠ Could not load the restart notice (${reason}). Tell the operator if this session should be plan-connected."
+    return 0
+  fi
+  if [ -n "$notice_out" ]; then emit "$notice_out"; fi
+  return 0
+}
+
 CONNECTED="0"
 if [ -f "$CONNECTION_LIB" ]; then
   CONNECTED="$(printf '%s' "$PAYLOAD" | node "$CONNECTION_LIB" 2>/dev/null || true)"
@@ -79,6 +132,17 @@ fi
 # mantra.md, nothing). A sub-agent of an unconnected session inherits the
 # same silence via the parent's own connection state.
 if [ "$CONNECTED" != "1" ]; then
+  # DX-3928: the ONE narrow exception to the silence above — a SessionStart
+  # (startup|resume) whose project's previous session was plan-connected is told
+  # which plan it was on and how many events are waiting. The wording is a registry
+  # row; this script only runs the pinned package's `restart-notice` subcommand:
+  #   exit 0 + text  -> print it
+  #   exit 0 + empty -> stay silent (a project with no earlier connected session —
+  #                     PLN-11 R-10 / DX-3421 still hold for it)
+  #   non-zero exit  -> one line naming why the notice could not be loaded
+  if [ "$EVENT" = "SessionStart" ]; then
+    restart_notice
+  fi
   exit 0
 fi
 

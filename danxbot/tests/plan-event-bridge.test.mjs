@@ -589,7 +589,7 @@ describe("subcommand exit handling", () => {
       onReady: (record) => ready.push(record),
     });
     assert.deepEqual(ready, [
-      { kind: "ready", boards: ["danxbot:danxbot-main", "gpt-manager:main"], cardCount: null, degraded: false },
+      { kind: "ready", boards: ["danxbot:danxbot-main", "gpt-manager:main"], cardCount: null, degraded: false, inventoryError: null },
     ]);
     assert.deepEqual(pushed, [{ id: 1, text: "one" }]);
   });
@@ -903,27 +903,36 @@ describe("output parsing", () => {
       boards: ["a:b"],
       cardCount: 3,
       degraded: false,
+      inventoryError: null,
     });
     assert.deepEqual(bridge.parseRecord('{"type":"ready","boards":["a:b"],"cardCount":0,"degraded":true}'), {
       kind: "ready",
       boards: ["a:b"],
       cardCount: 0,
       degraded: true,
+      inventoryError: null,
     });
     assert.deepEqual(bridge.parseRecord('{"type":"ready","boards":[],"cardCount":0,"degraded":true}'), {
       kind: "ready",
       boards: [],
       cardCount: 0,
       degraded: true,
+      inventoryError: null,
     });
     assert.deepEqual(bridge.parseRecord('{"type":"ready","boards":null,"cardCount":null,"degraded":true}'), {
       kind: "ready",
       boards: null,
       cardCount: null,
       degraded: true,
+      inventoryError: null,
     });
+    // DX-3928: the server's inventoryError string is kept on the ready record.
+    assert.deepEqual(
+      bridge.parseRecord('{"type":"ready","boards":null,"cardCount":null,"degraded":true,"inventoryError":"plan inventory: 503"}'),
+      { kind: "ready", boards: null, cardCount: null, degraded: true, inventoryError: "plan inventory: 503" },
+    );
     // pre-DX-2970 subcommand: no boards/cardCount/degraded on the wire at all.
-    assert.deepEqual(bridge.parseRecord('{"type":"ready"}'), { kind: "ready", boards: [], cardCount: null, degraded: false });
+    assert.deepEqual(bridge.parseRecord('{"type":"ready"}'), { kind: "ready", boards: [], cardCount: null, degraded: false, inventoryError: null });
     assert.deepEqual(bridge.parseRecord("npm warn exec something"), { kind: "junk" });
     assert.deepEqual(bridge.parseRecord('{"type":"event","id":3}'), { kind: "junk" });
   });
@@ -981,6 +990,19 @@ describe("describeReadyRecord (DX-3059)", () => {
     assert.doesNotMatch(message, /no cards yet/);
   });
 
+  test("DX-3928: a ready record carrying inventoryError prints the string in the DEGRADED line", () => {
+    const message = bridge.describeReadyRecord({ boards: null, cardCount: null, degraded: true, inventoryError: "plan inventory: 503 upstream" });
+    assert.match(message, /^DEGRADED/);
+    assert.match(message, /\(plan inventory: 503 upstream\)/);
+  });
+
+  test("DX-3928: a null inventoryError prints nothing extra", () => {
+    const withNull = bridge.describeReadyRecord({ boards: null, cardCount: null, degraded: true, inventoryError: null });
+    const without = bridge.describeReadyRecord({ boards: null, cardCount: null, degraded: true });
+    assert.equal(withNull, without);
+    assert.doesNotMatch(withNull, /\(\)|null/);
+  });
+
   test("degraded: the credential can see no board at all (boards empty, read succeeded) reads as a problem, not the benign no-cards text", () => {
     const message = bridge.describeReadyRecord({ boards: [], cardCount: 0, degraded: true });
     assert.match(message, /^DEGRADED/);
@@ -997,6 +1019,7 @@ describe("describeReadyRecord (DX-3059)", () => {
       boards: ["danxbot:danxbot-main"],
       cardCount: 0,
       degraded: true,
+      inventoryError: null,
     });
     assert.doesNotMatch(message, /^DEGRADED/);
     assert.match(message, /danxbot:danxbot-main/);

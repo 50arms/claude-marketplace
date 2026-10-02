@@ -921,6 +921,8 @@ export function parseRecord(line) {
       boards: record.boards === null ? null : Array.isArray(record.boards) ? record.boards.map(String) : [],
       cardCount: Number.isSafeInteger(record.cardCount) && record.cardCount >= 0 ? record.cardCount : null,
       degraded: record.degraded === true,
+      // DX-3928 / DX-3912: the server's own reason the inventory read failed (null when it did not).
+      inventoryError: typeof record.inventoryError === "string" && record.inventoryError !== "" ? record.inventoryError : null,
     };
   }
   return { kind: "junk" };
@@ -941,8 +943,10 @@ export function describeReadyRecord(record) {
       boards === null
         ? "the plan inventory read failed (network/timeout/bad response), so nothing is known"
         : "this session's credential cannot see any board of the connected plan";
+    // DX-3928: the server's own failure text, when it sent one (null prints nothing extra).
+    const reason = typeof record.inventoryError === "string" && record.inventoryError !== "" ? ` (${record.inventoryError})` : "";
     return (
-      `DEGRADED — ${why}. The bridge is streaming, but it may be relaying nothing. ` +
+      `DEGRADED — ${why}${reason}. The bridge is streaming, but it may be relaying nothing. ` +
       `Check the dashboard credential's board scope and the dashboard's reachability, ` +
       `then run plan_connect again in this session once fixed.`
     );

@@ -36,6 +36,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const EVENT_HOOK_SH = path.join(here, "..", "scripts", "event-hook.sh");
 const ENSURE_SH = path.join(here, "..", "scripts", "ensure-dashboard-mcp.sh");
 const NPX_TIMEOUT_MS = 30_000;
+// DX-3928: event-hook.sh's not-connected SessionStart branch runs `restart-notice` (0.1.204+).
+const RESTART_NOTICE_SUBCOMMAND = "restart-notice";
 
 /** The literal subcommand token event-hook.sh passes to the installed pin: `node "$MCP_BIN" <token> "$DANX_EVENT"` (DX-3811 — run from the plugin-data install, no longer via npx). */
 function eventTextSubcommandFromSource() {
@@ -56,7 +58,7 @@ test(
   "the pinned danx-dashboard-mcp version supports every subcommand this plugin invokes",
   { timeout: NPX_TIMEOUT_MS + 10_000 },
   () => {
-    const required = [BRIDGE_SUBCOMMAND, backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, eventTextSubcommandFromSource()];
+    const required = [BRIDGE_SUBCOMMAND, backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, eventTextSubcommandFromSource(), RESTART_NOTICE_SUBCOMMAND];
 
     // An unknown subcommand makes the real published `dist/index.js` refuse with its
     // own "the only ones are ..." message, which names every subcommand the pinned
