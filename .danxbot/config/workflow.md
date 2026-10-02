@@ -27,7 +27,7 @@ For every code dispatch, in order:
 3. **Finalize** — the unconditional last action before `danxbot_complete`:
 
    ```bash
-   bash .danxbot/scripts/agent-finalize.sh <AGENT> <CARD-ID> "<title>" "<bullet>" ...
+   bash "$DANX_SCRIPTS_DIR/agent-finalize.sh" <AGENT> <CARD-ID> "<title>" "<bullet>" ...
    ```
 
    This squashes your branch (source edits + version bump) into one commit
