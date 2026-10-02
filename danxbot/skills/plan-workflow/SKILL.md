@@ -102,7 +102,10 @@ running system and the shipped code (the mantra's evidence rule):
 - Then `PUT /api/plans/mine/agent-verification` `{note}`: what you checked. A 409
   `plan_agent_verification_blocked` lists the open cards and unverified records — work
   them, never around them. A record edit or reopened card clears a verification: redo it.
-- Never tick or clear a human sign-off: the server refuses it; it is the operator's call.
+- Then tell the operator in ONE chat line that the plan is ready for their sign-off (its page
+  shows it pending). No card, no problem. Never tick or clear their sign-off: the server
+  refuses it.
+- A plan is done only with both sign-offs; never report it done on card count alone.
 
 ## Stopping
 
