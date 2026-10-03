@@ -144,12 +144,12 @@ must name the invariant it enforces.
 searched. "Can't reuse it because <constraint>" is a guess until you cite the `file:line`
 that enforces it.
 
-**Existing code.** Comments are authoritative on WHY but were true only when written: confirm the producer or mechanism
-they name still exists, follow a cited docblock to code. A comment or rule you find false is
-corrected in the same change. Before choosing where state lives
-(DB row, file, env), trace the seed and load path to what is authoritative at runtime.
-Recurring jobs are incremental (delta + high-water mark): the 10th run costs what the 1st
-does. All code is your code — never "pre-existing, not mine".
+**Existing code.** Comments are authoritative on WHY but were true only when written: confirm
+the producer or mechanism they name still exists, follow a cited docblock to code. A comment
+or rule you find false is corrected in the same change. Before choosing where state lives (DB
+row, file, env), trace the seed and load path to what is authoritative at runtime. Recurring
+jobs are incremental (delta + high-water mark): the 10th run costs what the 1st does. All
+code is your code — never "pre-existing, not mine".
 
 ## Debugging
 

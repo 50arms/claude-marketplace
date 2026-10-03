@@ -58,6 +58,27 @@ for (const [name, pattern] of MOVED) {
   });
 }
 
+// DX-4305 — two retired PLAN-2 working rules, each kept in ONE home. R-36 (a parked card) is
+// plan-workflow's; R-23's "a statement in a rules file is not evidence" is already rule 2, so
+// rule 2 must keep saying it or the "already covered" verdict stops being true.
+const PARKED_CARD = /An archived \(Backlog\) card was parked on\s+purpose/;
+
+test("the parked-card rule lives once in plan-workflow § Actionable work and not in the mantra", () => {
+  const start = planWorkflow.indexOf("## Actionable work");
+  const actionable = planWorkflow.slice(start, planWorkflow.indexOf("\n## ", start + 1));
+  assert.match(actionable, PARKED_CARD);
+  assert.match(actionable, /read why in its comments before reopening it/);
+  assert.match(actionable, /a park the operator made is theirs\s+to lift/);
+  assert.equal([...planWorkflow.matchAll(new RegExp(PARKED_CARD.source, "g"))].length, 1);
+  assert.doesNotMatch(mantra, PARKED_CARD);
+});
+
+test("rule 2 owns 'verified this turn, never a label or proxy'", () => {
+  const evidence = rule(2).replace(/\s+/g, " ");
+  assert.match(evidence, /only on what you verified this turn/);
+  assert.match(evidence, /never a name, label, status field or proxy/);
+});
+
 test("plan-workflow points at its own worktree rule, never the mantra's", () => {
   assert.doesNotMatch(planWorkflow, /the mantra's worktree/);
 });
