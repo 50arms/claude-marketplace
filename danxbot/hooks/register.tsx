@@ -110,12 +110,17 @@ async function refresh($: any, force = false): Promise<void> {
         $.ui.status('plan: error')
       }
       await update($, gate, cur => {
+        // `at` is this claim's token: a load whose stale lock was taken over must not touch the new holder's
+        if (cur.at !== now) {
+          again = false
+          return cur
+        }
         again = cur.again
         return { ...cur, again: false }
       })
     }
   } finally {
-    await update($, gate, cur => ({ ...cur, inFlight: false, again: false }))
+    await update($, gate, cur => (cur.at === now ? { ...cur, inFlight: false, again: false } : cur))
   }
 }
 
