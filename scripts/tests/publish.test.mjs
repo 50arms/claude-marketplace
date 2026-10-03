@@ -27,14 +27,42 @@ function editedClone() {
   return dir;
 }
 
+/**
+ * DX-4232: a stand-in `claude` CLI on PATH. publish.sh runs `claude plugin validate <plugin>` and
+ * `claude plugin test <plugin>` for a plugin that declares hooks modules; this one appends its
+ * arguments to `calls.log` and exits 1 for the subcommand named in STANDIN_FAIL, else 0.
+ */
+function standInClaude() {
+  // outside the clone: a file inside it would count as a change outside the target plugin
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "standin-claude-"));
+  fs.writeFileSync(
+    path.join(bin, "claude"),
+    '#!/usr/bin/env bash\necho "$*" >> "$(dirname "$0")/calls.log"\n[ "$2" = "$STANDIN_FAIL" ] && exit 1\nexit 0\n',
+    { mode: 0o755 },
+  );
+  const log = path.join(bin, "calls.log");
+  return { bin, calls: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : []) };
+}
+
 /** publish.sh patch danxbot; DANX_AGENT_WORKTREE commits the bump but skips the push and this machine's plugin delivery. */
-function publish(dir) {
+function publish(dir, { fail = "", claudeBin } = {}) {
+  const standIn = standInClaude();
+  // the caller's own CLAUDE_BIN (set to run validate for real) must not replace the stand-in
+  const { CLAUDE_BIN: _callers, ...inherited } = process.env;
   const r = spawnSync("bash", [path.join(dir, "scripts", "publish.sh"), "patch", "danxbot"], {
     cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, ...GIT_IDENTITY, DANX_AGENT_WORKTREE: dir, NODE_PATH: path.join(REPO_ROOT, "node_modules") },
+    env: {
+      ...inherited,
+      ...GIT_IDENTITY,
+      DANX_AGENT_WORKTREE: dir,
+      NODE_PATH: path.join(REPO_ROOT, "node_modules"),
+      PATH: `${standIn.bin}${path.delimiter}${process.env.PATH}`,
+      STANDIN_FAIL: fail,
+      ...(claudeBin ? { CLAUDE_BIN: claudeBin } : {}),
+    },
   });
-  return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}`, claudeCalls: standIn.calls() };
 }
 
 test("DX-4244: publish over an edited skill file prints no INTEGRITY FAILURE", () => {
@@ -132,7 +160,16 @@ function pushHarness() {
 }
 
 function publishPushing({ dir, home }, extraEnv = {}) {
-  const env = { ...process.env, ...GIT_IDENTITY, HOME: home, USERPROFILE: home, NODE_PATH: path.join(REPO_ROOT, "node_modules") };
+  const standIn = standInClaude();
+  const { CLAUDE_BIN: _callers, ...inherited } = process.env;
+  const env = {
+    ...inherited,
+    ...GIT_IDENTITY,
+    HOME: home,
+    USERPROFILE: home,
+    NODE_PATH: path.join(REPO_ROOT, "node_modules"),
+    PATH: `${standIn.bin}${path.delimiter}${process.env.PATH}`,
+  };
   delete env.DANX_AGENT_WORKTREE;
   Object.assign(env, extraEnv);
   const r = spawnSync("bash", [path.join(dir, "scripts", "publish.sh"), "patch", "danxbot"], { cwd: dir, encoding: "utf8", env });
@@ -266,5 +303,87 @@ test("DX-4288: under DANX_AGENT_WORKTREE the bump is committed and never pushed,
     assert.equal(originMain(h), originBefore);
   } finally {
     fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});
+
+// DX-4232: publish.sh validates and tests a plugin's hooks modules before it bumps anything.
+function snapshot(dir) {
+  return {
+    head: git(dir, "rev-parse", "HEAD").trim(),
+    pluginJson: fs.readFileSync(path.join(dir, "danxbot", ".claude-plugin", "plugin.json"), "utf8"),
+    integrity: fs.readFileSync(path.join(dir, "danxbot", "integrity-manifest.json"), "utf8"),
+  };
+}
+
+function assertUntouched(dir, before) {
+  assert.deepEqual(snapshot(dir), before, "a commit was made, the version bumped or the integrity manifest rewritten");
+}
+
+test("DX-4232: validate and test both pass: they run in that order, before the bump, and the publish goes through", () => {
+  const dir = editedClone();
+  try {
+    const before = snapshot(dir);
+    const r = publish(dir);
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(r.claudeCalls, ["plugin validate danxbot", "plugin test danxbot"]);
+    assert.notEqual(git(dir, "rev-parse", "HEAD").trim(), before.head);
+    assert.match(git(dir, "log", "-1", "--format=%s").trim(), /^danxbot v\d+\.\d+\.\d+$/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const failing of ["validate", "test"]) {
+  test(`DX-4232: claude plugin ${failing} failing refuses the publish: no commit, no bump, no manifest rewrite`, () => {
+    const dir = editedClone();
+    try {
+      const before = snapshot(dir);
+      const r = publish(dir, { fail: failing });
+      assert.notEqual(r.status, 0, r.out);
+      assert.match(r.out, new RegExp(`claude plugin ${failing} danxbot failed`));
+      assert.match(r.out, /Nothing was bumped or pushed/);
+      assertUntouched(dir, before);
+      // validate runs first: when it fails, test never runs
+      assert.deepEqual(r.claudeCalls, failing === "validate" ? ["plugin validate danxbot"] : ["plugin validate danxbot", "plugin test danxbot"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("DX-4232: a missing claude CLI refuses the publish and names CLAUDE_BIN", () => {
+  const dir = editedClone();
+  try {
+    const before = snapshot(dir);
+    const r = publish(dir, { claudeBin: path.join(dir, "no-such-claude") });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /CLAUDE_BIN/);
+    assertUntouched(dir, before);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("DX-4232: the manifest a publish commits lists hooks/register.tsx and every hooks/ and types/ file, so launch.mjs reports none of them damaged", () => {
+  const dir = editedClone();
+  try {
+    const r = publish(dir);
+    assert.equal(r.status, 0, r.out);
+    const listed = Object.keys(JSON.parse(fs.readFileSync(path.join(dir, "danxbot", "integrity-manifest.json"), "utf8")).files);
+    assert.ok(listed.includes("hooks/register.tsx"));
+    const onDisk = [];
+    const walk = (rel) => {
+      for (const e of fs.readdirSync(path.join(dir, "danxbot", rel), { withFileTypes: true })) {
+        const next = `${rel}/${e.name}`;
+        if (e.isDirectory()) walk(next);
+        else onDisk.push(next);
+      }
+    };
+    walk("hooks");
+    walk("types");
+    assert.ok(onDisk.length > 4, "the module's files are in the clone");
+    for (const file of onDisk) assert.ok(listed.includes(file), `${file} is missing from the manifest`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -178,6 +178,46 @@ if ! node "${REPO_ROOT}/scripts/lint-frontmatter.js" "${REPO_ROOT}"; then
   exit 1
 fi
 
+# --- Pre-flight: plugin hooks modules (DX-4232) ---------------------------
+#
+# A plugin whose hooks.json declares "modules" ships native function hooks. The engine loads a
+# module whole or not at all, and in the desktop app a module that fails to load says nothing
+# visible, so a broken one would reach every session silently. `claude plugin validate` (reads
+# the module's source the way the engine will) and `claude plugin test` (runs its *.test.ts[x]
+# against the engine) both run BEFORE anything is rewritten or bumped; either failing refuses the
+# publish with the tree untouched. CLAUDE_BIN names the CLI when `claude` is not on PATH.
+
+plugin_has_modules() {
+  node -e '
+    const fs = require("fs");
+    const f = process.argv[1] + "/hooks/hooks.json";
+    if (!fs.existsSync(f)) process.exit(1);
+    const m = JSON.parse(fs.readFileSync(f, "utf8")).modules;
+    process.exit(Array.isArray(m) && m.length > 0 ? 0 : 1);
+  ' "$1"
+}
+
+CLAUDE_CMD="${CLAUDE_BIN:-claude}"
+for plugin in "${TARGETS[@]}"; do
+  if plugin_has_modules "$plugin"; then
+    if ! command -v "$CLAUDE_CMD" >/dev/null 2>&1; then
+      err "${plugin} declares hooks modules, so publishing needs the claude CLI to validate and test them, and '${CLAUDE_CMD}' is not on PATH."
+      err "Set CLAUDE_BIN to the claude executable, then re-run. Nothing was bumped or pushed."
+      exit 1
+    fi
+    info "Validating ${plugin}'s hooks modules..."
+    if ! "$CLAUDE_CMD" plugin validate "$plugin"; then
+      err "claude plugin validate ${plugin} failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
+      exit 1
+    fi
+    info "Testing ${plugin}'s hooks modules..."
+    if ! "$CLAUDE_CMD" plugin test "$plugin"; then
+      err "claude plugin test ${plugin} failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
+      exit 1
+    fi
+  fi
+done
+
 # --- Integrity manifests -------------------------------------------------
 #
 # DX-3997 / DX-4244 - a plugin that ships its own integrity launcher
