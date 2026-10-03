@@ -2,7 +2,7 @@
 // answered (`dashboard_url`), never on a constant; an answer without a usable origin is an error state.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { NO_DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const OTHER = 'https://plans.example.test'
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -15,7 +15,8 @@ const hrefs = async (ui: any) => (await ui.findAll({ type: 'Link' })).map((l: an
 const browserUrls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.tool === 'navigate').map((c: any) => c.args.url)
 
 for (const surface of SURFACES) {
-  for (const origin of [DASHBOARD_URL, OTHER]) {
+  // the default origin's hrefs are asserted in the band, quick-view, pane and browser-tab tests
+  for (const origin of [OTHER]) {
     describe(`links on ${surface}, dashboard at ${origin}`, () => {
       test('the band line and the quick view link to the plan on that origin', async ($, on) => {
         const d = dashboard(on, { dashboardUrl: origin })
@@ -73,33 +74,36 @@ describe('an origin the plugin can use', () => {
   })
 })
 
-describe('an answer without a usable dashboard_url is an error state, with no fallback origin', () => {
-  for (const [name, value] of [
-    ['absent', null],
-    ['empty', ''],
-    ['not a string', 5555],
-    ['not a URL', 'localhost:5555 please'],
-    ['not http(s)', 'ftp://plans.example.test'],
-  ] as const) {
-    test(`${name}: the band says error, draws no link and no quick view`, async ($, on) => {
-      const d = dashboard(on, { dashboardUrl: value })
-      await startSession($, d, 'desktop')
-      const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-      const footer = await mountIndicator($, 'desktop')
-      expect(await footerText(footer)).toBe('plan: error')
-      expect(await band.findAll({ type: 'Link' })).toHaveLength(0)
-      expect(await band.find({ key: 'open-tab' })).toBeUndefined()
-      await footer.press({ key: 'footer-plan' })
-      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-      expect((await pane.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')).toContain('dashboard_url')
-    })
-  }
+for (const surface of SURFACES) {
+  describe(`an answer without a usable dashboard_url is an error state, with no fallback origin, on ${surface}`, () => {
+    for (const [name, value] of [
+      ['absent', NO_DASHBOARD_URL],
+      ['null', null],
+      ['empty', ''],
+      ['not a string', 5555],
+      ['not a URL', 'localhost:5555 please'],
+      ['not http(s)', 'ftp://plans.example.test'],
+    ] as const) {
+      test(`${name}: the band says error, draws no link and no quick view`, async ($, on) => {
+        const d = dashboard(on, { dashboardUrl: value })
+        await startSession($, d, surface)
+        const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+        const footer = await mountIndicator($, surface)
+        expect(await footerText(footer)).toBe('plan: error')
+        expect(await band.findAll({ type: 'Link' })).toHaveLength(0)
+        expect(await band.find({ key: 'open-tab' })).toBeUndefined()
+        await footer.press({ key: 'footer-plan' })
+        expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+        const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+        expect((await pane.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')).toContain('dashboard_url')
+      })
+    }
 
-  test('it also fails when the session is not connected to a plan (the field belongs to the list)', async ($, on) => {
-    const d = dashboard(on, { dashboardUrl: null, connected: false })
-    await startSession($, d, 'desktop')
-    const footer = await mountIndicator($, 'desktop')
-    expect(await footerText(footer)).toBe('plan: error')
+    test('it also fails when the session is not connected to a plan (the field belongs to the list)', async ($, on) => {
+      const d = dashboard(on, { dashboardUrl: NO_DASHBOARD_URL, connected: false })
+      await startSession($, d, surface)
+      const footer = await mountIndicator($, surface)
+      expect(await footerText(footer)).toBe('plan: error')
+    })
   })
-})
+}

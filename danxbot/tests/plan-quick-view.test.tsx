@@ -198,6 +198,21 @@ for (const surface of SURFACES) {
       expect(await band.find({ key: 'quick-view' })).toBeUndefined()
     })
 
+    test('a footer press after a plan move opens the card on the NEW plan, even before the reset has landed', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      await footer.press({ key: 'footer-plan' })
+      const release = d.holdQuickWrite()
+      d.world.planId = 24
+      await d.clock.advance(60_000)
+      // the atom still says 23 (the reset is held): the press must not read that as "open, so close"
+      await footer.press({ key: 'footer-plan' })
+      // the card exists only when the atom holds 24 (the band line alone also says PLAN-24)
+      expect(await band.find({ key: 'quick-view' })).toBeDefined()
+      release()
+      await d.clock.settle()
+    })
+
     test('a plan change that happens while loads fail is seen on the error view: coming back to the first plan does not reopen the card', async ($, on) => {
       const d = dashboard(on)
       const { band, footer } = await mounted($, d, surface)
@@ -229,7 +244,7 @@ for (const surface of SURFACES) {
       expect(await band.find({ key: 'quick-view' })).toBeUndefined()
       // and the press opens it on the new plan
       await footer.press({ key: 'footer-plan' })
-      expect((await text(band))).toContain('PLAN-24 · Agent mode')
+      expect(await band.find({ key: 'quick-view' })).toBeDefined()
     })
   })
 

@@ -106,6 +106,14 @@ export function quickOpenFor(quickPlanId: number | null, v: PlanView): boolean {
   return quickPlanId !== null && quickPlanId === (v.connected?.id ?? null)
 }
 
+// DX-4317: the reset rule. A view closes the card opened on another plan when it decides: a ready view (one
+// with no plan is a leave) or any view that names a connected plan (an error built after the plan was read).
+// A loading, no-mcp or early-error view names no plan and never decides, so recovery on the same plan keeps
+// the card.
+export function quickClosedBy(quickPlanId: number | null, v: PlanView): boolean {
+  return quickPlanId !== null && (v.phase === 'ready' || v.connected !== null) && !quickOpenFor(quickPlanId, v)
+}
+
 // Open problems split into questions and actions: one count for the pane and the quick view.
 export function problemSplit(v: PlanView): { questions: number; actions: number } {
   const actions = v.problems.filter(p => p.type === 'action').length

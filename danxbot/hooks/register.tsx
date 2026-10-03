@@ -5,7 +5,7 @@ import type { ConnectedPlan, Draft, PlanRow, ProblemRow, RefreshGate, SolutionRo
 import { renderBand } from './plan/band'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
-import { footerLabel, quickOpenFor } from './plan/words'
+import { footerLabel, quickClosedBy, quickOpenFor } from './plan/words'
 import { parsePreviewStart, parseTabId, parseTabsContext } from './plan/browser-output'
 import {
   BROWSER_TOAST_MS,
@@ -104,14 +104,9 @@ async function refresh($: any, force = false): Promise<void> {
       try {
         const v = await loadView($)
         await update($, view, () => v)
-        // The card belongs to the plan it was opened on: a view on another plan closes it for good, whether it
-        // is ready (a ready view with no plan is a leave) or an error built after the plan was read. An error
-        // or loading view that names no plan (an early error, no-mcp) never decides: recovery on the same plan
-        // keeps the card. Between the view update above and this one the new view is already stored, so the
-        // draw checks quickOpenFor itself.
-        if (v.phase === 'ready' || v.connected !== null) {
-          await update($, quickPlanId, cur => (cur !== null && !quickOpenFor(cur, v) ? null : cur))
-        }
+        // The card belongs to the plan it was opened on (quickClosedBy names the rule). Between the view update
+        // above and this one the new view is already stored, so the draw checks quickOpenFor itself.
+        await update($, quickPlanId, cur => (quickClosedBy(cur, v) ? null : cur))
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
