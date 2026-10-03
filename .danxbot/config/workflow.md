@@ -48,11 +48,11 @@ period. No "I'll bump later", no "the consumer will pick it up anyway".
 
 ## Why publish.sh + finalize, not publish.sh alone
 
-`publish.sh`'s own `git push` pushes the current branch. From an agent
-worktree the current branch is `<AGENT>`, not `main`, so a bare push would
-land on `origin/<AGENT>` and ship nothing. That is exactly why `publish.sh`
-skips its push inside a worktree and `agent-finalize.sh` (which pushes
-`HEAD:main` with a rebase-race loop) does the real ship. Run both, in order.
+`publish.sh`'s own push is `git push origin HEAD:main`: it ships the branch as-is,
+with no squash and no rebase-race loop, so a dispatched agent's bump commit would land
+on `main` outside the finalize flow. That is why `publish.sh` skips its push inside a
+worktree (`DANX_AGENT_WORKTREE`) and `agent-finalize.sh` (squash, then `HEAD:main` with a
+rebase-race loop) does the real ship. Run both, in order.
 
 ## No tests / no build
 

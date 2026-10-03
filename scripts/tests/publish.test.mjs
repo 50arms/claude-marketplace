@@ -213,15 +213,25 @@ test("DX-4288: a diverged HEAD is refused before any bump, and nothing is pushed
   }
 });
 
-test("DX-4288: a HEAD behind origin/main is refused and nothing is pushed", () => {
+test("DX-4288: a HEAD strictly behind origin/main is refused and nothing is pushed or bumped", () => {
   const h = pushHarness();
   try {
+    const base = originMain(h);
     advanceOrigin(h);
+    git(h.dir, "fetch", "-q", "origin");
+    git(h.dir, "checkout", "-q", "--no-track", "-B", "agent-branch", base);
+    git(h.dir, "merge-base", "--is-ancestor", "HEAD", originMain(h));
+    assert.notEqual(git(h.dir, "rev-parse", "HEAD").trim(), originMain(h));
     const originBefore = originMain(h);
+    const headBefore = git(h.dir, "rev-parse", "HEAD").trim();
+    const versionBefore = pluginVersion(h.dir);
+    fs.appendFileSync(path.join(h.dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- DX-4288 behind edit -->\n");
     const r = publishPushing(h);
     assert.notEqual(r.status, 0, r.out);
     assert.match(r.out, /not a fast-forward of origin\/main/);
     assert.equal(originMain(h), originBefore);
+    assert.equal(git(h.dir, "rev-parse", "HEAD").trim(), headBefore);
+    assert.equal(pluginVersion(h.dir), versionBefore);
   } finally {
     fs.rmSync(h.root, { recursive: true, force: true });
   }
@@ -251,6 +261,7 @@ test("DX-4288: under DANX_AGENT_WORKTREE the bump is committed and never pushed,
     const before = pluginVersion(h.dir);
     const r = publishPushing(h, { DANX_AGENT_WORKTREE: h.dir });
     assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /NOT pushing/);
     assert.notEqual(pluginVersion(h.dir), before);
     assert.equal(originMain(h), originBefore);
   } finally {

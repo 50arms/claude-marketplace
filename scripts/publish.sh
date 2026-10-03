@@ -296,13 +296,13 @@ done
 # Push — UNLESS we are running inside a danxbot agent worktree.
 #
 # A dispatched danxbot agent works on branch `<agent>` in a worktree, not
-# `main`. A bare `git push` from there lands the bump commit on
+# `main`. A push of the branch name from there lands the bump commit on
 # `origin/<agent>` — never `origin/main` — so it ships NOTHING to
 # consumers (the marketplace version-compares `main`). When DANX_AGENT_WORKTREE
 # is set we therefore leave the bump committed on the agent branch and let
 # `.danxbot/scripts/agent-finalize.sh` do the real push (`HEAD:main`, with a
 # rebase-race loop). Operator/main-session runs (no DANX_AGENT_WORKTREE) push
-# normally — unchanged behavior.
+# normally, with the explicit `HEAD:main` push below (DX-4288).
 if [ -n "${DANX_AGENT_WORKTREE:-}" ]; then
   info "DANX_AGENT_WORKTREE set — bump committed on this branch; NOT pushing."
   info "Run .danxbot/scripts/agent-finalize.sh to squash + push HEAD:main."
