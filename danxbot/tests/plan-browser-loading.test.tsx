@@ -62,8 +62,8 @@ describe('Open in browser tab shows it is working', () => {
     expect(d.toasts.filter(t => t.startsWith('Opening'))).toHaveLength(1)
     await d.clock.advance(5_000)
     await first
-    // one open: tabs_context + navigate, and the tab was kept once
-    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'navigate'])
+    // one open: tabs_context + preview_start, and the tab was kept once
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'preview_start'])
     expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(1)
   })
 
@@ -74,7 +74,7 @@ describe('Open in browser tab shows it is working', () => {
     expect(await label(band, 'open-tab')).toBe('Browser tab')
     expect(d.toasts).toEqual([
       'Opening the plan in the browser…',
-      'Browser navigate failed: use the link instead. (navigation to this site is not allowed)',
+      'Browser preview_start failed: use the link instead. (navigation to this site is not allowed)',
     ])
     const calls = browserCalls(d).length
     await band.press({ key: 'open-tab' })

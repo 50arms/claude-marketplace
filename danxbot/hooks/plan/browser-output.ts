@@ -72,12 +72,21 @@ export function parseTabId(text: string): string {
   return id
 }
 
-// navigate with NO tabId opens the Browser pane at the URL and reports the tab it used:
-//   navigated to <url>
-//   Tab Context:
-//   - Executed on tabId: <id>
-export function navigatedTabId(text: string): string {
-  const id = /Executed on tabId:\s*([\w-]+)/.exec(text)?.[1]
-  if (!id) throw new Error(`navigate answered no "Executed on tabId": ${excerpt(text)}`)
-  return id
+// preview_start {url} is the one call that opens the Browser pane from a closed state (a navigate
+// with no tabId is refused: "navigation to <origin> was denied or failed"). It answers a JSON
+// object, then prose, and the tab it used is `tabId`; `navOk` says the page loaded:
+//   {"serverId": "preview-local_...", "tabId": "seed", "reused": true, "type": "browser", "navOk": true}
+//   Browser pane opened. Use serverId "..." with read_page / computer / navigate.
+export function parsePreviewStart(text: string): string {
+  const json = firstJsonObject(text)
+  let parsed: any
+  try {
+    parsed = json === null ? undefined : JSON.parse(json)
+  } catch {
+    parsed = undefined
+  }
+  if (parsed === undefined) throw new Error(`preview_start answered no JSON: ${excerpt(text)}`)
+  if (parsed.navOk !== true) throw new Error(`preview_start did not load the page (navOk is not true): ${excerpt(text)}`)
+  if (typeof parsed.tabId !== 'string' || parsed.tabId === '') throw new Error(`preview_start answered no tabId: ${excerpt(text)}`)
+  return parsed.tabId
 }

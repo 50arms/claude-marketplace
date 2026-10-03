@@ -4,7 +4,7 @@ import type { Register } from 'claude-code'
 import type { Draft, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { renderBand } from './plan/band'
 import type { Handlers } from './plan/handlers'
-import { navigatedTabId, parseTabId, parseTabsContext } from './plan/browser-output'
+import { parsePreviewStart, parseTabId, parseTabsContext } from './plan/browser-output'
 import {
   BROWSER_TOAST_MS,
   CALL_ERROR_MAX,
@@ -146,8 +146,9 @@ async function browserOk($: any, tool: string, args: object): Promise<string> {
 
 // Opens `url` in the ONE in-app browser tab this plugin owns (id kept in $.state), so the
 // person's own tabs are never navigated away. Three cases:
-//   pane closed          navigate {url} with NO tabId (the tool opens the pane at the URL and
-//                        reports "Executed on tabId: <id>", which is the tab we keep);
+//   pane closed          preview_start {url}: the one call that opens the pane (a navigate with no
+//                        tabId is refused). It names the tab, which we keep (navOk must be true).
+//                        A rejected call is a toast with the rejection text, never a navigate;
 //   pane open, tab ours  navigate {url, tabId}, tabs_select;
 //   pane open, no tab    tabs_create, navigate {url, tabId}, keep its id, tabs_select.
 // Any step that fails or answers something unreadable throws into the toast: reading it as "no
@@ -160,8 +161,8 @@ function openInBrowser($: any, url: string): Promise<void> {
     try {
       const ctx = parseTabsContext(await browserOk($, 'tabs_context', {}))
       if (!ctx.browserOpen) {
-        step = 'navigate'
-        const made = navigatedTabId(await browserOk($, 'navigate', { url }))
+        step = 'preview_start'
+        const made = parsePreviewStart(await browserOk($, 'preview_start', { url }))
         await update($, tab, () => made)
       } else {
         let tabId = await read($, tab)

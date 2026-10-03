@@ -14,6 +14,13 @@ const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringi
 export const TABS_CREATE_OPEN = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "tab-1",\n  "reused": false,\n  "type": "browser"\n}\nOpened tab tab-1 in the background — the user\'s current tab stays in front. Use `navigate` with tabId "tab-1" to load a URL; front it with `tabs_select` when the user should look.'
 export const TABS_CREATE_CLOSED = 'No tab was created. The Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.'
 
+// captured from the desktop app (2026-10-03): the two closed answers of tabs_context, the refusal of
+// a navigate with no tabId on a closed pane, and preview_start, the call that opens the pane
+export const TABS_CONTEXT_CLOSED = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.'
+export const TABS_CONTEXT_CLOSED_LATER = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane is not open.'
+export const NAVIGATE_REFUSED = 'navigation to https://danxbot.sageus.ai was denied or failed'
+export const PREVIEW_START_OK = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "seed",\n  "reused": true,\n  "type": "browser",\n  "navOk": true\n}\nBrowser pane opened. Use serverId "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0" with read_page / computer / navigate.'
+
 const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, body })
 
 type Sol = { id: number; title: string; recommended: boolean; body?: string; pro?: string; con?: string; steps?: any[] }
@@ -33,6 +40,10 @@ export function dashboard(
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
+    // which closed text tabs_context carries (the app words it two ways)
+    closedText?: 'not-yet-open' | 'not-open'
+    // preview_start: opens the pane (default), loads nothing (navOk false), or is rejected outright
+    previewStart?: 'ok' | 'navNotOk' | 'rejected'
     // tabs_context says the pane is open but tabs_create answers the pane-closed text
     tabsCreate?: 'ok' | 'closed'
     // navigate takes this long on the fake clock (a slow open)
@@ -199,9 +210,7 @@ export function dashboard(
       // the real results: a JSON object followed by prose (captured from the desktop app)
       if (e.tool === 'tabs_context') {
         if (!browserOpen) {
-          return out(
-            '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.',
-          )
+          return out(options.closedText === 'not-open' ? TABS_CONTEXT_CLOSED_LATER : TABS_CONTEXT_CLOSED)
         }
         if (options.badTabEntry) return out('{"browserOpen": true, "tabs": [{"origin": "x"}]}\nThe Browser pane is currently displayed.')
         const tabs = (options.tabs ?? []).map(
@@ -216,16 +225,19 @@ export function dashboard(
       }
       if (e.tool === 'navigate' && options.browser === 'denied') return out('navigation to this site is not allowed', true)
       if (e.tool === 'navigate') {
-        // with no tabId the tool opens the pane at the URL
-        if (!e.args.tabId && !browserOpen) {
-          browserOpen = true
-          options.tabs = ['seed']
-        }
-        const id = e.args.tabId ?? 'seed'
+        // a navigate with no tabId on a closed pane is refused (the app, 2026-10-03): only preview_start opens it
+        if (!e.args.tabId && !browserOpen) return out(NAVIGATE_REFUSED, true)
         if (options.navigateTakesMs) await clock.sleep(options.navigateTakesMs)
-        return out(
-          `navigated to ${e.args.url}\n\nTab Context:\n- Executed on tabId: ${id}\n- Available tabs:\n  • tabId ${id}: "50 Arms" ("${e.args.url}")`,
-        )
+        return out(`navigated to ${e.args.url}`)
+      }
+      if (e.tool === 'preview_start') {
+        if (options.previewStart === 'rejected') return { deny: 'preview_start is not available to plugins' }
+        if (options.browser === 'denied') return out('navigation to this site is not allowed', true)
+        if (options.navigateTakesMs) await clock.sleep(options.navigateTakesMs)
+        if (options.previewStart === 'navNotOk') return out(PREVIEW_START_OK.replace('"navOk": true', '"navOk": false'))
+        browserOpen = true
+        options.tabs = ['seed']
+        return out(PREVIEW_START_OK)
       }
       return out('ok')
     }

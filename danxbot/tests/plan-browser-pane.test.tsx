@@ -3,20 +3,24 @@
 // in: navigate with no tabId opens the pane at the URL and names the tab it used.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { firstJsonObject, navigatedTabId, parseTabId, parseTabsContext } from '../hooks/plan/browser-output'
-import { TABS_CREATE_CLOSED, TABS_CREATE_OPEN, dashboard, startSession } from './plan-kit'
+import { firstJsonObject, parsePreviewStart, parseTabId, parseTabsContext } from '../hooks/plan/browser-output'
+import {
+  PREVIEW_START_OK,
+  TABS_CONTEXT_CLOSED,
+  TABS_CONTEXT_CLOSED_LATER,
+  TABS_CREATE_CLOSED,
+  TABS_CREATE_OPEN,
+  dashboard,
+  startSession,
+} from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const URL = 'https://danxbot.sageus.ai/plans/23'
 const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 const tools = (d: any) => browserCalls(d).map((c: any) => c.tool)
 
-// captured from the desktop app (2026-10-03)
-const CLOSED = `{
-  "browserOpen": false,
-  "tabs": []
-}
-The Browser pane isn't open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.`
+// captured from the desktop app (2026-10-03); the kit holds the closed ones
+const CLOSED = TABS_CONTEXT_CLOSED
 const OPEN = `{
   "browserOpen": true,
   "tabs": [
@@ -28,12 +32,6 @@ const OPEN = `{
   ]
 }
 The Browser pane is currently displayed.`
-const NAVIGATED = `navigated to https://danxbot.sageus.ai/plans/23
-
-Tab Context:
-- Executed on tabId: seed
-- Available tabs:
-  • tabId seed: "50 Arms" ("https://danxbot.sageus.ai/plans/23")`
 
 describe('reading the browser tool results', () => {
   test('trailing prose never breaks parsing; the pane closed is a valid answer with no tabs', () => {
@@ -62,23 +60,53 @@ describe('reading the browser tool results', () => {
     expect(() => parseTabId('Created.\ntabId: tab-9')).toThrow(/no tabId/)
   })
 
-  test('navigate names the tab it used on its "Executed on tabId" line, else it throws', () => {
-    expect(navigatedTabId(NAVIGATED)).toBe('seed')
-    expect(() => navigatedTabId('navigated to x')).toThrow(/Executed on tabId/)
+  test('both closed answers of tabs_context read as the pane closed', () => {
+    expect(parseTabsContext(TABS_CONTEXT_CLOSED)).toEqual({ browserOpen: false, tabs: [] })
+    expect(parseTabsContext(TABS_CONTEXT_CLOSED_LATER)).toEqual({ browserOpen: false, tabs: [] })
+  })
+
+  test('preview_start: the tab id comes from its JSON, and navOk must be true', () => {
+    expect(parsePreviewStart(PREVIEW_START_OK)).toBe('seed')
+    expect(() => parsePreviewStart(PREVIEW_START_OK.replace('"navOk": true', '"navOk": false'))).toThrow(/navOk is not true/)
+    expect(() => parsePreviewStart(PREVIEW_START_OK.replace('"navOk": true', '"other": 1'))).toThrow(/navOk is not true/)
+    expect(() => parsePreviewStart(PREVIEW_START_OK.replace('"tabId": "seed"', '"x": 1'))).toThrow(/no tabId/)
+    expect(() => parsePreviewStart('Browser pane opened.')).toThrow(/no JSON/)
   })
 })
 
 describe('Open in browser tab by pane state, on the desktop', () => {
-  test('pane CLOSED: navigate with no tabId opens it and names the tab to keep: two browser calls, no tabs_create', async ($, on) => {
-    const d = dashboard(on, { browserClosed: true })
+  for (const closedText of ['not-yet-open', 'not-open'] as const) {
+    test(`pane CLOSED (${closedText}): tabs_context then preview_start, nothing else; the tab it names is kept`, async ($, on) => {
+      const d = dashboard(on, { browserClosed: true, closedText })
+      await startSession($, d, 'desktop')
+      const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+      await band.press({ key: 'open-tab' })
+
+      expect(tools(d)).toEqual(['tabs_context', 'preview_start'])
+      expect(browserCalls(d)[1].args).toEqual({ url: URL })
+      expect(d.stateWrites.filter(w => w.key === 'tab')).toEqual([{ plugin: 'danxbot', key: 'tab', value: 'seed' }])
+      expect(d.toasts).toEqual(['Opening the plan in the browser…', 'Plan opened in the browser tab'])
+    })
+  }
+
+  test('preview_start with navOk false toasts the excerpt and stores nothing', async ($, on) => {
+    const d = dashboard(on, { browserClosed: true, previewStart: 'navNotOk' })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await band.press({ key: 'open-tab' })
+    expect(tools(d)).toEqual(['tabs_context', 'preview_start'])
+    expect(d.toasts.at(-1)).toMatch(/^Browser preview_start failed: use the link instead\. \(preview_start did not load the page \(navOk is not true\): /)
+    expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(0)
+  })
 
-    expect(tools(d)).toEqual(['tabs_context', 'navigate'])
-    expect(browserCalls(d)[1].args).toEqual({ url: URL })
-    expect(d.stateWrites.filter(w => w.key === 'tab')).toEqual([{ plugin: 'danxbot', key: 'tab', value: 'seed' }])
-    expect(d.toasts).toEqual(['Opening the plan in the browser…', 'Plan opened in the browser tab'])
+  test('a rejected preview_start call says so with the rejection text, and never falls back to navigate', async ($, on) => {
+    const d = dashboard(on, { browserClosed: true, previewStart: 'rejected' })
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    await band.press({ key: 'open-tab' })
+    expect(tools(d)).toEqual(['tabs_context', 'preview_start'])
+    expect(d.toasts.at(-1)).toMatch(/^Browser preview_start failed: use the link instead\. \(.*preview_start is not available to plugins/)
+    expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(0)
   })
 
   test('pane closed, then a second press: one tab was opened and the second press reuses it', async ($, on) => {
@@ -140,7 +168,7 @@ describe('Open in browser tab by pane state, on the desktop', () => {
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await band.press({ key: 'open-tab' })
-    expect(d.toasts.at(-1)).toBe('Browser navigate failed: use the link instead. (navigation to this site is not allowed)')
+    expect(d.toasts.at(-1)).toBe('Browser preview_start failed: use the link instead. (navigation to this site is not allowed)')
     expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(0)
   })
 })
