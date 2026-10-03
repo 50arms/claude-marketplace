@@ -72,6 +72,11 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   if (typeof list.body.total !== 'number') {
     return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered no total: cannot tell whether the plan list is complete' }
   }
+  // DX-4317: the origin every link is built on. Without it no link can be right, so the load is an error.
+  const dashboardUrl = readOrigin(list.body.dashboard_url)
+  if (dashboardUrl === null) {
+    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered no valid dashboard_url (an http(s) origin): cannot build plan links' }
+  }
   const plansRead: any[] = list.body.plans ?? []
   const plansUnread = Math.max(0, list.body.total - plansRead.length)
   const plans: PlanRow[] = plansRead
@@ -108,6 +113,7 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
     ref: `PLAN-${connectedId}`,
     name: session.plan_name ?? '',
     status: planR.body.status,
+    dashboardUrl,
   }
   const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown }
 
@@ -165,6 +171,17 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
     inProgress,
     inProgressTotal: inProg.body.total,
     refreshedAt,
+  }
+}
+
+// The origin of an http(s) URL string, or null: a trailing slash or path is dropped, a non-URL is refused.
+function readOrigin(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null
+  } catch {
+    return null
   }
 }
 

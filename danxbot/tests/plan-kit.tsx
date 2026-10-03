@@ -18,6 +18,9 @@ export const TABS_CREATE_CLOSED = 'No tab was created. The Browser pane isn\'t o
 // a navigate with no tabId on a closed pane, and preview_start, the call that opens the pane
 export const TABS_CONTEXT_CLOSED = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.'
 export const TABS_CONTEXT_CLOSED_LATER = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane is not open.'
+// DX-4317: the dashboard origin the fixture answers (`dashboard_url`): deliberately not the production
+// one, so a link built on a constant instead of the answer fails every test that checks a href.
+export const DASHBOARD_URL = 'http://localhost:5555'
 export const NAVIGATE_REFUSED = 'navigation to https://danxbot.sageus.ai was denied or failed'
 export const PREVIEW_START_OK = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "seed",\n  "reused": true,\n  "type": "browser",\n  "navOk": true\n}\nBrowser pane opened. Use serverId "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0" with read_page / computer / navigate.'
 
@@ -38,6 +41,9 @@ export function dashboard(
   on: On,
   options: {
     connected?: boolean
+    // `dashboard_url` on GET /api/plans: the default DASHBOARD_URL, an override (any value, so a bad one can
+    // be tried), or null for an answer without the field
+    dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky'
     browser?: 'ok' | 'denied'
@@ -165,6 +171,7 @@ export function dashboard(
             ? null
             : { plan_id: world.planId, plan_name: plans.find(p => p.id === world.planId)?.name ?? 'Far plan' },
         sessionListenerAttached: { state: 'healthy' },
+        ...(options.dashboardUrl === null ? {} : { dashboard_url: options.dashboardUrl ?? DASHBOARD_URL }),
       })
     }
     const planOne = /^\/api\/plans\/(\d+)$/.exec(path)
@@ -348,8 +355,11 @@ export function dashboard(
     return { deny: `no stand-in for ${e.server}` }
   })
   // what the plugin keeps in $.state (a test has no `$.state` of its own to read back)
-  const flags = { viewWriteFails: false, refusedViewWrites: 0 }
-  on('state.set', (_$: any, e: any, next: any) => {
+  const flags = { viewWriteFails: false, refusedViewWrites: 0, heldQuickWrite: null as Promise<void> | null }
+  on('state.set', async (_$: any, e: any, next: any) => {
+    // a write of the quick-view atom that waits for holdQuickWrite()'s release: the window between a view
+    // update and the reset that follows it
+    if (flags.heldQuickWrite && e.key === 'quickPlanId') await flags.heldQuickWrite
     // a write of the plugin's view that the host refuses: the one way a refresh can throw past its own catch
     if (flags.viewWriteFails && e.key === 'view') {
       flags.refusedViewWrites++
@@ -387,7 +397,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), holdQuickWrite: () => { let release!: () => void; flags.heldQuickWrite = new Promise<void>(r => (release = r)); return () => { flags.heldQuickWrite = null; release() } }, refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

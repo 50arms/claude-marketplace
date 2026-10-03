@@ -5,6 +5,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { firstJsonObject, parsePreviewStart, parseTabId, parseTabsContext } from '../hooks/plan/browser-output'
 import {
+  DASHBOARD_URL,
   PREVIEW_START_OK,
   TABS_CONTEXT_CLOSED,
   TABS_CONTEXT_CLOSED_LATER,
@@ -15,7 +16,7 @@ import {
 } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const URL = 'https://danxbot.sageus.ai/plans/23'
+const URL = `${DASHBOARD_URL}/plans/23`
 const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 const tools = (d: any) => browserCalls(d).map((c: any) => c.tool)
 

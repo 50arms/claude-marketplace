@@ -1,11 +1,8 @@
-import type { PlanView } from '../../types'
+import type { ConnectedPlan, PlanView } from '../../types'
 
 export const PANE = 'danx-plan'
 export const COMMAND = 'danx-plan'
 export const SERVER = 'danx-dashboard'
-// Known limit: the dashboard origin is hard-coded, so a plugin install on another deployment would
-// open the wrong site (a follow-up card makes it come from the session).
-export const DASHBOARD = 'https://danxbot.sageus.ai'
 export const POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
 
@@ -76,13 +73,15 @@ export const busyKey = {
   isSaving: (busy: string[], problemId: number) => busy.includes(`problem:${problemId}`),
 }
 
-export function planUrl(planId: number): string {
-  return `${DASHBOARD}/plans/${planId}`
+// DX-4317: every link is built on the origin the plan list answered (`dashboard_url`), carried on the
+// connected plan: there is no origin constant, so a link always opens the dashboard the data came from.
+export function planUrl(plan: ConnectedPlan): string {
+  return `${plan.dashboardUrl}/plans/${plan.id}`
 }
 
 // The one builder of a card's page: problem links are built on it.
-export function cardUrl(planId: number, cardId: string): string {
-  return `${planUrl(planId)}/cards/${cardId}`
+export function cardUrl(plan: ConnectedPlan, cardId: string): string {
+  return `${planUrl(plan)}/cards/${cardId}`
 }
 
 // The donut's size in px (Svg takes CSS pixels): the band line's, and the quick view's.

@@ -1,7 +1,7 @@
 // DX-4346: the quick view (a card in the band, opened from the footer entry) and the dismissable band.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -45,7 +45,7 @@ for (const surface of SURFACES) {
       expect(quick).toContain('1 in progress, not waiting on you')
       expect(quick).toContain('events live')
       // the band's own link and the quick view's, both the one plan URL
-      expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toEqual(Array(2).fill('https://danxbot.sageus.ai/plans/23'))
+      expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toEqual(Array(2).fill(`${DASHBOARD_URL}/plans/23`))
       expect(await band.find({ key: 'quick-open-pane' })).toBeDefined()
     })
 
@@ -129,7 +129,7 @@ for (const surface of SURFACES) {
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await footerText(footer)).toBe('plan: error')
 
-      // quickOpen survived the error: the next good refresh draws the card again
+      // quickPlanId survived the error: the next good refresh draws the card again
       d.failInProgress(false)
       await d.clock.advance(60_000)
       expect(await band.find({ key: 'quick-view' })).toBeDefined()
@@ -179,6 +179,58 @@ for (const surface of SURFACES) {
         expect(await band.find({ key: 'quick-view' })).toBeDefined()
       })
     }
+  })
+
+  describe(`the quick view stays with the plan it was opened on, on ${surface}`, () => {
+    test('between a view on another plan and the reset that follows it, the card is not drawn', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      await footer.press({ key: 'footer-plan' })
+      expect(await band.find({ key: 'quick-view' })).toBeDefined()
+      // the plan moves; the reset of the quick-view atom is held, so the ready view on 24 is stored first
+      const release = d.holdQuickWrite()
+      d.world.planId = 24
+      await d.clock.advance(60_000)
+      expect(await footerText(footer)).toContain('PLAN-24')
+      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+      release()
+      await d.clock.settle()
+      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+    })
+
+    test('a plan change that happens while loads fail is seen on the error view: coming back to the first plan does not reopen the card', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      await footer.press({ key: 'footer-plan' })
+      // an error view built after the plan was read names its plan (24), so the card is closed by it
+      d.failInProgress()
+      d.world.planId = 24
+      await d.clock.advance(60_000)
+      expect(await footerText(footer)).toBe('plan: error')
+      d.world.planId = 23
+      await d.clock.advance(60_000)
+      d.failInProgress(false)
+      await d.clock.advance(60_000)
+      expect(await footerText(footer)).toContain('PLAN-23')
+      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+    })
+
+    test('an error between two different plans (the list fails, so no plan is named): the card does not follow to the new plan', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      await footer.press({ key: 'footer-plan' })
+      d.failList()
+      d.world.planId = 24
+      await d.clock.advance(60_000)
+      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+      d.failList(false)
+      await d.clock.advance(60_000)
+      expect(await footerText(footer)).toContain('PLAN-24')
+      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+      // and the press opens it on the new plan
+      await footer.press({ key: 'footer-plan' })
+      expect((await text(band))).toContain('PLAN-24 · Agent mode')
+    })
   })
 
   describe(`dismissing the band on ${surface}`, () => {

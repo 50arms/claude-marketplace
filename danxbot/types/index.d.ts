@@ -59,6 +59,9 @@ export type ConnectedPlan = {
   name: string
   // read with the plan itself (GET /api/plans/:id), never from the capped list
   status: string
+  // The dashboard's public origin (`dashboard_url` on GET /api/plans, e.g. `https://host` or
+  // `http://localhost:5555`), with no path: every link to the plan, a card or a problem starts with it.
+  dashboardUrl: string
 }
 
 // The dashboard's card counts by status for one plan (`status_breakdown`); all six keys are required.
@@ -130,8 +133,9 @@ declare module 'claude-code' {
       // replaces `view` whole, so a flag inside it would be reset by every refresh.
       dismissed: boolean
       // The plan the quick-view card was opened on, or null when closed. The card shows only while this
-      // equals the connected plan's id on a ready view, so an error or loading view (which carries no
-      // connected plan) can neither close it nor leave it open on another plan.
+      // equals the connected plan's id on the view drawn (quickOpenFor). A view that names a connected plan
+      // (ready, or an error built after the plan was read) on another plan clears it; a view that names
+      // none and is not ready (loading, no-mcp, an early error) never decides.
       quickPlanId: number | null
       expanded: number | null
       // keys of the writes under way (config busyKey): one per problem or connect

@@ -90,8 +90,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
   }
 
   const plan = v.connected
-  const planId = plan.id
-  const ui: Ui = { draft: m.draft, busy: m.working, talk: m.talk, planId, now: m.now, hasBrowser: m.hasBrowser }
+  const ui: Ui = { draft: m.draft, busy: m.working, talk: m.talk, plan, now: m.now, hasBrowser: m.hasBrowser }
   const { questions, actions } = problemSplit(v)
   const percent = viewPercent(v)
 
@@ -107,11 +106,11 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       </Box>
       <Box flexDirection="row" gap={1}>
         {m.hasBrowser && (
-          <Button key="open-plan" onPress={() => hd.openBrowserTab(planUrl(planId))}>
+          <Button key="open-plan" onPress={() => hd.openBrowserTab(planUrl(plan))}>
             {busyKey.isOpeningBrowser(m.working) ? 'Opening…' : 'Open in browser tab'}
           </Button>
         )}
-        <Link href={planUrl(planId)} label="Open link" />
+        <Link href={planUrl(plan)} label="Open link" />
         <Button key="switch" dimColor onPress={() => hd.toggleSwitch()}>
           Switch plan
         </Button>
@@ -146,7 +145,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       {v.inProgress.length === 0 && <Text dimColor>No cards in progress that are not waiting on you.</Text>}
       {v.inProgress.map(row => (
         <Box key={`ip-${row.id}`} flexDirection="row" gap={1}>
-          <Link href={cardUrl(planId, row.id)} label={row.id} />
+          <Link href={cardUrl(plan, row.id)} label={row.id} />
           <Text>{row.title.slice(0, CARD_TITLE_MAX)}</Text>
           {row.agent && <Text dimColor>{row.agent}</Text>}
           <Text dimColor>updated {age(row.updatedAt, m.now)}</Text>

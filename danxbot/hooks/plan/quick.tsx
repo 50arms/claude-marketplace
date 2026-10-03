@@ -56,11 +56,11 @@ export function renderQuickView(E: any, hd: Handlers, v: PlanView, hasSvg: boole
           Plan
         </Button>
         {hasBrowser && (
-          <Button key="quick-open-tab" onPress={() => hd.openBrowserTab(planUrl(plan.id))}>
+          <Button key="quick-open-tab" onPress={() => hd.openBrowserTab(planUrl(plan))}>
             {busyKey.isOpeningBrowser(busy) ? 'Opening…' : 'Browser tab'}
           </Button>
         )}
-        <Link key="quick-link" href={planUrl(plan.id)} label="Open ↗" />
+        <Link key="quick-link" href={planUrl(plan)} label="Open ↗" />
       </Box>
     </Box>
   )

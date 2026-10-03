@@ -1,4 +1,4 @@
-import type { Draft, ProblemRow, SolutionRow, StepRow } from '../../types'
+import type { ConnectedPlan, Draft, ProblemRow, SolutionRow, StepRow } from '../../types'
 import type { Handlers } from './handlers'
 import { ACCENT, CARD_TITLE_MAX, DANGER, SUCCESS, WARNING, busyKey, cardUrl } from './config'
 import { WORDS, age } from './words'
@@ -7,14 +7,14 @@ export type Ui = {
   draft: Draft | null
   busy: string[]
   talk: number | null
-  planId: number
+  plan: ConnectedPlan
   now: number
   // The in-app browser exists on the desktop surface only.
   hasBrowser: boolean
 }
 
-function problemUrl(planId: number, p: ProblemRow): string {
-  return `${cardUrl(planId, p.cardId)}/problems/PBLM-${p.id}`
+function problemUrl(plan: ConnectedPlan, p: ProblemRow): string {
+  return `${cardUrl(plan, p.cardId)}/problems/PBLM-${p.id}`
 }
 
 function countSteps(steps: StepRow[]): { done: number; total: number } {
@@ -227,7 +227,7 @@ export function problemCard(hd: Handlers, E: any, ui: Ui, p: ProblemRow, isOpen:
               {isOpen ? '▾' : '▸'}
             </Button>
             {standing(E, p)}
-            <Link href={problemUrl(ui.planId, p)} label={`PBLM-${p.id}`} />
+            <Link href={problemUrl(ui.plan, p)} label={`PBLM-${p.id}`} />
           </Box>
           <Text dimColor>{age(p.updatedAt, ui.now)}</Text>
         </Box>
@@ -257,7 +257,7 @@ export function problemCard(hd: Handlers, E: any, ui: Ui, p: ProblemRow, isOpen:
       {isOpen && (
         <Box flexDirection="row" gap={1}>
           {ui.hasBrowser && (
-            <Button key={`tab-${p.id}`} dimColor onPress={() => hd.openBrowserTab(problemUrl(ui.planId, p))}>
+            <Button key={`tab-${p.id}`} dimColor onPress={() => hd.openBrowserTab(problemUrl(ui.plan, p))}>
               {busyKey.isOpeningBrowser(ui.busy) ? 'Opening…' : 'Open in browser tab'}
             </Button>
           )}

@@ -99,6 +99,13 @@ export function viewPercent(v: PlanView): number | null {
   return v.phase === 'ready' && v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
 }
 
+// DX-4317: the one rule for "the quick-view card is open for this view": it was opened on the plan the
+// view is connected to. The draw, the footer press and the reset all ask this, so no view can show a card
+// that was opened on another plan (the draw runs between a view update and the reset that follows it).
+export function quickOpenFor(quickPlanId: number | null, v: PlanView): boolean {
+  return quickPlanId !== null && quickPlanId === (v.connected?.id ?? null)
+}
+
 // Open problems split into questions and actions: one count for the pane and the quick view.
 export function problemSplit(v: PlanView): { questions: number; actions: number } {
   const actions = v.problems.filter(p => p.type === 'action').length

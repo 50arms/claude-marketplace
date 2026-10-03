@@ -40,11 +40,11 @@ export function renderBand(
     )
   }
 
-  const planId = v.connected?.id ?? null
+  const plan = v.connected
   const percent = viewPercent(v)
   const indicator =
     percent === null ? (
-      <Text color={planId === null ? WARNING : SUCCESS}>●</Text>
+      <Text color={plan === null ? WARNING : SUCCESS}>●</Text>
     ) : hasSvg ? (
       <Svg source={donutSvg(percent)} alt={donutAlt(percent)} width={DONUT_BAND_PX} height={DONUT_BAND_PX} />
     ) : (
@@ -61,12 +61,12 @@ export function renderBand(
       <Box flexGrow={1} />
       <Box flexDirection="row" gap={1} flexShrink={0}>
         {openPane}
-        {planId !== null && hasBrowser && (
-          <Button key="open-tab" onPress={() => hd.openBrowserTab(planUrl(planId))}>
+        {plan !== null && hasBrowser && (
+          <Button key="open-tab" onPress={() => hd.openBrowserTab(planUrl(plan))}>
             {busyKey.isOpeningBrowser(busy) ? 'Opening…' : 'Browser tab'}
           </Button>
         )}
-        {planId !== null && <Link href={planUrl(planId)} label="Open ↗" />}
+        {plan !== null && <Link href={planUrl(plan)} label="Open ↗" />}
         {close}
       </Box>
     </Box>

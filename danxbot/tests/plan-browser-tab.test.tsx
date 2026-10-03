@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { dashboard, startSession } from './plan-kit'
+import { DASHBOARD_URL, dashboard, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -8,7 +8,7 @@ const PANE = {
   requestId: 'danx-plan',
   props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
 } as any
-const URL = 'https://danxbot.sageus.ai/plans/23'
+const URL = `${DASHBOARD_URL}/plans/23`
 const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 
 describe('Open in browser tab', () => {
