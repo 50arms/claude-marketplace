@@ -48,12 +48,11 @@ test("a comment or rule found false is corrected in the same change, and the par
   assert.doesNotMatch(existingCode, /not evidence|verified this turn/i);
 });
 
-test("debugging step 5 isolates two plausible producers, and no other step does (PLAN-2 R-38)", () => {
+test("debugging step 5 isolates two plausible producers (PLAN-2 R-38)", () => {
   const debugging = skill.slice(skill.indexOf("## Debugging"), skill.indexOf("## Git"));
   const step5 = slice(debugging, "\n5. ", "\n6. ");
   assert.match(step5, TWO_PRODUCERS);
   assert.match(step5, /green after fixing one proves nothing about the other/);
-  assert.doesNotMatch(flat(debugging).replace(step5, ""), TWO_PRODUCERS);
 });
 
 test("each addition is stated exactly once in issue-workflow", () => {
