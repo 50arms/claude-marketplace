@@ -159,6 +159,28 @@ for (const surface of SURFACES) {
     })
   })
 
+  describe(`the quick view across failed loads on ${surface}`, () => {
+    // an early error view carries no connected plan: recovery on the SAME plan must not look like a plan change
+    for (const [name, breakIt, fixIt] of [
+      ['a plan-list 500', (d: any) => d.failList(), (d: any) => d.failList(false)],
+      ['a thrown MCP call (timeout)', (d: any) => d.setMcp('flaky'), (d: any) => d.setMcp('up')],
+      ['the MCP server gone and back', (d: any) => d.setMcp('down'), (d: any) => d.setMcp('up')],
+    ] as const) {
+      test(`${name}, then recovery: the quick view is drawn again`, async ($, on) => {
+        const d = dashboard(on)
+        const { band, footer } = await mounted($, d, surface)
+        await footer.press({ key: 'footer-plan' })
+        expect(await band.find({ key: 'quick-view' })).toBeDefined()
+        breakIt(d)
+        await d.clock.advance(60_000)
+        expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+        fixIt(d)
+        await d.clock.advance(60_000)
+        expect(await band.find({ key: 'quick-view' })).toBeDefined()
+      })
+    }
+  })
+
   describe(`dismissing the band on ${surface}`, () => {
     test('the close control hides the band; the footer entry brings it back in one press, with the quick view open', async ($, on) => {
       const d = dashboard(on)
@@ -227,7 +249,7 @@ for (const surface of SURFACES) {
       await footer.press({ key: 'footer-plan' })
       const keys = new Set(d.stateWrites.map(w => `${w.plugin}.${w.key}`))
       expect(keys.has('danxbot.dismissed')).toBe(true)
-      expect(keys.has('danxbot.quickOpen')).toBe(true)
+      expect(keys.has('danxbot.quickPlanId')).toBe(true)
       expect(d.stateWrites.some(w => w.key === 'view' && JSON.stringify(w.value).includes('dismissed'))).toBe(false)
     })
   })

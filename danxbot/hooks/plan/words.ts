@@ -35,13 +35,13 @@ export function age(iso: string, now: number): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 
-// "3 open problems", "3+ open problems" when the view read fewer cards than exist, '' for none.
 // "+" when the view read fewer needs-you cards than the dashboard has: every count of open problems is then a
 // lower bound. The one home of that rule.
 export function capMark(v: PlanView): string {
   return v.cardsTotal > v.cardsRead ? '+' : ''
 }
 
+// "3 open problems", "3+ open problems" when the view read fewer cards than exist, '' for none.
 export function problemCount(v: PlanView): string {
   const n = v.problems.length
   if (n === 0) return ''

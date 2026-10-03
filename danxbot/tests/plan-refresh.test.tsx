@@ -147,6 +147,8 @@ describe('the refresh timer and its lock', () => {
     } catch {
       // the engine reports the press hook as failed: that is the throw being exercised
     }
+    // the throwing hook really fired (a renamed atom would make this test vacuous)
+    expect(d.refusedViewWrites()).toBeGreaterThan(0)
     d.failViewWrite(false)
     const before = loads()
     await pane.press({ key: 'refresh' })

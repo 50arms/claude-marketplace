@@ -129,8 +129,10 @@ declare module 'claude-code' {
       // The band is hidden for the session (the footer entry brings it back). Its own atom: refresh
       // replaces `view` whole, so a flag inside it would be reset by every refresh.
       dismissed: boolean
-      // The quick-view card in the band is open.
-      quickOpen: boolean
+      // The plan the quick-view card was opened on, or null when closed. The card shows only while this
+      // equals the connected plan's id on a ready view, so an error or loading view (which carries no
+      // connected plan) can neither close it nor leave it open on another plan.
+      quickPlanId: number | null
       expanded: number | null
       // keys of the writes under way (config busyKey): one per problem or connect
       busy: string[]

@@ -35,10 +35,10 @@ const view = atom({ plugin: 'danxbot', key: 'view' } as const, EMPTY)
 const gate = atom({ plugin: 'danxbot', key: 'gate' } as const, { inFlight: false, again: false, at: null } as RefreshGate)
 const pick = atom({ plugin: 'danxbot', key: 'pick' } as const, '')
 const switching = atom({ plugin: 'danxbot', key: 'switching' } as const, false)
-// the band is hidden for the session / the quick-view card is open: their own atoms, since refresh
-// replaces `view` whole
+// the band is hidden for the session / the plan the quick-view card was opened on: their own atoms,
+// since refresh replaces `view` whole
 const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
-const quickOpen = atom({ plugin: 'danxbot', key: 'quickOpen' } as const, false)
+const quickPlanId = atom({ plugin: 'danxbot', key: 'quickPlanId' } as const, null as number | null)
 const expanded = atom({ plugin: 'danxbot', key: 'expanded' } as const, null as number | null)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 const draft = atom({ plugin: 'danxbot', key: 'draft' } as const, null as Draft | null)
@@ -103,13 +103,12 @@ async function refresh($: any, force = false): Promise<void> {
     while (again) {
       try {
         const v = await loadView($)
-        let previous: number | null = null
-        await update($, view, cur => {
-          previous = cur.connected?.id ?? null
-          return v
-        })
-        // the card belongs to the plan it was opened on: leaving or changing plan closes it (not `dismissed`)
-        if (v.phase === 'ready' && (v.connected?.id ?? null) !== previous) await update($, quickOpen, () => false)
+        await update($, view, () => v)
+        // The card belongs to the plan it was opened on: a READY load on another plan (a leave or a move)
+        // closes it for good. An error or loading view carries no connected plan, so it never decides.
+        if (v.phase === 'ready') {
+          await update($, quickPlanId, cur => (cur !== null && cur !== (v.connected?.id ?? null) ? null : cur))
+        }
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -357,7 +356,8 @@ async function footerPress($: any): Promise<void> {
   const v = await read($, view)
   if (v.phase === 'ready' && v.connected) {
     // a dismissed band opens with the quick view; otherwise the press toggles it
-    await update($, quickOpen, cur => wasDismissed || !cur)
+    const id = v.connected.id
+    await update($, quickPlanId, cur => (wasDismissed || cur !== id ? id : null))
   } else {
     await $.ui.open({ id: PANE, title: 'Plan', focus: true })
   }
@@ -366,7 +366,7 @@ async function footerPress($: any): Promise<void> {
 // The band's close control: the whole band (and its quick view) hides until the footer entry is pressed.
 async function dismissBand($: any): Promise<void> {
   await update($, dismissed, () => true)
-  await update($, quickOpen, () => false)
+  await update($, quickPlanId, () => null)
 }
 
 function handlers($: any): Handlers {
@@ -377,7 +377,7 @@ function handlers($: any): Handlers {
     connect: plan => connect($, plan),
     footerPress: () => footerPress($),
     dismissBand: () => dismissBand($),
-    closeQuick: () => update($, quickOpen, () => false),
+    closeQuick: () => update($, quickPlanId, () => null),
     disconnect: plan => disconnect($, plan),
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
@@ -439,7 +439,7 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, expanded, () => null)
     await update($, draft, () => null)
     await update($, talk, () => null)
-    await update($, quickOpen, () => false)
+    await update($, quickPlanId, () => null)
     void refresh($, true)
   }
   return next(e)
@@ -476,14 +476,16 @@ async function drawBand($: any, e: any, next: any) {
   if (e.props.hasSurvey) return next(e)
   // a dismissed band draws nothing, whatever the connection (the footer entry brings it back)
   if (await read($, dismissed)) return next(e)
+  const v = await read($, view)
+  const quickPlan = await read($, quickPlanId)
   return renderBand(
     $.ui.resolve(e),
     handlers($),
-    await read($, view),
+    v,
     e.surface === 'desktop',
     e.surface === 'desktop',
     await read($, busy),
-    await read($, quickOpen),
+    quickPlan !== null && quickPlan === (v.connected?.id ?? null),
   )
 }
 
