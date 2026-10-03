@@ -45,32 +45,39 @@ export function parseTabsContext(text: string): TabsContext {
   }
   if (typeof parsed.browserOpen !== 'boolean') throw new Error(`tabs_context answered no browserOpen: ${excerpt(text)}`)
   if (!Array.isArray(parsed.tabs)) throw new Error(`tabs_context answered no tabs list: ${excerpt(text)}`)
-  return {
-    browserOpen: parsed.browserOpen,
-    tabs: parsed.tabs.map((t: any) => ({ id: String(t.tabId), isActive: t.isActive === true })),
-  }
-}
-
-// The tab to adopt after the pane opened: the active one, else the only one.
-export function activeTab(ctx: TabsContext): string {
-  const tab = ctx.tabs.find(t => t.isActive) ?? (ctx.tabs.length === 1 ? ctx.tabs[0] : undefined)
-  if (!ctx.browserOpen || !tab) throw new Error('the Browser pane did not open a tab')
-  return tab.id
-}
-
-// tabs_create's text was never captured, so the id is read tolerantly: a JSON `tabId`, else the prose
-// forms `tabId: <id>` / `tabId=<id>` / `tabId <id>`.
-export function parseTabId(text: string): string {
-  const json = firstJsonObject(text)
-  if (json) {
-    try {
-      const id = JSON.parse(json).tabId
-      if (typeof id === 'string' && id) return id
-    } catch {
-      // not JSON after all: fall through to the prose forms
+  for (const t of parsed.tabs) {
+    if (t === null || typeof t !== 'object' || typeof t.tabId !== 'string' || t.tabId === '') {
+      throw new Error(`tabs_context listed a tab with no tabId: ${excerpt(JSON.stringify(t))}`)
     }
   }
-  const id = /tabId"?(?:\s*[:=]\s*|\s+)"?([\w-]+)/.exec(text)?.[1]
-  if (!id) throw new Error(`tabs_create answered no tabId: ${excerpt(text)}`)
+  return {
+    browserOpen: parsed.browserOpen,
+    tabs: parsed.tabs.map((t: any) => ({ id: t.tabId, isActive: t.isActive === true })),
+  }
+}
+
+// tabs_create with the pane open answers a JSON object with the new tab, then prose:
+//   {"serverId": "preview-local_...", "tabId": "tab-1", "reused": false, "type": "browser"}
+//   Opened tab tab-1 in the background ...
+// With the pane closed it answers prose only ("No tab was created. The Browser pane isn't open yet ...").
+export function parseTabId(text: string): string {
+  const json = firstJsonObject(text)
+  let id: unknown
+  try {
+    id = json === null ? undefined : JSON.parse(json).tabId
+  } catch {
+    id = undefined
+  }
+  if (typeof id !== 'string' || id === '') throw new Error(`tabs_create answered no tabId: ${excerpt(text)}`)
+  return id
+}
+
+// navigate with NO tabId opens the Browser pane at the URL and reports the tab it used:
+//   navigated to <url>
+//   Tab Context:
+//   - Executed on tabId: <id>
+export function navigatedTabId(text: string): string {
+  const id = /Executed on tabId:\s*([\w-]+)/.exec(text)?.[1]
+  if (!id) throw new Error(`navigate answered no "Executed on tabId": ${excerpt(text)}`)
   return id
 }

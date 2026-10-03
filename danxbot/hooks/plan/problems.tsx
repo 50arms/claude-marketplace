@@ -258,7 +258,7 @@ export function problemCard(hd: Handlers, E: any, ui: Ui, p: ProblemRow, isOpen:
         <Box flexDirection="row" gap={1}>
           {ui.hasBrowser && (
             <Button key={`tab-${p.id}`} dimColor onPress={() => hd.openBrowserTab(problemUrl(ui.planId, p))}>
-              Open in browser tab
+              {busyKey.isOpeningBrowser(ui.busy) ? 'Opening…' : 'Open in browser tab'}
             </Button>
           )}
           {busyKey.isSaving(ui.busy, p.id) && <Text dimColor>Saving…</Text>}

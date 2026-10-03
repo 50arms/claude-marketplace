@@ -9,6 +9,11 @@ import { NOTE_MARKER } from '../hooks/plan/config'
 export const SURFACES = ['terminal', 'desktop'] as const
 
 const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError: false })
+// tabs_create as the desktop app words it (captured 2026-10-03): with the pane open, a JSON object
+// then prose; with it closed, prose only
+export const TABS_CREATE_OPEN = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "tab-1",\n  "reused": false,\n  "type": "browser"\n}\nOpened tab tab-1 in the background — the user\'s current tab stays in front. Use `navigate` with tabId "tab-1" to load a URL; front it with `tabs_select` when the user should look.'
+export const TABS_CREATE_CLOSED = 'No tab was created. The Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.'
+
 const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, body })
 
 type Sol = { id: number; title: string; recommended: boolean; body?: string; pro?: string; con?: string; steps?: any[] }
@@ -28,6 +33,12 @@ export function dashboard(
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
+    // tabs_context says the pane is open but tabs_create answers the pane-closed text
+    tabsCreate?: 'ok' | 'closed'
+    // navigate takes this long on the fake clock (a slow open)
+    navigateTakesMs?: number
+    // a tab entry without a string tabId in tabs_context
+    badTabEntry?: boolean
     tabs?: string[]
     // what tabs_context answers: the list (default), an error result, or text that is no tab list
     tabsContext?: 'list' | 'error' | 'garbage'
@@ -58,6 +69,7 @@ export function dashboard(
   const calls: { server: string; tool: string; args: any }[] = []
   const api: { method: string; path: string; body?: any; query?: any }[] = []
   const toasts: string[] = []
+  const toastTimeouts: number[] = []
   const statuses: (string | undefined)[] = []
   const opened: { id: string; title?: string }[] = []
   const stateWrites: { plugin: string; key: string; value: unknown }[] = []
@@ -159,7 +171,7 @@ export function dashboard(
     return reply({ error: `unrouted ${method} ${path}` }, 404)
   }
 
-  on('mcp.call', (_$: any, e: any) => {
+  on('mcp.call', async (_$: any, e: any) => {
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.server === 'danx-dashboard') {
       // a deny reaches the plugin as a rejection that carries the reason
@@ -191,14 +203,16 @@ export function dashboard(
             '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.',
           )
         }
+        if (options.badTabEntry) return out('{"browserOpen": true, "tabs": [{"origin": "x"}]}\nThe Browser pane is currently displayed.')
         const tabs = (options.tabs ?? []).map(
           (tabId, i) => `    {\n      "tabId": "${tabId}",\n      "origin": "https://danxbot.sageus.ai",\n      "isActive": ${i === 0}\n    }`,
         )
         return out(`{\n  "browserOpen": true,\n  "tabs": [\n${tabs.join(',\n')}\n  ]\n}\nThe Browser pane is currently displayed.`)
       }
       if (e.tool === 'tabs_create') {
+        if (options.tabsCreate === 'closed') return out(TABS_CREATE_CLOSED)
         options.tabs = [...(options.tabs ?? []), 'tab-7']
-        return out('{"tabId":"tab-7"}')
+        return out(TABS_CREATE_OPEN.replace('tab-1', 'tab-7'))
       }
       if (e.tool === 'navigate' && options.browser === 'denied') return out('navigation to this site is not allowed', true)
       if (e.tool === 'navigate') {
@@ -208,6 +222,7 @@ export function dashboard(
           options.tabs = ['seed']
         }
         const id = e.args.tabId ?? 'seed'
+        if (options.navigateTakesMs) await clock.sleep(options.navigateTakesMs)
         return out(
           `navigated to ${e.args.url}\n\nTab Context:\n- Executed on tabId: ${id}\n- Available tabs:\n  • tabId ${id}: "50 Arms" ("${e.args.url}")`,
         )
@@ -224,6 +239,7 @@ export function dashboard(
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)
+    if (e.timeoutMs !== undefined) toastTimeouts.push(e.timeoutMs)
     return { value: undefined }
   })
   const flags = { statusThrows: false }
@@ -241,7 +257,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failStatus: (on = true) => void (flags.statusThrows = on), stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failStatus: (on = true) => void (flags.statusThrows = on), stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

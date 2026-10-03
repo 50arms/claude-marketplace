@@ -108,7 +108,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       <Box flexDirection="row" gap={1}>
         {m.hasBrowser && (
           <Button key="open-plan" onPress={() => hd.openBrowserTab(planUrl(planId))}>
-            Open in browser tab
+            {busyKey.isOpeningBrowser(m.working) ? 'Opening…' : 'Open in browser tab'}
           </Button>
         )}
         <Link href={planUrl(planId)} label="Open link" />

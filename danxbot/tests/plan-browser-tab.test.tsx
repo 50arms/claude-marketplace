@@ -28,7 +28,8 @@ describe('Open in browser tab', () => {
     await pane.press({ key: 'open-plan' })
     expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'navigate', 'tabs_select'])
     for (const call of browserCalls(d).filter((c: any) => c.tool !== 'tabs_context')) expect(call.args.tabId).toBe('tab-7')
-    expect(d.toasts).toHaveLength(0)
+    // two presses, each a start toast and a success toast, and nothing else
+    expect(d.toasts).toEqual(Array(2).fill(['Opening the plan in the browser…', 'Plan opened in the browser tab']).flat())
   })
 
   test('a held tab that was closed is replaced, never a neighbour navigated', async ($, on) => {
@@ -47,8 +48,8 @@ describe('Open in browser tab', () => {
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await band.press({ key: 'open-tab' })
-    expect(d.toasts).toHaveLength(1)
-    expect(d.toasts[0]).toBe('Browser navigate failed: use the link instead. (navigation to this site is not allowed)')
+    expect(d.toasts).toHaveLength(2)
+    expect(d.toasts[1]).toBe('Browser navigate failed: use the link instead. (navigation to this site is not allowed)')
     expect(browserCalls(d).map((c: any) => c.tool)).not.toContain('tabs_select')
   })
 
@@ -60,8 +61,8 @@ describe('Open in browser tab', () => {
       await band.press({ key: 'open-tab' })
       await band.press({ key: 'open-tab' })
       expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_context'])
-      expect(d.toasts).toHaveLength(2)
-      expect(d.toasts[0]).toMatch(/^Browser tabs_context failed: use the link instead\. \(.+\)$/)
+      expect(d.toasts).toHaveLength(4)
+      expect(d.toasts[1]).toMatch(/^Browser tabs_context failed: use the link instead\. \(.+\)$/)
       expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(0)
     })
   }

@@ -31,6 +31,9 @@ export const CALL_ERROR_MAX = 200
 export const ERROR_BODY_MAX = 200
 export const OUTPUT_EXCERPT_MAX = 80
 
+// How long the short browser-open toasts stay (the default is 4000).
+export const BROWSER_TOAST_MS = 2_500
+
 // What the fallback toast puts between its reason and the model row it could not append.
 export const NOTE_MARKER = ' | It was to read: '
 
@@ -59,6 +62,8 @@ export const EMPTY: PlanView = {
 export const busyKey = {
   connect: (planId: number) => `connect:${planId}`,
   problem: (problemId: number) => `problem:${problemId}`,
+  browser: 'browser:open',
+  isOpeningBrowser: (busy: string[]) => busy.includes('browser:open'),
   isConnecting: (busy: string[]) => busy.some(k => k.startsWith('connect:')),
   isSaving: (busy: string[], problemId: number) => busy.includes(`problem:${problemId}`),
 }

@@ -1,12 +1,12 @@
 import type { PlanView } from '../../types'
-import { SUCCESS, WARNING, planUrl } from './config'
+import { SUCCESS, WARNING, busyKey, planUrl } from './config'
 import type { Handlers } from './handlers'
 import { bandLabel } from './words'
 
 // Always-visible band above the prompt: connection status plus buttons for the pane and the
 // plan page. With no danx-dashboard MCP server in the session it is only the Plan button:
 // no label, no error.
-export function renderBand(E: any, hd: Handlers, v: PlanView, hasBrowser: boolean): any {
+export function renderBand(E: any, hd: Handlers, v: PlanView, hasBrowser: boolean, busy: string[]): any {
   const { Box, Text, Button, Link } = E
   const openPane = (
     <Button key="open-pane" onPress={() => hd.openPane()}>
@@ -23,7 +23,7 @@ export function renderBand(E: any, hd: Handlers, v: PlanView, hasBrowser: boolea
       {openPane}
       {planId !== null && hasBrowser && (
         <Button key="open-tab" onPress={() => hd.openBrowserTab(planUrl(planId))}>
-          Browser tab
+          {busyKey.isOpeningBrowser(busy) ? 'Opening…' : 'Browser tab'}
         </Button>
       )}
       {planId !== null && <Link href={planUrl(planId)} label="Open ↗" />}

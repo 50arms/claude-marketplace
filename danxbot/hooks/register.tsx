@@ -4,8 +4,9 @@ import type { Register } from 'claude-code'
 import type { Draft, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { renderBand } from './plan/band'
 import type { Handlers } from './plan/handlers'
-import { activeTab, parseTabId, parseTabsContext } from './plan/browser-output'
+import { navigatedTabId, parseTabId, parseTabsContext } from './plan/browser-output'
 import {
+  BROWSER_TOAST_MS,
   CALL_ERROR_MAX,
   COMMAND,
   CONNECT_ERROR_MAX,
@@ -145,39 +146,42 @@ async function browserOk($: any, tool: string, args: object): Promise<string> {
 
 // Opens `url` in the ONE in-app browser tab this plugin owns (id kept in $.state), so the
 // person's own tabs are never navigated away. Three cases:
-//   pane closed          navigate {url} with NO tabId (the tool opens the pane at the URL), then
-//                        read tabs_context again and keep the active tab's id as ours;
+//   pane closed          navigate {url} with NO tabId (the tool opens the pane at the URL and
+//                        reports "Executed on tabId: <id>", which is the tab we keep);
 //   pane open, tab ours  navigate {url, tabId}, tabs_select;
 //   pane open, no tab    tabs_create, navigate {url, tabId}, keep its id, tabs_select.
 // Any step that fails or answers something unreadable throws into the toast: reading it as "no
-// tabs" would open a new tab on every press.
-async function openInBrowser($: any, url: string): Promise<void> {
-  let step = 'tabs_context'
-  try {
-    const ctx = parseTabsContext(await browserOk($, 'tabs_context', {}))
-    if (!ctx.browserOpen) {
-      step = 'navigate'
-      await browserOk($, 'navigate', { url })
-      step = 'tabs_context'
-      const made = activeTab(parseTabsContext(await browserOk($, 'tabs_context', {})))
-      await update($, tab, () => made)
-      return
+// tabs" would open a new tab on every press. The whole open holds the browser busy key, so the
+// buttons read "Opening…" and a second press while it runs does nothing.
+function openInBrowser($: any, url: string): Promise<void> {
+  return withBusy($, busyKey.browser, async () => {
+    let step = 'tabs_context'
+    $.ui.toast('Opening the plan in the browser…', { timeoutMs: BROWSER_TOAST_MS })
+    try {
+      const ctx = parseTabsContext(await browserOk($, 'tabs_context', {}))
+      if (!ctx.browserOpen) {
+        step = 'navigate'
+        const made = navigatedTabId(await browserOk($, 'navigate', { url }))
+        await update($, tab, () => made)
+      } else {
+        let tabId = await read($, tab)
+        if (!tabId || !ctx.tabs.some(t => t.id === tabId)) {
+          step = 'tabs_create'
+          const made = parseTabId(await browserOk($, 'tabs_create', { foreground: true }))
+          await update($, tab, () => made)
+          tabId = made
+        }
+        step = 'navigate'
+        await browserOk($, 'navigate', { url, tabId })
+        step = 'tabs_select'
+        await browserOk($, 'tabs_select', { tabId })
+      }
+      $.ui.toast('Plan opened in the browser tab', { timeoutMs: BROWSER_TOAST_MS })
+    } catch (err: any) {
+      // the advice first, the (cut) detail last: a cut sentence must not end the toast
+      $.ui.toast(`Browser ${step} failed: use the link instead. (${String(err?.message ?? err).slice(0, TOAST_ERROR_MAX)})`)
     }
-    let tabId = await read($, tab)
-    if (!tabId || !ctx.tabs.some(t => t.id === tabId)) {
-      step = 'tabs_create'
-      const made = parseTabId(await browserOk($, 'tabs_create', { foreground: true }))
-      await update($, tab, () => made)
-      tabId = made
-    }
-    step = 'navigate'
-    await browserOk($, 'navigate', { url, tabId })
-    step = 'tabs_select'
-    await browserOk($, 'tabs_select', { tabId })
-  } catch (err: any) {
-    // the advice first, the (cut) detail last: a cut sentence must not end the toast
-    $.ui.toast(`Browser ${step} failed: use the link instead. (${String(err?.message ?? err).slice(0, TOAST_ERROR_MAX)})`)
-  }
+  })
 }
 
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
@@ -404,7 +408,7 @@ async function onTitle($: any, e: any, next: any) {
 
 async function drawBand($: any, e: any, next: any) {
   if (e.props.hasSurvey) return next(e)
-  return renderBand($.ui.resolve(e), handlers($), await read($, view), e.surface === 'desktop')
+  return renderBand($.ui.resolve(e), handlers($), await read($, view), e.surface === 'desktop', await read($, busy))
 }
 
 async function drawPane($: any, e: any) {
