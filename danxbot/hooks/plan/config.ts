@@ -64,6 +64,8 @@ export const busyKey = {
   problem: (problemId: number) => `problem:${problemId}`,
   browser: 'browser:open',
   isOpeningBrowser: (busy: string[]) => busy.includes('browser:open'),
+  disconnect: (planId: number) => `disconnect:${planId}`,
+  isDisconnecting: (busy: string[]) => busy.some(k => k.startsWith('disconnect:')),
   isConnecting: (busy: string[]) => busy.some(k => k.startsWith('connect:')),
   isSaving: (busy: string[], problemId: number) => busy.includes(`problem:${problemId}`),
 }

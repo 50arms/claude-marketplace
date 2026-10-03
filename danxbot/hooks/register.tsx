@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Draft, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
+import type { ConnectedPlan, Draft, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { renderBand } from './plan/band'
 import type { Handlers } from './plan/handlers'
 import { parsePreviewStart, parseTabId, parseTabsContext } from './plan/browser-output'
@@ -23,8 +23,8 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { isServerMissing, mcpText } from './plan/mcp'
-import { answerNote, connectNote } from './plan/notes'
+import { isServerMissing, mcpText, toolOutcome } from './plan/mcp'
+import { answerNote, connectNote, disconnectNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { statusText } from './plan/words'
 
@@ -225,6 +225,34 @@ function connect($: any, plan: PlanRow): Promise<void> {
   })
 }
 
+// Takes the session OFF its plan (plan_connect with disconnect: true, guarded by the plan we think we
+// are on). A refusal is shown, never swallowed: a 409 means the pane was stale (the server names the
+// plan the session is really on, or says it is on none), so it also refreshes; a 404 or any other
+// failure carries its status and message. No confirm: one Connect undoes it.
+function disconnect($: any, plan: ConnectedPlan): Promise<void> {
+  return withBusy($, busyKey.disconnect(plan.id), async () => {
+    let r
+    try {
+      r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
+    } catch (err: any) {
+      $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
+      return
+    }
+    const outcome = toolOutcome(r)
+    if (!outcome.ok) {
+      const body = outcome.body ?? {}
+      const detail = JSON.stringify(body).slice(0, CONNECT_ERROR_MAX)
+      $.ui.toast(`Disconnect refused: ${outcome.status || 'mcp'} ${body.message ?? body.error ?? ''} ${detail}`.replace(/ +/g, ' ').trim())
+      if (outcome.status === 409) await refresh($, true)
+      return
+    }
+    $.ui.toast(`Disconnected from ${plan.ref}`)
+    await update($, switching, () => false)
+    await tellModel($, disconnectNote({ ref: plan.ref, name: outcome.body?.leftPlan?.name ?? plan.name }))
+    await refresh($, true)
+  })
+}
+
 // One write to a problem (answer, comment, step tick), inside its busy claim: call, toast a
 // refusal, re-read the plan. It touches nothing the operator is composing; an answer clears the
 // draft. Resolves true when the write was made and accepted.
@@ -316,6 +344,7 @@ function handlers($: any): Handlers {
     openPane: () => $.ui.open({ id: PANE, title: 'Plan', focus: true }),
     openBrowserTab: url => openInBrowser($, url),
     connect: plan => connect($, plan),
+    disconnect: plan => disconnect($, plan),
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
     pickPlan: value => update($, pick, () => value),

@@ -115,6 +115,9 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         <Button key="switch" dimColor onPress={() => hd.toggleSwitch()}>
           Switch plan
         </Button>
+        <Button key="disconnect" dimColor onPress={() => hd.disconnect(plan)}>
+          {busyKey.isDisconnecting(m.working) ? 'Disconnecting…' : 'Disconnect'}
+        </Button>
       </Box>
       {m.isSwitching && planPicker(hd, E, m, true)}
 

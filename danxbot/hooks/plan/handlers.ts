@@ -1,4 +1,4 @@
-import type { PlanRow, ProblemRow, SolutionRow, StepRow } from '../../types'
+import type { ConnectedPlan, PlanRow, ProblemRow, SolutionRow, StepRow } from '../../types'
 
 // What a drawing may do. The drawing files are pure (`$` cannot cross an import), so
 // register.tsx builds this from `$` and hands it in. Each returns its work's promise, which a
@@ -10,6 +10,7 @@ export type Handlers = {
   openPane: () => Promise<unknown>
   openBrowserTab: (url: string) => Promise<unknown>
   connect: (plan: PlanRow) => Promise<unknown>
+  disconnect: (plan: ConnectedPlan) => Promise<unknown>
   toggleSwitch: () => Promise<unknown>
   cancelSwitch: () => Promise<unknown>
   pickPlan: (value: string) => Promise<unknown>

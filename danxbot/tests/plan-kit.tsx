@@ -40,6 +40,10 @@ export function dashboard(
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
+    // plan_connect {disconnect: true}: the leave works (default), or the server refuses it a given way
+    disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected'
+    // the disconnect call takes this long on the fake clock
+    disconnectTakesMs?: number
     // which closed text tabs_context carries (the app words it two ways)
     closedText?: 'not-yet-open' | 'not-open'
     // preview_start: opens the pane (default), loads nothing (navOk false), or is rejected outright
@@ -188,6 +192,26 @@ export function dashboard(
       // a deny reaches the plugin as a rejection that carries the reason
       if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (e.tool === 'plan_connect' && e.args.disconnect) {
+        if (options.disconnect === 'rejected') return { deny: 'plan_connect is not available' }
+        if (options.disconnectTakesMs) await clock.sleep(options.disconnectTakesMs)
+        const refuse = (status: number, body: unknown, isError = false) => ({
+          value: { content: [{ type: 'text', text: JSON.stringify({ ok: false, status, body }) }], isError },
+        })
+        if (options.disconnect === 'mismatch') {
+          world.planId = 24
+          return refuse(409, { error: 'plan_mismatch', message: 'this session is on PLAN-24 "Agent mode", not PLAN-23', plan: { id: 24 } }, true)
+        }
+        if (options.disconnect === 'notConnected' || world.planId === null) {
+          world.planId = null
+          return refuse(409, { error: 'session_not_connected' })
+        }
+        if (options.disconnect === 'notFound') return refuse(404, { error: 'Not found' })
+        if (e.args.plan_id !== world.planId) return refuse(409, { error: 'plan_mismatch' }, true)
+        const left = plans.find(p => p.id === world.planId)
+        world.planId = null
+        return { value: text({ ok: true, status: 200, body: { session: { plan_id: null }, leftPlan: { id: left?.id, name: left?.name } } }) }
+      }
       if (e.tool === 'plan_connect') {
         if (options.connectFails) return { value: { content: [{ type: 'text', text: 'no such plan' }], isError: true } }
         world.planId = e.args.plan_id
