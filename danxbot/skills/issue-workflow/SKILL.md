@@ -145,7 +145,8 @@ searched. "Can't reuse it because <constraint>" is a guess until you cite the `f
 that enforces it.
 
 **Existing code.** Comments are authoritative on WHY but were true only when written: confirm the producer or mechanism
-they name still exists, follow a cited docblock to code. Before choosing where state lives
+they name still exists, follow a cited docblock to code. A comment or rule you find false is
+corrected in the same change. Before choosing where state lives
 (DB row, file, env), trace the seed and load path to what is authoritative at runtime.
 Recurring jobs are incremental (delta + high-water mark): the 10th run costs what the 1st
 does. All code is your code — never "pre-existing, not mine".
@@ -159,7 +160,8 @@ does. All code is your code — never "pre-existing, not mine".
    authorization, even against production; only a write crosses the line.
 5. Name the producer of the bad value: currently buggy, was buggy, wrong expectation, or
    external. A green neighbour is not the failing path — observe the exact artifact the
-   consumer sees.
+   consumer sees. Two plausible producers → back each fix out alone and re-run; green after
+   fixing one proves nothing about the other.
 6. Fix the mechanism, not the symptom (mechanism > architectural > observability co-shipped
    > defense). Retry as the primary fix is forbidden.
 7. Before the first edit, quote the `file:line` that enforces the rule your fix must satisfy.
@@ -201,7 +203,8 @@ Every user-facing bug report, one block per bug:
 - Poll an LLM, dispatch or orchestrator no faster than every 60–120s.
 - A literal `\n` in an MCP string is two characters — use a real line break.
 - Never read or edit `dist/`/build output; `node_modules/` is read-only.
-- Browser checks: the in-app browser tool only, never a headed browser on the desktop;
-  close the tabs you opened.
+- Browser checks: the in-app browser tool only, never a headed browser on the desktop. Open
+  your own tab and pass its `tabId` on every call (none acts on the tab the user has
+  fronted); close the tabs you opened.
 - Signal only a PID you spawned and captured at spawn — never `pkill -f`, `killall` or a
   pattern lookup. A dev server someone may be using is not yours to restart without asking.

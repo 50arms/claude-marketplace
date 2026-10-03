@@ -99,7 +99,9 @@ A note edit replaces its link list per kind — resend them all.
 ## Actionable work
 
 Create via `danxbot:issue-workflow` (load before choosing a type) — but `ready` the card AND
-build it here; the plan never waits on a worker.
+build it here; the plan never waits on a worker. An archived (Backlog) card was parked on
+purpose: read why in its comments before readying it; a park the operator made is theirs to
+lift.
 
 ## Closing a plan
 
