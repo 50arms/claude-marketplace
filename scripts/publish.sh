@@ -157,6 +157,21 @@ if ! node "${REPO_ROOT}/scripts/lint-frontmatter.js" "${REPO_ROOT}"; then
   exit 1
 fi
 
+# --- Pre-flight: integrity manifests ------------------------------------
+#
+# DX-4244 — the injection-budget check below runs every hook for real, and a hook
+# of a plugin that ships an integrity launcher verifies that plugin's hash manifest
+# first. An edited hashed file made the manifest stale, so each hook printed a false
+# "INTEGRITY FAILURE ... git checkout -- <plugin>" (a fix that would destroy the very
+# edit being published). Regenerate the target plugins' manifests first; the bump
+# step below rewrites them again once plugin.json carries the new version.
+
+for plugin in "${TARGETS[@]}"; do
+  if [ -f "${plugin}/scripts/launch.mjs" ]; then
+    node "${REPO_ROOT}/scripts/write-integrity-manifest.mjs" "$plugin"
+  fi
+done
+
 # --- Pre-flight: injection budget ---------------------------------------
 #
 # DX-3053 â€” same shape as the frontmatter lint above: one shared check
