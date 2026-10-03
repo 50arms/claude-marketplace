@@ -42,6 +42,9 @@ describe('Open in browser tab', () => {
     expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'navigate', 'tabs_select'])
   })
 
+  // This test must stay AFTER the first one in this file: that test leaves tab-7 held in its own
+  // session, and here a new session finds tab-7 in the browser but not in its own $.state. A tab id
+  // kept in a module variable would be shared across the two and reused.
   test('a fresh session holds no tab: nothing is shared through the module', async ($, on) => {
     const d = dashboard(on, { tabs: ['tab-7'] })
     await startSession($, d, 'desktop')
@@ -62,6 +65,20 @@ describe('Open in browser tab', () => {
     expect(d.toasts[0]).toMatch(/Use the link instead\.$/)
     expect(browserCalls(d).map((c: any) => c.tool)).not.toContain('tabs_select')
   })
+
+  for (const mode of ['error', 'garbage'] as const) {
+    test(`a ${mode} tabs_context goes to the toast: no tab is created or navigated`, async ($, on) => {
+      const d = dashboard(on, { tabs: ['tab-1'], tabsContext: mode })
+      await startSession($, d, 'desktop')
+      const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+      await band.press({ key: 'open-tab' })
+      await band.press({ key: 'open-tab' })
+      expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_context'])
+      expect(d.toasts).toHaveLength(2)
+      expect(d.toasts[0]).toMatch(/Browser tabs_context was denied or failed: .*Use the link instead\.$/)
+      expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(0)
+    })
+  }
 
   test('the terminal draws no browser-tab button anywhere, the link only', async ($, on) => {
     const d = dashboard(on)

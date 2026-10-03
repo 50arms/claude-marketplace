@@ -70,3 +70,95 @@ describe('state keys', () => {
     expect([...new Set(d.stateWrites.map(w => w.plugin))]).toEqual(['danxbot'])
   })
 })
+
+describe('the dashboard cannot be read', () => {
+  for (const surface of SURFACES) {
+    test(`a rejection that is not "no such server" is an error shown as one, on ${surface}`, async ($, on) => {
+      const d = dashboard(on, { mcp: 'flaky' })
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await label(band)).toContain('plan: error')
+      expect(await label(pane)).toContain('request timed out after 60000ms')
+      expect(await label(pane)).not.toContain('not connected in this session')
+      expect(d.statuses.at(-1)).toBe('plan: error')
+    })
+  }
+})
+
+describe('the hooks that refresh', () => {
+  test('the model connecting a plan (tool.call plan_connect) is shown at once', async ($, on) => {
+    const d = dashboard(on, { connected: false })
+    on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => {
+      d.world.planId = 24
+      return { result: {}, text: 'connected', isError: false } as any
+    })
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    expect(await label(band)).toContain('Not connected to a plan')
+    await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 24 } as any)
+    await d.clock.settle()
+    expect(await label(band)).toContain('PLAN-24 · Agent mode')
+  })
+
+  test('a finished turn refreshes, but never twice within 10 s', async ($, on) => {
+    const d = dashboard(on)
+    on('turn.complete', () => ({ text: 'done' }) as any)
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    const loads = () => d.api.filter(a => a.path === '/api/plans').length
+    d.world.cards[1]!.problems.push({ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] })
+    const turn = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
+
+    await d.clock.advance(5_000)
+    const before = loads()
+    await $.turn.complete(turn)
+    await d.clock.settle()
+    expect(loads()).toBe(before)
+    expect(await label(band)).toContain('3 open problems')
+
+    await d.clock.advance(6_000)
+    await $.turn.complete(turn)
+    await d.clock.settle()
+    expect(loads()).toBe(before + 1)
+    expect(await label(band)).toContain('4 open problems')
+  })
+})
+
+describe('the refresh timer and its lock', () => {
+  test('several session.start calls leave one timer: one load per 60 s tick', async ($, on) => {
+    const d = dashboard(on)
+    for (let i = 0; i < 3; i++) await startSession($, d, 'desktop')
+    const loads = () => d.api.filter(a => a.path === '/api/plans').length
+    const before = loads()
+    await d.clock.advance(60_000)
+    expect(loads()).toBe(before + 1)
+  })
+
+  test('session.end cancels the timer', async ($, on) => {
+    const d = dashboard(on)
+    on('session.end', () => ({ sessionId: 's1' }) as any)
+    await startSession($, d, 'desktop')
+    await $.session.end({ reason: 'other' } as any)
+    const before = d.api.filter(a => a.path === '/api/plans').length
+    await d.clock.advance(180_000)
+    expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(before)
+  })
+
+  test('a refresh that throws releases the lock: the next one still loads', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    const loads = () => d.api.filter(a => a.path === '/api/plans').length
+    d.failStatus()
+    try {
+      await pane.press({ key: 'refresh' })
+    } catch {
+      // the engine reports the press hook as failed: that is the throw being exercised
+    }
+    d.failStatus(false)
+    const before = loads()
+    await pane.press({ key: 'refresh' })
+    expect(loads()).toBe(before + 1)
+  })
+})

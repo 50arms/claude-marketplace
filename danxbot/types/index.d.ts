@@ -26,7 +26,8 @@ export type SolutionRow = {
 }
 
 export type CommentRow = {
-  id: number
+  // as the API returns it (a string)
+  id: string
   author: string
   at: string
   text: string
@@ -44,6 +45,19 @@ export type ProblemRow = {
   updatedAt: string
   solutions: SolutionRow[]
   comments: CommentRow[]
+  // Comments on the card the API did not return (it pages them): the true count is at least
+  // comments.length and at most comments.length + moreComments.
+  moreComments: number
+}
+
+// The plan this session is bound to, read from the same response as the plan list (session.plan_id
+// and session.plan_name), so a plan beyond the list's cap still labels correctly. `status` is the
+// list row's, null when the plan is not in the capped list.
+export type ConnectedPlan = {
+  id: number
+  ref: string
+  name: string
+  status: string | null
 }
 
 // `no-mcp`: the session has no `danx-dashboard` MCP server (another repo), so the dashboard
@@ -51,9 +65,13 @@ export type ProblemRow = {
 export type PlanView = {
   phase: 'loading' | 'ready' | 'error' | 'no-mcp'
   error: string | null
-  connectedPlanId: number | null
+  connected: ConnectedPlan | null
   plans: PlanRow[]
   problems: ProblemRow[]
+  // Needs-you cards the dashboard has, and how many this view read; more than read means the
+  // problem list is a lower bound and the pane says so.
+  cardsTotal: number
+  cardsRead: number
   listener: string | null
   refreshedAt: string | null
 }

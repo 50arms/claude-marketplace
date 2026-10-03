@@ -60,6 +60,14 @@ A machine crash once left six cached plugin files the same size but all NUL byte
 - The bridge restart check lives in `scripts/bridge-watchdog.mjs`, not in `plan-event-bridge.mjs`, so a damaged bridge file can still be detected and reported.
 - `.gitattributes` marks `danxbot/**` as `-text` so no checkout rewrites line endings under the hashes.
 
+## danxbot also ships a native hooks module (DX-4232)
+
+`danxbot/hooks/hooks.json` has `"modules": ["./register.tsx"]` beside its command hooks. The module (the plan band and the Plan pane, `/danx-plan`) is native function hooks, not a command, so it does NOT run through the integrity launcher; the launcher and `integrity-manifest.json` still cover its files (they are hashed like any shipped file).
+
+- Code: `danxbot/hooks/register.tsx` holds everything that takes `$` (the engine follows `$` only into a function in the same file, and `$.state` atoms must be declared in the file that reads them); `danxbot/hooks/plan/*` is pure drawing, shaping and constants. The `$.state` contract is `danxbot/types/index.d.ts`, named by `plugin.json`'s `"types"`.
+- Tests: `danxbot/tests/plan-*.test.tsx` run under `claude plugin test danxbot` (each over `['terminal','desktop']`), with the stand-in dashboard in `danxbot/tests/plan-kit.tsx`. `claude plugin validate danxbot` is the loud check: in the desktop app a module that fails to load says nothing.
+- `scripts/publish.sh` runs both for any target plugin whose `hooks.json` declares `modules`, before it rewrites or bumps anything, and refuses the publish if either fails. **It needs the `claude` CLI: it is not on PATH in this machine's Git Bash, so set `CLAUDE_BIN` to the executable** (for example the desktop app's `claude-code/<version>/<hash>/claude.exe`) or the publish is refused naming it. `danxbot/tests/plugin-modules.test.mjs` needs it too.
+
 ## Publishing is TWO steps, and the second one is not optional
 
 A plugin edit is not shipped until BOTH happen:

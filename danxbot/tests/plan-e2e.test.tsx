@@ -4,7 +4,7 @@
 // the stand-in danxbot_api call it caused.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, startSession, triedToTell } from './plan-kit'
+import { SURFACES, dashboard, expectRowCarries, startSession, toldModel } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -43,7 +43,7 @@ for (const surface of SURFACES) {
       expect(d.calls.filter(c => c.tool === 'plan_connect').map(c => c.args.plan_id)).toEqual([23])
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin · 4 open problems')
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('green')
-      expect(triedToTell(d)).toBe(1)
+      expect(toldModel(d)).toHaveLength(1)
 
       // 4. answer by option
       await pane.press({ key: 'open-11' })
@@ -73,8 +73,14 @@ for (const surface of SURFACES) {
       expect(await text(pane)).toContain('Nothing needs you on this plan.')
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
       expect(await text(band)).not.toContain('open problem')
-      // the connect row plus one per answer
-      expect(triedToTell(d)).toBe(5)
+      // the connect row plus one per answer, each naming what it is about
+      const rows = toldModel(d)
+      expect(rows).toHaveLength(5)
+      expectRowCarries(rows[0]!, ['PLAN-23', 'plan_id 23'])
+      expectRowCarries(rows[1]!, ['DX-1', 'PBLM-11', 'Best'])
+      expectRowCarries(rows[2]!, ['DX-2', 'PBLM-21', '"neither"'])
+      expectRowCarries(rows[3]!, ['DX-1', 'PBLM-12', 'Allow it'])
+      expectRowCarries(rows[4]!, ['DX-2', 'PBLM-23', 'REJECTED', 'not this quarter'])
     })
   })
 }

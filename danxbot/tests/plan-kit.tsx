@@ -4,6 +4,8 @@
 import { expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { NOTE_MARKER } from '../hooks/plan/config'
+
 export const SURFACES = ['terminal', 'desktop'] as const
 
 const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError: false })
@@ -19,7 +21,23 @@ export type Dashboard = ReturnType<typeof dashboard>
 // listed LAST so the plugin's reordering shows) and an action; DX-2 holds one question.
 export function dashboard(
   on: On,
-  options: { connected?: boolean; mcp?: 'up' | 'down'; browser?: 'ok' | 'denied'; tabs?: string[]; listFails?: boolean; connectFails?: boolean } = {},
+  options: {
+    connected?: boolean
+    // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
+    mcp?: 'up' | 'down' | 'flaky'
+    browser?: 'ok' | 'denied'
+    tabs?: string[]
+    // what tabs_context answers: the list (default), an error result, or text that is no tab list
+    tabsContext?: 'list' | 'error' | 'garbage'
+    listFails?: boolean
+    connectFails?: boolean
+    // the dashboard has more needs-you cards than the one load reads
+    cardsTotal?: number
+    // the connected plan is not in the (capped) plan list
+    planOutsideList?: boolean
+    // comments the API did not return for a card (it pages them)
+    commentsTotal?: number
+  } = {},
 ) {
   const clock = mock.clock(on)
   const calls: { server: string; tool: string; args: any }[] = []
@@ -82,8 +100,11 @@ export function dashboard(
     if (method === 'GET' && path === '/api/plans') {
       if (options.listFails) return reply({ error: 'boom' }, 500)
       return reply({
-        plans,
-        session: world.planId === null ? null : { plan_id: world.planId },
+        plans: options.planOutsideList ? plans.filter(p => p.id !== world.planId) : plans,
+        session:
+          world.planId === null
+            ? null
+            : { plan_id: world.planId, plan_name: plans.find(p => p.id === world.planId)?.name ?? 'Far plan' },
         sessionListenerAttached: { state: 'healthy' },
       })
     }
@@ -93,12 +114,21 @@ export function dashboard(
         cards: world.cards
           .filter(c => c.problems.some(p => p.open))
           .map(c => ({ id: c.id, priority: c.priority, title: c.title })),
+        total: options.cardsTotal ?? world.cards.filter(c => c.problems.some(p => p.open)).length,
       })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
-      return c ? reply({ id: c.id, title: c.title, problems: c.problems, comments: c.comments }) : reply({ error: 'nope' }, 404)
+      return c
+        ? reply({
+            id: c.id,
+            title: c.title,
+            problems: c.problems,
+            comments: c.comments,
+            comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length },
+          })
+        : reply({ error: 'nope' }, 404)
     }
     const ans = /^\/api\/issues\/([A-Z]+-\d+)\/problems\/(\d+)\/answer$/.exec(path)
     if (method === 'POST' && ans) {
@@ -116,7 +146,9 @@ export function dashboard(
   on('mcp.call', (_$: any, e: any) => {
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.server === 'danx-dashboard') {
-      if (options.mcp === 'down') return { deny: 'MCP server "danx-dashboard" is not connected' }
+      // a deny reaches the plugin as a rejection that carries the reason
+      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
+      if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (e.tool === 'plan_connect') {
         if (options.connectFails) return { value: { content: [{ type: 'text', text: 'no such plan' }], isError: true } }
         world.planId = e.args.plan_id
@@ -127,6 +159,12 @@ export function dashboard(
       return { value: route(e.args.method, e.args.path, e.args.body, e.args.query) }
     }
     if (e.server === 'Claude_Browser') {
+      if (e.tool === 'tabs_context' && options.tabsContext === 'error') {
+        return { value: { content: [{ type: 'text', text: 'browser is not available' }], isError: true } }
+      }
+      if (e.tool === 'tabs_context' && options.tabsContext === 'garbage') {
+        return { value: { content: [{ type: 'text', text: 'Tabs: one, two' }], isError: false } }
+      }
       if (e.tool === 'tabs_context') {
         return { value: { content: [{ type: 'text', text: JSON.stringify({ tabs: (options.tabs ?? []).map(tabId => ({ tabId })) }) }], isError: false } }
       }
@@ -151,7 +189,9 @@ export function dashboard(
     toasts.push(e.text)
     return { value: undefined }
   })
+  const flags = { statusThrows: false }
   on('ui.status', (_$: any, e: any) => {
+    if (flags.statusThrows) throw new Error('status line unavailable')
     statuses.push(e.text)
     return { value: undefined }
   })
@@ -164,16 +204,22 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { failStatus: (on = true) => void (flags.statusThrows = on), stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
-// `claude plugin test` (Claude Code 2.1.286) has no store beneath a plugin's own
-// $.session.append: the call rejects "no implementation for session.append" and no hook of the
-// test or another plugin sees it. The plugin turns that into one "Could not tell the model" toast,
-// so a test counts those toasts as the number of rows the plugin tried to append, and tests the
-// row text itself from hooks/plan-link/notes.ts.
-export const TOLD_MODEL_FAILED = /^Could not tell the model/
-export const triedToTell = (d: { toasts: string[] }) => d.toasts.filter(t => TOLD_MODEL_FAILED.test(t)).length
+// `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
+// call rejects "no implementation for session.append" and no hook of the test or of another
+// plugin sees it (tried: on('session.append') in the test, with and without a door matcher, an
+// inline plugin at the prepend and append tiers, and a stub on the kit's $). The plugin's fallback
+// toast therefore carries the row it could not append, after NOTE_MARKER, and toldModel() reads the
+// rows back from there. plan-pane.test.tsx's canary fails the day the append works in the kit.
+export const toldModel = (d: { toasts: string[] }): string[] =>
+  d.toasts.filter(t => t.startsWith('Could not tell the model')).map(t => t.slice(t.indexOf(NOTE_MARKER) + NOTE_MARKER.length))
+
+// The model must be able to act on a row: it carries every one of these fields.
+export function expectRowCarries(row: string, fields: string[]) {
+  for (const field of fields) expect(row, `the model row lacks "${field}": ${row}`).toContain(field)
+}
 
 // session.start as the engine raises it (the plugin loads the plan, registers its command and
 // starts its refresh timer), then lets the load it kicked off finish.
