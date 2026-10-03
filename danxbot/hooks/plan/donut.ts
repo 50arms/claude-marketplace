@@ -1,6 +1,11 @@
 // The plan-progress donut as an SVG document (desktop only: the terminal has no Svg and shows
 // the text glyph). A ring of circumference 100 so the arc length is the percent itself; a complete
 // plan (100) draws the done mark (a filled disc with a tick) instead (DX-4257).
+// A ring of circumference 100 has radius 100 / (2 * PI) = 15.9155, so a dash of `percent` is exactly
+// that percent of the way round. Strokes start at 3 o'clock; the offset of 25 (a quarter of the 100
+// circumference) turns the start to 12 o'clock.
+const RING_RADIUS = 15.9155
+const QUARTER_TURN = 25
 const GREEN = '#3fb950'
 const TRACK = '#6e7681'
 
@@ -15,8 +20,8 @@ export function donutSvg(percent: number): string {
   }
   return (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">' +
-    `<circle cx="18" cy="18" r="15.9155" fill="none" stroke="${TRACK}" stroke-opacity="0.35" stroke-width="4"/>` +
-    `<circle cx="18" cy="18" r="15.9155" fill="none" stroke="${GREEN}" stroke-width="4" stroke-dasharray="${percent} ${100 - percent}" stroke-dashoffset="25"/>` +
+    `<circle cx="18" cy="18" r="${RING_RADIUS}" fill="none" stroke="${TRACK}" stroke-opacity="0.35" stroke-width="4"/>` +
+    `<circle cx="18" cy="18" r="${RING_RADIUS}" fill="none" stroke="${GREEN}" stroke-width="4" stroke-dasharray="${percent} ${100 - percent}" stroke-dashoffset="${QUARTER_TURN}"/>` +
     '</svg>'
   )
 }

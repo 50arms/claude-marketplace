@@ -1,5 +1,5 @@
 import type { CommentRow, ConnectedPlan, InProgressRow, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS } from './config'
+import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, STATUS_KEYS } from './config'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -111,67 +111,62 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   }
   const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown }
 
-  let problems: ProblemRow[] = []
-  {
-    if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
-    if (typeof cards.body.total !== 'number') {
-      return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards answered no total: cannot tell whether the card list is complete` }
-    }
-    const rows: { id: string; priority: number }[] = (cards.body.cards ?? []).map((c: any) => ({
-      id: c.id,
-      priority: c.priority ?? 0,
-    }))
-    const fetched = await Promise.all(
-      rows.map(async row => ({
-        row,
-        r: await call('GET', `/api/issues/${row.id}`, {
-          query: { fields: { problems: { solutions: { steps: true } }, comments: true } },
-        }),
-      })),
-    )
-    // A card that cannot be read fails the whole load: a pane that silently drops a card's
-    // problems would tell the operator nothing needs them.
-    const failed = fetched.find(f => !f.r.ok)
-    if (failed) return { ...EMPTY, ...base, phase: 'error', error: `${failed.row.id} ${errText(failed.r)}` }
-    // a card's comments are paged: without comments_page.total they cannot be read as complete
-    const unpaged = fetched.find(f => typeof f.r.body.comments_page?.total !== 'number')
-    if (unpaged) {
-      return { ...EMPTY, ...base, phase: 'error', error: `GET /api/issues/${unpaged.row.id} answered no comments_page.total: cannot tell whether its comments are complete` }
-    }
-    // cards arrive priority-sorted; keep that order
-    problems = fetched.flatMap(f => toProblems(f.r.body, f.row.priority))
+  if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
+  if (typeof cards.body.total !== 'number') {
+    return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards answered no total: cannot tell whether the card list is complete` }
+  }
+  const rows: { id: string; priority: number }[] = (cards.body.cards ?? []).map((c: any) => ({
+    id: c.id,
+    priority: c.priority ?? 0,
+  }))
+  const fetched = await Promise.all(
+    rows.map(async row => ({
+      row,
+      r: await call('GET', `/api/issues/${row.id}`, {
+        query: { fields: { problems: { solutions: { steps: true } }, comments: true } },
+      }),
+    })),
+  )
+  // A card that cannot be read fails the whole load: a pane that silently drops a card's
+  // problems would tell the operator nothing needs them.
+  const failed = fetched.find(f => !f.r.ok)
+  if (failed) return { ...EMPTY, ...base, phase: 'error', error: `${failed.row.id} ${errText(failed.r)}` }
+  // a card's comments are paged: without comments_page.total they cannot be read as complete
+  const unpaged = fetched.find(f => typeof f.r.body.comments_page?.total !== 'number')
+  if (unpaged) {
+    return { ...EMPTY, ...base, phase: 'error', error: `GET /api/issues/${unpaged.row.id} answered no comments_page.total: cannot tell whether its comments are complete` }
+  }
+  // cards arrive priority-sorted; keep that order
+  const problems: ProblemRow[] = fetched.flatMap(f => toProblems(f.r.body, f.row.priority))
 
-    // The in-progress bucket: the same completeness rule, and a readable agent name per row (the cards
-    // route carries only the raw session id of a claimed card).
-    if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
-    if (typeof inProg.body.total !== 'number') {
-      return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
-    }
-    const ipRows: any[] = inProg.body.cards ?? []
-    const named = await Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`) })))
-    const unnamed = named.find(n => !n.r.ok)
-    if (unnamed) return { ...EMPTY, ...base, phase: 'error', error: `${unnamed.row.id} ${errText(unnamed.r)}` }
-    const inProgress: InProgressRow[] = named.map(n => ({
-      id: n.row.id,
-      title: n.row.title,
-      agent: n.r.body.assigned_agent_name ?? null,
-      updatedAt: n.row.updatedAt,
-    }))
-    return {
-      ...base,
-      phase: 'ready',
-      error: null,
-      problems,
-      cardsTotal: cards.body.total,
-      cardsRead: rows.length,
-      inProgress,
-      inProgressTotal: inProg.body.total,
-      refreshedAt,
-    }
+  // The in-progress bucket: the same completeness rule, and a readable agent name per row (the cards
+  // route carries only the raw session id of a claimed card).
+  if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
+  if (typeof inProg.body.total !== 'number') {
+    return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
+  }
+  const ipRows: any[] = inProg.body.cards ?? []
+  const named = await Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`) })))
+  const unnamed = named.find(n => !n.r.ok)
+  if (unnamed) return { ...EMPTY, ...base, phase: 'error', error: `${unnamed.row.id} ${errText(unnamed.r)}` }
+  const inProgress: InProgressRow[] = named.map(n => ({
+    id: n.row.id,
+    title: n.row.title,
+    agent: n.r.body.assigned_agent_name ?? null,
+    updatedAt: n.row.updatedAt,
+  }))
+  return {
+    ...base,
+    phase: 'ready',
+    error: null,
+    problems,
+    cardsTotal: cards.body.total,
+    cardsRead: rows.length,
+    inProgress,
+    inProgressTotal: inProg.body.total,
+    refreshedAt,
   }
 }
-
-const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const
 
 // All six statuses as numbers, or null: a missing count is an error state, never a guessed 0%.
 function readBreakdown(raw: any): StatusBreakdown | null {

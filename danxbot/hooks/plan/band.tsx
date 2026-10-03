@@ -8,12 +8,14 @@ import { bandLabel, donutGlyph, viewPercent } from './words'
 // The band above the prompt: the plan line (indicator, label, then Plan / Browser tab / Open and a
 // close control hugging the right edge, the label truncating first) and, when open, the quick view.
 // With no danx-dashboard MCP server in the session it is only the Plan button: no label, no error.
-// `hasSvg` is the desktop: the terminal draws the glyph as text.
+// `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text). `hasBrowser`: it has the
+// in-app browser (also the desktop today, but a different fact).
 export function renderBand(
   E: any,
   hd: Handlers,
   v: PlanView,
   hasSvg: boolean,
+  hasBrowser: boolean,
   busy: string[],
   quickOpen: boolean,
 ): any {
@@ -59,7 +61,7 @@ export function renderBand(
       <Box flexGrow={1} />
       <Box flexDirection="row" gap={1} flexShrink={0}>
         {openPane}
-        {planId !== null && hasSvg && (
+        {planId !== null && hasBrowser && (
           <Button key="open-tab" onPress={() => hd.openBrowserTab(planUrl(planId))}>
             {busyKey.isOpeningBrowser(busy) ? 'Opening…' : 'Browser tab'}
           </Button>
@@ -69,7 +71,7 @@ export function renderBand(
       </Box>
     </Box>
   )
-  const quick = quickOpen && percent !== null ? renderQuickView(E, hd, v, hasSvg, busy) : null
+  const quick = quickOpen && percent !== null ? renderQuickView(E, hd, v, hasSvg, hasBrowser, busy) : null
   return quick ? (
     <Box flexDirection="column">
       {line}

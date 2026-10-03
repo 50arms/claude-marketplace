@@ -103,7 +103,13 @@ async function refresh($: any, force = false): Promise<void> {
     while (again) {
       try {
         const v = await loadView($)
-        await update($, view, () => v)
+        let previous: number | null = null
+        await update($, view, cur => {
+          previous = cur.connected?.id ?? null
+          return v
+        })
+        // the card belongs to the plan it was opened on: leaving or changing plan closes it (not `dismissed`)
+        if (v.phase === 'ready' && (v.connected?.id ?? null) !== previous) await update($, quickOpen, () => false)
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -350,7 +356,8 @@ async function footerPress($: any): Promise<void> {
   await update($, dismissed, () => false)
   const v = await read($, view)
   if (v.phase === 'ready' && v.connected) {
-    await update($, quickOpen, cur => (wasDismissed ? true : !cur))
+    // a dismissed band opens with the quick view; otherwise the press toggles it
+    await update($, quickOpen, cur => wasDismissed || !cur)
   } else {
     await $.ui.open({ id: PANE, title: 'Plan', focus: true })
   }
@@ -473,6 +480,7 @@ async function drawBand($: any, e: any, next: any) {
     $.ui.resolve(e),
     handlers($),
     await read($, view),
+    e.surface === 'desktop',
     e.surface === 'desktop',
     await read($, busy),
     await read($, quickOpen),

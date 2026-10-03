@@ -1,7 +1,7 @@
 // DX-4346: the quick view (a card in the band, opened from the footer entry) and the dismissable band.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, mountIndicator, startSession } from './plan-kit'
+import { SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -111,6 +111,51 @@ for (const surface of SURFACES) {
       await footer.press({ key: 'footer-plan' })
       expect(await band.find({ key: 'quick-view' })).toBeUndefined()
       expect(d.opened.map(o => o.id)).toEqual(['danx-plan'])
+    })
+  })
+
+  describe(`the quick view in an error state on ${surface}`, () => {
+    test('a failed card read removes it, with no guessed zeros and no donut; the next good refresh brings it back', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      await footer.press({ key: 'footer-plan' })
+      expect(await band.find({ key: 'quick-view' })).toBeDefined()
+
+      d.failInProgress()
+      await d.clock.advance(60_000)
+      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+      expect(await text(band)).toContain('plan: error')
+      expect(await text(band)).not.toMatch(/0 open problems|0 actions|0 in progress/)
+      expect(await band.find({ type: 'Svg' })).toBeUndefined()
+      expect(await footerText(footer)).toBe('plan: error')
+
+      // quickOpen survived the error: the next good refresh draws the card again
+      d.failInProgress(false)
+      await d.clock.advance(60_000)
+      expect(await band.find({ key: 'quick-view' })).toBeDefined()
+      expect(await footerText(footer)).toBe('◔ 25% · PLAN-23 · 3 open')
+    })
+
+    test('leaving or changing plan closes it for good; the dismissed flag is not reset', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      await footer.press({ key: 'footer-plan' })
+      d.world.planId = null
+      await d.clock.advance(60_000)
+      d.world.planId = 23
+      await d.clock.advance(60_000)
+      // reconnected: the card does not come back by itself
+      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+
+      await footer.press({ key: 'footer-plan' })
+      d.world.planId = 24
+      await d.clock.advance(60_000)
+      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+
+      await band.press({ key: 'band-close' })
+      d.world.planId = null
+      await d.clock.advance(60_000)
+      expect(await band.find({ key: 'open-pane' })).toBeUndefined()
     })
   })
 

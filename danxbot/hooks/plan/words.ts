@@ -36,10 +36,16 @@ export function age(iso: string, now: number): string {
 }
 
 // "3 open problems", "3+ open problems" when the view read fewer cards than exist, '' for none.
+// "+" when the view read fewer needs-you cards than the dashboard has: every count of open problems is then a
+// lower bound. The one home of that rule.
+export function capMark(v: PlanView): string {
+  return v.cardsTotal > v.cardsRead ? '+' : ''
+}
+
 export function problemCount(v: PlanView): string {
   const n = v.problems.length
   if (n === 0) return ''
-  const more = v.cardsTotal > v.cardsRead ? '+' : ''
+  const more = capMark(v)
   return `${n}${more} open problem${n === 1 && !more ? '' : 's'}`
 }
 
@@ -69,8 +75,8 @@ export function bandLabel(v: PlanView): string {
   return [v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX), count].filter(Boolean).join(' · ')
 }
 
-// Percent complete, as the dashboard's plan header computes it. Mirrors `planCompletionPercent`-style
-// logic in danxbot's frontend/src/routes/plans/PlanStatusSummary.tsx (DX-3766, lines 202 and 218):
+// Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at
+// danxbot's frontend/src/routes/plans/PlanStatusSummary.tsx:202 (the total) and :218 (the percent) (DX-3766):
 // total = In Progress + ToDo + Backlog + Review + Done (Cancelled is NOT counted);
 // percent = total > 0 ? Math.round(Done / total * 100) : 0. The two must never disagree.
 export function planPercent(b: StatusBreakdown): number {
@@ -87,9 +93,10 @@ export function donutGlyph(percent: number): string {
   return '●'
 }
 
-// A connected, loaded view's percent; null otherwise.
+// A connected, LOADED view's percent; null otherwise. An error view keeps the last plan's fields, so only a
+// ready view may draw a figure: nothing derived from loaded data shows under an error.
 export function viewPercent(v: PlanView): number | null {
-  return v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
+  return v.phase === 'ready' && v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
 }
 
 // Open problems split into questions and actions: one count for the pane and the quick view.
@@ -105,7 +112,7 @@ export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' || v.phase === 'no-mcp') return null
   const percent = viewPercent(v)
   if (!v.connected || percent === null) return 'plan: not connected'
-  const open = v.problems.length > 0 ? ` · ${v.problems.length}${v.cardsTotal > v.cardsRead ? '+' : ''} open` : ''
+  const open = v.problems.length > 0 ? ` · ${v.problems.length}${capMark(v)} open` : ''
   return `${donutGlyph(percent)} ${percent}% · ${v.connected.ref}${open}`
 }
 

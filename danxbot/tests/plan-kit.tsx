@@ -348,7 +348,10 @@ export function dashboard(
     return { deny: `no stand-in for ${e.server}` }
   })
   // what the plugin keeps in $.state (a test has no `$.state` of its own to read back)
+  const flags = { viewWriteFails: false }
   on('state.set', (_$: any, e: any, next: any) => {
+    // a write of the plugin's view that the host refuses: the one way a refresh can throw past its own catch
+    if (flags.viewWriteFails && e.key === 'view') return { deny: 'view write refused' } as any
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
     return next(e)
   })
@@ -368,9 +371,7 @@ export function dashboard(
     if (e.timeoutMs !== undefined) toastTimeouts.push(e.timeoutMs)
     return { value: undefined }
   })
-  const flags = { statusThrows: false }
   on('ui.status', (_$: any, e: any) => {
-    if (flags.statusThrows) throw new Error('status line unavailable')
     statuses.push(e.text)
     return { value: undefined }
   })
@@ -383,7 +384,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failStatus: (on = true) => void (flags.statusThrows = on), stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

@@ -140,13 +140,14 @@ describe('the refresh timer and its lock', () => {
     await startSession($, d, 'desktop')
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     const loads = () => d.api.filter(a => a.path === '/api/plans').length
-    d.failStatus()
+    // the host refuses the view write, in the load and again in its error handler: the throw escapes the refresh
+    d.failViewWrite()
     try {
       await pane.press({ key: 'refresh' })
     } catch {
       // the engine reports the press hook as failed: that is the throw being exercised
     }
-    d.failStatus(false)
+    d.failViewWrite(false)
     const before = loads()
     await pane.press({ key: 'refresh' })
     expect(loads()).toBe(before + 1)

@@ -1,21 +1,20 @@
 import type { PlanView } from '../../types'
-import { DANGER, DONUT_QUICK_PX, SUCCESS, WARNING, busyKey, planUrl } from './config'
+import { DANGER, DONUT_QUICK_PX, STATUS_KEYS, SUCCESS, WARNING, busyKey, planUrl } from './config'
 import { donutAlt, donutSvg } from './donut'
 import type { Handlers } from './handlers'
-import { donutGlyph, planPercent, problemSplit } from './words'
-
-const STATES = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const
+import { capMark, donutGlyph, planPercent, problemSplit, viewPercent } from './words'
 
 // The quick view: a card in the band, directly above the prompt (the closest thing to a popover the
 // app draws). A real Svg donut on the desktop, the glyph and percent as text on the terminal.
-export function renderQuickView(E: any, hd: Handlers, v: PlanView, hasSvg: boolean, busy: string[]): any {
+// Drawn only for a ready view (an error view has no figures to show, and guessed zeros are worse).
+export function renderQuickView(E: any, hd: Handlers, v: PlanView, hasSvg: boolean, hasBrowser: boolean, busy: string[]): any {
   const { Box, Text, Button, Link, Svg } = E
   const plan = v.connected
   const counts = v.statusBreakdown
-  if (!plan || !counts) return null
+  if (viewPercent(v) === null || !plan || !counts) return null
   const percent = planPercent(counts)
   const { questions, actions } = problemSplit(v)
-  const capped = v.cardsTotal > v.cardsRead ? '+' : ''
+  const capped = capMark(v)
   return (
     <Box key="quick-view" flexDirection="column" borderStyle="round" paddingX={1}>
       <Box flexDirection="row" gap={1} justifyContent="space-between">
@@ -38,7 +37,7 @@ export function renderQuickView(E: any, hd: Handlers, v: PlanView, hasSvg: boole
           ×
         </Button>
       </Box>
-      <Text>{STATES.map(s => `${s} ${counts[s]}`).join(' · ')}</Text>
+      <Text>{STATUS_KEYS.map(s => `${s} ${counts[s]}`).join(' · ')}</Text>
       <Box flexDirection="row" gap={1}>
         <Text color={WARNING} bold>
           {questions}
@@ -56,7 +55,7 @@ export function renderQuickView(E: any, hd: Handlers, v: PlanView, hasSvg: boole
         <Button key="quick-open-pane" onPress={() => hd.openPane()}>
           Plan
         </Button>
-        {hasSvg && (
+        {hasBrowser && (
           <Button key="quick-open-tab" onPress={() => hd.openBrowserTab(planUrl(plan.id))}>
             {busyKey.isOpeningBrowser(busy) ? 'Opening…' : 'Browser tab'}
           </Button>

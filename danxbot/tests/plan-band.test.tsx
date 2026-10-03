@@ -50,5 +50,8 @@ describe('plan band', () => {
     const ui = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: true } } as any)
     expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
     expect(await ui.find({ key: 'open-pane' })).toBeUndefined()
+    // and without a survey the same band draws
+    const free = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+    expect(await free.find({ key: 'open-pane' })).toBeDefined()
   })
 })

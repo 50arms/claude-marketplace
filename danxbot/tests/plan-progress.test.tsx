@@ -35,12 +35,21 @@ describe('the percent mirrors the dashboard (PlanStatusSummary.tsx, DX-3766)', (
     })
   }
 
-  test('the glyph bands cover every integer', () => {
-    for (let p = 0; p <= 100; p++) {
-      const g = donutGlyph(p)
-      expect(g).toBe(p === 0 ? '○' : p <= 37 ? '◔' : p <= 62 ? '◑' : p < 100 ? '◕' : '●')
-    }
-  })
+  // the band edges, written out (not restated as a formula): 0 | 1-37 | 38-62 | 63-99 | 100
+  for (const [percent, glyph] of [
+    [0, '○'],
+    [1, '◔'],
+    [37, '◔'],
+    [38, '◑'],
+    [62, '◑'],
+    [63, '◕'],
+    [99, '◕'],
+    [100, '●'],
+  ] as const) {
+    test(`${percent}% draws ${glyph}`, () => {
+      expect(donutGlyph(percent)).toBe(glyph)
+    })
+  }
 })
 
 for (const surface of SURFACES) {

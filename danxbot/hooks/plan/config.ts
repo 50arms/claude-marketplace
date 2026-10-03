@@ -11,6 +11,9 @@ export const MIN_GAP_MS = 10_000
 
 // How much one load reads. Past a cap the view says so (cardsTotal vs cardsRead, moreComments)
 // rather than presenting a lower bound as the whole.
+// The dashboard's six card statuses, in the order the pane and the quick view list them.
+export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const
+
 export const MAX_PLANS = 30
 export const MAX_CARDS = 15
 
