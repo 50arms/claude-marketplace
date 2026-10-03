@@ -105,3 +105,155 @@ test("DX-4244: the pre-flight regenerates every marketplace plugin's manifest, s
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// DX-4288: the push. A bare origin plus a clone on a branch with NO upstream (what an agent's worktree
+// is), run with no DANX_AGENT_WORKTREE and no git config, so the real push path executes.
+function pushHarness() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "publish-push-"));
+  const origin = path.join(root, "origin.git");
+  const dir = path.join(root, "work");
+  const home = path.join(root, "home");
+  fs.mkdirSync(home);
+  git(REPO_ROOT, "clone", "-q", "--bare", "--no-hardlinks", REPO_ROOT, origin);
+  git(origin, "update-ref", "refs/heads/main", "HEAD");
+  git(origin, "symbolic-ref", "HEAD", "refs/heads/main");
+  for (const ref of git(origin, "for-each-ref", "--format=%(refname)", "refs/heads").split("\n").filter(Boolean)) {
+    if (ref !== "refs/heads/main") git(origin, "update-ref", "-d", ref);
+  }
+  git(root, "clone", "-q", origin, dir);
+  git(dir, "checkout", "-q", "--no-track", "-b", "agent-branch", "origin/main");
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "publish.sh"), path.join(dir, "scripts", "publish.sh"));
+  // The post-push steps rewrite THIS machine's installed-plugin records; the harness has no use for them.
+  fs.rmSync(path.join(dir, "scripts", "update-plugins.sh"));
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "carry publish.sh");
+  fs.appendFileSync(path.join(dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- DX-4288 test edit -->\n");
+  return { root, origin, dir, home };
+}
+
+function publishPushing({ dir, home }, extraEnv = {}) {
+  const env = { ...process.env, ...GIT_IDENTITY, HOME: home, USERPROFILE: home, NODE_PATH: path.join(REPO_ROOT, "node_modules") };
+  delete env.DANX_AGENT_WORKTREE;
+  Object.assign(env, extraEnv);
+  const r = spawnSync("bash", [path.join(dir, "scripts", "publish.sh"), "patch", "danxbot"], { cwd: dir, encoding: "utf8", env });
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
+}
+
+const pluginVersion = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "danxbot", ".claude-plugin", "plugin.json"), "utf8")).version;
+const originMain = (h) => git(h.origin, "rev-parse", "refs/heads/main").trim();
+const originBranches = (h) => git(h.origin, "for-each-ref", "--format=%(refname)", "refs/heads").trim();
+
+test("DX-4288: a branch with no upstream publishes the bump to origin/main, and pushes no branch of its own", () => {
+  const h = pushHarness();
+  try {
+    const before = pluginVersion(h.dir);
+    const r = publishPushing(h);
+    assert.equal(r.status, 0, r.out);
+    assert.equal(originMain(h), git(h.dir, "rev-parse", "HEAD").trim());
+    assert.notEqual(pluginVersion(h.dir), before);
+    assert.equal(originBranches(h), "refs/heads/main");
+  } finally {
+    fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});
+
+test("DX-4288: commits the branch is ahead of origin/main ride along with the bump", () => {
+  const h = pushHarness();
+  try {
+    git(h.dir, "add", "-A");
+    git(h.dir, "commit", "-q", "-m", "branch work ahead of main");
+    const work = git(h.dir, "rev-parse", "HEAD").trim();
+    const r = publishPushing(h);
+    assert.equal(r.status, 0, r.out);
+    git(h.origin, "merge-base", "--is-ancestor", work, "refs/heads/main");
+  } finally {
+    fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});
+
+test("DX-4288: on a branch named main, the publish still lands on origin/main", () => {
+  const h = pushHarness();
+  try {
+    git(h.dir, "checkout", "-q", "-B", "main");
+    git(h.dir, "branch", "-q", "--set-upstream-to=origin/main", "main");
+    const r = publishPushing(h);
+    assert.equal(r.status, 0, r.out);
+    assert.equal(originMain(h), git(h.dir, "rev-parse", "HEAD").trim());
+  } finally {
+    fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});
+
+function advanceOrigin(h) {
+  const other = path.join(h.root, "other");
+  git(h.root, "clone", "-q", h.origin, other);
+  fs.writeFileSync(path.join(other, "ADVANCED.txt"), "origin moved\n");
+  git(other, "add", "-A");
+  git(other, "commit", "-q", "-m", "origin/main moves on");
+  git(other, "push", "-q", "origin", "HEAD:main");
+}
+
+test("DX-4288: a diverged HEAD is refused before any bump, and nothing is pushed", () => {
+  const h = pushHarness();
+  try {
+    git(h.dir, "add", "-A");
+    git(h.dir, "commit", "-q", "-m", "local work");
+    advanceOrigin(h);
+    const originBefore = originMain(h);
+    const headBefore = git(h.dir, "rev-parse", "HEAD").trim();
+    const versionBefore = pluginVersion(h.dir);
+    const r = publishPushing(h);
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /not a fast-forward of origin\/main/);
+    assert.equal(originMain(h), originBefore);
+    assert.equal(git(h.dir, "rev-parse", "HEAD").trim(), headBefore, "a commit was made despite the refusal");
+    assert.equal(pluginVersion(h.dir), versionBefore);
+  } finally {
+    fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});
+
+test("DX-4288: a HEAD behind origin/main is refused and nothing is pushed", () => {
+  const h = pushHarness();
+  try {
+    advanceOrigin(h);
+    const originBefore = originMain(h);
+    const r = publishPushing(h);
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /not a fast-forward of origin\/main/);
+    assert.equal(originMain(h), originBefore);
+  } finally {
+    fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});
+
+test("DX-4288: an unreachable origin fails loud before any bump", () => {
+  const h = pushHarness();
+  try {
+    git(h.dir, "remote", "set-url", "origin", path.join(h.root, "does-not-exist.git"));
+    const headBefore = git(h.dir, "rev-parse", "HEAD").trim();
+    const r = publishPushing(h);
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /Could not fetch origin\/main/);
+    assert.equal(git(h.dir, "rev-parse", "HEAD").trim(), headBefore);
+  } finally {
+    fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});
+
+test("DX-4288: under DANX_AGENT_WORKTREE the bump is committed and never pushed, even from a diverged HEAD", () => {
+  const h = pushHarness();
+  try {
+    git(h.dir, "add", "-A");
+    git(h.dir, "commit", "-q", "-m", "local work");
+    advanceOrigin(h);
+    const originBefore = originMain(h);
+    const before = pluginVersion(h.dir);
+    const r = publishPushing(h, { DANX_AGENT_WORKTREE: h.dir });
+    assert.equal(r.status, 0, r.out);
+    assert.notEqual(pluginVersion(h.dir), before);
+    assert.equal(originMain(h), originBefore);
+  } finally {
+    fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});

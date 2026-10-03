@@ -141,6 +141,27 @@ fi
 
 info "Plugins to bump (${BUMP_TYPE}): ${TARGETS[*]}"
 
+# --- Pre-flight: HEAD must fast-forward origin/main (DX-4288) ------------
+#
+# The push below is `git push origin HEAD:main`, so a release can run from any
+# checkout (the operator's `main`, or an agent's worktree branch with no upstream),
+# with no git config from the caller. That only ships anything if HEAD already
+# contains everything on origin/main; a HEAD that does not would either be rejected
+# at the push, after the bump commits exist, or (a branch that diverged) publish a
+# version built from a stale tree. Refuse here, before any bump, pushing nothing.
+# Skipped under DANX_AGENT_WORKTREE: that run never pushes (agent-finalize.sh does).
+if [ -z "${DANX_AGENT_WORKTREE:-}" ]; then
+  if ! git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main'; then
+    err "Could not fetch origin/main - cannot prove HEAD fast-forwards it. Nothing was bumped or pushed."
+    exit 1
+  fi
+  if ! git merge-base --is-ancestor origin/main HEAD; then
+    err "HEAD ($(git rev-parse --short HEAD)) is not a fast-forward of origin/main ($(git rev-parse --short origin/main))."
+    err "Rebase this branch onto origin/main, then re-run publish. Nothing was bumped or pushed."
+    exit 1
+  fi
+fi
+
 # --- Pre-flight: frontmatter lint ---------------------------------------
 #
 # DX-2986 — a SKILL.md whose frontmatter isn't valid YAML (or is missing
@@ -286,8 +307,11 @@ if [ -n "${DANX_AGENT_WORKTREE:-}" ]; then
   info "DANX_AGENT_WORKTREE set — bump committed on this branch; NOT pushing."
   info "Run .danxbot/scripts/agent-finalize.sh to squash + push HEAD:main."
 else
-  info "Pushing..."
-  git push
+  # DX-4288: explicit `origin HEAD:main`, never a bare `git push` - a fresh worktree
+  # branch has no upstream, and one with the wrong upstream/push.default would push a
+  # stray branch instead of main. The pre-flight above proved HEAD fast-forwards main.
+  info "Pushing HEAD to origin/main..."
+  git push origin HEAD:main
 
   # Refresh THIS machine's local marketplace clone so the just-pushed
   # version is loadable in the current session.
