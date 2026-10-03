@@ -1,6 +1,6 @@
 ---
 name: fix-agent-behavior
-description: 'Diagnose a wrong agent action, then fix it by briefly refining an existing rule/skill/hook/MCP description, expanding documentation, or escalating — never by adding a new skill.'
+description: 'Load when the operator corrects how you work, before saving the correction anywhere. Diagnose the wrong action, then fix it by briefly refining an existing rule/skill/hook/MCP description, expanding documentation, or escalating — never a memory file or a new skill.'
 ---
 
 # Diagnose, Then Fix (Never Add a Skill)
@@ -45,6 +45,8 @@ a second copy.
 - Reaches every project, machine, dispatched context → plugin source.
 - This machine's main session only → `~/.claude/CLAUDE.md`.
 - One repo only → that repo's `.claude/CLAUDE.md` or `.claude/rules/`.
+- Never a memory file (one project's main session only; no sub-agent or worker reads it):
+  a correction already saved as one moves to its home above and the memory is deleted.
 
 Apply the edit yourself (`Edit`/`Write`). A plugin edit isn't done until published: bump
 the version and push (`scripts/publish.sh` if present) — publishing is standing,
