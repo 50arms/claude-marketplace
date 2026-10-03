@@ -26,6 +26,8 @@ export function dashboard(
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky'
     browser?: 'ok' | 'denied'
+    // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
+    browserClosed?: boolean
     tabs?: string[]
     // what tabs_context answers: the list (default), an error result, or text that is no tab list
     tabsContext?: 'list' | 'error' | 'garbage'
@@ -52,6 +54,7 @@ export function dashboard(
   } = {},
 ) {
   const clock = mock.clock(on)
+  let browserOpen = !options.browserClosed
   const calls: { server: string; tool: string; args: any }[] = []
   const api: { method: string; path: string; body?: any; query?: any }[] = []
   const toasts: string[] = []
@@ -178,23 +181,38 @@ export function dashboard(
       return { value: route(e.args.method, e.args.path, e.args.body, e.args.query) }
     }
     if (e.server === 'Claude_Browser') {
-      if (e.tool === 'tabs_context' && options.tabsContext === 'error') {
-        return { value: { content: [{ type: 'text', text: 'browser is not available' }], isError: true } }
-      }
-      if (e.tool === 'tabs_context' && options.tabsContext === 'garbage') {
-        return { value: { content: [{ type: 'text', text: 'Tabs: one, two' }], isError: false } }
-      }
+      const out = (text: string, isError = false) => ({ value: { content: [{ type: 'text', text }], isError } })
+      if (e.tool === 'tabs_context' && options.tabsContext === 'error') return out('browser is not available', true)
+      if (e.tool === 'tabs_context' && options.tabsContext === 'garbage') return out('Tabs: one, two')
+      // the real results: a JSON object followed by prose (captured from the desktop app)
       if (e.tool === 'tabs_context') {
-        return { value: { content: [{ type: 'text', text: JSON.stringify({ tabs: (options.tabs ?? []).map(tabId => ({ tabId })) }) }], isError: false } }
+        if (!browserOpen) {
+          return out(
+            '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.',
+          )
+        }
+        const tabs = (options.tabs ?? []).map(
+          (tabId, i) => `    {\n      "tabId": "${tabId}",\n      "origin": "https://danxbot.sageus.ai",\n      "isActive": ${i === 0}\n    }`,
+        )
+        return out(`{\n  "browserOpen": true,\n  "tabs": [\n${tabs.join(',\n')}\n  ]\n}\nThe Browser pane is currently displayed.`)
       }
       if (e.tool === 'tabs_create') {
         options.tabs = [...(options.tabs ?? []), 'tab-7']
-        return { value: { content: [{ type: 'text', text: '{"tabId":"tab-7"}' }], isError: false } }
+        return out('{"tabId":"tab-7"}')
       }
-      if (e.tool === 'navigate' && options.browser === 'denied') {
-        return { value: { content: [{ type: 'text', text: 'navigation to this site is not allowed' }], isError: true } }
+      if (e.tool === 'navigate' && options.browser === 'denied') return out('navigation to this site is not allowed', true)
+      if (e.tool === 'navigate') {
+        // with no tabId the tool opens the pane at the URL
+        if (!e.args.tabId && !browserOpen) {
+          browserOpen = true
+          options.tabs = ['seed']
+        }
+        const id = e.args.tabId ?? 'seed'
+        return out(
+          `navigated to ${e.args.url}\n\nTab Context:\n- Executed on tabId: ${id}\n- Available tabs:\n  • tabId ${id}: "50 Arms" ("${e.args.url}")`,
+        )
       }
-      return { value: { content: [{ type: 'text', text: 'ok' }], isError: false } }
+      return out('ok')
     }
     return { deny: `no stand-in for ${e.server}` }
   })

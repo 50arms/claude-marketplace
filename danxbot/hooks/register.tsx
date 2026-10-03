@@ -4,7 +4,7 @@ import type { Register } from 'claude-code'
 import type { Draft, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { renderBand } from './plan/band'
 import type { Handlers } from './plan/handlers'
-import { parseTabId, parseTabs } from './plan/browser-output'
+import { activeTab, parseTabId, parseTabsContext } from './plan/browser-output'
 import {
   CALL_ERROR_MAX,
   COMMAND,
@@ -136,37 +136,47 @@ async function tellModel($: any, text: string): Promise<void> {
   }
 }
 
-async function browser($: any, tool: string, args: object): Promise<{ ok: boolean; text: string }> {
+// One Claude_Browser call; an error result throws with its text.
+async function browserOk($: any, tool: string, args: object): Promise<string> {
   const r = await $.mcp.call('Claude_Browser', tool, args)
-  return { ok: !r.isError, text: mcpText(r) }
+  if (r.isError) throw new Error(mcpText(r))
+  return mcpText(r)
 }
 
 // Opens `url` in the ONE in-app browser tab this plugin owns (id kept in $.state), so the
-// person's own tabs are never navigated away. Any step that fails or answers something unreadable
-// throws into the toast: reading it as "no tabs" would open a new tab on every press.
+// person's own tabs are never navigated away. Three cases:
+//   pane closed          navigate {url} with NO tabId (the tool opens the pane at the URL), then
+//                        read tabs_context again and keep the active tab's id as ours;
+//   pane open, tab ours  navigate {url, tabId}, tabs_select;
+//   pane open, no tab    tabs_create, navigate {url, tabId}, keep its id, tabs_select.
+// Any step that fails or answers something unreadable throws into the toast: reading it as "no
+// tabs" would open a new tab on every press.
 async function openInBrowser($: any, url: string): Promise<void> {
   let step = 'tabs_context'
   try {
-    const ctx = await browser($, 'tabs_context', {})
-    if (!ctx.ok) throw new Error(ctx.text)
-    const tabs = parseTabs(ctx.text)
+    const ctx = parseTabsContext(await browserOk($, 'tabs_context', {}))
+    if (!ctx.browserOpen) {
+      step = 'navigate'
+      await browserOk($, 'navigate', { url })
+      step = 'tabs_context'
+      const made = activeTab(parseTabsContext(await browserOk($, 'tabs_context', {})))
+      await update($, tab, () => made)
+      return
+    }
     let tabId = await read($, tab)
-    if (!tabId || !tabs.includes(tabId)) {
+    if (!tabId || !ctx.tabs.some(t => t.id === tabId)) {
       step = 'tabs_create'
-      const created = await browser($, 'tabs_create', { foreground: true })
-      if (!created.ok) throw new Error(created.text)
-      const made = parseTabId(created.text)
+      const made = parseTabId(await browserOk($, 'tabs_create', { foreground: true }))
       await update($, tab, () => made)
       tabId = made
     }
     step = 'navigate'
-    const nav = await browser($, 'navigate', { url, tabId })
-    if (!nav.ok) throw new Error(nav.text)
+    await browserOk($, 'navigate', { url, tabId })
     step = 'tabs_select'
-    const selected = await browser($, 'tabs_select', { tabId })
-    if (!selected.ok) throw new Error(selected.text)
+    await browserOk($, 'tabs_select', { tabId })
   } catch (err: any) {
-    $.ui.toast(`Browser ${step} was denied or failed: ${String(err?.message ?? err).slice(0, TOAST_ERROR_MAX)}. Use the link instead.`)
+    // the advice first, the (cut) detail last: a cut sentence must not end the toast
+    $.ui.toast(`Browser ${step} failed: use the link instead. (${String(err?.message ?? err).slice(0, TOAST_ERROR_MAX)})`)
   }
 }
 

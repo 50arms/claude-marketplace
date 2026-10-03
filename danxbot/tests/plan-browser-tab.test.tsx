@@ -48,8 +48,7 @@ describe('Open in browser tab', () => {
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await band.press({ key: 'open-tab' })
     expect(d.toasts).toHaveLength(1)
-    expect(d.toasts[0]).toMatch(/navigate was denied or failed: navigation to this site is not allowed/)
-    expect(d.toasts[0]).toMatch(/Use the link instead\.$/)
+    expect(d.toasts[0]).toBe('Browser navigate failed: use the link instead. (navigation to this site is not allowed)')
     expect(browserCalls(d).map((c: any) => c.tool)).not.toContain('tabs_select')
   })
 
@@ -62,7 +61,7 @@ describe('Open in browser tab', () => {
       await band.press({ key: 'open-tab' })
       expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_context'])
       expect(d.toasts).toHaveLength(2)
-      expect(d.toasts[0]).toMatch(/Browser tabs_context was denied or failed: .*Use the link instead\.$/)
+      expect(d.toasts[0]).toMatch(/^Browser tabs_context failed: use the link instead\. \(.+\)$/)
       expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(0)
     })
   }
