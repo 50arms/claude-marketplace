@@ -86,7 +86,9 @@ async function refresh($: any, force = false): Promise<void> {
   const now = await $.clock.now()
   let go = false
   await update($, gate, cur => {
-    if (cur.inFlight) {
+    // a lock held past LOCK_STALE_MS belongs to a load that never settled: any request takes it over
+    const stale = cur.inFlight && cur.at !== null && now - cur.at > LOCK_STALE_MS
+    if (cur.inFlight && !stale) {
       go = false
       return force ? { ...cur, again: true } : cur
     }
@@ -232,9 +234,10 @@ function act($: any, p: ProblemRow, path: string, method: string, body: object, 
   return withBusy($, busyKey.problem(p.id), async () => void (await write($, p, path, method, body, done)))
 }
 
-// THE answer: the one place a body and its label meet, and the one re-entry guard for every answer
-// path (a busy claim for presses that overlap, the open-in-view check for ones that queue). Answers the problem, clears the note or rejection draft (only an answer does), then tells
-// the model (it did not make the call).
+// THE answer: the one place a body and its label meet, and the one re-entry guard for every
+// answer path (a busy claim for presses that overlap, the open-in-view check for ones that
+// queue). Answers the problem, clears the note or rejection draft (only an answer does), then
+// tells the model (it did not make the call).
 function answer($: any, p: ProblemRow, body: Record<string, unknown>, label: string): Promise<void> {
   return withBusy($, busyKey.problem(p.id), async () => {
     // A press can reach a drawing that is already stale (a second press queued behind the first,
@@ -328,9 +331,8 @@ async function retryWhileNoMcp($: any): Promise<void> {
 
 async function onSessionStart($: any, e: any, next: any) {
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
-  // Free only a STALE lock (a dead load's, left in $.state): freeing a live one lets two loads overlap.
-  const now = await $.clock.now()
-  await update($, gate, cur => (cur.inFlight && cur.at !== null && now - cur.at > LOCK_STALE_MS ? { inFlight: false, again: false, at: null } : cur))
+  // a new process or a reload cannot have a write in flight: no key claimed before it is still held
+  await update($, busy, () => [])
   ticker?.cancel()
   ticker = $.clock.every(POLL_MS, () => refresh($))
   void refresh($, true).then(() => retryWhileNoMcp($))
@@ -338,18 +340,19 @@ async function onSessionStart($: any, e: any, next: any) {
 }
 
 // Reasons after which the process is gone. `clear` and `resume` end THIS session but the process
-// goes on, and no session.start follows a /clear: the refresh timer must keep running then, or the
-// band shows stale data for the rest of the process. Any reason not listed keeps the timer too:
-// stopping a timer in a live process is the harm, a timer left in a dying one is not.
+// goes on, and no session.start follows a /clear: the refresh timer must keep running then, or
+// the band shows stale data for the rest of the process. Any reason not listed keeps the timer
+// too: stopping a timer in a live process is the harm, a timer left in a dying one is not.
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
 async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason)) {
     ticker?.cancel()
     ticker = null
-  } else if (e.reason === 'clear') {
-    // a fresh conversation: what the person had open or half-typed no longer applies, and what the
-    // dashboard shows may have moved while they were in the old one
+  } else if (e.reason === 'clear' || e.reason === 'resume') {
+    // a fresh conversation (or another session taking this one's place) in the same process: what
+    // the person had open or half-typed no longer applies, and what the dashboard shows may have
+    // moved while they were in the old one
     await update($, expanded, () => null)
     await update($, draft, () => null)
     await update($, talk, () => null)

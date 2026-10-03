@@ -25,7 +25,7 @@ function toSteps(raw: any[]): StepRow[] {
 export function toProblems(card: any, priority: number): ProblemRow[] {
   const comments: any[] = card.comments ?? []
   // The API pages a card's comments (comments_page.total counts them all).
-  const moreComments = Math.max(0, (card.comments_page?.total ?? comments.length) - comments.length)
+  const moreComments = Math.max(0, card.comments_page.total - comments.length)
   // DX-4232 PBLM-1913: an answered problem leaves the pane at once; its history lives in the browser.
   return (card.problems ?? [])
     .filter((p: any) => p.open)
@@ -122,6 +122,11 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
     // problems would tell the operator nothing needs them.
     const failed = fetched.find(f => !f.r.ok)
     if (failed) return { ...EMPTY, ...base, phase: 'error', error: `${failed.row.id} ${errText(failed.r)}` }
+    // a card's comments are paged: without comments_page.total they cannot be read as complete
+    const unpaged = fetched.find(f => typeof f.r.body.comments_page?.total !== 'number')
+    if (unpaged) {
+      return { ...EMPTY, ...base, phase: 'error', error: `GET /api/issues/${unpaged.row.id} answered no comments_page.total: cannot tell whether its comments are complete` }
+    }
     // cards arrive priority-sorted; keep that order
     problems = fetched.flatMap(f => toProblems(f.r.body, f.row.priority))
     return { ...base, phase: 'ready', error: null, problems, cardsTotal: cards.body.total, cardsRead: rows.length, refreshedAt }

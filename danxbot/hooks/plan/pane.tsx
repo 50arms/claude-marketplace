@@ -23,8 +23,10 @@ export type PaneModel = {
 function planPicker(hd: Handlers, E: any, m: PaneModel, isSwitch: boolean): any {
   const { Box, Text, Button, Select } = E
   const candidates = m.v.plans.filter(p => p.id !== m.v.connected?.id)
-  if (candidates.length === 0) return <Text dimColor>No plans found.</Text>
   const morePlans = cappedPlansNote(m.v)
+  if (candidates.length === 0) {
+    return <Text dimColor>{morePlans ? `No plans listed here. ${morePlans}.` : 'No plans found.'}</Text>
+  }
   const plan = candidates.find(p => String(p.id) === m.picked) ?? candidates[0]
   return (
     <Box flexDirection="column" gap={1}>

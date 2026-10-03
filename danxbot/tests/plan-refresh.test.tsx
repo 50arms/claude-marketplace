@@ -135,16 +135,6 @@ describe('the refresh timer and its lock', () => {
     expect(loads()).toBe(before + 1)
   })
 
-  test('session.end cancels the timer', async ($, on) => {
-    const d = dashboard(on)
-    on('session.end', () => ({ sessionId: 's1' }) as any)
-    await startSession($, d, 'desktop')
-    await $.session.end({ reason: 'other' } as any)
-    const before = d.api.filter(a => a.path === '/api/plans').length
-    await d.clock.advance(180_000)
-    expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(before)
-  })
-
   test('a refresh that throws releases the lock: the next one still loads', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')

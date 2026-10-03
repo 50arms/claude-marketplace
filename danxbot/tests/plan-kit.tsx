@@ -37,6 +37,14 @@ export function dashboard(
     plansTotal?: number
     // the paged routes answer no `total` at all
     noTotal?: boolean
+    // the first /api/plans call never settles (the fake clock must move an hour to release it)
+    hangFirstLoad?: boolean
+    // the first answer POST never settles (a write in flight when a process dies)
+    hangFirstAnswer?: boolean
+    // the issue route answers comments with no comments_page.total
+    noCommentsTotal?: boolean
+    // the plan list comes back empty although the dashboard has this many plans
+    emptyPlanListOf?: number
     // the connected plan is not in the (capped) plan list
     planOutsideList?: boolean
     // comments the API did not return for a card (it pages them)
@@ -104,8 +112,8 @@ export function dashboard(
     if (method === 'GET' && path === '/api/plans') {
       if (options.listFails) return reply({ error: 'boom' }, 500)
       return reply({
-        plans: options.planOutsideList ? plans.filter(p => p.id !== world.planId) : plans,
-        ...(options.noTotal ? {} : { total: options.plansTotal ?? plans.length }),
+        plans: options.emptyPlanListOf ? [] : options.planOutsideList ? plans.filter(p => p.id !== world.planId) : plans,
+        ...(options.noTotal ? {} : { total: options.emptyPlanListOf ?? options.plansTotal ?? plans.length }),
         session:
           world.planId === null
             ? null
@@ -131,7 +139,7 @@ export function dashboard(
             title: c.title,
             problems: c.problems,
             comments: c.comments,
-            comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length },
+            ...(options.noCommentsTotal ? {} : { comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length } }),
           })
         : reply({ error: 'nope' }, 404)
     }
@@ -161,6 +169,12 @@ export function dashboard(
         return { value: text({ session: { plan_id: e.args.plan_id } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
+      if (options.hangFirstAnswer && e.args.method === 'POST' && /\/answer$/.test(e.args.path) && api.filter(a => a.method === 'POST').length === 1) {
+        return clock.sleep(3_600_000).then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
+      }
+      if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
+        return clock.sleep(3_600_000).then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
+      }
       return { value: route(e.args.method, e.args.path, e.args.body, e.args.query) }
     }
     if (e.server === 'Claude_Browser') {
