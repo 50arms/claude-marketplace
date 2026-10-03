@@ -1,7 +1,7 @@
 // DX-4319 — the operator's project memory directory had grown 16 files, each
-// written when an agent was corrected. A memory file reaches one project's main
-// session and nothing else, so a correction saved there never reaches a
-// sub-agent, a worker or another repo (PLN-11 R-3). Two things came out of
+// written when an agent was corrected. A memory file reaches one project on one
+// machine, so a correction saved there never reaches a dispatched worker,
+// another repo or another machine (PLN-11 R-3). Two things came out of
 // carrying them home, each stated ONCE in the skill that owns the subject:
 //   - fix-agent-behavior is where a correction goes, and it says so in the one
 //     line every session sees (its description) and in its list of homes;
@@ -48,7 +48,7 @@ test("the description every session sees sends a correction to the skill before 
 test("the list of homes rules a memory file out and moves a correction already saved as one", () => {
   const locate = section(fixBehavior, "## 3. Locate the target and edit it");
   assert.match(locate, NEVER_A_MEMORY_FILE);
-  assert.match(locate, /one project's main session only; no sub-agent or worker reads it/);
+  assert.match(locate, /it reaches one project on one machine; no dispatched worker, other repo or other machine reads it/);
   assert.match(locate, /a correction already saved as one moves to its home above and the memory is deleted/);
   assert.equal(count(fixBehavior, NEVER_A_MEMORY_FILE), 1);
 });

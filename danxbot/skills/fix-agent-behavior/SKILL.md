@@ -45,8 +45,9 @@ a second copy.
 - Reaches every project, machine, dispatched context → plugin source.
 - This machine's main session only → `~/.claude/CLAUDE.md`.
 - One repo only → that repo's `.claude/CLAUDE.md` or `.claude/rules/`.
-- Never a memory file (one project's main session only; no sub-agent or worker reads it):
-  a correction already saved as one moves to its home above and the memory is deleted.
+- Never a memory file (it reaches one project on one machine; no dispatched worker, other
+  repo or other machine reads it): a correction already saved as one moves to its home above
+  and the memory is deleted.
 
 Apply the edit yourself (`Edit`/`Write`). A plugin edit isn't done until published: bump
 the version and push (`scripts/publish.sh` if present) — publishing is standing,
