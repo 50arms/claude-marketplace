@@ -24,7 +24,7 @@ const gates = skill.slice(start, end).replace(/\s+/g, " ");
 
 test("the brief has the sub-agent do what the gate text says, card writes included, and nothing else", () => {
   assert.match(gates, /2\. Do what that text says/);
-  assert.match(gates, /including (any|the) card writes it asks for \(checklists, dependency edges\)/);
+  assert.match(gates, /including any card writes it asks for \(checklists, dependency edges\)/);
   assert.match(gates, /and nothing else\./);
 });
 
