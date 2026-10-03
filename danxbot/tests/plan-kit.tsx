@@ -21,6 +21,8 @@ export const TABS_CONTEXT_CLOSED_LATER = '{\n  "browserOpen": false,\n  "tabs": 
 export const NAVIGATE_REFUSED = 'navigation to https://danxbot.sageus.ai was denied or failed'
 export const PREVIEW_START_OK = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "seed",\n  "reused": true,\n  "type": "browser",\n  "navOk": true\n}\nBrowser pane opened. Use serverId "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0" with read_page / computer / navigate.'
 
+// the connected plan's counts: 4 / (3 + 5 + 1 + 3 + 4) = 25%; Cancelled (2) is not counted
+export const DEFAULT_BREAKDOWN = { 'In Progress': 3, ToDo: 5, Backlog: 1, Review: 3, Done: 4, Cancelled: 2 }
 const SESSION_ID = '41365fb5-6b43-443b-a01b-81245574f648'
 const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, body })
 
@@ -41,6 +43,14 @@ export function dashboard(
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
+    // the connected plan's status counts: the default, an override, or none at all
+    breakdown?: Record<string, unknown>
+    noBreakdown?: boolean
+    // the in-progress bucket: how many cards it has, whether its call fails or answers no total, and whether the card has an agent
+    inProgressTotal?: number
+    inProgressFails?: boolean
+    noInProgressTotal?: boolean
+    noAgent?: boolean
     // plan_connect {disconnect: true}: the leave works (default), or the server refuses it a given way
     // ('rejected' is a THROWN call, the only error result; 'noLeftPlan' is a 200 without leftPlan)
     disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected' | 'noLeftPlan'
@@ -83,7 +93,8 @@ export function dashboard(
     commentsTotal?: number
   } = {},
 ) {
-  const clock = mock.clock(on)
+  // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
+  const clock = mock.clock(on, { now: Date.parse('2026-10-03T08:00:00.000Z') })
   let browserOpen = !options.browserClosed
   const calls: { server: string; tool: string; args: any }[] = []
   const api: { method: string; path: string; body?: any; query?: any }[] = []
@@ -94,6 +105,7 @@ export function dashboard(
   const stateWrites: { plugin: string; key: string; value: unknown }[] = []
   const commands: string[] = []
   const world = {
+    inProgress: [{ id: 'DX-9', title: 'In flight card', updatedAt: '2026-10-03T07:58:30.000Z' }] as { id: string; title: string; updatedAt: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
     titleSeen: undefined as string | undefined,
     cards: [
@@ -155,7 +167,26 @@ export function dashboard(
         sessionListenerAttached: { state: 'healthy' },
       })
     }
+    const planOne = /^\/api\/plans\/(\d+)$/.exec(path)
+    if (method === 'GET' && planOne) {
+      const p = plans.find(x => x.id === Number(planOne[1]))
+      if (!p) return reply({ error: 'nope' }, 404)
+      return reply({
+        id: p.id,
+        ref: p.ref,
+        name: p.name,
+        status: p.status,
+        ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
+      })
+    }
     const cards = /^\/api\/plans\/(\d+)\/cards$/.exec(path)
+    if (method === 'GET' && cards && query?.bucket === 'in-progress') {
+      if (options.inProgressFails) return reply({ error: 'in-progress boom' }, 500)
+      return reply({
+        cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4, updatedAt: c.updatedAt, assignedAgent: 'raw-session-uuid' })),
+        ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
+      })
+    }
     if (method === 'GET' && cards) {
       return reply({
         cards: world.cards
@@ -165,6 +196,10 @@ export function dashboard(
       })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
+    if (method === 'GET' && issue && world.inProgress.some(c => c.id === issue[1])) {
+      const c = world.inProgress.find(x => x.id === issue[1])!
+      return reply({ id: c.id, title: c.title, assigned_agent_name: options.noAgent ? null : 'PLAN-23: danxbot plugin' })
+    }
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
       return c
@@ -318,6 +353,16 @@ export function dashboard(
     return next(e)
   })
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
+  // what the engine draws above the prompt when no plugin does: nothing
+  on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+  // what the engine draws in the footer when no plugin does: its mode labels
+  on('ui.render', { component: 'SessionMode' }, ($: any, e: any) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text dimColor>{e.props.modes.join(' & ')}</Text>
+  })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)
     if (e.timeoutMs !== undefined) toastTimeouts.push(e.timeoutMs)
@@ -370,4 +415,24 @@ export async function startSession($: any, d: Dashboard, surface: string) {
 export function expectText(found: { text: string } | undefined, pattern: string | RegExp) {
   expect(found).toBeDefined()
   expect(found!.text).toMatch(pattern)
+}
+
+// The indicator is the footer entry; every test mounts it here, so the site is one line.
+export async function mountIndicator($: any, surface: string, modes: string[] = []) {
+  return $.ui.mount({ plugin: 'danxbot', surface, component: 'SessionMode', props: { modes } } as any)
+}
+
+// The footer entry's text (the one `SessionMode` button), and the band's progress indicator: an Svg whose alt
+// carries `N% complete` on the desktop, the text glyph on the terminal (no Svg there).
+export const footerText = async (ui: any): Promise<string | undefined> => (await ui.find({ key: 'footer-plan' }))?.text
+
+export async function expectIndicator(band: any, surface: string, percent: number) {
+  const GLYPHS: [number, string][] = [[0, '○'], [37, '◔'], [62, '◑'], [99, '◕'], [100, '●']]
+  const glyph = GLYPHS.find(([max]) => percent <= max)![1]
+  if (surface === 'desktop') {
+    expect((await band.find({ type: 'Svg' }))?.props.alt).toBe(`${percent}% complete`)
+  } else {
+    expect(await band.find({ type: 'Svg' })).toBeUndefined()
+    expect(await band.find({ type: 'Text', text: glyph })).toBeDefined()
+  }
 }

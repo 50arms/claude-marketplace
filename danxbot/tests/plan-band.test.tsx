@@ -36,23 +36,19 @@ describe('plan band', () => {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const buttons = await ui.findAll({ type: 'Button' })
-      expect(buttons.map(b => b.key)).toEqual(['open-pane'])
+      expect(buttons.map(b => b.key)).toEqual(['open-pane', 'band-close'])
       expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
       await ui.unmount()
     }
-    expect(d.statuses.filter(Boolean)).toHaveLength(0)
+    expect(d.statuses).toHaveLength(0)
   })
 
   test('yields to a survey', async ($, on) => {
     const d = dashboard(on)
-    // what the engine draws when no plugin does: the survey stays alone in the band
-    on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
-      const { Text } = $.ui.resolve(e)
-      return <Text>survey</Text>
-    })
+    // a survey keeps the band to itself: the plugin passes, so only the engine's own (here empty) tree is drawn
     await startSession($, d, 'desktop')
     const ui = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: true } } as any)
-    expect(await ui.find({ type: 'Text', text: 'survey' })).toBeDefined()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
     expect(await ui.find({ key: 'open-pane' })).toBeUndefined()
   })
 })

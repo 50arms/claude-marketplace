@@ -57,7 +57,28 @@ export type ConnectedPlan = {
   id: number
   ref: string
   name: string
-  status: string | null
+  // read with the plan itself (GET /api/plans/:id), never from the capped list
+  status: string
+}
+
+// The dashboard's card counts by status for one plan (`status_breakdown`); all six keys are required.
+export type StatusBreakdown = {
+  'In Progress': number
+  ToDo: number
+  Backlog: number
+  Review: number
+  Done: number
+  Cancelled: number
+}
+
+// A card in the plan's in-progress bucket (not waiting on the operator), as the pane lists it.
+export type InProgressRow = {
+  id: string
+  title: string
+  // the readable agent name from the issue resource; null when nobody holds the card
+  agent: string | null
+  // when the card last changed: NOT when it went In Progress (no field says that)
+  updatedAt: string
 }
 
 // `no-mcp`: the session has no `danx-dashboard` MCP server (another repo), so the dashboard
@@ -74,6 +95,12 @@ export type PlanView = {
   cardsRead: number
   // Plans the dashboard has that the capped plan list did not return.
   plansUnread: number
+  // Card counts by status of the connected plan; null when not connected.
+  statusBreakdown: StatusBreakdown | null
+  // The in-progress bucket's rows, and how many cards the bucket has (its own count, never the
+  // status count's: a card in progress with an open problem sits in needs-you).
+  inProgress: InProgressRow[]
+  inProgressTotal: number
   listener: string | null
   refreshedAt: string | null
 }
@@ -99,6 +126,11 @@ declare module 'claude-code' {
       gate: RefreshGate
       pick: string
       switching: boolean
+      // The band is hidden for the session (the footer entry brings it back). Its own atom: refresh
+      // replaces `view` whole, so a flag inside it would be reset by every refresh.
+      dismissed: boolean
+      // The quick-view card in the band is open.
+      quickOpen: boolean
       expanded: number | null
       // keys of the writes under way (config busyKey): one per problem or connect
       busy: string[]

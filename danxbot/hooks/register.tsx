@@ -3,7 +3,9 @@ import type { Register } from 'claude-code'
 
 import type { ConnectedPlan, Draft, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { renderBand } from './plan/band'
+import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
+import { footerLabel } from './plan/words'
 import { parsePreviewStart, parseTabId, parseTabsContext } from './plan/browser-output'
 import {
   BROWSER_TOAST_MS,
@@ -26,7 +28,6 @@ import type { Api } from './plan/load'
 import { isServerMissing, mcpText, refusalText, toolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote } from './plan/notes'
 import { renderPane } from './plan/pane'
-import { statusText } from './plan/words'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -34,6 +35,10 @@ const view = atom({ plugin: 'danxbot', key: 'view' } as const, EMPTY)
 const gate = atom({ plugin: 'danxbot', key: 'gate' } as const, { inFlight: false, again: false, at: null } as RefreshGate)
 const pick = atom({ plugin: 'danxbot', key: 'pick' } as const, '')
 const switching = atom({ plugin: 'danxbot', key: 'switching' } as const, false)
+// the band is hidden for the session / the quick-view card is open: their own atoms, since refresh
+// replaces `view` whole
+const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
+const quickOpen = atom({ plugin: 'danxbot', key: 'quickOpen' } as const, false)
 const expanded = atom({ plugin: 'danxbot', key: 'expanded' } as const, null as number | null)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 const draft = atom({ plugin: 'danxbot', key: 'draft' } as const, null as Draft | null)
@@ -99,10 +104,8 @@ async function refresh($: any, force = false): Promise<void> {
       try {
         const v = await loadView($)
         await update($, view, () => v)
-        $.ui.status(statusText(v))
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
-        $.ui.status('plan: error')
       }
       await update($, gate, cur => {
         // `at` is this claim's token: a load whose stale lock was taken over must not touch the new holder's
@@ -339,12 +342,35 @@ function toggleDraft($: any, p: ProblemRow, solutionId: number, kind: 'note' | '
   )
 }
 
+// The footer entry's one press: it always brings the band back; connected, it also toggles the quick
+// view (opening it when the band had been dismissed); not connected, or in error, it opens the pane
+// instead (the connect view).
+async function footerPress($: any): Promise<void> {
+  const wasDismissed = await read($, dismissed)
+  await update($, dismissed, () => false)
+  const v = await read($, view)
+  if (v.phase === 'ready' && v.connected) {
+    await update($, quickOpen, cur => (wasDismissed ? true : !cur))
+  } else {
+    await $.ui.open({ id: PANE, title: 'Plan', focus: true })
+  }
+}
+
+// The band's close control: the whole band (and its quick view) hides until the footer entry is pressed.
+async function dismissBand($: any): Promise<void> {
+  await update($, dismissed, () => true)
+  await update($, quickOpen, () => false)
+}
+
 function handlers($: any): Handlers {
   return {
     refresh: () => refresh($, true),
     openPane: () => $.ui.open({ id: PANE, title: 'Plan', focus: true }),
     openBrowserTab: url => openInBrowser($, url),
     connect: plan => connect($, plan),
+    footerPress: () => footerPress($),
+    dismissBand: () => dismissBand($),
+    closeQuick: () => update($, quickOpen, () => false),
     disconnect: plan => disconnect($, plan),
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
@@ -406,12 +432,14 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, expanded, () => null)
     await update($, draft, () => null)
     await update($, talk, () => null)
+    await update($, quickOpen, () => false)
     void refresh($, true)
   }
   return next(e)
 }
 
 async function onCommand($: any) {
+  await update($, dismissed, () => false)
   await $.ui.open({ id: PANE, title: 'Plan' })
   void refresh($, true)
   return { text: 'Plan pane opened.' }
@@ -439,7 +467,24 @@ async function onTitle($: any, e: any, next: any) {
 
 async function drawBand($: any, e: any, next: any) {
   if (e.props.hasSurvey) return next(e)
-  return renderBand($.ui.resolve(e), handlers($), await read($, view), e.surface === 'desktop', await read($, busy))
+  // a dismissed band draws nothing, whatever the connection (the footer entry brings it back)
+  if (await read($, dismissed)) return next(e)
+  return renderBand(
+    $.ui.resolve(e),
+    handlers($),
+    await read($, view),
+    e.surface === 'desktop',
+    await read($, busy),
+    await read($, quickOpen),
+  )
+}
+
+// The footer: the engine's own mode labels (next) stay, with ONE plan button beside them. Nothing
+// to say (loading, no MCP server) leaves the site untouched.
+async function drawSessionMode($: any, e: any, next: any) {
+  const label = footerLabel(await read($, view))
+  if (label === null) return next(e)
+  return renderFooter($.ui.resolve(e), handlers($), label, await next(e))
 }
 
 async function drawPane($: any, e: any) {
@@ -466,5 +511,6 @@ export const register: Register = on => {
   on('classic.SessionStart', onTitle)
   on('classic.UserPromptSubmit', onTitle)
   on('ui.render', { component: 'AbovePrompt' }, drawBand)
+  on('ui.render', { component: 'SessionMode' }, drawSessionMode)
   on('ui.render', { component: 'Pane', requestId: PANE }, drawPane)
 }

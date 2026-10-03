@@ -1,6 +1,6 @@
 import type { Draft, ProblemRow, SolutionRow, StepRow } from '../../types'
 import type { Handlers } from './handlers'
-import { ACCENT, CARD_TITLE_MAX, DANGER, DASHBOARD, SUCCESS, WARNING, busyKey } from './config'
+import { ACCENT, CARD_TITLE_MAX, DANGER, SUCCESS, WARNING, busyKey, cardUrl } from './config'
 import { WORDS, age } from './words'
 
 export type Ui = {
@@ -14,7 +14,7 @@ export type Ui = {
 }
 
 function problemUrl(planId: number, p: ProblemRow): string {
-  return `${DASHBOARD}/plans/${planId}/cards/${p.cardId}/problems/PBLM-${p.id}`
+  return `${cardUrl(planId, p.cardId)}/problems/PBLM-${p.id}`
 }
 
 function countSteps(steps: StepRow[]): { done: number; total: number } {

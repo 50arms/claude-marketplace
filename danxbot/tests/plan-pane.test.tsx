@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, expectRowCarries, expectText, startSession, toldModel } from './plan-kit'
+import { SURFACES, dashboard, expectIndicator, expectRowCarries, expectText, startSession, toldModel } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -58,7 +58,7 @@ describe('plan pane connects', () => {
       expect(d.calls.filter(c => c.tool === 'plan_connect')).toEqual([
         { server: 'danx-dashboard', tool: 'plan_connect', args: { plan_id: 23, title: 'PLAN-23: danxbot plugin' } },
       ])
-      expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('green')
+      await expectIndicator(band, surface, 25)
       expectText(await band.find({ type: 'Text', text: /PLAN-23/ }), /PLAN-23 · Danxbot plugin/)
       const rows = toldModel(d)
       expect(rows).toHaveLength(1)

@@ -1,4 +1,4 @@
-import type { CommentRow, ConnectedPlan, PlanRow, PlanView, ProblemRow, SolutionRow, StepRow } from '../../types'
+import type { CommentRow, ConnectedPlan, InProgressRow, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
 import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS } from './config'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
@@ -83,28 +83,39 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
       status: p.status,
       needsYou: p.bucket_counts?.['needs-you'] ?? 0,
     }))
-  // The connected plan comes from the session in this same response, not from the capped list.
+  // The session in this same response says WHICH plan; the plan itself is read by id below.
   const session = list.body.session
-  const connected: ConnectedPlan | null =
-    session?.plan_id == null
-      ? null
-      : {
-          id: session.plan_id,
-          ref: `PLAN-${session.plan_id}`,
-          name: session.plan_name ?? '',
-          status: plans.find(p => p.id === session.plan_id)?.status ?? null,
-        }
+  const connectedId: number | null = session?.plan_id ?? null
   const listener: string | null = list.body.sessionListenerAttached?.state ?? null
-  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
+  const noPlan = { connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
+  if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
+
+  // One load of everything about the connected plan: the plan itself (its status counts and status),
+  // the needs-you cards and the in-progress cards, together.
+  const [planR, cards, inProg] = await Promise.all([
+    call('GET', `/api/plans/${connectedId}`),
+    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'needs-you', sort: 'priority', limit: MAX_CARDS } }),
+    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', limit: MAX_CARDS } }),
+  ])
+  const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
+  if (!planR.ok) return fail(errText(planR))
+  const breakdown = readBreakdown(planR.body?.status_breakdown)
+  if (breakdown === null || typeof planR.body?.status !== 'string') {
+    return fail(`GET /api/plans/${connectedId} answered no valid status_breakdown (all six statuses as numbers) and status: cannot show progress`)
+  }
+  const connected: ConnectedPlan = {
+    id: connectedId,
+    ref: `PLAN-${connectedId}`,
+    name: session.plan_name ?? '',
+    status: planR.body.status,
+  }
+  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown }
 
   let problems: ProblemRow[] = []
-  if (connected) {
-    const cards = await call('GET', `/api/plans/${connected.id}/cards`, {
-      query: { bucket: 'needs-you', sort: 'priority', limit: MAX_CARDS },
-    })
+  {
     if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
     if (typeof cards.body.total !== 'number') {
-      return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connected.id}/cards answered no total: cannot tell whether the card list is complete` }
+      return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards answered no total: cannot tell whether the card list is complete` }
     }
     const rows: { id: string; priority: number }[] = (cards.body.cards ?? []).map((c: any) => ({
       id: c.id,
@@ -129,8 +140,42 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
     }
     // cards arrive priority-sorted; keep that order
     problems = fetched.flatMap(f => toProblems(f.r.body, f.row.priority))
-    return { ...base, phase: 'ready', error: null, problems, cardsTotal: cards.body.total, cardsRead: rows.length, refreshedAt }
-  }
 
-  return { ...base, phase: 'ready', error: null, problems, refreshedAt }
+    // The in-progress bucket: the same completeness rule, and a readable agent name per row (the cards
+    // route carries only the raw session id of a claimed card).
+    if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
+    if (typeof inProg.body.total !== 'number') {
+      return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
+    }
+    const ipRows: any[] = inProg.body.cards ?? []
+    const named = await Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`) })))
+    const unnamed = named.find(n => !n.r.ok)
+    if (unnamed) return { ...EMPTY, ...base, phase: 'error', error: `${unnamed.row.id} ${errText(unnamed.r)}` }
+    const inProgress: InProgressRow[] = named.map(n => ({
+      id: n.row.id,
+      title: n.row.title,
+      agent: n.r.body.assigned_agent_name ?? null,
+      updatedAt: n.row.updatedAt,
+    }))
+    return {
+      ...base,
+      phase: 'ready',
+      error: null,
+      problems,
+      cardsTotal: cards.body.total,
+      cardsRead: rows.length,
+      inProgress,
+      inProgressTotal: inProg.body.total,
+      refreshedAt,
+    }
+  }
+}
+
+const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const
+
+// All six statuses as numbers, or null: a missing count is an error state, never a guessed 0%.
+function readBreakdown(raw: any): StatusBreakdown | null {
+  if (raw === null || typeof raw !== 'object') return null
+  for (const key of STATUS_KEYS) if (typeof raw[key] !== 'number') return null
+  return { 'In Progress': raw['In Progress'], ToDo: raw.ToDo, Backlog: raw.Backlog, Review: raw.Review, Done: raw.Done, Cancelled: raw.Cancelled }
 }

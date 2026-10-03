@@ -86,7 +86,7 @@ describe('the MCP server connects after session start', () => {
     await d.clock.advance(30_000)
     expect(apiCalls()).toBe(1 + NO_MCP_RETRY_MS.length)
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect((await band.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['open-pane'])
+    expect((await band.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['open-pane', 'band-close'])
   })
 
   test('a server that is up needs no retry', async ($, on) => {

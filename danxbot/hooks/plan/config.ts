@@ -53,6 +53,9 @@ export const EMPTY: PlanView = {
   cardsTotal: 0,
   cardsRead: 0,
   plansUnread: 0,
+  statusBreakdown: null,
+  inProgress: [],
+  inProgressTotal: 0,
   listener: null,
   refreshedAt: null,
 }
@@ -73,3 +76,12 @@ export const busyKey = {
 export function planUrl(planId: number): string {
   return `${DASHBOARD}/plans/${planId}`
 }
+
+// The one builder of a card's page: problem links are built on it.
+export function cardUrl(planId: number, cardId: string): string {
+  return `${planUrl(planId)}/cards/${cardId}`
+}
+
+// The donut's size in px (Svg takes CSS pixels): the band line's, and the quick view's.
+export const DONUT_BAND_PX = 16
+export const DONUT_QUICK_PX = 44

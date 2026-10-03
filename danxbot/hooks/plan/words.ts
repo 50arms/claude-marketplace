@@ -1,4 +1,4 @@
-import type { PlanView } from '../../types'
+import type { PlanView, StatusBreakdown } from '../../types'
 import { BAND_PLAN_NAME_MAX } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
@@ -69,11 +69,48 @@ export function bandLabel(v: PlanView): string {
   return [v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX), count].filter(Boolean).join(' · ')
 }
 
-// The status line.
-export function statusText(v: PlanView): string | undefined {
+// Percent complete, as the dashboard's plan header computes it. Mirrors `planCompletionPercent`-style
+// logic in danxbot's frontend/src/routes/plans/PlanStatusSummary.tsx (DX-3766, lines 202 and 218):
+// total = In Progress + ToDo + Backlog + Review + Done (Cancelled is NOT counted);
+// percent = total > 0 ? Math.round(Done / total * 100) : 0. The two must never disagree.
+export function planPercent(b: StatusBreakdown): number {
+  const total = b['In Progress'] + b.ToDo + b.Backlog + b.Review + b.Done
+  return total > 0 ? Math.round((b.Done / total) * 100) : 0
+}
+
+// The text donut for a percent: ○ 0, ◔ 1-37, ◑ 38-62, ◕ 63-99, ● 100.
+export function donutGlyph(percent: number): string {
+  if (percent <= 0) return '○'
+  if (percent <= 37) return '◔'
+  if (percent <= 62) return '◑'
+  if (percent < 100) return '◕'
+  return '●'
+}
+
+// A connected, loaded view's percent; null otherwise.
+export function viewPercent(v: PlanView): number | null {
+  return v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
+}
+
+// Open problems split into questions and actions: one count for the pane and the quick view.
+export function problemSplit(v: PlanView): { questions: number; actions: number } {
+  const actions = v.problems.filter(p => p.type === 'action').length
+  return { questions: v.problems.length - actions, actions }
+}
+
+// The footer entry's label (the `SessionMode` button); null where the footer shows nothing (loading,
+// no MCP server). Replaces the plain status text: there is no second label builder.
+export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'error') return 'plan: error'
-  if (v.phase === 'loading' || v.phase === 'no-mcp') return undefined
-  if (!v.connected) return 'plan: not connected'
-  const count = problemCount(v)
-  return `plan: ${count ? `${v.connected.ref} · ${count}` : v.connected.ref}`
+  if (v.phase === 'loading' || v.phase === 'no-mcp') return null
+  const percent = viewPercent(v)
+  if (!v.connected || percent === null) return 'plan: not connected'
+  const open = v.problems.length > 0 ? ` · ${v.problems.length}${v.cardsTotal > v.cardsRead ? '+' : ''} open` : ''
+  return `${donutGlyph(percent)} ${percent}% · ${v.connected.ref}${open}`
+}
+
+// "+N more cards in progress in the browser" when the in-progress bucket was capped.
+export function cappedInProgressNote(v: PlanView): string | null {
+  const unread = v.inProgressTotal - v.inProgress.length
+  return unread > 0 ? `+${unread} more in-progress card${unread === 1 ? '' : 's'} in the browser` : null
 }

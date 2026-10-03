@@ -2,8 +2,8 @@ import type { Draft, PlanView } from '../../types'
 import type { Handlers } from './handlers'
 import { problemCard } from './problems'
 import type { Ui } from './problems'
-import { DANGER, PICKER_PLAN_NAME_MAX, SUCCESS, WARNING, busyKey, planUrl } from './config'
-import { cappedNote, cappedPlansNote, updatedText } from './words'
+import { CARD_TITLE_MAX, DANGER, PICKER_PLAN_NAME_MAX, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
+import { age, cappedInProgressNote, cappedNote, cappedPlansNote, problemSplit, updatedText, viewPercent } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
 export type PaneModel = {
@@ -92,8 +92,8 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
   const plan = v.connected
   const planId = plan.id
   const ui: Ui = { draft: m.draft, busy: m.working, talk: m.talk, planId, now: m.now, hasBrowser: m.hasBrowser }
-  const actions = v.problems.filter(p => p.type === 'action').length
-  const questions = v.problems.length - actions
+  const { questions, actions } = problemSplit(v)
+  const percent = viewPercent(v)
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -102,7 +102,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         <Text color={SUCCESS}>● Connected: {plan.ref}</Text>
         <Text>{plan.name}</Text>
         <Text dimColor>
-          {plan.status ? `${plan.status} · ` : ''}events {v.listener === 'healthy' ? 'live' : (v.listener ?? 'unknown')}
+          {plan.status} · {percent}% complete · events {v.listener === 'healthy' ? 'live' : (v.listener ?? 'unknown')}
         </Text>
       </Box>
       <Box flexDirection="row" gap={1}>
@@ -138,6 +138,21 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       {v.problems.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
       {v.problems.map(p => problemCard(hd, E, ui, p, m.open === p.id))}
       {cappedNote(v) && <Text color={WARNING}>{cappedNote(v)}</Text>}
+
+      <Box flexDirection="row" gap={1}>
+        <Text bold>In progress</Text>
+        <Text dimColor>{v.inProgressTotal} not waiting on you</Text>
+      </Box>
+      {v.inProgress.length === 0 && <Text dimColor>No cards in progress that are not waiting on you.</Text>}
+      {v.inProgress.map(row => (
+        <Box key={`ip-${row.id}`} flexDirection="row" gap={1}>
+          <Link href={cardUrl(planId, row.id)} label={row.id} />
+          <Text>{row.title.slice(0, CARD_TITLE_MAX)}</Text>
+          {row.agent && <Text dimColor>{row.agent}</Text>}
+          <Text dimColor>updated {age(row.updatedAt, m.now)}</Text>
+        </Box>
+      ))}
+      {cappedInProgressNote(v) && <Text color={WARNING}>{cappedInProgressNote(v)}</Text>}
       {v.refreshedAt && <Text dimColor>{updatedText(v.refreshedAt)}</Text>}
     </Box>
   )
