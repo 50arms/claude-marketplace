@@ -1,4 +1,5 @@
 {
+  "modules": ["./register.tsx"],
   "description": "launch.mjs: every command below runs through it; it verifies the plugin's files against integrity-manifest.json first, restores a damaged one from the marketplace clone, and reports what it cannot restore (DX-3997). event-hook.sh: for a plan-connected session, the registry's effective text for SessionStart (startup/resume/compaction) and for every sub-agent (any type, any plugin) at SubagentStart; silent when not connected (DX-3421). ensure-dashboard-mcp.sh: installs the pinned danx-dashboard-mcp into the plugin data dir once, so the fetch runs it with node, never a cold npx (DX-3811). plan-event-bridge.mjs: relays the connected plan's events into the session. bridge-watchdog.mjs: restarts a dead bridge (PostToolUse, Stop). background-work-report.mjs: reports running background work to quiet the idle nudge. activity-report.mjs: tells the dashboard when a sub-agent starts or finishes and when a background Bash call starts, so the session's running count closes (DX-3284). inject-time.sh: wall clock with UTC offset.",
   "hooks": {
     "UserPromptSubmit": [

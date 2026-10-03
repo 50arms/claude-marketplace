@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "cc590c3a6278d43ba56a85bbc9ed82a3629bf5a83b5f358e23a54c625d23d6ba",
+    ".claude-plugin/plugin.json": "9c98c3e5577219547b3de0f01aa39679e22040d155716de6c3352ade363e981e",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -9,7 +9,16 @@
     "agents/worker-sonnet-high.md": "8a11fefd2a9291eed571c045af77b40607f8cb2341d7ca4de001da4a698656b4",
     "agents/worker-sonnet-low.md": "c3cd31490d50f9e51e54d00717d443445bc361c2d64bc6eb484d881c4af0398b",
     "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
-    "hooks/hooks.json": "23d813f276aa9900cdaae5eb92cd32d648c990e202a963d12f362ce386c43120",
+    "hooks/hooks.json": "e135b31f5eaefd28c29c372196f8f044c87eb3c13f0118c2d18e67ae9ed4c09e",
+    "hooks/plan-link/band.tsx": "8f16e53059bd6f9d0e38e1e0cd9c0fa2aa48828a117af90825fdc511044b9aaa",
+    "hooks/plan-link/config.ts": "3c1166d2bc27ed8c4af229d1410e4fce1d70d280c318d5099a8a6aaa5d8c5353",
+    "hooks/plan-link/handlers.ts": "c17f3f09d9fde8fd2339a3ccb7ec34a9a28a675e8dc324c409b88cf234f98076",
+    "hooks/plan-link/load.ts": "095db11780ae8b911187bf85a4e12a1dca3fee2c1827200a2fa9673e733ce522",
+    "hooks/plan-link/notes.ts": "78c33f020f05e6d7c13572e6f18e7101725c389d790a655109c5b21a5ef4333a",
+    "hooks/plan-link/pane.tsx": "5cbb8427c7d2b0931732096336682bcd590264350107a30c648c8fcc672f0430",
+    "hooks/plan-link/problems.tsx": "e153fe5516e6f65998a530fbeed0edf4532e16302f868f512d5683f2af0228e9",
+    "hooks/plan-link/words.ts": "8ec3a95dfb1e71a1802e8b5efa04aeb64d36ba116841630bcbac536f24f9965a",
+    "hooks/register.tsx": "b00284184bb78e2eed10dadd90ab853f50c101467a6b4c8ea95c31e3454f3b6f",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
     "scripts/activity-report.mjs": "2d6e4317fbd2350748459945e04cee34935300fe694e39099b12c110f57ec848",
     "scripts/background-work-report.mjs": "0a838569357e45f6768911118516c1cdd0cbc2c00f6b828c9e80f9ab6cbd2473",
@@ -29,6 +38,7 @@
     "skills/issue-workflow/SKILL.md": "32ed835b32120fe7300d4bc0525089a1cfa9ff849a8c0bf0546012f8b832f9a8",
     "skills/issue-workflow/references/card-creation-and-reference.md": "9c05a4d0a6c13f66dcb8fe19b35efa3dfe07d7fa775e51c0ff415768f5c74167",
     "skills/plan-workflow/SKILL.md": "877b4e0c1ae7dc32e0c6b4bb4920d794986b16e0aa727d216b0180a062efd96f",
-    "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a"
+    "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
+    "types/index.d.ts": "67d0a73f0c60bbb0795dcb47b5f79172af3c4a28e3b28edcf0467ddaff1e3144"
   }
 }
