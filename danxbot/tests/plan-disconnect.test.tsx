@@ -64,7 +64,10 @@ for (const surface of SURFACES) {
       const { band, pane } = await mounted($, d, surface)
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toMatch(/^Disconnect refused: 409 this session is on PLAN-24 "Agent mode", not PLAN-23/)
+      // the server's own sentence, then which plan the session really is on; no JSON dump
+      expect(d.toasts.at(-1)).toBe(
+        'Disconnect refused: 409 Session 41365fb5-6b43-443b-a01b-81245574f648 is on plan 24, not plan 23; nothing was changed. (PLAN-24 "Agent mode")',
+      )
       expect(toldModel(d)).toHaveLength(0)
       // the refresh read the session's real plan
       expect(await text(band)).toContain('PLAN-24')
@@ -75,7 +78,9 @@ for (const surface of SURFACES) {
       const { band, pane } = await mounted($, d, surface)
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toMatch(/^Disconnect refused: 409 session_not_connected/)
+      expect(d.toasts.at(-1)).toBe(
+        'Disconnect refused: 409 Session 41365fb5-6b43-443b-a01b-81245574f648 is not connected to a plan, so there is nothing to leave.',
+      )
       expect(toldModel(d)).toHaveLength(0)
       expect(await text(band)).toContain('Not connected to a plan')
     })
@@ -92,7 +97,17 @@ for (const surface of SURFACES) {
       expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
     })
 
-    test('a rejected call is a toast with the rejection text', async ($, on) => {
+    test('a 200 that names no plan left is a failure shown, not told to the model as fact; the pane reads the truth', async ($, on) => {
+      const d = dashboard(on, { disconnect: 'noLeftPlan' })
+      const { band, pane } = await mounted($, d, surface)
+      await pane.press({ key: 'disconnect' })
+      await d.clock.settle()
+      expect(d.toasts.at(-1)).toBe('Disconnect failed: the answer named no plan left')
+      expect(toldModel(d)).toHaveLength(0)
+      expect(await text(band)).toContain('Not connected to a plan')
+    })
+
+    test('a THROWN call (the only error result) is a toast with the rejection text', async ($, on) => {
       const d = dashboard(on, { disconnect: 'rejected' })
       const { pane } = await mounted($, d, surface)
       await pane.press({ key: 'disconnect' })

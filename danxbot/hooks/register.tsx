@@ -23,7 +23,7 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { isServerMissing, mcpText, toolOutcome } from './plan/mcp'
+import { isServerMissing, mcpText, refusalText, toolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { statusText } from './plan/words'
@@ -66,13 +66,7 @@ async function api($: any, method: string, path: string, extra: { query?: object
     if (isServerMissing(message)) return { ok: false, status: 0, unreachable: true, body: { error: message } }
     return { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
   }
-  const text = mcpText(res)
-  if (res.isError) return { ok: false, status: 0, body: { error: text } }
-  try {
-    return JSON.parse(text) as Api
-  } catch {
-    return { ok: false, status: 0, body: { error: text } }
-  }
+  return toolOutcome(res)
 }
 
 async function loadView($: any) {
@@ -214,8 +208,10 @@ function connect($: any, plan: PlanRow): Promise<void> {
       $.ui.toast(`Connect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
     }
-    if (r.isError) {
-      $.ui.toast(`Connect failed: ${mcpText(r).slice(0, CONNECT_ERROR_MAX)}`)
+    const outcome = toolOutcome(r)
+    if (!outcome.ok) {
+      // a refusal is `ok: false`, not an error result: nothing connected, so the model is told nothing
+      $.ui.toast(`Connect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
       return
     }
     $.ui.toast(`Connected to ${plan.ref}`)
@@ -240,15 +236,20 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
     }
     const outcome = toolOutcome(r)
     if (!outcome.ok) {
-      const body = outcome.body ?? {}
-      const detail = JSON.stringify(body).slice(0, CONNECT_ERROR_MAX)
-      $.ui.toast(`Disconnect refused: ${outcome.status || 'mcp'} ${body.message ?? body.error ?? ''} ${detail}`.replace(/ +/g, ' ').trim())
+      $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
       if (outcome.status === 409) await refresh($, true)
+      return
+    }
+    const left = outcome.body?.leftPlan
+    if (typeof left?.name !== 'string') {
+      // a 200 that names no plan left cannot be told to the model as fact: show it, and read the truth
+      $.ui.toast('Disconnect failed: the answer named no plan left')
+      await refresh($, true)
       return
     }
     $.ui.toast(`Disconnected from ${plan.ref}`)
     await update($, switching, () => false)
-    await tellModel($, disconnectNote({ ref: plan.ref, name: outcome.body?.leftPlan?.name ?? plan.name }))
+    await tellModel($, disconnectNote({ ref: plan.ref, name: left.name }))
     await refresh($, true)
   })
 }

@@ -1,3 +1,5 @@
+import { ERROR_BODY_MAX } from './config'
+
 // What `$.mcp.call` rejects with, as the engine words it.
 
 // The engine's rejection when the session has no such server or tool:
@@ -14,21 +16,34 @@ export function mcpText(r: any): string {
   return (r?.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
 }
 
-// A tool's result as danxbot_api words it: JSON text `{ok, status, body}`. A refusal may arrive as an
-// error result or as `ok: false`; a plain object (no `ok`) is a success body.
+// A tool's result as danxbot_api and plan_connect word it: JSON text `{ok, status, body}` (pretty-printed),
+// where a server refusal is `ok: false` and is NEVER an error result. Only a thrown call is an error:
+// argument validation, an outdated MCP, a 5xx. So an `isError` result carries plain text, and anything
+// that is not an envelope is a failure here, never a success.
 export type ToolOutcome = { ok: boolean; status: number; body: any }
 
+// THE one parser of that envelope: api() and every plan_connect caller use it.
 export function toolOutcome(r: any): ToolOutcome {
+  if (r === null || r === undefined) return { ok: false, status: 0, body: { error: 'the tool answered no result' } }
   const text = mcpText(r)
+  if (r.isError) return { ok: false, status: 0, body: { error: text } }
   let parsed: any
   try {
     parsed = JSON.parse(text)
   } catch {
-    parsed = undefined
+    return { ok: false, status: 0, body: { error: text } }
   }
-  if (parsed !== null && typeof parsed === 'object' && typeof parsed.ok === 'boolean') {
-    return { ok: parsed.ok && !r.isError, status: typeof parsed.status === 'number' ? parsed.status : 0, body: parsed.body }
+  if (parsed === null || typeof parsed !== 'object' || typeof parsed.ok !== 'boolean') {
+    return { ok: false, status: 0, body: { error: `the tool answered no {ok, status, body}: ${text.slice(0, ERROR_BODY_MAX)}` } }
   }
-  if (r.isError) return { ok: false, status: 0, body: parsed ?? { error: text } }
-  return { ok: true, status: 0, body: parsed }
+  return { ok: parsed.ok, status: typeof parsed.status === 'number' ? parsed.status : 0, body: parsed.body }
+}
+
+// What a refusal says: the server's own message (or error), and for plan_mismatch which plan the
+// session is really on.
+export function refusalText(o: ToolOutcome): string {
+  const b = o.body ?? {}
+  const said = String(b.message ?? b.error ?? 'no detail')
+  const real = b.error === 'plan_mismatch' && b.actual_plan ? ` (PLAN-${b.actual_plan.id} "${b.actual_plan.name}")` : ''
+  return `${o.status || 'mcp'} ${said}${real}`
 }

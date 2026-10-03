@@ -97,13 +97,39 @@ describe('plan pane connects', () => {
     }
   })
 
-  test('a failed connect toasts and tells the model nothing', async ($, on) => {
+  test('a REFUSED connect (ok: false, never an error result) is shown as refused and tells the model nothing', async ($, on) => {
     const d = dashboard(on, { connected: false, connectFails: true })
+    await startSession($, d, 'desktop')
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    await pane.press({ key: 'connect' })
+    await d.clock.settle()
+    expect(d.toasts.some(t => t.startsWith('Connected'))).toBe(false)
+    expect(d.toasts.at(-1)).toMatch(/^Connect refused: 409 PLAN-24 is archived\. Restore it before doing this/)
+    expect(toldModel(d)).toHaveLength(0)
+    expect(await (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')).toContain('Not connected to a plan')
+  })
+
+  test('a REFUSED Switch plan leaves the session on its plan and tells the model nothing', async ($, on) => {
+    const d = dashboard(on, { connectFails: true })
+    await startSession($, d, 'desktop')
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    await pane.press({ key: 'switch' })
+    await pane.press({ key: 'connect' })
+    await d.clock.settle()
+    expect(d.toasts.at(-1)).toMatch(/^Connect refused: 409 PLAN-24 is archived/)
+    expect(toldModel(d)).toHaveLength(0)
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')).toContain('PLAN-23')
+  })
+
+  test('a THROWN connect (the only error result) toasts with the rejection text and tells the model nothing', async ($, on) => {
+    const d = dashboard(on, { connected: false, connectThrows: true })
     await startSession($, d, 'desktop')
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     await pane.press({ key: 'connect' })
     await d.clock.settle()
-    expect(d.toasts.at(-1)).toMatch(/Connect failed: no such plan/)
+    expect(d.toasts.at(-1)).toMatch(/^Connect failed: .*the MCP server is outdated/)
     expect(toldModel(d)).toHaveLength(0)
   })
 

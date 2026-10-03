@@ -15,12 +15,12 @@
     "hooks/plan/config.ts": "a3bee1404d3823045820c2c9b6dca529b884893c08b652f02ac0fe6c2b522a7b",
     "hooks/plan/handlers.ts": "c12694e7669d923b4f536e81cc3a1eb9d54d5a7c90513c089f34cdf99eec1f2a",
     "hooks/plan/load.ts": "6c6627a36b3ffa5f4d71955307401f98dbe4e876ec88f727d783f52f298d95f9",
-    "hooks/plan/mcp.ts": "734b8723e4786265b5d32b78a1241d54dd75b9175eeeab0f482e07e035c7298c",
+    "hooks/plan/mcp.ts": "dbf8da57047eb9a044723f3dc4125a1feadf4bcbd668fe80febc895930b19fce",
     "hooks/plan/notes.ts": "da1f33a0d1dd86b730204300b8bab842c3e8bb5de46af7119062f52ac5002ab2",
     "hooks/plan/pane.tsx": "47f3f0969b202a18859cf7c8f8c2a87c713f820dbbbb172efa049c71d7507f2b",
     "hooks/plan/problems.tsx": "ba6619a995d47cf26c7a38c0fcac80e554ad166cdd87d382ecb6806048b7206e",
     "hooks/plan/words.ts": "f625b305aca5cc509ab9ec23da82c5ffe02a37fe32e99e4d88de79ec3dbf31ac",
-    "hooks/register.tsx": "870776805ee7308bbc21a79fee2bc05fcb0cbc7729de9668e2120854965b16a8",
+    "hooks/register.tsx": "19ac0898f59331d1f76883de6f72c6508e98da568f000e065f7900e62472cfbb",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
     "scripts/activity-report.mjs": "2d6e4317fbd2350748459945e04cee34935300fe694e39099b12c110f57ec848",
     "scripts/background-work-report.mjs": "0a838569357e45f6768911118516c1cdd0cbc2c00f6b828c9e80f9ab6cbd2473",
@@ -39,7 +39,7 @@
     "skills/fix-agent-behavior/SKILL.md": "05af9b36921772fc36c4ef6a63a1c08403902104e5ec40bcf14a4a04e91642ef",
     "skills/issue-workflow/SKILL.md": "32ed835b32120fe7300d4bc0525089a1cfa9ff849a8c0bf0546012f8b832f9a8",
     "skills/issue-workflow/references/card-creation-and-reference.md": "9c05a4d0a6c13f66dcb8fe19b35efa3dfe07d7fa775e51c0ff415768f5c74167",
-    "skills/plan-workflow/SKILL.md": "caf643daf1db687030a3ffb68242915d44ab6c9f1ba2e9326c3ef30fce64964d",
+    "skills/plan-workflow/SKILL.md": "99ea0a0cff1632738bcac5badd80079b450bc525994c0dded066b71a8873a72e",
     "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
     "types/index.d.ts": "1aa30b8f54316953986e62d225dea811cd51381f631c3575dab9eba605bcdc04"
   }

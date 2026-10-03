@@ -21,6 +21,7 @@ export const TABS_CONTEXT_CLOSED_LATER = '{\n  "browserOpen": false,\n  "tabs": 
 export const NAVIGATE_REFUSED = 'navigation to https://danxbot.sageus.ai was denied or failed'
 export const PREVIEW_START_OK = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "seed",\n  "reused": true,\n  "type": "browser",\n  "navOk": true\n}\nBrowser pane opened. Use serverId "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0" with read_page / computer / navigate.'
 
+const SESSION_ID = '41365fb5-6b43-443b-a01b-81245574f648'
 const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, body })
 
 type Sol = { id: number; title: string; recommended: boolean; body?: string; pro?: string; con?: string; steps?: any[] }
@@ -41,7 +42,8 @@ export function dashboard(
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
     // plan_connect {disconnect: true}: the leave works (default), or the server refuses it a given way
-    disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected'
+    // ('rejected' is a THROWN call, the only error result; 'noLeftPlan' is a 200 without leftPlan)
+    disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected' | 'noLeftPlan'
     // the disconnect call takes this long on the fake clock
     disconnectTakesMs?: number
     // which closed text tabs_context carries (the app words it two ways)
@@ -58,7 +60,9 @@ export function dashboard(
     // what tabs_context answers: the list (default), an error result, or text that is no tab list
     tabsContext?: 'list' | 'error' | 'garbage'
     listFails?: boolean
+    // plan_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
+    connectThrows?: boolean
     // the dashboard has more needs-you cards than the one load reads
     cardsTotal?: number
     // ... and more plans than the plan list returns
@@ -195,28 +199,69 @@ export function dashboard(
       if (e.tool === 'plan_connect' && e.args.disconnect) {
         if (options.disconnect === 'rejected') return { deny: 'plan_connect is not available' }
         if (options.disconnectTakesMs) await clock.sleep(options.disconnectTakesMs)
-        const refuse = (status: number, body: unknown, isError = false) => ({
-          value: { content: [{ type: 'text', text: JSON.stringify({ ok: false, status, body }) }], isError },
+        // the real envelope (packages/danx-dashboard-mcp jsonResult, the server's handleLeavePlan): pretty-printed
+        // JSON text, and a refusal is `ok: false`, never an error result
+        const envelope = (ok: boolean, status: number, body: unknown) => ({
+          value: { content: [{ type: 'text', text: JSON.stringify({ ok, status, body }, null, 2) }], isError: false },
         })
         if (options.disconnect === 'mismatch') {
           world.planId = 24
-          return refuse(409, { error: 'plan_mismatch', message: 'this session is on PLAN-24 "Agent mode", not PLAN-23', plan: { id: 24 } }, true)
+          return envelope(false, 409, {
+            error: 'plan_mismatch',
+            session_id: SESSION_ID,
+            expected_plan_id: e.args.plan_id,
+            actual_plan: { id: 24, name: 'Agent mode' },
+            message: `Session ${SESSION_ID} is on plan 24, not plan ${e.args.plan_id}; nothing was changed.`,
+          })
         }
         if (options.disconnect === 'notConnected' || world.planId === null) {
           world.planId = null
-          return refuse(409, { error: 'session_not_connected' })
+          return envelope(false, 409, {
+            error: 'session_not_connected',
+            session_id: SESSION_ID,
+            message: `Session ${SESSION_ID} is not connected to a plan, so there is nothing to leave.`,
+          })
         }
-        if (options.disconnect === 'notFound') return refuse(404, { error: 'Not found' })
-        if (e.args.plan_id !== world.planId) return refuse(409, { error: 'plan_mismatch' }, true)
+        if (options.disconnect === 'notFound') return envelope(false, 404, { error: 'Not found' })
         const left = plans.find(p => p.id === world.planId)
         world.planId = null
-        return { value: text({ ok: true, status: 200, body: { session: { plan_id: null }, leftPlan: { id: left?.id, name: left?.name } } }) }
+        if (options.disconnect === 'noLeftPlan') return envelope(true, 200, { session: { session_id: SESSION_ID, plan_id: null } })
+        return envelope(true, 200, {
+          session: { session_id: SESSION_ID, plan_id: null },
+          leftPlan: { id: left?.id, name: left?.name },
+        })
       }
       if (e.tool === 'plan_connect') {
-        if (options.connectFails) return { value: { content: [{ type: 'text', text: 'no such plan' }], isError: true } }
+        // a THROWN call (argument validation, an outdated MCP): the one error-result path
+        if (options.connectThrows) return { deny: 'plan_connect: the MCP server is outdated' }
+        // refusals are `ok: false` envelopes (handleConnect / lockPlanForConnect / planArchivedError)
+        if (options.connectFails) {
+          return {
+            value: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      ok: false,
+                      status: 409,
+                      body: {
+                        error: 'PLAN-24 is archived. Restore it before doing this: an archived plan connects no sessions and runs no lifecycle behaviour.',
+                        code: 'plan_archived',
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+              isError: false,
+            },
+          }
+        }
         world.planId = e.args.plan_id
         world.titleSeen = e.args.title
-        return { value: text({ session: { plan_id: e.args.plan_id } }) }
+        return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id } } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
       if (options.hangFirstAnswer && e.args.method === 'POST' && /\/answer$/.test(e.args.path) && api.filter(a => a.method === 'POST').length === 1) {

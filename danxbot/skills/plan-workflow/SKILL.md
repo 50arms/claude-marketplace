@@ -156,6 +156,6 @@ the JSONL last-entry age — name the source.
 
 Before an actual compaction, load `danxbot:prepare-for-compaction`.
 
-Retiring this session (a handoff, not a compaction): after the handoff comment, last plan action,
-`plan_connect({plan_id, disconnect: true})` — `plan_id` is the plan you are on. Moving to another
-plan needs no leave.
+Retiring this session (a handoff, not a compaction): as your last plan action, after the handoff
+comment, call `plan_connect({plan_id, disconnect: true})` (`plan_id` = the plan you are on). Moving to
+another plan needs no leave.
