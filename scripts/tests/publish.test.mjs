@@ -80,3 +80,28 @@ test("DX-4244: a marketplace plugin with no scripts/launch.mjs gets no manifest 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("DX-4244: the pre-flight regenerates every marketplace plugin's manifest, so a stale untargeted one is refused loudly, not published over", () => {
+  const dir = editedClone();
+  try {
+    // check-injection-budget.mjs runs EVERY marketplace plugin's hooks, so a stale manifest in a plugin that is
+    // not a publish target would still print a false INTEGRITY FAILURE. The pre-flight rewrites it first, which
+    // dirties a non-target plugin, and publish refuses on that instead of shipping over it.
+    fs.mkdirSync(path.join(dir, "second", ".claude-plugin"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "second", "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "second", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "second", version: "1.0.0", description: "has a launcher" }) + "\n");
+    fs.writeFileSync(path.join(dir, "second", "scripts", "launch.mjs"), "// stub launcher\n");
+    fs.writeFileSync(path.join(dir, "second", "integrity-manifest.json"), JSON.stringify({ schemaVersion: 1, files: {} }) + "\n");
+    const mpPath = path.join(dir, ".claude-plugin", "marketplace.json");
+    const mp = JSON.parse(fs.readFileSync(mpPath, "utf8"));
+    mp.plugins.push({ name: "second", source: "./second", description: "has a launcher" });
+    fs.writeFileSync(mpPath, JSON.stringify(mp, null, 2) + "\n");
+    git(dir, "add", "second", ".claude-plugin");
+    git(dir, "commit", "-q", "-m", "add a launcher plugin with a stale manifest");
+    const r = publish(dir);
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /changes outside target plugins \(second\/integrity-manifest\.json\)/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
