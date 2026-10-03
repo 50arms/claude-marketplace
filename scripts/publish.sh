@@ -157,19 +157,25 @@ if ! node "${REPO_ROOT}/scripts/lint-frontmatter.js" "${REPO_ROOT}"; then
   exit 1
 fi
 
-# --- Pre-flight: integrity manifests ------------------------------------
+# --- Integrity manifests -------------------------------------------------
 #
-# DX-4244 — the injection-budget check below runs every hook for real, and a hook
-# of a plugin that ships an integrity launcher verifies that plugin's hash manifest
-# first. An edited hashed file made the manifest stale, so each hook printed a false
-# "INTEGRITY FAILURE ... git checkout -- <plugin>" (a fix that would destroy the very
-# edit being published). Regenerate the target plugins' manifests first; the bump
-# step below rewrites them again once plugin.json carries the new version.
+# DX-3997 / DX-4244 - a plugin that ships its own integrity launcher
+# (scripts/launch.mjs) has a hash manifest its hooks verify before running. The
+# manifest is rewritten at two points: BEFORE the injection-budget check below
+# (check-injection-budget.mjs runs every marketplace plugin's hooks for real, so a
+# stale manifest made each hook print a false "INTEGRITY FAILURE ... git checkout
+# -- <plugin>", a fix that would destroy the very edit being published), and AFTER
+# the version bump (the bumped plugin.json is itself a hashed file).
 
-for plugin in "${TARGETS[@]}"; do
+write_integrity_manifest_if_shipped() {
+  local plugin="$1"
   if [ -f "${plugin}/scripts/launch.mjs" ]; then
     node "${REPO_ROOT}/scripts/write-integrity-manifest.mjs" "$plugin"
   fi
+}
+
+for plugin in "${ALL_PLUGINS[@]}"; do
+  write_integrity_manifest_if_shipped "$plugin"
 done
 
 # --- Pre-flight: injection budget ---------------------------------------
@@ -253,13 +259,10 @@ for plugin in "${TARGETS[@]}"; do
     fs.writeFileSync(path, JSON.stringify(j, null, 2) + '\n');
   " "$manifest" "$next"
 
-  # DX-3997 â€” a plugin that ships its own integrity launcher gets its hash manifest
-  # rewritten HERE, after the bump (the bumped plugin.json is one of the hashed files)
-  # and before the commit, so the manifest in every published version matches that
+  # DX-3997 - rewritten here, after the bump (the bumped plugin.json is one of the hashed
+  # files) and before the commit, so the manifest in every published version matches that
   # version's tree byte for byte.
-  if [ -f "${plugin}/scripts/launch.mjs" ]; then
-    node "${REPO_ROOT}/scripts/write-integrity-manifest.mjs" "$plugin"
-  fi
+  write_integrity_manifest_if_shipped "$plugin"
 
   # Stage + commit JUST the plugin's tree + manifest. Other plugins'
   # untouched manifests stay out of this commit.

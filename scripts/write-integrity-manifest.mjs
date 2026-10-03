@@ -8,10 +8,12 @@
 // so a cache copy a machine crash left zeroed or truncated is repaired from the
 // marketplace clone, or reported loudly, instead of silently killing the hook.
 //
-// WHEN IT RUNS. `scripts/publish.sh` runs it after the version bump and before
-// the bump commit, for every plugin that ships a `scripts/launch.mjs` — the
-// bumped `.claude-plugin/plugin.json` is itself a hashed file, so the manifest
-// is regenerated last. Run it by hand to inspect the output; never hand-edit it.
+// WHEN IT RUNS. `scripts/publish.sh` runs it twice for every plugin that ships a
+// `scripts/launch.mjs`: before its injection-budget check (that check runs every
+// plugin's hooks, and a stale manifest would make each print a false INTEGRITY
+// FAILURE), and again after the version bump, before the bump commit (the bumped
+// `.claude-plugin/plugin.json` is itself a hashed file, so the manifest is
+// regenerated last). Run it by hand to inspect the output; never hand-edit it.
 //
 // FILE LIST. `git ls-files --cached --others --exclude-standard` over the plugin
 // dir: exactly what `git add <plugin>/` would commit, so the manifest and the
