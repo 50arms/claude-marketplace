@@ -3,14 +3,14 @@ import type { Handlers } from './handlers'
 import { problemCard } from './problems'
 import type { Ui } from './problems'
 import { DANGER, PICKER_PLAN_NAME_MAX, SUCCESS, WARNING, busyKey, planUrl } from './config'
-import { cappedNote } from './words'
+import { cappedNote, cappedPlansNote, updatedText } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
 export type PaneModel = {
   v: PlanView
   picked: string
   open: number | null
-  working: string | null
+  working: string[]
   isSwitching: boolean
   draft: Draft | null
   talk: number | null
@@ -24,6 +24,7 @@ function planPicker(hd: Handlers, E: any, m: PaneModel, isSwitch: boolean): any 
   const { Box, Text, Button, Select } = E
   const candidates = m.v.plans.filter(p => p.id !== m.v.connected?.id)
   if (candidates.length === 0) return <Text dimColor>No plans found.</Text>
+  const morePlans = cappedPlansNote(m.v)
   const plan = candidates.find(p => String(p.id) === m.picked) ?? candidates[0]
   return (
     <Box flexDirection="column" gap={1}>
@@ -37,6 +38,7 @@ function planPicker(hd: Handlers, E: any, m: PaneModel, isSwitch: boolean): any 
         value={String(plan.id)}
         onSelect={(value: string) => hd.pickPlan(value)}
       />
+      {morePlans && <Text color={WARNING}>{morePlans}</Text>}
       <Box flexDirection="row" gap={1}>
         <Button key="connect" variant="primary" onPress={() => hd.connect(plan)}>
           {busyKey.isConnecting(m.working) ? 'Connecting…' : `${isSwitch ? 'Switch to' : 'Connect to'} ${plan.ref}`}
@@ -59,7 +61,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
     <Box flexDirection="row" justifyContent="space-between">
       <Text bold>Danxbot plan</Text>
       <Button key="refresh" dimColor onPress={() => hd.refresh()}>
-        {v.phase === 'loading' || m.working ? 'Working…' : 'Refresh'}
+        {v.phase === 'loading' || m.working.length > 0 ? 'Working…' : 'Refresh'}
       </Button>
     </Box>
   )
@@ -131,7 +133,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       {v.problems.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
       {v.problems.map(p => problemCard(hd, E, ui, p, m.open === p.id))}
       {cappedNote(v) && <Text color={WARNING}>{cappedNote(v)}</Text>}
-      {v.refreshedAt && <Text dimColor>Updated {v.refreshedAt.slice(11, 19)}Z</Text>}
+      {v.refreshedAt && <Text dimColor>{updatedText(v.refreshedAt)}</Text>}
     </Box>
   )
 }

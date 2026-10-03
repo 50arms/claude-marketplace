@@ -5,7 +5,7 @@ import { WORDS, age } from './words'
 
 export type Ui = {
   draft: Draft | null
-  busy: string | null
+  busy: string[]
   talk: number | null
   planId: number
   now: number

@@ -49,6 +49,17 @@ export function cappedNote(v: PlanView): string | null {
   return unread > 0 ? `+${unread} more card${unread === 1 ? '' : 's'} with open problems in the browser` : null
 }
 
+// "+3 more plans in the browser" when the plan list was capped.
+export function cappedPlansNote(v: PlanView): string | null {
+  return v.plansUnread > 0 ? `+${v.plansUnread} more plan${v.plansUnread === 1 ? '' : 's'} in the browser` : null
+}
+
+// "Updated 08:15:42Z": the UTC clock part of an ISO timestamp.
+export function updatedText(iso: string): string {
+  const [, time = ''] = iso.split('T')
+  return `Updated ${time.slice(0, 8)}Z`
+}
+
 // The band's label for a view that is not the Plan-button-only one.
 export function bandLabel(v: PlanView): string {
   if (v.phase === 'error') return 'plan: error'

@@ -10,7 +10,9 @@ import {
   COMMAND,
   CONNECT_ERROR_MAX,
   EMPTY,
+  LOCK_STALE_MS,
   MIN_GAP_MS,
+  NO_MCP_RETRY_MS,
   PANE,
   POLL_MS,
   SERVER,
@@ -32,7 +34,7 @@ const gate = atom({ plugin: 'danxbot', key: 'gate' } as const, { inFlight: false
 const pick = atom({ plugin: 'danxbot', key: 'pick' } as const, '')
 const switching = atom({ plugin: 'danxbot', key: 'switching' } as const, false)
 const expanded = atom({ plugin: 'danxbot', key: 'expanded' } as const, null as number | null)
-const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, null as string | null)
+const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 const draft = atom({ plugin: 'danxbot', key: 'draft' } as const, null as Draft | null)
 const talk = atom({ plugin: 'danxbot', key: 'talk' } as const, null as number | null)
 // DX-4232: the browser tab id lives in $.state, never in a module variable (a module variable is
@@ -161,9 +163,24 @@ async function openInBrowser($: any, url: string): Promise<void> {
   }
 }
 
-async function connect($: any, plan: PlanRow): Promise<void> {
-  await update($, busy, () => busyKey.connect(plan.id))
+// One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
+// together (a double click, a key repeat) cannot both win. The loser does nothing.
+async function withBusy($: any, key: string, work: () => Promise<void>): Promise<void> {
+  let won = false
+  await update($, busy, cur => {
+    won = !cur.includes(key)
+    return won ? [...cur, key] : cur
+  })
+  if (!won) return
   try {
+    await work()
+  } finally {
+    await update($, busy, cur => cur.filter(k => k !== key))
+  }
+}
+
+function connect($: any, plan: PlanRow): Promise<void> {
+  return withBusy($, busyKey.connect(plan.id), async () => {
     const sessionTitle = await read($, title)
     let r
     try {
@@ -183,36 +200,50 @@ async function connect($: any, plan: PlanRow): Promise<void> {
     await update($, switching, () => false)
     await tellModel($, connectNote(plan))
     await refresh($, true)
-  } finally {
-    await update($, busy, () => null)
-  }
+  })
 }
 
-// One write to a problem (answer, comment, step tick): mark it busy, call, toast a refusal,
-// re-read the plan. It touches nothing the operator is composing; an answer clears the draft.
-async function act($: any, p: ProblemRow, path: string, method: string, body: object, done: string): Promise<boolean> {
-  await update($, busy, () => busyKey.problem(p.id))
-  try {
-    const r = await api($, method, `/api/issues/${p.cardId}/${path}`, { body })
-    if (!r.ok) {
-      $.ui.toast(`${p.cardId} PBLM-${p.id}: ${errText(r)}`)
-      return false
-    }
-    if (done) $.ui.toast(done)
-    await refresh($, true)
-    return true
-  } finally {
-    await update($, busy, () => null)
+// One write to a problem (answer, comment, step tick), inside its busy claim: call, toast a
+// refusal, re-read the plan. It touches nothing the operator is composing; an answer clears the
+// draft. Resolves true when the write was made and accepted.
+async function write(
+  $: any,
+  p: ProblemRow,
+  path: string,
+  method: string,
+  body: object,
+  done: string,
+  isAnswer = false,
+): Promise<boolean> {
+  const r = await api($, method, `/api/issues/${p.cardId}/${path}`, { body })
+  if (!r.ok) {
+    $.ui.toast(`${p.cardId} PBLM-${p.id}: ${errText(r)}`)
+    return false
   }
+  if (done) $.ui.toast(done)
+  // PBLM-1913: an answered problem leaves the pane at once. A refresh asked while another runs is
+  // only queued (see refresh), so the view is corrected here, not left stale until it finishes.
+  if (isAnswer) await update($, view, cur => ({ ...cur, problems: cur.problems.filter(x => x.id !== p.id) }))
+  await refresh($, true)
+  return true
 }
 
-// THE answer: the one place a body and its label meet. Answers the problem, clears the note or
-// rejection draft (only an answer does), then tells the model (it did not make the call).
-async function answer($: any, p: ProblemRow, body: Record<string, unknown>, label: string): Promise<void> {
-  const ok = await act($, p, `problems/${p.id}/answer`, 'POST', body, `Answered: ${label}`)
-  if (!ok) return
-  await update($, draft, () => null)
-  await tellModel($, answerNote(p, label))
+function act($: any, p: ProblemRow, path: string, method: string, body: object, done: string): Promise<void> {
+  return withBusy($, busyKey.problem(p.id), async () => void (await write($, p, path, method, body, done)))
+}
+
+// THE answer: the one place a body and its label meet, and the one re-entry guard for every answer
+// path (a busy claim for presses that overlap, the open-in-view check for ones that queue). Answers the problem, clears the note or rejection draft (only an answer does), then tells
+// the model (it did not make the call).
+function answer($: any, p: ProblemRow, body: Record<string, unknown>, label: string): Promise<void> {
+  return withBusy($, busyKey.problem(p.id), async () => {
+    // A press can reach a drawing that is already stale (a second press queued behind the first,
+    // run after it finished): a problem no longer open in the view was answered already.
+    if (!(await read($, view)).problems.some(x => x.id === p.id)) return
+    if (!(await write($, p, `problems/${p.id}/answer`, 'POST', body, `Answered: ${label}`, true))) return
+    await update($, draft, () => null)
+    await tellModel($, answerNote(p, label))
+  })
 }
 
 function useSolution($: any, p: ProblemRow, s: SolutionRow): Promise<void> {
@@ -280,19 +311,50 @@ function handlers($: any): Handlers {
 
 // ---- hooks ----------------------------------------------------------------
 
+// The first load can run before the MCP server connects. A no-mcp view at session start is retried
+// after each wait in NO_MCP_RETRY_MS (on the clock, so a test moves it) and then left as no-mcp.
+async function retryWhileNoMcp($: any): Promise<void> {
+  for (const wait of NO_MCP_RETRY_MS) {
+    try {
+      await $.clock.sleep(wait)
+    } catch {
+      // the wait rejects when the plugin's environment is unloaded (a reload): the retries end with it
+      return
+    }
+    if ((await read($, view)).phase !== 'no-mcp') return
+    await refresh($, true)
+  }
+}
+
 async function onSessionStart($: any, e: any, next: any) {
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
-  // a fresh session starts with the refresh lock free, whatever a previous run left in $.state
-  await update($, gate, () => ({ inFlight: false, again: false, at: null }))
+  // Free only a STALE lock (a dead load's, left in $.state): freeing a live one lets two loads overlap.
+  const now = await $.clock.now()
+  await update($, gate, cur => (cur.inFlight && cur.at !== null && now - cur.at > LOCK_STALE_MS ? { inFlight: false, again: false, at: null } : cur))
   ticker?.cancel()
   ticker = $.clock.every(POLL_MS, () => refresh($))
-  void refresh($, true)
+  void refresh($, true).then(() => retryWhileNoMcp($))
   return next(e)
 }
 
+// Reasons after which the process is gone. `clear` and `resume` end THIS session but the process
+// goes on, and no session.start follows a /clear: the refresh timer must keep running then, or the
+// band shows stale data for the rest of the process. Any reason not listed keeps the timer too:
+// stopping a timer in a live process is the harm, a timer left in a dying one is not.
+const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
+
 async function onSessionEnd($: any, e: any, next: any) {
-  ticker?.cancel()
-  ticker = null
+  if (PROCESS_ENDS.includes(e.reason)) {
+    ticker?.cancel()
+    ticker = null
+  } else if (e.reason === 'clear') {
+    // a fresh conversation: what the person had open or half-typed no longer applies, and what the
+    // dashboard shows may have moved while they were in the old one
+    await update($, expanded, () => null)
+    await update($, draft, () => null)
+    await update($, talk, () => null)
+    void refresh($, true)
+  }
   return next(e)
 }
 

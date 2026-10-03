@@ -12,6 +12,13 @@ export const MIN_GAP_MS = 10_000
 export const MAX_PLANS = 30
 export const MAX_CARDS = 15
 
+// A refresh lock held longer than this is a dead load's, not a running one's.
+export const LOCK_STALE_MS = 120_000
+
+// At session start the MCP server may not be connected yet: a no-mcp first load is retried after
+// each of these waits (clock-driven) before the view settles on no-mcp.
+export const NO_MCP_RETRY_MS = [2_000, 5_000, 15_000]
+
 // Truncation lengths, each for one place.
 export const BAND_PLAN_NAME_MAX = 50
 export const PICKER_PLAN_NAME_MAX = 60
@@ -19,6 +26,8 @@ export const CARD_TITLE_MAX = 80
 export const TOAST_ERROR_MAX = 160
 export const CONNECT_ERROR_MAX = 200
 export const CALL_ERROR_MAX = 200
+export const ERROR_BODY_MAX = 200
+export const OUTPUT_EXCERPT_MAX = 80
 
 // What the fallback toast puts between its reason and the model row it could not append.
 export const NOTE_MARKER = ' | It was to read: '
@@ -38,16 +47,18 @@ export const EMPTY: PlanView = {
   problems: [],
   cardsTotal: 0,
   cardsRead: 0,
+  plansUnread: 0,
   listener: null,
   refreshedAt: null,
 }
 
-// What `busy` holds while a write is under way: one writer per key.
+// What `busy` holds while writes are under way: a list of keys, one per connect or problem, so
+// two different problems can be answered at once and the same one cannot be answered twice.
 export const busyKey = {
   connect: (planId: number) => `connect:${planId}`,
   problem: (problemId: number) => `problem:${problemId}`,
-  isConnecting: (busy: string | null) => busy?.startsWith('connect:') ?? false,
-  isSaving: (busy: string | null, problemId: number) => busy === `problem:${problemId}`,
+  isConnecting: (busy: string[]) => busy.some(k => k.startsWith('connect:')),
+  isSaving: (busy: string[], problemId: number) => busy.includes(`problem:${problemId}`),
 }
 
 export function planUrl(planId: number): string {

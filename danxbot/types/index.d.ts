@@ -72,6 +72,8 @@ export type PlanView = {
   // problem list is a lower bound and the pane says so.
   cardsTotal: number
   cardsRead: number
+  // Plans the dashboard has that the capped plan list did not return.
+  plansUnread: number
   listener: string | null
   refreshedAt: string | null
 }
@@ -98,7 +100,8 @@ declare module 'claude-code' {
       pick: string
       switching: boolean
       expanded: number | null
-      busy: string | null
+      // keys of the writes under way (config busyKey): one per problem or connect
+      busy: string[]
       draft: Draft | null
       talk: number | null
       // The in-app browser tab this plugin owns, so a person's own tabs are never navigated.

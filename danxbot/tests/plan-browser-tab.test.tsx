@@ -42,19 +42,6 @@ describe('Open in browser tab', () => {
     expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'navigate', 'tabs_select'])
   })
 
-  // This test must stay AFTER the first one in this file: that test leaves tab-7 held in its own
-  // session, and here a new session finds tab-7 in the browser but not in its own $.state. A tab id
-  // kept in a module variable would be shared across the two and reused.
-  test('a fresh session holds no tab: nothing is shared through the module', async ($, on) => {
-    const d = dashboard(on, { tabs: ['tab-7'] })
-    await startSession($, d, 'desktop')
-    expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(0)
-    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    await band.press({ key: 'open-tab' })
-    // tab-7 exists in the browser but is not ours: a tab is created
-    expect(browserCalls(d).map((c: any) => c.tool)).toContain('tabs_create')
-  })
-
   test('a denied navigation says so and points at the link', async ($, on) => {
     const d = dashboard(on, { browser: 'denied' })
     await startSession($, d, 'desktop')

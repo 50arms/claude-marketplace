@@ -33,6 +33,10 @@ export function dashboard(
     connectFails?: boolean
     // the dashboard has more needs-you cards than the one load reads
     cardsTotal?: number
+    // ... and more plans than the plan list returns
+    plansTotal?: number
+    // the paged routes answer no `total` at all
+    noTotal?: boolean
     // the connected plan is not in the (capped) plan list
     planOutsideList?: boolean
     // comments the API did not return for a card (it pages them)
@@ -101,6 +105,7 @@ export function dashboard(
       if (options.listFails) return reply({ error: 'boom' }, 500)
       return reply({
         plans: options.planOutsideList ? plans.filter(p => p.id !== world.planId) : plans,
+        ...(options.noTotal ? {} : { total: options.plansTotal ?? plans.length }),
         session:
           world.planId === null
             ? null
@@ -114,7 +119,7 @@ export function dashboard(
         cards: world.cards
           .filter(c => c.problems.some(p => p.open))
           .map(c => ({ id: c.id, priority: c.priority, title: c.title })),
-        total: options.cardsTotal ?? world.cards.filter(c => c.problems.some(p => p.open)).length,
+        ...(options.noTotal ? {} : { total: options.cardsTotal ?? world.cards.filter(c => c.problems.some(p => p.open)).length }),
       })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
@@ -204,7 +209,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { failStatus: (on = true) => void (flags.statusThrows = on), stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failStatus: (on = true) => void (flags.statusThrows = on), stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
@@ -216,9 +221,14 @@ export function dashboard(
 export const toldModel = (d: { toasts: string[] }): string[] =>
   d.toasts.filter(t => t.startsWith('Could not tell the model')).map(t => t.slice(t.indexOf(NOTE_MARKER) + NOTE_MARKER.length))
 
-// The model must be able to act on a row: it carries every one of these fields.
+// The model must be able to act on a row: it carries every one of these fields, each as a whole
+// token (DX-1 is not found inside DX-12).
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 export function expectRowCarries(row: string, fields: string[]) {
-  for (const field of fields) expect(row, `the model row lacks "${field}": ${row}`).toContain(field)
+  for (const field of fields) {
+    const token = new RegExp(`(?<![\\w-])${escapeRegExp(field)}(?![\\w-])`)
+    expect(token.test(row), `the model row lacks "${field}": ${row}`).toBe(true)
+  }
 }
 
 // session.start as the engine raises it (the plugin loads the plan, registers its command and

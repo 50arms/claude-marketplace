@@ -1,5 +1,5 @@
 import type { CommentRow, ConnectedPlan, PlanRow, PlanView, ProblemRow, SolutionRow, StepRow } from '../../types'
-import { EMPTY, MAX_CARDS, MAX_PLANS } from './config'
+import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS } from './config'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -8,7 +8,7 @@ export type Call = (method: string, path: string, extra?: { query?: object; body
 
 export function errText(r: Api): string {
   const b = r.body ?? {}
-  return `${r.status || 'mcp'}: ${b.message ?? b.error ?? JSON.stringify(b).slice(0, 200)}`
+  return `${r.status || 'mcp'}: ${b.message ?? b.error ?? JSON.stringify(b).slice(0, ERROR_BODY_MAX)}`
 }
 
 function toSteps(raw: any[]): StepRow[] {
@@ -68,7 +68,13 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   if (list.unreachable) return { ...EMPTY, phase: 'no-mcp' }
   if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list) }
 
-  const plans: PlanRow[] = (list.body.plans ?? [])
+  // A paged route that does not say how many there are cannot be read as complete.
+  if (typeof list.body.total !== 'number') {
+    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered no total: cannot tell whether the plan list is complete' }
+  }
+  const plansRead: any[] = list.body.plans ?? []
+  const plansUnread = Math.max(0, list.body.total - plansRead.length)
+  const plans: PlanRow[] = plansRead
     .filter((p: any) => !p.archived_at)
     .map((p: any) => ({
       id: p.id,
@@ -89,7 +95,7 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
           status: plans.find(p => p.id === session.plan_id)?.status ?? null,
         }
   const listener: string | null = list.body.sessionListenerAttached?.state ?? null
-  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0 }
+  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
 
   let problems: ProblemRow[] = []
   if (connected) {
@@ -97,6 +103,9 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
       query: { bucket: 'needs-you', sort: 'priority', limit: MAX_CARDS },
     })
     if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
+    if (typeof cards.body.total !== 'number') {
+      return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connected.id}/cards answered no total: cannot tell whether the card list is complete` }
+    }
     const rows: { id: string; priority: number }[] = (cards.body.cards ?? []).map((c: any) => ({
       id: c.id,
       priority: c.priority ?? 0,
@@ -115,7 +124,7 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
     if (failed) return { ...EMPTY, ...base, phase: 'error', error: `${failed.row.id} ${errText(failed.r)}` }
     // cards arrive priority-sorted; keep that order
     problems = fetched.flatMap(f => toProblems(f.r.body, f.row.priority))
-    return { ...base, phase: 'ready', error: null, problems, cardsTotal: cards.body.total ?? rows.length, cardsRead: rows.length, refreshedAt }
+    return { ...base, phase: 'ready', error: null, problems, cardsTotal: cards.body.total, cardsRead: rows.length, refreshedAt }
   }
 
   return { ...base, phase: 'ready', error: null, problems, refreshedAt }
