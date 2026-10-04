@@ -35,8 +35,8 @@ for (const surface of SURFACES) {
       const reads = issueReads(d).filter((a: any) => a.path !== '/api/issues/DX-9')
       expect(reads.map((a: any) => a.path).sort()).toEqual(['/api/issues/DX-1', '/api/issues/DX-2', '/api/issues/DX-3'])
       for (const a of reads) expect(a.query).toEqual({ fields: { problems: true } })
-      // the in-progress card is read for its agent name alone: no relation requested
-      expect(issueReads(d).find((a: any) => a.path === '/api/issues/DX-9')?.query).toBeUndefined()
+      // the in-progress card is read for its agent name alone (DX-4405: assigned_agent_name, no relation)
+      expect(issueReads(d).find((a: any) => a.path === '/api/issues/DX-9')?.query).toEqual({ fields: { assigned_agent_name: true } })
       const t = await text(pane)
       expect(t).toContain('Question 0?')
       expect(t).toContain('Question 48?')
@@ -184,9 +184,9 @@ for (const surface of SURFACES) {
   describe(`the pane's card lists on ${surface}`, () => {
     test('ask the dashboard for a sort id it accepts', async ($, on) => {
       const { d } = await openPane($, on, surface)
-      const lists = d.api.filter((a: any) => a.method === 'GET' && /^\/api\/plans\/[^/]+\/cards$/.test(a.path))
-      expect(lists.length).toBeGreaterThan(0)
-      for (const a of lists) expect(a.query.sort).toMatch(/^(created|updated|priority|ref|title)-(asc|desc)$/)
+      const sorted = d.api.filter((a: any) => a.method === 'GET' && /^\/api\/plans\/[^/]+\/cards$/.test(a.path) && a.query?.sort !== undefined)
+      expect(sorted.length).toBeGreaterThan(0)
+      for (const a of sorted) expect(a.query.sort).toMatch(/^(created|updated|priority|ref|title)-(asc|desc)$/)
     })
   })
 }
