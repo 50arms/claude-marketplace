@@ -60,3 +60,13 @@ test("each addition is stated exactly once in issue-workflow", () => {
     assert.equal(count(skill, pattern), 1, String(pattern));
   }
 });
+
+test("browser-visible work keeps ONE current screenshot on the card: attach, then delete the one it supersedes", () => {
+  const building = skill.slice(skill.indexOf("## Building"), skill.indexOf("## Debugging"));
+  const show = building.slice(building.indexOf("**Show the work.**"));
+  assert.match(show, /attach a screenshot to the card \(`attach_file`\)/);
+  assert.match(show, /replace it at each milestone and at completion/);
+  assert.match(show, /delete the one it supersedes/);
+  assert.match(show, /never a growing list/);
+  assert.equal(count(skill, /\*\*Show the work\.\*\*/), 1);
+});
