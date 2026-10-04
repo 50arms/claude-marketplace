@@ -218,6 +218,11 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       </Box>
       {v.problems.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
       {v.problems.map(p => problemCard(hd, E, ui, p, m.open === p.id))}
+      {v.cardErrors.map(line => (
+        <Text key={`err-${line}`} color={WARNING}>
+          {line}
+        </Text>
+      ))}
       {cappedNote(v) && <Text color={WARNING}>{cappedNote(v)}</Text>}
 
       <Box flexDirection="row" gap={1}>

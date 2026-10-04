@@ -1,4 +1,4 @@
-import type { ConnectedPlan, Draft, ProblemRow, SolutionRow, StepRow } from '../../types'
+import type { ConnectedPlan, Draft, ProblemDetail, ProblemRow, SolutionRow, StepRow } from '../../types'
 import type { Handlers } from './handlers'
 import { ACCENT, CARD_TITLE_MAX, DANGER, SUCCESS, WARNING, busyKey, cardUrl } from './config'
 import { WORDS, age } from './words'
@@ -165,12 +165,12 @@ function solutionCard(hd: Handlers, E: any, ui: Ui, p: ProblemRow, s: SolutionRo
   )
 }
 
-function picker(hd: Handlers, E: any, ui: Ui, p: ProblemRow): any {
+function picker(hd: Handlers, E: any, ui: Ui, p: ProblemRow, detail: ProblemDetail): any {
   const { Box, Input } = E
   const w = WORDS[p.type]
   return (
     <Box flexDirection="column" gap={1}>
-      {p.solutions.map(s => solutionCard(hd, E, ui, p, s))}
+      {detail.solutions.map(s => solutionCard(hd, E, ui, p, s))}
       <Input
         key={`free-${p.id}`}
         placeholder={w.freeform}
@@ -181,21 +181,21 @@ function picker(hd: Handlers, E: any, ui: Ui, p: ProblemRow): any {
   )
 }
 
-function discussion(hd: Handlers, E: any, ui: Ui, p: ProblemRow): any {
+function discussion(hd: Handlers, E: any, ui: Ui, p: ProblemRow, detail: ProblemDetail): any {
   const { Box, Text, Button, Input, Markdown } = E
   const isOpen = ui.talk === p.id
   return (
     <Box flexDirection="column">
       <Button key={`talk-${p.id}`} plain dimColor onPress={() => hd.toggleTalk(p.id)}>
-        {`${isOpen ? '▾' : '▸'} Discussion (${p.comments.length}${p.moreComments > 0 ? '+' : ''})`}
+        {`${isOpen ? '▾' : '▸'} Discussion (${detail.comments.length}${detail.moreComments > 0 ? '+' : ''})`}
       </Button>
       {isOpen && (
         <Box flexDirection="column" gap={1} paddingLeft={2}>
-          {p.comments.length === 0 && p.moreComments === 0 && <Text dimColor>No comments yet.</Text>}
-          {p.moreComments > 0 && (
-            <Text dimColor>Up to {p.moreComments} more comment{p.moreComments === 1 ? '' : 's'} on this card in the browser.</Text>
+          {detail.comments.length === 0 && detail.moreComments === 0 && <Text dimColor>No comments yet.</Text>}
+          {detail.moreComments > 0 && (
+            <Text dimColor>Up to {detail.moreComments} more comment{detail.moreComments === 1 ? '' : 's'} on this card in the browser.</Text>
           )}
-          {p.comments.map(c => (
+          {detail.comments.map(c => (
             <Box key={`c-${c.id}`} flexDirection="column">
               <Box flexDirection="row" gap={1}>
                 <Text bold>{c.author}</Text>
@@ -251,9 +251,12 @@ export function problemCard(hd: Handlers, E: any, ui: Ui, p: ProblemRow, isOpen:
         </Box>
       )}
 
-      {isOpen && picker(hd, E, ui, p)}
+      {/* DX-4458: the solutions and comments are read when the problem opens */}
+      {isOpen && p.detailError && <Text color={WARNING}>{p.detailError}</Text>}
+      {isOpen && !p.detailError && !p.detail && <Text dimColor>Loading…</Text>}
+      {isOpen && p.detail && picker(hd, E, ui, p, p.detail)}
 
-      {isOpen && discussion(hd, E, ui, p)}
+      {isOpen && p.detail && discussion(hd, E, ui, p, p.detail)}
       {isOpen && (
         <Box flexDirection="row" gap={1}>
           {ui.hasBrowser && (

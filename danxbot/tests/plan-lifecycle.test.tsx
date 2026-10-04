@@ -118,7 +118,9 @@ describe('what one load says about what it did not read', () => {
     const d = dashboard(on, { noCommentsTotal: true })
     await startSession($, d, 'desktop')
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    expect(await text(pane)).toContain('answered no comments_page.total')
+    await pane.press({ key: 'open-11' })
+    expect(await text(pane)).toContain("Couldn't load the comments of PBLM-11: the dashboard did not say how many there are")
+    expect(await pane.find({ key: 'talk-11' })).toBeUndefined()
   })
 
   for (const surface of ['terminal', 'desktop'] as const) {

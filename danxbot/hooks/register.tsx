@@ -88,7 +88,7 @@ async function api($: any, method: string, path: string, extra: { query?: object
 
 async function loadView($: any) {
   const refreshedAt = new Date(await $.clock.now()).toISOString()
-  return loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt)
+  return loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt, await read($, expanded))
 }
 
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked
@@ -533,7 +533,11 @@ function handlers($: any): Handlers {
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
     pickPlan: value => update($, pick, () => value),
-    toggleExpanded: id => update($, expanded, cur => (cur === id ? null : id)),
+    // DX-4458: opening a problem reads its solutions and comments (a refresh reads the open one's)
+    toggleExpanded: async id => {
+      await update($, expanded, cur => (cur === id ? null : id))
+      await refresh($, true)
+    },
     toggleTalk: id => update($, talk, cur => (cur === id ? null : id)),
     toggleDraft: (p, solutionId, kind) => toggleDraft($, p, solutionId, kind),
     useSolution: (p, s) => useSolution($, p, s),

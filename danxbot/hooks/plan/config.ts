@@ -70,6 +70,7 @@ export const EMPTY: PlanView = {
   connected: null,
   plans: [],
   problems: [],
+  cardErrors: [],
   cardsTotal: 0,
   cardsRead: 0,
   plansUnread: 0,

@@ -43,6 +43,13 @@ export type ProblemRow = {
   summary: string | null
   context: string | null
   updatedAt: string
+  // DX-4458: read when the person opens the problem, never with the row: null until then. `detailError` is the one
+  // person-facing line for a failed read of it.
+  detail: ProblemDetail | null
+  detailError: string | null
+}
+
+export type ProblemDetail = {
   solutions: SolutionRow[]
   comments: CommentRow[]
   // Comments on the card the API did not return (it pages them): the true count is at least
@@ -104,6 +111,8 @@ export type PlanView = {
   connected: ConnectedPlan | null
   plans: PlanRow[]
   problems: ProblemRow[]
+  // DX-4458: one person-facing line per card the load could not read; the other cards still show.
+  cardErrors: string[]
   // Needs-you cards the dashboard has, and how many this view read; more than read means the
   // problem list is a lower bound and the pane says so.
   cardsTotal: number

@@ -47,6 +47,38 @@ export const DEFAULT_BREAKDOWN = { 'In Progress': 3, ToDo: 5, Backlog: 1, Review
 const SESSION_ID = '41365fb5-6b43-443b-a01b-81245574f648'
 const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, body })
 
+// DX-4458: the host refuses a tool result past its size limit, with a notice written for the model (captured 2026-10-04 from the
+// plan pane on DX-4443). The fixture's limit is lower than the real one so a fixture card can pass it.
+export const HOST_LIMIT_CHARS = 60_000
+export const HOST_OVERSIZE = (chars: number) => `Error: result (${chars.toLocaleString('en-US')} characters across 2,050 lines) exceeds maximum allowed tokens. Output has been saved to C:\tool-results\mcp-danx-dashboard-danxbot_api-1.txt
+Format: JSON
+Use offset and limit parameters to read specific portions of the file.`
+function hostLimited(result: { content: { text: string }[]; isError: boolean }) {
+  const chars = result.content[0].text.includes('"oversize":true') ? HOST_LIMIT_CHARS + 1 : result.content[0].text.length
+  return chars > HOST_LIMIT_CHARS ? { content: [{ type: 'text', text: HOST_OVERSIZE(chars) }], isError: true } : result
+}
+
+// DX-3: 49 open questions, two solutions each, with markdown bodies: the problems alone are small, with their solutions too large.
+export function bigCard(): Card {
+  return {
+    id: 'DX-3',
+    title: 'Big card',
+    priority: 1,
+    comments: [],
+    problems: Array.from({ length: 49 }, (_, i) => ({
+      id: 300 + i,
+      type: 'question' as const,
+      statement: `Question ${i}?`,
+      open: true,
+      context: 'c'.repeat(300),
+      solutions: [
+        { id: 3000 + i * 2, title: 'Port it', recommended: false, body: 'b'.repeat(900) },
+        { id: 3001 + i * 2, title: 'Drop it', recommended: false, body: 'b'.repeat(900) },
+      ],
+    })),
+  }
+}
+
 // The seven states the server answers for `sessionListenerAttached.state` (danxbot src/issues/plan-session-listeners.ts
 // ListenerHealthState). The fixture's next step for a state other than `healthy` is `NEXT_STEP(state)`.
 export const LISTENER_STATES = ['unattached', 'stopped', 'reconnecting', 'credential_mismatch', 'plan_has_no_cards', 'inventory_unavailable', 'healthy'] as const
@@ -148,6 +180,13 @@ export function dashboard(
     planCardsTotal?: number
     // ... answers no total, a row with no id, no list, or a plan card_count the cards do not add up to
     planCardsShape?: 'noTotal' | 'noId' | 'noList' | 'otherCount'
+    // DX-4458: DX-3, a needs-you card with 49 open problems whose headline read fits the host's limit and whose
+    // problems-with-solutions read does not (DX-4443's shape)
+    bigCard?: boolean
+    // DX-4458: GET /api/issues/<id> answers 500 for this card
+    cardFails?: string
+    // DX-4458: ... and the host refuses that card's answer as too large
+    cardOversize?: string
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -209,6 +248,7 @@ export function dashboard(
       },
     ] as Card[],
   }
+  if (options.bigCard) world.cards.push(bigCard())
   const plans = [
     { id: 23, ref: 'PLAN-23', name: options.planName ?? 'Danxbot plugin', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 2 } },
     { id: 24, ref: 'PLAN-24', name: 'Agent mode', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 0 } },
@@ -285,21 +325,34 @@ export function dashboard(
       })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
+    if (method === 'GET' && issue && options.cardFails === issue[1]) return reply({ error: 'boom' }, 500)
+    if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
+    const probs = /^\/api\/issues\/([A-Z]+-\d+)\/problems$/.exec(path)
+    if (method === 'GET' && probs) {
+      const c = world.cards.find(x => x.id === probs[1])
+      if (!c) return reply({ error: 'nope' }, 404)
+      const q = String(query?.q ?? '').toLowerCase()
+      return reply({ problems: c.problems.filter(p => p.open && p.statement.toLowerCase().includes(q)) })
+    }
     if (method === 'GET' && issue && world.inProgress.some(c => c.id === issue[1])) {
       const c = world.inProgress.find(x => x.id === issue[1])!
       return reply({ id: c.id, title: c.title, assigned_agent_name: options.noAgent ? null : 'PLAN-23: danxbot plugin' })
     }
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
-      return c
-        ? reply({
-            id: c.id,
-            title: c.title,
-            problems: c.problems,
-            comments: c.comments,
-            ...(options.noCommentsTotal ? {} : { comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length } }),
-          })
-        : reply({ error: 'nope' }, 404)
+      if (!c) return reply({ error: 'nope' }, 404)
+      // as the real route answers: scalars always, a relation only when `fields` names it (problems' own solutions likewise)
+      const fields = query?.fields ?? {}
+      return reply({
+        id: c.id,
+        title: c.title,
+        ...(fields.problems
+          ? { problems: c.problems.map(({ solutions, ...row }) => (fields.problems.solutions ? { ...row, solutions } : row)) }
+          : {}),
+        ...(fields.comments
+          ? { comments: c.comments, ...(options.noCommentsTotal ? {} : { comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length } }) }
+          : {}),
+      })
     }
     const ans = /^\/api\/issues\/([A-Z]+-\d+)\/problems\/(\d+)\/answer$/.exec(path)
     if (method === 'POST' && ans) {
@@ -425,7 +478,7 @@ export function dashboard(
       if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
         return clock.sleep(3_600_000).then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
       }
-      return { value: route(e.args.method, e.args.path, e.args.body, e.args.query) }
+      return { value: hostLimited(route(e.args.method, e.args.path, e.args.body, e.args.query)) }
     }
     if (e.server === 'Claude_Browser') {
       const out = (text: string, isError = false) => ({ value: { content: [{ type: 'text', text }], isError } })
