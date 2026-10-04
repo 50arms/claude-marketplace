@@ -142,9 +142,8 @@ the whole brief — each tier loads `danxbot:issue-workflow` itself. Add the wor
 below only when the card wouldn't cover it. Set `effort_level` first, by the kind of work
 (issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
 never `general-purpose`. A card that carries gates never goes to a `worker-haiku-*` tier.
-A builder never spawns gate agents, since their notices reach only you: once it reports its
-pushed tip SHA, you run its gates, relay the findings and tell it when to land
-(issue-workflow § Gates).
+A builder runs its PRE gates itself and never spawns gate agents; once it reports its pushed
+tip SHA, you run its POST gates as gate workers and say when to land.
 
 Partition files before fanning out. State a time-box; never background a long test run and
 end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits
