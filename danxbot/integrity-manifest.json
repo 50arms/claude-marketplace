@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "798f384101758b24daf36575e9535bf5bb81577549ad6840ffa7596b17d1a256",
+    ".claude-plugin/plugin.json": "753cfa14662def18caa296e1021fca702351ed4512bab2d523adc90bbbc3e604",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -40,7 +40,7 @@
     "scripts/lib/hook-input.mjs": "077c2b2ec8932b05b68cbadeb51e197855757b79752219f8b966a37779ddbf3f",
     "scripts/lib/plan-connection.mjs": "7f2095132c484aebbda1c04760d6a738ab5ce0deed1d246ffd8051c539c9383d",
     "scripts/plan-event-bridge.mjs": "ec2e0d61e96c0a4dd7561049fd65dc3a756c9a84037f3c9c69002ebb6f6cf72f",
-    "skills/fix-agent-behavior/SKILL.md": "29ad51abcbaefbf35ea80ebee46233fafd4adf148341b84d13cb0c48407f9f11",
+    "skills/fix-agent-behavior/SKILL.md": "9f38073c718c331612ee868fa4e5b4e80e23b478b5549823737ab9047882b5fc",
     "skills/issue-workflow/SKILL.md": "ff3b570ae877a24ac29bde1b26847d12fb2fef4857179598af9ab41d1a1e1312",
     "skills/issue-workflow/references/card-creation-and-reference.md": "9c05a4d0a6c13f66dcb8fe19b35efa3dfe07d7fa775e51c0ff415768f5c74167",
     "skills/plan-workflow/SKILL.md": "5ef8787db46b810faa448713531bd210aa5abe510fcb7c63b42fd84e2ef721de",
