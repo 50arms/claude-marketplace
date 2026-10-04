@@ -44,8 +44,8 @@ own card on its own board.
 
 **Never a childless container.** A Feature/Epic without children can't be readied or picked
 up, so create its children the same turn (Epic → `phase_children[]`; Feature → child cards
-with `parent_id`). Can't → it's a Story. Parent→child: Epic → Feature/Story/Bug/Chore;
-Feature → Story/Bug/Chore; leaves have none.
+with `parent_id`). Can't → it's a Story. Parent→child: Epic → Feature/Story/Bug/Chore/Task;
+Feature → Story/Bug/Chore/Task; leaves have none.
 
 ## Effort
 

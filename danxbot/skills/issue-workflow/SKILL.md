@@ -15,8 +15,8 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 |---|---|---|
 | Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
-| Gates | the profile instruction carries them | one sub-agent per gate ("Gates" below) |
-| Merge + end | the `work` profile instruction | commit, push to main; `complete` + retro; report |
+| Gates | the profile instruction carries them | run by the operator session, never spawned by you ("Gates" below) |
+| Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to main, `complete` + retro, report |
 
 Dispatched-only mechanics (`danxbot_complete`, halt, `agent-finalize.sh`, the pre-synced
 worktree, DB resets) live only in danxbot's `work` profile.
@@ -39,17 +39,23 @@ worktree, DB resets) live only in danxbot's `work` profile.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Pass its POST gates.
 6. Merge first: a dispatched worker runs its profile's end order, `agent-finalize.sh`
-   first; an operator-session sub-agent commits and pushes to main. Only then transition
-   `complete` with a summary and write the retro, citing the sha now on `origin/main` (last
-   — it 409s until terminal). A phase card leaves `Notes from Phase N` on the next phase card.
+   first; an operator-session sub-agent, once told to land, commits and pushes to main.
+   Only then transition `complete` with a summary and write the retro (last — it 409s
+   until terminal), citing the sha now on `origin/main`. A phase card leaves `Notes from
+   Phase N` on the next phase card.
 
 ## Gates
 
 A quality gate is a step a card must pass: PRE gates (`plan-*`) run before the build, POST
 gates (`code-*`) on the finished diff. The card's `quality_gates` lists the ones it
-carries, and each board keeps its own text for what a gate does. For each gate not yet
-`pass`, dispatch one sub-agent — `danxbot:worker-opus-high` for an architecture gate,
-`danxbot:worker-sonnet-high` for the rest — briefed to:
+carries, and each board keeps its own text for what a gate does.
+
+An operator-session sub-agent never spawns gate agents: a nested agent's completion notice
+reaches only the top-level session. It runs a gate itself, in its own context, only when its
+brief says to; otherwise it pushes its card branch, reports the tip SHA and stops. The
+operator session runs each gate not yet `pass`, relays the findings for the sub-agent to fix,
+and tells it when to land. Each gate is one sub-agent — `danxbot:worker-opus-high` for an
+architecture gate, `danxbot:worker-sonnet-high` for the rest — briefed to:
 
 1. Fetch the board's gate text through `danxbot_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
