@@ -40,7 +40,7 @@ describe('plan band', () => {
       expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
       await ui.unmount()
     }
-    expect(d.statuses).toHaveLength(0)
+    expect(d.statuses.filter(s => s !== undefined)).toEqual([])
   })
 
   test('yields to a survey', async ($, on) => {

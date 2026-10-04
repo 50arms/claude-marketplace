@@ -132,7 +132,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(60_000)
       d.failList()
       await d.clock.advance(60_000)
-      expect(d.statuses).toHaveLength(0)
+      expect(d.statuses.filter(s => s !== undefined)).toEqual([])
     })
   })
 }

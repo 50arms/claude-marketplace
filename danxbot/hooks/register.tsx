@@ -400,7 +400,13 @@ async function retryWhileNoMcp($: any): Promise<void> {
   }
 }
 
+// DX-4374: v0.10.0 pinned a status line; the footer is the PLAN-NN button alone, so unpin anything an older loaded version left.
+async function unpinStatus($: any): Promise<void> {
+  await $.ui.status(undefined)
+}
+
 async function onSessionStart($: any, e: any, next: any) {
+  await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
