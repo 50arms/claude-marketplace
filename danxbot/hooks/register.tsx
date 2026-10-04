@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register } from 'claude-code'
 
 import type { ConnectedPlan, Draft, PermissionRequest, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
@@ -18,8 +18,11 @@ import {
   COMMAND,
   CONNECT_ERROR_MAX,
   EMPTY,
+  LIVE_REASON_MAX,
+  LIVE_SUBCOMMAND,
   LOCK_STALE_MS,
   MIN_GAP_MS,
+  NO_LIVE,
   NO_MCP_RETRY_MS,
   PANE,
   PLAN_TITLE,
@@ -43,7 +46,8 @@ import type { ToolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
-import { visibleSubagents } from './plan/subagents'
+import { NEW_READER, dashboardMcpBin, dashboardMcpRecord, exitReason, mergeSnapshots, pluginDataDir, pruneSnapshots, readPiece, readVersionRecord } from './plan/live'
+import { shownSubagents } from './plan/subagent-cards'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -67,6 +71,9 @@ const approvalOpened = atom({ plugin: 'danxbot', key: 'approvalOpened' } as cons
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
 // DX-4499: the clock a running sub-agent's runtime counts up against (see tickClock).
 const tick = atom({ plugin: 'danxbot', key: 'tick' } as const, 0)
+// DX-4508: the main session's transcript path (the classic events carry it) and the live child's reports for this session.
+const transcript = atom({ plugin: 'danxbot', key: 'transcript' } as const, null as string | null)
+const live = atom({ plugin: 'danxbot', key: 'live' } as const, NO_LIVE)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -80,6 +87,10 @@ const tick = atom({ plugin: 'danxbot', key: 'tick' } as const, 0)
 let ticker: { cancel: () => void } | null = null
 // DX-4499: the runtime clock's timer, one per session like the refresh timer.
 let runtimeClock: { cancel: () => void } | null = null
+// DX-4508: the live child's stream, at most one; a handle, so a module variable (a reload kills the child with the module).
+let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
+// DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
+let liveQueue: Promise<void> = Promise.resolve()
 
 // One dashboard call through the session's own danx-dashboard MCP server: same credential, same
 // x-danx-session-id header. Only the engine's "no such server" rejection (another repo) is
@@ -129,6 +140,7 @@ async function refresh($: any, force = false): Promise<void> {
         // for Sign in to ask for again; a loaded view knows its own
         await update($, view, cur => (v.phase === 'ready' ? v : { ...v, resumePlan: cur.connected?.id ?? cur.resumePlan }))
         await syncRuntimeClock($)
+        await syncLive($, false)
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -611,7 +623,7 @@ async function unpinStatus($: any): Promise<void> {
 // `visibleUntil`): started by a load that brings one, stopped by the first tick that finds none, so a plan with no sub-agents has no
 // timer at all. A cosmetic timer: it makes no call, it only redraws a pane that shows the clock.
 async function syncRuntimeClock($: any): Promise<void> {
-  const shown = visibleSubagents((await read($, view)).subagents.rows, await $.clock.now()).length > 0
+  const shown = shownSubagents(await read($, view), await read($, live), await $.clock.now()).length > 0
   if (shown && runtimeClock === null) {
     runtimeClock = $.clock.every(TICK_MS, () => tickClock($))
   } else if (!shown && runtimeClock !== null) {
@@ -624,6 +636,124 @@ async function tickClock($: any): Promise<void> {
   const now = await $.clock.now()
   await update($, tick, () => now)
   await syncRuntimeClock($)
+}
+
+// ---- DX-4508: the live sub-agent numbers ------------------------------------
+// While this session is plan-connected and has a running sub-agent (`$.agent.list()`), ONE host child streams its sub-agents'
+// numbers: `node <installed danx-dashboard-mcp>/dist/index.js subagents-live <main transcript>`, one JSON line per change. Each line
+// is checked and merged into the `live` atom, which redraws the pane with no dashboard read. The child stops once none runs. A
+// child that cannot start, exits, or prints a line that cannot be read is one muted line in the section, the dashboard's
+// numbers stand, and nothing retries until the next sub-agent starts.
+
+function errMessage(err: any): string {
+  return String(err?.message ?? err)
+}
+
+// `agent-<id>` -> status of this session's sub-agents (a teammate is not one), or why the engine could not list them.
+async function agentStatuses($: any): Promise<Record<string, string> | string> {
+  let agents: { id: string; type: string; status: string }[]
+  try {
+    agents = await $.agent.list()
+  } catch (err: any) {
+    return `the engine did not list this session's sub-agents (${errMessage(err)})`
+  }
+  // DX-4508: the dashboard and the live child name a sub-agent `agent-<agent id>`; `$.agent.list()` names it by the agent id alone
+  return Object.fromEntries(agents.filter(a => a.type !== 'teammate').map(a => [`agent-${a.id}`, a.status]))
+}
+
+async function noteTranscript($: any, e: any): Promise<void> {
+  const path = typeof e.transcript_path === 'string' ? e.transcript_path : ''
+  if (path !== '') await update($, transcript, cur => (cur === path ? cur : path))
+}
+
+// Ends the child (leaving its loop kills it); its loop then sees it is no longer the child and returns quietly.
+function stopLive(): void {
+  const child = liveChild
+  liveChild = null
+  if (child !== null) void child.return(undefined as any)
+}
+
+async function liveFailed($: any, reason: string): Promise<void> {
+  await update($, live, cur => ({ ...cur, warning: reason.slice(0, LIVE_REASON_MAX), failed: true }))
+}
+
+// `isStart`: a sub-agent just started, the one moment a failure is tried again.
+function syncLive($: any, isStart: boolean): Promise<void> {
+  liveQueue = liveQueue.then(() => checkLive($, isStart)).catch(err => liveFailed($, `the live check failed: ${errMessage(err)}`))
+  return liveQueue
+}
+
+async function checkLive($: any, isStart: boolean): Promise<void> {
+  if (isStart) await update($, live, cur => (cur.failed ? { ...cur, failed: false } : cur))
+  if ((await read($, view)).connected === null) return stopLive()
+  const statuses = await agentStatuses($)
+  if (typeof statuses === 'string') {
+    stopLive()
+    return liveFailed($, statuses)
+  }
+  // with none running there is nothing live to show, so an earlier failure's line goes too (the failure itself stands)
+  const anyRunning = Object.values(statuses).includes('running')
+  await update($, live, cur => ({ ...cur, statuses, warning: anyRunning ? cur.warning : null }))
+  if (!anyRunning) return stopLive()
+  if (liveChild !== null || (await read($, live)).failed) return
+  await startLive($)
+}
+
+async function startLive($: any): Promise<void> {
+  const path = await read($, transcript)
+  if (path === null) return liveFailed($, 'the session has not reported its transcript path yet')
+  const data = pluginDataDir($.plugin.root)
+  if ('reason' in data) return liveFailed($, data.reason)
+  const record = dashboardMcpRecord(data.dir)
+  let text: string
+  try {
+    text = await $.fs.read(record)
+  } catch (err: any) {
+    return liveFailed($, `no recorded dashboard MCP version at ${record} (${errMessage(err)})`)
+  }
+  const version = readVersionRecord(text)
+  if ('reason' in version) return liveFailed($, version.reason)
+  const bin = dashboardMcpBin(data.dir, version.version)
+  if (!(await $.fs.exists(bin))) return liveFailed($, `the dashboard MCP ${version.version} is not installed at ${bin}`)
+  const sessionId: string = await $.session.id()
+  const child: HookStream<ProcessSpawnChunk, ProcessSpawnResult> = $.process.spawn({ argv: ['node', bin, LIVE_SUBCOMMAND, path] })
+  liveChild = child
+  // a new child's first line carries every sub-agent; until it comes, what this session's last child said stands
+  await update($, live, cur => ({ ...cur, sessionId, warning: null, failed: false, snapshots: cur.sessionId === sessionId ? cur.snapshots : {} }))
+  void readLive($, child)
+}
+
+// The child's life, detached from the event that started it (plugin-authoring: "a child for the session's life").
+async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpawnResult>): Promise<void> {
+  let reader = NEW_READER
+  let isFirst = true
+  const ended = async (reason: string) => {
+    if (liveChild !== child) return
+    stopLive()
+    await liveFailed($, reason)
+  }
+  try {
+    for (;;) {
+      const r = await child.next()
+      // stopped (stopLive): whatever ended the stream was ours
+      if (liveChild !== child) return
+      if (r.done) return ended(exitReason(r.value, reader.stderr))
+      const step = readPiece(reader, r.value, LIVE_REASON_MAX)
+      reader = step.reader
+      for (const snapshots of step.lines) {
+        const statuses = await agentStatuses($)
+        if (typeof statuses === 'string') return ended(statuses)
+        const now = await $.clock.now()
+        const first = isFirst
+        isFirst = false
+        await update($, live, cur => ({ ...cur, statuses, snapshots: pruneSnapshots(mergeSnapshots(cur.snapshots, snapshots, first), now) }))
+      }
+      if (step.failure !== null) return ended(step.failure)
+      if (step.lines.length > 0) await syncRuntimeClock($)
+    }
+  } catch (err: any) {
+    await ended(`the live reader could not run: ${errMessage(err)}`)
+  }
 }
 
 async function onSessionStart($: any, e: any, next: any) {
@@ -651,7 +781,12 @@ async function onSessionEnd($: any, e: any, next: any) {
     runtimeClock = null
     settleTimer?.cancel()
     settleTimer = null
+    stopLive()
   } else if (e.reason === 'clear' || e.reason === 'resume') {
+    // DX-4508: another conversation: its sub-agents and transcript are not this one's
+    stopLive()
+    await update($, live, () => NO_LIVE)
+    await update($, transcript, () => null)
     // a fresh conversation (or another session taking this one's place) in the same process: what
     // the person had open or half-typed no longer applies, and what the dashboard shows may have
     // moved while they were in the old one
@@ -706,12 +841,23 @@ function settleSubagents($: any): void {
   })
 }
 
-async function onSubagentChange($: any, e: any, next: any) {
+async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
+  await noteTranscript($, e)
   const r = await next(e)
   void refresh($)
   // only a session connected to a plan has a Sub-agents section to settle
   if ((await read($, view)).connected !== null) settleSubagents($)
+  // DX-4508: start the live child for a new sub-agent, or stop it with the last one
+  await syncLive($, isStart)
   return r
+}
+
+function onSubagentStart($: any, e: any, next: any) {
+  return onSubagentChange($, e, next, true)
+}
+
+function onSubagentStop($: any, e: any, next: any) {
+  return onSubagentChange($, e, next, false)
 }
 
 async function onTurnComplete($: any, e: any, next: any) {
@@ -720,8 +866,9 @@ async function onTurnComplete($: any, e: any, next: any) {
   return r
 }
 
-// The app's session title, handed to `plan_connect` from the pane's Connect.
+// The app's session title, handed to `plan_connect` from the pane's Connect; and (DX-4508) the main transcript's path.
 async function onTitle($: any, e: any, next: any) {
+  await noteTranscript($, e)
   const t = typeof e.session_title === 'string' ? e.session_title.trim() : ''
   if (t) await update($, title, () => t)
   return next(e)
@@ -781,6 +928,7 @@ async function drawPane($: any, e: any) {
     now: await $.clock.now(),
     hasBrowser: e.surface === 'desktop',
     hasSvg: e.surface === 'desktop',
+    live: await read($, live),
   }
   return renderPane($.ui.resolve(e), handlers($), m)
 }
@@ -792,8 +940,8 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, onPlanConnect)
   on('tool.call', { tool: 'mcp__danx-dashboard__request_permission' }, onRequestPermission)
   on('turn.complete', onTurnComplete)
-  on('classic.SubagentStart', onSubagentChange)
-  on('classic.SubagentStop', onSubagentChange)
+  on('classic.SubagentStart', onSubagentStart)
+  on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onTitle)
   on('classic.UserPromptSubmit', onTitle)
   on('ui.render', { component: 'AbovePrompt' }, drawBand)

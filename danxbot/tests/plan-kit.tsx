@@ -261,6 +261,8 @@ export function dashboard(
     // DX-4499: the plan's live sessions, and each one's sub-agent rows (raw, as the route answers them)
     sessions: [OWN_SESSION] as { session_id: string; title: string }[],
     subagents: {} as Record<string, Record<string, unknown>[]>,
+    // DX-4508: this session's sub-agents as `$.agent.list()` answers them (the engine's own list), none by default
+    agents: [] as { id: string; type: string; description: string; status: string }[],
     titleSeen: undefined as string | undefined,
     // DX-4423: null while the session holds a key
     signedOut: (options.signedOut ?? null) as 'signed-out' | 'lapsed' | 'revoked' | null,
@@ -619,6 +621,19 @@ export function dashboard(
     return next(e)
   })
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
+  // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
+  // sub-agents. A test that drives the live child stacks its own process.spawn and fs hooks over these.
+  const agentLists = { count: 0 }
+  on('session.id', () => ({ value: OWN_SESSION.session_id }) as any)
+  on('agent.list', () => {
+    agentLists.count++
+    return { value: world.agents } as any
+  })
+  const spawns: string[][] = []
+  on('process.spawn', async function* (_$: any, e: any) {
+    spawns.push([...e.argv])
+    return { code: 1, signal: null }
+  } as any)
   // what the engine draws above the prompt when no plugin does: nothing
   on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
     const { Box } = $.ui.resolve(e)
@@ -658,7 +673,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { agentLists, spawns, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

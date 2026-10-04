@@ -2,7 +2,7 @@
 // same refresh as the rest of the pane (DX-4498's two routes), its runtime counted on a local clock, ended ones dimmed until they drop.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SUBAGENTS_UNAVAILABLE_LINE, SUBAGENT_ACTIVITY_MAX, SUBAGENT_LABEL_MAX, SUBAGENT_SESSION_MAX, SUBAGENT_STATE_COLOR } from '../hooks/plan/config'
+import { SUBAGENTS_UNAVAILABLE_LINE, SUBAGENT_ACTIVITY_MAX, SUBAGENT_CARD_BACKGROUND, SUBAGENT_LABEL_MAX, SUBAGENT_STATE_COLOR, SUBAGENT_UNTITLED } from '../hooks/plan/config'
 import { compactCount, dollars, duration, nestSubagents, visibleSubagents } from '../hooks/plan/subagents'
 import { CLOCK_START, DASHBOARD_URL, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, endedSubagent, rawSubagent, startSession } from './plan-kit'
 
@@ -15,6 +15,12 @@ const cardKeys = async (ui: any) => (await cards(ui)).map((b: any) => b.key)
 const keysBelow = (el: any): string[] =>
   (el.children ?? []).flatMap((c: any) => (typeof c === 'string' ? [] : [...(c.props?.key ? [c.props.key] : []), ...keysBelow(c)]))
 const OWN = OWN_SESSION.session_id
+// DX-4508: the status dots of the Sub-agents section (the pane draws other dots above it), `<colour>:<dimmed>` each
+const sectionDots = async (ui: any) => {
+  const texts = await ui.findAll({ type: 'Text' })
+  const from = texts.findIndex((t: any) => t.text === 'Sub-agents')
+  return texts.slice(from).filter((t: any) => t.text === '●').map((t: any) => `${t.props.color}:${!!t.props.dimColor}`)
+}
 const subagentCalls = (d: any) => d.api.filter((a: any) => a.path.startsWith('/api/plan-sessions'))
 
 describe('the words a sub-agent card is drawn in', () => {
@@ -46,7 +52,7 @@ describe('the words a sub-agent card is drawn in', () => {
 
 describe('which sub-agents show, and in what order', () => {
   const row = (over: Record<string, unknown>) => ({
-    id: 'x', sessionId: 's', sessionTitle: 't', parentId: null, label: null, agentType: null, model: null, effort: null, state: 'running', startedAt: 0,
+    id: 'x', sessionId: 's', parentId: null, label: null, agentType: null, model: null, effort: null, state: 'running', startedAt: 0,
     finishedAt: null, visibleUntil: null, tokensTotal: 0, costUsd: 0, toolCalls: 0, activity: null, card: null, ...over,
   }) as any
 
@@ -76,19 +82,35 @@ describe('which sub-agents show, and in what order', () => {
 
 for (const surface of SURFACES) {
   describe(`a sub-agent card on ${surface}`, () => {
-    test('a running sub-agent is its own card: border in its state colour, theme fill, padding, a dot, and every fact the operator asked for', async ($, on) => {
+    // DX-4508: drawn as Claude Code's own background task cards are: no border, a raised fill, colour only on the status dot
+    test('a running sub-agent is its own card: no border, a raised fill, padding, a coloured dot, and every fact the operator asked for', async ($, on) => {
       const d = dashboard(on)
       d.world.subagents[OWN] = [rawSubagent('a1')]
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       const card = await ui.find({ key: 'sa-agent-a1' })
-      expect(card?.props).toMatchObject({ borderStyle: 'round', borderColor: 'green', borderDimColor: false, backgroundColor: 'userMessageBackground', paddingX: 1 })
+      expect(card?.props).toMatchObject({ backgroundColor: SUBAGENT_CARD_BACKGROUND, paddingX: 1 })
+      expect(SUBAGENT_CARD_BACKGROUND).toBe('userMessageBackground')
+      for (const prop of ['borderStyle', 'borderColor', 'borderDimColor']) expect(card?.props[prop]).toBeUndefined()
       const dot = (await ui.findAll({ type: 'Text', text: '●' })).find((t: any) => t.props.color === SUBAGENT_STATE_COLOR.running)
       expect(dot).toBeDefined()
+      // the name in the primary colour (bold), every metadata line muted: the dot is the only colour on the card
+      const name = (await ui.findAll({ type: 'Text', text: 'Build a1' }))[0]
+      expect(name?.props.bold).toBe(true)
+      expect(!!name?.props.dimColor).toBe(false)
+      expect(name?.props.color).toBeUndefined()
+      for (const line of ['4m 12s', 'danxbot:worker-sonnet-high · claude-sonnet-5-5 · high', '12k tokens', '▸ Bash', 'In flight card']) {
+        // the last match: the In progress list above also names the card
+        const t = (await ui.findAll({ type: 'Text', text: line })).at(-1)
+        expect(t?.props.dimColor, line).toBe(true)
+        expect(t?.props.color, line).toBeUndefined()
+      }
       const shown = card!.text
       expect(shown).toContain('Build a1')
       expect(shown).toContain('danxbot:worker-sonnet-high · claude-sonnet-5-5 · high')
-      expect(shown).toContain('session: PLAN-23: danxbot plugin')
+      // DX-4508: no session line
+      expect(shown).not.toContain('session:')
+      expect(shown).not.toContain(OWN_SESSION.title)
       // 4 minutes 12 seconds before the fake clock's start
       expect(shown).toContain('4m 12s')
       expect(shown).toContain('12k tokens · $0.42 · 7 tool calls')
@@ -114,10 +136,10 @@ for (const surface of SURFACES) {
       const cut = (cap: number) => `${'x'.repeat(cap - 1)}…`
       expect(card.text).toContain(cut(SUBAGENT_LABEL_MAX))
       expect(card.text).toContain(`▸ ${cut(SUBAGENT_ACTIVITY_MAX)}`)
-      expect(card.text).toContain(`session: ${cut(SUBAGENT_SESSION_MAX)}`)
+      expect(card.text).not.toContain('session:')
       const texts = await ui.findAll({ type: 'Text' })
       const long60 = texts.filter((t: any) => t.text.includes('xxxxxxxx'))
-      expect(long60.length).toBeGreaterThanOrEqual(4)
+      expect(long60.length).toBeGreaterThanOrEqual(3)
       for (const t of long60) expect(t.props.wrap).toBe('truncate-end')
       const runtimeBox = (await ui.findAll({ type: 'Box' })).find((b: any) => b.text === 'failed 1m 30s')
       expect(runtimeBox?.props.flexShrink).toBe(0)
@@ -140,15 +162,23 @@ for (const surface of SURFACES) {
       expect((await ui.find({ key: 'sa-agent-none' }))?.text).toContain('no card')
     })
 
-    test('a sub-agent with no label shows its id, and with no type, model or effort draws no empty line', async ($, on) => {
+    // DX-4508: the title is the description, else the agent type, never the id (`agent-a7526d...`)
+    test('a sub-agent with no description is titled by its agent type, and with neither by a plain word, never its id', async ($, on) => {
       const d = dashboard(on)
-      d.world.subagents[OWN] = [rawSubagent('bare', { description: null, agent_type: null, model: null, effort: null, current_activity: null })]
+      d.world.subagents[OWN] = [
+        rawSubagent('typed', { description: null, model: null, effort: null }),
+        rawSubagent('bare', { description: null, agent_type: null, model: null, effort: null, current_activity: null, started_at: CLOCK_START - 10_000 }),
+      ]
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
-      const shown = (await ui.find({ key: 'sa-agent-bare' }))!.text
-      expect(shown).toContain('agent-bare')
-      expect(shown).not.toContain(' · claude')
-      expect(shown).not.toContain('▸')
+      expect((await ui.findAll({ type: 'Text', text: 'danxbot:worker-sonnet-high' }))[0]?.props.bold).toBe(true)
+      const typed = (await ui.find({ key: 'sa-agent-typed' }))!.text
+      expect(typed).not.toContain('agent-typed')
+      const bare = (await ui.find({ key: 'sa-agent-bare' }))!.text
+      expect(bare).toContain(SUBAGENT_UNTITLED)
+      expect(bare).not.toContain('agent-bare')
+      expect(bare).not.toContain(' · claude')
+      expect(bare).not.toContain('▸')
     })
 
     test('the section names the plan sessions it reads: live ones of the plan, newest activity first, one sub-agents read each', async ($, on) => {
@@ -160,15 +190,15 @@ for (const surface of SURFACES) {
       expect(subagentCalls(d).map(a => a.path).sort()).toEqual(['/api/plan-sessions', `/api/plan-sessions/${OTHER_SESSION.session_id}/subagents`, `/api/plan-sessions/${OWN}/subagents`].sort())
     })
 
-    test('two sessions: each card carries its own session title', async ($, on) => {
+    test('two sessions: the cards name no session, and order across them by start', async ($, on) => {
       const d = dashboard(on)
       d.world.sessions = [OWN_SESSION, OTHER_SESSION]
       d.world.subagents[OWN] = [rawSubagent('a1')]
       d.world.subagents[OTHER_SESSION.session_id] = [rawSubagent('b1', { session_id: OTHER_SESSION.session_id, started_at: CLOCK_START - 60_000 })]
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
-      expect((await ui.find({ key: 'sa-agent-a1' }))!.text).toContain(`session: ${OWN_SESSION.title}`)
-      expect((await ui.find({ key: 'sa-agent-b1' }))!.text).toContain(`session: ${OTHER_SESSION.title}`)
+      expect((await ui.find({ key: 'sa-agent-a1' }))!.text).not.toContain(OWN_SESSION.title)
+      expect((await ui.find({ key: 'sa-agent-b1' }))!.text).not.toContain(OTHER_SESSION.title)
       // oldest start first among running rows, whichever session they belong to
       expect(await cardKeys(ui)).toEqual(['sa-agent-a1', 'sa-agent-b1'])
     })
@@ -185,9 +215,10 @@ for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       expect(await cardKeys(ui)).toEqual(['sa-agent-a1', 'sa-agent-a2', 'sa-agent-e2', 'sa-agent-e1'])
       const failed = (await ui.find({ key: 'sa-agent-e2' }))!
-      expect(failed.props).toMatchObject({ borderColor: SUBAGENT_STATE_COLOR.failed, borderDimColor: true })
       expect(failed.text).toContain('failed 1m 30s')
-      expect((await ui.find({ key: 'sa-agent-e1' }))!.props).toMatchObject({ borderColor: SUBAGENT_STATE_COLOR.done, borderDimColor: true })
+      // an ended card is dimmed: its dot keeps its state's colour, dimmed, and so is its name
+      expect(await sectionDots(ui)).toEqual([`${SUBAGENT_STATE_COLOR.running}:false`, `${SUBAGENT_STATE_COLOR.running}:false`, `${SUBAGENT_STATE_COLOR.failed}:true`, `${SUBAGENT_STATE_COLOR.done}:true`])
+      expect((await ui.findAll({ type: 'Text', text: 'Build e2' }))[0]?.props.dimColor).toBe(true)
       const stateWords = await text(ui)
       expect(stateWords).toContain('2 running, 2 ended')
     })
@@ -197,11 +228,11 @@ for (const surface of SURFACES) {
       d.world.subagents[OWN] = [endedSubagent('s1', 'stopped', 10_000)]
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
-      expect((await ui.find({ key: 'sa-agent-s1' }))!.props.borderColor).toBe(SUBAGENT_STATE_COLOR.stopped)
+      expect(await sectionDots(ui)).toEqual([`${SUBAGENT_STATE_COLOR.stopped}:true`])
       expect(new Set(Object.values(SUBAGENT_STATE_COLOR)).size).toBe(4)
     })
 
-    test('a sub-agent that spawned others holds their cards inside its own, and says the session once', async ($, on) => {
+    test('a sub-agent that spawned others holds their cards inside its own', async ($, on) => {
       const d = dashboard(on)
       d.world.subagents[OWN] = [
         rawSubagent('p'),
@@ -213,10 +244,6 @@ for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       const parent = (await ui.find({ key: 'sa-agent-p' }))!
       expect(keysBelow(parent)).toEqual(['sa-agent-c', 'sa-agent-gc'])
-      // the parent's card holds the child and grandchild, and the session is said once across all three
-      expect(parent.text.split('session:').length - 1).toBe(1)
-      // a child whose parent is not listed is drawn as a root, with its session
-      expect((await ui.find({ key: 'sa-agent-orphan' }))!.text).toContain('session: ')
       expect(await cardKeys(ui)).toEqual(['sa-agent-p', 'sa-agent-c', 'sa-agent-gc', 'sa-agent-orphan'])
     })
 

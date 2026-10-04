@@ -258,7 +258,8 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
 }
 
 // DX-4499: the sub-agents of every live session on the plan (GET /api/plan-sessions, newest activity first, the pane's own session
-// among them), one read each (GET /api/plan-sessions/:sessionId/subagents, DX-4498), each row carrying its session's title. A read
+// among them), one read each (GET /api/plan-sessions/:sessionId/subagents, DX-4498), each row carrying its session's id (DX-4508: the
+// live numbers lay over this session's own rows). A read
 // that fails is one line naming what could not be read; the other sessions' rows still show. Signed-out and revoked answers are
 // `guarded`'s: they end the whole load before they reach here.
 async function loadSubagents(call: Call, planId: number): Promise<SubagentsView> {
@@ -291,7 +292,7 @@ async function loadSubagents(call: Call, planId: number): Promise<SubagentsView>
       errors.push(`Couldn't read ${named}: the dashboard sent no list of them`)
       continue
     }
-    const shaped = raw.map(x => toSubagent(x, s.session_id, s.title))
+    const shaped = raw.map(x => toSubagent(x, s.session_id))
     const bad = shaped.find((x): x is string => typeof x === 'string')
     if (bad !== undefined) errors.push(`Couldn't read ${named}: ${bad}`)
     else rows.push(...(shaped as SubagentRow[]))

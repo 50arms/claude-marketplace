@@ -109,18 +109,16 @@ export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: strin
 // shape the pane draws a card from. `state` is the server's (running, or how it ended); the pane counts a running one's
 // runtime up from `startedAt` on its own clock and drops an ended one at `visibleUntil` (epoch ms, both).
 export type SubagentState = 'running' | 'done' | 'failed' | 'stopped'
+// DX-4508: the card a sub-agent works on. `title` is null when only the live child named the card and the pane has loaded
+// no card of that id: the id link is drawn alone.
 export type SubagentCard = {
   id: string
-  title: string
-  // how the server learned the card: the one the sub-agent claimed, or the one its brief opens with
-  via: 'claim' | 'brief'
+  title: string | null
 }
 export type SubagentRow = {
   // `agent-<agent id>`: the key `parentId` of another row names
   id: string
   sessionId: string
-  // the readable title of the session the sub-agent runs under
-  sessionTitle: string
   parentId: string | null
   // the label its spawning call gave it; null when it was given none
   label: string | null
@@ -151,6 +149,39 @@ export type SubagentsView = {
   // every session's sub-agents read answered 404: the dashboard has no such route yet (it predates DX-4498). Not an error line per
   // session: the section says so once, quietly.
   unavailable: boolean
+}
+
+// DX-4508: one sub-agent as the live child (`danx-dashboard-mcp subagents-live <main transcript>`) prints it, epoch ms.
+export type LiveSnapshot = {
+  // `agent-<agent id>`, the dashboard row's id
+  id: string
+  parentId: string | null
+  description: string | null
+  agentType: string | null
+  model: string | null
+  effort: string | null
+  startedAt: number
+  lastActivityAt: number
+  finishedAt: number | null
+  endStatus: 'completed' | 'failed' | 'stopped' | null
+  tokensTotal: number
+  costUsd: number
+  toolCallCount: number
+  currentActivity: string | null
+  cardId: string | null
+}
+
+// DX-4508: what the live child has reported for THIS session, laid over the dashboard rows when the pane draws.
+export type LiveSubagents = {
+  // the session the snapshots are of (`$.session.id()` when the child started); null before any child ran
+  sessionId: string | null
+  snapshots: Record<string, LiveSnapshot>
+  // `agent-<id>` -> `$.agent.list()`'s status, read at each start check and each line
+  statuses: Record<string, string>
+  // why the live numbers are not shown (the child could not start, exited, or printed a line it cannot read); null when they are
+  warning: string | null
+  // a failure stands until the next sub-agent start (never retried on a refresh)
+  failed: boolean
 }
 
 export type PlanView = {
@@ -231,6 +262,10 @@ declare module 'claude-code' {
       // DX-4499: the clock (epoch ms) a running sub-agent's runtime counts up against: advanced once a second, only while one is
       // shown, and used for nothing but drawing (no call is made on it).
       tick: number
+      // DX-4508: the MAIN session's transcript path, as the classic events last carried it (`transcript_path`): the live child reads it.
+      transcript: string | null
+      // DX-4508: the live child's reports for this session (see LiveSubagents).
+      live: LiveSubagents
     }
   }
 }

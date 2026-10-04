@@ -1,4 +1,4 @@
-import type { Draft, PlanView, StatusBreakdown } from '../../types'
+import type { Draft, LiveSubagents, PlanView, StatusBreakdown } from '../../types'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { problemCard } from './problems'
@@ -21,6 +21,8 @@ export type PaneModel = {
   hasBrowser: boolean
   // DX-4374: the surface draws an Svg (the desktop); the terminal shows the donut as a glyph and text.
   hasSvg: boolean
+  // DX-4508: the live child's numbers for this session's sub-agents
+  live: LiveSubagents
 }
 
 // DX-4374: one status dot, in the colour that says what it means (green working, yellow warning).
@@ -242,7 +244,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       {cappedInProgressNote(v) && <Text color={WARNING}>{cappedInProgressNote(v)}</Text>}
 
       {/* DX-4499: after the cards they work on, so a sub-agent's card ref sits under the In progress list it belongs to */}
-      {subagentSection(E, v, plan, m.now)}
+      {subagentSection(E, v, plan, m.now, m.live)}
       {/* DX-4448: the plan loaded, but the card links did not: say why replies show plain card ids, never silently */}
       {v.links.state === 'error' && <Text color={WARNING}>Card ids in replies are not linked: {v.links.message}</Text>}
       {v.refreshedAt && <Text dimColor>{updatedText(v.refreshedAt)}</Text>}

@@ -11,7 +11,7 @@ const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isF
 
 // One row of `GET /api/plan-sessions/:sessionId/subagents` (danxbot's plan_session_subagent resource), or the one reason it cannot
 // be read. Every field the card draws is checked: a row the pane cannot draw truthfully is an error line, never a guessed value.
-export function toSubagent(raw: any, sessionId: string, sessionTitle: string): SubagentRow | string {
+export function toSubagent(raw: any, sessionId: string): SubagentRow | string {
   if (raw === null || typeof raw !== 'object') return 'a row that is not an object'
   if (!isString(raw.id)) return 'a row with no id'
   const at = (what: string) => `${raw.id} has no valid ${what}`
@@ -29,7 +29,6 @@ export function toSubagent(raw: any, sessionId: string, sessionTitle: string): S
   return {
     id: raw.id,
     sessionId,
-    sessionTitle,
     parentId: raw.parent_id,
     label: raw.description,
     agentType: raw.agent_type,
@@ -50,8 +49,9 @@ export function toSubagent(raw: any, sessionId: string, sessionTitle: string): S
 function readCard(raw: any): SubagentCard | null | typeof MALFORMED {
   if (raw === null) return null
   if (raw === undefined || typeof raw !== 'object') return MALFORMED
-  if (!isString(raw.id) || !isString(raw.title) || (raw.via !== 'claim' && raw.via !== 'brief')) return MALFORMED
-  return { id: raw.id, title: raw.title, via: raw.via }
+  // DX-4508: the card's `via` (how the server learned it) is not read: the pane draws the id and title alone
+  if (!isString(raw.id) || !isString(raw.title)) return MALFORMED
+  return { id: raw.id, title: raw.title }
 }
 
 // The rows a session's chain of parents loops through, or null: a loop is never drawn (a card inside itself), so it is an error.

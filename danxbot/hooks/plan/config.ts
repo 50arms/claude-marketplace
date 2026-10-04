@@ -1,4 +1,4 @@
-import type { ConnectedPlan, PlanView, SubagentState } from '../../types'
+import type { ConnectedPlan, LiveSubagents, PlanView, SubagentState } from '../../types'
 
 export const PANE = 'danx-plan'
 // DX-4419: the name every footer and pane label, and the band's not-connected, loading and disconnected states, carry,
@@ -60,7 +60,8 @@ export const OUTPUT_EXCERPT_MAX = 80
 // DX-4499: the sub-agent card's long lines, each cut with an ellipsis so one line never wraps the card.
 export const SUBAGENT_LABEL_MAX = 60
 export const SUBAGENT_ACTIVITY_MAX = 90
-export const SUBAGENT_SESSION_MAX = 50
+// DX-4508: a sub-agent's title is its description, else its agent type, never its id (`agent-a7526d...`); with neither, this.
+export const SUBAGENT_UNTITLED = 'Sub-agent'
 // DX-4499: the section's one line when the dashboard has no sub-agents route yet (an older dashboard than DX-4498's).
 export const SUBAGENTS_UNAVAILABLE_LINE = 'This dashboard does not report sub-agents yet.'
 
@@ -80,17 +81,33 @@ export const SUCCESS = 'green'
 export const DANGER = 'red'
 export const WARNING = 'yellow'
 
-// DX-4499: the dot, the card's border and the state word of a sub-agent, one colour per state: green running, cyan done,
-// red failed, yellow stopped (a person or a lapsed session ended it).
+// DX-4499 / DX-4508: a sub-agent's status dot, one colour per state: green running, cyan done, red failed, yellow stopped (a
+// person or a lapsed session ended it). The dot is the only coloured mark on the card: the card has no border.
 export const SUBAGENT_STATE_COLOR: Record<SubagentState, string> = {
   running: SUCCESS,
   done: ACCENT,
   failed: DANGER,
   stopped: WARNING,
 }
-// DX-4499: the card's fill: the terminal theme's own colour for a boxed message (the user-message box), so it reads on a light
-// and a dark theme alike.
+// DX-4508: the card's raised surface, a theme key so it reads on a light and a dark theme alike. Claude Code's own background
+// task rows are drawn on `userMessageBackground` (its hover `userMessageBackgroundHover`), the slightly lighter grey of a user
+// prompt (dark theme rgb(55,55,55)); the theme's other fills are the docked sidebar's own colour (`composerSidebarBackground`, the
+// pane itself, so no raise), the selection blue, and the bash/memory message tints. Checked in the 2.1.286 build's themes.
+// No rounded corners: a Box rounds only by drawing a `round` border, and the card is borderless.
 export const SUBAGENT_CARD_BACKGROUND = 'userMessageBackground'
+
+// DX-4508: the host child that streams this session's sub-agent numbers (`node <bin> subagents-live <main transcript>`), and where
+// its bin sits under a version's install directory: the one layout scripts/ensure-dashboard-mcp.sh names as BIN_REL.
+export const LIVE_SUBCOMMAND = 'subagents-live'
+export const DASHBOARD_MCP_BIN_REL = 'node_modules/@thehammer/danx-dashboard-mcp/dist/index.js'
+// DX-4508: how long an ended sub-agent stays listed after it finished: danxbot's SUBAGENT_ENDED_VISIBLE_MS
+// (src/issues/db/plan-session-subagents.ts), mirrored for a row only the live child has reported so far.
+export const SUBAGENT_ENDED_VISIBLE_MS = 600_000
+// DX-4508: the one line the section shows when the live numbers cannot be read; the dashboard's numbers stand.
+export const liveUnavailableLine = (reason: string) => `Live numbers unavailable: ${reason}`
+export const LIVE_REASON_MAX = 160
+// DX-4508: no live child has reported yet.
+export const NO_LIVE: LiveSubagents = { sessionId: null, snapshots: {}, statuses: {}, warning: null, failed: false }
 
 export const EMPTY: PlanView = {
   phase: 'loading',
