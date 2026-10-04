@@ -12,8 +12,10 @@ throughout; this skill is the plan mechanics.
 
 1. Plan link in the prompt → that plan. Else list plans; your session's plan right → step 3.
    Else find it in the list; none → create one.
-2. The session title must name what you're doing — generic or stale → rename first, then
-   `plan_connect({plan_id, title})`. Renamed later → connect again.
+2. Your session title is `{Name}: PLAN-NNN {short title}` (e.g. `Amara: PLAN-17 Closed beta`; `{Name}` your own
+   short given name). `plan_connect({plan_id})` answers `naming` with the exact title and a free name: rename the
+   thread to it (desktop `set_session_title`; terminal: ask the person to `/rename`), then
+   `plan_connect({plan_id, title})` again — the server refuses a wrong format or a name another live session holds.
 3. A session holds no dashboard key until its user approves it. `plan_connect` answering
    `approval_required` (or `approval_pending`) is not a failure: show the user the confirm code
    and the approval URL, open that URL in the in-app browser yourself when you have one (the
