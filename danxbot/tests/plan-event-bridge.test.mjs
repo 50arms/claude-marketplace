@@ -2643,21 +2643,16 @@ describe("start() writes .started.json (DX-2953)", () => {
   });
 });
 
-describe("hookMayStart — SessionStart spawns nothing for an unconnected session (DX-3392 1762/1764)", () => {
-  test("plan_connect always may start, without consulting the connection record", () => {
-    const connected = () => assert.fail("a connect must not consult the connection record");
-    assert.equal(bridge.hookMayStart({ intent: bridge.CONNECT_INTENT, sessionId: SESSION, env: {}, connected }), true);
-  });
-
-  test("a session start follows the connection record, read under DANXBOT_PLAN_SESSIONS_HOME", () => {
+describe("hookMayStart — a hook spawns nothing for a session with no plan connection record (DX-3392 1762/1764, DX-4391)", () => {
+  test("a hook follows the connection record, read under DANXBOT_PLAN_SESSIONS_HOME", () => {
     const seen = [];
     const connected = (sessionId, home) => {
       seen.push([sessionId, home]);
       return sessionId === "on-a-plan";
     };
     const env = { DANXBOT_PLAN_SESSIONS_HOME: "/fake-home" };
-    assert.equal(bridge.hookMayStart({ intent: bridge.RESUME_INTENT, sessionId: "on-a-plan", env, connected }), true);
-    assert.equal(bridge.hookMayStart({ intent: bridge.RESUME_INTENT, sessionId: "no-plan", env, connected }), false);
+    assert.equal(bridge.hookMayStart({ sessionId: "on-a-plan", env, connected }), true);
+    assert.equal(bridge.hookMayStart({ sessionId: "no-plan", env, connected }), false);
     assert.deepEqual(seen, [["on-a-plan", "/fake-home"], ["no-plan", "/fake-home"]]);
   });
 
@@ -2665,11 +2660,11 @@ describe("hookMayStart — SessionStart spawns nothing for an unconnected sessio
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-gate-"));
     try {
       const env = { DANXBOT_PLAN_SESSIONS_HOME: home };
-      assert.equal(bridge.hookMayStart({ intent: bridge.RESUME_INTENT, sessionId: SESSION, env }), false);
+      assert.equal(bridge.hookMayStart({ sessionId: SESSION, env }), false);
       const dir = path.join(home, ".config", "danxbot", "plan-sessions");
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
-      assert.equal(bridge.hookMayStart({ intent: bridge.RESUME_INTENT, sessionId: SESSION, env }), true);
+      assert.equal(bridge.hookMayStart({ sessionId: SESSION, env }), true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -2729,5 +2724,40 @@ describe("start mode's watchdog flags (DX-3997)", () => {
     const result = spawnSync(process.execPath, [path.join(here, "..", "scripts", "plan-event-bridge.mjs"), "watchdog"], { encoding: "utf8" });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /usage: plan-event-bridge\.mjs start\|stop\|run/);
+  });
+
+  // DX-4391: the real CLI, as the PostToolUse(plan_connect) hook runs it. The env lacks the messaging inbox on purpose:
+  // a start that got past the gate would announce that on stderr and exit 2, so a quiet exit 0 proves nothing started.
+  describe("the PostToolUse(plan_connect) hook run for real", () => {
+    const runHook = (home) =>
+      spawnSync(process.execPath, [path.join(here, "..", "scripts", "plan-event-bridge.mjs"), "start"], {
+        encoding: "utf8",
+        input: JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", tool_name: "mcp__danx-dashboard__plan_connect" }),
+        env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, DANXBOT_PLAN_SESSIONS_HOME: home },
+      });
+
+    test("a plan_connect that left no connection record (approval_required, approval_pending, signed_in) starts nothing and says nothing", () => {
+      const home = tmpDir();
+      try {
+        const result = runHook(home);
+        assert.deepEqual([result.status, result.stdout, result.stderr], [0, "", ""]);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    test("a plan_connect that left the connection record starts the bridge (here it fails loud on the missing inbox)", () => {
+      const home = tmpDir();
+      try {
+        const dir = path.join(home, ".config", "danxbot", "plan-sessions");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
+        const result = runHook(home);
+        assert.equal(result.status, 2);
+        assert.match(result.stderr, /could not start/);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
   });
 });

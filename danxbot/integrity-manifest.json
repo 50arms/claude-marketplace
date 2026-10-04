@@ -38,7 +38,7 @@
     "scripts/lib/failure-notice.mjs": "3bfe8c6f51d0732b057c8fa939aee31cebec4f9da89c5535c69bc570a9e4f302",
     "scripts/lib/hook-input.mjs": "4ee05e236faf87a5bc1ff6a180afbe7b123631336a076105575a3e14f4481b33",
     "scripts/lib/plan-connection.mjs": "3b6560c21170630b9c9c3effaaafd568eaa13c930109274e96135ad69b3e9051",
-    "scripts/plan-event-bridge.mjs": "47482603f315a302d8bb350bcfcabc026e89eb64867abc201d34055aa9a8cc85",
+    "scripts/plan-event-bridge.mjs": "b6acd0aef03e9bfeb1bbdc14cdca80abeff85215bd0b3a35fb0ca70233c123e8",
     "skills/fix-agent-behavior/SKILL.md": "29ad51abcbaefbf35ea80ebee46233fafd4adf148341b84d13cb0c48407f9f11",
     "skills/issue-workflow/SKILL.md": "0d924c0963b6a59522d22cca338d39151c31a21fcbb9fa0ceb0b46e59da4b8f9",
     "skills/issue-workflow/references/card-creation-and-reference.md": "9c05a4d0a6c13f66dcb8fe19b35efa3dfe07d7fa775e51c0ff415768f5c74167",

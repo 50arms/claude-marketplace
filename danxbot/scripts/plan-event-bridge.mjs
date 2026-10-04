@@ -17,8 +17,11 @@
  * its inbox as one plain message with the reason and the fix. When the inbox itself is
  * missing, `start` exits 2 with the notice on stderr, which `asyncRewake` shows Claude.
  *
- * WHEN IT RUNS. `plan_connect` (PostToolUse) always runs `start`. SessionStart runs it
- * only for a plan-connected session (`lib/plan-connection.mjs`, see `hookMayStart`).
+ * WHEN IT RUNS. `plan_connect` (PostToolUse) and SessionStart run `start` only for a
+ * plan-connected session (`lib/plan-connection.mjs`, see `hookMayStart`). A `plan_connect`
+ * that is not a plan connection (DX-4391: approval_required, approval_pending, signed_in,
+ * a refused connect, a leave) leaves no connection record, so it starts nothing and relays
+ * nothing.
  *
  * LIVENESS. The bridge's own check of its Claude process (`CLAUDE_PID`, observed but
  * undocumented) is the sole authority on whether the session is alive; SessionEnd only
@@ -1578,9 +1581,9 @@ export async function run(
 
 /**
  * Which hook ran this. `hooks.json` fires PostToolUse only on `plan_connect`, so
- * that event IS "this session just connected a plan": the one moment the bridge
+ * that event IS "this session just asked to connect a plan": the one moment the bridge
  * must be (re)started and every failure told to the session, whatever state the
- * session was in before.
+ * session was in before, once `hookMayStart` has found the connect real.
  */
 export function intentFromHookEvent(hookEventName) {
   return hookEventName === "PostToolUse" ? CONNECT_INTENT : RESUME_INTENT;
@@ -1588,11 +1591,13 @@ export function intentFromHookEvent(hookEventName) {
 
 /**
  * Whether a hook's `start` may spawn anything (DX-3392 problems 1762/1764, PLN-11
- * R-10). A `plan_connect` always may; a SessionStart only for a session already
- * plan-connected, so the many sessions that never touch a plan spawn nothing.
+ * R-10): only for a session with a plan connection record, so the many sessions that never
+ * touch a plan spawn nothing. DX-4391: this holds for a `plan_connect` too. The MCP server
+ * writes the record before it answers a real connect, whereas the answers of a signed-out
+ * session (approval_required, approval_pending, signed_in) leave none, and a `start` for those
+ * relayed `bridge down: no_connection_record` into the session each time.
  */
-export function hookMayStart({ intent, sessionId, env = process.env, connected = isPlanConnected }) {
-  if (intent === CONNECT_INTENT) return true;
+export function hookMayStart({ sessionId, env = process.env, connected = isPlanConnected }) {
   return connected(sessionId, env.DANXBOT_PLAN_SESSIONS_HOME || homedir());
 }
 
@@ -1657,7 +1662,7 @@ if (isMain) {
       const flags = parseStartFlags(process.argv.slice(3));
       const hook = await readHookInput();
       const request = resolveStartRequest({ hook, flags });
-      if (request.gated && !hookMayStart({ intent: request.intent, sessionId: request.sessionId })) process.exit(0);
+      if (request.gated && !hookMayStart({ sessionId: request.sessionId })) process.exit(0);
       const { gated: _gated, ...startArgs } = request;
       const result = await start(startArgs);
       process.exit(result.exitCode ?? 0);
