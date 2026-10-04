@@ -22,7 +22,10 @@ import {
   PANE,
   PLAN_TITLE,
   POLL_MS,
+  SIGNED_IN_TOAST,
   SIGN_IN_ROUNDS,
+  SIGN_IN_TIMEOUT_TOAST,
+  signInFailedToast,
   SERVER,
   NOTE_MARKER,
   TOAST_ERROR_MAX,
@@ -350,29 +353,30 @@ async function signIn($: any): Promise<void> {
       try {
         r = await $.mcp.call(SERVER, 'plan_connect', args)
       } catch (err: any) {
-        $.ui.toast(`Sign in failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
+        $.ui.toast(signInFailedToast(String(err?.message ?? err)))
         return
       }
       const step = signInStep(r)
-      if (step.kind === 'approval') {
-        if (shown !== null && step.request.url !== shown) break
-        shown = step.request.url
-        await showApproval($, step.request)
+      if (step.kind === 'waiting') {
+        if (step.request !== null) {
+          if (shown !== null && step.request.url !== shown) break
+          shown = step.request.url
+          await showApproval($, step.request)
+        }
         continue
       }
-      if (step.kind === 'pending') continue
-      $.ui.toast(step.kind === 'done' ? 'Signed in' : step.message)
+      $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
       // signed in (even if the plan was refused): the view reads the truth; a stop leaves the signed-out view as it is
       if (step.kind !== 'stop') await refresh($, true)
       return
     }
-    $.ui.toast('Sign in timed out: the request expired. Press Sign in again.')
+    $.ui.toast(SIGN_IN_TIMEOUT_TOAST)
   })
 }
 
 // The button's press returns at once: the sign-in waits minutes for a person, and a press must not.
 function startSignIn($: any): Promise<void> {
-  signIn($).catch(err => $.ui.toast(`Sign in failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`))
+  signIn($).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
   return Promise.resolve()
 }
 

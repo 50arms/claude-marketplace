@@ -127,6 +127,9 @@ export const SIGNED_OUT_LABEL = `${BRAND}: signed out`
 export const SIGNED_OUT_LINE = "This session's access ended. Sign in to reconnect."
 export const SIGN_IN_LABEL = 'Sign in'
 export const SIGNING_IN_LABEL = 'Signing in…'
+export const SIGNED_IN_TOAST = 'Signed in'
+export const SIGN_IN_TIMEOUT_TOAST = 'Sign in timed out. Press Sign in again.'
+export const signInFailedToast = (message: string) => `Sign in failed: ${message.slice(0, CONNECT_ERROR_MAX)}`
 // Each sign-in call waits up to ~45 s inside the MCP for the approval (session-access.ts AWAIT_APPROVAL_MS). The request's
 // own expiry (10 minutes) ends the sign-in first: the call that outlives it answers a NEW request, which is not shown.
 // This bound only guarantees the loop ends if the server never answers either way.

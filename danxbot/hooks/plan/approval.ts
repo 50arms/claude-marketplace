@@ -6,7 +6,9 @@
 
 export type ApprovalRequest = { url: string; code: string }
 
-export function approvalRequestOf(text: string | undefined): ApprovalRequest | null {
+// `states`: the answers that carry a request to show. A model's `plan_connect` shows only a NEW request
+// (`approval_required`); DX-4423's Sign in also reads the request a waiting call names (`approval_pending`).
+export function approvalRequestOf(text: string | undefined, states: readonly string[] = ['approval_required']): ApprovalRequest | null {
   if (!text) return null
   let parsed: any
   try {
@@ -14,7 +16,7 @@ export function approvalRequestOf(text: string | undefined): ApprovalRequest | n
   } catch {
     return null
   }
-  if (parsed === null || typeof parsed !== 'object' || parsed.state !== 'approval_required') return null
+  if (parsed === null || typeof parsed !== 'object' || !states.includes(parsed.state)) return null
   const { approvalUrl, confirmCode } = parsed
   // only a web link is opened in the browser
   if (typeof approvalUrl !== 'string' || !/^https?:\/\//.test(approvalUrl)) return null

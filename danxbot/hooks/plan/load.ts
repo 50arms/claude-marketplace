@@ -64,6 +64,7 @@ export function toProblems(card: any, priority: number): ProblemRow[] {
     )
 }
 
+// control flow only: thrown by `guarded` below, caught by loadPlan, never seen outside it
 class SignedOut extends Error {}
 
 // The whole load. A signed-out answer to ANY of its calls (the key can be dropped between two of them) ends it as the
