@@ -23,7 +23,10 @@ No code edits, no investigation in the project codebase yet.
    hook, MCP server instructions or route spec text that owns the subject. Read every
    related item first so nothing is duplicated.
 3. **The rule exists and was still broken** → sharpen it with one concise, generalised
-   example. Never a bullet list of cases.
+   example, only if the rule is genuinely ambiguous. Never a bullet list of cases. A
+   clear rule that was broken anyway is usually a model limit, not a text gap: tell the
+   operator so (a higher effort or more capable model follows it more reliably) and
+   add nothing.
 4. **Text can't fix it** → say so and escalate to the operator with a proposed system
    change (a route reminder, the janitor, or code) instead of more prose.
 
