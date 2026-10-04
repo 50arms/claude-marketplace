@@ -9,7 +9,7 @@
 // the dashboard suppresses the nudge while a positive count is fresh. It injects
 // nothing into the session.
 //
-// Modes (`process.argv[2]`, see `dispatchMode`):
+// Modes (`process.argv[2]`, routed by `MODE_HANDLERS` through `runHook`):
 //   stop / subagent-stop — count the snapshot, report it, and keep a local debug
 //     record of what was counted (never a shell `command`).
 //   session-start / stop-failure — report "clear" (no snapshot to trust).
@@ -393,42 +393,43 @@ export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, ex
 }
 
 /**
- * The routing table from a hook's `mode` argv string to the handler it
- * dispatches to — exported so mode routing is unit-tested without a spawned process. `hooks/hooks.json` is the
- * single source of which event sends which literal mode string; a test
- * parses that file directly rather than duplicating the strings here.
+ * The routing table from a hook's `mode` argv string to its handler (`run`), and, where a mode
+ * sometimes has nothing to report, whether this firing needs the package at all (`needsPackage`).
+ * `runHook` is its one reader. `hooks/hooks.json` is the single source of which event sends which
+ * literal mode string; a test parses that file directly rather than duplicating the strings here.
  */
 export const MODE_HANDLERS = {
-  stop: runReport,
-  "subagent-stop": runReport,
-  "session-start": runClear,
-  "stop-failure": runClear,
-  heartbeat: runHeartbeat,
+  stop: { run: runReport },
+  "subagent-stop": { run: runReport },
+  "session-start": { run: runClear },
+  "stop-failure": { run: runClear },
+  // The heartbeat is a no-op unless `agent_id` shows a sub-agent running a tool (see runHeartbeat): no package then.
+  heartbeat: { run: runHeartbeat, needsPackage: (input) => input?.agent_id !== undefined && input?.agent_id !== null },
 };
-
-export function dispatchMode(mode, input, options) {
-  return MODE_HANDLERS[mode]?.(input, options); // unknown mode — silent no-op, matches the CLI-robustness contract
-}
 
 /**
  * One hook firing (DX-4321): for a plan-connected session, the package version first (`session-start`
  * refreshes it, every other mode reads the record and resolves only when none exists, both through
  * `versionFor`), then the mode's handler. A session that is not plan-connected reports nothing, so it
- * needs no package: no registry request, no line. This is the one connection check on this path; the
- * handler is told the answer rather than asking again. Resolves to the one line to print (a failed
- * refresh that kept the recorded version) or `null`, and whether there was no version to run.
+ * needs no package: no registry request, no line. The check here is what keeps the registry untouched
+ * for such a session; the handlers keep their own (a stat) because they are also called directly.
+ * An unknown mode does nothing, matching the CLI-robustness contract. Resolves to the one line to print
+ * (a failed refresh that kept the recorded version) or `null`, and whether there was no version to run.
  */
 export async function runHook(mode, input, { env = process.env, versionForFn = versionFor, isConnected = isPlanConnected, ...options } = {}) {
-  const handler = MODE_HANDLERS[mode];
-  if (!handler) return { line: null, missingVersion: false };
-  if (!isValidSessionId(input?.session_id) || !sessionIsConnected(input.session_id, env, isConnected)) return { line: null, missingVersion: false };
-  let line;
-  try {
-    line = (await versionForFn({ sessionStart: mode === "session-start", env })).keptLine;
-  } catch (err) {
-    return { line: err.message, missingVersion: true };
+  const nothing = { line: null, missingVersion: false };
+  if (!Object.hasOwn(MODE_HANDLERS, mode)) return nothing;
+  const { run, needsPackage = () => true } = MODE_HANDLERS[mode];
+  if (!isValidSessionId(input?.session_id) || !sessionIsConnected(input.session_id, env, isConnected)) return nothing;
+  let line = null;
+  if (needsPackage(input)) {
+    try {
+      line = (await versionForFn({ sessionStart: mode === "session-start", env })).keptLine;
+    } catch (err) {
+      return { line: err.message, missingVersion: true };
+    }
   }
-  handler(input, { env, isConnected: () => true, ...options });
+  run(input, { env, isConnected, ...options });
   return { line, missingVersion: false };
 }
 

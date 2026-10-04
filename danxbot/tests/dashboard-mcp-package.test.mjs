@@ -243,7 +243,9 @@ describe("recorded version", () => {
          let reads = 0;
          const bad = [];
          fs.writeFileSync(readyFile, "");
+         const nap = new Int32Array(new SharedArrayBuffer(4));
          while (!fs.existsSync(stopFile) && Date.now() < safety) {
+           if (reads % 16 === 0) Atomics.wait(nap, 0, 0, 1); // yield now and then (and after every failed read): a pure busy spin starves the writer's rename of an open file on Windows
            let text;
            try { text = fs.readFileSync(file, "utf8"); } catch { continue; } // a rename in flight can refuse a read on Windows; a partial write cannot hide behind it
            reads += 1;
@@ -260,11 +262,22 @@ describe("recorded version", () => {
     observer.stdout.on("data", (chunk) => (out += chunk));
     const closed = new Promise((resolve) => observer.on("close", resolve));
     while (!existsSync(readyFile)) await new Promise((resolve) => setTimeout(resolve, 10));
-    const until = Date.now() + 1000;
-    for (let i = 0; Date.now() < until; i += 1) writeRecordedVersion(i % 2 === 0 ? "0.1.51" : "0.1.50", env);
+    // Write until enough replacements happened (not for a fixed time: a loaded machine does fewer per second), with a cap.
+    const until = Date.now() + 15_000;
+    let writes = 0;
+    for (let i = 0; writes <= 150 && Date.now() < until; i += 1) {
+      try {
+        writeRecordedVersion(i % 2 === 0 ? "0.1.51" : "0.1.50", env);
+        writes += 1;
+      } catch (err) {
+        // Windows can refuse a rename over a file the observer has open past the retry budget under load: not a partial write.
+        if (!(err instanceof RecordWriteError && /\((EPERM|EBUSY|EACCES)\)/.test(err.message))) throw err;
+      }
+    }
     writeFileSync(stopFile, "");
     await closed;
     const result = JSON.parse(out);
+    assert.ok(writes > 100, `the writer actually replaced the record: ${writes}`);
     assert.ok(result.reads > 100, `the observer actually read: ${result.reads}`);
     assert.deepEqual(result.bad, [], "a partial or empty record was observable");
   });

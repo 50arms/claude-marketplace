@@ -37,7 +37,7 @@ import {
   runReport,
   runClear,
   runHeartbeat,
-  dispatchMode,
+  runHook,
 } from "../scripts/background-work-report.mjs";
 import { childEnv as bridgeChildEnv } from "../scripts/plan-event-bridge.mjs";
 import { PKG_NAME, TEST_VERSION, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
@@ -663,40 +663,70 @@ describe("runHeartbeat — PostToolUse(.*) no-op almost always", () => {
   });
 });
 
-// ------------------------------------------------------ dispatchMode (mode routing)
+// ------------------------------------------------------ runHook (mode routing)
 
-describe("dispatchMode — routes a hook's mode string to the right handler (review finding 8)", () => {
-  test("stop / subagent-stop send the count", () => {
+/** A `versionForFn` stand-in: the version rule is tested in dashboard-mcp-package.test.mjs; these tests are about routing. */
+const versionStub = () => {
+  const calls = [];
+  return { calls, versionForFn: async (options) => (calls.push(options), { version: "0.1.50", keptLine: null }) };
+};
+
+describe("runHook — routes a hook's mode string to the right handler (review finding 8)", () => {
+  test("stop / subagent-stop send the count", async () => {
     connect("sess-19");
     for (const mode of ["stop", "subagent-stop"]) {
       const calls = [];
-      dispatchMode(mode, { session_id: "sess-19", background_tasks: [{ type: "shell", status: "running" }] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
+      await runHook(mode, { session_id: "sess-19", background_tasks: [{ type: "shell", status: "running" }] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), ...versionStub() });
       assert.deepEqual(calls[0].args.slice(-2, -1), ["1"], `mode ${mode} should report a count`);
     }
   });
 
-  test("session-start / stop-failure send clear", () => {
+  test("session-start / stop-failure send clear", async () => {
     connect("sess-20");
     for (const mode of ["session-start", "stop-failure"]) {
       const calls = [];
-      dispatchMode(mode, { session_id: "sess-20" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls) });
+      await runHook(mode, { session_id: "sess-20" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), ...versionStub() });
       assert.deepEqual(calls[0].args.slice(-2, -1), ["clear"], `mode ${mode} should clear`);
     }
   });
 
-  test("heartbeat routes to runHeartbeat (ticks with a stored count)", () => {
+  test("heartbeat routes to runHeartbeat (ticks with a stored count)", async () => {
     connect("sess-21");
     const primeCalls = [];
-    dispatchMode("stop", { session_id: "sess-21", background_tasks: [{ type: "shell", status: "running" }] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(primeCalls), now: () => 0 });
+    await runHook("stop", { session_id: "sess-21", background_tasks: [{ type: "shell", status: "running" }] }, { env: env(), platform: "linux", spawnFn: fakeSpawn(primeCalls), now: () => 0, ...versionStub() });
 
     const calls = [];
-    dispatchMode("heartbeat", { session_id: "sess-21", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000 });
+    await runHook("heartbeat", { session_id: "sess-21", agent_id: "agent-1" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_000, ...versionStub() });
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].args.slice(-2, -1), ["1"]);
   });
 
-  test("an unknown mode does nothing and does not throw", () => {
-    assert.doesNotThrow(() => dispatchMode("bogus-mode", { session_id: "sess-22" }, { env: env() }));
+  test("the version rule is asked as a refresh for session-start only, and only for a connected session", async () => {
+    connect("sess-23");
+    for (const [mode, sessionStart] of [["session-start", true], ["stop", false], ["subagent-stop", false], ["stop-failure", false]]) {
+      const stub = versionStub();
+      await runHook(mode, { session_id: "sess-23" }, { env: env(), platform: "linux", spawnFn: fakeSpawn([]), ...stub });
+      assert.deepEqual(stub.calls.map((c) => c.sessionStart), [sessionStart], mode);
+    }
+    const stub = versionStub();
+    await runHook("session-start", { session_id: "not-connected-23" }, { env: env(), platform: "linux", spawnFn: fakeSpawn([]), ...stub });
+    assert.deepEqual(stub.calls, [], "an unconnected session never asks for a version");
+  });
+
+  test("a heartbeat with no agent_id has nothing to report, so it does not ask for a version either", async () => {
+    connect("sess-24");
+    const stub = versionStub();
+    const calls = [];
+    await runHook("heartbeat", { session_id: "sess-24" }, { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), ...stub });
+    assert.deepEqual(stub.calls, []);
+    assert.deepEqual(calls, []);
+  });
+
+  test("an unknown mode does nothing, does not throw, and never asks for a version", async () => {
+    const stub = versionStub();
+    assert.deepEqual(await runHook("bogus-mode", { session_id: "sess-22" }, { env: env(), ...stub }), { line: null, missingVersion: false });
+    assert.deepEqual(await runHook("constructor", { session_id: "sess-22" }, { env: env(), ...stub }), { line: null, missingVersion: false }, "an inherited property is not a mode");
+    assert.deepEqual(stub.calls, []);
   });
 });
 

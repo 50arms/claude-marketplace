@@ -57,7 +57,7 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { requireRecordedSpec, versionFor } from "./lib/dashboard-mcp-package.mjs";
+import { VersionError, requireRecordedSpec, versionFor } from "./lib/dashboard-mcp-package.mjs";
 import { isPlanConnected } from "./lib/plan-connection.mjs";
 import { HEALTHY_RUN_MS, HEARTBEAT_STALE_MS, readJsonFile, sessionPaths, stateDir, writeFileAtomic } from "./lib/bridge-state.mjs";
 import { effectiveRestartGeneration } from "./lib/bridge-restart-decision.mjs";
@@ -631,6 +631,9 @@ export function waitForVerdict(child, timeoutMs) {
  * A `plan_connect` (`intent: "connect"`) REPLACES a live bridge on purpose: the
  * session may have just moved to another plan, whose boards this credential has
  * never been checked against, and that check happens at startup.
+ *
+ * Injectable for tests: `spawnRun`, `isAlive`, `killTree`, `now`, `waitVerdict`, `verdictTimeoutMs`,
+ * `post`, `stderr` and (DX-4321) `versionForFn`, the version rule of lib/dashboard-mcp-package.mjs.
  */
 export async function start({
   env = process.env,
@@ -673,15 +676,16 @@ const writeStderr = (message) => process.stderr.write(message);
  * notice could not reach the inbox and went to stderr for asyncRewake), or `{refusal}`, a start() result,
  * when there is no version at all and nothing can run.
  */
-export async function prepareDashboardMcpVersion({ env, sessionId, intent, post, stderr, sessionStart, versionForFn = versionFor }) {
+async function prepareDashboardMcpVersion({ env, sessionId, intent, post, stderr, sessionStart, versionForFn }) {
   const relevant = isSessionKnownToWantEvents({ intent, env, sessionId });
   let outcome;
   try {
     outcome = await versionForFn({ sessionStart, env });
   } catch (err) {
+    if (!(err instanceof VersionError)) throw err; // only a failure to obtain a version is announced; a bug is not
     const announced = await announce({
       reason: err.message,
-      fix: `${err.fix ?? "make sure a danx-dashboard-mcp version can be recorded"}, then call plan_connect again in this session`,
+      fix: `${err.fix}, then call plan_connect again in this session`,
       env,
       post,
       stderr,
