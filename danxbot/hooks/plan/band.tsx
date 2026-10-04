@@ -42,9 +42,10 @@ export function renderBand(
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
   const failed = v.phase === 'error'
+  const failedColor = failed ? DANGER : undefined
   const indicator =
     percent === null ? (
-      <Text color={failed ? DANGER : plan === null ? WARNING : SUCCESS}>●</Text>
+      <Text color={failedColor ?? (plan === null ? WARNING : SUCCESS)}>●</Text>
     ) : (
       donutMark(E, percent, hasSvg, DONUT_BAND_PX)
     )
@@ -52,7 +53,8 @@ export function renderBand(
     <Box key="band-line" flexDirection="row" gap={1}>
       <Box flexShrink={0}>{indicator}</Box>
       <Box flexShrink={1}>
-        <Text color={failed ? DANGER : undefined} dimColor={!failed} wrap="truncate-end">
+        {/* DX-4419: a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
+        <Text color={failedColor} dimColor={!failed} wrap="truncate-end">
           {bandLabel(v)}
         </Text>
       </Box>

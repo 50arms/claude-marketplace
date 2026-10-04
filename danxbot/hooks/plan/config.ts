@@ -1,6 +1,9 @@
 import type { ConnectedPlan, PlanView } from '../../types'
 
 export const PANE = 'danx-plan'
+// DX-4419: the name every band, footer and pane label carries, so the operator can tell the text is danxbot's.
+export const BRAND = 'Danxbot'
+export const PLAN_TITLE = `${BRAND} Plan`
 export const COMMAND = 'danx-plan'
 export const SERVER = 'danx-dashboard'
 export const POLL_MS = 60_000

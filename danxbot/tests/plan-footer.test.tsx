@@ -20,7 +20,7 @@ for (const surface of SURFACES) {
       expect(await text(footer)).toBe('focus & memory paused')
     })
 
-    test('not connected: the button reads Plan', async ($, on) => {
+    test('not connected: the button reads Danxbot', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
@@ -33,7 +33,7 @@ for (const surface of SURFACES) {
       ['100%', { breakdown: counts({ Done: 5, Cancelled: 1 }) }],
       ['a capped 3+ load', { cardsTotal: 9 }],
     ] as const) {
-      test(`${name}: the text is still exactly PLAN-23 (no percent, glyph or open count)`, async ($, on) => {
+      test(`${name}: the text is still exactly Danxbot · PLAN-23 (no percent, glyph or open count)`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
         expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')

@@ -129,6 +129,9 @@ describe('what one load says about what it did not read', () => {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(band)).toContain('Danxbot Plan: Disconnected')
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('red')
+      const label = await band.find({ type: 'Text', text: /Danxbot Plan: Disconnected/ })
+      expect(label?.props.color).toBe('red')
+      expect(label?.props.dimColor).toBeFalsy()
       expect(await text(pane)).toContain('answered no total')
     })
   }

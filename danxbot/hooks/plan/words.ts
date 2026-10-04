@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_PLAN_NAME_MAX } from './config'
+import { BAND_PLAN_NAME_MAX, BRAND, PLAN_TITLE } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
 export const WORDS = {
@@ -68,11 +68,12 @@ export function updatedText(iso: string): string {
 
 // The band's label for a view that is not the Plan-button-only one.
 export function bandLabel(v: PlanView): string {
-  if (v.phase === 'error') return 'Danxbot Plan: Disconnected'
-  if (v.phase === 'loading' && !v.refreshedAt) return 'Danxbot Plan: loading…'
-  if (!v.connected) return 'Danxbot: not connected to a plan'
+  // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
+  if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
+  if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
+  if (!v.connected) return `${BRAND}: not connected to a plan`
   const count = problemCount(v)
-  return ['Danxbot', v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX), count].filter(Boolean).join(' · ')
+  return [BRAND, v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX), count].filter(Boolean).join(' · ')
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at
@@ -118,7 +119,7 @@ export function problemSplit(v: PlanView): { questions: number; actions: number 
 // was read keeps it, and the footer keeps `Danxbot · PLAN-NN`.
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' || v.phase === 'no-mcp') return null
-  return v.connected ? `Danxbot · ${v.connected.ref}` : 'Danxbot'
+  return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND
 }
 
 // "+N more cards in progress in the browser" when the in-progress bucket was capped.

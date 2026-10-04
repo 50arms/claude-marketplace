@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import { EMPTY } from '../hooks/plan/config'
+import { bandLabel } from '../hooks/plan/words'
 import { SURFACES, dashboard, expectText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
 describe('plan band', () => {
+  test('the first load reads Danxbot Plan: loading…', () => {
+    expect(bandLabel({ ...EMPTY, phase: 'loading', refreshedAt: null })).toBe('Danxbot Plan: loading…')
+  })
+
   test('shows Not connected and a Plan button with no command typed, on every surface', async ($, on) => {
     const d = dashboard(on, { connected: false })
     for (const surface of SURFACES) {
@@ -21,7 +27,7 @@ describe('plan band', () => {
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expectText(await ui.find({ type: 'Text', text: /PLAN-23/ }), /PLAN-23 · Danxbot plugin · 3 open problems/)
+      expectText(await ui.find({ type: 'Text', text: /PLAN-23/ }), /Danxbot · PLAN-23 · Danxbot plugin · 3 open problems/)
       expect(await ui.find({ type: 'Link' })).toBeDefined()
       const tab = await ui.find({ type: 'Button', key: 'open-tab' })
       if (surface === 'desktop') expect(tab).toBeDefined()
