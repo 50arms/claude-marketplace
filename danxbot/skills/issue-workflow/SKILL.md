@@ -25,6 +25,10 @@ worktree, DB resets) live only in danxbot's `work` profile.
 
 1. Read the card with its description, AC, comments and dependencies; read the parent if
    set; on a plan, read its architecture and note overlapping siblings.
+   Understanding code you have not read yet (how a flow works, where something lives, why a
+   test fails) goes to a foreground `Explore` sub-agent that returns only file:line facts;
+   read directly only the lines you are about to edit. Every line you read stays in your
+   context and is paid again on each later turn.
 2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip
    this step, the card is already yours.
 3. Pass its PRE gates ("Gates" below), then build test-first, to the rules under
