@@ -138,6 +138,11 @@ export function dashboard(
     commentsTotal?: number
     // DX-4448: GET /api/boards fails
     boardsFail?: boolean
+    // ... answers boards the plugin cannot read: none at all, or a prefix that is not capital letters
+    boardsShape?: 'none' | 'badPrefix'
+    // DX-4448: the plan's all-cards read fails / counts more cards than it returned
+    planCardsFail?: boolean
+    planCardsTotal?: number
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -227,6 +232,8 @@ export function dashboard(
     // DX-4448: the boards (danxbot's own and gpt-manager's), whose `issue_prefix` the card links are built on
     if (method === 'GET' && path === '/api/boards') {
       if (options.boardsFail) return reply({ error: 'boards boom' }, 500)
+      if (options.boardsShape === 'none') return reply({ boards: [] })
+      if (options.boardsShape === 'badPrefix') return reply({ boards: [{ id: 'x', issue_prefix: 'dx-1' }] })
       return reply({
         boards: [
           { id: 'danxbot:danxbot-main', issue_prefix: 'DX' },
@@ -253,6 +260,12 @@ export function dashboard(
         cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4, updatedAt: c.updatedAt, assignedAgent: 'raw-session-uuid' })),
         ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
       })
+    }
+    // DX-4448: no bucket = every card of the plan in any status (DX-30 and DX-31 are in neither the needs-you nor the in-progress bucket)
+    if (method === 'GET' && cards && query?.bucket === undefined) {
+      if (options.planCardsFail) return reply({ error: 'plan cards boom' }, 500)
+      const ids = [...world.cards.map(c => c.id), ...world.inProgress.map(c => c.id), 'DX-30', 'DX-31']
+      return reply({ cards: ids.map(id => ({ id, title: id })), total: options.planCardsTotal ?? ids.length })
     }
     if (method === 'GET' && cards) {
       return reply({

@@ -656,17 +656,14 @@ async function drawSessionMode($: any, e: any, next: any) {
 }
 
 // DX-4448: card ids in an assistant reply drawn as links. Reads only the `view` atom (filled at refresh): no network in the draw.
-// The stored message is untouched (a rewrite changes the drawing only); anything this cannot link leaves the reply as it is.
-const MARKDOWN_MAX = 10_000
+// The text is rewritten in the props and handed on (claude-code.d.ts, ui.render: "rewrite `props`"), so the engine's own drawing
+// and any hook below stay in effect; the stored message is untouched, and `onScreen` rides along as received. Nothing to link
+// (not connected, no prefixes known, no card id in the text) leaves the event as it is.
 async function drawAssistantMessage($: any, e: any, next: any) {
   const v = await read($, view)
   if (v.phase !== 'ready' || v.connected === null || v.cardPrefixes.length === 0) return next(e)
-  const planCards = new Set<string>([...v.problems.map(p => p.cardId), ...v.inProgress.map(r => r.id)])
-  const text = linkCardIds(e.props.text, v.cardPrefixes, v.connected, planCards)
-  // nothing linked, or the Markdown element's own cap exceeded: draw the reply as the surface would
-  if (text === e.props.text || text.length > MARKDOWN_MAX) return next(e)
-  const { Markdown } = $.ui.resolve(e)
-  return <Markdown text={text} />
+  const text = linkCardIds(e.props.text, v.cardPrefixes, v.connected, new Set(v.planCardIds))
+  return next(text === e.props.text ? e : { ...e, props: { ...e.props, text } })
 }
 
 async function drawPane($: any, e: any) {

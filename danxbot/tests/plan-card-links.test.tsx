@@ -56,72 +56,77 @@ describe('linkCardIds', () => {
   })
 })
 
-const message = (text: string) => ({ plugin: 'danxbot', component: 'AssistantMessage', props: { text, isFirstOfReply: true } }) as any
-const markdownOf = async (ui: any) => (await ui.find({ type: 'Markdown' }))?.props.text as string | undefined
-// the engine's own drawing stand-in (plan-kit): a Text carrying the reply as it is
-const plainOf = async (ui: any, text: string) => expect((await ui.find({ type: 'Text', text }))?.text).toBe(text)
+
+const message = (text: string, extra: object = {}) =>
+  ({ plugin: 'danxbot', component: 'AssistantMessage', props: { text, isFirstOfReply: true, ...extra } }) as any
+// the engine's own drawing stand-in (plan-kit) draws the props' text, so what reaches it is what is drawn
+const drawnText = async (ui: any): Promise<string | undefined> => (await ui.find({ type: 'Text' }))?.text
+const paneText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 
 for (const surface of SURFACES) {
   describe(`card links in an assistant reply on ${surface}`, () => {
-    test('connected: the reply is drawn as Markdown with a plan link and a board link, and no call is made', async ($, on) => {
+    test('connected: the rewritten text reaches the engine drawing; a plan card of any status links to the plan, others to the board; no call is made', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const calls = d.calls.length
       const api = d.api.length
-      const ui = await $.ui.mount({ ...message('Fix DX-1 (in the plan), SG-5 (elsewhere), UTF-8 (no).'), surface })
-      expect(await markdownOf(ui)).toBe(`Fix ${PLAN_URL('DX-1')} (in the plan), ${BOARD_URL('SG-5')} (elsewhere), UTF-8 (no).`)
+      // DX-1 needs you, DX-9 is in progress, DX-30 is ToDo and DX-31 Done (neither in a bucket the view lists), SG-5 is on another board
+      const ui = await $.ui.mount({ ...message('DX-1 DX-9 DX-30 DX-31 SG-5 UTF-8 DX-99'), surface })
+      expect(await drawnText(ui)).toBe(
+        [PLAN_URL('DX-1'), PLAN_URL('DX-9'), PLAN_URL('DX-30'), PLAN_URL('DX-31'), BOARD_URL('SG-5'), 'UTF-8', BOARD_URL('DX-99')].join(' '),
+      )
       // DX-4448: the draw reads the view atom only
       expect(d.calls.length).toBe(calls)
       expect(d.api.length).toBe(api)
     })
 
-    test('a reply with nothing to link is not redrawn', async ($, on) => {
+    test('the other props ride along as received', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
-      const ui = await $.ui.mount({ ...message('Nothing here, UTF-8 only.'), surface })
-      expect(await markdownOf(ui)).toBeUndefined()
-      await plainOf(ui, 'Nothing here, UTF-8 only.')
+      const ui = await $.ui.mount({ ...message('DX-1', { onScreen: null }), surface })
+      expect(await drawnText(ui)).toBe(PLAN_URL('DX-1'))
     })
 
-    test('a rewrite past the Markdown cap is not drawn as Markdown', async ($, on) => {
+    test('a reply with nothing to link is drawn as it is', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
-      const long = `DX-1 ${'x'.repeat(9_990)}`
-      const ui = await $.ui.mount({ ...message(long), surface })
-      expect(await markdownOf(ui)).toBeUndefined()
-      await plainOf(ui, long)
+      expect(await drawnText(await $.ui.mount({ ...message('Nothing here, UTF-8 only.'), surface }))).toBe('Nothing here, UTF-8 only.')
     })
 
     test('not connected: the reply is drawn as it is', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
-      const ui = await $.ui.mount({ ...message('DX-1'), surface })
-      expect(await markdownOf(ui)).toBeUndefined()
-      await plainOf(ui, 'DX-1')
+      expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
     })
 
     test('signed out: the reply is drawn as it is', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out' })
       await startSession($, d, surface)
-      const ui = await $.ui.mount({ ...message('DX-1'), surface })
-      expect(await markdownOf(ui)).toBeUndefined()
-      await plainOf(ui, 'DX-1')
-    })
-
-    test('the boards call failing leaves the plan view and the reply as they are', async ($, on) => {
-      const d = dashboard(on, { boardsFail: true })
-      await startSession($, d, surface)
-      const ui = await $.ui.mount({ ...message('DX-1'), surface })
-      expect(await markdownOf(ui)).toBeUndefined()
-      await plainOf(ui, 'DX-1')
+      expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
     })
 
     test('before the first load finishes (the empty view) the reply is drawn as it is', async ($, on) => {
       dashboard(on)
       expect(EMPTY.cardPrefixes).toEqual([])
-      const ui = await $.ui.mount({ ...message('DX-1'), surface })
-      expect(await markdownOf(ui)).toBeUndefined()
-      await plainOf(ui, 'DX-1')
+      expect(EMPTY.planCardIds).toEqual([])
+      expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
     })
+
+    // DX-4448: what the links stand on failing is an error view in the pane, as any other failed read is, and the reply stays as written
+    for (const [name, options, shown] of [
+      ['the boards call failing', { boardsFail: true }, 'boards boom'],
+      ['a boards answer with no boards', { boardsShape: 'none' }, 'GET /api/boards answered no boards'],
+      ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }, 'GET /api/boards answered no boards'],
+      ['the plan cards call failing', { planCardsFail: true }, 'plan cards boom'],
+      ['the plan having more cards than were read', { planCardsTotal: 1001 }, 'more cards than the 1000'],
+    ] as const) {
+      test(`${name}: an error in the pane, never silent; the reply is drawn as it is`, async ($, on) => {
+        const d = dashboard(on, options as any)
+        await startSession($, d, surface)
+        expect(await paneText(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))).toContain(shown)
+        expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
+      })
+    }
   })
 }

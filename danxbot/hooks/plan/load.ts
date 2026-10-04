@@ -1,5 +1,5 @@
 import type { CommentRow, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, STATUS_KEYS } from './config'
+import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, PLAN_CARDS_LIMIT, PREFIX_PATTERN, STATUS_KEYS } from './config'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
@@ -132,13 +132,15 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
 
   // One load of everything about the connected plan: the plan itself (its status counts and status),
   // the needs-you cards and the in-progress cards, together.
-  const [planR, cards, inProg, boards] = await Promise.all([
+  const [planR, cards, inProg, boards, allCards] = await Promise.all([
     call('GET', `/api/plans/${connectedId}`),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_BUCKET_ID, sort: 'priority', limit: MAX_CARDS } }),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', limit: MAX_CARDS } }),
     // DX-4448: the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
     // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
     call('GET', '/api/boards'),
+    // DX-4448: every card id of the plan, for the same links (the route takes no `fields`: rows come whole, capped at 1000)
+    call('GET', `/api/plans/${connectedId}/cards`, { query: { sort: 'ref', limit: PLAN_CARDS_LIMIT } }),
   ])
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
   if (!planR.ok) return fail(errText(planR))
@@ -153,9 +155,17 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     status: planR.body.status,
     dashboardUrl,
   }
-  // DX-4448: cosmetic, so a boards call that fails costs the links, never the plan view: no prefixes, no links.
-  const cardPrefixes = boards.ok ? readPrefixes(boards.body?.boards) : []
-  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, cardPrefixes }
+  // DX-4448: a failed or wrong-shaped read of what the card links stand on is an error view, as every other failed read is,
+  // never links that silently stop appearing.
+  if (!boards.ok) return fail(`GET /api/boards ${errText(boards)}`)
+  const cardPrefixes = readPrefixes(boards.body?.boards)
+  if (cardPrefixes === null) return fail('GET /api/boards answered no boards with an issue_prefix of capital letters: cannot link card ids')
+  if (!allCards.ok) return fail(`GET /api/plans/${connectedId}/cards (all) ${errText(allCards)}`)
+  const planCardIds = readCardIds(allCards.body)
+  if (planCardIds === null) {
+    return fail(`GET /api/plans/${connectedId}/cards (all) answered no total, or more cards than the ${PLAN_CARDS_LIMIT} it was asked for: cannot tell which card ids are the plan's`)
+  }
+  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, cardPrefixes, planCardIds }
 
   if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
   if (typeof cards.body.total !== 'number') {
@@ -215,11 +225,22 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
 }
 
-// DX-4448: the distinct, well-formed issue prefixes of GET /api/boards' answer (capital letters; a malformed one is dropped).
-function readPrefixes(raw: any): string[] {
-  if (!Array.isArray(raw)) return []
-  const found = raw.map(b => b?.issue_prefix).filter((p): p is string => typeof p === 'string' && /^[A-Z]{1,10}$/.test(p))
-  return [...new Set(found)]
+// DX-4448: the distinct issue prefixes of GET /api/boards' answer, or null when the answer is not a non-empty list of boards that
+// each carry a well-formed one.
+function readPrefixes(raw: any): string[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const prefixes = raw.map(b => b?.issue_prefix)
+  if (!prefixes.every((p): p is string => typeof p === 'string' && PREFIX_PATTERN.test(p))) return null
+  return [...new Set(prefixes)]
+}
+
+// DX-4448: every card id of GET /api/plans/:id/cards' answer, or null when the list cannot be read as complete (no total, or
+// more cards than the page asked for, or a row with no id).
+function readCardIds(body: any): string[] | null {
+  const cards: any[] = body?.cards ?? []
+  if (typeof body?.total !== 'number' || body.total > cards.length) return null
+  if (!cards.every(c => typeof c?.id === 'string')) return null
+  return cards.map(c => c.id)
 }
 
 // The origin of an http(s) URL string, or null: a trailing slash or path is dropped, a non-URL is refused.
