@@ -14,9 +14,14 @@ throughout; this skill is the plan mechanics.
    Else find it in the list; none → create one.
 2. The session title must name what you're doing — generic or stale → rename first, then
    `plan_connect({plan_id, title})`. Renamed later → connect again.
-3. Orient from the connect briefing, else read the plan's records, architecture and cards,
+3. A session holds no dashboard key until its user approves it. `plan_connect` answering
+   `approval_required` (or `approval_pending`) is not a failure: show the user the confirm code,
+   say the approval page is open in their browser (the plugin opens it; give them the URL if it
+   did not), and once they approve call `plan_connect` again. Every other dashboard tool
+   answers "not signed in" until then.
+4. Orient from the connect briefing, else read the plan's records, architecture and cards,
    plus one batch read of its In-Progress/open-problem cards and the newest handoff comment.
-4. Follow `plan_connect`'s browser instruction as written.
+5. Follow `plan_connect`'s browser instruction as written.
 
 ## Where things go
 

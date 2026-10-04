@@ -303,6 +303,17 @@ if [ "$FETCH_OK" = "1" ] && [ -n "$EVENT_TEXT" ]; then
   exit 0
 fi
 
+# DX-4391: a session whose record exists but whose dashboard key does not (the record is another
+# schema version, or the key file was dropped on a 401 or pruned) is SIGNED OUT, not broken: the
+# package names it `no_connection_record` or `credential_unavailable`, and its tools already tell
+# the model to call `plan_connect`. Telling the operator "the hook failed" on every hook would be
+# noise, so this is the one failure that stays quiet.
+if [ "$FETCH_OK" != "1" ]; then
+  case "$FETCH_ERR" in
+    no_connection_record:*|credential_unavailable:*) exit 0 ;;
+  esac
+fi
+
 # Fetch failure: ALWAYS reported, never silent, and never a mantra.md reread
 # (DX-3421 — no offline fallback any more). Tell the agent to tell the
 # operator.

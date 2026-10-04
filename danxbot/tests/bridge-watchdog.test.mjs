@@ -127,7 +127,7 @@ describe("shouldWatchdogRestart (DX-2953) — the full decision table", () => {
     });
     assert.equal(d.restart, true, "a not_connected record from an unrelated, superseded instance must not block a different, current instance");
   });
-  for (const reason of ["no_connection_record", "not_connected", "superseded", "replaced", "session_is_worker"]) {
+  for (const reason of ["no_connection_record", "credential_unavailable", "not_connected", "superseded", "replaced", "session_is_worker"]) {
     test(`applicable ${reason} record always forbids a restart`, () => {
       const d = decision.shouldWatchdogRestart({ pidRecord: stalePid, startedRecord: started(), connectedRecord: connectedTrue, stoppedRecord: stopped(reason), now: NOW });
       assert.equal(d.restart, false, `${reason} must forbid a restart`);

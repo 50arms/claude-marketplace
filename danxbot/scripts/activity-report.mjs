@@ -137,7 +137,7 @@ export function parseOutcome(result) {
  * worker's session id. Everything else — a refused envelope, an unreachable dashboard, a bad
  * credential — is a real failure.
  */
-const EXPECTED_REASONS = new Set(["no_connection_record", "session_not_connected", "session_is_worker"]);
+const EXPECTED_REASONS = new Set(["no_connection_record", "credential_unavailable", "session_not_connected", "session_is_worker"]);
 
 function recordFailure(env, sessionId, mode, outcome, now) {
   const file = failureFile(stateDir(env), sessionId);

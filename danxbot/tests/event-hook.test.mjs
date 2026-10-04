@@ -181,6 +181,25 @@ describe("event-hook.sh — connected: resolves the right danxbot event and prin
   });
 });
 
+describe("event-hook.sh — a signed-out session (DX-4391) is quiet", () => {
+  // The package's own stderr for a record it cannot use (another schema version) or whose session
+  // key file is gone: `<reason>: <detail>`, exit 1.
+  for (const reason of ["no_connection_record", "credential_unavailable"]) {
+    for (const event of ["SessionStart", "SubagentStart"]) {
+      test(`${event}: ${reason} prints nothing and exits 0`, () => {
+        const result = runHookWithFakeMcp("fail", { event, source: "startup", stderrText: `${reason}: the session key is gone. Fix: call plan_connect again` });
+        assert.equal(result.status, 0);
+        assert.equal(result.stdout, "");
+      });
+    }
+  }
+
+  test("any other reason is still reported", () => {
+    const result = runHookWithFakeMcp("fail", { source: "startup", stderrText: "unauthorized: the dashboard refused the key" });
+    assert.match(result.stdout, /Could not load the "session_start" event text/);
+  });
+});
+
 describe("event-hook.sh — fetch failure: always reported, never silent, no mantra.md fallback", () => {
   test("a hard failure (network/auth/etc.) prints ONE line naming the event and the reason, exit 0", () => {
     const result = runHookWithFakeMcp("fail", { source: "startup", stderrText: "not_found: could not fetch the effective \"session_start\" text from the dashboard" });

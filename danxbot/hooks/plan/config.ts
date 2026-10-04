@@ -34,6 +34,9 @@ export const OUTPUT_EXCERPT_MAX = 80
 // How long the short browser-open toasts stay (the default is 4000).
 export const BROWSER_TOAST_MS = 2_500
 
+// DX-4391: the host caps a toast at 60 s; the approval toast carries the confirm code the person compares with the page.
+export const APPROVAL_TOAST_MS = 60_000
+
 // What the fallback toast puts between its reason and the model row it could not append.
 export const NOTE_MARKER = ' | It was to read: '
 

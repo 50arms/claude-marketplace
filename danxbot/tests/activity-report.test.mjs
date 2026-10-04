@@ -265,7 +265,7 @@ describe("runActivity — failures leave a trace, successes and the ordinary 'no
   });
 
   test("not-on-a-plan answers are the expected case and leave no trace", () => {
-    for (const reason of ["no_connection_record", "session_not_connected", "session_is_worker"]) {
+    for (const reason of ["no_connection_record", "credential_unavailable", "session_not_connected", "session_is_worker"]) {
       connect();
       runActivity("subagent-start", startPayload, { env: env(), now: () => EVENT_AT_MS, ...fakes({ outcome: { ok: false, reason } }) });
       assert.equal(trace(), null, reason);

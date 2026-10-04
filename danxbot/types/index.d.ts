@@ -147,6 +147,8 @@ declare module 'claude-code' {
       tab: string | null
       // The session's title as the app last reported it, passed to `plan_connect`.
       title: string | null
+      // DX-4391: the approval URL last opened, so one request opens its page once.
+      approvalOpened: string | null
     }
   }
 }

@@ -2,12 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { ConnectedPlan, Draft, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
+import { approvalRequestOf, approvalToast } from './plan/approval'
 import { renderBand } from './plan/band'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
 import { footerLabel } from './plan/words'
 import { parsePreviewStart, parseTabId, parseTabsContext } from './plan/browser-output'
 import {
+  APPROVAL_TOAST_MS,
   BROWSER_TOAST_MS,
   CALL_ERROR_MAX,
   COMMAND,
@@ -45,6 +47,8 @@ const talk = atom({ plugin: 'danxbot', key: 'talk' } as const, null as number | 
 // lost on reload and shared by nothing else).
 const tab = atom({ plugin: 'danxbot', key: 'tab' } as const, null as string | null)
 const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string | null)
+// DX-4391: the approval URL last opened (a request opens its page once).
+const approvalOpened = atom({ plugin: 'danxbot', key: 'approvalOpened' } as const, null as string | null)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -139,6 +143,10 @@ async function browserOk($: any, tool: string, args: object): Promise<string> {
   return mcpText(r)
 }
 
+// The two toasts of an open, by what is opened.
+const PLAN_OPEN = { opening: 'Opening the plan in the browser…', opened: 'Plan opened in the browser tab' }
+const APPROVAL_OPEN = { opening: 'Opening the approval page in the browser…', opened: 'Approval page opened in the browser tab' }
+
 // Opens `url` in the ONE in-app browser tab this plugin owns (id kept in $.state), so the
 // person's own tabs are never navigated away. Three cases:
 //   pane closed          preview_start {url}: the one call that opens the pane (a navigate with no
@@ -149,10 +157,10 @@ async function browserOk($: any, tool: string, args: object): Promise<string> {
 // Any step that fails or answers something unreadable throws into the toast: reading it as "no
 // tabs" would open a new tab on every press. The whole open holds the browser busy key, so the
 // buttons read "Opening…" and a second press while it runs does nothing.
-function openInBrowser($: any, url: string): Promise<void> {
+function openInBrowser($: any, url: string, words = PLAN_OPEN): Promise<void> {
   return withBusy($, busyKey.browser, async () => {
     let step = 'tabs_context'
-    $.ui.toast('Opening the plan in the browser…', { timeoutMs: BROWSER_TOAST_MS })
+    $.ui.toast(words.opening, { timeoutMs: BROWSER_TOAST_MS })
     try {
       const ctx = parseTabsContext(await browserOk($, 'tabs_context', {}))
       if (!ctx.browserOpen) {
@@ -172,7 +180,7 @@ function openInBrowser($: any, url: string): Promise<void> {
         step = 'tabs_select'
         await browserOk($, 'tabs_select', { tabId })
       }
-      $.ui.toast('Plan opened in the browser tab', { timeoutMs: BROWSER_TOAST_MS })
+      $.ui.toast(words.opened, { timeoutMs: BROWSER_TOAST_MS })
     } catch (err: any) {
       // the advice first, the (cut) detail last: a cut sentence must not end the toast
       $.ui.toast(`Browser ${step} failed: use the link instead. (${String(err?.message ?? err).slice(0, TOAST_ERROR_MAX)})`)
@@ -448,6 +456,14 @@ async function onCommand($: any) {
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
   void refresh($, true)
+  const approval = approvalRequestOf(ran.text)
+  if (approval !== null && (await read($, approvalOpened)) !== approval.url) {
+    // DX-4391: a signed-out session asked for access: open the approval page once, then leave the
+    // code up to compare. The plan page is not opened (there is no connection to show yet).
+    await update($, approvalOpened, () => approval.url)
+    await openInBrowser($, approval.url, APPROVAL_OPEN)
+    $.ui.toast(approvalToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
+  }
   return ran
 }
 
