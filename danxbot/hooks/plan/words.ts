@@ -73,11 +73,12 @@ export function ellipsize(text: string, max: number): string {
 const NAME_SEP = ' · '
 
 // DX-4420: the columns the band's label may take: its width less the indicator and each control. A Button draws `[ label ]`
-// chrome on the terminal; a Link none. The estimate is deliberately a little high (a spare column, and a desktop's native
-// buttons are no wider than the terminal's), so a control is never pushed off the edge by it.
+// chrome on the terminal; a Link none. The terminal's widths are the model (UNVERIFIED on the desktop's native buttons and 16px donut): the spare columns
+// are the margin, and the label's own `truncate-end` is the second line of defence.
 export function bandLabelCols(columns: number, controls: readonly { label: string; isButton: boolean }[]): number {
   const controlCols = controls.reduce((n, c) => n + c.label.length + (c.isButton ? BAND_CONTROL_CHROME_COLS : 0) + BAND_GAP_COLS, 0)
-  return columns - BAND_INDICATOR_COLS - BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
+  // the row's gaps: one per control, one after the indicator, one after the label's spacer
+  return columns - BAND_INDICATOR_COLS - 2 * BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
 }
 
 // The band's label for a view that is not the Panel-button-only one. `maxCols`: the columns the label may take (absent:

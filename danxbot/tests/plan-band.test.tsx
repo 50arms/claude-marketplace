@@ -23,8 +23,8 @@ describe('plan band', () => {
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     const labelOf = async (ui: any) => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
     expect(await labelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, its gap, 2 spare, and the controls: Panel 10, `⚠ 3` 8, Browser tab 16, Open ↗ 7, × 6
-    expect(await labelOf(narrow)).toBe('PLAN-23 · A very …')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Panel 10, `⚠ 3` 8, Browser tab 16, Open ↗ 7, × 6
+    expect(await labelOf(narrow)).toBe('PLAN-23 · A very…')
     expect((await narrow.find({ key: 'open-pane' }))?.text).toBe('Panel')
   })
 

@@ -28,7 +28,7 @@ export const LOCK_STALE_MS = 120_000
 export const NO_MCP_RETRY_MS = [2_000, 5_000, 15_000]
 
 // Truncation lengths, each for one place.
-// DX-4420: the band's plan name is cut to the columns the band has left after its controls (band.tsx), never to a fixed
+// DX-4420: the band's plan name is cut to the columns the band has left after its controls (`bandLabelCols` in words.ts), never to a fixed
 // length. The widths below are what that budget assumes: the indicator, the `[ label ]` chrome and the gap per control,
 // the shortest name worth drawing, and a spare column so a measuring error never pushes a control off the edge.
 export const BAND_INDICATOR_COLS = 2
