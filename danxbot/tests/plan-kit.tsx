@@ -214,6 +214,8 @@ export function dashboard(
     // DX-4423: null while the session holds a key
     signedOut: (options.signedOut ?? null) as 'signed-out' | 'lapsed' | 'revoked' | null,
     signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean } | undefined, calls: [] as any[] },
+    // DX-4435: what the key's own claim route (POST /api/permission-requests/:publicId/claim) answers: a status, or 'notFound'
+    permissionClaim: 'pending' as 'pending' | 'approved' | 'claimed' | 'denied' | 'expired' | 'notFound',
     cards: [
       {
         id: 'DX-1',
@@ -362,6 +364,10 @@ export function dashboard(
           ? { comments: c.comments, ...(options.noCommentsTotal ? {} : { comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length } }) }
           : {}),
       })
+    }
+    if (method === 'POST' && /^\/api\/permission-requests\/[^/]+\/claim$/.test(path)) {
+      if (world.permissionClaim === 'notFound') return reply({ error: 'Not found' }, 404)
+      return reply({ status: world.permissionClaim, granted: world.permissionClaim === 'approved' ? ['team.members.view'] : null })
     }
     const ans = /^\/api\/issues\/([A-Z]+-\d+)\/problems\/(\d+)\/answer$/.exec(path)
     if (method === 'POST' && ans) {

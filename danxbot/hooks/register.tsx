@@ -1,10 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { ConnectedPlan, Draft, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
+import type { ConnectedPlan, Draft, PermissionRequest, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { approvalRequestOf, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
+import { asApproval, claimPath, claimStatus, livePermissionRequests, permissionRequestOf } from './plan/permission'
 import { linkCardIds } from './plan/card-links'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
@@ -59,6 +60,8 @@ const tab = atom({ plugin: 'danxbot', key: 'tab' } as const, null as string | nu
 const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string | null)
 // DX-4391: the approval URL last opened (a request opens its page once).
 const approvalOpened = atom({ plugin: 'danxbot', key: 'approvalOpened' } as const, null as string | null)
+// DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
+const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -121,6 +124,7 @@ async function refresh($: any, force = false): Promise<void> {
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
+      await settlePermissionRequests($)
       await update($, gate, cur => {
         // `at` is this claim's token: a load whose stale lock was taken over must not touch the new holder's
         if (cur.at !== now) {
@@ -134,6 +138,20 @@ async function refresh($: any, force = false): Promise<void> {
   } finally {
     await update($, gate, cur => (cur.at === now ? { ...cur, inFlight: false, again: false } : cur))
   }
+}
+
+// DX-4435: a request leaves the list when it expires, or its claim (the key's own route) says it was approved, denied or expired,
+// or the session lost its key. A claim that fails for any other reason leaves it for the next refresh: its expiry ends it anyway.
+async function settlePermissionRequests($: any): Promise<void> {
+  const now = await $.clock.now()
+  const open = livePermissionRequests(await read($, permissionRequests), now)
+  const decided = new Set<string>()
+  for (const r of open) {
+    const out = await api($, 'POST', claimPath(r))
+    // a 404 is a request the dashboard no longer knows
+    if (out.status === 404 || isSignedOut(out) || outcomeRevokedBy(out) !== null || (out.ok && claimStatus(out.body) === 'over')) decided.add(r.publicId)
+  }
+  await update($, permissionRequests, cur => livePermissionRequests(cur, now).filter(r => !decided.has(r.publicId)))
 }
 
 // The model did not make this call, so tell it (it reads this, the person does not). R-4.
@@ -520,6 +538,13 @@ async function dismissBand($: any): Promise<void> {
   await update($, dismissed, () => true)
 }
 
+// The band's permission button: the newest open request's page again, with its code (a press is an explicit open).
+async function openNewestPermissionRequest($: any): Promise<void> {
+  const open = livePermissionRequests(await read($, permissionRequests), await $.clock.now())
+  const newest = open.at(-1)
+  if (newest !== undefined) await showApproval($, asApproval(newest), true)
+}
+
 function handlers($: any): Handlers {
   return {
     refresh: () => refresh($, true),
@@ -530,6 +555,7 @@ function handlers($: any): Handlers {
     dismissBand: () => dismissBand($),
     disconnect: plan => disconnect($, plan),
     signIn: () => startSignIn($),
+    openPermissionRequest: () => openNewestPermissionRequest($),
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
     pickPlan: value => update($, pick, () => value),
@@ -623,6 +649,17 @@ async function onPlanConnect($: any, e: any, next: any) {
   return ran
 }
 
+// DX-4435: the model asked for a permission: open the approval page once with its code and the permissions asked for (the
+// sign-in's open, showApproval), and keep the request for the band until it is decided.
+async function onRequestPermission($: any, e: any, next: any) {
+  const ran = await next(e)
+  const request = permissionRequestOf(ran.text, e.permissions)
+  if (request === null) return ran
+  await update($, permissionRequests, cur => [...cur.filter(r => r.publicId !== request.publicId), request])
+  await showApproval($, asApproval(request))
+  return ran
+}
+
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
   void refresh($)
@@ -648,6 +685,7 @@ async function drawBand($: any, e: any, next: any) {
     e.surface === 'desktop',
     e.surface === 'desktop',
     await read($, busy),
+    livePermissionRequests(await read($, permissionRequests), await $.clock.now()).length,
     e.props.bodyColumns,
   )
 }
@@ -696,6 +734,7 @@ export const register: Register = on => {
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
   on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, onPlanConnect)
+  on('tool.call', { tool: 'mcp__danx-dashboard__request_permission' }, onRequestPermission)
   on('turn.complete', onTurnComplete)
   on('classic.SessionStart', onTitle)
   on('classic.UserPromptSubmit', onTitle)

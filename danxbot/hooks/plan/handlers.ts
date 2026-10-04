@@ -14,6 +14,7 @@ export type Handlers = {
   connect: (plan: PlanRow) => Promise<unknown>
   disconnect: (plan: ConnectedPlan) => Promise<unknown>
   signIn: () => Promise<unknown>
+  openPermissionRequest: () => Promise<unknown>
   toggleSwitch: () => Promise<unknown>
   cancelSwitch: () => Promise<unknown>
   pickPlan: (value: string) => Promise<unknown>

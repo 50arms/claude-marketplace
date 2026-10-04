@@ -69,6 +69,8 @@ it (access, credentials, hardware, authority), else a `question`. Never `AskUser
 a plan-mode pause. A card needs a human exactly while it has an open problem; removing its
 last open problem closes that need.
 
+A call refused 403 for a missing permission → `request_permission` with a reason (show the person its code) and keep working; blocked without it, open an action problem.
+
 ## Claiming (operator-session sub-agents only)
 
 A dispatched worker never claims: danxbot picked the card up before spawning it

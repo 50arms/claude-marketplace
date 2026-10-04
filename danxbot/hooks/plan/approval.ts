@@ -4,7 +4,8 @@
 // `approval_required` is the answer to a NEW request (a later call answers `approval_pending`), so
 // it is the one state that opens the approval page.
 
-export type ApprovalRequest = { url: string; code: string }
+// DX-4435: `permissions` is set for a `request_permission` request (what the key asks to be granted), absent for a sign-in.
+export type ApprovalRequest = { url: string; code: string; permissions?: readonly string[] }
 
 // `states`: the answers that carry a request to show. A model's `plan_connect` shows only a NEW request
 // (`approval_required`); DX-4423's Sign in also reads the request a waiting call names (`approval_pending`).
@@ -29,6 +30,7 @@ export function approvalRequestOf(text: string | undefined, states: readonly str
 export type OpenFailure = { step: string; message: string }
 
 export function approvalToast(a: ApprovalRequest, failed: OpenFailure | null): string {
-  if (failed === null) return `Approve this session in the browser. Confirm code ${a.code} must match the page: ${a.url}`
+  const what = a.permissions && a.permissions.length > 0 ? `permission ${a.permissions.join(', ')}` : 'this session'
+  if (failed === null) return `Approve ${what} in the browser. Confirm code ${a.code} must match the page: ${a.url}`
   return `Could not open the approval page (${failed.step}: ${failed.message}). Open this link and check that confirm code ${a.code} matches: ${a.url}`
 }

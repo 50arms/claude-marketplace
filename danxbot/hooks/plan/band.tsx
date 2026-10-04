@@ -2,6 +2,7 @@ import type { PlanView } from '../../types'
 import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
+import { permissionBadge } from './permission'
 import { bandLabel, bandLabelCols, problemBadge, viewPercent } from './words'
 
 // DX-4420: the band button that opens the pane (it read `Plan`), and the other controls' labels the width budget counts.
@@ -24,6 +25,8 @@ export function renderBand(
   hasSvg: boolean,
   hasBrowser: boolean,
   busy: string[],
+  // DX-4435: how many of the model's permission requests are still open.
+  permissionRequests: number,
   // The band's width in columns (`bodyColumns`); absent in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns?: number,
@@ -54,6 +57,7 @@ export function renderBand(
   const badge = v.phase === 'error' ? '' : problemBadge(v)
   // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
+  const permissionLabel = permissionBadge(permissionRequests)
   const showBadge = plan !== null && badge !== ''
   // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
@@ -63,6 +67,7 @@ export function renderBand(
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
     ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
+    ...(permissionLabel !== '' ? [{ label: permissionLabel, isButton: true }] : []),
     ...(plan !== null && hasBrowser ? [{ label: BROWSER_TAB_LABEL, isButton: true }] : []),
     ...(plan !== null ? [{ label: OPEN_LINK_LABEL, isButton: false }] : []),
     { label: CLOSE_LABEL, isButton: true },
@@ -107,6 +112,11 @@ export function renderBand(
           ) : (
             <Link href={needsYouUrl(plan)} label={badge} />
           ))}
+        {permissionLabel !== '' && (
+          <Button key="open-permission" variant="primary" onPress={() => hd.openPermissionRequest()}>
+            {permissionLabel}
+          </Button>
+        )}
         {plan !== null && hasBrowser && (
           <Button key="open-tab" onPress={() => hd.openBrowserTab(planUrl(plan))}>
             {busyKey.isOpeningBrowser(busy) ? 'Opening…' : BROWSER_TAB_LABEL}

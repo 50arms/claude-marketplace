@@ -152,6 +152,9 @@ export type RefreshGate = {
   at: number | null
 }
 
+// DX-4435: a `request_permission` request the band counts until it is decided; `expiresAt` is epoch ms.
+export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[]; expiresAt: number }
+
 declare module 'claude-code' {
   interface PluginState {
     danxbot: {
@@ -173,6 +176,8 @@ declare module 'claude-code' {
       title: string | null
       // DX-4391: the approval URL last opened, so one request opens its page once.
       approvalOpened: string | null
+      // DX-4435: the model's undecided permission requests, oldest first.
+      permissionRequests: PermissionRequest[]
     }
   }
 }
