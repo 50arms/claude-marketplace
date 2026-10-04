@@ -243,7 +243,8 @@ async function openInBrowser($: any, url: string): Promise<void> {
 // may be refused (PLAN-23 records that the host asks the person to allow a site first, which a plugin
 // cannot raise; not yet seen live for this open), which is what the cause then says. A browser already
 // busy with another open is told too. DX-4424: the toast comes once the tab is in front; a later
-// failure of the page load toasts again with the same code and link.
+// failure of the page load toasts again with the same code and link. `forget` is showApproval's: any failure clears its
+// once-per-URL record so the next request retries.
 async function openApprovalPage($: any, approval: ApprovalRequest, forget: () => Promise<unknown>): Promise<void> {
   let opening: Opening = { failed: { step: 'busy', message: 'another browser open is in progress' }, loaded: Promise.resolve(null) }
   await withBusy($, busyKey.browser, async () => {
@@ -389,7 +390,8 @@ async function signIn($: any): Promise<void> {
         if (step.request !== null) {
           if (shown !== null && step.request.url !== shown) break
           // DX-4423: the press itself always tries the open; later rounds of the same wait only repeat the request
-          await showApproval($, step.request, shown === null)
+          const firstOfPress = shown === null
+          await showApproval($, step.request, firstOfPress)
           shown = step.request.url
         }
         continue

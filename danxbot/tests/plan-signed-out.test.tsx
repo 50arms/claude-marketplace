@@ -270,6 +270,20 @@ for (const surface of SURFACES) {
       expect(previewStarts(d)).toHaveLength(2)
     })
 
+    test('a page load that fails after the tab came forward is tried again by the next request', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'signed-out', tabs: ['tab-1'], browser: 'denied' })
+      modelConnect(on)
+      await startSession($, d, surface)
+      d.calls.length = 0
+      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await d.clock.settle()
+      expect(pageOpens(d)).toHaveLength(1)
+      d.setBrowser('ok')
+      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await d.clock.settle()
+      expect(pageOpens(d)).toHaveLength(2)
+    })
+
     test('an explicit Sign in press opens the approval page again even when this request was already opened', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
       modelConnect(on)
