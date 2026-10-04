@@ -101,7 +101,9 @@ A note edit replaces its link list per kind — resend them all.
 Create via `danxbot:issue-workflow` (load before choosing a type) — but `ready` the card AND
 build it here; the plan never waits on a worker. An archived (Backlog) card was parked on
 purpose: read why in its comments before reopening it; a park the operator made is theirs
-to lift.
+to lift. A design talked through with the operator is decided the moment their answers leave
+no open question: write it into the plan, slice, ready and build in that same turn, never a
+card held in Review for a "go" (a point still open is a problem on that card).
 
 ## Closing a plan
 
