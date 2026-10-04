@@ -75,6 +75,7 @@ export const EMPTY: PlanView = {
   listener: null,
   refreshedAt: null,
   resumePlan: null,
+  revokedBy: null,
 }
 
 // What `busy` holds while writes are under way: a list of keys, one per connect or problem, so
@@ -119,9 +120,9 @@ export const DONUT_PANE_PX = 44
 export const NO_EVENT_BRIDGE = 'the dashboard sent no event bridge status for this session'
 
 // DX-4423: a session with no dashboard key. The danx-dashboard MCP answers every tool but `plan_connect` with an error
-// result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key was revoked or lapsed
-// (REVOKED_HALT ends with it): packages/danx-dashboard-mcp session-access.ts. DX-4418's distinct `key_revoked` answer will
-// replace this match for the revoked case. The text is for the agent: the person only ever reads the words below.
+// result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key lapsed (KEY_LAPSED_HALT
+// ends with it): packages/danx-dashboard-mcp session-access.ts. A key a PERSON revoked is not this: it is the stop halt below.
+// The text is for the agent: the person only ever reads the words below.
 export const SIGNED_OUT_MARK = 'Not signed in to the danxbot dashboard'
 export const SIGNED_OUT_LABEL = `${BRAND}: signed out`
 export const SIGNED_OUT_LINE = "This session's access ended. Sign in to reconnect."
@@ -134,3 +135,13 @@ export const signInFailedToast = (message: string) => `Sign in failed: ${message
 // own expiry (10 minutes) ends the sign-in first: the call that outlives it answers a NEW request, which is not shown.
 // This bound only guarantees the loop ends if the server never answers either way.
 export const SIGN_IN_ROUNDS = 16
+
+// DX-4418: a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
+// makes no access request: `keyRevokedHalt` in packages/danx-dashboard-mcp key-revoked-halt.ts, which begins
+// `STOP ALL WORK NOW. <revokedBy> revoked your access to the danxbot dashboard at <revokedAt>.` followed by a blank line. The
+// text is for the agent (it tells it to commit and stop); the person reads the words below, and there is no Sign in: a
+// revoked agent must stop.
+export const KEY_REVOKED_HALT = /^STOP ALL WORK NOW\. (.+) revoked your access to the danxbot dashboard at \S+\.\n/
+export const keyRevokedLabel = (by: string) => `${BRAND}: access revoked by ${by}`
+export const KEY_REVOKED_FOOTER = `${BRAND}: access revoked`
+export const KEY_REVOKED_LINE = "A person revoked this session's access, so the session must stop. Nothing here can sign it in again."

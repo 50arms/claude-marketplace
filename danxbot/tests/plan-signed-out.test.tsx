@@ -5,16 +5,16 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { SIGN_IN_ROUNDS } from '../hooks/plan/config'
 import { loadPlan } from '../hooks/plan/load'
-import { isSignedOut } from '../hooks/plan/mcp'
+import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
 import { signInStep } from '../hooks/plan/sign-in'
-import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, REVOKED_HALT, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
 const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => b.text)
 // the server's agent-facing wording: none of it may reach the person, in any drawing or toast
-const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|lapsed|no longer accepts/i
+const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|lapsed|no longer accepts|STOP ALL WORK|Commit your work|agent-finalize/i
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'danx-dashboard' && c.tool === 'plan_connect')
 const previewStarts = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.tool === 'preview_start')
 const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
@@ -25,7 +25,9 @@ describe('classification: the signed-out answer is its own state, not an error',
 
   test('both halts of the server read as signed out, and nothing else does', () => {
     expect(isSignedOut(halt(SIGN_IN_HALT))).toBe(true)
-    expect(isSignedOut(halt(REVOKED_HALT))).toBe(true)
+    expect(isSignedOut(halt(KEY_LAPSED_HALT))).toBe(true)
+    // a key a person revoked is the stop halt, never signed out: it does not carry the sign-in sentence
+    expect(isSignedOut(halt(KEY_REVOKED_HALT))).toBe(false)
     expect(isSignedOut(halt('plan_connect: bad arguments'))).toBe(false)
     expect(isSignedOut({ ok: false, status: 500, body: { error: SIGN_IN_HALT } })).toBe(false)
     expect(isSignedOut({ ok: true, status: 200, body: { error: SIGN_IN_HALT } })).toBe(false)
@@ -38,9 +40,9 @@ describe('classification: the signed-out answer is its own state, not an error',
   test('the first call, a later call, and the revoked wording each end the load as signed-out', async () => {
     const list = { ok: true, status: 200, body: { plans: [], total: 0, session: { plan_id: 23, plan_name: 'x' }, dashboard_url: 'http://localhost:5555' } }
     expect(await loadPlan(async () => halt(SIGN_IN_HALT), 't')).toMatchObject({ phase: 'signed-out', error: null, connected: null, refreshedAt: 't' })
-    expect(await loadPlan(async () => halt(REVOKED_HALT), 't')).toMatchObject({ phase: 'signed-out' })
+    expect(await loadPlan(async () => halt(KEY_LAPSED_HALT), 't')).toMatchObject({ phase: 'signed-out' })
     // the key dropped between the plan list and the plan's own read
-    const later = await loadPlan(async (_m, path) => (path === '/api/plans' ? list : halt(REVOKED_HALT)), 't')
+    const later = await loadPlan(async (_m, path) => (path === '/api/plans' ? list : halt(KEY_LAPSED_HALT)), 't')
     expect(later).toMatchObject({ phase: 'signed-out', error: null })
   })
 
@@ -57,6 +59,45 @@ describe('the loaded view', () => {
     const v = d.stateWrites.filter(w => w.key === 'view').at(-1)!.value as any
     expect(v.phase).toBe('ready')
     expect(v.resumePlan).toBeNull()
+  })
+})
+
+describe('a key a person revoked (DX-4418): the stop halt of MCP 0.1.225', () => {
+  const halt = (text: string) => ({ ok: false, status: 0, body: { error: text } })
+
+  test('the exact halt names who revoked the key, and only that exact opening counts', () => {
+    expect(keyRevokedBy(KEY_REVOKED_HALT)).toBe(REVOKER)
+    // a name with spaces, and the opening cut from the real text (key-revoked-halt.ts, keyRevokedHalt)
+    expect(keyRevokedBy('STOP ALL WORK NOW. Dana Smith revoked your access to the danxbot dashboard at 2026-10-04T07:00:00.000Z.\n\nCommit your work.')).toBe('Dana Smith')
+    for (const other of [
+      KEY_LAPSED_HALT,
+      SIGN_IN_HALT,
+      `Note: ${KEY_REVOKED_HALT}`,
+      'STOP ALL WORK NOW. dana revoked your access to Slack at 2026-10-04T07:00:00.000Z.\n\n',
+      'STOP ALL WORK NOW. revoked your access to the danxbot dashboard at 2026-10-04T07:00:00.000Z.\n\n',
+      'STOP ALL WORK NOW. dana revoked your access to the danxbot dashboard at 2026-10-04T07:00:00.000Z.',
+      '',
+    ]) {
+      expect(keyRevokedBy(other)).toBeNull()
+    }
+  })
+
+  test('an outcome reads as revoked only when it is an error result carrying the halt', () => {
+    expect(outcomeRevokedBy(halt(KEY_REVOKED_HALT))).toBe(REVOKER)
+    expect(outcomeRevokedBy({ ok: false, status: 401, body: { error: KEY_REVOKED_HALT } })).toBeNull()
+    expect(outcomeRevokedBy({ ok: true, status: 200, body: { error: KEY_REVOKED_HALT } })).toBeNull()
+    expect(outcomeRevokedBy({ ok: false, status: 0, body: undefined })).toBeNull()
+  })
+
+  test('the first call and a later call each end the load as key-revoked, naming who', async () => {
+    const list = { ok: true, status: 200, body: { plans: [], total: 0, session: { plan_id: 23, plan_name: 'x' }, dashboard_url: 'http://localhost:5555' } }
+    expect(await loadPlan(async () => halt(KEY_REVOKED_HALT), 't')).toMatchObject({ phase: 'key-revoked', revokedBy: REVOKER, error: null, connected: null, refreshedAt: 't' })
+    const later = await loadPlan(async (_m, path) => (path === '/api/plans' ? list : halt(KEY_REVOKED_HALT)), 't')
+    expect(later).toMatchObject({ phase: 'key-revoked', revokedBy: REVOKER })
+  })
+
+  test('Sign in reads the halt as the end, never as a stop it could retry', () => {
+    expect(signInStep({ content: [{ type: 'text', text: KEY_REVOKED_HALT }], isError: true })).toEqual({ kind: 'revoked', by: REVOKER })
   })
 })
 
@@ -81,7 +122,7 @@ describe('what one plan_connect answer means to Sign in', () => {
 })
 
 for (const surface of SURFACES) {
-  for (const kind of ['signed-out', 'revoked'] as const) {
+  for (const kind of ['signed-out', 'lapsed'] as const) {
     describe(`${kind} on ${surface}`, () => {
       test("band, pane and footer say Danxbot: signed out in red, with a Sign in button and none of the server's words", async ($, on) => {
         const d = dashboard(on, { signedOut: kind })
@@ -105,6 +146,65 @@ for (const surface of SURFACES) {
     })
   }
 
+  describe(`a revoked key on ${surface}`, () => {
+    test('band, pane and footer say access revoked by the person in red, with no Sign in anywhere and none of the halt', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'revoked' })
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      const footer = await mountIndicator($, surface)
+
+      const label = await band.find({ type: 'Text', text: /Danxbot: access revoked by dana/ })
+      expect(label.props.color).toBe('red')
+      expect(await texts(pane)).toContain('Danxbot: access revoked by dana')
+      expect(await texts(pane)).toContain("A person revoked this session's access, so the session must stop.")
+      expect(await footerText(footer)).toBe('Danxbot: access revoked')
+      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+      expect(await pane.find({ key: 'sign-in' })).toBeUndefined()
+      for (const shown of [await texts(band), await texts(pane), (await buttons(band)).join(' '), (await buttons(pane)).join(' ')]) {
+        expect(shown).not.toMatch(AGENT_TEXT)
+        expect(shown).not.toContain('Sign in')
+      }
+      expect(await buttons(pane)).not.toContain('Disconnect')
+      expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
+    })
+
+    test('the plugin never calls plan_connect for a revoked session, however long it polls', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'revoked' })
+      await startSession($, d, surface)
+      for (let i = 0; i < 5; i++) await d.clock.advance(60_000)
+      expect(connectCalls(d)).toEqual([])
+    })
+
+    test('a lapsed key that is then revoked reads revoked, and the view never offers Sign in again', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'lapsed' })
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await texts(band)).toContain('Danxbot: signed out')
+      d.world.signedOut = 'revoked'
+      await d.clock.advance(60_000)
+      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
+      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+    })
+
+    test('a person revokes the key while Sign in waits: one toast, the view reads revoked, and no further call is made', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'signed-out' })
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      await band.press({ key: 'sign-in' })
+      await d.clock.settle()
+      d.world.signedOut = 'revoked'
+      await d.clock.advance(45_000)
+      await d.clock.settle()
+      expect(d.toasts.at(-1)).toBe('Danxbot: access revoked by dana. This session must stop.')
+      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
+      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+      const calls = connectCalls(d).length
+      await d.clock.advance(120_000)
+      expect(connectCalls(d)).toHaveLength(calls)
+    })
+  })
+
   describe(`Sign in on ${surface}`, () => {
     test('a session that was on a plan loses its key: the next refresh reads signed out and Sign in asks for that plan again with its title', async ($, on) => {
       const d = dashboard(on)
@@ -112,7 +212,7 @@ for (const surface of SURFACES) {
       await $.classic.SessionStart({ source: 'startup', session_title: 'PLAN-23: danxbot plugin' } as any)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      d.world.signedOut = 'revoked'
+      d.world.signedOut = 'lapsed'
       // three polls while signed out: the plan it was on is still remembered after the first
       for (let i = 0; i < 3; i++) await d.clock.advance(60_000)
       expect(await texts(band)).toContain('Danxbot: signed out')
@@ -128,7 +228,7 @@ for (const surface of SURFACES) {
       d.failList()
       await d.clock.advance(60_000)
       d.failList(false)
-      d.world.signedOut = 'revoked'
+      d.world.signedOut = 'lapsed'
       await d.clock.advance(60_000)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await band.press({ key: 'sign-in' })
@@ -153,7 +253,7 @@ for (const surface of SURFACES) {
     })
 
     test('the buttons read Signing in… while it waits, a second press makes no second call, and approval reloads the view by itself', async ($, on) => {
-      const d = dashboard(on, { signedOut: 'revoked' })
+      const d = dashboard(on, { signedOut: 'lapsed' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })

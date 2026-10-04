@@ -23,6 +23,7 @@ import {
   PLAN_TITLE,
   POLL_MS,
   SIGNED_IN_TOAST,
+  keyRevokedLabel,
   SIGN_IN_ROUNDS,
   SIGN_IN_TIMEOUT_TOAST,
   signInFailedToast,
@@ -366,6 +367,11 @@ async function signIn($: any): Promise<void> {
           await showApproval($, step.request)
         }
         continue
+      }
+      if (step.kind === 'revoked') {
+        $.ui.toast(`${keyRevokedLabel(step.by)}. This session must stop.`)
+        await refresh($, true)
+        return
       }
       $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
       // signed in (even if the plan was refused): the view reads the truth; a stop leaves the signed-out view as it is

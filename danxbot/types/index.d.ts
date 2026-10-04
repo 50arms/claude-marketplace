@@ -90,10 +90,12 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 
 // `no-mcp`: the session has no `danx-dashboard` MCP server (another repo), so the dashboard
 // cannot be reached at all. It is not an error: the band shows only its Panel button.
-// `signed-out` (DX-4423): the server is there but the session holds no dashboard key (revoked, lapsed, or never
-// approved): the band and pane say so and offer Sign in, never the server's agent-facing text.
+// `signed-out` (DX-4423): the server is there but the session holds no dashboard key (lapsed, or never approved):
+// the band and pane say so and offer Sign in, never the server's agent-facing text.
+// `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band and pane say so and offer NO
+// Sign in, because a revoked agent must stop.
 export type PlanView = {
-  phase: 'loading' | 'ready' | 'error' | 'no-mcp' | 'signed-out'
+  phase: 'loading' | 'ready' | 'error' | 'no-mcp' | 'signed-out' | 'key-revoked'
   error: string | null
   connected: ConnectedPlan | null
   plans: PlanRow[]
@@ -116,6 +118,8 @@ export type PlanView = {
   refreshedAt: string | null
   // DX-4423: the plan this session was on when it was signed out, for Sign in to ask for again; null when not known.
   resumePlan: number | null
+  // DX-4418: who revoked the key, on a `key-revoked` view; null on every other.
+  revokedBy: string | null
 }
 
 // What the operator is composing on one problem: a note on a solution, or a rejection reason.

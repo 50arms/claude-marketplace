@@ -1,6 +1,6 @@
 import type { CommentRow, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
 import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, STATUS_KEYS } from './config'
-import { isSignedOut } from './mcp'
+import { isSignedOut, outcomeRevokedBy } from './mcp'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -66,18 +66,27 @@ export function toProblems(card: any, priority: number): ProblemRow[] {
 
 // control flow only: thrown by `guarded` below, caught by loadPlan, never seen outside it
 class SignedOut extends Error {}
+class KeyRevoked extends Error {
+  constructor(readonly by: string) {
+    super(by)
+  }
+}
 
 // The whole load. A signed-out answer to ANY of its calls (the key can be dropped between two of them) ends it as the
-// `signed-out` view, never as a generic error carrying the server's text. `resumePlan` is the caller's to fill.
+// `signed-out` view, and a key a person revoked as the `key-revoked` view (DX-4418), never as a generic error carrying the
+// server's text. `resumePlan` is the caller's to fill.
 export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const guarded: Call = async (method, path, extra) => {
     const r = await call(method, path, extra)
+    const by = outcomeRevokedBy(r)
+    if (by !== null) throw new KeyRevoked(by)
     if (isSignedOut(r)) throw new SignedOut()
     return r
   }
   try {
     return await readPlan(guarded, refreshedAt)
   } catch (err) {
+    if (err instanceof KeyRevoked) return { ...EMPTY, phase: 'key-revoked', revokedBy: err.by, refreshedAt }
     if (err instanceof SignedOut) return { ...EMPTY, phase: 'signed-out', refreshedAt }
     throw err
   }

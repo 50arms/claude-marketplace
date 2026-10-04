@@ -1,4 +1,4 @@
-import { ERROR_BODY_MAX, SIGNED_OUT_MARK } from './config'
+import { ERROR_BODY_MAX, KEY_REVOKED_HALT, SIGNED_OUT_MARK } from './config'
 
 // What `$.mcp.call` rejects with, as the engine words it.
 
@@ -53,4 +53,15 @@ export function refusalText(o: ToolOutcome): string {
 // mentions signing in is a plain failure.
 export function isSignedOut(o: ToolOutcome): boolean {
   return !o.ok && o.status === 0 && typeof o.body?.error === 'string' && o.body.error.includes(SIGNED_OUT_MARK)
+}
+
+// DX-4418: who revoked the key, when the text is the MCP's stop halt for a key a person revoked (see KEY_REVOKED_HALT); null for
+// any other text. Anchored at the start: nothing that merely quotes the sentence counts.
+export function keyRevokedBy(text: string): string | null {
+  return KEY_REVOKED_HALT.exec(text)?.[1] ?? null
+}
+
+// The same for a tool's outcome: the halt is an error result, so status 0 with the text as the error.
+export function outcomeRevokedBy(o: ToolOutcome): string | null {
+  return !o.ok && o.status === 0 && typeof o.body?.error === 'string' ? keyRevokedBy(o.body.error) : null
 }

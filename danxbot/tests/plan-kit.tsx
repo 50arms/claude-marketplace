@@ -26,11 +26,16 @@ export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
 export const NAVIGATE_REFUSED = `navigation to ${DASHBOARD_URL} was denied or failed`
 export const PREVIEW_START_OK = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "seed",\n  "reused": true,\n  "type": "browser",\n  "navOk": true\n}\nBrowser pane opened. Use serverId "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0" with read_page / computer / navigate.'
 
-// DX-4423: what the danx-dashboard MCP (0.1.224, session-access.ts) answers every tool but plan_connect while the session holds
-// no key: an error result. REVOKED_HALT is what the first call after a 401 on the session's key answers; both end in the
-// sign-in sentence. These are the server's words, for the agent: the plugin must never show them to the person.
+// DX-4423 / DX-4418: what the danx-dashboard MCP (0.1.225, session-access.ts and key-revoked-halt.ts) answers every tool but
+// plan_connect while the session holds no key: an error result. SIGN_IN_HALT is a session that never signed in, KEY_LAPSED_HALT
+// what the first call after a lapsed key's 401 answers (it ends in the sign-in sentence), and KEY_REVOKED_HALT the one stop halt
+// for a key a PERSON revoked, which EVERY tool answers, plan_connect included, with no access request. These are the server's
+// words, for the agent: the plugin must never show them to the person.
 export const SIGN_IN_HALT = "Not signed in to the danxbot dashboard. Call `plan_connect` (with `title`: your session's own title) to request access; the user approves it in their browser, then this tool works."
-export const REVOKED_HALT = `The dashboard no longer accepts this session's key (it was revoked, or it lapsed after a day unused), so this session is signed out. ${SIGN_IN_HALT}`
+export const KEY_LAPSED_HALT = `The dashboard no longer accepts this session's key (it lapsed after a day unused), so this session is signed out. ${SIGN_IN_HALT}`
+export const REVOKER = 'dana'
+export const REVOKED_AT = '2026-10-04T07:00:00.000Z'
+export const KEY_REVOKED_HALT = `STOP ALL WORK NOW. ${REVOKER} revoked your access to the danxbot dashboard at ${REVOKED_AT}.\n\nCommit your work in progress now (commit what you have; do not run agent-finalize.sh and do not merge). Then end this session: tell the person what you committed and stop.\n\nDo not call plan_connect or any other danxbot dashboard tool again, do not request access again and do not look for another route.`
 export const APPROVAL_URL = 'http://localhost:5555/connect/abc123'
 export const CONFIRM_CODE = 'WXYZ2345'
 // the approval request plan_connect answers while signed out, and what its next calls answer meanwhile (instruction text as the server words it)
@@ -106,10 +111,10 @@ export function dashboard(
     tabsContext?: 'list' | 'error' | 'garbage'
     listFails?: boolean
     // DX-4423: the session holds no dashboard key: every danxbot_api call is the MCP's error result (the first call after a revoke
-    // answers REVOKED_HALT, a session that never signed in SIGN_IN_HALT) and plan_connect runs the request-and-approve dance
+    // answers KEY_LAPSED_HALT, a session that never signed in SIGN_IN_HALT; 'revoked' answers KEY_REVOKED_HALT to every tool and never asks) and plan_connect runs the request-and-approve dance
     // (world.signIn): approval_required, then approval_pending after `waitMs` on the fake clock, until a test sets `approved`
     // (then the key is stored: the tools work again and plan_connect connects to the plan it is given) or `answer`
-    signedOut?: 'signed-out' | 'revoked'
+    signedOut?: 'signed-out' | 'lapsed' | 'revoked'
     // plan_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
@@ -150,7 +155,7 @@ export function dashboard(
     planId: options.connected === false ? (null as number | null) : 23,
     titleSeen: undefined as string | undefined,
     // DX-4423: null while the session holds a key
-    signedOut: (options.signedOut ?? null) as 'signed-out' | 'revoked' | null,
+    signedOut: (options.signedOut ?? null) as 'signed-out' | 'lapsed' | 'revoked' | null,
     signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean } | undefined, calls: [] as any[] },
     cards: [
       {
@@ -281,8 +286,10 @@ export function dashboard(
       // a deny reaches the plugin as a rejection that carries the reason
       if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
-      if (world.signedOut !== null && e.tool !== 'plan_connect') {
-        return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? REVOKED_HALT : SIGN_IN_HALT }], isError: true } }
+      const haltText = () => (world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT)
+      // a revoked key stops EVERY tool, plan_connect included, and asks for nothing
+      if (world.signedOut === 'revoked' || (world.signedOut !== null && e.tool !== 'plan_connect')) {
+        return { value: { content: [{ type: 'text', text: haltText() }], isError: true } }
       }
       if (world.signedOut !== null && e.tool === 'plan_connect') {
         const dance = world.signIn

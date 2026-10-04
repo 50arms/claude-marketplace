@@ -68,7 +68,7 @@ export function renderBand(
   const labelCols = columns === undefined ? undefined : bandLabelCols(columns, controls)
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
-  const failed = v.phase === 'error' || signedOut
+  const failed = v.phase === 'error' || signedOut || v.phase === 'key-revoked'
   const failedColor = failed ? DANGER : undefined
   const indicator =
     percent === null ? (

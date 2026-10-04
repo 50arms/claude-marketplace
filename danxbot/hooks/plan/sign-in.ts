@@ -1,6 +1,6 @@
 import { approvalRequestOf } from './approval'
 import type { ApprovalRequest } from './approval'
-import { mcpText, refusalText, toolOutcome } from './mcp'
+import { keyRevokedBy, mcpText, refusalText, toolOutcome } from './mcp'
 
 // DX-4423: what one `plan_connect` answer means to the Sign in button, and what the person is told. The server's own
 // words are written for the agent (it says "Do not retry unless they ask"), so nothing here passes them on: every
@@ -14,6 +14,8 @@ export type SignInStep =
   | { kind: 'done' }
   // signed in, but the plan connect was refused: the view reloads and says where the session is
   | { kind: 'refused'; message: string }
+  // a person revoked the key while signing in: nothing more to do, and the view reads the truth
+  | { kind: 'revoked'; by: string }
   // nothing more to do
   | { kind: 'stop'; message: string }
 
@@ -28,6 +30,8 @@ const STOPPED: Record<string, string> = {
 
 export function signInStep(result: any): SignInStep {
   const text = mcpText(result)
+  const revokedBy = keyRevokedBy(text)
+  if (revokedBy !== null) return { kind: 'revoked', by: revokedBy }
   let parsed: any
   try {
     parsed = JSON.parse(text)

@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, keyRevokedLabel } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
 export const WORDS = {
@@ -86,6 +86,8 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
 export function bandLabel(v: PlanView, maxCols?: number): string {
   // DX-4423: a session with no key reads signed out, in the operator's words, whatever it was connected to before.
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
+  // DX-4418: a revoked key names who revoked it.
+  if (v.phase === 'key-revoked') return keyRevokedLabel(v.revokedBy as string) // always set with the phase
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
   if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
   if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
@@ -141,6 +143,7 @@ export function problemSplit(v: PlanView): { questions: number; actions: number 
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' || v.phase === 'no-mcp') return null
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
+  if (v.phase === 'key-revoked') return KEY_REVOKED_FOOTER
   return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND
 }
 

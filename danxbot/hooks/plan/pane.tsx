@@ -3,8 +3,8 @@ import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { problemCard } from './problems'
 import type { Ui } from './problems'
-import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
-import { age, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
+import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
+import { age, bandLabel, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
 export type PaneModel = {
@@ -149,6 +149,15 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
         {busyKey.isSigningIn(m.working) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
       </Button>,
+    )
+  }
+  // DX-4418: a person revoked the key: who, and that the session must stop. No Sign in: a revoked agent must stop.
+  if (v.phase === 'key-revoked') {
+    return shell(
+      <Text key="key-revoked" color={DANGER} bold>
+        ● {bandLabel(v)}
+      </Text>,
+      <Text>{KEY_REVOKED_LINE}</Text>,
     )
   }
   if (v.phase === 'error') {
