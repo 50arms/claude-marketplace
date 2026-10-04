@@ -69,8 +69,13 @@ for (const surface of SURFACES) {
       const t = await text(pane)
       expect(t).toContain("Couldn't load DX-1")
       expect(t).toContain('+1 more card with open problems in the browser')
-      const only = await openPane($, on, surface, { cardFails: 'DX-1', cardsTotal: 1 })
-      expect(await text(only.pane)).not.toContain('Nothing needs you')
+    })
+
+    test('when the only needs-you card cannot be read the pane does not say nothing needs you', async ($, on) => {
+      const { pane } = await openPane($, on, surface, { cardFails: ['DX-1', 'DX-2'] })
+      const t = await text(pane)
+      expect(t).toContain("Couldn't load DX-1")
+      expect(t).not.toContain('Nothing needs you')
     })
 
     test('an in-progress card whose read fails is still listed, with one line saying its agent is unknown', async ($, on) => {

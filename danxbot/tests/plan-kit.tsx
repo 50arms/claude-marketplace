@@ -184,7 +184,7 @@ export function dashboard(
     // problems-with-solutions read does not (DX-4443's shape)
     bigCard?: boolean
     // DX-4458: GET /api/issues/<id> answers 500 for this card
-    cardFails?: string
+    cardFails?: string | string[]
     // DX-4458: ... and the host refuses that card's answer as too large
     cardOversize?: string
     // DX-4458: GET /api/issues/<id>/problems answers 500
@@ -327,7 +327,7 @@ export function dashboard(
       })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
-    if (method === 'GET' && issue && options.cardFails === issue[1]) return reply({ error: 'boom' }, 500)
+    if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
     const probs = /^\/api\/issues\/([A-Z]+-\d+)\/problems$/.exec(path)
     if (method === 'GET' && probs && options.problemsFail) return reply({ error: 'boom' }, 500)
