@@ -1,4 +1,4 @@
-import type { CommentRow, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
+import type { CommentRow, ConnectedPlan, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
 import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, STATUS_KEYS } from './config'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
@@ -150,22 +150,12 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   // cards arrive priority-sorted; keep that order
   const problems: ProblemRow[] = fetched.flatMap(f => toProblems(f.r.body, f.row.priority))
 
-  // The in-progress bucket: the same completeness rule, and a readable agent name per row (the cards
-  // route carries only the raw session id of a claimed card).
+  // The in-progress bucket: the same completeness rule. DX-4415: only the ids are kept (the pane's refs row).
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
   if (typeof inProg.body.total !== 'number') {
     return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
   }
-  const ipRows: any[] = inProg.body.cards ?? []
-  const named = await Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`) })))
-  const unnamed = named.find(n => !n.r.ok)
-  if (unnamed) return { ...EMPTY, ...base, phase: 'error', error: `${unnamed.row.id} ${errText(unnamed.r)}` }
-  const inProgress: InProgressRow[] = named.map(n => ({
-    id: n.row.id,
-    title: n.row.title,
-    agent: n.r.body.assigned_agent_name ?? null,
-    updatedAt: n.row.updatedAt,
-  }))
+  const inProgress: string[] = (inProg.body.cards ?? []).map((c: any) => c.id)
   return {
     ...base,
     phase: 'ready',

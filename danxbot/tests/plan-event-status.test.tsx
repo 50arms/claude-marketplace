@@ -25,12 +25,12 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       // the connection line's dot is the other green; the event dot is its own Text, in the row with `events`
-      expect(await greens(pane)).toEqual(['● Connected: PLAN-23', '●'])
+      expect(await greens(pane)).toEqual(['●', '●'])
       const events = await pane.find({ type: 'Text', text: /^events$/ })
       expect(events).toBeDefined()
       const all = await joined(pane)
-      expect(all).toContain('● Connected: PLAN-23')
-      expect(all.indexOf('● Connected: PLAN-23')).toBeLessThan(all.indexOf('events'))
+      expect(all).toContain('Connected: PLAN-23')
+      expect(all.indexOf('Connected: PLAN-23')).toBeLessThan(all.indexOf('events'))
       expect(all).not.toContain('Next step')
       expect(all).not.toContain(NO_EVENT_BRIDGE)
     })
@@ -46,7 +46,7 @@ for (const surface of SURFACES) {
         const step = (await texts(pane)).find((t: any) => t.text === NEXT_STEP(state))
         expect(step?.props.color).toBe(YELLOW)
         expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
-        expect(await greens(pane)).toEqual(['● Connected: PLAN-23'])
+        expect(await greens(pane)).toEqual(['●'])
       })
     }
 
@@ -57,7 +57,7 @@ for (const surface of SURFACES) {
       expect((await texts(pane)).find((t: any) => t.text === 'events: Healthy')?.props.color).toBe(YELLOW)
       expect(await joined(pane)).toContain(NEXT_STEP('Healthy'))
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
-      expect(await greens(pane)).toEqual(['● Connected: PLAN-23'])
+      expect(await greens(pane)).toEqual(['●'])
     })
 
     test('connected with no listener row: a warning line saying so; no green dot, no `events` label', async ($, on) => {
@@ -68,7 +68,7 @@ for (const surface of SURFACES) {
       expect(line?.props.color).toBe(YELLOW)
       expect(await yellowDots(pane)).toBe(1)
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
-      expect(await greens(pane)).toEqual(['● Connected: PLAN-23'])
+      expect(await greens(pane)).toEqual(['●'])
     })
 
     // the state is the truth, not the `attached` flag: a reader keyed on `attached` would get both of these wrong
@@ -78,7 +78,7 @@ for (const surface of SURFACES) {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect((await texts(pane)).find((t: any) => t.text === 'events: credential_mismatch')?.props.color).toBe(YELLOW)
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
-      expect(await greens(pane)).toEqual(['● Connected: PLAN-23'])
+      expect(await greens(pane)).toEqual(['●'])
     })
 
     test('attached false with the healthy state is the green line: only the state decides', async ($, on) => {
@@ -121,7 +121,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect([...new Set(d.api.map(a => `${a.method} ${a.path}`))].sort()).toEqual(
-        ['GET /api/issues/DX-1', 'GET /api/issues/DX-2', 'GET /api/issues/DX-9', 'GET /api/plans', 'GET /api/plans/23', 'GET /api/plans/23/cards'].sort(),
+        ['GET /api/issues/DX-1', 'GET /api/issues/DX-2', 'GET /api/plans', 'GET /api/plans/23', 'GET /api/plans/23/cards'].sort(),
       )
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeDefined()
       const before = d.api.filter(a => a.path === '/api/plans').length

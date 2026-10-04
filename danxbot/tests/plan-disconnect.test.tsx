@@ -2,6 +2,7 @@
 // session off its plan; the model is told in the same step; every refusal is shown, never swallowed.
 import { describe, expect, test } from 'claude-code/testing'
 
+import { DISCONNECTING_TIP, DISCONNECT_GLYPH, DISCONNECT_TIP } from '../hooks/plan/config'
 import { SURFACES, dashboard, expectRowCarries, startSession, toldModel } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -26,7 +27,8 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       const { band, pane } = await mounted($, d, surface)
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
-      expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+      expect((await pane.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
+      expect(await pane.find({ type: 'Text', text: ` ${DISCONNECT_TIP} ` })).toBeDefined()
 
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
@@ -45,12 +47,14 @@ for (const surface of SURFACES) {
       expectRowCarries(rows[0]!, ['PLAN-23', 'Danxbot plugin', 'disconnected', 'no plan', '/api/plans/mine'])
     })
 
-    test('the button reads Disconnecting… while the call is in flight, and a double press makes one call', async ($, on) => {
+    test('the button is dim and its tooltip reads Disconnecting… while the call is in flight, and a double press makes one call', async ($, on) => {
       const d = dashboard(on, { disconnectTakesMs: 5_000 })
       const { pane } = await mounted($, d, surface)
       const first = pane.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnecting…')
+      expect((await pane.find({ key: 'disconnect' }))?.props.dimColor).toBe(true)
+      expect(await pane.find({ type: 'Text', text: ` ${DISCONNECTING_TIP} ` })).toBeDefined()
+      expect(await pane.find({ type: 'Text', text: ` ${DISCONNECT_TIP} ` })).toBeUndefined()
       await Promise.allSettled([pane.press({ key: 'disconnect' })])
       expect(disconnectCalls(d)).toHaveLength(1)
       await d.clock.advance(5_000)
@@ -94,7 +98,8 @@ for (const surface of SURFACES) {
       expect(toldModel(d)).toHaveLength(0)
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
       // the key was released: the button is back
-      expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+      expect((await pane.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
+      expect((await pane.find({ key: 'disconnect' }))?.props.dimColor).not.toBe(true)
     })
 
     test('a 200 that names no plan left is a failure shown, not told to the model as fact; the pane reads the truth', async ($, on) => {

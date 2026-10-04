@@ -95,7 +95,7 @@ async function refresh($: any, force = false): Promise<void> {
   })
   if (!go) return
   // The lock is released in `finally`, so a throw out of any step below cannot leave it held and
-  // stop every later refresh (the Refresh button included).
+  // stop every later refresh.
   try {
     let again = true
     while (again) {
@@ -360,7 +360,6 @@ async function dismissBand($: any): Promise<void> {
 
 function handlers($: any): Handlers {
   return {
-    refresh: () => refresh($, true),
     openPane: () => openPlanPane($),
     openBrowserTab: url => openInBrowser($, url),
     connect: plan => connect($, plan),

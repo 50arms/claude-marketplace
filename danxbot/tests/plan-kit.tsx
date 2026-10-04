@@ -68,11 +68,10 @@ export function dashboard(
     // the connected plan's status counts: the default, an override, or none at all
     breakdown?: Record<string, unknown>
     noBreakdown?: boolean
-    // the in-progress bucket: how many cards it has, whether its call fails or answers no total, and whether the card has an agent
+    // the in-progress bucket: how many cards it has, and whether its call fails or answers no total
     inProgressTotal?: number
     inProgressFails?: boolean
     noInProgressTotal?: boolean
-    noAgent?: boolean
     // plan_connect {disconnect: true}: the leave works (default), or the server refuses it a given way
     // ('rejected' is a THROWN call, the only error result; 'noLeftPlan' is a 200 without leftPlan)
     disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected' | 'noLeftPlan'
@@ -225,10 +224,6 @@ export function dashboard(
       })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
-    if (method === 'GET' && issue && world.inProgress.some(c => c.id === issue[1])) {
-      const c = world.inProgress.find(x => x.id === issue[1])!
-      return reply({ id: c.id, title: c.title, assigned_agent_name: options.noAgent ? null : 'PLAN-23: danxbot plugin' })
-    }
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
       return c

@@ -6,7 +6,6 @@ import type { ConnectedPlan, PlanRow, ProblemRow, SolutionRow, StepRow } from '.
 // Every answer's body and label is built in register.tsx, in one place: the drawing only says
 // which answer the operator gave.
 export type Handlers = {
-  refresh: () => Promise<unknown>
   showPlan: () => Promise<unknown>
   dismissBand: () => Promise<unknown>
   openPane: () => Promise<unknown>

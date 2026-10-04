@@ -43,18 +43,6 @@ for (const surface of SURFACES) {
       await d.clock.advance(60_000)
       expect(await label(band)).toContain('3 open problems')
     })
-
-    test('the Refresh button forces a load every press', async ($, on) => {
-      const d = dashboard(on)
-      await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      const loads = () => d.api.filter(a => a.path === '/api/plans').length
-      const start = loads()
-      // the Refresh button forces; two presses are two loads
-      await pane.press({ key: 'refresh' })
-      await pane.press({ key: 'refresh' })
-      expect(loads()).toBe(start + 2)
-    })
   })
 }
 
@@ -141,15 +129,15 @@ describe('the refresh timer and its lock', () => {
     // the host refuses the view write, in the load and again in its error handler: the throw escapes the refresh
     d.failViewWrite()
     try {
-      await pane.press({ key: 'refresh' })
+      await d.clock.advance(60_000)
     } catch {
-      // the engine reports the press hook as failed: that is the throw being exercised
+      // the engine reports the timer hook as failed: that is the throw being exercised
     }
     // the throwing hook really fired (a renamed atom would make this test vacuous)
     expect(d.refusedViewWrites()).toBeGreaterThan(0)
     d.failViewWrite(false)
     const before = loads()
-    await pane.press({ key: 'refresh' })
+    await d.clock.advance(60_000)
     expect(loads()).toBe(before + 1)
   })
 })

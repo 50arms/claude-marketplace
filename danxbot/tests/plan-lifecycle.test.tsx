@@ -179,7 +179,7 @@ describe('expectRowCarries', () => {
 })
 
 describe('the refresh lock and the busy list at a stale or new start', () => {
-  test('a load that never settles: a Refresh inside the stale window does not double-load, past it the lock is taken over', async ($, on) => {
+  test('a load that never settles: a /danx-plan inside the stale window does not double-load, past it the lock is taken over', async ($, on) => {
     const d = dashboard(on, { hangFirstLoad: true })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
@@ -187,15 +187,18 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     expect(loadsOf(d)).toBe(1)
 
     await d.clock.advance(LOCK_STALE_MS / 2)
-    await pane.press({ key: 'refresh' })
+    await $.command.run({ command: 'danx-plan' })
+    await d.clock.settle()
     expect(loadsOf(d)).toBe(1)
 
     // the 60 s timer ticks inside the window did not load either; past it, a press does
     await d.clock.advance(LOCK_STALE_MS / 2 - 1_000)
-    await pane.press({ key: 'refresh' })
+    await $.command.run({ command: 'danx-plan' })
+    await d.clock.settle()
     expect(loadsOf(d)).toBe(1)
     await d.clock.advance(2_000)
-    await pane.press({ key: 'refresh' })
+    await $.command.run({ command: 'danx-plan' })
+    await d.clock.settle()
     expect(loadsOf(d)).toBe(2)
     expect(await text(pane)).toContain('Connected: PLAN-23')
   })

@@ -74,16 +74,6 @@ export type StatusBreakdown = {
   Cancelled: number
 }
 
-// A card in the plan's in-progress bucket (not waiting on the operator), as the pane lists it.
-export type InProgressRow = {
-  id: string
-  title: string
-  // the readable agent name from the issue resource; null when nobody holds the card
-  agent: string | null
-  // when the card last changed: NOT when it went In Progress (no field says that)
-  updatedAt: string
-}
-
 // DX-4374: the server's `sessionListenerAttached {attached, state, nextStep}`, less `attached`. Only the exact
 // state `healthy` is a working bridge; `nextStep` is the server's own wording (null when it has none).
 export type ListenerStatus = { state: string; nextStep: string | null }
@@ -104,9 +94,9 @@ export type PlanView = {
   plansUnread: number
   // Card counts by status of the connected plan; null when not connected.
   statusBreakdown: StatusBreakdown | null
-  // The in-progress bucket's rows, and how many cards the bucket has (its own count, never the
-  // status count's: a card in progress with an open problem sits in needs-you).
-  inProgress: InProgressRow[]
+  // DX-4415: the in-progress bucket's card ids (the pane's refs row), and how many cards the bucket has (its own
+  // count, never the status count's: a card in progress with an open problem sits in needs-you).
+  inProgress: string[]
   inProgressTotal: number
   // The event bridge as GET /api/plans answers it (`sessionListenerAttached`): the server's health state and
   // its next step; null when the answer carries none (a session on no plan, or no session row).

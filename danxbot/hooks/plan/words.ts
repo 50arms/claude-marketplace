@@ -60,12 +60,6 @@ export function cappedPlansNote(v: PlanView): string | null {
   return v.plansUnread > 0 ? `+${v.plansUnread} more plan${v.plansUnread === 1 ? '' : 's'} in the browser` : null
 }
 
-// "Updated 08:15:42Z": the UTC clock part of an ISO timestamp.
-export function updatedText(iso: string): string {
-  const [, time = ''] = iso.split('T')
-  return `Updated ${time.slice(0, 8)}Z`
-}
-
 // The band's label for a view that is not the Plan-button-only one.
 export function bandLabel(v: PlanView): string {
   if (v.phase === 'error') return 'plan: error'
@@ -121,8 +115,8 @@ export function footerLabel(v: PlanView): string | null {
   return v.connected ? v.connected.ref : 'Plan'
 }
 
-// "+N more cards in progress in the browser" when the in-progress bucket was capped.
-export function cappedInProgressNote(v: PlanView): string | null {
+// DX-4415: "+4" at the end of the refs row when the in-progress bucket has more cards than the load read.
+export function inProgressMore(v: PlanView): string | null {
   const unread = v.inProgressTotal - v.inProgress.length
-  return unread > 0 ? `+${unread} more in-progress card${unread === 1 ? '' : 's'} in the browser` : null
+  return unread > 0 ? `+${unread}` : null
 }

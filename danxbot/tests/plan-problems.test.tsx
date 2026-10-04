@@ -116,7 +116,7 @@ for (const surface of SURFACES) {
     test('a refused answer shows the error, tells the model nothing and keeps the problem', async ($, on) => {
       const { d, pane } = await openPane($, on, surface)
       d.world.cards[1]!.problems[0]!.statement = 'FAIL'
-      await pane.press({ key: 'refresh' })
+      await $.command.run({ command: 'danx-plan' })
       await d.clock.settle()
       await pane.press({ key: 'open-21' })
       await pane.press({ key: 'use-211' })

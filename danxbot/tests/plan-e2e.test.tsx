@@ -4,7 +4,7 @@
 // the stand-in danxbot_api call it caused.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
+import { DASHBOARD_URL, NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -111,7 +111,7 @@ for (const surface of SURFACES) {
       expect(all).toContain('25%')
       expect(all).toContain('4 / 16 done')
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeDefined()
-      expect(all).toContain('In flight card')
+      expect((await pane.find({ type: 'Link', text: 'DX-9' }))?.props.href).toBe(`${DASHBOARD_URL}/plans/23/cards/DX-9`)
 
       d.setListener('unattached')
       await d.clock.advance(60_000)

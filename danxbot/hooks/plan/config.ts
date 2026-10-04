@@ -84,6 +84,19 @@ export function cardUrl(plan: ConnectedPlan, cardId: string): string {
   return `${planUrl(plan)}/cards/${cardId}`
 }
 
+// DX-4415: the pane's top-line icon controls. Each is ONE glyph (a Button or Link in this engine draws no Svg and
+// has no icon, tooltip or colour prop), and each glyph's tooltip is a hover card (see icon-control.tsx).
+export const OPEN_LINK_GLYPH = '↗'
+export const SWITCH_GLYPH = '⇄'
+export const DISCONNECT_GLYPH = '⏻'
+export const OPEN_LINK_TIP = 'Open link'
+export const SWITCH_TIP = 'Switch plan'
+export const DISCONNECT_TIP = 'Disconnect'
+export const DISCONNECTING_TIP = 'Disconnecting…'
+
+// DX-4415: what the progress row's right side says when no card is In Progress.
+export const NO_IN_PROGRESS = 'No cards in progress'
+
 // The donut's size in px (Svg takes CSS pixels): the band line's, and the pane header's.
 export const DONUT_BAND_PX = 16
 export const DONUT_PANE_PX = 44

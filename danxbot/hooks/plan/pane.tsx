@@ -1,10 +1,29 @@
-import type { Draft, PlanView, StatusBreakdown } from '../../types'
+import type { ConnectedPlan, Draft, PlanView, StatusBreakdown } from '../../types'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
+import { iconControl } from './icon-control'
 import { problemCard } from './problems'
 import type { Ui } from './problems'
-import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
-import { age, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
+import {
+  DANGER,
+  DISCONNECTING_TIP,
+  DISCONNECT_GLYPH,
+  DISCONNECT_TIP,
+  DONUT_PANE_PX,
+  NO_EVENT_BRIDGE,
+  NO_IN_PROGRESS,
+  OPEN_LINK_GLYPH,
+  OPEN_LINK_TIP,
+  PICKER_PLAN_NAME_MAX,
+  SUCCESS,
+  SWITCH_GLYPH,
+  SWITCH_TIP,
+  WARNING,
+  busyKey,
+  cardUrl,
+  planUrl,
+} from './config'
+import { cappedNote, cappedPlansNote, doneTotal, inProgressMore, planPercent, problemSplit } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
 export type PaneModel = {
@@ -116,22 +135,72 @@ function planPicker(hd: Handlers, E: any, m: PaneModel, isSwitch: boolean): any 
   )
 }
 
-export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
+// DX-4415: the top line of a connected pane. Left: the connection dot and `Connected: PLAN-NN`. Right: the Browser tab
+// button (desktop only), then three icon controls (Open link, Switch plan, Disconnect on a red background), each
+// a one-glyph control with its hover-card tooltip.
+function topLine(hd: Handlers, E: any, m: PaneModel, plan: ConnectedPlan): any {
   const { Box, Text, Button, Link } = E
-  const { v } = m
-
-  const header = (
-    <Box flexDirection="row" justifyContent="space-between">
-      <Text bold>Danxbot plan</Text>
-      <Button key="refresh" dimColor onPress={() => hd.refresh()}>
-        {v.phase === 'loading' || m.working.length > 0 ? 'Working…' : 'Refresh'}
-      </Button>
+  const disconnecting = busyKey.isDisconnecting(m.working)
+  return (
+    <Box key="top-line" flexDirection="row" justifyContent="space-between">
+      <Box flexDirection="row" gap={1}>
+        <Text color={SUCCESS}>●</Text>
+        <Text>Connected: {plan.ref}</Text>
+      </Box>
+      <Box flexDirection="row" gap={1}>
+        {m.hasBrowser && (
+          <Button key="open-plan" onPress={() => hd.openBrowserTab(planUrl(plan))}>
+            {busyKey.isOpeningBrowser(m.working) ? 'Opening…' : 'Open in browser tab'}
+          </Button>
+        )}
+        {iconControl(E, { key: 'open-link', tip: OPEN_LINK_TIP, control: <Link href={planUrl(plan)} label={OPEN_LINK_GLYPH} /> })}
+        {iconControl(E, {
+          key: 'switch',
+          tip: SWITCH_TIP,
+          control: (
+            <Button key="switch" plain onPress={() => hd.toggleSwitch()}>
+              {SWITCH_GLYPH}
+            </Button>
+          ),
+        })}
+        {iconControl(E, {
+          key: 'disconnect',
+          tip: disconnecting ? DISCONNECTING_TIP : DISCONNECT_TIP,
+          backgroundColor: DANGER,
+          control: (
+            <Button key="disconnect" plain dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
+              {DISCONNECT_GLYPH}
+            </Button>
+          ),
+        })}
+      </Box>
     </Box>
   )
-  // the header over one column of body lines
+}
+
+// DX-4415: the cards In Progress as refs, each a link to its card page on the dashboard the plan list answered; a
+// bucket larger than the load read ends in `+N`; an empty one says so in dim text.
+function refs(E: any, v: PlanView, plan: ConnectedPlan): any {
+  const { Box, Text, Link } = E
+  const more = inProgressMore(v)
+  return (
+    <Box key="refs" flexDirection="row" flexWrap="wrap" gap={1}>
+      {v.inProgress.length === 0 && <Text dimColor>{NO_IN_PROGRESS}</Text>}
+      {v.inProgress.map(id => (
+        <Link key={`ip-${id}`} href={cardUrl(plan, id)} label={id} />
+      ))}
+      {more && <Text dimColor>{more}</Text>}
+    </Box>
+  )
+}
+
+export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
+  const { Box, Text } = E
+  const { v } = m
+
+  // the lines of a pane with no connected plan, in one column
   const shell = (...lines: any[]) => (
     <Box flexDirection="column" gap={1}>
-      {header}
       {lines}
     </Box>
   )
@@ -154,66 +223,38 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
   const ui: Ui = { draft: m.draft, busy: m.working, talk: m.talk, plan, now: m.now, hasBrowser: m.hasBrowser }
   const { questions, actions } = problemSplit(v)
 
+  // DX-4415, top to bottom: the top line, the events line, the plan title, the progress row (donut left, refs
+  // right), the Needs You block. Nothing else (the switch picker, while open, sits under the top line).
   return (
     <Box flexDirection="column" gap={1}>
-      {header}
-      <Box flexDirection="column">
-        <Text color={SUCCESS}>● Connected: {plan.ref}</Text>
-        <Text>{plan.name}</Text>
-        <Text dimColor>{plan.status}</Text>
-        {eventLine(E, v)}
-      </Box>
-      {/* a connected view always has its breakdown (loadPlan errors without one); the guard only narrows the type */}
-      {v.statusBreakdown && progress(E, v.statusBreakdown, m.hasSvg)}
-      <Box flexDirection="row" gap={1}>
-        {m.hasBrowser && (
-          <Button key="open-plan" onPress={() => hd.openBrowserTab(planUrl(plan))}>
-            {busyKey.isOpeningBrowser(m.working) ? 'Opening…' : 'Open in browser tab'}
-          </Button>
-        )}
-        <Link href={planUrl(plan)} label="Open link" />
-        <Button key="switch" dimColor onPress={() => hd.toggleSwitch()}>
-          Switch plan
-        </Button>
-        <Button key="disconnect" dimColor onPress={() => hd.disconnect(plan)}>
-          {busyKey.isDisconnecting(m.working) ? 'Disconnecting…' : 'Disconnect'}
-        </Button>
-      </Box>
+      {topLine(hd, E, m, plan)}
       {m.isSwitching && planPicker(hd, E, m, true)}
-
-      <Box flexDirection="row" gap={1}>
-        <Text bold>Needs You</Text>
-        <Text dimColor>{v.problems.length} open</Text>
-        {actions > 0 && (
-          <Text color={DANGER} bold>
-            {actions} action{actions === 1 ? '' : 's'}
-          </Text>
-        )}
-        {questions > 0 && (
-          <Text color={WARNING} bold>
-            {questions} question{questions === 1 ? '' : 's'}
-          </Text>
-        )}
+      {eventLine(E, v)}
+      <Text>{plan.name}</Text>
+      <Box key="progress-row" flexDirection="row" justifyContent="space-between" gap={2}>
+        {/* a connected view always has its breakdown (loadPlan errors without one); the guard only narrows the type */}
+        {v.statusBreakdown && progress(E, v.statusBreakdown, m.hasSvg)}
+        {refs(E, v, plan)}
       </Box>
-      {v.problems.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
-      {v.problems.map(p => problemCard(hd, E, ui, p, m.open === p.id))}
-      {cappedNote(v) && <Text color={WARNING}>{cappedNote(v)}</Text>}
-
-      <Box flexDirection="row" gap={1}>
-        <Text bold>In progress</Text>
-        <Text dimColor>{v.inProgressTotal} not waiting on you</Text>
-      </Box>
-      {v.inProgress.length === 0 && <Text dimColor>No cards in progress that are not waiting on you.</Text>}
-      {v.inProgress.map(row => (
-        <Box key={`ip-${row.id}`} flexDirection="row" gap={1}>
-          <Link href={cardUrl(plan, row.id)} label={row.id} />
-          <Text>{row.title.slice(0, CARD_TITLE_MAX)}</Text>
-          {row.agent && <Text dimColor>{row.agent}</Text>}
-          <Text dimColor>updated {age(row.updatedAt, m.now)}</Text>
+      <Box key="needs-you" flexDirection="column" gap={1}>
+        <Box flexDirection="row" gap={1}>
+          <Text bold>Needs You</Text>
+          <Text dimColor>{v.problems.length} open</Text>
+          {actions > 0 && (
+            <Text color={DANGER} bold>
+              {actions} action{actions === 1 ? '' : 's'}
+            </Text>
+          )}
+          {questions > 0 && (
+            <Text color={WARNING} bold>
+              {questions} question{questions === 1 ? '' : 's'}
+            </Text>
+          )}
         </Box>
-      ))}
-      {cappedInProgressNote(v) && <Text color={WARNING}>{cappedInProgressNote(v)}</Text>}
-      {v.refreshedAt && <Text dimColor>{updatedText(v.refreshedAt)}</Text>}
+        {v.problems.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
+        {v.problems.map(p => problemCard(hd, E, ui, p, m.open === p.id))}
+        {cappedNote(v) && <Text color={WARNING}>{cappedNote(v)}</Text>}
+      </Box>
     </Box>
   )
 }
