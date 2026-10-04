@@ -122,6 +122,20 @@ for (const surface of SURFACES) {
       expect(connectCalls(d).every((c: any) => c.args.disconnect === undefined)).toBe(true)
     })
 
+    test('a failed load before the revoke does not make the session forget its plan', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.failList()
+      await d.clock.advance(60_000)
+      d.failList(false)
+      d.world.signedOut = 'revoked'
+      await d.clock.advance(60_000)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      await band.press({ key: 'sign-in' })
+      await d.clock.settle()
+      expect(connectCalls(d)[0]!.args).toEqual({ plan_id: 23 })
+    })
+
     test('the request opens its page once and shows the code in one toast, whichever call asked for it', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
       await startSession($, d, surface)

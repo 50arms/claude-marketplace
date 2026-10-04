@@ -112,8 +112,9 @@ async function refresh($: any, force = false): Promise<void> {
     while (again) {
       try {
         const v = await loadView($)
-        // DX-4423: the plan a signed-out session was on is kept for Sign in to ask for again
-        await update($, view, cur => (v.phase === 'signed-out' ? { ...v, resumePlan: cur.connected?.id ?? cur.resumePlan } : v))
+        // DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one)
+        // for Sign in to ask for again; a loaded view knows its own
+        await update($, view, cur => (v.phase === 'ready' ? v : { ...v, resumePlan: cur.connected?.id ?? cur.resumePlan }))
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -336,12 +337,13 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   })
 }
 
-// DX-4423: the Sign in button. A session with no dashboard key asks for one through `plan_connect` (with its own title,
-// and the plan it was on): the MCP answers with the approval request (at once when it makes one, else after waiting on the one pending), which is shown as the model's own would be
-// (showApproval); each next call waits there for the person's approval, so the calls repeat until one answers something
-// final. A call that answers a DIFFERENT request than the one shown means the first expired while it waited: that is the
-// end (a new request nobody asked for is left to lapse), never a second page. The whole sign-in holds the sign-in busy key
-// (the buttons read "Signing in…", a second press does nothing).
+// DX-4423: the Sign in button. A session with no dashboard key asks for one through `plan_connect` (with its own title, and
+// the plan it was on). The MCP answers with the approval request, which is shown as the model's own would be (showApproval):
+// at once when this call makes the request, else after waiting on the one already pending. Each call waits there for the
+// person's approval, so the calls repeat until one answers something final. A call that answers a DIFFERENT request than the
+// one shown means the first expired while it waited: that is the end (a new request nobody asked for is left to lapse),
+// never a second page. The whole sign-in holds the sign-in busy key (the buttons read "Signing in…", a second press does
+// nothing).
 async function signIn($: any): Promise<void> {
   await withBusy($, busyKey.signIn, async () => {
     const sessionTitle = await read($, title)
