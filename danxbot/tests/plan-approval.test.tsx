@@ -13,6 +13,7 @@ const required = (url: string, code = 'NXGUF88G') =>
 const pending = JSON.stringify({ state: 'approval_pending', approvalUrl: URL_A, confirmCode: 'NXGUF88G', expiresAt: 'x', instruction: 'Wait.' })
 const connected = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 23 } } })
 
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const CALL = { tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any
 const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 const navigations = (d: any) => browserCalls(d).filter((c: any) => c.tool === 'navigate' || c.tool === 'preview_start')
@@ -63,6 +64,40 @@ describe('plan_connect while signed out', () => {
     expect(ran.text).toBe(text)
     expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
     expect(d.toasts.at(-1)).toContain('NXGUF88G')
+  })
+
+  test('the open does not hold the plan_connect answer: the model reads it at once, the toast follows the open', async ($, on) => {
+    const d = dashboard(on, { browserClosed: true, navigateTakesMs: 5_000 })
+    answering(on, [required(URL_A)])
+    await startSession($, d, 'desktop')
+    let answered = false
+    const call = $.tool.call(CALL).then((r: any) => {
+      answered = true
+      return r
+    })
+    await d.clock.settle()
+    expect(answered).toBe(true)
+    expect(d.toasts.some(t => t.includes('NXGUF88G'))).toBe(false)
+    await d.clock.advance(5_000)
+    await d.clock.settle()
+    expect((await call).text).toBe(required(URL_A))
+    expect(d.toasts.at(-1)).toContain('NXGUF88G')
+  })
+
+  test('a browser busy with another open says so, with the code and the link, and makes no browser call of its own', async ($, on) => {
+    const d = dashboard(on, { browserClosed: true, navigateTakesMs: 5_000 })
+    answering(on, [required(URL_A)])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    const planOpen = band.press({ key: 'open-tab' })
+    await d.clock.settle()
+    const calls = browserCalls(d).length
+    await $.tool.call(CALL)
+    await d.clock.settle()
+    expect(browserCalls(d)).toHaveLength(calls)
+    expect(d.toasts.at(-1)).toBe(`Could not open the approval page (busy: another browser open is in progress). Open this link and check that confirm code NXGUF88G matches: ${URL_A}`)
+    await d.clock.advance(5_000)
+    await planOpen
   })
 
   test('the same request repeated opens nothing again; a new request opens its own page', async ($, on) => {

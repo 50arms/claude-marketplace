@@ -23,7 +23,7 @@
     "hooks/plan/pane.tsx": "7293738120dd1616eb48c916a89b10bf07318d82d79bed9687bcd614d13b3d3b",
     "hooks/plan/problems.tsx": "96f9feef8245a6e82e72d969f623a01455f68039a231cf5b1a81100e50a3d012",
     "hooks/plan/words.ts": "7947de6fe69e1937ae7e47e48b801f804e0306fc9f8a02cc4a67ad4403bbf359",
-    "hooks/register.tsx": "d26d8d2a013b0eab07913424eeb1d37d0c087a8a3bc881bd1264e9669a39fafa",
+    "hooks/register.tsx": "013c0dbc55f4be1c71210daac6ca990b367df0b52cd872a7008eb535d87a302b",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
     "scripts/activity-report.mjs": "6379ca4a590e48ddc71b82f9ff6ea74620ad8242589c2cc679520d6e9f1d7093",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",

@@ -197,8 +197,9 @@ function openInBrowser($: any, url: string): Promise<void> {
 // DX-4391: the approval page's open. ONE toast tells the outcome, with the confirm code and the
 // link in it either way, for 60 s (the host's longest): a toast replaces the one before it, so a
 // failure toast shown first would be gone before anyone read the cause. The plugin's browser call
-// can be refused (the host asks the person to allow a site first, and a plugin cannot raise that
-// prompt), which is what the cause then says. A browser already busy with another open is told too.
+// may be refused (PLAN-23 records that the host asks the person to allow a site first, which a plugin
+// cannot raise; not yet seen live for this open), which is what the cause then says. A browser already
+// busy with another open is told too.
 async function openApprovalPage($: any, approval: ApprovalRequest): Promise<void> {
   let failed: OpenFailure | null = { step: 'busy', message: 'another browser open is in progress' }
   await withBusy($, busyKey.browser, async () => {
@@ -483,7 +484,8 @@ async function onPlanConnect($: any, e: any, next: any) {
     // the toast carries the link for that case. Not awaited: the open takes seconds (5 to 10 live) and
     // the model should read its answer meanwhile, which tells it to show the code too.
     await update($, approvalOpened, () => approval.url)
-    void openApprovalPage($, approval)
+    // a failure past tryOpen (the busy key, the toast itself) must still leave the link, so it is caught here
+    openApprovalPage($, approval).catch(() => $.ui.toast(`Approve this session in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS }))
   }
   return ran
 }
