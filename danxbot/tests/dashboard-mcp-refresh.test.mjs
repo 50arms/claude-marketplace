@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import * as bridge from "../scripts/plan-event-bridge.mjs";
 import { runHook as runBackgroundWork } from "../scripts/background-work-report.mjs";
 import { runActivity } from "../scripts/activity-report.mjs";
-import { readRecordedSpec, readRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
+import { requireRecordedSpec, recordedVersionOrNull } from "../scripts/lib/dashboard-mcp-package.mjs";
 import { PKG_NAME, fakeNpm, makeFakeBinDir, recordFilePath, recordVersion, recordedVersion, writeFakeBinSourceFile } from "./fixtures/fake-dashboard-mcp.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
@@ -132,7 +132,7 @@ const ENTRY_POINTS = {
     },
     // The command the bridge's run process builds: `npx -y <name>@<recorded version> bridge`.
     ranVersion() {
-      const { args } = bridge.bridgeCommand({ resumeIds: [], spec: readRecordedSpec(baseEnv), platform: "linux" });
+      const { args } = bridge.bridgeCommand({ resumeIds: [], spec: requireRecordedSpec(baseEnv), platform: "linux" });
       assert.equal(args[1].slice(0, args[1].lastIndexOf("@")), PKG_NAME);
       return args[1].slice(args[1].lastIndexOf("@") + 1);
     },
@@ -145,12 +145,12 @@ describe("AC1 — the registry's latest moves A to B and the next session start 
       const treeBefore = pluginTreeHash();
       await entry.run.call(entry);
       assert.equal(entry.ranVersion.call(entry), A, "the first session start runs what the registry served");
-      assert.equal(readRecordedVersion(baseEnv), A);
+      assert.equal(recordedVersionOrNull(baseEnv), A);
 
       registry.setVersion(B);
       await entry.run.call(entry);
       assert.equal(entry.ranVersion.call(entry), B, "the next session start runs B");
-      assert.equal(readRecordedVersion(baseEnv), B);
+      assert.equal(recordedVersionOrNull(baseEnv), B);
       assert.equal(pluginTreeHash(), treeBefore, "no file in the plugin changed");
     });
   }
@@ -177,7 +177,7 @@ describe("a hook that is not a session start reads the record and makes ZERO reg
     const result = runScript("event-hook.sh", ["SubagentStart"], { input: JSON.stringify({ session_id: SESSION }) });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(requests(), before);
-    assert.equal(readRecordedVersion(baseEnv), A);
+    assert.equal(recordedVersionOrNull(baseEnv), A);
     assert.match(npmCalls().at(-1), new RegExp(`@${A.replace(/\./g, "\\.")}$`));
   });
 
@@ -212,7 +212,7 @@ describe("a hook that is not a session start reads the record and makes ZERO reg
       recordVersion(dir, A);
       const result = await bridge.start({ env, sessionId: SESSION, spawnRun: () => ({ pid: 1 }), waitVerdict: async () => null, stderr: () => {}, post: async () => {}, ...extra });
       assert.equal(result.started, true);
-      assert.equal(readRecordedVersion(env), A);
+      assert.equal(recordedVersionOrNull(env), A);
       rmSync(dir, { recursive: true, force: true });
     }
     assert.equal(requests(), before);
@@ -307,7 +307,7 @@ describe("AC4 — a session start that cannot read the registry says so, once, a
     assert.match(posted[0], /could not refresh/);
     assert.match(posted[0], /HTTP 500/);
     assert.ok(posted[0].includes(A));
-    assert.equal(readRecordedVersion(baseEnv), A);
+    assert.equal(recordedVersionOrNull(baseEnv), A);
     assert.equal(spawnRun.length, 1);
   });
 
@@ -387,6 +387,6 @@ describe("AC4 — a session start that cannot read the registry says so, once, a
   test("the record file is where every reader looks: dashboard-mcp/current under the plugin data dir", () => {
     recordVersion(dataDir, A);
     assert.equal(recordFilePath(dataDir), path.join(dataDir, "dashboard-mcp", "current"));
-    assert.equal(readRecordedVersion(baseEnv), A);
+    assert.equal(recordedVersionOrNull(baseEnv), A);
   });
 });

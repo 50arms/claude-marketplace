@@ -6,17 +6,21 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import fs, { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DASHBOARD_MCP_PACKAGE_NAME,
-  readRecordedVersion,
+  RecordWriteError,
+  recordedOrResolvedVersion,
+  recordedVersionOrNull,
   refreshOrKeep,
-  refreshRecordedVersion,
+  refreshAndRecordVersion,
   registryUrl,
   resolveLatestVersion,
+  versionFor,
+  writeRecordedVersion,
 } from "../scripts/lib/dashboard-mcp-package.mjs";
 import { listPluginFiles } from "../../scripts/write-integrity-manifest.mjs";
 import { REGISTRY_BASE_URL_ENV, REGISTRY_TIMEOUT_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
@@ -122,56 +126,119 @@ describe("resolveLatestVersion", () => {
 
 describe("recorded version", () => {
   test("the reader returns the recorded version, and null when nothing (or nothing valid) is recorded", () => {
-    assert.equal(readRecordedVersion(env), null);
+    assert.equal(recordedVersionOrNull(env), null);
     recordAt("0.1.7");
-    assert.equal(readRecordedVersion(env), "0.1.7");
-    recordAt("not-a-version");
-    assert.equal(readRecordedVersion(env), null, "a record that is not a strict x.y.z is no record");
+    assert.equal(recordedVersionOrNull(env), "0.1.7");
+  });
+
+  test("a record that exists but is damaged or unreadable is a loud failure naming the file, never read as no record", async () => {
+    for (const text of ["not-a-version", "", "0.1", "v1.2.3", "1.2.3-beta"]) {
+      recordAt(text);
+      assert.throws(() => recordedVersionOrNull(env), (err) => err.message.includes(recordFile()) && /damaged/.test(err.message), JSON.stringify(text));
+    }
+    rmSync(recordFile());
+    mkdirSync(recordFile()); // a directory where the record should be: unreadable, not absent
+    assert.throws(() => recordedVersionOrNull(env), (err) => err.message.includes(recordFile()) && /cannot be read/.test(err.message));
+    await assert.rejects(recordedOrResolvedVersion({ env }), /cannot be read/);
+    assert.deepEqual(registry.requests(), [], "a damaged record is reported, not papered over with a network request");
+  });
+
+  test("a damaged record is replaced by the next successful session-start refresh", async () => {
+    recordAt("garbage");
+    assert.deepEqual(await versionFor({ sessionStart: true, env }), { version: "0.1.50", keptLine: null });
+    assert.equal(recordedVersionOrNull(env), "0.1.50");
+  });
+
+  test("a record that cannot be WRITTEN is reported as that, with its own reason, not as a registry failure", async () => {
+    writeFileSync(path.join(dataDir, "dashboard-mcp"), "a file where the record's directory belongs");
+    await assert.rejects(recordedOrResolvedVersion({ env }), (err) => {
+      assert.match(err.message, /could not record version 0\.1\.50/);
+      assert.doesNotMatch(err.message, /registry could not be read|could not read http/i);
+      return true;
+    });
+    await assert.rejects(refreshAndRecordVersion({ env }), RecordWriteError);
   });
 
   test("the reader makes no registry request", () => {
     recordAt("0.1.7");
-    readRecordedVersion(env);
+    recordedVersionOrNull(env);
     assert.deepEqual(registry.requests(), []);
   });
 
   test("a refresh records the registry's version under dashboard-mcp/current and leaves no temp file", async () => {
-    assert.equal(await refreshRecordedVersion({ env }), "0.1.50");
+    assert.equal(await refreshAndRecordVersion({ env }), "0.1.50");
     assert.equal(readFileSync(recordFile(), "utf8").trim(), "0.1.50");
     assert.deepEqual(readdirSync(path.dirname(recordFile())), ["current"]);
     registry.setVersion("0.1.51");
-    await refreshRecordedVersion({ env });
-    assert.equal(readRecordedVersion(env), "0.1.51");
+    await refreshAndRecordVersion({ env });
+    assert.equal(recordedVersionOrNull(env), "0.1.51");
     assert.deepEqual(readdirSync(path.dirname(recordFile())), ["current"]);
   });
 
   test("a failed refresh changes nothing: the previous record stays, whole", async () => {
     recordAt("0.1.7");
     registry.setMode("status-500");
-    await assert.rejects(refreshRecordedVersion({ env }));
-    assert.equal(readRecordedVersion(env), "0.1.7");
+    await assert.rejects(refreshAndRecordVersion({ env }));
+    assert.equal(recordedVersionOrNull(env), "0.1.7");
     assert.deepEqual(readdirSync(path.dirname(recordFile())), ["current"]);
   });
 
-  test("the record is written by temp file + rename, so a reader never sees a partial one", async () => {
-    // Read the record in a tight loop while refreshes replace it: every read must be a complete
-    // strict version, never empty or truncated.
+  test("the write targets a temp name and renames it onto the record: the record itself is never written in place", () => {
+    const calls = [];
+    const spy = {
+      mkdirSync: (...args) => (calls.push(["mkdir", args[0]]), fs.mkdirSync(...args)),
+      writeFileSync: (...args) => (calls.push(["write", args[0]]), fs.writeFileSync(...args)),
+      renameSync: (...args) => (calls.push(["rename", args[0], args[1]]), fs.renameSync(...args)),
+      rmSync: (...args) => fs.rmSync(...args),
+    };
+    writeRecordedVersion("0.1.9", env, spy);
+    const write = calls.find(([kind]) => kind === "write");
+    const rename = calls.find(([kind]) => kind === "rename");
+    assert.notEqual(write[1], recordFile(), "the version is never written straight into the record");
+    assert.match(write[1], /current\..*\.tmp$/);
+    assert.deepEqual(rename.slice(1), [write[1], recordFile()], "the temp file is renamed onto the record");
+    assert.ok(calls.indexOf(write) < calls.indexOf(rename));
+    assert.equal(recordedVersionOrNull(env), "0.1.9");
+  });
+
+  test("a real observer: another process polling the record while this one replaces it hundreds of times never reads a partial one", async () => {
     recordAt("0.1.50");
-    let stop = false;
-    const seen = new Set();
-    const reader = (async () => {
-      while (!stop) {
-        seen.add(readFileSync(recordFile(), "utf8"));
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-    })();
-    for (let i = 0; i < 20; i += 1) {
-      registry.setVersion(i % 2 === 0 ? "0.1.51" : "0.1.50");
-      await refreshRecordedVersion({ env });
-    }
-    stop = true;
-    await reader;
-    for (const text of seen) assert.match(text, /^0\.1\.5[01]\n?$/, `a torn record was observable: ${JSON.stringify(text)}`);
+    const readyFile = path.join(dataDir, "observer-ready");
+    const stopFile = path.join(dataDir, "observer-stop");
+    const observer = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const fs = require("node:fs");
+         const [file, readyFile, stopFile] = process.argv.slice(1);
+         const safety = Date.now() + 20000;
+         let reads = 0;
+         const bad = [];
+         fs.writeFileSync(readyFile, "");
+         while (!fs.existsSync(stopFile) && Date.now() < safety) {
+           let text;
+           try { text = fs.readFileSync(file, "utf8"); } catch { continue; } // a rename in flight can refuse a read on Windows; a partial write cannot hide behind it
+           reads += 1;
+           if (!/^0\\.1\\.5[01]\\n$/.test(text)) bad.push(JSON.stringify(text));
+         }
+         process.stdout.write(JSON.stringify({ reads, bad: bad.slice(0, 5) }));`,
+        recordFile(),
+        readyFile,
+        stopFile,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    let out = "";
+    observer.stdout.on("data", (chunk) => (out += chunk));
+    const closed = new Promise((resolve) => observer.on("close", resolve));
+    while (!existsSync(readyFile)) await new Promise((resolve) => setTimeout(resolve, 10));
+    const until = Date.now() + 1000;
+    for (let i = 0; Date.now() < until; i += 1) writeRecordedVersion(i % 2 === 0 ? "0.1.51" : "0.1.50", env);
+    writeFileSync(stopFile, "");
+    await closed;
+    const result = JSON.parse(out);
+    assert.ok(result.reads > 100, `the observer actually read: ${result.reads}`);
+    assert.deepEqual(result.bad, [], "a partial or empty record was observable");
   });
 
   test("two concurrent refreshes leave one valid file that agrees with the registry", async () => {
@@ -189,7 +256,7 @@ describe("recorded version", () => {
       assert.equal(r.code, 0);
       assert.equal(r.out, `${DASHBOARD_MCP_PACKAGE_NAME}@0.1.50`);
     }
-    assert.equal(readRecordedVersion(env), "0.1.50");
+    assert.equal(recordedVersionOrNull(env), "0.1.50");
     assert.deepEqual(readdirSync(path.dirname(recordFile())), ["current"]);
   });
 });
@@ -238,7 +305,7 @@ describe("CLI", () => {
     const result = runModule([]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, `${DASHBOARD_MCP_PACKAGE_NAME}@0.1.50`);
-    assert.equal(readRecordedVersion(env), "0.1.50");
+    assert.equal(recordedVersionOrNull(env), "0.1.50");
     assert.equal(registry.requests().length, 1);
   });
 
@@ -256,7 +323,7 @@ describe("CLI", () => {
     const result = runModule(["--refresh"]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, `${DASHBOARD_MCP_PACKAGE_NAME}@0.1.50`);
-    assert.equal(readRecordedVersion(env), "0.1.50");
+    assert.equal(recordedVersionOrNull(env), "0.1.50");
   });
 
   test("--refresh with the registry down and a record: exit 3, the recorded spec on stdout, ONE line on stderr", () => {

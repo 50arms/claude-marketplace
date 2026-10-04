@@ -100,6 +100,9 @@ payload_field() {
 # and never calls this.
 REFRESH_NOTICE=""
 REFRESH_FATAL=""
+# The exit code `dashboard-mcp-package.mjs --refresh` uses for "the refresh failed, the recorded version
+# keeps running": EXIT_REFRESH_FAILED_KEPT in that module. Any other non-zero exit means nothing can run.
+REFRESH_FAILED_KEPT_EXIT=3
 refresh_mcp_version() {
   [ "$EVENT" = "SessionStart" ] || return 0
   local refresh_err refresh_rc="0"
@@ -107,7 +110,7 @@ refresh_mcp_version() {
   node "$PACKAGE_LIB" --refresh >/dev/null 2>"$refresh_err" || refresh_rc="$?"
   case "$refresh_rc" in
     0) ;;
-    3) REFRESH_NOTICE="$(cat "$refresh_err" 2>/dev/null || true)" ;;
+    "$REFRESH_FAILED_KEPT_EXIT") REFRESH_NOTICE="$(cat "$refresh_err" 2>/dev/null || true)" ;;
     *)
       REFRESH_FATAL="$(cat "$refresh_err" 2>/dev/null || true)"
       if [ -z "$REFRESH_FATAL" ]; then REFRESH_FATAL="exit_${refresh_rc}: the version refresh exited without a message"; fi

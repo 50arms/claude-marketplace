@@ -16,6 +16,8 @@ import * as state from "../scripts/lib/bridge-state.mjs";
 import * as decision from "../scripts/lib/bridge-restart-decision.mjs";
 import * as watchdog from "../scripts/bridge-watchdog.mjs";
 import { spawnStandIn } from "./fixtures/spawn-standin.mjs";
+import { TEST_VERSION, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
+import { REGISTRY_BASE_URL_ENV } from "./fixtures/fake-registry.mjs";
 import { SESSION, started, stopped, NOW, freshPid, stalePid, connectedTrue, connectedFalse } from "./fixtures/bridge-records.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -25,11 +27,16 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "bwd-test-"));
 }
 
+// DX-4321: a watchdog restart runs the bridge's `start`, which needs a RECORDED danx-dashboard-mcp version, so
+// every env built here has one recorded under `dataDir`; the registry URL points at a port nothing listens on, so
+// a start that wrongly reached for the registry would fail instead of reaching npm.
 function env(dataDir, overrides = {}) {
+  recordVersion(dataDir, TEST_VERSION);
   return {
     CLAUDE_PLUGIN_DATA: dataDir,
     CLAUDE_CODE_MESSAGING_SOCKET: "socket-path",
     CLAUDE_CODE_MESSAGING_TOKEN: "inbox-secret",
+    [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9",
     ...overrides,
   };
 }

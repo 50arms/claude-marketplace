@@ -35,7 +35,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPlanConnected, isValidSessionId } from "./lib/plan-connection.mjs";
-import { readRecordedSpec, recordedVersion, refreshOrKeep } from "./lib/dashboard-mcp-package.mjs";
+import { requireRecordedSpec, versionFor } from "./lib/dashboard-mcp-package.mjs";
 // The bridge's env builder: strips the session's inbox token/socket from the child env.
 import { childEnv } from "./plan-event-bridge.mjs";
 
@@ -229,7 +229,7 @@ function parseSubcommandOutcome(result) {
  */
 export function reportToDashboard({ countOrClear, eventAt, sessionId, env = process.env, spawnFn = spawnSync, platform, execPath, exists, timeoutMs = REPORT_SPAWN_TIMEOUT_MS }) {
   try {
-    const { command, args } = reportCommand({ countOrClear, eventAt, spec: readRecordedSpec(env), platform, execPath, exists });
+    const { command, args } = reportCommand({ countOrClear, eventAt, spec: requireRecordedSpec(env), platform, execPath, exists });
     const result = spawnFn(command, args, {
       env: childEnv(env, sessionId),
       stdio: ["ignore", "pipe", "ignore"],
@@ -411,25 +411,20 @@ export function dispatchMode(mode, input, options) {
  * (the recorded version keeps running) or `null`; throws, with the one line saying nothing can
  * run, when there is no recorded version at all.
  */
-export async function prepareVersion(mode, { env = process.env, refresh = refreshOrKeep, resolve = recordedVersion } = {}) {
-  if (mode === "session-start") {
-    const outcome = await refresh({ env });
-    return outcome.refreshed ? null : outcome.line;
-  }
-  if (mode === "stop" || mode === "subagent-stop" || mode === "stop-failure" || mode === "heartbeat") {
-    await resolve({ env });
-  }
-  return null;
+export async function prepareVersion(mode, { env = process.env, versionForFn = versionFor } = {}) {
+  const sessionStart = mode === "session-start";
+  if (!sessionStart && !["stop", "subagent-stop", "stop-failure", "heartbeat"].includes(mode)) return null; // unknown mode: nothing to run
+  return (await versionForFn({ sessionStart, env })).keptLine;
 }
 
 /** One hook firing: the version first, then the mode. Resolves to the one line to print (or `null`) and whether the version was missing. */
-export async function runHook(mode, input, { env = process.env, refresh, resolve, ...options } = {}) {
+export async function runHook(mode, input, { env = process.env, versionForFn, ...options } = {}) {
   // A session that is not plan-connected reports nothing, so it needs no package: no registry request, no line.
   const isConnected = options.isConnected ?? isPlanConnected;
   if (!isValidSessionId(input?.session_id) || !sessionIsConnected(input.session_id, env, isConnected)) return { line: null, missingVersion: false };
   let line = null;
   try {
-    line = await prepareVersion(mode, { env, refresh, resolve });
+    line = await prepareVersion(mode, { env, versionForFn });
   } catch (err) {
     return { line: err.message, missingVersion: true };
   }
@@ -443,8 +438,7 @@ async function main() {
   if (!input) return; // malformed/empty stdin — never block or guess
   try {
     const { line, missingVersion } = await runHook(mode, input);
-    if (line) process.stderr.write(`${line}
-`);
+    if (line) process.stderr.write(`${line}\n`);
     if (missingVersion) process.exitCode = 1;
   } catch {
     // A hook bug must never surface as a failed/blocked tool call or turn.

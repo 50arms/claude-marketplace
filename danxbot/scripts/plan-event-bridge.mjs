@@ -57,7 +57,7 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { readRecordedSpec, recordedVersion, refreshOrKeep } from "./lib/dashboard-mcp-package.mjs";
+import { requireRecordedSpec, versionFor } from "./lib/dashboard-mcp-package.mjs";
 import { isPlanConnected } from "./lib/plan-connection.mjs";
 import { HEALTHY_RUN_MS, HEARTBEAT_STALE_MS, readJsonFile, sessionPaths, stateDir, writeFileAtomic } from "./lib/bridge-state.mjs";
 import { effectiveRestartGeneration } from "./lib/bridge-restart-decision.mjs";
@@ -632,45 +632,51 @@ export function waitForVerdict(child, timeoutMs) {
  * session may have just moved to another plan, whose boards this credential has
  * never been checked against, and that check happens at startup.
  */
-export async function start({
+export async function start(options = {}) {
+  const version = await prepareDashboardMcpVersion(options);
+  if (version.refusal) return version.refusal;
+  const result = await startBridge(options);
+  return { ...result, exitCode: Math.max(result.exitCode ?? 0, version.exitCode) };
+}
+
+const writeStderr = (message) => process.stderr.write(message);
+
+/**
+ * DX-4321: the version of the danx-dashboard-mcp package this start runs, decided by the one rule in
+ * lib/dashboard-mcp-package.mjs (`versionFor`): a SessionStart (`sessionStart`) refreshes it, any other
+ * start reads the record. Returns `{exitCode}` (2 only when a notice could not reach the inbox and went to
+ * stderr for asyncRewake), or `{refusal}`, a start() result, when there is no version at all and nothing
+ * can run. A start missing what it needs is left to startBridge, which reports that itself.
+ */
+export async function prepareDashboardMcpVersion({
   env = process.env,
   sessionId,
   intent = RESUME_INTENT,
   post = postToInbox,
-  stderr = (message) => process.stderr.write(message),
-  // DX-4321: true for a SessionStart hook, which refreshes the recorded danx-dashboard-mcp version; every other start reads the record.
+  stderr = writeStderr,
   sessionStart = false,
-  resolveVersion = resolveDashboardMcpVersion,
-  ...rest
+  versionForFn = versionFor,
 } = {}) {
-  // A start missing what it needs reports that itself (startBridge), before any version is asked for.
-  if (!sessionId || REQUIRED_ENV.some((name) => !env[name])) return startBridge({ env, sessionId, intent, post, stderr, ...rest });
-  const relevant = () => isSessionKnownToWantEvents({ intent, env, sessionId });
-  let kept;
+  if (!sessionId || REQUIRED_ENV.some((name) => !env[name])) return { exitCode: 0 };
+  const relevant = isSessionKnownToWantEvents({ intent, env, sessionId });
+  let outcome;
   try {
-    kept = await resolveVersion({ env, sessionStart });
+    outcome = await versionForFn({ sessionStart, env });
   } catch (err) {
-    // DX-4321: no recorded version and the registry unreadable, so there is no package to run.
     const announced = await announce({
       reason: err.message,
       fix: "restore access to the npm registry, then call plan_connect again in this session",
       env,
       post,
       stderr,
-      relevant: relevant(),
+      relevant,
     });
-    return { started: false, reason: err.message, exitCode: announced.exitCode };
+    return { refusal: { started: false, reason: err.message, exitCode: announced.exitCode } };
   }
-  // DX-4321: the refresh failed but the recorded version keeps running: tell the session, once, which one.
-  const told = kept.refreshed ? { exitCode: 0 } : await announce({ notice: versionKeptNotice(kept.line), env, post, stderr, relevant: relevant() });
-  const result = await startBridge({ env, sessionId, intent, post, stderr, ...rest });
-  return { ...result, exitCode: Math.max(result.exitCode ?? 0, told.exitCode) };
-}
-
-/** The version `start` runs: a SessionStart refreshes it from the registry, anything else reads the record (resolving it only when none exists). */
-export async function resolveDashboardMcpVersion({ env, sessionStart }) {
-  if (sessionStart) return refreshOrKeep({ env });
-  return { version: await recordedVersion({ env }), refreshed: true };
+  if (outcome.keptLine === null) return { exitCode: 0 };
+  // The refresh failed but the recorded version keeps running: tell the session, once, which one.
+  const told = await announce({ notice: versionKeptNotice(outcome.keptLine), env, post, stderr, relevant });
+  return { exitCode: told.exitCode };
 }
 
 async function startBridge({
@@ -681,7 +687,7 @@ async function startBridge({
   isAlive: alive = isAlive,
   killTree: kill = killTree,
   now = Date.now,
-  stderr = (message) => process.stderr.write(message),
+  stderr = writeStderr,
   post = postToInbox,
   waitVerdict = waitForVerdict,
   verdictTimeoutMs = STARTUP_VERDICT_MS,
@@ -1241,7 +1247,7 @@ export function terminalShutdown(event) {
 /** The real bridge subcommand child. Injectable (`run()`'s `spawnSubcommand`) so tests can
  * replace it with a stand-in that never touches the network. */
 function defaultSpawnSubcommand({ resumeIds, env }) {
-  const { command, args } = bridgeCommand({ resumeIds, spec: readRecordedSpec(env) });
+  const { command, args } = bridgeCommand({ resumeIds, spec: requireRecordedSpec(env) });
   return spawn(command, args, {
     env,
     stdio: ["ignore", "pipe", "pipe"],
