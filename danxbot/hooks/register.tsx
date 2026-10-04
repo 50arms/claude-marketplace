@@ -5,7 +5,7 @@ import type { ConnectedPlan, Draft, PlanRow, ProblemRow, RefreshGate, SolutionRo
 import { renderBand } from './plan/band'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
-import { footerLabel, quickClosedBy, quickOpenFor } from './plan/words'
+import { footerLabel } from './plan/words'
 import { parsePreviewStart, parseTabId, parseTabsContext } from './plan/browser-output'
 import {
   BROWSER_TOAST_MS,
@@ -35,10 +35,8 @@ const view = atom({ plugin: 'danxbot', key: 'view' } as const, EMPTY)
 const gate = atom({ plugin: 'danxbot', key: 'gate' } as const, { inFlight: false, again: false, at: null } as RefreshGate)
 const pick = atom({ plugin: 'danxbot', key: 'pick' } as const, '')
 const switching = atom({ plugin: 'danxbot', key: 'switching' } as const, false)
-// the band is hidden for the session / the plan the quick-view card was opened on: their own atoms,
-// since refresh replaces `view` whole
+// the band is hidden for the session: its own atom, since refresh replaces `view` whole
 const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
-const quickPlanId = atom({ plugin: 'danxbot', key: 'quickPlanId' } as const, null as number | null)
 const expanded = atom({ plugin: 'danxbot', key: 'expanded' } as const, null as number | null)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 const draft = atom({ plugin: 'danxbot', key: 'draft' } as const, null as Draft | null)
@@ -104,9 +102,6 @@ async function refresh($: any, force = false): Promise<void> {
       try {
         const v = await loadView($)
         await update($, view, () => v)
-        // The card belongs to the plan it was opened on (quickClosedBy names the rule). Between the view update
-        // above and this one the new view is already stored, so the draw checks quickOpenFor itself.
-        await update($, quickPlanId, cur => (quickClosedBy(cur, v) ? null : cur))
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -345,26 +340,17 @@ function toggleDraft($: any, p: ProblemRow, solutionId: number, kind: 'note' | '
   )
 }
 
-// The footer entry's one press: it always brings the band back; connected, it also toggles the quick
-// view (opening it when the band had been dismissed); not connected, or in error, it opens the pane
-// instead (the connect view).
-async function footerPress($: any): Promise<void> {
-  const wasDismissed = await read($, dismissed)
+// DX-4374: the one way into the plan UI, for the footer button and /danx-plan alike: bring the band
+// back (clear `dismissed`) and open the Plan pane. It never closes anything and tells the model nothing
+// (R-4 covers actions that change plan state; this changes none).
+async function showPlan($: any): Promise<void> {
   await update($, dismissed, () => false)
-  const v = await read($, view)
-  if (v.phase === 'ready' && v.connected) {
-    // a dismissed band opens with the quick view; otherwise the press toggles it
-    const id = v.connected.id
-    await update($, quickPlanId, cur => (wasDismissed || !quickOpenFor(cur, v) ? id : null))
-  } else {
-    await $.ui.open({ id: PANE, title: 'Plan', focus: true })
-  }
+  await $.ui.open({ id: PANE, title: 'Plan', focus: true })
 }
 
-// The band's close control: the whole band (and its quick view) hides until the footer entry is pressed.
+// The band's close control: the band hides until the footer button or /danx-plan is used.
 async function dismissBand($: any): Promise<void> {
   await update($, dismissed, () => true)
-  await update($, quickPlanId, () => null)
 }
 
 function handlers($: any): Handlers {
@@ -373,9 +359,8 @@ function handlers($: any): Handlers {
     openPane: () => $.ui.open({ id: PANE, title: 'Plan', focus: true }),
     openBrowserTab: url => openInBrowser($, url),
     connect: plan => connect($, plan),
-    footerPress: () => footerPress($),
+    showPlan: () => showPlan($),
     dismissBand: () => dismissBand($),
-    closeQuick: () => update($, quickPlanId, () => null),
     disconnect: plan => disconnect($, plan),
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
@@ -437,15 +422,13 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, expanded, () => null)
     await update($, draft, () => null)
     await update($, talk, () => null)
-    await update($, quickPlanId, () => null)
     void refresh($, true)
   }
   return next(e)
 }
 
 async function onCommand($: any) {
-  await update($, dismissed, () => false)
-  await $.ui.open({ id: PANE, title: 'Plan' })
+  await showPlan($)
   void refresh($, true)
   return { text: 'Plan pane opened.' }
 }
@@ -475,7 +458,6 @@ async function drawBand($: any, e: any, next: any) {
   // a dismissed band draws nothing, whatever the connection (the footer entry brings it back)
   if (await read($, dismissed)) return next(e)
   const v = await read($, view)
-  const quickPlan = await read($, quickPlanId)
   return renderBand(
     $.ui.resolve(e),
     handlers($),
@@ -483,7 +465,6 @@ async function drawBand($: any, e: any, next: any) {
     e.surface === 'desktop',
     e.surface === 'desktop',
     await read($, busy),
-    quickOpenFor(quickPlan, v),
   )
 }
 
@@ -506,6 +487,7 @@ async function drawPane($: any, e: any) {
     talk: await read($, talk),
     now: await $.clock.now(),
     hasBrowser: e.surface === 'desktop',
+    hasSvg: e.surface === 'desktop',
   }
   return renderPane($.ui.resolve(e), handlers($), m)
 }

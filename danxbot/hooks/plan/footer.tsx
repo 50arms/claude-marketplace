@@ -8,7 +8,7 @@ export function renderFooter(E: any, hd: Handlers, label: string, rest: any): an
   return (
     <Box flexDirection="row" gap={1}>
       {rest}
-      <Button key="footer-plan" onPress={() => hd.footerPress()}>
+      <Button key="footer-plan" onPress={() => hd.showPlan()}>
         {label}
       </Button>
     </Box>

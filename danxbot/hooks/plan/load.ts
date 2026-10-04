@@ -1,4 +1,4 @@
-import type { CommentRow, ConnectedPlan, InProgressRow, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
+import type { CommentRow, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
 import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, STATUS_KEYS } from './config'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
@@ -91,7 +91,7 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   // The session in this same response says WHICH plan; the plan itself is read by id below.
   const session = list.body.session
   const connectedId: number | null = session?.plan_id ?? null
-  const listener: string | null = list.body.sessionListenerAttached?.state ?? null
+  const listener = readListener(list.body.sessionListenerAttached)
   const noPlan = { connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
@@ -190,4 +190,11 @@ function readBreakdown(raw: any): StatusBreakdown | null {
   if (raw === null || typeof raw !== 'object') return null
   for (const key of STATUS_KEYS) if (typeof raw[key] !== 'number') return null
   return { 'In Progress': raw['In Progress'], ToDo: raw.ToDo, Backlog: raw.Backlog, Review: raw.Review, Done: raw.Done, Cancelled: raw.Cancelled }
+}
+
+// DX-4374: the event bridge's state and next step, or null when the answer carries no state string (the server
+// answers null for a session on no plan). A missing nextStep is null, never a guessed sentence.
+function readListener(raw: any): ListenerStatus | null {
+  if (raw === null || typeof raw !== 'object' || typeof raw.state !== 'string') return null
+  return { state: raw.state, nextStep: typeof raw.nextStep === 'string' ? raw.nextStep : null }
 }

@@ -86,7 +86,7 @@ for (const surface of SURFACES) {
     test('a failed in-progress call fails the load as an error shown in footer and pane, never a missing section', async ($, on) => {
       const d = dashboard(on, { inProgressFails: true })
       await startSession($, d, surface)
-      expect(await footerText(await mountIndicator($, surface))).toBe('plan: error')
+      expect(await footerText(await mountIndicator($, surface))).toBe('PLAN-23')
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).toContain('in-progress boom')
       expect(await text(pane)).not.toContain('In progress')
@@ -97,7 +97,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).toContain('answered no total')
-      expect(await footerText(await mountIndicator($, surface))).toBe('plan: error')
+      expect(await footerText(await mountIndicator($, surface))).toBe('PLAN-23')
     })
   })
 }

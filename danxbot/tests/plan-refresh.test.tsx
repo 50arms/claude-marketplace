@@ -17,7 +17,6 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await label(band)).toContain('3 open problems')
-      expect(await footerText(await mountIndicator($, surface))).toBe('◔ 25% · PLAN-23 · 3 open')
 
       // a new problem appears on the dashboard; the next tick of the clock picks it up
       d.world.cards[1]!.problems.push({ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] })
@@ -27,7 +26,6 @@ for (const surface of SURFACES) {
       await d.clock.advance(1_000)
       expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(loads + 1)
       expect(await label(band)).toContain('4 open problems')
-      expect(await footerText(await mountIndicator($, surface))).toBe('◔ 25% · PLAN-23 · 4 open')
     })
 
     test('a refresh error shows `plan: error` in the band and the message in the pane', async ($, on) => {
@@ -38,7 +36,7 @@ for (const surface of SURFACES) {
       d.failList()
       await d.clock.advance(60_000)
       expect(await label(band)).toContain('plan: error')
-      expect(await footerText(await mountIndicator($, surface))).toBe('plan: error')
+      expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
       expect(await label(pane)).toContain('500: boom')
       // and it recovers on the next good load
       d.failList(false)
@@ -81,7 +79,7 @@ describe('the dashboard cannot be read', () => {
       expect(await label(band)).toContain('plan: error')
       expect(await label(pane)).toContain('request timed out after 60000ms')
       expect(await label(pane)).not.toContain('not connected in this session')
-      expect(await footerText(await mountIndicator($, surface))).toBe('plan: error')
+      expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
     })
   }
 })

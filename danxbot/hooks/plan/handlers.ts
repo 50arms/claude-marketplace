@@ -7,9 +7,8 @@ import type { ConnectedPlan, PlanRow, ProblemRow, SolutionRow, StepRow } from '.
 // which answer the operator gave.
 export type Handlers = {
   refresh: () => Promise<unknown>
-  footerPress: () => Promise<unknown>
+  showPlan: () => Promise<unknown>
   dismissBand: () => Promise<unknown>
-  closeQuick: () => Promise<unknown>
   openPane: () => Promise<unknown>
   openBrowserTab: (url: string) => Promise<unknown>
   connect: (plan: PlanRow) => Promise<unknown>

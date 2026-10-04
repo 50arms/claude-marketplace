@@ -80,8 +80,14 @@ export function bandLabel(v: PlanView): string {
 // total = In Progress + ToDo + Backlog + Review + Done (Cancelled is NOT counted);
 // percent = total > 0 ? Math.round(Done / total * 100) : 0. The two must never disagree.
 export function planPercent(b: StatusBreakdown): number {
-  const total = b['In Progress'] + b.ToDo + b.Backlog + b.Review + b.Done
-  return total > 0 ? Math.round((b.Done / total) * 100) : 0
+  const { done, total } = doneTotal(b)
+  return total > 0 ? Math.round((done / total) * 100) : 0
+}
+
+// DX-4374: the same rule's two whole numbers (the pane shows `done / total`): Done over In Progress + ToDo +
+// Backlog + Review + Done, Cancelled excluded. planPercent and the pane both read it, so they never disagree.
+export function doneTotal(b: StatusBreakdown): { done: number; total: number } {
+  return { done: b.Done, total: b['In Progress'] + b.ToDo + b.Backlog + b.Review + b.Done }
 }
 
 // The text donut for a percent: ○ 0, ◔ 1-37, ◑ 38-62, ◕ 63-99, ● 100.
@@ -99,36 +105,17 @@ export function viewPercent(v: PlanView): number | null {
   return v.phase === 'ready' && v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
 }
 
-// DX-4317: the one rule for "the quick-view card is open for this view": it was opened on the plan the
-// view is connected to. The draw, the footer press and the reset all ask this, so no view can show a card
-// that was opened on another plan (the draw runs between a view update and the reset that follows it).
-export function quickOpenFor(quickPlanId: number | null, v: PlanView): boolean {
-  return quickPlanId !== null && quickPlanId === (v.connected?.id ?? null)
-}
-
-// DX-4317: the reset rule. A view closes the card opened on another plan when it decides: a ready view (one
-// with no plan is a leave) or any view that names a connected plan (an error built after the plan was read).
-// A loading, no-mcp or early-error view names no plan and never decides, so recovery on the same plan keeps
-// the card.
-export function quickClosedBy(quickPlanId: number | null, v: PlanView): boolean {
-  return quickPlanId !== null && (v.phase === 'ready' || v.connected !== null) && !quickOpenFor(quickPlanId, v)
-}
-
-// Open problems split into questions and actions: one count for the pane and the quick view.
+// Open problems split into questions and actions: one count for the pane.
 export function problemSplit(v: PlanView): { questions: number; actions: number } {
   const actions = v.problems.filter(p => p.type === 'action').length
   return { questions: v.problems.length - actions, actions }
 }
 
-// The footer entry's label (the `SessionMode` button); null where the footer shows nothing (loading,
-// no MCP server). Replaces the plain status text: there is no second label builder.
+// DX-4374: the footer button's label, read from `view.connected` alone (never from the phase's error):
+// `PLAN-NN` when a plan is known, `Plan` otherwise; null where the footer shows nothing (loading, no MCP).
 export function footerLabel(v: PlanView): string | null {
-  if (v.phase === 'error') return 'plan: error'
   if (v.phase === 'loading' || v.phase === 'no-mcp') return null
-  const percent = viewPercent(v)
-  if (!v.connected || percent === null) return 'plan: not connected'
-  const open = v.problems.length > 0 ? ` · ${v.problems.length}${capMark(v)} open` : ''
-  return `${donutGlyph(percent)} ${percent}% · ${v.connected.ref}${open}`
+  return v.connected ? v.connected.ref : 'Plan'
 }
 
 // "+N more cards in progress in the browser" when the in-progress bucket was capped.

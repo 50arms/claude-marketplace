@@ -84,6 +84,10 @@ export type InProgressRow = {
   updatedAt: string
 }
 
+// DX-4374: the server's `sessionListenerAttached {attached, state, nextStep}`, less `attached`. Only the exact
+// state `healthy` is a working bridge; `nextStep` is the server's own wording (null when it has none).
+export type ListenerStatus = { state: string; nextStep: string | null }
+
 // `no-mcp`: the session has no `danx-dashboard` MCP server (another repo), so the dashboard
 // cannot be reached at all. It is not an error: the band shows only its Plan button.
 export type PlanView = {
@@ -104,7 +108,9 @@ export type PlanView = {
   // status count's: a card in progress with an open problem sits in needs-you).
   inProgress: InProgressRow[]
   inProgressTotal: number
-  listener: string | null
+  // The event bridge as GET /api/plans answers it (`sessionListenerAttached`): the server's health state and
+  // its next step; null when the answer carries none (a session on no plan, or no session row).
+  listener: ListenerStatus | null
   refreshedAt: string | null
 }
 
@@ -129,14 +135,9 @@ declare module 'claude-code' {
       gate: RefreshGate
       pick: string
       switching: boolean
-      // The band is hidden for the session (the footer entry brings it back). Its own atom: refresh
+      // The band is hidden for the session (the footer button or /danx-plan brings it back). Its own atom: refresh
       // replaces `view` whole, so a flag inside it would be reset by every refresh.
       dismissed: boolean
-      // The plan the quick-view card was opened on, or null when closed. The card shows only while this
-      // equals the connected plan's id on the view drawn (quickOpenFor). A view that names a connected plan
-      // (ready, or an error built after the plan was read) on another plan clears it; a view that names
-      // none and is not ready (loading, no-mcp, an early error) never decides.
-      quickPlanId: number | null
       expanded: number | null
       // keys of the writes under way (config busyKey): one per problem or connect
       busy: string[]

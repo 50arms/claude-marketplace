@@ -1,9 +1,10 @@
-import type { Draft, PlanView } from '../../types'
+import type { Draft, PlanView, StatusBreakdown } from '../../types'
+import { donutAlt, donutSvg } from './donut'
 import type { Handlers } from './handlers'
 import { problemCard } from './problems'
 import type { Ui } from './problems'
-import { CARD_TITLE_MAX, DANGER, PICKER_PLAN_NAME_MAX, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
-import { age, cappedInProgressNote, cappedNote, cappedPlansNote, problemSplit, updatedText, viewPercent } from './words'
+import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
+import { age, cappedInProgressNote, cappedNote, cappedPlansNote, donutGlyph, doneTotal, planPercent, problemSplit, updatedText } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
 export type PaneModel = {
@@ -17,6 +18,63 @@ export type PaneModel = {
   now: number
   // The in-app browser exists on the desktop surface only.
   hasBrowser: boolean
+  // DX-4374: the surface draws an Svg (the desktop); the terminal shows the donut as a glyph and text.
+  hasSvg: boolean
+}
+
+// DX-4374: the progress donut with its percent and done / total: a real Svg on the desktop, the glyph and the
+// same figures as text on the terminal. Only a ready, connected view has counts to show.
+function progress(E: any, counts: StatusBreakdown, hasSvg: boolean): any {
+  const { Box, Text, Svg } = E
+  const percent = planPercent(counts)
+  const { done, total } = doneTotal(counts)
+  return (
+    <Box key="progress" flexDirection="row" gap={1}>
+      {hasSvg ? (
+        <Svg source={donutSvg(percent)} alt={donutAlt(percent)} width={DONUT_PANE_PX} height={DONUT_PANE_PX} />
+      ) : (
+        <Text color={SUCCESS}>{donutGlyph(percent)}</Text>
+      )}
+      <Box flexDirection="column">
+        <Text bold>{percent}%</Text>
+        <Text dimColor>
+          {done} / {total} done
+        </Text>
+      </Box>
+    </Box>
+  )
+}
+
+// DX-4374: the event bridge beside the connection line. Only the exact state `healthy` is the green dot and
+// `events`; any other state is shown as the server names it, in the warning colour, with its next step
+// verbatim; no status at all says so (never green).
+function eventLine(E: any, v: PlanView): any {
+  const { Box, Text } = E
+  const l = v.listener
+  if (l === null) {
+    return (
+      <Text key="events" color={WARNING}>
+        ● {NO_EVENT_BRIDGE}
+      </Text>
+    )
+  }
+  if (l.state === 'healthy') {
+    return (
+      <Box key="events" flexDirection="row" gap={1}>
+        <Text color={SUCCESS}>●</Text>
+        <Text>events</Text>
+      </Box>
+    )
+  }
+  return (
+    <Box key="events" flexDirection="column">
+      <Box flexDirection="row" gap={1}>
+        <Text color={WARNING}>●</Text>
+        <Text color={WARNING}>events: {l.state}</Text>
+      </Box>
+      {l.nextStep !== null && <Text color={WARNING}>{l.nextStep}</Text>}
+    </Box>
+  )
 }
 
 // The plan to connect to: the person's pick, else the first plan that is not the connected one.
@@ -92,7 +150,6 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
   const plan = v.connected
   const ui: Ui = { draft: m.draft, busy: m.working, talk: m.talk, plan, now: m.now, hasBrowser: m.hasBrowser }
   const { questions, actions } = problemSplit(v)
-  const percent = viewPercent(v)
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -100,10 +157,10 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       <Box flexDirection="column">
         <Text color={SUCCESS}>● Connected: {plan.ref}</Text>
         <Text>{plan.name}</Text>
-        <Text dimColor>
-          {plan.status} · {percent}% complete · events {v.listener === 'healthy' ? 'live' : (v.listener ?? 'unknown')}
-        </Text>
+        <Text dimColor>{plan.status}</Text>
+        {eventLine(E, v)}
       </Box>
+      {v.statusBreakdown && progress(E, v.statusBreakdown, m.hasSvg)}
       <Box flexDirection="row" gap={1}>
         {m.hasBrowser && (
           <Button key="open-plan" onPress={() => hd.openBrowserTab(planUrl(plan))}>

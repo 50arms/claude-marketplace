@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, expectText, startSession } from './plan-kit'
+import { SURFACES, dashboard, expectText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
@@ -55,3 +55,105 @@ describe('plan band', () => {
     expect(await free.find({ key: 'open-pane' })).toBeDefined()
   })
 })
+
+async function mounted($: any, d: any, surface: string) {
+  await startSession($, d, surface)
+  const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+  const footer = await mountIndicator($, surface)
+  return { band, footer }
+}
+
+for (const surface of SURFACES) {
+  describe(`dismissing the band on ${surface}`, () => {
+    test('the close control hides the band; one footer press brings it back and opens the pane', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      expect(await band.find({ key: 'band-close' })).toBeDefined()
+      await band.press({ key: 'band-close' })
+      expect(await band.find({ key: 'open-pane' })).toBeUndefined()
+      // the footer is untouched by the dismissal
+      expect((await footer.find({ key: 'footer-plan' }))?.text).toBe('PLAN-23')
+
+      await footer.press({ key: 'footer-plan' })
+      expect(await band.find({ key: 'open-pane' })).toBeDefined()
+      expect(d.opened.map(o => o.id)).toEqual(['danx-plan'])
+    })
+
+    test('a second dismiss after a restore works', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      await band.press({ key: 'band-close' })
+      await footer.press({ key: 'footer-plan' })
+      await band.press({ key: 'band-close' })
+      expect(await band.find({ key: 'open-pane' })).toBeUndefined()
+      await footer.press({ key: 'footer-plan' })
+      expect(await band.find({ key: 'open-pane' })).toBeDefined()
+    })
+
+    test('it stays dismissed through a refresh, a second session.start, a /clear and a connection change', async ($, on) => {
+      const d = dashboard(on)
+      on('session.end', () => ({ sessionId: 's1' }) as any)
+      const { band } = await mounted($, d, surface)
+      await band.press({ key: 'band-close' })
+
+      await d.clock.advance(60_000)
+      await startSession($, d, surface)
+      await $.session.end({ reason: 'clear' } as any)
+      await d.clock.settle()
+      d.world.planId = null
+      await d.clock.advance(60_000)
+      d.world.planId = 24
+      await d.clock.advance(60_000)
+      expect(await band.find({ key: 'open-pane' })).toBeUndefined()
+      expect(d.stateWrites.filter(w => w.key === 'dismissed' && w.value === false)).toHaveLength(0)
+    })
+
+    test('/danx-plan brings a dismissed band back (a keyboard way)', async ($, on) => {
+      const d = dashboard(on)
+      const { band } = await mounted($, d, surface)
+      await band.press({ key: 'band-close' })
+      await $.command.run({ command: 'danx-plan' })
+      await d.clock.settle()
+      expect(await band.find({ key: 'open-pane' })).toBeDefined()
+    })
+
+    test('a dismissed band with no danx-dashboard MCP server draws nothing', async ($, on) => {
+      const d = dashboard(on, { mcp: 'down' })
+      const { band } = await mounted($, d, surface)
+      await band.press({ key: 'band-close' })
+      expect(await band.findAll({ type: 'Button' })).toHaveLength(0)
+    })
+
+    test('the dismissed flag is a $.state atom under plugin danxbot, not part of the view', async ($, on) => {
+      const d = dashboard(on)
+      const { band, footer } = await mounted($, d, surface)
+      await band.press({ key: 'band-close' })
+      await footer.press({ key: 'footer-plan' })
+      expect(new Set(d.stateWrites.map(w => `${w.plugin}.${w.key}`)).has('danxbot.dismissed')).toBe(true)
+      expect(d.stateWrites.some(w => w.key === 'view' && JSON.stringify(w.value).includes('dismissed'))).toBe(false)
+    })
+  })
+
+  describe(`the band line on ${surface}`, () => {
+    test('the controls sit after a growing spacer at the right; the label is the one element that truncates', async ($, on) => {
+      const d = dashboard(on)
+      const { band } = await mounted($, d, surface)
+      const tree: any = await band.drawn()
+      const row = tree.type === 'Box' && tree.children.some((c: any) => c?.props?.flexGrow === 1) ? tree : null
+      expect(row).not.toBeNull()
+      const kids = row.children
+      const spacerAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexGrow === 1)
+      const labelAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexShrink === 1)
+      const controlsAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexShrink === 0 && c.children?.some((x: any) => x?.props?.key === 'open-pane'))
+      expect(labelAt).toBeGreaterThan(-1)
+      expect(spacerAt).toBeGreaterThan(labelAt)
+      expect(controlsAt).toBeGreaterThan(spacerAt)
+      expect((await band.find({ type: 'Text', text: /PLAN-23/ }))?.props.wrap).toBe('truncate-end')
+      // order and keys unchanged, the close control last
+      const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
+      expect(keys).toEqual(surface === 'desktop' ? ['open-pane', 'open-tab', 'band-close'] : ['open-pane', 'band-close'])
+      expect(await band.find({ type: 'Link' })).toBeDefined()
+      expect((await band.find({ key: 'band-close' }))?.props.role).toBe('dismiss')
+    })
+  })
+}

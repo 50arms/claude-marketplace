@@ -172,7 +172,6 @@ for (const surface of SURFACES) {
       expect(texts).toContain('+18 more cards with open problems in the browser')
       const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
       expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')).toContain('3+ open problems')
-      expect(await footerText(await mountIndicator($, surface))).toBe('◔ 25% · PLAN-23 · 3+ open')
     })
 
     test('a plan beyond the plan list cap still labels correctly, from the session in the same response', async ($, on) => {

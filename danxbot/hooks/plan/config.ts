@@ -6,7 +6,7 @@ export const SERVER = 'danx-dashboard'
 export const POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
 
-// The dashboard's six card statuses, in the order the pane and the quick view list them.
+// The dashboard's six card statuses, in the order a view's breakdown is read.
 export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const
 
 // How much one load reads. Past a cap the view says so (cardsTotal vs cardsRead, moreComments)
@@ -84,6 +84,10 @@ export function cardUrl(plan: ConnectedPlan, cardId: string): string {
   return `${planUrl(plan)}/cards/${cardId}`
 }
 
-// The donut's size in px (Svg takes CSS pixels): the band line's, and the quick view's.
+// The donut's size in px (Svg takes CSS pixels): the band line's, and the pane header's.
 export const DONUT_BAND_PX = 16
-export const DONUT_QUICK_PX = 44
+export const DONUT_PANE_PX = 44
+
+// DX-4374: what the pane's event line says for a connected session the server reports no event bridge for
+// (`sessionListenerAttached` null): never green, never silent.
+export const NO_EVENT_BRIDGE = 'no event bridge for this session'

@@ -1,4 +1,4 @@
-// DX-4317: every link the band, the quick view and the pane draw is built on the origin the plan list
+// DX-4317: every link the band and the pane draw is built on the origin the plan list
 // answered (`dashboard_url`), never on a constant; an answer without a usable origin is an error state.
 import { describe, expect, test } from 'claude-code/testing'
 
@@ -15,17 +15,14 @@ const hrefs = async (ui: any) => (await ui.findAll({ type: 'Link' })).map((l: an
 const browserUrls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.tool === 'navigate').map((c: any) => c.args.url)
 
 for (const surface of SURFACES) {
-  // the default origin's hrefs are asserted in the band, quick-view, pane and browser-tab tests
+  // the default origin's hrefs are asserted in the band, pane and browser-tab tests
   for (const origin of [OTHER]) {
     describe(`links on ${surface}, dashboard at ${origin}`, () => {
-      test('the band line and the quick view link to the plan on that origin', async ($, on) => {
+      test('the band line links to the plan on that origin', async ($, on) => {
         const d = dashboard(on, { dashboardUrl: origin })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-        const footer = await mountIndicator($, surface)
         expect(await hrefs(band)).toEqual([`${origin}/plans/23`])
-        await footer.press({ key: 'footer-plan' })
-        expect(await hrefs(band)).toEqual([`${origin}/plans/23`, `${origin}/plans/23`])
       })
 
       test('the pane links the plan, every in-progress card and every problem on that origin', async ($, on) => {
@@ -44,20 +41,16 @@ for (const surface of SURFACES) {
 }
 
 describe('the browser-tab buttons open the session dashboard (desktop)', () => {
-  test('band, quick view, pane and a problem each navigate to the answered origin', async ($, on) => {
+  test('band, pane and a problem each navigate to the answered origin', async ($, on) => {
     const d = dashboard(on, { dashboardUrl: OTHER, tabs: ['tab-1'] })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    const footer = await mountIndicator($, 'desktop')
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     await band.press({ key: 'open-tab' })
-    await footer.press({ key: 'footer-plan' })
-    await band.press({ key: 'quick-open-tab' })
     await pane.press({ key: 'open-plan' })
     await pane.press({ key: 'open-11' })
     await pane.press({ key: 'tab-11' })
     expect(browserUrls(d)).toEqual([
-      `${OTHER}/plans/23`,
       `${OTHER}/plans/23`,
       `${OTHER}/plans/23`,
       `${OTHER}/plans/23/cards/DX-1/problems/PBLM-11`,
@@ -84,16 +77,14 @@ for (const surface of SURFACES) {
       ['not a URL', 'localhost:5555 please'],
       ['not http(s)', 'ftp://plans.example.test'],
     ] as const) {
-      test(`${name}: the band says error, draws no link and no quick view`, async ($, on) => {
+      test(`${name}: the band says error, draws no link and the footer reads Plan`, async ($, on) => {
         const d = dashboard(on, { dashboardUrl: value })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         const footer = await mountIndicator($, surface)
-        expect(await footerText(footer)).toBe('plan: error')
+        expect(await footerText(footer)).toBe('Plan')
         expect(await band.findAll({ type: 'Link' })).toHaveLength(0)
         expect(await band.find({ key: 'open-tab' })).toBeUndefined()
-        await footer.press({ key: 'footer-plan' })
-        expect(await band.find({ key: 'quick-view' })).toBeUndefined()
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
         expect((await pane.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')).toContain('dashboard_url')
       })
@@ -103,7 +94,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { dashboardUrl: NO_DASHBOARD_URL, connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect(await footerText(footer)).toBe('plan: error')
+      expect(await footerText(footer)).toBe('Plan')
     })
   })
 }

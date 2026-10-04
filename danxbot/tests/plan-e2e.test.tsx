@@ -4,7 +4,7 @@
 // the stand-in danxbot_api call it caused.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
+import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -85,36 +85,45 @@ for (const surface of SURFACES) {
   })
 }
 
-// DX-4346: the indicator flow, end to end on both surfaces.
+// DX-4374: the indicator flow, end to end on both surfaces.
 for (const surface of SURFACES) {
   describe(`the indicator flow on ${surface}`, () => {
-    test('connect, read the percent, dismiss, restore from the footer, quick view open and close, the pane lists the in-progress card, disconnect', async ($, on) => {
+    test('connect, dismiss, one footer press restores the band and opens the pane with donut and event line, the bridge degrades, disconnect', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const footer = await mountIndicator($, surface, ['focus'])
-      expect(await footerText(footer)).toBe('plan: not connected')
+      expect(await footerText(footer)).toBe('Plan')
 
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       await pane.press({ key: 'connect' })
       await d.clock.settle()
-      expect(await footerText(footer)).toBe('◔ 25% · PLAN-23 · 3 open')
+      expect(await footerText(footer)).toBe('PLAN-23')
       await expectIndicator(band, surface, 25)
 
       await band.press({ key: 'band-close' })
       expect(await band.find({ key: 'open-pane' })).toBeUndefined()
       await footer.press({ key: 'footer-plan' })
       expect(await band.find({ key: 'open-pane' })).toBeDefined()
-      expect(await band.find({ key: 'quick-view' })).toBeDefined()
-      await footer.press({ key: 'footer-plan' })
-      expect(await band.find({ key: 'quick-view' })).toBeUndefined()
+      expect(d.opened.map(o => o.id)).toEqual(['danx-plan'])
 
-      expect((await pane.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')).toContain('In flight card')
+      const all = await text(pane)
+      expect(all).toContain('25%')
+      expect(all).toContain('4 / 16 done')
+      expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeDefined()
+      expect(all).toContain('In flight card')
+
+      d.setListener('unattached')
+      await d.clock.advance(60_000)
+      expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
+      expect(await text(pane)).toContain(NEXT_STEP('unattached'))
 
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(await footerText(footer)).toBe('plan: not connected')
+      expect(await footerText(footer)).toBe('Plan')
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
+      expect(await pane.find({ type: 'Svg' })).toBeUndefined()
+      expect(await text(pane)).not.toMatch(/events|%/)
     })
   })
 }

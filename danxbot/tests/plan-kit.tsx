@@ -31,6 +31,11 @@ export const DEFAULT_BREAKDOWN = { 'In Progress': 3, ToDo: 5, Backlog: 1, Review
 const SESSION_ID = '41365fb5-6b43-443b-a01b-81245574f648'
 const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, body })
 
+// The seven states the server answers for `sessionListenerAttached.state` (danxbot src/issues/plan-session-listeners.ts
+// ListenerHealthState). The fixture's next step for a state other than `healthy` is `NEXT_STEP(state)`.
+export const LISTENER_STATES = ['unattached', 'stopped', 'reconnecting', 'credential_mismatch', 'plan_has_no_cards', 'inventory_unavailable', 'healthy'] as const
+export const NEXT_STEP = (state: string) => `Next step for ${state}: run plan_connect again.`
+
 type Sol = { id: number; title: string; recommended: boolean; body?: string; pro?: string; con?: string; steps?: any[] }
 type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean; solutions: Sol[]; summary?: string; context?: string }
 type Card = { id: string; title: string; priority: number; problems: Prob[]; comments: any[] }
@@ -51,6 +56,10 @@ export function dashboard(
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
+    // `sessionListenerAttached` on GET /api/plans: a state (any string, so an unknown one can be tried; default
+    // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
+    // as readCallerSessionOverlay does.
+    listener?: string | null
     // the connected plan's status counts: the default, an override, or none at all
     breakdown?: Record<string, unknown>
     noBreakdown?: boolean
@@ -113,6 +122,7 @@ export function dashboard(
   const stateWrites: { plugin: string; key: string; value: unknown }[] = []
   const commands: string[] = []
   const world = {
+    listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card', updatedAt: '2026-10-03T07:58:30.000Z' }] as { id: string; title: string; updatedAt: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
     titleSeen: undefined as string | undefined,
@@ -172,7 +182,10 @@ export function dashboard(
           world.planId === null
             ? null
             : { plan_id: world.planId, plan_name: plans.find(p => p.id === world.planId)?.name ?? 'Far plan' },
-        sessionListenerAttached: { state: 'healthy' },
+        sessionListenerAttached:
+          world.planId === null || world.listener === null
+            ? null
+            : { attached: world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
       })
     }
@@ -357,15 +370,8 @@ export function dashboard(
     return { deny: `no stand-in for ${e.server}` }
   })
   // what the plugin keeps in $.state (a test has no `$.state` of its own to read back)
-  const flags = { viewWriteFails: false, refusedViewWrites: 0, heldQuickWrite: null as Promise<void> | null }
+  const flags = { viewWriteFails: false, refusedViewWrites: 0 }
   on('state.set', async (_$: any, e: any, next: any) => {
-    // the NEXT write of the quick-view atom waits for holdQuickWrite()'s release (later ones pass): the window between a view
-    // update and the reset that follows it
-    if (flags.heldQuickWrite && e.key === 'quickPlanId') {
-      const held = flags.heldQuickWrite
-      flags.heldQuickWrite = null
-      await held
-    }
     // a write of the plugin's view that the host refuses: the one way a refresh can throw past its own catch
     if (flags.viewWriteFails && e.key === 'view') {
       flags.refusedViewWrites++
@@ -403,7 +409,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), holdQuickWrite: () => { let release!: () => void; flags.heldQuickWrite = new Promise<void>(r => (release = r)); return release }, refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
@@ -437,12 +443,12 @@ export function expectText(found: { text: string } | undefined, pattern: string 
   expect(found!.text).toMatch(pattern)
 }
 
-// The indicator is the footer entry; every test mounts it here, so the site is one line.
+// The footer is one plan button; every test mounts it here, so the site is one line.
 export async function mountIndicator($: any, surface: string, modes: string[] = []) {
   return $.ui.mount({ plugin: 'danxbot', surface, component: 'SessionMode', props: { modes } } as any)
 }
 
-// The footer entry's text (the one `SessionMode` button), and the band's progress indicator: an Svg whose alt
+// The footer button's text (the one `SessionMode` button), and the band's progress indicator: an Svg whose alt
 // carries `N% complete` on the desktop, the text glyph on the terminal (no Svg there).
 export const footerText = async (ui: any): Promise<string | undefined> => (await ui.find({ key: 'footer-plan' }))?.text
 

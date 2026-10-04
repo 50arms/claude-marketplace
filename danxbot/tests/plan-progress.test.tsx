@@ -1,6 +1,5 @@
-// DX-4346: the plan-progress figure and the footer entry that carries it. The footer (the
-// SessionMode site) draws text buttons only, so it shows a text glyph on both surfaces; the Svg donut
-// lives in the band line and the quick view.
+// DX-4346: the plan-progress figure. DX-4374: the footer is one `PLAN-NN` button with no figure (plan-footer.test.tsx);
+// the Svg donut lives in the band line and the pane header (plan-pane-progress.test.tsx).
 import { describe, expect, test } from 'claude-code/testing'
 
 import { donutGlyph, planPercent } from '../hooks/plan/words'
@@ -58,7 +57,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { planOutsideList: true })
       await startSession($, d, surface)
       expect(d.api.some(a => a.path === '/api/plans/23')).toBe(true)
-      expect(await footerText(await mountIndicator($, surface))).toBe('◔ 25% · PLAN-23 · 3 open')
+      expect(await footerText(await mountIndicator($, surface))).toBe('PLAN-23')
     })
 
     for (const [name, options] of [
@@ -68,7 +67,7 @@ for (const surface of SURFACES) {
       test(`${name} is a named error: no guessed 0%`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
-        expect(await footerText(await mountIndicator($, surface))).toBe('plan: error')
+        expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
         expect(await text(pane)).toContain('status_breakdown')
       })
@@ -77,23 +76,8 @@ for (const surface of SURFACES) {
     test('a status count that is not a number is the same error', async ($, on) => {
       const d = dashboard(on, { breakdown: { ...counts({ Done: 1 }), Review: '3' } })
       await startSession($, d, surface)
-      expect(await footerText(await mountIndicator($, surface))).toBe('plan: error')
+      expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
     })
-
-    for (const [breakdown, label] of [
-      [counts({ ToDo: 4 }), '○ 0% · PLAN-23 · 3 open'],
-      [counts({ Done: 1, ToDo: 1 }), '◑ 50% · PLAN-23 · 3 open'],
-      [counts({ Done: 3, ToDo: 1 }), '◕ 75% · PLAN-23 · 3 open'],
-      [counts({ Done: 5, Cancelled: 1 }), '● 100% · PLAN-23 · 3 open'],
-    ] as const) {
-      test(`the footer entry is a TEXT glyph and percent, no Svg: ${label}`, async ($, on) => {
-        const d = dashboard(on, { breakdown })
-        await startSession($, d, surface)
-        const footer = await mountIndicator($, surface)
-        expect(await footerText(footer)).toBe(label)
-        expect(await footer.find({ type: 'Svg' })).toBeUndefined()
-      })
-    }
 
     test('the band line draws the donut: an Svg whose alt carries N% complete on the desktop, the glyph on the terminal', async ($, on) => {
       const d = dashboard(on)
@@ -107,14 +91,13 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await expectIndicator(band, surface, 100)
-      expect(await footerText(await mountIndicator($, surface))).toBe('● 100% · PLAN-23 · 3 open')
     })
 
-    test('not connected: the footer reads not connected, the band draws no donut, a press opens the pane', async ($, on) => {
+    test('not connected: the footer reads Plan, the band draws no donut, a press opens the pane', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect(await footerText(footer)).toBe('plan: not connected')
+      expect(await footerText(footer)).toBe('Plan')
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await text(band)).not.toMatch(/%/)
@@ -135,7 +118,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface, ['focus', 'memory paused'])
       expect(await text(footer)).toBe('focus & memory paused')
-      expect(await footerText(footer)).toBe('◔ 25% · PLAN-23 · 3 open')
+      expect(await footerText(footer)).toBe('PLAN-23')
     })
 
     test('no $.ui.status call remains: the footer entry replaced it (R-1)', async ($, on) => {
