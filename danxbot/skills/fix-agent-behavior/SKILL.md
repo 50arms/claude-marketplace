@@ -43,7 +43,8 @@ then search sibling repos by `git remote get-url origin`. Use what you find; nev
 a second copy.
 
 - Reaches every project, machine, dispatched context → plugin source.
-- This machine's main session only → `~/.claude/CLAUDE.md`.
+- This machine only, or the operator's own preference (what needs no ask, what is
+  operator-only) → `~/.claude/CLAUDE.md`, never a plugin or a repo.
 - One repo only → that repo's `.claude/CLAUDE.md` or `.claude/rules/`.
 - Never a memory file (it reaches one project on one machine; no dispatched worker, other
   repo or other machine reads it): a correction already saved as one moves to its home above
