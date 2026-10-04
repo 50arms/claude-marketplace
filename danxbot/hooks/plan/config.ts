@@ -92,9 +92,9 @@ export function planUrl(plan: ConnectedPlan): string {
 
 // DX-4420: the plan page's Needs You tab, which the band's problem button opens. `needs-you` is danxbot's
 // NEEDS_YOU_BUCKET.id (frontend/src/lib/plan-buckets.ts), read by PlanDetailScreen from `?tab=`.
-export const NEEDS_YOU_TAB = 'needs-you'
+export const NEEDS_YOU_BUCKET_ID = 'needs-you'
 export function needsYouUrl(plan: ConnectedPlan): string {
-  return `${planUrl(plan)}?tab=${NEEDS_YOU_TAB}`
+  return `${planUrl(plan)}?tab=${NEEDS_YOU_BUCKET_ID}`
 }
 
 // The one builder of a card's page: problem links are built on it.

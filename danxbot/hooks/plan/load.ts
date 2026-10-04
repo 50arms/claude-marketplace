@@ -1,5 +1,5 @@
 import type { CommentRow, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_TAB, STATUS_KEYS } from './config'
+import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, STATUS_KEYS } from './config'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -86,7 +86,7 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
       ref: p.ref,
       name: p.name,
       status: p.status,
-      needsYou: p.bucket_counts?.[NEEDS_YOU_TAB] ?? 0,
+      needsYou: p.bucket_counts?.[NEEDS_YOU_BUCKET_ID] ?? 0,
     }))
   // The session in this same response says WHICH plan; the plan itself is read by id below.
   const session = list.body.session
@@ -104,7 +104,7 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   // the needs-you cards and the in-progress cards, together.
   const [planR, cards, inProg] = await Promise.all([
     call('GET', `/api/plans/${connectedId}`),
-    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_TAB, sort: 'priority', limit: MAX_CARDS } }),
+    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_BUCKET_ID, sort: 'priority', limit: MAX_CARDS } }),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', limit: MAX_CARDS } }),
   ])
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })

@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { EMPTY } from '../hooks/plan/config'
-import { BAND_PLAN_NAME_MAX } from '../hooks/plan/config'
+import { BAND_PLAN_NAME_MAX, EMPTY } from '../hooks/plan/config'
 import { bandLabel } from '../hooks/plan/words'
 import { DASHBOARD_URL, SURFACES, problemBadgeOf, dashboard, expectText, mountIndicator, startSession } from './plan-kit'
 
@@ -39,7 +38,7 @@ describe('plan band', () => {
       const button = await ui.find({ type: 'Button', key: 'open-problems' })
       if (surface === 'desktop') expect(button).toBeDefined()
       else expect(button).toBeUndefined()
-      if (surface === 'terminal') expect(await ui.find({ type: 'Link', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` })).toBeDefined()
+      if (surface === 'terminal') expect((await ui.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(`${DASHBOARD_URL}/plans/23?tab=needs-you`)
       await ui.unmount()
     }
   })
