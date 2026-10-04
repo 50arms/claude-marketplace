@@ -82,7 +82,7 @@ for (const surface of SURFACES) {
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         const footer = await mountIndicator($, surface)
-        expect(await footerText(footer)).toBe('Plan')
+        expect(await footerText(footer)).toBe('Danxbot')
         expect(await band.findAll({ type: 'Link' })).toHaveLength(0)
         expect(await band.find({ key: 'open-tab' })).toBeUndefined()
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
@@ -94,7 +94,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { dashboardUrl: NO_DASHBOARD_URL, connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect(await footerText(footer)).toBe('Plan')
+      expect(await footerText(footer)).toBe('Danxbot')
     })
   })
 }

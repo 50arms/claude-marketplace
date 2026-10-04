@@ -102,7 +102,7 @@ for (const surface of SURFACES) {
         expect(await joined(pane)).toContain('sessionListenerAttached')
         expect(await joined(pane)).not.toContain(NO_EVENT_BRIDGE)
         expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
-        expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
+        expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
       })
     }
 

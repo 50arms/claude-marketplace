@@ -358,7 +358,7 @@ async function showPlan($: any): Promise<void> {
 
 // The one open of the Plan pane (the band's Plan button and showPlan): focused, so it takes the keyboard.
 function openPlanPane($: any): Promise<unknown> {
-  return $.ui.open({ id: PANE, title: 'Plan', focus: true })
+  return $.ui.open({ id: PANE, title: 'Danxbot Plan', focus: true })
 }
 
 // The band's close control: the band hides until the footer button or /danx-plan is used.

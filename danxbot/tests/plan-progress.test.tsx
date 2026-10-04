@@ -57,7 +57,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { planOutsideList: true })
       await startSession($, d, surface)
       expect(d.api.some(a => a.path === '/api/plans/23')).toBe(true)
-      expect(await footerText(await mountIndicator($, surface))).toBe('PLAN-23')
+      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
     })
 
     for (const [name, options] of [
@@ -67,7 +67,7 @@ for (const surface of SURFACES) {
       test(`${name} is a named error: no guessed 0%`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
-        expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
+        expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
         expect(await text(pane)).toContain('status_breakdown')
       })
@@ -76,7 +76,7 @@ for (const surface of SURFACES) {
     test('a status count that is not a number is the same error', async ($, on) => {
       const d = dashboard(on, { breakdown: { ...counts({ Done: 1 }), Review: '3' } })
       await startSession($, d, surface)
-      expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
+      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
     })
 
     test('the band line draws the donut: an Svg whose alt carries N% complete on the desktop, the glyph on the terminal', async ($, on) => {
@@ -99,7 +99,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect(await footerText(footer)).toBe('Plan')
+      expect(await footerText(footer)).toBe('Danxbot')
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await text(band)).not.toMatch(/%/)
@@ -120,7 +120,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface, ['focus', 'memory paused'])
       expect(await text(footer)).toBe('focus & memory paused')
-      expect(await footerText(footer)).toBe('PLAN-23')
+      expect(await footerText(footer)).toBe('Danxbot · PLAN-23')
     })
 
     test('no $.ui.status call remains: the footer button replaced it (R-1)', async ($, on) => {

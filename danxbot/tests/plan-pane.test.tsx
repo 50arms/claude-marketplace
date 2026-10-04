@@ -107,7 +107,7 @@ describe('plan pane connects', () => {
     expect(d.toasts.some(t => t.startsWith('Connected'))).toBe(false)
     expect(d.toasts.at(-1)).toMatch(/^Connect refused: 409 PLAN-24 is archived\. Restore it before doing this/)
     expect(toldModel(d)).toHaveLength(0)
-    expect(await (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')).toContain('Not connected to a plan')
+    expect(await (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')).toContain('Danxbot: not connected to a plan')
   })
 
   test('a REFUSED Switch plan leaves the session on its plan and tells the model nothing', async ($, on) => {

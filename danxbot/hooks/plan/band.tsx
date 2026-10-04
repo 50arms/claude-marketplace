@@ -1,5 +1,5 @@
 import type { PlanView } from '../../types'
-import { DONUT_BAND_PX, SUCCESS, WARNING, busyKey, planUrl } from './config'
+import { DANGER, DONUT_BAND_PX, SUCCESS, WARNING, busyKey, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { bandLabel, viewPercent } from './words'
@@ -40,9 +40,11 @@ export function renderBand(
 
   const plan = v.connected
   const percent = viewPercent(v)
+  // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
+  const failed = v.phase === 'error'
   const indicator =
     percent === null ? (
-      <Text color={plan === null ? WARNING : SUCCESS}>●</Text>
+      <Text color={failed ? DANGER : plan === null ? WARNING : SUCCESS}>●</Text>
     ) : (
       donutMark(E, percent, hasSvg, DONUT_BAND_PX)
     )
@@ -50,7 +52,7 @@ export function renderBand(
     <Box key="band-line" flexDirection="row" gap={1}>
       <Box flexShrink={0}>{indicator}</Box>
       <Box flexShrink={1}>
-        <Text dimColor wrap="truncate-end">
+        <Text color={failed ? DANGER : undefined} dimColor={!failed} wrap="truncate-end">
           {bandLabel(v)}
         </Text>
       </Box>

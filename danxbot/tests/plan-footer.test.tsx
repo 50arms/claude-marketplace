@@ -14,7 +14,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface, ['focus & memory paused'])
-      expect((await footer.findAll({ type: 'Button' })).map((b: any) => [b.key, b.text])).toEqual([['footer-plan', 'PLAN-23']])
+      expect((await footer.findAll({ type: 'Button' })).map((b: any) => [b.key, b.text])).toEqual([['footer-plan', 'Danxbot · PLAN-23']])
       expect(await footer.find({ type: 'Svg' })).toBeUndefined()
       // the only Text is the engine's own mode label, which survives beside the button
       expect(await text(footer)).toBe('focus & memory paused')
@@ -24,7 +24,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect((await footer.findAll({ type: 'Button' })).map((b: any) => b.text)).toEqual(['Plan'])
+      expect((await footer.findAll({ type: 'Button' })).map((b: any) => b.text)).toEqual(['Danxbot'])
     })
 
     for (const [name, options] of [
@@ -36,18 +36,18 @@ for (const surface of SURFACES) {
       test(`${name}: the text is still exactly PLAN-23 (no percent, glyph or open count)`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
-        expect(await footerText(await mountIndicator($, surface))).toBe('PLAN-23')
+        expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
       })
     }
 
     // the label is derived from view.connected alone: an error built before the plan was read names none
     for (const [name, options, label] of [
-      ['a plan-list 500', { listFails: true }, 'Plan'],
-      ['a thrown MCP call (timeout)', { mcp: 'flaky' }, 'Plan'],
-      ['a bad dashboard_url', { dashboardUrl: 'not a url' }, 'Plan'],
-      ['a missing status_breakdown', { noBreakdown: true }, 'Plan'],
-      ['a failed in-progress call (after the plan was read)', { inProgressFails: true }, 'PLAN-23'],
-      ['an in-progress call with no total (after the plan was read)', { noInProgressTotal: true }, 'PLAN-23'],
+      ['a plan-list 500', { listFails: true }, 'Danxbot'],
+      ['a thrown MCP call (timeout)', { mcp: 'flaky' }, 'Danxbot'],
+      ['a bad dashboard_url', { dashboardUrl: 'not a url' }, 'Danxbot'],
+      ['a missing status_breakdown', { noBreakdown: true }, 'Danxbot'],
+      ['a failed in-progress call (after the plan was read)', { inProgressFails: true }, 'Danxbot · PLAN-23'],
+      ['an in-progress call with no total (after the plan was read)', { noInProgressTotal: true }, 'Danxbot · PLAN-23'],
     ] as const) {
       test(`${name}: the button reads ${label}, never error text`, async ($, on) => {
         const d = dashboard(on, options as any)
@@ -75,7 +75,7 @@ for (const surface of SURFACES) {
         const footer = await mountIndicator($, surface)
         await footer.press({ key: 'footer-plan' })
         await d.clock.settle()
-        expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Plan', focus: true }])
+        expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Danxbot Plan', focus: true }])
         expect(d.stateWrites.filter(w => w.key === 'dismissed').map(w => w.value)).toEqual([false])
         expect(d.toasts).toEqual([])
         expect(toldModel(d)).toEqual([])
@@ -115,7 +115,7 @@ for (const surface of SURFACES) {
       expect(d.stateWrites.filter(w => w.key === 'dismissed')).toEqual(footerWrites)
       expect(d.opened).toEqual(footerOpened)
       // both opened the pane with focus
-      expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Plan', focus: true }])
+      expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Danxbot Plan', focus: true }])
     })
   })
 }

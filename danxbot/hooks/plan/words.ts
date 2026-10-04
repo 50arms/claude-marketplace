@@ -68,11 +68,11 @@ export function updatedText(iso: string): string {
 
 // The band's label for a view that is not the Plan-button-only one.
 export function bandLabel(v: PlanView): string {
-  if (v.phase === 'error') return 'plan: error'
-  if (v.phase === 'loading' && !v.refreshedAt) return 'plan: loading…'
-  if (!v.connected) return 'Not connected to a plan'
+  if (v.phase === 'error') return 'Danxbot Plan: Disconnected'
+  if (v.phase === 'loading' && !v.refreshedAt) return 'Danxbot Plan: loading…'
+  if (!v.connected) return 'Danxbot: not connected to a plan'
   const count = problemCount(v)
-  return [v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX), count].filter(Boolean).join(' · ')
+  return ['Danxbot', v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX), count].filter(Boolean).join(' · ')
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at
@@ -112,13 +112,13 @@ export function problemSplit(v: PlanView): { questions: number; actions: number 
 }
 
 // DX-4374: the footer button's label, read from `view.connected` alone (never from the phase's error):
-// `PLAN-NN` when a plan is known, `Plan` otherwise; null where the footer shows nothing (loading, no MCP).
-// The label can flip to `Plan` when a plan-list load fails: that error view carries no connected plan (the
+// `Danxbot · PLAN-NN` when a plan is known, `Danxbot` otherwise (DX-4419); null where the footer shows nothing (loading, no MCP).
+// The label can flip to `Danxbot` when a plan-list load fails: that error view carries no connected plan (the
 // session is read from the same failed answer), so the footer cannot name one. An error built after the plan
-// was read keeps it, and the footer keeps `PLAN-NN`.
+// was read keeps it, and the footer keeps `Danxbot · PLAN-NN`.
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' || v.phase === 'no-mcp') return null
-  return v.connected ? v.connected.ref : 'Plan'
+  return v.connected ? `Danxbot · ${v.connected.ref}` : 'Danxbot'
 }
 
 // "+N more cards in progress in the browser" when the in-progress bucket was capped.

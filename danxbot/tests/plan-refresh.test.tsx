@@ -28,15 +28,15 @@ for (const surface of SURFACES) {
       expect(await label(band)).toContain('4 open problems')
     })
 
-    test('a refresh error shows `plan: error` in the band and the message in the pane', async ($, on) => {
+    test('a refresh error shows `Danxbot Plan: Disconnected` in the band and the message in the pane', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       d.failList()
       await d.clock.advance(60_000)
-      expect(await label(band)).toContain('plan: error')
-      expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
+      expect(await label(band)).toContain('Danxbot Plan: Disconnected')
+      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
       expect(await label(pane)).toContain('500: boom')
       // and it recovers on the next good load
       d.failList(false)
@@ -76,10 +76,10 @@ describe('the dashboard cannot be read', () => {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await label(band)).toContain('plan: error')
+      expect(await label(band)).toContain('Danxbot Plan: Disconnected')
       expect(await label(pane)).toContain('request timed out after 60000ms')
       expect(await label(pane)).not.toContain('not connected in this session')
-      expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
+      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
     })
   }
 })
@@ -93,7 +93,7 @@ describe('the hooks that refresh', () => {
     })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await label(band)).toContain('Not connected to a plan')
+    expect(await label(band)).toContain('Danxbot: not connected to a plan')
     await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 24 } as any)
     await d.clock.settle()
     expect(await label(band)).toContain('PLAN-24 · Agent mode')

@@ -10,7 +10,7 @@ describe('plan band', () => {
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expectText(await ui.find({ type: 'Text', text: /Not connected to a plan/ }), /Not connected to a plan/)
+      expectText(await ui.find({ type: 'Text', text: /Danxbot: not connected to a plan/ }), /Danxbot: not connected to a plan/)
       expect(await ui.find({ type: 'Button', key: 'open-pane' })).toBeDefined()
       await ui.unmount()
     }
@@ -72,7 +72,7 @@ for (const surface of SURFACES) {
       await band.press({ key: 'band-close' })
       expect(await band.find({ key: 'open-pane' })).toBeUndefined()
       // the footer is untouched by the dismissal
-      expect((await footer.find({ key: 'footer-plan' }))?.text).toBe('PLAN-23')
+      expect((await footer.find({ key: 'footer-plan' }))?.text).toBe('Danxbot · PLAN-23')
 
       await footer.press({ key: 'footer-plan' })
       expect(await band.find({ key: 'open-pane' })).toBeDefined()

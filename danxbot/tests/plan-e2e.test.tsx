@@ -29,7 +29,7 @@ for (const surface of SURFACES) {
 
       // 1. the band is there with no command typed
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('Not connected to a plan')
+      expect(await text(band)).toContain('Danxbot: not connected to a plan')
 
       // 2. the Plan button opens the pane
       await band.press({ key: 'open-pane' })
@@ -93,12 +93,12 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const footer = await mountIndicator($, surface, ['focus'])
-      expect(await footerText(footer)).toBe('Plan')
+      expect(await footerText(footer)).toBe('Danxbot')
 
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       await pane.press({ key: 'connect' })
       await d.clock.settle()
-      expect(await footerText(footer)).toBe('PLAN-23')
+      expect(await footerText(footer)).toBe('Danxbot · PLAN-23')
       await expectIndicator(band, surface, 25)
 
       await band.press({ key: 'band-close' })
@@ -120,7 +120,7 @@ for (const surface of SURFACES) {
 
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(await footerText(footer)).toBe('Plan')
+      expect(await footerText(footer)).toBe('Danxbot')
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await pane.find({ type: 'Svg' })).toBeUndefined()
       expect(await text(pane)).not.toMatch(/events|%/)
