@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "7b81778b78d815b3b4d8fbb57111d78544d33be707b378ca67f1fb66f2500ab1",
+    ".claude-plugin/plugin.json": "051b27b3bd74eb278dae9689d879cfe1dc5fd66570919cf3872add46ffe56717",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -11,19 +11,19 @@
     "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
     "hooks/hooks.json": "17f34debd6b4c7bad8e1a63a9df5849d6776d95d33cf5bf1bafbfd80f24a0697",
     "hooks/plan/approval.ts": "78afd88473dec3ca00b04498cc7a27c1b30e98d1b091440c3610221dddff8318",
-    "hooks/plan/band.tsx": "b3e09de9ce6bddc2d7576b62cf67e38101d93f8d0cacfeeccc126dc054e50446",
+    "hooks/plan/band.tsx": "1f8bf6b899d770579ae222fab50ea403aebab658f9daab8a454b92354e255e03",
     "hooks/plan/browser-output.ts": "df6d3fa4511379c842c8d522b6c42179fe43dc34a53051ab471b5e8ece9aff33",
-    "hooks/plan/config.ts": "46635525b1e1242c5cc4d10fdccf6cde9191f77bf5062075aee09e658d611c5e",
+    "hooks/plan/config.ts": "13a61be554e6a459bc992b923f8206eac4a8681bf51626996110be321a4ac668",
     "hooks/plan/donut.tsx": "30ccb102b2fb7f44908b75446593030c49527e2f70ba8db6f4f441d8bae27a84",
-    "hooks/plan/footer.tsx": "111a9aeb4508b8742777c91f7dd649ec483d0127e2f82d60a40c0445ddcfcbcf",
+    "hooks/plan/footer.tsx": "774cb9f03234da29ae8d6bd7c173fb2942235614b0ac9e9819ae971dc5ea035f",
     "hooks/plan/handlers.ts": "74178525aed6ca594775b77cebbe1ac5c8157b4227128cc4bb7142e5c07b5b3c",
     "hooks/plan/load.ts": "6d9cc0b88d9ff355995aeed647b250d43a8ccc60db8deb5ae7f409c4d2848e85",
     "hooks/plan/mcp.ts": "dbf8da57047eb9a044723f3dc4125a1feadf4bcbd668fe80febc895930b19fce",
     "hooks/plan/notes.ts": "da1f33a0d1dd86b730204300b8bab842c3e8bb5de46af7119062f52ac5002ab2",
     "hooks/plan/pane.tsx": "7293738120dd1616eb48c916a89b10bf07318d82d79bed9687bcd614d13b3d3b",
     "hooks/plan/problems.tsx": "96f9feef8245a6e82e72d969f623a01455f68039a231cf5b1a81100e50a3d012",
-    "hooks/plan/words.ts": "99c650801339a78ab3d2f086c2c6674a620d5fe77d2b826b59c3e68f0a07deb4",
-    "hooks/register.tsx": "65a97f1333c248b3c99aad0c23b944fc47a66146385b16abdc30dddf73e307d2",
+    "hooks/plan/words.ts": "7947de6fe69e1937ae7e47e48b801f804e0306fc9f8a02cc4a67ad4403bbf359",
+    "hooks/register.tsx": "36fa9334df843a500f44b187caede9a6051fc75cca389651efb3f087256881ee",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
     "scripts/activity-report.mjs": "6379ca4a590e48ddc71b82f9ff6ea74620ad8242589c2cc679520d6e9f1d7093",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
@@ -44,6 +44,6 @@
     "skills/issue-workflow/references/card-creation-and-reference.md": "9c05a4d0a6c13f66dcb8fe19b35efa3dfe07d7fa775e51c0ff415768f5c74167",
     "skills/plan-workflow/SKILL.md": "72aa581efd3035db6e51c0571fdd3cdd4f44d9ff56ede27c014d776abe8405f6",
     "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
-    "types/index.d.ts": "2432992f5d6a31ce69a811d3744760d86a0b4e1127e2da48d56dd8a10fa0a12e"
+    "types/index.d.ts": "1f86802d9f772446e931d7bbe6f30ed1bb5612155e4e421c0e03e4a64b94434f"
   }
 }
