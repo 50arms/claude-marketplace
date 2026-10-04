@@ -145,6 +145,10 @@ async function browserOk($: any, tool: string, args: object): Promise<string> {
   return mcpText(r)
 }
 
+// An open's two outcomes: `failed` is null once the tab is in front, else the step and the cause;
+// `loaded` settles (never rejects) when the page has loaded: null, or the navigate failure.
+type Opening = { failed: OpenFailure | null; loaded: Promise<OpenFailure | null> }
+
 // Opens `url` in the ONE in-app browser tab this plugin owns (id kept in $.state), so the
 // person's own tabs are never navigated away. DX-4424: measured live (2026-10-04), every call that
 // acts on a page, a `navigate` included, costs ~2.5-3.5 s whatever the page is (the page itself
@@ -160,10 +164,7 @@ async function browserOk($: any, tool: string, args: object): Promise<string> {
 //   pane open, no tab    tabs_context, tabs_create, tabs_select, navigate {url, tabId}, keep its id.
 // Any step that fails or answers something unreadable is a failure: reading it as "no tabs" would
 // open a new tab on every press. `failed` is null once the tab is in front, else the step and the
-// cause. `loaded` settles (never rejects) when the page has loaded: null, or the navigate failure.
-// The caller holds the browser busy key through `failed` only, never through `loaded`.
-type Opening = { failed: OpenFailure | null; loaded: Promise<OpenFailure | null> }
-
+// cause. The caller holds the browser busy key through `failed` only, never through `loaded`.
 async function tryOpen($: any, url: string): Promise<Opening> {
   let step = 'tabs_select'
   try {
@@ -188,8 +189,7 @@ async function tryOpen($: any, url: string): Promise<Opening> {
       step = 'tabs_select'
       parseTabsSelect(await browserOk($, 'tabs_select', { tabId }), tabId)
     }
-    const navigating = tabId
-    const loaded = browserOk($, 'navigate', { url, tabId: navigating }).then(
+    const loaded = browserOk($, 'navigate', { url, tabId }).then(
       () => null,
       (err: any): OpenFailure => ({ step: 'navigate', message: String(err?.message ?? err).slice(0, TOAST_ERROR_MAX) }),
     )

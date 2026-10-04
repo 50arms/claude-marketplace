@@ -61,6 +61,24 @@ describe('Open in browser tab', () => {
     expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'tabs_select', 'navigate'])
   })
 
+  test('a held tab whose navigate is refused: the tab is still fronted, the failure toasts its step and cause, and no tab is created', async ($, on) => {
+    const d = dashboard(on, { tabs: ['tab-1'], browser: 'denied' })
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    await band.press({ key: 'open-tab' })
+    await d.clock.settle()
+    d.calls.length = 0
+    d.toasts.length = 0
+    await band.press({ key: 'open-tab' })
+    await d.clock.settle()
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_select', 'navigate'])
+    expect(d.toasts).toEqual([
+      'Opening the plan in the browser…',
+      'Plan opened in the browser tab',
+      'Browser navigate failed: use the link instead. (navigation to this site is not allowed)',
+    ])
+  })
+
   for (const mode of ['error', 'garbage'] as const) {
     test(`a ${mode} tabs_context goes to the toast: no tab is created or navigated`, async ($, on) => {
       const d = dashboard(on, { tabs: ['tab-1'], tabsContext: mode })

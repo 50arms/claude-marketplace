@@ -142,6 +142,8 @@ describe('plan_connect while signed out', () => {
     // ONE last toast carries the cause, the code and the link, for the longest the host allows
     expect(d.toasts.at(-1)).toMatch(/^Could not open the approval page \(navigate: .+\)\. Open this link and check that confirm code NXGUF88G matches: /)
     expect(d.toasts.at(-1)).toContain(URL_A)
+    // the tab came forward first (code and link up), then the failed page load repeats both with its cause
+    expect(d.toasts.filter(t => t.includes('NXGUF88G') && t.includes(URL_A))).toHaveLength(2)
     expect(d.toastTimeouts.at(-1)).toBe(60_000)
   })
 
