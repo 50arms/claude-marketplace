@@ -33,7 +33,7 @@
     "scripts/launch.mjs": "86531ed3b6f9475ea990f2735676b89cb041c4e8496a51523847a00cecc54df0",
     "scripts/lib/bridge-restart-decision.mjs": "f5be8445c9356cf5d0b9a83be3ca3a10ab4552910782bf6339763c0a2ef2b7d4",
     "scripts/lib/bridge-state.mjs": "df98141d8ebcbcba08252489d864c8948be980a9508c161e0efb2043058f7743",
-    "scripts/lib/dashboard-mcp-package.mjs": "02fa37ba7cffb7fa535571df5e4081c537ce385582d632b314f40916dc9b32fb",
+    "scripts/lib/dashboard-mcp-package.mjs": "c4d4dd3ac02f8a843b59910af19ae02345619e82dc3b55221653177433804207",
     "scripts/lib/failure-notice.mjs": "022bbbc907440f4dfea75c2cc9ab9ee2cfea2ead7188408e41bdbb76bee08dd5",
     "scripts/lib/hook-input.mjs": "4ee05e236faf87a5bc1ff6a180afbe7b123631336a076105575a3e14f4481b33",
     "scripts/lib/plan-connection.mjs": "3b6560c21170630b9c9c3effaaafd568eaa13c930109274e96135ad69b3e9051",
