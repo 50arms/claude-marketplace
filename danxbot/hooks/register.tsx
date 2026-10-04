@@ -337,7 +337,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
 }
 
 // DX-4423: the Sign in button. A session with no dashboard key asks for one through `plan_connect` (with its own title,
-// and the plan it was on): the MCP answers at once with the approval request, which is shown as the model's own would be
+// and the plan it was on): the MCP answers with the approval request (at once when it makes one, else after waiting on the one pending), which is shown as the model's own would be
 // (showApproval); each next call waits there for the person's approval, so the calls repeat until one answers something
 // final. A call that answers a DIFFERENT request than the one shown means the first expired while it waited: that is the
 // end (a new request nobody asked for is left to lapse), never a second page. The whole sign-in holds the sign-in busy key
