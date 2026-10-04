@@ -116,6 +116,42 @@ describe('request_permission', () => {
     expect(await band.find({ key: 'open-permission' })).toBeUndefined()
   })
 
+  test('asking again for a request already open keeps one request in the band', async ($, on) => {
+    const d = dashboard(on, { tabs: ['seed'] })
+    answering(on, [answer('approval_required', URL_A, 'CODE1'), answer('approval_pending', URL_A, 'CODE1')])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount(BAND)
+    await $.tool.call(CALL(['team.members.view']))
+    await $.tool.call(CALL(['team.members.view']))
+    expect((await band.find({ key: 'open-permission' }))?.text).toBe('⚠ 1 permission request')
+  })
+
+  test('a session that lost its key drops its requests at the next refresh', async ($, on) => {
+    const d = dashboard(on, { tabs: ['seed'] })
+    answering(on, [answer('approval_required', URL_A, 'CODE1')])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount(BAND)
+    await $.tool.call(CALL(['team.members.view']))
+    expect(await band.find({ key: 'open-permission' })).toBeDefined()
+    d.world.signedOut = 'revoked'
+    await d.clock.advance(60_000)
+    await d.clock.settle()
+    expect(await band.find({ key: 'open-permission' })).toBeUndefined()
+  })
+
+  test('a claim that fails for another reason keeps the request, to be asked again', async ($, on) => {
+    const d = dashboard(on, { tabs: ['seed'] })
+    answering(on, [answer('approval_required', URL_A, 'CODE1')])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount(BAND)
+    await $.tool.call(CALL(['team.members.view']))
+    d.world.permissionClaim = 'boom'
+    await d.clock.advance(60_000)
+    await d.clock.settle()
+    expect(claims(d).length).toBeGreaterThan(0)
+    expect(await band.find({ key: 'open-permission' })).toBeDefined()
+  })
+
   test('with no request nothing is claimed', async ($, on) => {
     const d = dashboard(on, { tabs: ['seed'] })
     await startSession($, d, 'desktop')

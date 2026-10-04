@@ -29,8 +29,10 @@ export function approvalRequestOf(text: string | undefined, states: readonly str
 // and the link too, since a browser that did not open leaves the link as the only way in.
 export type OpenFailure = { step: string; message: string }
 
+// What the person is asked to approve: the permissions a key asked for, else the session itself.
+export const approvalSubject = (a: ApprovalRequest) => (a.permissions && a.permissions.length > 0 ? `permission ${a.permissions.join(', ')}` : 'this session')
+
 export function approvalToast(a: ApprovalRequest, failed: OpenFailure | null): string {
-  const what = a.permissions && a.permissions.length > 0 ? `permission ${a.permissions.join(', ')}` : 'this session'
-  if (failed === null) return `Approve ${what} in the browser. Confirm code ${a.code} must match the page: ${a.url}`
+  if (failed === null) return `Approve ${approvalSubject(a)} in the browser. Confirm code ${a.code} must match the page: ${a.url}`
   return `Could not open the approval page (${failed.step}: ${failed.message}). Open this link and check that confirm code ${a.code} matches: ${a.url}`
 }

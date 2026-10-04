@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { ConnectedPlan, Draft, PermissionRequest, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
-import { approvalRequestOf, approvalToast } from './plan/approval'
+import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
 import { asApproval, claimPath, claimStatus, livePermissionRequests, permissionRequestOf } from './plan/permission'
@@ -291,7 +291,7 @@ async function showApproval($: any, approval: ApprovalRequest, force = false): P
   const forget = () => update($, approvalOpened, cur => (cur === approval.url ? null : cur))
   openApprovalPage($, approval, forget).catch(async () => {
     await forget()
-    $.ui.toast(`Approve this session in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS })
+    $.ui.toast(`Approve ${approvalSubject(approval)} in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS })
   })
 }
 

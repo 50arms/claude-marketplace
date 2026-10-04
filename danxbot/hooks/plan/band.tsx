@@ -55,9 +55,9 @@ export function renderBand(
   const plan = v.connected
   // DX-4420: a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
   const badge = v.phase === 'error' ? '' : problemBadge(v)
+  const permissionLabel = permissionBadge(permissionRequests)
   // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
-  const permissionLabel = permissionBadge(permissionRequests)
   const showBadge = plan !== null && badge !== ''
   // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
