@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "7f1ba68b5f56177cc592e238d6509bafd6f769a12eac52c07268b48fca606124",
+    ".claude-plugin/plugin.json": "1af2965eaa12aebb203f7f5705890a01a8275c9465933c5f2dfa5fe7b1b4085f",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -18,7 +18,7 @@
     "hooks/plan/donut.tsx": "30ccb102b2fb7f44908b75446593030c49527e2f70ba8db6f4f441d8bae27a84",
     "hooks/plan/footer.tsx": "774cb9f03234da29ae8d6bd7c173fb2942235614b0ac9e9819ae971dc5ea035f",
     "hooks/plan/handlers.ts": "a0954a4470a2ff9254fc79aca3bb5da7e03e6a2c1977873712da3215243efba3",
-    "hooks/plan/load.ts": "1e4e6b6d11e183958a196be0f0eaa16d9da286661636129dd54609cbb86608f8",
+    "hooks/plan/load.ts": "8226493090f4707e0b641cde23b47cc4bd7b12248c38f998ccbe8477cd925586",
     "hooks/plan/mcp.ts": "6ab095681260b54b584168d0881fe3c24cf2125d0ad2e3e9a6017dbeb096168f",
     "hooks/plan/notes.ts": "da1f33a0d1dd86b730204300b8bab842c3e8bb5de46af7119062f52ac5002ab2",
     "hooks/plan/pane.tsx": "7e25051fbcdefecbd74d67284023bbc1adb27264911f9e7b4b39bb08e42be93b",
