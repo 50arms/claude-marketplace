@@ -19,15 +19,15 @@
     "hooks/plan/footer.tsx": "774cb9f03234da29ae8d6bd7c173fb2942235614b0ac9e9819ae971dc5ea035f",
     "hooks/plan/handlers.ts": "a0954a4470a2ff9254fc79aca3bb5da7e03e6a2c1977873712da3215243efba3",
     "hooks/plan/live.ts": "3fd0c8b0f701ef0fdd03aea5eb5beef69b9516108af3b359db1375f19ce11409",
-    "hooks/plan/load.ts": "9dc6aa44400db3b6e107aca73054abfba673ded19a54246117c19b3d8bd68f95",
+    "hooks/plan/load.ts": "fa6d6930946783b2af04987db45a7dc6421366a739570cc2d39e5390575a4f79",
     "hooks/plan/mcp.ts": "6ab095681260b54b584168d0881fe3c24cf2125d0ad2e3e9a6017dbeb096168f",
     "hooks/plan/notes.ts": "da1f33a0d1dd86b730204300b8bab842c3e8bb5de46af7119062f52ac5002ab2",
-    "hooks/plan/pane.tsx": "5b3ece23173ac8a20c48d0847a5fc06051316f323dc8ab634b1c4a9657868ac5",
+    "hooks/plan/pane.tsx": "032ff750f0d015cb0d51e8f4817b7e7226b8281d5d98bbed41b1ef06db14bf9d",
     "hooks/plan/permission.ts": "5929ca009c7e7fc1ac085d16fddad2ae04e1f582176dbce9ca92018d4ae0ac9e",
     "hooks/plan/problems.tsx": "48afc9c93eaa36ff79bb4cce555721eccb15a011f4ded3a1826abab0d79156bd",
     "hooks/plan/sign-in.ts": "c37913348a5b2343fd65bdce703069dfa20d255a34a65b6bb2c93c23c55d6267",
     "hooks/plan/subagent-cards.tsx": "1b7fe8517061242da89abcf962e3b6817c7d32050e2c9eb723d1d0b027670e28",
-    "hooks/plan/subagents.ts": "a92f290559ce9de63dfa4907bfa3b40abda858da048ad553ff00d86383705edd",
+    "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/words.ts": "63d09986ef840ddab69f5fc3952802d98db57b2e3ea1abe402c3e4e7bfebf060",
     "hooks/register.tsx": "c32da0b561e0c8fc68ead481f212435cc869a342b1e2bad84e5c4883b79421d0",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
@@ -50,6 +50,6 @@
     "skills/issue-workflow/references/card-creation-and-reference.md": "5a486a62ceaa4f29b9b6254e7323842ae6ae3564ee49af802d94af0b22445d12",
     "skills/plan-workflow/SKILL.md": "1bfa9fcc14f51dc98c7f95791357ec0fb4d2f831500110ecd8609d9278d59308",
     "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
-    "types/index.d.ts": "bb3a4201835728b875367e6ef9f62aa40716e6ff1a9a8c36868bd869fecea6e1"
+    "types/index.d.ts": "505d44810f586e6f480dfbbc12f1975e4c889d6bf8cdbf75907b74e0d0e564c0"
   }
 }
