@@ -73,7 +73,7 @@ test("the builder runs its PRE gates in its own context, then pushes, reports th
 });
 
 test("the operator session runs and re-runs the POST gates as gate workers and says when to land", () => {
-  assert.match(gates, /The operator session runs each POST gate not yet `pass` as a gate worker/);
+  assert.match(gates, /The operator session runs each POST gate not yet `pass` through one gate worker per gate/);
   assert.match(gates, /relays the findings and says when to land/);
   assert.match(gates, /the operator session re-runs a POST gate/);
 });

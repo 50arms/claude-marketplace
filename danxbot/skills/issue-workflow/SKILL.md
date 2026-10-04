@@ -53,9 +53,9 @@ carries, and each board keeps its own text for what a gate does.
 An operator-session sub-agent runs its PRE gates itself, in its own context, then builds,
 pushes its card branch, reports the tip SHA and stops. It never spawns gate agents: a
 background agent's notice reaches only the top-level session. The operator session runs
-each POST gate not yet `pass` as a gate worker (`danxbot:worker-opus-high` for an
-architecture gate, `danxbot:worker-sonnet-high` for the rest), relays the findings and says
-when to land. Whoever runs a gate:
+each POST gate not yet `pass` through one gate worker per gate (`danxbot:worker-opus-high`
+for an architecture gate, `danxbot:worker-sonnet-high` for the rest), relays the findings
+and says when to land. Whoever runs a gate:
 
 1. Fetch the board's gate text through `danxbot_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
