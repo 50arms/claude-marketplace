@@ -36,7 +36,8 @@ note = real milestone; remove a wrong-plan card from the plan; rename a stale pl
 They read cards, not chat. A chat reply is at most 3 lines, no headings, tables, lists or
 fences: an answer to their question, a one-line start of a deploy, dispatch or publish, a
 real failure or correction, or card ids. Findings, options and status go on the card;
-already there → give the id.
+already there → give the id. Every card id in chat is a markdown link to that card
+(`[DX-1](<dashboard>/plans/<plan id>/cards/DX-1)`), never a plan or board page.
 
 A question is not a stop or a command. "Why X?" gets an answer: running work keeps running
 and nothing new starts. Stop, redirect or act only on an explicit verb.
