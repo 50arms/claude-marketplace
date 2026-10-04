@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "d754edbb52bec1385daaa9ac282cb458ede11964087ff367ad413d536b5ad66c",
+    ".claude-plugin/plugin.json": "ad1999232fbf014fc590e9e2d7d3df418e6a8098d41a92f24e0ecf4d6313623c",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -11,7 +11,7 @@
     "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
     "hooks/hooks.json": "17f34debd6b4c7bad8e1a63a9df5849d6776d95d33cf5bf1bafbfd80f24a0697",
     "hooks/plan/approval.ts": "78afd88473dec3ca00b04498cc7a27c1b30e98d1b091440c3610221dddff8318",
-    "hooks/plan/band.tsx": "4d005b3041aae3ed20a9b14a688c9f42e9604cbd27ee428e5706eedd7c86010c",
+    "hooks/plan/band.tsx": "4863ae22e51502fe6995eea7f28f210c8af8f0ac83b3c9037a5d92ccb5af1ab3",
     "hooks/plan/browser-output.ts": "df6d3fa4511379c842c8d522b6c42179fe43dc34a53051ab471b5e8ece9aff33",
     "hooks/plan/config.ts": "6f83d617e01122691df46ce05944f5b9d4cb823548be20e510a1967defd90f3c",
     "hooks/plan/donut.tsx": "30ccb102b2fb7f44908b75446593030c49527e2f70ba8db6f4f441d8bae27a84",
@@ -22,8 +22,8 @@
     "hooks/plan/notes.ts": "da1f33a0d1dd86b730204300b8bab842c3e8bb5de46af7119062f52ac5002ab2",
     "hooks/plan/pane.tsx": "7293738120dd1616eb48c916a89b10bf07318d82d79bed9687bcd614d13b3d3b",
     "hooks/plan/problems.tsx": "96f9feef8245a6e82e72d969f623a01455f68039a231cf5b1a81100e50a3d012",
-    "hooks/plan/words.ts": "013fce44da438029c722eaf80b71bd2128cc3e004b17606a4f5914c35a214fee",
-    "hooks/register.tsx": "da264da2b479696f45462a13203cc73a2669372945b241dfeb62dcb425048e90",
+    "hooks/plan/words.ts": "f33173cda85fdd5746602d63cd960c853927e4de81059275c9c08470a70aa89d",
+    "hooks/register.tsx": "a979151a433687b1e1fc41588ae8f213d47c2153ca7955c318e082f93af9096f",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
     "scripts/activity-report.mjs": "6379ca4a590e48ddc71b82f9ff6ea74620ad8242589c2cc679520d6e9f1d7093",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
