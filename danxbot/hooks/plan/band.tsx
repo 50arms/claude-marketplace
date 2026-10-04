@@ -1,18 +1,20 @@
 import type { PlanView } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_SPARE_COLS, DANGER, DONUT_BAND_PX, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { DANGER, DONUT_BAND_PX, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
-import { bandLabel, problemBadge, viewPercent } from './words'
+import { bandLabel, bandLabelCols, problemBadge, viewPercent } from './words'
 
-// DX-4420: the band button that opens the pane (it read `Plan`).
+// DX-4420: the band button that opens the pane (it read `Plan`), and the other controls' labels the width budget counts.
 const OPEN_PANE_LABEL = 'Panel'
+const OPEN_LINK_LABEL = 'Open ↗'
+const CLOSE_LABEL = '×'
 
 // The widest the Browser tab button reads (it flips to `Opening…`, shorter), for the label budget.
 const BROWSER_TAB_LABEL = 'Browser tab'
 
-// The band above the prompt: the plan line (indicator, label, then Plan / the open-problem count (DX-4420) / Browser tab / Open and a
+// The band above the prompt: the plan line (indicator, label, then Panel / the open-problem count (DX-4420) / Browser tab / Open and a
 // close control hugging the right edge, the label truncating first).
-// With no danx-dashboard MCP server in the session it is only the Plan button: no label, no error.
+// With no danx-dashboard MCP server in the session it is only the Panel button: no label, no error.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text). `hasBrowser`: it has the
 // in-app browser (also the desktop today, but a different fact).
 export function renderBand(
@@ -22,6 +24,8 @@ export function renderBand(
   hasSvg: boolean,
   hasBrowser: boolean,
   busy: string[],
+  // The band's width in columns (`bodyColumns`); absent in a test mount or a surface that does not say it, then only the
+  // layout's `truncate-end` on the label applies.
   columns?: number,
 ): any {
   const { Box, Text, Button, Link } = E
@@ -32,7 +36,7 @@ export function renderBand(
   )
   const close = (
     <Button key="band-close" role="dismiss" onPress={() => hd.dismissBand()}>
-      ×
+      {CLOSE_LABEL}
     </Button>
   )
   if (v.phase === 'no-mcp') {
@@ -50,9 +54,15 @@ export function renderBand(
   const badge = v.phase === 'error' ? '' : problemBadge(v)
   // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
-  const controls = [OPEN_PANE_LABEL, badge, plan !== null && hasBrowser ? BROWSER_TAB_LABEL : '', plan !== null ? 'Open ↗' : '', '×'].filter(Boolean)
-  const controlCols = controls.reduce((n, c) => n + c.length + BAND_CONTROL_CHROME_COLS + BAND_GAP_COLS, 0)
-  const labelCols = columns === undefined ? undefined : columns - BAND_INDICATOR_COLS - BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
+  const showBadge = plan !== null && badge !== ''
+  const controls = [
+    { label: OPEN_PANE_LABEL, isButton: true },
+    ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
+    ...(plan !== null && hasBrowser ? [{ label: BROWSER_TAB_LABEL, isButton: true }] : []),
+    ...(plan !== null ? [{ label: OPEN_LINK_LABEL, isButton: false }] : []),
+    { label: CLOSE_LABEL, isButton: true },
+  ]
+  const labelCols = columns === undefined ? undefined : bandLabelCols(columns, controls)
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
   const failed = v.phase === 'error'
@@ -78,8 +88,8 @@ export function renderBand(
         {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab: a Button into the
             in-app browser where there is one (the Browser tab path), a Link elsewhere. A Button carries no colour, so
             the primary variant stands in for the warning tone. */}
-        {plan !== null &&
-          badge !== '' &&
+        {showBadge &&
+          plan !== null &&
           (hasBrowser ? (
             <Button key="open-problems" variant="primary" onPress={() => hd.openBrowserTab(needsYouUrl(plan))}>
               {badge}
@@ -92,7 +102,7 @@ export function renderBand(
             {busyKey.isOpeningBrowser(busy) ? 'Opening…' : BROWSER_TAB_LABEL}
           </Button>
         )}
-        {plan !== null && <Link href={planUrl(plan)} label="Open ↗" />}
+        {plan !== null && <Link href={planUrl(plan)} label={OPEN_LINK_LABEL} />}
         {close}
       </Box>
     </Box>

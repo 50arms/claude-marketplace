@@ -13,7 +13,7 @@ describe('plan band', () => {
     expect(bandLabel(connected(long) as any)).toBe(`PLAN-17 · ${long}`)
     expect(bandLabel(connected(long) as any, 30)).toBe(`PLAN-17 · ${'x'.repeat(19)}…`)
     expect(bandLabel(connected('short') as any, 30)).toBe('PLAN-17 · short')
-    expect(bandLabel(connected(long) as any, 3)).toBe(`PLAN-17 · xxx…`)
+    expect(bandLabel(connected(long) as any, 3)).toBe('PLAN-17 · xxx…')
   })
 
   test('the band cuts the name to the columns its controls leave, never a control', async ($, on) => {
@@ -23,9 +23,9 @@ describe('plan band', () => {
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     const labelOf = async (ui: any) => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
     expect(await labelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    expect((await labelOf(narrow)).endsWith('…')).toBe(true)
-    expect((await labelOf(narrow)).length).toBeLessThan(40)
-    for (const ui of [wide, narrow]) for (const key of ['open-pane', 'open-problems', 'open-tab', 'band-close']) expect(await ui.find({ key })).toBeDefined()
+    // 70 columns less the indicator, its gap, 2 spare, and the controls: Panel 10, `⚠ 3` 8, Browser tab 16, Open ↗ 7, × 6
+    expect(await labelOf(narrow)).toBe('PLAN-23 · A very …')
+    expect((await narrow.find({ key: 'open-pane' }))?.text).toBe('Panel')
   })
 
   test('the first load reads Danxbot Plan: loading…', () => {

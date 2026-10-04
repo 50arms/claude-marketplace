@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_NAME_MIN_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
 export const WORDS = {
@@ -70,7 +70,17 @@ export function ellipsize(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
-// The band's label for a view that is not the Plan-button-only one. `maxCols`: the columns the label may take (absent:
+const NAME_SEP = ' · '
+
+// DX-4420: the columns the band's label may take: its width less the indicator and each control. A Button draws `[ label ]`
+// chrome on the terminal; a Link none. The estimate is deliberately a little high (a spare column, and a desktop's native
+// buttons are no wider than the terminal's), so a control is never pushed off the edge by it.
+export function bandLabelCols(columns: number, controls: readonly { label: string; isButton: boolean }[]): number {
+  const controlCols = controls.reduce((n, c) => n + c.label.length + (c.isButton ? BAND_CONTROL_CHROME_COLS : 0) + BAND_GAP_COLS, 0)
+  return columns - BAND_INDICATOR_COLS - BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
+}
+
+// The band's label for a view that is not the Panel-button-only one. `maxCols`: the columns the label may take (absent:
 // no limit, the layout truncates); a connected plan's name is cut to what `PLAN-NN · ` leaves, with an ellipsis.
 export function bandLabel(v: PlanView, maxCols?: number): string {
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
@@ -79,8 +89,9 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
   if (!v.connected) return `${BRAND}: not connected to a plan`
   // DX-4420: a connected band reads `PLAN-NN · name`; the Danxbot prefix stays on the states with no plan.
   const { ref, name } = v.connected
-  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - ref.length - ' · '.length)
-  return [ref, ellipsize(name, nameCols)].filter(Boolean).join(' · ')
+  const sepCols = ref ? NAME_SEP.length : 0
+  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - ref.length - sepCols)
+  return [ref, ellipsize(name, nameCols)].filter(Boolean).join(NAME_SEP)
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at

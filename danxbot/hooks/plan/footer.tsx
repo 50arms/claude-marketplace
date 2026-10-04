@@ -1,6 +1,6 @@
 import type { Handlers } from './handlers'
 
-export const FOOTER_PAD = ' '
+export const FOOTER_PAD = '\u00A0' // a non-breaking space
 
 // The footer button in the `SessionMode` site: ONE text button (the footer draws text buttons only:
 // no Svg, nothing floating). It sits beside whatever the engine and other plugins already put there

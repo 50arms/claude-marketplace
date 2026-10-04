@@ -357,7 +357,7 @@ async function showPlan($: any): Promise<void> {
   await openPlanPane($)
 }
 
-// The one open of the Plan pane (the band's Plan button and showPlan): focused, so it takes the keyboard.
+// The one open of the Plan pane (the band's Panel button and showPlan): focused, so it takes the keyboard.
 function openPlanPane($: any): Promise<unknown> {
   return $.ui.open({ id: PANE, title: PLAN_TITLE, focus: true })
 }

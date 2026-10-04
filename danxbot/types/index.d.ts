@@ -89,7 +89,7 @@ export type InProgressRow = {
 export type ListenerStatus = { state: string; nextStep: string | null }
 
 // `no-mcp`: the session has no `danx-dashboard` MCP server (another repo), so the dashboard
-// cannot be reached at all. It is not an error: the band shows only its Plan button.
+// cannot be reached at all. It is not an error: the band shows only its Panel button.
 export type PlanView = {
   phase: 'loading' | 'ready' | 'error' | 'no-mcp'
   error: string | null
