@@ -14,7 +14,8 @@ import { HEARTBEAT_STALE_MS, HEALTHY_RUN_MS } from "./bridge-state.mjs";
  * DX-2953 — stop reasons that ALWAYS forbid a watchdog restart, regardless
  * of `restartGeneration` or `consumedStopInstance`: the session is either
  * definitively not connected (DX-4391: or signed out, its session key gone, which only a new
- * `plan_connect` approval fixes), or another listener already has (or will) cover it. `bridge_failed` is handled separately (see
+ * `plan_connect` approval fixes), or another listener already has (or will) cover it.
+ * `bridge_failed` is handled separately (see
  * `shouldWatchdogRestart`) — it forbids a restart only once already
  * consumed, or while `restartGeneration` has not reset.
  */

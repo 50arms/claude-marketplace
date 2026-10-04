@@ -221,15 +221,16 @@ export function writeConnectedIfCurrent(paths, { connected, instanceId, now = Da
 /**
  * DX-2953 — reasons that must NEVER cause a `.connected.json` write. Per the
  * card: `no_connection_record` and `session_is_worker` never prove the
- * session is bound to a plan, and every `bridge_failed` record this plugin
+ * session is bound to a plan, nor does `credential_unavailable` (DX-4391: a signed-out
+ * session whose key is gone), and every `bridge_failed` record this plugin
  * ever persists (see `start()`'s `spawnRun` catch and `run()`'s own
  * liveness-check fatal paths) is, by construction, a failure that happened
- * BEFORE any mint was attempted — none of these three prove the session is
+ * BEFORE any mint was attempted — none of these four prove the session is
  * bound. Every other reason (including `not_connected`, which instead
  * writes `connected:false`) reaches a mint or a stream, so it DOES prove
  * binding.
  */
-export const CONNECTED_WRITE_SKIP_REASONS = new Set(["no_connection_record", "session_is_worker", "bridge_failed"]);
+export const CONNECTED_WRITE_SKIP_REASONS = new Set(["no_connection_record", "credential_unavailable", "session_is_worker", "bridge_failed"]);
 
 /**
  * DX-2953 — write the `.started.json` marker's full record. `start()` is the

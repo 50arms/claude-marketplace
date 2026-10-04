@@ -460,6 +460,8 @@ async function onPlanConnect($: any, e: any, next: any) {
   if (approval !== null && (await read($, approvalOpened)) !== approval.url) {
     // DX-4391: a signed-out session asked for access: open the approval page once, then leave the
     // code up to compare. The plan page is not opened (there is no connection to show yet).
+    // recorded before the open on purpose: a skipped or failed open must not re-open on every repeat;
+    // the toast below carries the link for that case
     await update($, approvalOpened, () => approval.url)
     await openInBrowser($, approval.url, APPROVAL_OPEN)
     $.ui.toast(approvalToast(approval), { timeoutMs: APPROVAL_TOAST_MS })

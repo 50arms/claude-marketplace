@@ -2513,8 +2513,8 @@ describe("buildStartedRecord (DX-2953)", () => {
 });
 
 describe("CONNECTED_WRITE_SKIP_REASONS / writeConnectedMarker semantics (DX-2953)", () => {
-  test("no_connection_record, session_is_worker and bridge_failed are the exact skip set", () => {
-    assert.deepEqual([...bridge.CONNECTED_WRITE_SKIP_REASONS].sort(), ["bridge_failed", "no_connection_record", "session_is_worker"].sort());
+  test("no_connection_record, credential_unavailable, session_is_worker and bridge_failed are the exact skip set", () => {
+    assert.deepEqual([...bridge.CONNECTED_WRITE_SKIP_REASONS].sort(), ["bridge_failed", "credential_unavailable", "no_connection_record", "session_is_worker"].sort());
   });
   test("writeConnectedMarker writes connected/instanceId/at, atomically", () => {
     const dataDir = tmpDir();
