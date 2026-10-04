@@ -61,12 +61,20 @@ function backgroundWorkSubcommandFromSource() {
   return args[2];
 }
 
+/** DX-4508: the literal subcommand the plan pane's hooks module spawns for its live sub-agent numbers (hooks/plan/config.ts `LIVE_SUBCOMMAND`; a .ts file, so read as text). */
+function liveSubcommandFromSource() {
+  const src = readFileSync(path.join(here, "..", "hooks", "plan", "config.ts"), "utf8");
+  const m = src.match(/export const LIVE_SUBCOMMAND = '([^']+)'/);
+  assert.ok(m, "hooks/plan/config.ts no longer declares LIVE_SUBCOMMAND the expected way: update this test's extraction regex");
+  return m[1];
+}
+
 test(
   "the registry's current danx-dashboard-mcp version supports every subcommand this plugin invokes",
   { timeout: NPX_TIMEOUT_MS + 10_000 },
   async () => {
     const spec = await currentSpec();
-    const required = [BRIDGE_SUBCOMMAND, backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, eventTextSubcommandFromSource(), RESTART_NOTICE_SUBCOMMAND];
+    const required = [BRIDGE_SUBCOMMAND, backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, eventTextSubcommandFromSource(), RESTART_NOTICE_SUBCOMMAND, liveSubcommandFromSource()];
 
     // An unknown subcommand makes the real published `dist/index.js` refuse with its
     // own "the only ones are ..." message, which names every subcommand the current
