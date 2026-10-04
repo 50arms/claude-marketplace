@@ -30,3 +30,13 @@ export function failureNotice(reason, fix) {
     `Fix: ${trim(fix) || "call plan_connect again in this session to restart the bridge"}.`
   );
 }
+
+/**
+ * DX-4321 — the notice for a session start whose refresh of the recorded danx-dashboard-mcp
+ * version failed. The bridge is NOT down (it runs the recorded version), so this is not a
+ * failureNotice: `line` is the one line the version module wrote, naming the reason and the
+ * version still in use.
+ */
+export function versionKeptNotice(line) {
+  return `${RELAY_MARKER} ${String(line ?? "").trim().replace(/\.+$/, "")}. Events keep flowing on that version; tell the operator if the registry stays unreachable.`;
+}

@@ -16,6 +16,8 @@ import * as state from "../scripts/lib/bridge-state.mjs";
 import * as failureText from "../scripts/lib/failure-notice.mjs";
 import { spawnStandIn } from "./fixtures/spawn-standin.mjs";
 import { started, NOW } from "./fixtures/bridge-records.mjs";
+import { PKG_NAME, TEST_VERSION, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
+import { REGISTRY_BASE_URL_ENV } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SESSION = "11111111-2222-4333-8444-555555555555";
@@ -24,11 +26,19 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "peb-test-"));
 }
 
+/** The package spec the plugin records and runs (DX-4321: there is no literal in the plugin; the test records one). */
+const SPEC = `${PKG_NAME}@${TEST_VERSION}`;
+
+// A bridge runs the RECORDED danx-dashboard-mcp version, so every env built here has one recorded under
+// `dataDir`; the registry URL points at a port nothing listens on, so a test that wrongly reached for the
+// registry would fail instead of reaching npm.
 function env(dataDir, overrides = {}) {
+  recordVersion(dataDir, TEST_VERSION);
   return {
     CLAUDE_PLUGIN_DATA: dataDir,
     CLAUDE_CODE_MESSAGING_SOCKET: "socket-path",
     CLAUDE_CODE_MESSAGING_TOKEN: "inbox-secret",
+    [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9",
     ...overrides,
   };
 }
@@ -768,14 +778,14 @@ describe("cursor", () => {
 
   test("--resume-ids is built from the cursor, and absent when it is empty", () => {
     const posix = { platform: "linux" };
-    assert.deepEqual(bridge.bridgeCommand({ resumeIds: [], ...posix }), {
+    assert.deepEqual(bridge.bridgeCommand({ resumeIds: [], spec: SPEC, ...posix }), {
       command: "npx",
-      args: ["-y", bridge.DASHBOARD_MCP_PACKAGE, "bridge"],
+      args: ["-y", SPEC, "bridge"],
     });
     const file = pathsFor(tmpDir()).cursor;
     bridge.recordDelivered(file, 41);
     bridge.recordDelivered(file, 42);
-    assert.deepEqual(bridge.bridgeCommand({ resumeIds: bridge.readCursor(file), ...posix }).args.slice(-2), ["--resume-ids", "41,42"]);
+    assert.deepEqual(bridge.bridgeCommand({ resumeIds: bridge.readCursor(file), spec: SPEC, ...posix }).args.slice(-2), ["--resume-ids", "41,42"]);
   });
 });
 
@@ -807,7 +817,7 @@ describe("subcommand environment and command", () => {
   test("no secret ever appears in the command's arguments", () => {
     const secrets = ["dispatch-secret", "inbox-secret"];
     for (const platform of ["linux", "win32"]) {
-      const { command, args } = bridge.bridgeCommand({ resumeIds: [1, 2], platform, execPath: "C:\\node\\node.exe", exists: () => true });
+      const { command, args } = bridge.bridgeCommand({ resumeIds: [1, 2], spec: SPEC, platform, execPath: "C:\\node\\node.exe", exists: () => true });
       const joined = [command, ...args].join(" ");
       for (const secret of secrets) assert.equal(joined.includes(secret), false);
     }
@@ -816,11 +826,11 @@ describe("subcommand environment and command", () => {
   test("on Windows the subcommand runs through node and npm's JS entry, never a shell; a missing entry is an error", () => {
     const execPath = path.join("C:", "nodejs", "node.exe");
     const npxCli = path.join(path.dirname(execPath), "node_modules", "npm", "bin", "npx-cli.js");
-    assert.deepEqual(bridge.bridgeCommand({ resumeIds: [9], platform: "win32", execPath, exists: (p) => p === npxCli }), {
+    assert.deepEqual(bridge.bridgeCommand({ resumeIds: [9], spec: SPEC, platform: "win32", execPath, exists: (p) => p === npxCli }), {
       command: execPath,
-      args: [npxCli, "-y", bridge.DASHBOARD_MCP_PACKAGE, "bridge", "--resume-ids", "9"],
+      args: [npxCli, "-y", SPEC, "bridge", "--resume-ids", "9"],
     });
-    assert.throws(() => bridge.bridgeCommand({ resumeIds: [], platform: "win32", execPath, exists: () => false }), /npx not found/);
+    assert.throws(() => bridge.bridgeCommand({ resumeIds: [], spec: SPEC, platform: "win32", execPath, exists: () => false }), /npx not found/);
   });
 });
 
@@ -2687,16 +2697,24 @@ describe("start mode's watchdog flags (DX-3997)", () => {
   });
 
   test("a watchdog start is always the resume intent and skips the plan-connection gate, whatever hook event carried it", () => {
-    const hook = { sessionId: SESSION, intent: bridge.CONNECT_INTENT, transcriptPath: "/t.jsonl" };
+    // DX-4321: it also never refreshes the recorded MCP version (that is a session start's job), even when the payload says SessionStart.
+    const hook = { sessionId: SESSION, intent: bridge.CONNECT_INTENT, transcriptPath: "/t.jsonl", sessionStart: true };
     const request = bridge.resolveStartRequest({ hook, flags: { restartTrigger: "watchdog", consumeStopInstance: "inst-1" } });
     assert.deepEqual(request, {
       sessionId: SESSION,
       intent: bridge.RESUME_INTENT,
       transcriptPath: "/t.jsonl",
+      sessionStart: false,
       restartTrigger: "watchdog",
       consumeStopInstance: "inst-1",
       gated: false,
     });
+  });
+
+  test("a hook start refreshes the recorded version only for a SessionStart payload (DX-4321)", () => {
+    const flags = bridge.parseStartFlags([]);
+    assert.equal(bridge.resolveStartRequest({ hook: { sessionId: SESSION, intent: bridge.RESUME_INTENT, transcriptPath: null, sessionStart: true }, flags }).sessionStart, true);
+    assert.equal(bridge.resolveStartRequest({ hook: { sessionId: SESSION, intent: bridge.CONNECT_INTENT, transcriptPath: null, sessionStart: false }, flags }).sessionStart, false);
   });
 
   test("a hook start keeps the hook's own intent and stays gated", () => {

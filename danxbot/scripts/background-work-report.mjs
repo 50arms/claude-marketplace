@@ -4,7 +4,7 @@
 // makes no MCP call, and the nudge's only other signal is the last MCP call time.
 //
 // Claude Code's Stop / SubagentStop input carries a `background_tasks` snapshot.
-// This script reports a count from it via the pinned `danx-dashboard-mcp
+// This script reports a count from it via the recorded-version `danx-dashboard-mcp
 // background-work <count|clear> <event-at>` subcommand (PUT /api/plan-sessions/me/background-work);
 // the dashboard suppresses the nudge while a positive count is fresh. It injects
 // nothing into the session.
@@ -21,17 +21,25 @@
 // Every mode first checks `isPlanConnected` (lib/plan-connection.mjs) and does
 // nothing for an unconnected session. A hook bug never fails a tool call or turn:
 // main() swallows every error.
+//
+// Which package version runs (DX-4321): `session-start` refreshes the recorded
+// `danx-dashboard-mcp` version from the registry (lib/dashboard-mcp-package.mjs) before it
+// reports, and only for a plan-connected session (an unconnected one reports nothing, so it
+// needs no package); every other mode reads the record with no registry request, resolving it
+// only when none exists. This hook is async, so nothing reads its output: a refresh that fails still
+// leaves its one line on stderr, and with no recorded version nothing is reported and the exit
+// code is 1.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPlanConnected, isValidSessionId } from "./lib/plan-connection.mjs";
-import { DASHBOARD_MCP_PACKAGE } from "./lib/dashboard-mcp-package.mjs";
+import { readRecordedSpec, recordedVersion, refreshOrKeep } from "./lib/dashboard-mcp-package.mjs";
 // The bridge's env builder: strips the session's inbox token/socket from the child env.
 import { childEnv } from "./plan-event-bridge.mjs";
 
-export { isValidSessionId, childEnv, DASHBOARD_MCP_PACKAGE };
+export { isValidSessionId, childEnv };
 
 /** How long the subcommand's own hard timeout is documented to take; this script's spawn timeout sits a bit above it. */
 export const REPORT_SPAWN_TIMEOUT_MS = 8_000;
@@ -176,13 +184,14 @@ export function countFromSnapshot(backgroundTasks) {
  * The command that reports to the dashboard — never through a shell. On
  * Windows `npx` is a `.cmd` shim Node can't spawn directly, so run npm's own
  * JS entry with this node instead; elsewhere `npx` is an executable and is
- * spawned directly. Mirrors plan-event-bridge.mjs's `bridgeCommand`.
+ * spawned directly. Mirrors plan-event-bridge.mjs's `bridgeCommand`. `spec` is
+ * `<name>@<recorded version>` (DX-4321), never a literal here.
  */
-export function reportCommand({ countOrClear, eventAt, platform = process.platform, execPath = process.execPath, exists = fs.existsSync }) {
+export function reportCommand({ countOrClear, eventAt, spec, platform = process.platform, execPath = process.execPath, exists = fs.existsSync }) {
   // DX-3676 — the hook's own event time rides every report; the dashboard keeps
   // only a report newer than the one it holds, so async hooks that finish out
   // of order cannot overwrite a newer count.
-  const args = ["-y", DASHBOARD_MCP_PACKAGE, "background-work", countOrClear, eventAt];
+  const args = ["-y", spec, "background-work", countOrClear, eventAt];
   if (platform !== "win32") return { command: "npx", args };
   const npxCli = path.join(path.dirname(execPath), "node_modules", "npm", "bin", "npx-cli.js");
   if (!exists(npxCli)) throw new Error(`npx not found: expected ${npxCli} next to ${execPath}`);
@@ -220,7 +229,7 @@ function parseSubcommandOutcome(result) {
  */
 export function reportToDashboard({ countOrClear, eventAt, sessionId, env = process.env, spawnFn = spawnSync, platform, execPath, exists, timeoutMs = REPORT_SPAWN_TIMEOUT_MS }) {
   try {
-    const { command, args } = reportCommand({ countOrClear, eventAt, platform, execPath, exists });
+    const { command, args } = reportCommand({ countOrClear, eventAt, spec: readRecordedSpec(env), platform, execPath, exists });
     const result = spawnFn(command, args, {
       env: childEnv(env, sessionId),
       stdio: ["ignore", "pipe", "ignore"],
@@ -396,16 +405,50 @@ export function dispatchMode(mode, input, options) {
   return undefined; // unknown mode — silent no-op, matches the CLI-robustness contract
 }
 
-function main() {
+/**
+ * DX-4321 — makes the recorded version ready for `mode`: `session-start` refreshes it, every other
+ * mode reads it (resolving only when none exists). Returns the one line a failed refresh leaves
+ * (the recorded version keeps running) or `null`; throws, with the one line saying nothing can
+ * run, when there is no recorded version at all.
+ */
+export async function prepareVersion(mode, { env = process.env, refresh = refreshOrKeep, resolve = recordedVersion } = {}) {
+  if (mode === "session-start") {
+    const outcome = await refresh({ env });
+    return outcome.refreshed ? null : outcome.line;
+  }
+  if (mode === "stop" || mode === "subagent-stop" || mode === "stop-failure" || mode === "heartbeat") {
+    await resolve({ env });
+  }
+  return null;
+}
+
+/** One hook firing: the version first, then the mode. Resolves to the one line to print (or `null`) and whether the version was missing. */
+export async function runHook(mode, input, { env = process.env, refresh, resolve, ...options } = {}) {
+  // A session that is not plan-connected reports nothing, so it needs no package: no registry request, no line.
+  const isConnected = options.isConnected ?? isPlanConnected;
+  if (!isValidSessionId(input?.session_id) || !sessionIsConnected(input.session_id, env, isConnected)) return { line: null, missingVersion: false };
+  let line = null;
+  try {
+    line = await prepareVersion(mode, { env, refresh, resolve });
+  } catch (err) {
+    return { line: err.message, missingVersion: true };
+  }
+  dispatchMode(mode, input, { env, ...options });
+  return { line, missingVersion: false };
+}
+
+async function main() {
   const mode = process.argv[2];
   const input = readStdinJson();
   if (!input) return; // malformed/empty stdin — never block or guess
-  const env = process.env;
   try {
-    dispatchMode(mode, input, { env });
+    const { line, missingVersion } = await runHook(mode, input);
+    if (line) process.stderr.write(`${line}
+`);
+    if (missingVersion) process.exitCode = 1;
   } catch {
     // A hook bug must never surface as a failed/blocked tool call or turn.
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await main();

@@ -22,7 +22,8 @@ import {
   failureFile,
   stateDir,
 } from "../scripts/activity-report.mjs";
-import { installedBinPath } from "./fixtures/fake-dashboard-mcp.mjs";
+import { TEST_VERSION, installedBinPath, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
+import { REGISTRY_BASE_URL_ENV } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.join(here, "..");
@@ -331,6 +332,7 @@ process.stdout.write(JSON.stringify({ ok: true, runningActivities: 1 }) + "\\n")
 `;
 
 function installFakePackage() {
+  recordVersion(pluginData, TEST_VERSION); // DX-4321: the version to run is the recorded one
   const bin = installedBinPath(pluginData);
   mkdirSync(path.dirname(bin), { recursive: true });
   writeFileSync(bin, RECORDING_BIN);
@@ -347,6 +349,8 @@ function runCli(mode, payload, extraEnv = {}) {
       CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
       CLAUDE_PLUGIN_DATA: pluginData,
       DANXBOT_PLAN_SESSIONS_HOME: planHome,
+      // A port nothing listens on: a run that wrongly reached for the registry fails instead of reaching npm.
+      [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9",
       ...extraEnv,
     },
   });
@@ -396,7 +400,8 @@ describe("the real process — stdin to the installed package, through the real 
 
   test("an install that cannot run fails the hook SILENTLY (exit 0) and leaves the failure trace", () => {
     connect();
-    // No fake package installed, and `npm` made unrunnable: the install check must fail, not hang or throw.
+    // A version is recorded but nothing is installed, and `npm` is made unrunnable: the install check must fail, not hang or throw.
+    recordVersion(pluginData, TEST_VERSION);
     const r = runCli("subagent-start", startPayload, { PATH: path.join(pluginData, "no-such-bin"), DASHBOARD_MCP_INSTALL_TIMEOUT_SECS: "5" });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, "");

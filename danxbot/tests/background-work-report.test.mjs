@@ -24,7 +24,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  DASHBOARD_MCP_PACKAGE,
   REPORT_SPAWN_TIMEOUT_MS,
   HEARTBEAT_THROTTLE_MS,
   isValidSessionId,
@@ -41,6 +40,8 @@ import {
   dispatchMode,
 } from "../scripts/background-work-report.mjs";
 import { childEnv as bridgeChildEnv } from "../scripts/plan-event-bridge.mjs";
+import { PKG_NAME, TEST_VERSION, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
+import { REGISTRY_BASE_URL_ENV } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(here, "..", "scripts", "background-work-report.mjs");
@@ -73,7 +74,14 @@ function connect(sessionId, home = planHome) {
 }
 
 /** The env every functional test passes: plugin data dir + an ISOLATED plan-sessions home (never the operator's real one). */
-const env = () => ({ CLAUDE_PLUGIN_DATA: pluginData, DANXBOT_PLAN_SESSIONS_HOME: planHome });
+/** The package spec the plugin records and runs (DX-4321: there is no literal in the plugin; the test records one). */
+const SPEC = `${PKG_NAME}@${TEST_VERSION}`;
+// A report spawns the RECORDED version, so every env a test builds has one recorded; the registry URL points at
+// a port nothing listens on, so a test that wrongly reached for the registry would fail instead of reaching npm.
+const env = () => {
+  recordVersion(pluginData, TEST_VERSION);
+  return { CLAUDE_PLUGIN_DATA: pluginData, DANXBOT_PLAN_SESSIONS_HOME: planHome, [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9" };
+};
 
 /**
  * A `spawnFn` stand-in that never touches a real process — records every
@@ -154,20 +162,20 @@ describe("countFromSnapshot — pure logic", () => {
 const EVENT_AT = "2026-09-30T00:00:00.000Z";
 
 describe("reportCommand — spawn shape (mirrors plan-event-bridge.mjs's bridgeCommand)", () => {
-  test("non-windows spawns npx directly with the pinned package + subcommand + count", () => {
-    assert.deepEqual(reportCommand({ countOrClear: "3", eventAt: EVENT_AT, platform: "linux" }), {
+  test("non-windows spawns npx directly with the recorded package spec + subcommand + count", () => {
+    assert.deepEqual(reportCommand({ countOrClear: "3", eventAt: EVENT_AT, spec: SPEC, platform: "linux" }), {
       command: "npx",
-      args: ["-y", DASHBOARD_MCP_PACKAGE, "background-work", "3", EVENT_AT],
+      args: ["-y", SPEC, "background-work", "3", EVENT_AT],
     });
   });
   test("windows routes through node_modules/npm/bin/npx-cli.js next to execPath", () => {
     const execPath = "C:\\node\\node.exe";
     const npxCli = path.join("C:\\node", "node_modules", "npm", "bin", "npx-cli.js");
-    const result = reportCommand({ countOrClear: "clear", eventAt: EVENT_AT, platform: "win32", execPath, exists: (p) => p === npxCli });
-    assert.deepEqual(result, { command: execPath, args: [npxCli, "-y", DASHBOARD_MCP_PACKAGE, "background-work", "clear", EVENT_AT] });
+    const result = reportCommand({ countOrClear: "clear", eventAt: EVENT_AT, spec: SPEC, platform: "win32", execPath, exists: (p) => p === npxCli });
+    assert.deepEqual(result, { command: execPath, args: [npxCli, "-y", SPEC, "background-work", "clear", EVENT_AT] });
   });
   test("windows throws loud when npx-cli.js is missing, rather than spawning something broken", () => {
-    assert.throws(() => reportCommand({ countOrClear: "1", eventAt: EVENT_AT, platform: "win32", execPath: "C:\\node\\node.exe", exists: () => false }), /npx not found/);
+    assert.throws(() => reportCommand({ countOrClear: "1", eventAt: EVENT_AT, spec: SPEC, platform: "win32", execPath: "C:\\node\\node.exe", exists: () => false }), /npx not found/);
   });
 });
 
@@ -313,7 +321,7 @@ describe("runReport — stop / subagent-stop", () => {
       { env: env(), platform: "linux", spawnFn: fakeSpawn(calls), now: () => 1_700_000_000_000 },
     );
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args, ["-y", DASHBOARD_MCP_PACKAGE, "background-work", "2", new Date(1_700_000_000_000).toISOString()]);
+    assert.deepEqual(calls[0].args, ["-y", SPEC, "background-work", "2", new Date(1_700_000_000_000).toISOString()]);
     assert.equal(calls[0].opts.env.CLAUDE_CODE_SESSION_ID, "sess-1");
 
     const state = JSON.parse(readFileSync(stateFile("sess-1"), "utf8"));

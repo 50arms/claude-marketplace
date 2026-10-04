@@ -7,7 +7,7 @@
  * are skipped without a TTY, and MCP channels need a launch flag.
  *
  * SPLIT OF RESPONSIBILITY. This script owns process lifecycle (one bridge per session),
- * the delivered-id cursor and the inbox post. The pinned `danx-dashboard-mcp bridge`
+ * the delivered-id cursor and the inbox post. The recorded-version `danx-dashboard-mcp bridge`
  * subcommand owns everything about the dashboard: it resolves the credential this
  * session's own MCP server recorded at connect (never this process's ambient env, which
  * can belong to a different dashboard), mints the ticket, checks every board of the plan,
@@ -57,14 +57,13 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { DASHBOARD_MCP_PACKAGE } from "./lib/dashboard-mcp-package.mjs";
+import { readRecordedSpec, recordedVersion, refreshOrKeep } from "./lib/dashboard-mcp-package.mjs";
 import { isPlanConnected } from "./lib/plan-connection.mjs";
 import { HEALTHY_RUN_MS, HEARTBEAT_STALE_MS, readJsonFile, sessionPaths, stateDir, writeFileAtomic } from "./lib/bridge-state.mjs";
 import { effectiveRestartGeneration } from "./lib/bridge-restart-decision.mjs";
 import { parseHookPayload, readStdinText } from "./lib/hook-input.mjs";
-import { RELAY_MARKER, failureNotice } from "./lib/failure-notice.mjs";
+import { RELAY_MARKER, failureNotice, versionKeptNotice } from "./lib/failure-notice.mjs";
 
-export { DASHBOARD_MCP_PACKAGE };
 export const BRIDGE_SUBCOMMAND = "bridge";
 
 export const HEARTBEAT_MS = 30_000;
@@ -565,8 +564,7 @@ export function isSessionKnownToWantEvents({ intent, env, sessionId }) {
  * itself is what is missing, which a hook surfaces through `asyncRewake` on
  * exit code 2 (`hooks/hooks.json`). Log-only is not an option here.
  */
-export async function announce({ reason, fix, env, post = postToInbox, stderr = () => {}, relevant = true }) {
-  const notice = failureNotice(reason, fix);
+export async function announce({ reason, fix, notice = failureNotice(reason, fix), env, post = postToInbox, stderr = () => {}, relevant = true }) {
   if (!relevant) return { announced: false, posted: false, notice, exitCode: 0 };
   if (env.CLAUDE_CODE_MESSAGING_SOCKET && env.CLAUDE_CODE_MESSAGING_TOKEN) {
     for (let attempt = 1; attempt <= SOCKET_POST_ATTEMPTS; attempt += 1) {
@@ -635,6 +633,47 @@ export function waitForVerdict(child, timeoutMs) {
  * never been checked against, and that check happens at startup.
  */
 export async function start({
+  env = process.env,
+  sessionId,
+  intent = RESUME_INTENT,
+  post = postToInbox,
+  stderr = (message) => process.stderr.write(message),
+  // DX-4321: true for a SessionStart hook, which refreshes the recorded danx-dashboard-mcp version; every other start reads the record.
+  sessionStart = false,
+  resolveVersion = resolveDashboardMcpVersion,
+  ...rest
+} = {}) {
+  // A start missing what it needs reports that itself (startBridge), before any version is asked for.
+  if (!sessionId || REQUIRED_ENV.some((name) => !env[name])) return startBridge({ env, sessionId, intent, post, stderr, ...rest });
+  const relevant = () => isSessionKnownToWantEvents({ intent, env, sessionId });
+  let kept;
+  try {
+    kept = await resolveVersion({ env, sessionStart });
+  } catch (err) {
+    // DX-4321: no recorded version and the registry unreadable, so there is no package to run.
+    const announced = await announce({
+      reason: err.message,
+      fix: "restore access to the npm registry, then call plan_connect again in this session",
+      env,
+      post,
+      stderr,
+      relevant: relevant(),
+    });
+    return { started: false, reason: err.message, exitCode: announced.exitCode };
+  }
+  // DX-4321: the refresh failed but the recorded version keeps running: tell the session, once, which one.
+  const told = kept.refreshed ? { exitCode: 0 } : await announce({ notice: versionKeptNotice(kept.line), env, post, stderr, relevant: relevant() });
+  const result = await startBridge({ env, sessionId, intent, post, stderr, ...rest });
+  return { ...result, exitCode: Math.max(result.exitCode ?? 0, told.exitCode) };
+}
+
+/** The version `start` runs: a SessionStart refreshes it from the registry, anything else reads the record (resolving it only when none exists). */
+export async function resolveDashboardMcpVersion({ env, sessionStart }) {
+  if (sessionStart) return refreshOrKeep({ env });
+  return { version: await recordedVersion({ env }), refreshed: true };
+}
+
+async function startBridge({
   env = process.env,
   sessionId,
   intent = RESUME_INTENT,
@@ -881,8 +920,9 @@ export function childEnv(env, sessionId) {
  * `.cmd` shim Node can only start via `cmd.exe`, so run npm's own JS entry with this
  * node instead; elsewhere `npx` is an executable and is spawned directly.
  */
-export function bridgeCommand({ resumeIds, platform = process.platform, execPath = process.execPath, exists = fs.existsSync }) {
-  const args = ["-y", DASHBOARD_MCP_PACKAGE, BRIDGE_SUBCOMMAND, ...resumeArgs(resumeIds)];
+export function bridgeCommand({ resumeIds, spec, platform = process.platform, execPath = process.execPath, exists = fs.existsSync }) {
+  // DX-4321: `spec` is `<name>@<recorded version>` (lib/dashboard-mcp-package.mjs), never a literal here.
+  const args = ["-y", spec, BRIDGE_SUBCOMMAND, ...resumeArgs(resumeIds)];
   if (platform !== "win32") return { command: "npx", args };
   const npxCli = path.join(path.dirname(execPath), "node_modules", "npm", "bin", "npx-cli.js");
   if (!exists(npxCli)) throw new Error(`npx not found: expected ${npxCli} next to ${execPath}`);
@@ -1201,7 +1241,7 @@ export function terminalShutdown(event) {
 /** The real bridge subcommand child. Injectable (`run()`'s `spawnSubcommand`) so tests can
  * replace it with a stand-in that never touches the network. */
 function defaultSpawnSubcommand({ resumeIds, env }) {
-  const { command, args } = bridgeCommand({ resumeIds });
+  const { command, args } = bridgeCommand({ resumeIds, spec: readRecordedSpec(env) });
   return spawn(command, args, {
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -1546,7 +1586,8 @@ export function hookMayStart({ intent, sessionId, env = process.env, connected =
 async function readHookInput() {
   const hook = parseHookPayload(await readStdinText());
   // DX-2953: transcriptPath is recorded into .started.json's startInputs so a watchdog restart reuses it.
-  return { sessionId: hook.sessionId, intent: intentFromHookEvent(hook.hookEventName), transcriptPath: hook.transcriptPath };
+  // DX-4321: sessionStart is the one event that refreshes the recorded danx-dashboard-mcp version.
+  return { sessionId: hook.sessionId, intent: intentFromHookEvent(hook.hookEventName), transcriptPath: hook.transcriptPath, sessionStart: hook.hookEventName === "SessionStart" };
 }
 
 /** DX-3997: the only restart trigger `start` accepts — `bridge-watchdog.mjs` runs `start` as a subprocess with it. */
@@ -1587,6 +1628,7 @@ export function resolveStartRequest({ hook, flags }) {
     sessionId: hook.sessionId,
     intent: isWatchdog ? RESUME_INTENT : hook.intent,
     transcriptPath: hook.transcriptPath,
+    sessionStart: !isWatchdog && hook.sessionStart === true,
     restartTrigger: flags.restartTrigger,
     consumeStopInstance: flags.consumeStopInstance,
     gated: !isWatchdog,

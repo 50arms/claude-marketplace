@@ -19,7 +19,7 @@
 // background script gets a start and no end from here: the dashboard closes it when the
 // dispatch ends. Do not add a proxy event for it.
 //
-// What each event MEANS (the row key, the sub-agent id, the timestamps) lives in the pinned
+// What each event MEANS (the row key, the sub-agent id, the timestamps) lives in the
 // package's `activity` subcommand, not here. This script decides only WHETHER to call it:
 //   - only for a session connected to a plan (lib/plan-connection.mjs), like every other hook
 //     that talks to the dashboard;
@@ -27,7 +27,8 @@
 //     the subcommand refuses a foreground one itself, but starting the package for each would
 //     cost a process per command, so this is the one place the same predicate is read early.
 //
-// How it runs the package (DX-3811): the INSTALLED copy, with plain `node`, via
+// How it runs the package (DX-3811): the INSTALLED copy of the recorded version (DX-4321: read from
+// the plugin's record, resolved only when none exists), with plain `node`, via
 // ensure-dashboard-mcp.sh (a file check once installed) — never a cold `npx -y`, which was
 // measured failing 29 of 40 under concurrent sub-agent starts.
 //

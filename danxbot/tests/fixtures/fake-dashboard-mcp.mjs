@@ -1,17 +1,40 @@
 // Fakes for the two things event-hook.sh / ensure-dashboard-mcp.sh run (DX-3811):
 // the installed `@thehammer/danx-dashboard-mcp` bin, and the `npm` / `npx` on PATH.
 // No test using these touches the network.
-import { mkdirSync, mkdtempSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DASHBOARD_MCP_PACKAGE } from "../../scripts/lib/dashboard-mcp-package.mjs";
+import { DASHBOARD_MCP_PACKAGE_NAME } from "../../scripts/lib/dashboard-mcp-package.mjs";
 
-export const PKG_NAME = DASHBOARD_MCP_PACKAGE.slice(0, DASHBOARD_MCP_PACKAGE.lastIndexOf("@"));
-export const PKG_VERSION = DASHBOARD_MCP_PACKAGE.slice(DASHBOARD_MCP_PACKAGE.lastIndexOf("@") + 1);
+export const PKG_NAME = DASHBOARD_MCP_PACKAGE_NAME;
 
-/** Where ensure-dashboard-mcp.sh puts the pinned package's entry point under `dataDir`. */
-export function installedBinPath(dataDir) {
-  return path.join(dataDir, "dashboard-mcp", PKG_VERSION, "node_modules", PKG_NAME, "dist", "index.js");
+/**
+ * The version a test records (and its fake registry serves) when it does not care which. The
+ * plugin carries no version (DX-4321): a test that needs the version READS the record, with
+ * `recordedVersion(dataDir)`.
+ */
+export const TEST_VERSION = "0.1.50";
+
+/** `${dataDir}/dashboard-mcp/current`, where the plugin records the version it runs. */
+export function recordFilePath(dataDir) {
+  return path.join(dataDir, "dashboard-mcp", "current");
+}
+
+/** The version recorded under `dataDir`; throws when none is (a test reading what nothing wrote is a bug). */
+export function recordedVersion(dataDir) {
+  return readFileSync(recordFilePath(dataDir), "utf8").trim();
+}
+
+/** Records `version` under `dataDir` the way the plugin does. */
+export function recordVersion(dataDir, version = TEST_VERSION) {
+  mkdirSync(path.dirname(recordFilePath(dataDir)), { recursive: true });
+  writeFileSync(recordFilePath(dataDir), `${version}
+`);
+}
+
+/** Where ensure-dashboard-mcp.sh puts the recorded version's entry point under `dataDir`, or `version`'s when given. */
+export function installedBinPath(dataDir, version = recordedVersion(dataDir)) {
+  return path.join(dataDir, "dashboard-mcp", version, "node_modules", PKG_NAME, "dist", "index.js");
 }
 
 /**
@@ -42,9 +65,10 @@ export function writeFakeBinSourceFile() {
   return file;
 }
 
-/** Puts the fake bin where an installed pin lives under `dataDir`. */
-export function installFakeMcp(dataDir) {
-  const bin = installedBinPath(dataDir);
+/** Records `version` and puts the fake bin where that version's install lives under `dataDir`. */
+export function installFakeMcp(dataDir, version = TEST_VERSION) {
+  recordVersion(dataDir, version);
+  const bin = installedBinPath(dataDir, version);
   mkdirSync(path.dirname(bin), { recursive: true });
   writeFileSync(bin, FAKE_BIN_SOURCE);
   return bin;
@@ -77,10 +101,13 @@ export const NPX_TRIPWIRE = 'echo "npx was called: $*" >> "$FAKE_NPX_CALLS_FILE"
 export const fakeNpm = () => `
 echo "$*" >> "$FAKE_NPM_CALLS_FILE"
 PREFIX=""
+SPEC=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--prefix" ]; then PREFIX="$2"; shift; fi
+  SPEC="$1"
   shift
 done
+VERSION="\${SPEC##*@}"
 lay_down() {
   mkdir -p "$1/node_modules/${PKG_NAME}/dist"
   cp "$FAKE_BIN_SOURCE_FILE" "$1/node_modules/${PKG_NAME}/dist/index.js"
@@ -88,7 +115,7 @@ lay_down() {
 case "\${FAKE_NPM_MODE:-ok}" in
   ok) lay_down "$PREFIX" ;;
   slow) sleep 2; lay_down "$PREFIX" ;;
-  race) lay_down "$(dirname "$PREFIX")/${PKG_VERSION}"; lay_down "$PREFIX" ;;
+  race) lay_down "$(dirname "$PREFIX")/$VERSION"; lay_down "$PREFIX" ;;
   no-bin) ;;
   hang) exec sleep 30 ;;
   *) echo "npm error code E404" >&2; echo "npm error 404 Not Found - registry unreachable" >&2; exit 1 ;;

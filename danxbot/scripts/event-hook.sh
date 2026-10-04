@@ -22,8 +22,14 @@
 #   SubagentStart                -> sub_agent_start
 # — and asks the dashboard for that event's EFFECTIVE text (the reminder
 # registry's `event.<name>` row, `GET /api/reminders/event/<name>`) via the
-# pinned `danx-dashboard-mcp event-text` subcommand (run with `node` from the
+# `danx-dashboard-mcp event-text` subcommand (run with `node` from the
 # plugin-data install, DX-3811), then prints exactly that text.
+#
+# Which version of that package runs (DX-4321): the npm registry's `latest`, refreshed here at
+# every SessionStart (`lib/dashboard-mcp-package.mjs --refresh`, before the install check) and
+# read from the plugin's record, with no registry request, at SubagentStart. A refresh that fails
+# prints ONE extra line naming the reason and the version still in use, and the recorded version
+# keeps running; with no recorded version nothing runs and the failure line says so.
 #
 # Fetch failure: prints ONE line saying the event text could not be loaded,
 # naming the reason, and telling the agent to tell the operator — never
@@ -43,6 +49,7 @@ set -euo pipefail
 
 EVENT="${1:-SessionStart}"
 CONNECTION_LIB="${CLAUDE_PLUGIN_ROOT}/scripts/lib/plan-connection.mjs"
+PACKAGE_LIB="${CLAUDE_PLUGIN_ROOT}/scripts/lib/dashboard-mcp-package.mjs"
 
 # The fetch budget (DX-3811): covers the fetch only; the env override is a test seam.
 EVENT_TEXT_FETCH_TIMEOUT_SECS="${EVENT_TEXT_FETCH_TIMEOUT_SECS:-8}"
@@ -86,6 +93,35 @@ payload_field() {
   ' 2>/dev/null || true
 }
 
+# DX-4321: the SessionStart refresh of the recorded danx-dashboard-mcp version, run once, just
+# before the first install check. REFRESH_NOTICE is the one line a failed refresh prints (the
+# recorded version keeps running); REFRESH_FATAL is the reason when there is no recorded version
+# to run, which makes every install check below fail with it. A SubagentStart reads the record
+# and never calls this.
+REFRESH_NOTICE=""
+REFRESH_FATAL=""
+refresh_mcp_version() {
+  [ "$EVENT" = "SessionStart" ] || return 0
+  local refresh_err refresh_rc="0"
+  refresh_err="$(mktemp)"
+  node "$PACKAGE_LIB" --refresh >/dev/null 2>"$refresh_err" || refresh_rc="$?"
+  case "$refresh_rc" in
+    0) ;;
+    3) REFRESH_NOTICE="$(cat "$refresh_err" 2>/dev/null || true)" ;;
+    *)
+      REFRESH_FATAL="$(cat "$refresh_err" 2>/dev/null || true)"
+      if [ -z "$REFRESH_FATAL" ]; then REFRESH_FATAL="exit_${refresh_rc}: the version refresh exited without a message"; fi
+      ;;
+  esac
+  rm -f "$refresh_err"
+}
+
+# The refresh's one line, ahead of whatever else this event prints.
+emit_refresh_notice() {
+  if [ -n "$REFRESH_NOTICE" ]; then emit "⚠ ${REFRESH_NOTICE}."; fi
+  return 0
+}
+
 # DX-3928: the restart notice for a NOT-connected session (see the call site).
 restart_notice() {
   case "$(payload_field source)" in
@@ -98,7 +134,11 @@ restart_notice() {
   project_dir="$(payload_field cwd)"
   notice_err="$(mktemp)"
   notice_out=""
-  if mcp_bin="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-dashboard-mcp.sh" 2>"$notice_err")"; then
+  refresh_mcp_version
+  if [ -n "$REFRESH_FATAL" ]; then
+    printf '%s' "$REFRESH_FATAL" >"$notice_err"
+    notice_rc="1"
+  elif mcp_bin="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-dashboard-mcp.sh" 2>"$notice_err")"; then
     local cwd_args=()
     if [ -n "$project_dir" ]; then cwd_args=(--cwd "$project_dir"); fi
     if command -v timeout >/dev/null 2>&1; then
@@ -116,10 +156,14 @@ restart_notice() {
     if [ -z "$reason" ]; then
       if [ "$notice_rc" = "124" ]; then reason="timeout: no response within ${EVENT_TEXT_FETCH_TIMEOUT_SECS}s"; else reason="exit_${notice_rc}: the lookup exited without a message"; fi
     fi
+    emit_refresh_notice
     emit "⚠ Could not load the restart notice (${reason}). Tell the operator if this session should be plan-connected."
     return 0
   fi
-  if [ -n "$notice_out" ]; then emit "$notice_out"; fi
+  if [ -n "$notice_out" ]; then
+    emit_refresh_notice
+    emit "$notice_out"
+  fi
   return 0
 }
 
@@ -135,7 +179,7 @@ if [ "$CONNECTED" != "1" ]; then
   # DX-3928: the ONE narrow exception to the silence above — a SessionStart
   # (startup|resume) whose project's previous session was plan-connected is told
   # which plan it was on and how many events are waiting. The wording is a registry
-  # row; this script only runs the pinned package's `restart-notice` subcommand:
+  # row; this script only runs the package's `restart-notice` subcommand:
   #   exit 0 + text  -> print it
   #   exit 0 + empty -> stay silent (a project with no earlier connected session —
   #                     PLN-11 R-10 / DX-3421 still hold for it)
@@ -196,7 +240,7 @@ SESSION_ID="$(printf '%s' "$PAYLOAD" | node -e '
   });
 ' 2>/dev/null || true)"
 
-# DX-3811: the fetch runs the pinned package with plain `node` from a copy
+# DX-3811: the fetch runs the recorded package version with plain `node` from a copy
 # installed ONCE into the plugin data dir (ensure-dashboard-mcp.sh), never through
 # `npx -y`. A cold or contended `npx` took 4-15 s here and was killed by the
 # fetch timeout before it wrote a word, so about 1 in 9 sub-agents got the failure
@@ -217,7 +261,13 @@ FETCH_ERR=""
 # the script immediately, before the failure could ever be handled below —
 # mirrors mantra.sh's original DX-3366 idiom.
 ERR_FILE="$(mktemp)"
-MCP_BIN="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-dashboard-mcp.sh" 2>"$ERR_FILE")" && ENSURE_OK="1" || ENSURE_OK="0"
+refresh_mcp_version
+if [ -n "$REFRESH_FATAL" ]; then
+  printf '%s' "$REFRESH_FATAL" >"$ERR_FILE"
+  ENSURE_OK="0"
+else
+  MCP_BIN="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-dashboard-mcp.sh" 2>"$ERR_FILE")" && ENSURE_OK="1" || ENSURE_OK="0"
+fi
 if [ "$ENSURE_OK" = "1" ]; then
   if command -v timeout >/dev/null 2>&1; then
     EVENT_TEXT="$(CLAUDE_CODE_SESSION_ID="$SESSION_ID" timeout "${EVENT_TEXT_FETCH_TIMEOUT_SECS}s" node "$MCP_BIN" event-text "$DANX_EVENT" 2>"$ERR_FILE")" && FETCH_OK="1" || FETCH_RC="$?"
@@ -245,6 +295,7 @@ fi
 # reported-clean exit is treated as a failure too, never trusted as a
 # silent "success" (mirrors mantra.sh's DX-3366 AC 35447).
 if [ "$FETCH_OK" = "1" ] && [ -n "$EVENT_TEXT" ]; then
+  emit_refresh_notice
   emit "$EVENT_TEXT"
   exit 0
 fi
@@ -252,4 +303,5 @@ fi
 # Fetch failure: ALWAYS reported, never silent, and never a mantra.md reread
 # (DX-3421 — no offline fallback any more). Tell the agent to tell the
 # operator.
+emit_refresh_notice
 emit "⚠ Could not load the \"$DANX_EVENT\" event text from the danxbot reminder registry (${FETCH_ERR}). Tell the operator this event hook fetch failed."

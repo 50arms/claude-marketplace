@@ -68,6 +68,10 @@ A machine crash once left six cached plugin files the same size but all NUL byte
 - Tests: `danxbot/tests/plan-*.test.tsx` run under `claude plugin test danxbot` (each over `['terminal','desktop']`), with the stand-in dashboard in `danxbot/tests/plan-kit.tsx`. `claude plugin validate danxbot` is the loud check: in the desktop app a module that fails to load says nothing.
 - `scripts/publish.sh` runs both for any target plugin whose `hooks.json` declares `modules`, before it rewrites or bumps anything, and refuses the publish if either fails. **It needs the `claude` CLI: it is not on PATH in this machine's Git Bash, so set `CLAUDE_BIN` to the executable** (for example the desktop app's `claude-code/<version>/<hash>/claude.exe`) or the publish is refused naming it. `danxbot/tests/plugin-modules.test.mjs` needs it too.
 
+## The danxbot plugin carries no `@thehammer/danx-dashboard-mcp` version (DX-4321)
+
+The version is the npm registry's `latest`: the four session-start entry points (`ensure-dashboard-mcp.sh --prewarm`, `event-hook.sh SessionStart`, `background-work-report.mjs session-start`, `plan-event-bridge.mjs start`) resolve it through `danxbot/scripts/lib/dashboard-mcp-package.mjs` and record it in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`, every other hook reads that record with no network request, and a refresh that fails keeps the recorded version and says so in one line (with no record nothing runs and the line says so), so a danxbot publish reaches the next session start with no plugin release and never a version literal here (a test scans for one).
+
 ## Publishing is TWO steps, and the second one is not optional
 
 A plugin edit is not shipped until BOTH happen:
