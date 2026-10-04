@@ -622,17 +622,34 @@ export function dashboard(
   })
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
-  // sub-agents. A test that drives the live child stacks its own process.spawn and fs hooks over these.
+  // sub-agents (world.agents).
   const agentLists = { count: 0 }
   on('session.id', () => ({ value: OWN_SESSION.session_id }) as any)
   on('agent.list', () => {
     agentLists.count++
     return { value: world.agents } as any
   })
-  const spawns: string[][] = []
-  on('process.spawn', async function* (_$: any, e: any) {
-    spawns.push([...e.argv])
-    return { code: 1, signal: null }
+  // DX-4508: the live reader child (`$.process.spawn`): each start is recorded with its argv; a test queues what it prints
+  // (`pieces`) and how it ends on its own (`end`), delivered a mocked-clock second apart (READER_PIECE_MS). `stopped` says the
+  // plugin ended it (its stream returned, the call abandoned); a child that exited on its own is not stopped.
+  const readers: FakeReader[] = []
+  on('process.spawn', async function* (_$: any, e: any, next: any) {
+    const child: FakeReader = { argv: [...e.argv], pieces: [], end: null, stopped: false }
+    readers.push(child)
+    let exited = false
+    try {
+      while (!next.signal.aborted) {
+        while (child.pieces.length > 0) yield child.pieces.shift()!
+        if (child.end !== null) {
+          exited = true
+          return { value: child.end }
+        }
+        await clock.sleep(READER_PIECE_MS)
+      }
+      return { value: { code: null, signal: 'SIGTERM' } }
+    } finally {
+      child.stopped = !exited
+    }
   } as any)
   // what the engine draws above the prompt when no plugin does: nothing
   on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
@@ -673,7 +690,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { agentLists, spawns, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
@@ -697,6 +714,15 @@ export function expectRowCarries(row: string, fields: string[]) {
 
 // session.start as the engine raises it (the plugin loads the plan, registers its command and
 // starts its refresh timer), then lets the load it kicked off finish.
+// DX-4508: one start of the live reader child, as the kit's process.spawn stand-in records it (see `readers` in dashboard()).
+export const READER_PIECE_MS = 1_000
+export type FakeReader = {
+  argv: string[]
+  pieces: { stream: 'stdout' | 'stderr'; text: string }[]
+  end: { code: number | null; signal: string | null } | null
+  stopped: boolean
+}
+
 export async function startSession($: any, d: Dashboard, surface: string) {
   await $.session.start({ cwd: '/work', surface, isInteractive: true })
   await d.clock.settle()

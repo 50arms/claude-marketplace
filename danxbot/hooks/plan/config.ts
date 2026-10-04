@@ -82,7 +82,7 @@ export const DANGER = 'red'
 export const WARNING = 'yellow'
 
 // DX-4499 / DX-4508: a sub-agent's status dot, one colour per state: green running, cyan done, red failed, yellow stopped (a
-// person or a lapsed session ended it). The dot is the only coloured mark on the card: the card has no border.
+// person or a lapsed session ended it). The dot is the only coloured mark on the card: its border is drawn in the card's own fill.
 export const SUBAGENT_STATE_COLOR: Record<SubagentState, string> = {
   running: SUCCESS,
   done: ACCENT,
@@ -93,13 +93,13 @@ export const SUBAGENT_STATE_COLOR: Record<SubagentState, string> = {
 // task rows are drawn on `userMessageBackground` (its hover `userMessageBackgroundHover`), the slightly lighter grey of a user
 // prompt (dark theme rgb(55,55,55)); the theme's other fills are the docked sidebar's own colour (`composerSidebarBackground`, the
 // pane itself, so no raise), the selection blue, and the bash/memory message tints. Checked in the 2.1.286 build's themes.
-// No rounded corners: a Box rounds only by drawing a `round` border, and the card is borderless.
+// DX-4508: rounded corners with no visible line: a Box rounds only by drawing a `round` border, so the card draws one in this same
+// colour (decision on DX-4508, 2026-10-04).
 export const SUBAGENT_CARD_BACKGROUND = 'userMessageBackground'
 
-// DX-4508: the host child that streams this session's sub-agent numbers (`node <bin> subagents-live <main transcript>`), and where
-// its bin sits under a version's install directory: the one layout scripts/ensure-dashboard-mcp.sh names as BIN_REL.
-export const LIVE_SUBCOMMAND = 'subagents-live'
-export const DASHBOARD_MCP_BIN_REL = 'node_modules/@thehammer/danx-dashboard-mcp/dist/index.js'
+// DX-4508: the host child that streams this session's sub-agent numbers: `node <plugin root>/<this> <main transcript>`. The script finds
+// the installed danx-dashboard-mcp and runs its `subagents-live` (a hooks module is never told the plugin's data directory).
+export const LIVE_READER_SCRIPT = 'scripts/subagents-live.mjs'
 // DX-4508: how long an ended sub-agent stays listed after it finished: danxbot's SUBAGENT_ENDED_VISIBLE_MS
 // (src/issues/db/plan-session-subagents.ts), mirrored for a row only the live child has reported so far.
 export const SUBAGENT_ENDED_VISIBLE_MS = 600_000

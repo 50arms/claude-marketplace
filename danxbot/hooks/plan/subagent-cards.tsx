@@ -7,9 +7,10 @@ import { ellipsize } from './words'
 
 // DX-4499: the pane's Sub-agents section: every running sub-agent of the plan's live sessions, each its own card, and the ones
 // that ended in the last minutes, dimmed, until the server's `visibleUntil` passes on this pane's clock (`now`).
-// DX-4508: the card is drawn as Claude Code's own background task cards are: no border, a raised fill
-// (SUBAGENT_CARD_BACKGROUND), padding, colour only on the small status dot, the name in the primary text colour and every
-// metadata line muted. This session's rows carry the live child's numbers (withLive).
+// DX-4508: the card is drawn as Claude Code's own background task cards are: a raised fill (SUBAGENT_CARD_BACKGROUND) with rounded
+// corners and no visible border (a Box rounds only by drawing a `round` border, so it draws one in the fill's own colour), padding,
+// colour only on the small status dot, the name in the primary text colour and every metadata line muted. This session's rows carry
+// the live child's numbers (withLive).
 
 // The card's link: the plan's own card page when the plan holds the card, else the card's own board page (the plan-free route),
 // as a card id in a reply is linked (card-links.ts). With the links unread (v.links in error) the id is not known to be the plan's, so it
@@ -34,7 +35,14 @@ function card(E: any, v: PlanView, plan: ConnectedPlan, now: number, node: Subag
   const ended = row.state !== 'running'
   const runs = runsAs(row)
   return (
-    <Box key={`sa-${row.id}`} flexDirection="column" backgroundColor={SUBAGENT_CARD_BACKGROUND} paddingX={1}>
+    <Box
+      key={`sa-${row.id}`}
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={SUBAGENT_CARD_BACKGROUND}
+      backgroundColor={SUBAGENT_CARD_BACKGROUND}
+      paddingX={1}
+    >
       <Box flexDirection="row" justifyContent="space-between" gap={1}>
         <Box flexDirection="row" gap={1} flexShrink={1}>
           <Text color={SUBAGENT_STATE_COLOR[row.state]} dimColor={ended}>

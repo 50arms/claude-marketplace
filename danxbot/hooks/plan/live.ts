@@ -1,41 +1,13 @@
 import type { LiveSnapshot, LiveSubagents, PlanView, SubagentRow, SubagentState } from '../../types'
-import { DASHBOARD_MCP_BIN_REL, SUBAGENT_ENDED_VISIBLE_MS } from './config'
+import { LIVE_READER_SCRIPT, SUBAGENT_ENDED_VISIBLE_MS } from './config'
 import { parentLoop } from './subagents'
 
-// DX-4508: the live sub-agent numbers. Pure (no `$`): register.tsx starts the host child
-// (`node <installed danx-dashboard-mcp>/dist/index.js subagents-live <main transcript>`), feeds its stdout through
+// DX-4508: the live sub-agent numbers. Pure (no `$`): register.tsx starts the host child (`liveReaderArgv`), feeds its stdout through
 // these functions and keeps the result in the `live` atom; the pane draws the dashboard rows with it laid over them.
 
-// The plugin's data directory by Claude Code's own layout: a marketplace install's root is
-// `<plugins>/cache/<marketplace>/<plugin>/<version>` and its data directory `<plugins>/data/<plugin>-<marketplace>`
-// (checked on this machine, 2026-10-04: `...\plugins\cache\newms-plugins\danxbot\0.12.35` ->
-// `...\plugins\data\danxbot-newms-plugins`). Either separator; the answer keeps the root's own. A root of any other shape
-// (a `--plugin-dir` load) has no data directory this can name: the answer is the reason, never a guess.
-export function pluginDataDir(root: string): { dir: string } | { reason: string } {
-  const sep = root.includes('\\') ? '\\' : '/'
-  const parts = root.replace(/[\\/]+$/, '').split(/[\\/]/)
-  const n = parts.length
-  if (n < 5 || parts[n - 4] !== 'cache' || parts.slice(n - 3).some(p => p === '')) {
-    return { reason: `the plugin is not loaded from a marketplace install (${root}), so its data directory is unknown` }
-  }
-  const [marketplace, plugin] = [parts[n - 3], parts[n - 2]]
-  return { dir: [...parts.slice(0, n - 4), 'data', `${plugin}-${marketplace}`].join(sep) }
-}
-
-// The version record the SessionStart prewarm writes (scripts/lib/dashboard-mcp-package.mjs: `<version>\n`).
-export function dashboardMcpRecord(dataDir: string): string {
-  return `${dataDir}/dashboard-mcp/current`
-}
-
-// The record's text as a strict x.y.z, or the reason it is not one (the same rule as STRICT_VERSION there).
-export function readVersionRecord(text: string): { version: string } | { reason: string } {
-  const version = text.trim()
-  return /^\d+\.\d+\.\d+$/.test(version) ? { version } : { reason: `the recorded dashboard MCP version is not x.y.z (${JSON.stringify(version.slice(0, 40))})` }
-}
-
-// The installed entry point of that version.
-export function dashboardMcpBin(dataDir: string, version: string): string {
-  return `${dataDir}/dashboard-mcp/${version}/${DASHBOARD_MCP_BIN_REL}`
+// The host child: node running the plugin's reader script (it finds the installed danx-dashboard-mcp itself) on the main transcript.
+export function liveReaderArgv(root: string, transcript: string): string[] {
+  return ['node', `${root}/${LIVE_READER_SCRIPT}`, transcript]
 }
 
 // A child's stdout arrives in pieces that end wherever its writes did: `lines` are the whole lines so far, `rest` the
@@ -147,10 +119,18 @@ export function stateOfStatus(status: string): SubagentState | null {
   return null
 }
 
+// A sub-agent's state, finish and drop time by the engine's `state`: an end the snapshot has not timed yet is its last activity
+// (the engine can report the end before the child's line with the finish arrives), and an end already known keeps its time.
+function engineTimes(state: SubagentState, s: LiveSnapshot, knownFinish: number | null): Pick<SubagentRow, 'state' | 'finishedAt' | 'visibleUntil'> {
+  const finishedAt = state === 'running' ? null : (knownFinish ?? s.finishedAt ?? s.lastActivityAt)
+  return { state, finishedAt, visibleUntil: finishedAt === null ? null : finishedAt + SUBAGENT_ENDED_VISIBLE_MS }
+}
+
 // The pane's sub-agent rows with this session's live numbers over them. A dashboard row of the session the child reads
-// (`live.sessionId`) takes the snapshot's identity, numbers, activity and card; a snapshot the dashboard has no row for yet is
-// a row of its own, its state the engine's (`live.statuses`). Rows of other sessions are the dashboard's. `errors` names the
-// snapshots that could not become a row.
+// (`live.sessionId`) takes the snapshot's identity, numbers, activity and card, and the engine's state (`live.statuses`, the
+// engine's own list): an end that never reached the dashboard (no task notification) would otherwise read `running` there for
+// good. A snapshot the dashboard has no row for yet is a row of its own, its state the engine's. Rows of other sessions are the
+// dashboard's. `errors` names the snapshots that could not become a row.
 export function withLive(v: PlanView, live: LiveSubagents): { rows: SubagentRow[]; errors: string[] } {
   const rows = v.subagents.rows
   if (live.sessionId === null) return { rows, errors: [] }
@@ -161,8 +141,11 @@ export function withLive(v: PlanView, live: LiveSubagents): { rows: SubagentRow[
   const merged = rows.map(row => {
     const s = row.sessionId === live.sessionId ? live.snapshots[row.id] : undefined
     if (s === undefined) return row
+    const status = live.statuses[row.id]
+    const state = status === undefined ? null : stateOfStatus(status)
     return {
       ...row,
+      ...(state === null ? {} : engineTimes(state, s, row.finishedAt)),
       label: s.description ?? row.label,
       agentType: s.agentType ?? row.agentType,
       model: s.model ?? row.model,
@@ -186,8 +169,6 @@ export function withLive(v: PlanView, live: LiveSubagents): { rows: SubagentRow[
       errors.push(`${s.id} has an engine status the pane does not know (${status})`)
       continue
     }
-    // the engine can report the end before the child's line with the finish arrives: its last activity is when it stopped
-    const finishedAt = state === 'running' ? null : (s.finishedAt ?? s.lastActivityAt)
     merged.push({
       id: s.id,
       sessionId: live.sessionId,
@@ -196,10 +177,8 @@ export function withLive(v: PlanView, live: LiveSubagents): { rows: SubagentRow[
       agentType: s.agentType,
       model: s.model,
       effort: s.effort,
-      state,
       startedAt: s.startedAt,
-      finishedAt,
-      visibleUntil: finishedAt === null ? null : finishedAt + SUBAGENT_ENDED_VISIBLE_MS,
+      ...engineTimes(state, s, null),
       tokensTotal: s.tokensTotal,
       costUsd: s.costUsd,
       toolCalls: s.toolCallCount,

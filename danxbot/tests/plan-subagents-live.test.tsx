@@ -3,23 +3,9 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { LiveSnapshot, LiveSubagents, PlanView, SubagentRow } from '../types'
-import { DASHBOARD_MCP_BIN_REL, EMPTY, NO_LIVE, SUBAGENT_ENDED_VISIBLE_MS, liveUnavailableLine } from '../hooks/plan/config'
-import {
-  NEW_READER,
-  dashboardMcpBin,
-  dashboardMcpRecord,
-  exitReason,
-  mergeSnapshots,
-  parseLiveLine,
-  pluginDataDir,
-  pruneSnapshots,
-  readPiece,
-  readVersionRecord,
-  splitLines,
-  stateOfStatus,
-  withLive,
-} from '../hooks/plan/live'
-import { CLOCK_START, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, rawSubagent, startSession } from './plan-kit'
+import { EMPTY, LIVE_READER_SCRIPT, NO_LIVE, SUBAGENT_ENDED_VISIBLE_MS, liveUnavailableLine } from '../hooks/plan/config'
+import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, parseLiveLine, pruneSnapshots, readPiece, splitLines, stateOfStatus, withLive } from '../hooks/plan/live'
+import { CLOCK_START, OTHER_SESSION, OWN_SESSION, READER_PIECE_MS, SURFACES, dashboard, rawSubagent, startSession } from './plan-kit'
 
 const OWN = OWN_SESSION.session_id
 const MAIN_TRANSCRIPT = 'C:\\Users\\me\\.claude\\projects\\p\\sess-own.jsonl'
@@ -72,27 +58,12 @@ const liveOf = (snapshots: LiveSnapshot[], statuses: Record<string, string> = {}
   ...over,
 })
 
-describe('where the installed live reader is', () => {
-  test("a marketplace install's data directory, by Claude Code's layout, with either separator", () => {
-    expect(pluginDataDir('C:\\Users\\newms\\.claude\\plugins\\cache\\newms-plugins\\danxbot\\0.12.35')).toEqual({
-      dir: 'C:\\Users\\newms\\.claude\\plugins\\data\\danxbot-newms-plugins',
-    })
-    expect(pluginDataDir('/home/me/.claude/plugins/cache/newms-plugins/danxbot/0.12.35/')).toEqual({ dir: '/home/me/.claude/plugins/data/danxbot-newms-plugins' })
-  })
-
-  test('a root of any other shape (a --plugin-dir load) is a named reason, never a guess', () => {
-    const r = pluginDataDir('C:\\work\\claude-plugins\\danxbot')
-    expect(r).toEqual({ reason: expect.stringContaining('not loaded from a marketplace install') })
-    expect('reason' in pluginDataDir('/plugins/cache/x')).toBe(true)
-  })
-
-  test('the version record and the bin under that version', () => {
-    expect(dashboardMcpRecord('D')).toBe('D/dashboard-mcp/current')
-    expect(readVersionRecord('1.2.3\n')).toEqual({ version: '1.2.3' })
-    for (const bad of ['', 'latest', '1.2', '1.2.3-beta']) expect('reason' in readVersionRecord(bad)).toBe(true)
-    expect(dashboardMcpBin('D', '1.2.3')).toBe(`D/dashboard-mcp/1.2.3/${DASHBOARD_MCP_BIN_REL}`)
-    // the one layout ensure-dashboard-mcp.sh installs: BIN_REL="node_modules/${PKG_NAME}/dist/index.js"
-    expect(DASHBOARD_MCP_BIN_REL).toBe('node_modules/@thehammer/danx-dashboard-mcp/dist/index.js')
+// DX-4508: the module starts the plugin's own reader script (scripts/subagents-live.mjs, tested by subagents-live.test.mjs), which
+// finds the installed danx-dashboard-mcp from its own location and runs its `subagents-live`: the module reads no file of its own.
+describe('how the live reader is started', () => {
+  test("node, the plugin's reader script under its root, the main transcript", () => {
+    expect(LIVE_READER_SCRIPT).toBe('scripts/subagents-live.mjs')
+    expect(liveReaderArgv('C:\p\danxbot', MAIN_TRANSCRIPT)).toEqual(['node', 'C:\p\danxbot/scripts/subagents-live.mjs', MAIN_TRANSCRIPT])
   })
 })
 
@@ -164,12 +135,32 @@ describe("reading the live reader's output", () => {
 })
 
 describe('the live numbers over the dashboard rows', () => {
-  test("this session's row takes the snapshot's numbers, activity and identity; the dashboard's state and times stand", () => {
+  test("this session's row takes the snapshot's numbers, activity and identity; the dashboard's times stand", () => {
     const { rows, errors } = withLive(viewOf([row('a1')]), liveOf([snapshot('a1')], { 'agent-a1': 'running' }))
     expect(errors).toEqual([])
     expect(rows[0]).toMatchObject({ label: 'Live a1', tokensTotal: 50_000, costUsd: 1.5, toolCalls: 30, activity: 'Edit: register.tsx', state: 'running', startedAt: CLOCK_START - 60_000 })
     // no card in the snapshot: the dashboard's stands
     expect(rows[0].card).toEqual({ id: 'DX-9', title: 'In flight card' })
+  })
+
+  // DX-4508: a sub-agent whose end never reached the dashboard (no task notification) reads `running` there for good; the engine's
+  // own list is the truth for this session's sub-agents, as it is for a row only the live child reported.
+  test("this session's row takes the engine's state: an end the dashboard missed shows, timed by the transcript", () => {
+    const stuck = row('s1', { startedAt: 1_000 })
+    const live = liveOf([snapshot('s1', { lastActivityAt: 9_000 })], { 'agent-s1': 'completed' })
+    expect(withLive(viewOf([stuck]), live).rows[0]).toMatchObject({ state: 'done', finishedAt: 9_000, visibleUntil: 9_000 + SUBAGENT_ENDED_VISIBLE_MS })
+    // an end the dashboard already has keeps its own finish
+    const ended = row('e1', { state: 'done', finishedAt: 4_000, visibleUntil: 4_000 + SUBAGENT_ENDED_VISIBLE_MS })
+    expect(withLive(viewOf([ended]), liveOf([snapshot('e1')], { 'agent-e1': 'killed' })).rows[0]).toMatchObject({ state: 'stopped', finishedAt: 4_000 })
+    // running again by the engine (a resumed sub-agent): running, no finish
+    expect(withLive(viewOf([ended]), liveOf([snapshot('e1')], { 'agent-e1': 'running' })).rows[0]).toMatchObject({ state: 'running', finishedAt: null, visibleUntil: null })
+  })
+
+  test("with no engine status the pane knows, or no snapshot to time an end by, the dashboard's state stands", () => {
+    const stuck = row('s1')
+    expect(withLive(viewOf([stuck]), liveOf([snapshot('s1')], {})).rows[0].state).toBe('running')
+    expect(withLive(viewOf([stuck]), liveOf([snapshot('s1')], { 'agent-s1': 'pending' })).rows[0].state).toBe('running')
+    expect(withLive(viewOf([stuck]), liveOf([], { 'agent-s1': 'completed' })).rows[0]).toEqual(stuck)
   })
 
   test('rows of other sessions keep the dashboard values', () => {
@@ -225,7 +216,8 @@ describe('the live numbers over the dashboard rows', () => {
 const pane = () => ({ component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } }) as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const running = (id: string) => ({ id, type: 'danxbot:worker-sonnet-high', description: `Build ${id}`, status: 'running' })
-const liveWrites = (d: any) => d.stateWrites.filter((w: any) => w.key === 'live').map((w: any) => w.value)
+const subagentReads = (d: any) => d.api.filter((a: any) => a.path.startsWith('/api/plan-sessions')).length
+const line = (snapshots: LiveSnapshot[]) => ({ stream: 'stdout' as const, text: `${JSON.stringify({ subagents: snapshots })}\n` })
 
 for (const surface of SURFACES) {
   describe(`the live reader's life on ${surface}`, () => {
@@ -236,7 +228,7 @@ for (const surface of SURFACES) {
       const asked = d.agentLists.count
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
       expect(d.agentLists.count).toBeGreaterThan(asked)
-      expect(d.spawns).toEqual([])
+      expect(d.readers).toEqual([])
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       expect(await text(ui)).not.toContain('Live numbers unavailable')
     })
@@ -248,7 +240,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
       expect(d.agentLists.count).toBe(0)
-      expect(d.spawns).toEqual([])
+      expect(d.readers).toEqual([])
     })
 
     test('a running sub-agent but no transcript path reported: one muted line says so, the dashboard numbers stand', async ($, on) => {
@@ -261,32 +253,8 @@ for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       const line = (await ui.findAll({ type: 'Text', text: liveUnavailableLine('the session has not reported its transcript path yet') }))[0]
       expect(line?.props.dimColor).toBe(true)
-      expect(d.spawns).toEqual([])
+      expect(d.readers).toEqual([])
       expect((await ui.find({ key: 'sa-agent-a1' }))!.text).toContain('12k tokens · $0.42 · 7 tool calls')
-    })
-
-    // `claude plugin test` loads the plugin from its source folder, which is not a marketplace install: the reason is named, and
-    // the failure stands (no retry on a refresh) until the next sub-agent starts.
-    test('a plugin not loaded from a marketplace install: the line names it, a refresh does not retry, the next start does', async ($, on) => {
-      const d = dashboard(on)
-      d.world.subagents[OWN] = [rawSubagent('a1')]
-      d.world.agents = [running('a1')]
-      on('classic.SubagentStart', () => ({}) as any)
-      await startSession($, d, surface)
-      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
-      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
-      expect(await text(ui)).toContain('Live numbers unavailable: the plugin is not loaded from a marketplace install')
-      expect(d.spawns).toEqual([])
-      const tries = () => liveWrites(d).filter((v: any) => !v.failed).length
-      const before = tries()
-      // the 60 s refresh re-checks, but a standing failure is not tried again
-      await d.clock.advance(60_000)
-      expect(tries()).toBe(before)
-      expect(await text(ui)).toContain('Live numbers unavailable')
-      // the next start clears it and tries once more (and fails the same way here)
-      await $.classic.SubagentStart({ agent_id: 'a2', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
-      expect(tries()).toBeGreaterThan(before)
-      expect(liveWrites(d).at(-1)).toMatchObject({ failed: true, warning: expect.stringContaining('not loaded from a marketplace install') })
     })
 
     test('once no sub-agent runs, the failure line goes: there is nothing live to show', async ($, on) => {
@@ -298,11 +266,99 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
-      expect(await text(ui)).toContain('Live numbers unavailable')
+      expect(d.readers).toHaveLength(1)
+      d.readers[0].end = { code: 1, signal: null }
+      await d.clock.advance(READER_PIECE_MS)
+      expect(await text(ui)).toContain('Live numbers unavailable: the live reader exited with exit code 1')
       d.world.agents = [{ ...running('a1'), status: 'completed' }]
       await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
       expect(await text(ui)).not.toContain('Live numbers unavailable')
-      expect(d.spawns).toEqual([])
+      // the one start is not retried
+      expect(d.readers).toHaveLength(1)
+    })
+
+    // DX-4508: the reader's whole life, driven through a stand-in child: started only while a sub-agent runs, one at a time, its lines
+    // laid over this session's row with no dashboard read, stopped once none runs.
+    test("a running sub-agent starts one reader; its lines redraw this session's card with no dashboard read; it stops with the last one", async ($, on) => {
+      const d = dashboard(on)
+      d.world.subagents[OWN] = [rawSubagent('a1')]
+      d.world.agents = [running('a1')]
+      const children = d.readers
+      on('classic.SubagentStart', () => ({}) as any)
+      on('classic.SubagentStop', () => ({}) as any)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      expect(children).toHaveLength(1)
+      const [node, script, path] = children[0].argv
+      expect([node, path]).toEqual(['node', MAIN_TRANSCRIPT])
+      expect(script.replace(/\\/g, '/')).toMatch(/\/scripts\/subagents-live\.mjs$/)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
+      expect((await ui.find({ key: 'sa-agent-a1' }))!.text).toContain('12k tokens · $0.42 · 7 tool calls')
+
+      const reads = subagentReads(d)
+      children[0].pieces.push(line([snapshot('a1', { tokensTotal: 2_500_000, costUsd: 3.25, toolCallCount: 41, currentActivity: 'Edit: live.ts' })]))
+      await d.clock.advance(READER_PIECE_MS)
+      const shown = (await ui.find({ key: 'sa-agent-a1' }))!.text
+      expect(shown).toContain('2.5M tokens · $3.25 · 41 tool calls')
+      expect(shown).toContain('▸ Edit: live.ts')
+      expect(subagentReads(d)).toBe(reads)
+
+      // a second sub-agent while the reader runs: still one reader
+      d.world.agents = [running('a1'), running('a2')]
+      await $.classic.SubagentStart({ agent_id: 'a2', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      expect(children).toHaveLength(1)
+
+      // one ends, one still runs: the reader runs on
+      d.world.agents = [{ ...running('a1'), status: 'completed' }, running('a2')]
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
+      await d.clock.advance(READER_PIECE_MS)
+      expect(children[0].stopped).toBe(false)
+
+      // the last one ends: the reader is stopped, and nothing is said about it
+      d.world.agents = [{ ...running('a1'), status: 'completed' }, { ...running('a2'), status: 'completed' }]
+      await $.classic.SubagentStop({ agent_id: 'a2', agent_type: 'danxbot:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
+      await d.clock.advance(READER_PIECE_MS)
+      expect(children[0].stopped).toBe(true)
+      expect(children).toHaveLength(1)
+      expect(await text(ui)).not.toContain('Live numbers unavailable')
+    })
+
+    test('a reader that exits on its own: one line names why with what it said, and only the next start tries again', async ($, on) => {
+      const d = dashboard(on)
+      d.world.subagents[OWN] = [rawSubagent('a1')]
+      d.world.agents = [running('a1')]
+      const children = d.readers
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      children[0].pieces.push({ stream: 'stderr', text: 'no recorded dashboard MCP version' })
+      children[0].end = { code: 1, signal: null }
+      await d.clock.advance(READER_PIECE_MS)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
+      const said = liveUnavailableLine('the live reader exited with exit code 1: no recorded dashboard MCP version')
+      expect((await ui.findAll({ type: 'Text', text: said }))[0]?.props.dimColor).toBe(true)
+      // the dashboard's numbers stand
+      expect((await ui.find({ key: 'sa-agent-a1' }))!.text).toContain('12k tokens · $0.42 · 7 tool calls')
+      await d.clock.advance(60_000)
+      expect(children).toHaveLength(1)
+      await $.classic.SubagentStart({ agent_id: 'a2', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      expect(children).toHaveLength(2)
+    })
+
+    test('a line the pane cannot read stops the reader and says why', async ($, on) => {
+      const d = dashboard(on)
+      d.world.subagents[OWN] = [rawSubagent('a1')]
+      d.world.agents = [running('a1')]
+      const children = d.readers
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      children[0].pieces.push({ stream: 'stdout', text: 'nope\n' })
+      await d.clock.advance(READER_PIECE_MS)
+      await d.clock.advance(READER_PIECE_MS)
+      expect(children[0].stopped).toBe(true)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
+      expect(await text(ui)).toContain('Live numbers unavailable: the live reader printed a line that is not JSON')
     })
 
     test('the latest transcript path the classic events carry is kept', async ($, on) => {

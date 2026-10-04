@@ -19,7 +19,6 @@ import {
   CONNECT_ERROR_MAX,
   EMPTY,
   LIVE_REASON_MAX,
-  LIVE_SUBCOMMAND,
   LOCK_STALE_MS,
   MIN_GAP_MS,
   NO_LIVE,
@@ -46,7 +45,7 @@ import type { ToolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
-import { NEW_READER, dashboardMcpBin, dashboardMcpRecord, exitReason, mergeSnapshots, pluginDataDir, pruneSnapshots, readPiece, readVersionRecord } from './plan/live'
+import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
 import { shownSubagents } from './plan/subagent-cards'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
@@ -640,7 +639,8 @@ async function tickClock($: any): Promise<void> {
 
 // ---- DX-4508: the live sub-agent numbers ------------------------------------
 // While this session is plan-connected and has a running sub-agent (`$.agent.list()`), ONE host child streams its sub-agents'
-// numbers: `node <installed danx-dashboard-mcp>/dist/index.js subagents-live <main transcript>`, one JSON line per change. Each line
+// numbers: `node <plugin root>/scripts/subagents-live.mjs <main transcript>` (the installed danx-dashboard-mcp's `subagents-live`), one
+// JSON line per change. Each line
 // is checked and merged into the `live` atom, which redraws the pane with no dashboard read. The child stops once none runs. A
 // child that cannot start, exits, or prints a line that cannot be read is one muted line in the section, the dashboard's
 // numbers stand, and nothing retries until the next sub-agent starts.
@@ -702,21 +702,8 @@ async function checkLive($: any, isStart: boolean): Promise<void> {
 async function startLive($: any): Promise<void> {
   const path = await read($, transcript)
   if (path === null) return liveFailed($, 'the session has not reported its transcript path yet')
-  const data = pluginDataDir($.plugin.root)
-  if ('reason' in data) return liveFailed($, data.reason)
-  const record = dashboardMcpRecord(data.dir)
-  let text: string
-  try {
-    text = await $.fs.read(record)
-  } catch (err: any) {
-    return liveFailed($, `no recorded dashboard MCP version at ${record} (${errMessage(err)})`)
-  }
-  const version = readVersionRecord(text)
-  if ('reason' in version) return liveFailed($, version.reason)
-  const bin = dashboardMcpBin(data.dir, version.version)
-  if (!(await $.fs.exists(bin))) return liveFailed($, `the dashboard MCP ${version.version} is not installed at ${bin}`)
   const sessionId: string = await $.session.id()
-  const child: HookStream<ProcessSpawnChunk, ProcessSpawnResult> = $.process.spawn({ argv: ['node', bin, LIVE_SUBCOMMAND, path] })
+  const child: HookStream<ProcessSpawnChunk, ProcessSpawnResult> = $.process.spawn({ argv: liveReaderArgv($.plugin.root, path) })
   liveChild = child
   // a new child's first line carries every sub-agent; until it comes, what this session's last child said stands
   await update($, live, cur => ({ ...cur, sessionId, warning: null, failed: false, snapshots: cur.sessionId === sessionId ? cur.snapshots : {} }))

@@ -82,8 +82,9 @@ describe('which sub-agents show, and in what order', () => {
 
 for (const surface of SURFACES) {
   describe(`a sub-agent card on ${surface}`, () => {
-    // DX-4508: drawn as Claude Code's own background task cards are: no border, a raised fill, colour only on the status dot
-    test('a running sub-agent is its own card: no border, a raised fill, padding, a coloured dot, and every fact the operator asked for', async ($, on) => {
+    // DX-4508: drawn as Claude Code's own background task cards are: no visible border, a raised fill, rounded corners, colour only
+    // on the status dot. A Box rounds its corners only by drawing a `round` border, so the border is drawn in the card's own fill.
+    test('a running sub-agent is its own card: a round border in its own fill, a raised fill, padding, a coloured dot, and every fact the operator asked for', async ($, on) => {
       const d = dashboard(on)
       d.world.subagents[OWN] = [rawSubagent('a1')]
       await startSession($, d, surface)
@@ -91,7 +92,8 @@ for (const surface of SURFACES) {
       const card = await ui.find({ key: 'sa-agent-a1' })
       expect(card?.props).toMatchObject({ backgroundColor: SUBAGENT_CARD_BACKGROUND, paddingX: 1 })
       expect(SUBAGENT_CARD_BACKGROUND).toBe('userMessageBackground')
-      for (const prop of ['borderStyle', 'borderColor', 'borderDimColor']) expect(card?.props[prop]).toBeUndefined()
+      expect(card?.props).toMatchObject({ borderStyle: 'round', borderColor: SUBAGENT_CARD_BACKGROUND })
+      expect(card?.props.borderDimColor).toBeUndefined()
       const dot = (await ui.findAll({ type: 'Text', text: '●' })).find((t: any) => t.props.color === SUBAGENT_STATE_COLOR.running)
       expect(dot).toBeDefined()
       // the name in the primary colour (bold), every metadata line muted: the dot is the only colour on the card
