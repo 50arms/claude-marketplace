@@ -23,15 +23,26 @@ export async function readStdinText({ stdin = process.stdin, timeoutMs = 500 } =
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** `session_id`, `hook_event_name` and `transcript_path` out of the hook JSON; anything unusable is null / the env fallback. */
+/**
+ * DX-4391: a PostToolUse hook's `tool_response` as the text the tool answered: a string as is, else the
+ * `text` blocks of its `content` (or of the array itself) joined. "" when it carries none.
+ */
+export function toolResponseText(toolResponse) {
+  if (typeof toolResponse === "string") return toolResponse;
+  const blocks = Array.isArray(toolResponse) ? toolResponse : Array.isArray(toolResponse?.content) ? toolResponse.content : [];
+  return blocks.map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : "")).join("");
+}
+
+/** `session_id`, `hook_event_name`, `transcript_path` and (PostToolUse) the tool's answer text out of the hook JSON; anything unusable is null / "" / the env fallback. */
 export function parseHookPayload(text, env = process.env) {
-  const fallback = { sessionId: env.CLAUDE_CODE_SESSION_ID ?? null, hookEventName: null, transcriptPath: null };
+  const fallback = { sessionId: env.CLAUDE_CODE_SESSION_ID ?? null, hookEventName: null, transcriptPath: null, toolResultText: "" };
   try {
     const parsed = JSON.parse(text);
     return {
       sessionId: typeof parsed.session_id === "string" && parsed.session_id !== "" ? parsed.session_id : fallback.sessionId,
       hookEventName: typeof parsed.hook_event_name === "string" ? parsed.hook_event_name : null,
       transcriptPath: typeof parsed.transcript_path === "string" && parsed.transcript_path !== "" ? parsed.transcript_path : null,
+      toolResultText: toolResponseText(parsed.tool_response),
     };
   } catch {
     return fallback;

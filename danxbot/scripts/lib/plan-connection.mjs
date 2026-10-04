@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Is this session connected to a danxbot plan? The ONE answer (PLN-11 R-10: the
 // plugin stays quiet until a plan is connected), shared by event-hook.sh,
-// background-work-report.mjs and the plan event bridge's SessionStart start.
+// background-work-report.mjs and the plan event bridge's SessionStart and plan_connect starts (DX-4391).
 // A successful `plan_connect` makes the
 // danx-dashboard MCP server write `~/.config/danxbot/plan-sessions/<session>.json`
 // (its `session-connection.ts` owns the schema); this only checks the file

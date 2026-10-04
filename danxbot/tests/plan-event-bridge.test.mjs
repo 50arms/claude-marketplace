@@ -13,6 +13,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as bridge from "../scripts/plan-event-bridge.mjs";
 import * as state from "../scripts/lib/bridge-state.mjs";
+import { parseHookPayload, toolResponseText } from "../scripts/lib/hook-input.mjs";
 import * as failureText from "../scripts/lib/failure-notice.mjs";
 import { spawnStandIn } from "./fixtures/spawn-standin.mjs";
 import { started, NOW } from "./fixtures/bridge-records.mjs";
@@ -2656,6 +2657,18 @@ describe("hookMayStart — a hook spawns nothing for a session with no plan conn
     assert.deepEqual(seen, [["on-a-plan", "/fake-home"], ["no-plan", "/fake-home"]]);
   });
 
+  test("a sign-in answer starts nothing even when an old record is there; a connection envelope follows the record", () => {
+    const connected = () => true;
+    const answer = (state) => JSON.stringify({ state, approvalUrl: "https://dash.example/connect/x", confirmCode: "ABCD1234" });
+    for (const state of ["approval_required", "approval_pending", "signed_in", "denied"]) {
+      assert.equal(bridge.hookMayStart({ sessionId: SESSION, toolResultText: answer(state), env: {}, connected }), false, state);
+    }
+    const envelope = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 2 } } });
+    assert.equal(bridge.hookMayStart({ sessionId: SESSION, toolResultText: envelope, env: {}, connected }), true);
+    assert.equal(bridge.hookMayStart({ sessionId: SESSION, toolResultText: "", env: {}, connected }), true);
+    assert.equal(bridge.hookMayStart({ sessionId: SESSION, toolResultText: "not json", env: {}, connected: () => false }), false);
+  });
+
   test("the real record decides: absent → no start, present → start", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-gate-"));
     try {
@@ -2668,6 +2681,22 @@ describe("hookMayStart — a hook spawns nothing for a session with no plan conn
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("a PostToolUse payload's tool answer (DX-4391)", () => {
+  const text = '{"state":"signed_in"}';
+  test("toolResponseText reads a string, content blocks, or an object holding them; anything else is empty", () => {
+    assert.equal(toolResponseText(text), text);
+    assert.equal(toolResponseText([{ type: "text", text }, { type: "image" }]), text);
+    assert.equal(toolResponseText({ content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] }), "ab");
+    for (const odd of [undefined, null, 7, {}, { content: "x" }, [null]]) assert.equal(toolResponseText(odd), "");
+  });
+
+  test("parseHookPayload carries it; a payload without one reads empty", () => {
+    assert.equal(parseHookPayload(JSON.stringify({ session_id: SESSION, tool_response: text }), {}).toolResultText, text);
+    assert.equal(parseHookPayload(JSON.stringify({ session_id: SESSION }), {}).toolResultText, "");
+    assert.equal(parseHookPayload("not json", {}).toolResultText, "");
   });
 });
 
@@ -2729,10 +2758,10 @@ describe("start mode's watchdog flags (DX-3997)", () => {
   // DX-4391: the real CLI, as the PostToolUse(plan_connect) hook runs it. The env lacks the messaging inbox on purpose:
   // a start that got past the gate would announce that on stderr and exit 2, so a quiet exit 0 proves nothing started.
   describe("the PostToolUse(plan_connect) hook run for real", () => {
-    const runHook = (home) =>
+    const runHook = (home, toolResponse) =>
       spawnSync(process.execPath, [path.join(here, "..", "scripts", "plan-event-bridge.mjs"), "start"], {
         encoding: "utf8",
-        input: JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", tool_name: "mcp__danx-dashboard__plan_connect" }),
+        input: JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", tool_name: "mcp__danx-dashboard__plan_connect", tool_response: toolResponse }),
         env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, DANXBOT_PLAN_SESSIONS_HOME: home },
       });
 
@@ -2746,13 +2775,30 @@ describe("start mode's watchdog flags (DX-3997)", () => {
       }
     });
 
+    test("a sign-in answer over a stale record (key lapsed, record kept) starts nothing and says nothing, whichever shape tool_response has", () => {
+      const home = tmpDir();
+      try {
+        const dir = path.join(home, ".config", "danxbot", "plan-sessions");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
+        const text = JSON.stringify({ state: "approval_required", approvalUrl: "https://dash.example/connect/x", confirmCode: "ABCD1234" });
+        const blocks = [{ type: "text", text }];
+        for (const toolResponse of [text, blocks, { content: blocks }]) {
+          const result = runHook(home, toolResponse);
+          assert.deepEqual([result.status, result.stdout, result.stderr], [0, "", ""], JSON.stringify(toolResponse).slice(0, 40));
+        }
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+
     test("a plan_connect that left the connection record starts the bridge (here it fails loud on the missing inbox)", () => {
       const home = tmpDir();
       try {
         const dir = path.join(home, ".config", "danxbot", "plan-sessions");
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
-        const result = runHook(home);
+        const result = runHook(home, JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 2 } } }));
         assert.equal(result.status, 2);
         assert.match(result.stderr, /could not start/);
       } finally {

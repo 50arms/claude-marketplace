@@ -20,8 +20,8 @@
  * WHEN IT RUNS. `plan_connect` (PostToolUse) and SessionStart run `start` only for a
  * plan-connected session (`lib/plan-connection.mjs`, see `hookMayStart`). A `plan_connect`
  * that is not a plan connection (DX-4391: approval_required, approval_pending, signed_in,
- * a refused connect, a leave) leaves no connection record, so it starts nothing and relays
- * nothing.
+ * a refused connect, a leave) starts nothing and relays nothing: it leaves no connection
+ * record, and a sign-in answer is refused outright even over an old record.
  *
  * LIVENESS. The bridge's own check of its Claude process (`CLAUDE_PID`, observed but
  * undocumented) is the sole authority on whether the session is alive; SessionEnd only
@@ -1597,8 +1597,24 @@ export function intentFromHookEvent(hookEventName) {
  * session (approval_required, approval_pending, signed_in) leave none, and a `start` for those
  * relayed `bridge down: no_connection_record` into the session each time.
  */
-export function hookMayStart({ sessionId, env = process.env, connected = isPlanConnected }) {
+export function hookMayStart({ sessionId, toolResultText = "", env = process.env, connected = isPlanConnected }) {
+  if (isSignInAnswer(toolResultText)) return false;
   return connected(sessionId, env.DANXBOT_PLAN_SESSIONS_HOME || homedir());
+}
+
+/**
+ * DX-4391: whether a `plan_connect` answered a sign-in step (`approval_required`, `approval_pending`,
+ * `signed_in`, `denied`, ...) instead of a plan connection. The MCP server words every one of those as
+ * `{ state, ... }` and a real connect as the `{ ok, status, body }` envelope, which has no `state`. The
+ * answer matters beyond the record check: a session whose key lapsed or was revoked keeps its old
+ * connection record while it asks for access again, so the record alone would start a bridge for it.
+ */
+export function isSignInAnswer(text) {
+  try {
+    return typeof JSON.parse(text)?.state === "string";
+  } catch {
+    return false;
+  }
 }
 
 /** The hook's stdin JSON carries `session_id`, `hook_event_name` and `transcript_path`; a hand run has none. */
@@ -1606,7 +1622,7 @@ async function readHookInput() {
   const hook = parseHookPayload(await readStdinText());
   // DX-2953: transcriptPath is recorded into .started.json's startInputs so a watchdog restart reuses it.
   // DX-4321: sessionStart is the one event that refreshes the recorded danx-dashboard-mcp version.
-  return { sessionId: hook.sessionId, intent: intentFromHookEvent(hook.hookEventName), transcriptPath: hook.transcriptPath, sessionStart: hook.hookEventName === "SessionStart" };
+  return { sessionId: hook.sessionId, intent: intentFromHookEvent(hook.hookEventName), transcriptPath: hook.transcriptPath, sessionStart: hook.hookEventName === "SessionStart", toolResultText: hook.toolResultText };
 }
 
 /** DX-3997: the only restart trigger `start` accepts — `bridge-watchdog.mjs` runs `start` as a subprocess with it. */
@@ -1662,7 +1678,7 @@ if (isMain) {
       const flags = parseStartFlags(process.argv.slice(3));
       const hook = await readHookInput();
       const request = resolveStartRequest({ hook, flags });
-      if (request.gated && !hookMayStart({ sessionId: request.sessionId })) process.exit(0);
+      if (request.gated && !hookMayStart({ sessionId: request.sessionId, toolResultText: hook.toolResultText })) process.exit(0);
       const { gated: _gated, ...startArgs } = request;
       const result = await start(startArgs);
       process.exit(result.exitCode ?? 0);
