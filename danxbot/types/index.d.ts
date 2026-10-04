@@ -95,7 +95,7 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band and pane say so and offer NO
 // Sign in, because a revoked agent must stop.
 // DX-4448: `prefixes` are the issue prefixes (`DX`, `SG`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
-// EVERY card on the connected plan, any status (GET /api/issues filtered to the plan, closed cards included). Empty when not connected.
+// EVERY card on the connected plan, any status (GET /api/plans/:id/cards, unscoped by board, closed cards included). Empty when not connected.
 export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: string[] } | { state: 'error'; message: string }
 
 export type PlanView = {
