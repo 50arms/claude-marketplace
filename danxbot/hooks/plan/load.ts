@@ -173,8 +173,8 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
   // the needs-you cards and the in-progress cards, together.
   const [planR, cards, inProg, boards, allCards] = await Promise.all([
     call('GET', `/api/plans/${connectedId}`),
-    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_BUCKET_ID, sort: 'priority', limit: MAX_CARDS } }),
-    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', limit: MAX_CARDS } }),
+    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_BUCKET_ID, sort: 'priority-desc', limit: MAX_CARDS } }),
+    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority-desc', limit: MAX_CARDS } }),
     // DX-4448: the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
     // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
     call('GET', '/api/boards'),
