@@ -241,6 +241,12 @@ export function dashboard(
         ],
       })
     }
+    // DX-4448: every card of the plan in any status, closed included, unpaged (DX-30 and DX-31 are in neither the needs-you nor the in-progress bucket)
+    if (method === 'GET' && path === '/api/issues') {
+      if (options.planCardsFail) return reply({ error: 'plan cards boom' }, 500)
+      const ids = [...world.cards.map(c => c.id), ...world.inProgress.map(c => c.id), 'DX-30', 'DX-31']
+      return reply({ issues: ids.map(id => ({ id, title: id })), total: options.planCardsTotal ?? ids.length })
+    }
     const planOne = /^\/api\/plans\/(\d+)$/.exec(path)
     if (method === 'GET' && planOne) {
       const p = plans.find(x => x.id === Number(planOne[1]))
@@ -260,12 +266,6 @@ export function dashboard(
         cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4, updatedAt: c.updatedAt, assignedAgent: 'raw-session-uuid' })),
         ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
       })
-    }
-    // DX-4448: no bucket = every card of the plan in any status (DX-30 and DX-31 are in neither the needs-you nor the in-progress bucket)
-    if (method === 'GET' && cards && query?.bucket === undefined) {
-      if (options.planCardsFail) return reply({ error: 'plan cards boom' }, 500)
-      const ids = [...world.cards.map(c => c.id), ...world.inProgress.map(c => c.id), 'DX-30', 'DX-31']
-      return reply({ cards: ids.map(id => ({ id, title: id })), total: options.planCardsTotal ?? ids.length })
     }
     if (method === 'GET' && cards) {
       return reply({

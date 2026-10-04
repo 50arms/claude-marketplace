@@ -4,7 +4,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
 import { linkCardIds } from '../hooks/plan/card-links'
-import { DASHBOARD_URL, SURFACES, dashboard, startSession } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const plan = { id: 23, ref: 'PLAN-23', name: 'p', status: 'building', dashboardUrl: DASHBOARD_URL } as any
 const PREFIXES = ['DX', 'SG']
@@ -108,23 +108,26 @@ for (const surface of SURFACES) {
 
     test('before the first load finishes (the empty view) the reply is drawn as it is', async ($, on) => {
       dashboard(on)
-      expect(EMPTY.cardPrefixes).toEqual([])
-      expect(EMPTY.planCardIds).toEqual([])
+      expect(EMPTY.links).toEqual({ state: 'ready', prefixes: [], planCardIds: [] })
       expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
     })
 
-    // DX-4448: what the links stand on failing is an error view in the pane, as any other failed read is, and the reply stays as written
+    // DX-4448: what the links stand on failing is the links' own error: the plan view stays ready, the pane says why, the reply stays as written
     for (const [name, options, shown] of [
       ['the boards call failing', { boardsFail: true }, 'boards boom'],
-      ['a boards answer with no boards', { boardsShape: 'none' }, 'GET /api/boards answered no boards'],
-      ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }, 'GET /api/boards answered no boards'],
+      ['a boards answer with no boards', { boardsShape: 'none' }, 'answered no list of boards'],
+      ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }, 'answered a board with no issue_prefix'],
       ['the plan cards call failing', { planCardsFail: true }, 'plan cards boom'],
-      ['the plan having more cards than were read', { planCardsTotal: 1001 }, 'more cards than the 1000'],
+      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }, 'answered 5 of 9 cards'],
     ] as const) {
-      test(`${name}: an error in the pane, never silent; the reply is drawn as it is`, async ($, on) => {
+      test(`${name}: the plan stays ready, the pane says why, the reply is drawn as it is`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
-        expect(await paneText(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))).toContain(shown)
+        expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
+        const pane = await paneText(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))
+        expect(pane).toContain('Needs You')
+        expect(pane).toContain(`Card ids in replies are not linked: GET /api/`)
+        expect(pane).toContain(shown)
         expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
       })
     }

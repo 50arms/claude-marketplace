@@ -94,6 +94,10 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // the band and pane say so and offer Sign in, never the server's agent-facing text.
 // `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band and pane say so and offer NO
 // Sign in, because a revoked agent must stop.
+// DX-4448: `prefixes` are the issue prefixes (`DX`, `SG`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
+// EVERY card on the connected plan, any status (GET /api/issues filtered to the plan, closed cards included). Empty when not connected.
+export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: string[] } | { state: 'error'; message: string }
+
 export type PlanView = {
   phase: 'loading' | 'ready' | 'error' | 'no-mcp' | 'signed-out' | 'key-revoked'
   error: string | null
@@ -112,12 +116,9 @@ export type PlanView = {
   // status count's: a card in progress with an open problem sits in needs-you).
   inProgress: InProgressRow[]
   inProgressTotal: number
-  // DX-4448: the issue prefixes (`DX`, `SG`) of the dashboard's boards, read at refresh from GET /api/boards, so a card id in an
-  // assistant reply can be drawn as a link with no call at draw time. Empty when not connected or the boards call failed.
-  cardPrefixes: string[]
-  // DX-4448: the ids of EVERY card on the connected plan (any status, any bucket), read at refresh, so a card id in a reply
-  // links to its plan page whatever its status. Empty when not connected.
-  planCardIds: string[]
+  // DX-4448: what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
+  // failed read of it leaves the plan view `ready` and says so in the pane, and replies are then drawn as written.
+  links: CardLinks
   // The event bridge as GET /api/plans answers it (`sessionListenerAttached`): the server's health state and
   // its next step; null when the answer carries none (a session on no plan, or no session row).
   listener: ListenerStatus | null

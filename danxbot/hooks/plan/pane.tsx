@@ -234,6 +234,8 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         </Box>
       ))}
       {cappedInProgressNote(v) && <Text color={WARNING}>{cappedInProgressNote(v)}</Text>}
+      {/* DX-4448: the plan loaded, but the card links did not: say why replies show plain card ids, never silently */}
+      {v.links.state === 'error' && <Text color={WARNING}>Card ids in replies are not linked: {v.links.message}</Text>}
       {v.refreshedAt && <Text dimColor>{updatedText(v.refreshedAt)}</Text>}
     </Box>
   )

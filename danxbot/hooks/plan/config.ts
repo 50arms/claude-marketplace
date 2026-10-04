@@ -19,9 +19,6 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 // rather than presenting a lower bound as the whole.
 export const MAX_PLANS = 30
 export const MAX_CARDS = 15
-// DX-4448: GET /api/plans/:id/cards takes limit 1..1000 (danxbot_api_spec); the card-link load reads every card id of the plan at
-// that cap. A plan with more cards than that is an error, never a partial set read as the whole.
-export const PLAN_CARDS_LIMIT = 1000
 // DX-4448: an issue prefix as a board names it (`DX`, `SSL`): capital letters, at most this many. Anything else in a boards
 // answer is an error, and the card-id matcher is built from these without regex escaping.
 export const PREFIX_MAX = 10
@@ -79,8 +76,8 @@ export const EMPTY: PlanView = {
   statusBreakdown: null,
   inProgress: [],
   inProgressTotal: 0,
-  cardPrefixes: [],
-  planCardIds: [],
+  // DX-4448: nothing to link until a load reads the boards and the plan's cards
+  links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,
   refreshedAt: null,
   resumePlan: null,

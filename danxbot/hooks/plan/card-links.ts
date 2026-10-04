@@ -47,23 +47,25 @@ function* segments(text: string): Generator<{ prose: boolean; text: string }> {
   yield* flush(fence === null)
 }
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 // Every `PREFIX-123` with a known prefix becomes `[PREFIX-123](url)`. A card in `planCardIds` links to its page on the connected
 // plan; any other known-prefix card to the plan-free board route. Unknown prefixes (UTF-8, SHA-256) and anything inside code,
 // fences, links or URLs are left as written. No prefixes known: the text comes back unchanged.
 export function linkCardIds(text: string, prefixes: string[], plan: ConnectedPlan, planCardIds: ReadonlySet<string>): string {
   if (prefixes.length === 0) return text
-  // prefixes are capital letters only (readPrefixes in load.ts), so they need no regex escaping
-  const alt = [...prefixes].sort((a, b) => b.length - a.length).join('|')
+  const alt = [...prefixes].sort((a, b) => b.length - a.length).map(escapeRegExp).join('|')
   // a word char, `-`, `/` or `.` before it, or a word char or `-` after it, makes it part of something else (a path, UTF-8-1)
-  const id = String.raw`(?<![A-Za-z0-9_\-/.])(?:${alt})-\d+(?![A-Za-z0-9_\-])`
+  const id = String.raw`(?<![A-Za-z0-9_\-/.])(?<card>(?:${alt})-\d+)(?![A-Za-z0-9_\-])`
   const re = new RegExp(`${PROTECTED}|${id}`, 'gm')
   let out = ''
   for (const seg of segments(text)) {
     out += seg.prose
-      ? seg.text.replace(re, hit => {
-          // anything else the pattern matched is a protected construct: kept as written
-          if (!/^[A-Z]+-\d+$/.test(hit)) return hit
-          return `[${hit}](${planCardIds.has(hit) ? cardUrl(plan, hit) : boardCardUrl(plan, hit)})`
+      ? seg.text.replace(re, (hit: string, ...rest: any[]) => {
+          // the named group is the last argument; it is set only when the id alternative matched (a protected construct is kept)
+          const card: string | undefined = rest[rest.length - 1].card
+          if (card === undefined) return hit
+          return `[${card}](${planCardIds.has(card) ? cardUrl(plan, card) : boardCardUrl(plan, card)})`
         })
       : seg.text
   }
