@@ -57,6 +57,9 @@ type Sol = { id: number; title: string; recommended: boolean; body?: string; pro
 type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean; solutions: Sol[]; summary?: string; context?: string }
 type Card = { id: string; title: string; priority: number; problems: Prob[]; comments: any[] }
 
+// DX-4448: the plan's every card id (all statuses, two boards): the fixture's own cards plus DX-30 (ToDo), DX-31 (Done) and SG-7 (gpt-manager)
+const PLAN_CARD_IDS = ['DX-1', 'DX-2', 'DX-9', 'DX-30', 'DX-31', 'SG-7']
+
 export type Dashboard = ReturnType<typeof dashboard>
 
 // The fixture: two cards in priority order. DX-1 holds a question (its recommended solution is
@@ -139,10 +142,12 @@ export function dashboard(
     // DX-4448: GET /api/boards fails
     boardsFail?: boolean
     // ... answers boards the plugin cannot read: none at all, or a prefix that is not capital letters
-    boardsShape?: 'none' | 'badPrefix'
+    boardsShape?: 'none' | 'badPrefix' | 'noKey'
     // DX-4448: the plan's all-cards read fails / counts more cards than it returned
     planCardsFail?: boolean
     planCardsTotal?: number
+    // ... answers no total, a row with no id, no list, or a plan card_count the cards do not add up to
+    planCardsShape?: 'noTotal' | 'noId' | 'noList' | 'otherCount'
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -233,6 +238,7 @@ export function dashboard(
     if (method === 'GET' && path === '/api/boards') {
       if (options.boardsFail) return reply({ error: 'boards boom' }, 500)
       if (options.boardsShape === 'none') return reply({ boards: [] })
+      if (options.boardsShape === 'noKey') return reply({})
       if (options.boardsShape === 'badPrefix') return reply({ boards: [{ id: 'x', issue_prefix: 'dx-1' }] })
       return reply({
         boards: [
@@ -240,12 +246,6 @@ export function dashboard(
           { id: 'gpt-manager:gpt-manager-main', issue_prefix: 'SG' },
         ],
       })
-    }
-    // DX-4448: every card of the plan in any status, closed included, unpaged (DX-30 and DX-31 are in neither the needs-you nor the in-progress bucket)
-    if (method === 'GET' && path === '/api/issues') {
-      if (options.planCardsFail) return reply({ error: 'plan cards boom' }, 500)
-      const ids = [...world.cards.map(c => c.id), ...world.inProgress.map(c => c.id), 'DX-30', 'DX-31']
-      return reply({ issues: ids.map(id => ({ id, title: id })), total: options.planCardsTotal ?? ids.length })
     }
     const planOne = /^\/api\/plans\/(\d+)$/.exec(path)
     if (method === 'GET' && planOne) {
@@ -256,6 +256,7 @@ export function dashboard(
         ref: p.ref,
         name: p.name,
         status: p.status,
+        card_count: options.planCardsShape === 'otherCount' ? PLAN_CARD_IDS.length + 1 : PLAN_CARD_IDS.length,
         ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
       })
     }
@@ -266,6 +267,14 @@ export function dashboard(
         cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4, updatedAt: c.updatedAt, assignedAgent: 'raw-session-uuid' })),
         ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
       })
+    }
+    // DX-4448: the plan's every card in any status and on either board, unpaged (not board-scoped): DX-30 and DX-31 are in neither the
+    // needs-you nor the in-progress bucket, SG-7 is on the gpt-manager board
+    if (method === 'GET' && cards && query?.bucket === undefined) {
+      if (options.planCardsFail) return reply({ error: 'plan cards boom' }, 500)
+      if (options.planCardsShape === 'noList') return reply({ total: 0 })
+      const rows = PLAN_CARD_IDS.map(id => (options.planCardsShape === 'noId' ? { title: id } : { id, boardId: id.startsWith('SG') ? 'gpt-manager:gpt-manager-main' : 'danxbot:danxbot-main' }))
+      return reply({ cards: rows, ...(options.planCardsShape === 'noTotal' ? {} : { total: options.planCardsTotal ?? rows.length }) })
     }
     if (method === 'GET' && cards) {
       return reply({
@@ -487,8 +496,14 @@ export function dashboard(
   })
   // DX-4448: what the engine draws for an assistant reply when no plugin rewrites it: the text as it is
   on('ui.render', { component: 'AssistantMessage' }, ($: any, e: any) => {
-    const { Text } = $.ui.resolve(e)
-    return <Text>{e.props.text}</Text>
+    const { Box, Text } = $.ui.resolve(e)
+    // the other props are shown too, so a test sees that a rewrite carried them on
+    return (
+      <Box flexDirection="column">
+        <Text>{e.props.text}</Text>
+        <Text key="meta">{`first=${e.props.isFirstOfReply} onScreen=${JSON.stringify(e.props.onScreen ?? null)}`}</Text>
+      </Box>
+    )
   })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)

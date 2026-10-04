@@ -20,7 +20,7 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 export const MAX_PLANS = 30
 export const MAX_CARDS = 15
 // DX-4448: an issue prefix as a board names it (`DX`, `SSL`): capital letters, at most this many. Anything else in a boards
-// answer is an error, and the card-id matcher is built from these without regex escaping.
+// answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10
 export const PREFIX_PATTERN = new RegExp(`^[A-Z]{1,${PREFIX_MAX}}$`)
 

@@ -2,7 +2,6 @@
 // changes the drawing), and the draw reads only the `view` atom, so it makes no call.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { EMPTY } from '../hooks/plan/config'
 import { linkCardIds } from '../hooks/plan/card-links'
 import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
@@ -71,10 +70,11 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const calls = d.calls.length
       const api = d.api.length
-      // DX-1 needs you, DX-9 is in progress, DX-30 is ToDo and DX-31 Done (neither in a bucket the view lists), SG-5 is on another board
-      const ui = await $.ui.mount({ ...message('DX-1 DX-9 DX-30 DX-31 SG-5 UTF-8 DX-99'), surface })
+      // DX-1 needs you, DX-9 is in progress, DX-30 is ToDo and DX-31 Done (neither in a bucket the view lists), SG-7 is the plan's card on
+      // its other board; SG-5 is on that board but not in the plan
+      const ui = await $.ui.mount({ ...message('DX-1 DX-9 DX-30 DX-31 SG-7 SG-5 UTF-8 DX-99'), surface })
       expect(await drawnText(ui)).toBe(
-        [PLAN_URL('DX-1'), PLAN_URL('DX-9'), PLAN_URL('DX-30'), PLAN_URL('DX-31'), BOARD_URL('SG-5'), 'UTF-8', BOARD_URL('DX-99')].join(' '),
+        [PLAN_URL('DX-1'), PLAN_URL('DX-9'), PLAN_URL('DX-30'), PLAN_URL('DX-31'), PLAN_URL('SG-7'), BOARD_URL('SG-5'), 'UTF-8', BOARD_URL('DX-99')].join(' '),
       )
       // DX-4448: the draw reads the view atom only
       expect(d.calls.length).toBe(calls)
@@ -84,7 +84,8 @@ for (const surface of SURFACES) {
     test('the other props ride along as received', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
-      const ui = await $.ui.mount({ ...message('DX-1', { onScreen: null }), surface })
+      const ui = await $.ui.mount({ ...message('DX-1', { isFirstOfReply: false, onScreen: null }), surface })
+      expect((await ui.find({ type: 'Text', text: /^first=/ }))?.text).toBe('first=false onScreen=null')
       expect(await drawnText(ui)).toBe(PLAN_URL('DX-1'))
     })
 
@@ -108,7 +109,6 @@ for (const surface of SURFACES) {
 
     test('before the first load finishes (the empty view) the reply is drawn as it is', async ($, on) => {
       dashboard(on)
-      expect(EMPTY.links).toEqual({ state: 'ready', prefixes: [], planCardIds: [] })
       expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
     })
 
@@ -117,8 +117,13 @@ for (const surface of SURFACES) {
       ['the boards call failing', { boardsFail: true }, 'boards boom'],
       ['a boards answer with no boards', { boardsShape: 'none' }, 'answered no list of boards'],
       ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }, 'answered a board with no issue_prefix'],
+      ['a boards answer with no boards key', { boardsShape: 'noKey' }, 'answered no list of boards'],
       ['the plan cards call failing', { planCardsFail: true }, 'plan cards boom'],
-      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }, 'answered 5 of 9 cards'],
+      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }, 'answered 6 of 9 cards'],
+      ['the plan cards answer with no list', { planCardsShape: 'noList' }, 'answered no list of cards'],
+      ['the plan cards answer with no total', { planCardsShape: 'noTotal' }, 'answered no total'],
+      ['a plan card with no id', { planCardsShape: 'noId' }, 'answered a card with no id'],
+      ['cards that do not add up to the plan card_count (a board missing)', { planCardsShape: 'otherCount' }, 'answered 6 cards but the plan has 7'],
     ] as const) {
       test(`${name}: the plan stays ready, the pane says why, the reply is drawn as it is`, async ($, on) => {
         const d = dashboard(on, options as any)

@@ -7,7 +7,8 @@ import { boardCardUrl, cardUrl } from './config'
 
 // Markdown the ids must never be rewritten inside. One alternation, scanned left to right, so the earliest construct wins:
 // a code span (a run of N backticks to the next run of N), an inline or reference link or image, a reference definition,
-// an autolink `<scheme:...>`, a bare URL. String.raw keeps every backslash for the RegExp.
+// an autolink `<scheme:...>`, a bare URL. String.raw keeps every backslash for the RegExp. It must stay the FIRST group of the
+// final pattern: the code-span alternative's `\1` backreference counts on it being group 1.
 const PROTECTED = [
   String.raw`(?<!\x60)(\x60+)(?!\x60)[\s\S]*?(?<!\x60)\1(?!\x60)`,
   String.raw`!?\[(?:[^\[\]]|\[[^\]]*\])*\]\([^)]*\)`,
@@ -54,7 +55,7 @@ const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // fences, links or URLs are left as written. No prefixes known: the text comes back unchanged.
 export function linkCardIds(text: string, prefixes: string[], plan: ConnectedPlan, planCardIds: ReadonlySet<string>): string {
   if (prefixes.length === 0) return text
-  const alt = [...prefixes].sort((a, b) => b.length - a.length).map(escapeRegExp).join('|')
+  const alt = prefixes.map(escapeRegExp).join('|')
   // a word char, `-`, `/` or `.` before it, or a word char or `-` after it, makes it part of something else (a path, UTF-8-1)
   const id = String.raw`(?<![A-Za-z0-9_\-/.])(?<card>(?:${alt})-\d+)(?![A-Za-z0-9_\-])`
   const re = new RegExp(`${PROTECTED}|${id}`, 'gm')

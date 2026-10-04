@@ -139,8 +139,10 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     // DX-4448: the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
     // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
     call('GET', '/api/boards'),
-    // DX-4448: every card id of the plan, closed ones included, unpaged (GET /api/issues: `limit` absent -> every matching row)
-    call('GET', '/api/issues', { query: { filter: { plan_id: connectedId, include_closed: true } } }),
+    // DX-4448: every card id of the plan, whatever its board or status: the plan route is not board-scoped by the MCP (route-board-scope
+    // lists `/api/plans/:planId/cards` as false; GET /api/issues would be stamped with the session's board and miss a plan's other
+    // boards) and, with no `limit`, answers every row (rows come whole: the route takes no `fields`).
+    call('GET', `/api/plans/${connectedId}/cards`),
   ])
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
   if (!planR.ok) return fail(errText(planR))
@@ -155,7 +157,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     status: planR.body.status,
     dashboardUrl,
   }
-  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId) }
+  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
 
   if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
   if (typeof cards.body.total !== 'number') {
@@ -217,7 +219,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
 
 // DX-4448: the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays
 // `ready` (the plan itself was read), the pane says why replies are not linked, and replies are drawn as written.
-function readLinks(boards: Api, allCards: Api, planId: number): CardLinks {
+function readLinks(boards: Api, allCards: Api, planId: number, planCardCount: unknown): CardLinks {
   const error = (message: string): CardLinks => ({ state: 'error', message })
   if (!boards.ok) return error(`GET /api/boards ${errText(boards)}`)
   const list = boards.body?.boards
@@ -226,15 +228,18 @@ function readLinks(boards: Api, allCards: Api, planId: number): CardLinks {
   if (!prefixes.every((p): p is string => typeof p === 'string' && PREFIX_PATTERN.test(p))) {
     return error('GET /api/boards answered a board with no issue_prefix of capital letters')
   }
-  if (!allCards.ok) return error(`GET /api/issues (plan ${planId}) ${errText(allCards)}`)
-  const issues = allCards.body?.issues
-  if (!Array.isArray(issues)) return error(`GET /api/issues (plan ${planId}) answered no list of cards`)
-  if (typeof allCards.body.total !== 'number') return error(`GET /api/issues (plan ${planId}) answered no total`)
-  if (allCards.body.total !== issues.length) {
-    return error(`GET /api/issues (plan ${planId}) answered ${issues.length} of ${allCards.body.total} cards: cannot tell which ids are the plan's`)
+  const route = `GET /api/plans/${planId}/cards (all)`
+  if (!allCards.ok) return error(`${route} ${errText(allCards)}`)
+  const cards = allCards.body?.cards
+  if (!Array.isArray(cards)) return error(`${route} answered no list of cards`)
+  if (typeof allCards.body.total !== 'number') return error(`${route} answered no total`)
+  if (allCards.body.total !== cards.length) {
+    return error(`${route} answered ${cards.length} of ${allCards.body.total} cards: cannot tell which ids are the plan's`)
   }
-  if (!issues.every(c => typeof c?.id === 'string')) return error(`GET /api/issues (plan ${planId}) answered a card with no id`)
-  return { state: 'ready', prefixes: [...new Set(prefixes as string[])], planCardIds: issues.map(c => c.id) }
+  // the plan's own count (every board's cards) must agree, so a board-scoped or partial answer is an error, never a smaller set
+  if (planCardCount !== cards.length) return error(`${route} answered ${cards.length} cards but the plan has ${String(planCardCount)}`)
+  if (!cards.every(c => typeof c?.id === 'string')) return error(`${route} answered a card with no id`)
+  return { state: 'ready', prefixes: [...new Set(prefixes as string[])], planCardIds: cards.map(c => c.id) }
 }
 
 // The origin of an http(s) URL string, or null: a trailing slash or path is dropped, a non-URL is refused.

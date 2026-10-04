@@ -661,7 +661,8 @@ async function drawSessionMode($: any, e: any, next: any) {
 // (not connected, no prefixes known, no card id in the text) leaves the event as it is.
 async function drawAssistantMessage($: any, e: any, next: any) {
   const v = await read($, view)
-  // links in error, nothing known, or a text that is not a string: the reply is drawn as written
+  // links in error or nothing known: the reply is drawn as written. So is a text that is not a string (the d.ts types it `string`;
+  // this only guards the engine one day sending a block with none, which `linkCardIds` would throw on)
   if (v.phase !== 'ready' || v.connected === null || v.links.state !== 'ready' || v.links.prefixes.length === 0 || typeof e.props.text !== 'string') {
     return next(e)
   }
