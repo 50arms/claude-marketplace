@@ -61,14 +61,14 @@ test("each addition is stated exactly once in issue-workflow", () => {
   }
 });
 
-test("browser-visible work keeps ONE current screenshot on the card: attach, then delete the one it supersedes", () => {
+test("browser-visible work keeps ONE current screenshot on the card: attach with primary, then replaces", () => {
   const building = skill.slice(skill.indexOf("## Building"), skill.indexOf("## Debugging"));
   const show = building.slice(building.indexOf("**Show the work.**"));
-  assert.match(show, /attach a screenshot to the card \(`attach_file`\)/);
-  assert.match(show, /replace it at each milestone and at completion/);
-  assert.match(show, /delete the one it supersedes/);
+  assert.match(show, /attach a screenshot with `attach_file` and `primary: true`/);
+  assert.match(show, /`replaces: <attachment_id from that reply>` at each milestone/);
   assert.match(show, /never a growing list/);
-  assert.match(show, /Frame the component you are\s+working on/);
+  assert.match(show, /Frame the component you are working\s+on/);
   assert.match(show, /not the whole app/);
+  assert.doesNotMatch(show, /delete the one it supersedes/);
   assert.equal(count(skill, /\*\*Show the work\.\*\*/), 1);
 });
