@@ -12,7 +12,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DASHBOARD_MCP_PACKAGE_NAME,
+  RecordDamagedError,
   RecordWriteError,
+  REGISTRY_FIX,
   recordedOrResolvedVersion,
   recordedVersionOrNull,
   refreshOrKeep,
@@ -125,7 +127,7 @@ describe("resolveLatestVersion", () => {
 });
 
 describe("recorded version", () => {
-  test("the reader returns the recorded version, and null when nothing (or nothing valid) is recorded", () => {
+  test("the reader returns the recorded version, and null when nothing is recorded", () => {
     assert.equal(recordedVersionOrNull(env), null);
     recordAt("0.1.7");
     assert.equal(recordedVersionOrNull(env), "0.1.7");
@@ -141,6 +143,32 @@ describe("recorded version", () => {
     assert.throws(() => recordedVersionOrNull(env), (err) => err.message.includes(recordFile()) && /cannot be read/.test(err.message));
     await assert.rejects(recordedOrResolvedVersion({ env }), /cannot be read/);
     assert.deepEqual(registry.requests(), [], "a damaged record is reported, not papered over with a network request");
+  });
+
+  test("a damaged record AND a failed refresh: the error keeps both reasons, and its fix names the record file", async () => {
+    recordAt("garbage");
+    registry.setMode("status-500");
+    await assert.rejects(refreshOrKeep({ env }), (err) => {
+      assert.ok(err instanceof RecordDamagedError);
+      assert.equal(err.name, "RecordDamagedError");
+      assert.match(err.message, /damaged/);
+      assert.match(err.message, /refresh also failed.*HTTP 500/);
+      assert.ok(err.fix.includes(recordFile()), err.fix);
+      return true;
+    });
+  });
+
+  test("each failure carries the fix that fits it: registry, damaged record, record write", async () => {
+    registry.setMode("status-500");
+    await assert.rejects(versionFor({ sessionStart: true, env }), (err) => err.fix === REGISTRY_FIX);
+    await assert.rejects(versionFor({ sessionStart: false, env }), (err) => err.fix === REGISTRY_FIX);
+    registry.setVersion("0.1.50");
+    writeFileSync(path.join(dataDir, "dashboard-mcp"), "a file where the record's directory belongs");
+    await assert.rejects(recordedOrResolvedVersion({ env }), (err) => {
+      assert.equal(err.name, "RecordWriteError");
+      assert.ok(err.fix.includes(path.join(dataDir, "dashboard-mcp")), err.fix);
+      return true;
+    });
   });
 
   test("a damaged record is replaced by the next successful session-start refresh", async () => {

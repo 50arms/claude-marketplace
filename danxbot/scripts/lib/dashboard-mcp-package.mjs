@@ -60,8 +60,24 @@ export const RENAME_RETRYABLE_CODES = ["EPERM", "EBUSY", "EACCES"];
 
 const STRICT_VERSION = /^\d+\.\d+\.\d+$/;
 
+/** How much of a damaged record's content its error quotes. */
+export const DAMAGED_RECORD_EXCERPT_CHARS = 40;
+/** What to do about a registry that cannot be read, for the notice a consumer shows (`error.fix`). */
+export const REGISTRY_FIX = "restore access to the npm registry";
+
+/** A failure to obtain a version, carrying the line to show (`message`) and what to do about it (`fix`). */
+export class VersionError extends Error {
+  constructor(message, fix) {
+    super(message);
+    this.name = new.target.name;
+    this.fix = fix;
+  }
+}
 /** A write of the record failed; its own reason, not a registry failure. */
-export class RecordWriteError extends Error {}
+export class RecordWriteError extends VersionError {}
+/** The record exists but cannot be read or is not a strict x.y.z. */
+export class RecordDamagedError extends VersionError {}
+const recordFix = (file) => `delete ${file} so the next session start records a fresh version`;
 
 /** `<registry>/<name>/latest`, the name's slash encoded the way the registry's own tooling writes it. */
 export function registryUrl(env = process.env) {
@@ -122,10 +138,13 @@ export function recordedVersionOrNull(env = process.env) {
     text = fs.readFileSync(file, "utf8").trim();
   } catch (err) {
     if (err.code === "ENOENT") return null;
-    throw new Error(`the recorded ${DASHBOARD_MCP_PACKAGE_NAME} version in ${file} cannot be read (${err.code ?? err.message})`);
+    throw new RecordDamagedError(`the recorded ${DASHBOARD_MCP_PACKAGE_NAME} version in ${file} cannot be read (${err.code ?? err.message})`, recordFix(file));
   }
   if (!STRICT_VERSION.test(text)) {
-    throw new Error(`the recorded ${DASHBOARD_MCP_PACKAGE_NAME} version in ${file} is damaged (${JSON.stringify(text.slice(0, 40))} is not x.y.z)`);
+    throw new RecordDamagedError(
+      `the recorded ${DASHBOARD_MCP_PACKAGE_NAME} version in ${file} is damaged (${JSON.stringify(text.slice(0, DAMAGED_RECORD_EXCERPT_CHARS))} is not x.y.z)`,
+      recordFix(file),
+    );
   }
   return text;
 }
@@ -155,7 +174,7 @@ export function writeRecordedVersion(version, env = process.env, fsApi = fs) {
       }
     }
   } catch (err) {
-    throw new RecordWriteError(`could not record version ${version} in ${file} (${err.code ?? err.message})`);
+    throw new RecordWriteError(`could not record version ${version} in ${file} (${err.code ?? err.message})`, `make ${path.dirname(file)} writable`);
   } finally {
     fsApi.rmSync(tmp, { force: true });
   }
@@ -190,9 +209,16 @@ export async function refreshOrKeep(options = {}) {
   try {
     return { version: await refreshAndRecordVersion(options), refreshed: true };
   } catch (err) {
-    const recorded = recordedVersionOrNull(env);
-    if (recorded === null) throw new Error(noVersionLine(oneLine(err.message)));
-    return { version: recorded, refreshed: false, line: keptLine(oneLine(err.message), recorded) };
+    const reason = oneLine(err.message);
+    let recorded;
+    try {
+      recorded = recordedVersionOrNull(env);
+    } catch (readErr) {
+      // A damaged record AND a failed refresh: both reasons, so neither hides the other.
+      throw new RecordDamagedError(`${readErr.message}; the refresh also failed (${reason})`, readErr.fix);
+    }
+    if (recorded === null) throw new VersionError(noVersionLine(reason), err instanceof RecordWriteError ? err.fix : REGISTRY_FIX);
+    return { version: recorded, refreshed: false, line: keptLine(reason, recorded) };
   }
 }
 
@@ -205,7 +231,7 @@ export async function recordedOrResolvedVersion(options = {}) {
   try {
     version = await resolveLatestVersion(options);
   } catch (err) {
-    throw new Error(noVersionLine(oneLine(err.message)));
+    throw new VersionError(noVersionLine(oneLine(err.message)), REGISTRY_FIX);
   }
   writeRecordedVersion(version, env);
   return version;
@@ -229,7 +255,7 @@ export async function versionFor({ sessionStart = false, env = process.env, ...o
 /** `<name>@<version>` for the recorded version; throws when none is recorded. Sync, no network: for the code that builds a command. */
 export function requireRecordedSpec(env = process.env) {
   const version = recordedVersionOrNull(env);
-  if (version === null) throw new Error(noVersionLine("no session start has recorded one yet"));
+  if (version === null) throw new VersionError(noVersionLine("no session start has recorded one yet"), REGISTRY_FIX);
   return specOf(version);
 }
 

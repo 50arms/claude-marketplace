@@ -398,37 +398,37 @@ export function runHeartbeat(input, { env, spawnFn, now = Date.now, platform, ex
  * single source of which event sends which literal mode string; a test
  * parses that file directly rather than duplicating the strings here.
  */
+export const MODE_HANDLERS = {
+  stop: runReport,
+  "subagent-stop": runReport,
+  "session-start": runClear,
+  "stop-failure": runClear,
+  heartbeat: runHeartbeat,
+};
+
 export function dispatchMode(mode, input, options) {
-  if (mode === "stop" || mode === "subagent-stop") return runReport(input, options);
-  if (mode === "session-start" || mode === "stop-failure") return runClear(input, options);
-  if (mode === "heartbeat") return runHeartbeat(input, options);
-  return undefined; // unknown mode — silent no-op, matches the CLI-robustness contract
+  return MODE_HANDLERS[mode]?.(input, options); // unknown mode — silent no-op, matches the CLI-robustness contract
 }
 
 /**
- * DX-4321 — makes the recorded version ready for `mode`: `session-start` refreshes it, every other
- * mode reads it (resolving only when none exists). Returns the one line a failed refresh leaves
- * (the recorded version keeps running) or `null`; throws, with the one line saying nothing can
- * run, when there is no recorded version at all.
+ * One hook firing (DX-4321): for a plan-connected session, the package version first (`session-start`
+ * refreshes it, every other mode reads the record and resolves only when none exists, both through
+ * `versionFor`), then the mode's handler. A session that is not plan-connected reports nothing, so it
+ * needs no package: no registry request, no line. This is the one connection check on this path; the
+ * handler is told the answer rather than asking again. Resolves to the one line to print (a failed
+ * refresh that kept the recorded version) or `null`, and whether there was no version to run.
  */
-export async function prepareVersion(mode, { env = process.env, versionForFn = versionFor } = {}) {
-  const sessionStart = mode === "session-start";
-  if (!sessionStart && !["stop", "subagent-stop", "stop-failure", "heartbeat"].includes(mode)) return null; // unknown mode: nothing to run
-  return (await versionForFn({ sessionStart, env })).keptLine;
-}
-
-/** One hook firing: the version first, then the mode. Resolves to the one line to print (or `null`) and whether the version was missing. */
-export async function runHook(mode, input, { env = process.env, versionForFn, ...options } = {}) {
-  // A session that is not plan-connected reports nothing, so it needs no package: no registry request, no line.
-  const isConnected = options.isConnected ?? isPlanConnected;
+export async function runHook(mode, input, { env = process.env, versionForFn = versionFor, isConnected = isPlanConnected, ...options } = {}) {
+  const handler = MODE_HANDLERS[mode];
+  if (!handler) return { line: null, missingVersion: false };
   if (!isValidSessionId(input?.session_id) || !sessionIsConnected(input.session_id, env, isConnected)) return { line: null, missingVersion: false };
-  let line = null;
+  let line;
   try {
-    line = await prepareVersion(mode, { env, versionForFn });
+    line = (await versionForFn({ sessionStart: mode === "session-start", env })).keptLine;
   } catch (err) {
     return { line: err.message, missingVersion: true };
   }
-  dispatchMode(mode, input, { env, ...options });
+  handler(input, { env, isConnected: () => true, ...options });
   return { line, missingVersion: false };
 }
 

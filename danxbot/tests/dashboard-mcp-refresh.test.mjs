@@ -355,6 +355,17 @@ describe("AC4 — a session start that cannot read the registry says so, once, a
     assert.match(posted[0], /nothing that runs it can start/);
   });
 
+  test("the bridge's fix is worded from the error: a damaged record names the file, not the registry", async () => {
+    mkdirSync(path.dirname(recordFilePath(dataDir)), { recursive: true });
+    writeFileSync(recordFilePath(dataDir), "garbage");
+    const posted = [];
+    const result = await bridge.start({ env: baseEnv, sessionId: SESSION, intent: "connect", spawnRun: () => ({ pid: 1 }), waitVerdict: async () => null, stderr: () => {}, post: async (notice) => posted.push(notice) });
+    assert.equal(result.started, false);
+    assert.match(posted[0], /damaged/);
+    assert.ok(posted[0].includes(`delete ${recordFilePath(dataDir)}`), posted[0]);
+    assert.doesNotMatch(posted[0], /restore access to the npm registry/);
+  });
+
   test("the bridge with no recorded version and an unreachable inbox exits 2 with the notice on stderr", async () => {
     registry.setMode("status-500");
     const stderr = [];

@@ -632,70 +632,16 @@ export function waitForVerdict(child, timeoutMs) {
  * session may have just moved to another plan, whose boards this credential has
  * never been checked against, and that check happens at startup.
  */
-export async function start(options = {}) {
-  const version = await prepareDashboardMcpVersion(options);
-  if (version.refusal) return version.refusal;
-  const result = await startBridge(options);
-  return { ...result, exitCode: Math.max(result.exitCode ?? 0, version.exitCode) };
-}
-
-const writeStderr = (message) => process.stderr.write(message);
-
-/**
- * DX-4321: the version of the danx-dashboard-mcp package this start runs, decided by the one rule in
- * lib/dashboard-mcp-package.mjs (`versionFor`): a SessionStart (`sessionStart`) refreshes it, any other
- * start reads the record. Returns `{exitCode}` (2 only when a notice could not reach the inbox and went to
- * stderr for asyncRewake), or `{refusal}`, a start() result, when there is no version at all and nothing
- * can run. A start missing what it needs is left to startBridge, which reports that itself.
- */
-export async function prepareDashboardMcpVersion({
+export async function start({
   env = process.env,
   sessionId,
   intent = RESUME_INTENT,
   post = postToInbox,
   stderr = writeStderr,
+  // DX-4321: true for a SessionStart hook, which refreshes the recorded danx-dashboard-mcp version; every other start reads the record.
   sessionStart = false,
   versionForFn = versionFor,
-} = {}) {
-  if (!sessionId || REQUIRED_ENV.some((name) => !env[name])) return { exitCode: 0 };
-  const relevant = isSessionKnownToWantEvents({ intent, env, sessionId });
-  let outcome;
-  try {
-    outcome = await versionForFn({ sessionStart, env });
-  } catch (err) {
-    const announced = await announce({
-      reason: err.message,
-      fix: "restore access to the npm registry, then call plan_connect again in this session",
-      env,
-      post,
-      stderr,
-      relevant,
-    });
-    return { refusal: { started: false, reason: err.message, exitCode: announced.exitCode } };
-  }
-  if (outcome.keptLine === null) return { exitCode: 0 };
-  // The refresh failed but the recorded version keeps running: tell the session, once, which one.
-  const told = await announce({ notice: versionKeptNotice(outcome.keptLine), env, post, stderr, relevant });
-  return { exitCode: told.exitCode };
-}
-
-async function startBridge({
-  env = process.env,
-  sessionId,
-  intent = RESUME_INTENT,
-  spawnRun = spawnRunProcess,
-  isAlive: alive = isAlive,
-  killTree: kill = killTree,
-  now = Date.now,
-  stderr = writeStderr,
-  post = postToInbox,
-  waitVerdict = waitForVerdict,
-  verdictTimeoutMs = STARTUP_VERDICT_MS,
-  // DX-2953: recorded into .started.json's startInputs so a watchdog restart reuses it.
-  transcriptPath = null,
-  // DX-2953 / DX-3997: set only by `start --restart-trigger=watchdog` (run by bridge-watchdog.mjs); selects generation-bump behavior in buildStartedRecord.
-  restartTrigger,
-  consumeStopInstance = null,
+  ...rest
 } = {}) {
   const missing = [["session id", sessionId], ...REQUIRED_ENV.map((name) => [name, env[name]])]
     .filter(([, value]) => !value)
@@ -711,6 +657,63 @@ async function startBridge({
     });
     return { started: false, reason: `missing ${missing.join(", ")}`, exitCode: announced.exitCode };
   }
+  const resolved = { env, sessionId, intent, post, stderr };
+  const version = await prepareDashboardMcpVersion({ ...resolved, sessionStart, versionForFn });
+  if (version.refusal) return version.refusal;
+  const result = await startBridge({ ...resolved, ...rest });
+  return { ...result, exitCode: Math.max(result.exitCode ?? 0, version.exitCode) };
+}
+
+const writeStderr = (message) => process.stderr.write(message);
+
+/**
+ * DX-4321: the version of the danx-dashboard-mcp package this start runs, decided by the one rule in
+ * lib/dashboard-mcp-package.mjs (`versionFor`): a SessionStart (`sessionStart`) refreshes it, any other
+ * start reads the record. Takes start()'s already-resolved values. Returns `{exitCode}` (2 only when a
+ * notice could not reach the inbox and went to stderr for asyncRewake), or `{refusal}`, a start() result,
+ * when there is no version at all and nothing can run.
+ */
+export async function prepareDashboardMcpVersion({ env, sessionId, intent, post, stderr, sessionStart, versionForFn = versionFor }) {
+  const relevant = isSessionKnownToWantEvents({ intent, env, sessionId });
+  let outcome;
+  try {
+    outcome = await versionForFn({ sessionStart, env });
+  } catch (err) {
+    const announced = await announce({
+      reason: err.message,
+      fix: `${err.fix ?? "make sure a danx-dashboard-mcp version can be recorded"}, then call plan_connect again in this session`,
+      env,
+      post,
+      stderr,
+      relevant,
+    });
+    return { refusal: { started: false, reason: err.message, exitCode: announced.exitCode } };
+  }
+  if (outcome.keptLine === null) return { exitCode: 0 };
+  // The refresh failed but the recorded version keeps running: tell the session, once, which one.
+  const told = await announce({ notice: versionKeptNotice(outcome.keptLine), env, post, stderr, relevant });
+  return { exitCode: told.exitCode };
+}
+
+// `start` has resolved every default and checked what the bridge needs (session id, env) before this runs.
+async function startBridge({
+  env,
+  sessionId,
+  intent,
+  post,
+  stderr,
+  spawnRun = spawnRunProcess,
+  isAlive: alive = isAlive,
+  killTree: kill = killTree,
+  now = Date.now,
+  waitVerdict = waitForVerdict,
+  verdictTimeoutMs = STARTUP_VERDICT_MS,
+  // DX-2953: recorded into .started.json's startInputs so a watchdog restart reuses it.
+  transcriptPath = null,
+  // DX-2953 / DX-3997: set only by `start --restart-trigger=watchdog` (run by bridge-watchdog.mjs); selects generation-bump behavior in buildStartedRecord.
+  restartTrigger,
+  consumeStopInstance = null,
+}) {
   const dir = stateDir(env);
   const paths = sessionPaths(dir, sessionId);
   pruneStale(dir, now());

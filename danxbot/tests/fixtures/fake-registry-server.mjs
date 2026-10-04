@@ -8,6 +8,8 @@
 //   body       200 with `body` verbatim (a malformed answer)
 //   status-500 500
 //   hang       accepts the request and never answers
+// Every response says `connection: close`: a client that reused a keep-alive socket after the test
+// stopped or moved the server would otherwise meet an ECONNRESET under load.
 // Every request's path is appended to the request log, one line, before it is answered.
 import fs from "node:fs";
 import http from "node:http";
@@ -21,15 +23,15 @@ const server = http.createServer((req, res) => {
     case "hang":
       return;
     case "status-500":
-      res.writeHead(500, { "content-type": "text/plain" });
+      res.writeHead(500, { "content-type": "text/plain", connection: "close" });
       res.end("registry exploded");
       return;
     case "body":
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(control.body);
       return;
     default:
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ name: "@thehammer/danx-dashboard-mcp", version: control.version }));
   }
 });
