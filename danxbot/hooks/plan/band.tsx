@@ -57,6 +57,8 @@ export function renderBand(
   const showBadge = plan !== null && badge !== ''
   // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
+  // DX-4418: a revoked key is red too, with no Sign in
+  const revoked = v.phase === 'key-revoked'
   const controls = [
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
@@ -68,7 +70,7 @@ export function renderBand(
   const labelCols = columns === undefined ? undefined : bandLabelCols(columns, controls)
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
-  const failed = v.phase === 'error' || signedOut || v.phase === 'key-revoked'
+  const failed = v.phase === 'error' || signedOut || revoked
   const failedColor = failed ? DANGER : undefined
   const indicator =
     percent === null ? (

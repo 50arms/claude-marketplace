@@ -34,7 +34,8 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { isServerMissing, mcpText, refusalText, toolOutcome } from './plan/mcp'
+import { isServerMissing, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
+import type { ToolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
@@ -279,6 +280,17 @@ async function withBusy($: any, key: string, work: () => Promise<void>): Promise
   }
 }
 
+// DX-4423 / DX-4418: a connect or leave pressed on a pane that went stale: the key is gone since the pane drew. The person is told
+// in the view's words, never the server's (a revoked key's answer is the agent's stop order), and the view reloads to say so.
+// True when that was the answer.
+async function accessEnded($: any, outcome: ToolOutcome): Promise<boolean> {
+  const by = outcomeRevokedBy(outcome)
+  if (by === null && !isSignedOut(outcome)) return false
+  $.ui.toast(by !== null ? `${keyRevokedLabel(by)}. This session must stop.` : 'Signed out. Sign in from the band or the pane.')
+  await refresh($, true)
+  return true
+}
+
 function connect($: any, plan: PlanRow): Promise<void> {
   return withBusy($, busyKey.connect(plan.id), async () => {
     const sessionTitle = await read($, title)
@@ -293,6 +305,7 @@ function connect($: any, plan: PlanRow): Promise<void> {
       return
     }
     const outcome = toolOutcome(r)
+    if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       // a refusal is `ok: false`, not an error result: nothing connected, so the model is told nothing
       $.ui.toast(`Connect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
@@ -319,6 +332,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
       return
     }
     const outcome = toolOutcome(r)
+    if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
       if (outcome.status === 409) await refresh($, true)

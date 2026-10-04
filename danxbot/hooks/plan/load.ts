@@ -78,6 +78,7 @@ class KeyRevoked extends Error {
 export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const guarded: Call = async (method, path, extra) => {
     const r = await call(method, path, extra)
+    // revoked first: a revoked key's halt is a different text from the signed-out one, but the order says which wins
     const by = outcomeRevokedBy(r)
     if (by !== null) throw new KeyRevoked(by)
     if (isSignedOut(r)) throw new SignedOut()

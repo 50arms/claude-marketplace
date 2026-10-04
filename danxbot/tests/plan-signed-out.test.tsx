@@ -1,4 +1,4 @@
-// DX-4423: a session with no dashboard key (revoked, lapsed, never approved). The danx-dashboard MCP answers every tool but
+// DX-4423: a session with no dashboard key (lapsed, never approved; a key a person revoked is its own view, DX-4418). The danx-dashboard MCP answers every tool but
 // plan_connect with an error result written for the agent; the band, pane and footer must say "Danxbot: signed out" in the
 // person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.
 import { describe, expect, test } from 'claude-code/testing'
@@ -185,6 +185,18 @@ for (const surface of SURFACES) {
       await d.clock.advance(60_000)
       expect(await texts(band)).toContain('Danxbot: access revoked by dana')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+    })
+
+    test('a leave pressed on a pane drawn before the revoke: the person reads the view\'s words, never the halt, and the view reloads revoked', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      d.world.signedOut = 'revoked'
+      d.toasts.length = 0
+      await pane.press({ key: 'disconnect' })
+      await d.clock.settle()
+      expect(d.toasts).toEqual(['Danxbot: access revoked by dana. This session must stop.'])
+      expect(await texts(pane)).toContain('Danxbot: access revoked by dana')
     })
 
     test('a person revokes the key while Sign in waits: one toast, the view reads revoked, and no further call is made', async ($, on) => {
