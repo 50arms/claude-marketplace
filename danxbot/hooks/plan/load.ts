@@ -1,6 +1,7 @@
-import type { CardLinks, CommentRow, ConnectedPlan, ProblemDetail, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, PREFIX_PATTERN, STATUS_KEYS } from './config'
+import type { CardLinks, CommentRow, ConnectedPlan, ProblemDetail, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow, SubagentRow, SubagentsView } from '../../types'
+import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, MAX_SESSIONS, NEEDS_YOU_BUCKET_ID, PREFIX_PATTERN, STATUS_KEYS } from './config'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
+import { parentLoop, toSubagent } from './subagents'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -171,7 +172,7 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
 
   // One load of everything about the connected plan: the plan itself (its status counts and status),
   // the needs-you cards and the in-progress cards, together.
-  const [planR, cards, inProg, boards, allCards] = await Promise.all([
+  const [planR, cards, inProg, boards, allCards, subagents] = await Promise.all([
     call('GET', `/api/plans/${connectedId}`),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_BUCKET_ID, sort: 'priority-desc', limit: MAX_CARDS } }),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority-desc', limit: MAX_CARDS } }),
@@ -182,6 +183,8 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
     // lists `/api/plans/:planId/cards` as false; GET /api/issues would be stamped with the session's board and miss a plan's other
     // boards) and, with no `limit`, answers every row (rows come whole: the route takes no `fields`).
     call('GET', `/api/plans/${connectedId}/cards`),
+    // DX-4499: the sub-agents of the plan's live sessions: its own state, so a failed read leaves the plan view `ready`.
+    loadSubagents(call, connectedId),
   ])
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
   if (!planR.ok) return fail(errText(planR))
@@ -249,8 +252,48 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
     cardsRead: cardProblems.length,
     inProgress,
     inProgressTotal: inProg.body.total,
+    subagents,
     refreshedAt,
   }
+}
+
+// DX-4499: the sub-agents of every live session on the plan (GET /api/plan-sessions, newest activity first, the pane's own session
+// among them), one read each (GET /api/plan-sessions/:sessionId/subagents, DX-4498), each row carrying its session's title. A read
+// that fails is one line naming what could not be read; the other sessions' rows still show. Signed-out and revoked answers are
+// `guarded`'s: they end the whole load before they reach here.
+async function loadSubagents(call: Call, planId: number): Promise<SubagentsView> {
+  const list = await call('GET', '/api/plan-sessions', { query: { plan_id: planId, live: true, limit: MAX_SESSIONS } })
+  const unreadable = (what: string, detail: string): SubagentsView => ({ rows: [], errors: [`Couldn't read ${what}: ${detail}`], sessionsCapped: false })
+  if (!list.ok) return unreadable("the plan's sessions", failureReason(list))
+  const sessions: unknown = list.body?.sessions
+  if (!Array.isArray(sessions)) return unreadable("the plan's sessions", 'the dashboard sent no list of them')
+  if (!sessions.every(s => typeof s?.session_id === 'string' && typeof s?.title === 'string')) {
+    return unreadable("the plan's sessions", 'the dashboard sent a session with no id or title')
+  }
+  const reads = await Promise.all(
+    sessions.map(async s => ({ s, r: await call('GET', `/api/plan-sessions/${s.session_id}/subagents`) })),
+  )
+  const rows: SubagentRow[] = []
+  const errors: string[] = []
+  for (const { s, r } of reads) {
+    const named = `the sub-agents of "${s.title}"`
+    if (!r.ok) {
+      errors.push(`Couldn't read ${named}: ${failureReason(r)}`)
+      continue
+    }
+    const raw: unknown = r.body?.subagents
+    if (!Array.isArray(raw)) {
+      errors.push(`Couldn't read ${named}: the dashboard sent no list of them`)
+      continue
+    }
+    const shaped = raw.map(x => toSubagent(x, s.session_id, s.title))
+    const bad = shaped.find((x): x is string => typeof x === 'string')
+    if (bad !== undefined) errors.push(`Couldn't read ${named}: ${bad}`)
+    else rows.push(...(shaped as SubagentRow[]))
+  }
+  const looped = parentLoop(rows)
+  if (looped !== null) return { rows: [], errors: [...errors, `Couldn't draw the sub-agents: ${looped} is its own ancestor`], sessionsCapped: sessions.length >= MAX_SESSIONS }
+  return { rows, errors, sessionsCapped: sessions.length >= MAX_SESSIONS }
 }
 
 // DX-4448: the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays

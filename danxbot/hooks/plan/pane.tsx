@@ -2,6 +2,7 @@ import type { Draft, PlanView, StatusBreakdown } from '../../types'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { problemCard } from './problems'
+import { subagentSection } from './subagent-cards'
 import type { Ui } from './problems'
 import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
 import { age, bandLabel, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
@@ -239,6 +240,9 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         </Box>
       ))}
       {cappedInProgressNote(v) && <Text color={WARNING}>{cappedInProgressNote(v)}</Text>}
+
+      {/* DX-4499: after the cards they work on, so a sub-agent's card ref sits under the In progress list it belongs to */}
+      {subagentSection(E, v, plan, m.now)}
       {/* DX-4448: the plan loaded, but the card links did not: say why replies show plain card ids, never silently */}
       {v.links.state === 'error' && <Text color={WARNING}>Card ids in replies are not linked: {v.links.message}</Text>}
       {v.refreshedAt && <Text dimColor>{updatedText(v.refreshedAt)}</Text>}

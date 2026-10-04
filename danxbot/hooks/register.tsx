@@ -27,6 +27,8 @@ import {
   SIGNED_IN_TOAST,
   keyRevokedLabel,
   SIGN_IN_ROUNDS,
+  SUBAGENT_SETTLE_MS,
+  TICK_MS,
   SIGN_IN_TIMEOUT_TOAST,
   signInFailedToast,
   SERVER,
@@ -41,6 +43,7 @@ import type { ToolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
+import { visibleSubagents } from './plan/subagents'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -62,6 +65,8 @@ const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string 
 const approvalOpened = atom({ plugin: 'danxbot', key: 'approvalOpened' } as const, null as string | null)
 // DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
+// DX-4499: the clock a running sub-agent's runtime counts up against (see tickClock).
+const tick = atom({ plugin: 'danxbot', key: 'tick' } as const, 0)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -73,6 +78,8 @@ const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' }
 // $.state, which holds JSON); a reload cancels the old environment's waits and runs session.start
 // again, which starts a new one.
 let ticker: { cancel: () => void } | null = null
+// DX-4499: the runtime clock's timer, one per session like the refresh timer.
+let runtimeClock: { cancel: () => void } | null = null
 
 // One dashboard call through the session's own danx-dashboard MCP server: same credential, same
 // x-danx-session-id header. Only the engine's "no such server" rejection (another repo) is
@@ -121,6 +128,7 @@ async function refresh($: any, force = false): Promise<void> {
         // DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one)
         // for Sign in to ask for again; a loaded view knows its own
         await update($, view, cur => (v.phase === 'ready' ? v : { ...v, resumePlan: cur.connected?.id ?? cur.resumePlan }))
+        await syncRuntimeClock($)
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -599,6 +607,25 @@ async function unpinStatus($: any): Promise<void> {
   await $.ui.status(undefined)
 }
 
+// DX-4499: the runtime clock runs only while the pane has a sub-agent to count (a running one, or an ended one not yet past its
+// `visibleUntil`): started by a load that brings one, stopped by the first tick that finds none, so a plan with no sub-agents has no
+// timer at all. A cosmetic timer: it makes no call, it only redraws a pane that shows the clock.
+async function syncRuntimeClock($: any): Promise<void> {
+  const shown = visibleSubagents((await read($, view)).subagents.rows, await $.clock.now()).length > 0
+  if (shown && runtimeClock === null) {
+    runtimeClock = $.clock.every(TICK_MS, () => tickClock($))
+  } else if (!shown && runtimeClock !== null) {
+    runtimeClock.cancel()
+    runtimeClock = null
+  }
+}
+
+async function tickClock($: any): Promise<void> {
+  const now = await $.clock.now()
+  await update($, tick, () => now)
+  await syncRuntimeClock($)
+}
+
 async function onSessionStart($: any, e: any, next: any) {
   await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
@@ -620,6 +647,8 @@ async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason)) {
     ticker?.cancel()
     ticker = null
+    runtimeClock?.cancel()
+    runtimeClock = null
   } else if (e.reason === 'clear' || e.reason === 'resume') {
     // a fresh conversation (or another session taking this one's place) in the same process: what
     // the person had open or half-typed no longer applies, and what the dashboard shows may have
@@ -658,6 +687,32 @@ async function onRequestPermission($: any, e: any, next: any) {
   await update($, permissionRequests, cur => [...cur.filter(r => r.publicId !== request.publicId), request])
   await showApproval($, asApproval(request))
   return ran
+}
+
+// DX-4499: a sub-agent started or stopped: read the dashboard now (not forced: a load within MIN_GAP_MS of the last stands), and once
+// more SUBAGENT_SETTLE_MS later. The plugin's own SubagentStart / SubagentStop command hooks report the change to the dashboard
+// at the same moment this hook runs, so the first read can precede the report; the second is after it. One wait pending at a time,
+// so a burst of sub-agents costs one extra read.
+let settling = false
+async function settleSubagents($: any): Promise<void> {
+  if (settling) return
+  settling = true
+  try {
+    await $.clock.sleep(SUBAGENT_SETTLE_MS)
+  } catch {
+    // the wait rejects when the plugin's environment is unloaded (a reload): the read ends with it
+    return
+  } finally {
+    settling = false
+  }
+  await refresh($, true)
+}
+
+async function onSubagentChange($: any, e: any, next: any) {
+  const r = await next(e)
+  void refresh($)
+  void settleSubagents($)
+  return r
 }
 
 async function onTurnComplete($: any, e: any, next: any) {
@@ -714,6 +769,8 @@ async function drawAssistantMessage($: any, e: any, next: any) {
 }
 
 async function drawPane($: any, e: any) {
+  // DX-4499: read for the subscription alone: the tick redraws the pane, and `now` below is what a runtime counts against
+  await read($, tick)
   const m = {
     v: await read($, view),
     picked: await read($, pick),
@@ -736,6 +793,8 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, onPlanConnect)
   on('tool.call', { tool: 'mcp__danx-dashboard__request_permission' }, onRequestPermission)
   on('turn.complete', onTurnComplete)
+  on('classic.SubagentStart', onSubagentChange)
+  on('classic.SubagentStop', onSubagentChange)
   on('classic.SessionStart', onTitle)
   on('classic.UserPromptSubmit', onTitle)
   on('ui.render', { component: 'AbovePrompt' }, drawBand)

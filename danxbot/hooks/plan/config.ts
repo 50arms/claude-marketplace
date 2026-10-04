@@ -1,4 +1,4 @@
-import type { ConnectedPlan, PlanView } from '../../types'
+import type { ConnectedPlan, PlanView, SubagentState } from '../../types'
 
 export const PANE = 'danx-plan'
 // DX-4419: the name every footer and pane label, and the band's not-connected, loading and disconnected states, carry,
@@ -19,10 +19,20 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 // rather than presenting a lower bound as the whole.
 export const MAX_PLANS = 30
 export const MAX_CARDS = 15
+// DX-4499: the live sessions of the plan whose sub-agents one load reads (one call each). The list route answers no total, so
+// a full page is the signal that there may be more (`sessionsCapped`).
+export const MAX_SESSIONS = 20
 // DX-4448: an issue prefix as a board names it (`DX`, `SSL`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10
 export const PREFIX_PATTERN = new RegExp(`^[A-Z]{1,${PREFIX_MAX}}$`)
+
+// DX-4499: a sub-agent starting or stopping asks for a refresh at once, and for one more this long after: the plugin's own
+// SubagentStart / SubagentStop command hooks report the change to the dashboard at the same moment, so the first read can come
+// before the report does. One wait after one event, never a repeating one.
+export const SUBAGENT_SETTLE_MS = 5_000
+// DX-4499: how often the pane's clock advances while it shows a sub-agent: the runtime's seconds, drawn only, no call.
+export const TICK_MS = 1_000
 
 // A refresh lock held longer than this is a dead load's, not a running one's.
 export const LOCK_STALE_MS = 120_000
@@ -47,6 +57,10 @@ export const CONNECT_ERROR_MAX = 200
 export const CALL_ERROR_MAX = 200
 export const ERROR_BODY_MAX = 200
 export const OUTPUT_EXCERPT_MAX = 80
+// DX-4499: the sub-agent card's long lines, each cut with an ellipsis so one line never wraps the card.
+export const SUBAGENT_LABEL_MAX = 60
+export const SUBAGENT_ACTIVITY_MAX = 90
+export const SUBAGENT_SESSION_MAX = 50
 
 // How long the short browser-open toasts stay (the default is 4000).
 export const BROWSER_TOAST_MS = 2_500
@@ -64,6 +78,18 @@ export const SUCCESS = 'green'
 export const DANGER = 'red'
 export const WARNING = 'yellow'
 
+// DX-4499: the dot, the card's border and the state word of a sub-agent, one colour per state: green running, cyan done,
+// red failed, yellow stopped (a person or a lapsed session ended it).
+export const SUBAGENT_STATE_COLOR: Record<SubagentState, string> = {
+  running: SUCCESS,
+  done: ACCENT,
+  failed: DANGER,
+  stopped: WARNING,
+}
+// DX-4499: the card's fill: the terminal theme's own colour for a boxed message (the user-message box), so it reads on a light
+// and a dark theme alike.
+export const SUBAGENT_CARD_BACKGROUND = 'userMessageBackground'
+
 export const EMPTY: PlanView = {
   phase: 'loading',
   error: null,
@@ -77,6 +103,7 @@ export const EMPTY: PlanView = {
   statusBreakdown: null,
   inProgress: [],
   inProgressTotal: 0,
+  subagents: { rows: [], errors: [], sessionsCapped: false },
   // DX-4448: nothing to link until a load reads the boards and the plan's cards
   links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,

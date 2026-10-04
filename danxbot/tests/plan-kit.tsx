@@ -85,6 +85,46 @@ export const LISTENER_STATES = ['unattached', 'stopped', 'reconnecting', 'creden
 // The next step never contains the state's name, so a test that finds the state name cannot be satisfied by it.
 export const NEXT_STEP = (state: string) => `Run plan_connect again (step ${[...state].reduce((n, c) => n + c.charCodeAt(0), 0)}).`
 
+// DX-4499: the plan's live sessions as GET /api/plan-sessions answers them (newest activity first), and one sub-agent row as
+// GET /api/plan-sessions/:sessionId/subagents answers it (danxbot's plan_session_subagent resource: snake_case, epoch ms). The
+// defaults are a running sub-agent that started 4 minutes before the fake clock's start (2026-10-03T08:00:00Z).
+export const CLOCK_START = Date.parse('2026-10-03T08:00:00.000Z')
+export const OWN_SESSION = { session_id: 'sess-own', title: 'PLAN-23: danxbot plugin' }
+export const OTHER_SESSION = { session_id: 'sess-other', title: 'PLAN-23: review pass' }
+export function rawSubagent(id: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: `agent-${id}`,
+    session_id: OWN_SESSION.session_id,
+    parent_id: null,
+    description: `Build ${id}`,
+    agent_type: 'danxbot:worker-sonnet-high',
+    model: 'claude-sonnet-5-5',
+    effort: 'high',
+    state: 'running',
+    end_status: null,
+    started_at: CLOCK_START - 252_000,
+    last_activity_at: CLOCK_START - 5_000,
+    finished_at: null,
+    runtime_ms: null,
+    visible_until: null,
+    tokens_in: 20,
+    tokens_out: 40,
+    cache_read: 12_000,
+    cache_write: 300,
+    tokens_total: 12_360,
+    cost_usd: 0.4216,
+    tool_call_count: 7,
+    current_activity: 'Bash: Run the affected tests',
+    card: { id: 'DX-9', title: 'In flight card', via: 'brief' },
+    ...over,
+  }
+}
+// an ended row: it finished `agoMs` before the fake clock's start and stays listed until ten minutes after that
+export function endedSubagent(id: string, state: 'done' | 'failed' | 'stopped', agoMs: number, over: Record<string, unknown> = {}): Record<string, unknown> {
+  const finished = CLOCK_START - agoMs
+  return rawSubagent(id, { state, end_status: state === 'done' ? 'completed' : state, finished_at: finished, runtime_ms: 90_000, started_at: finished - 90_000, visible_until: finished + 600_000, ...over })
+}
+
 type Sol = { id: number; title: string; recommended: boolean; body?: string; pro?: string; con?: string; steps?: any[] }
 type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean; solutions: Sol[]; summary?: string; context?: string }
 type Card = { id: string; title: string; priority: number; problems: Prob[]; comments: any[] }
@@ -193,6 +233,12 @@ export function dashboard(
     problemsEmpty?: boolean
     // DX-4458: the comments read of a card answers 500
     commentsFail?: boolean
+    // DX-4499: GET /api/plan-sessions fails (500) / answers something that is no list / a session with no title
+    sessionsFail?: boolean
+    sessionsShape?: 'noList' | 'noTitle'
+    // ... GET /api/plan-sessions/<id>/subagents answers 500 for these session ids, or no list at all
+    subagentsFail?: string | string[]
+    subagentsNoList?: boolean
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -210,6 +256,9 @@ export function dashboard(
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card', updatedAt: '2026-10-03T07:58:30.000Z' }] as { id: string; title: string; updatedAt: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
+    // DX-4499: the plan's live sessions, and each one's sub-agent rows (raw, as the route answers them)
+    sessions: [OWN_SESSION] as { session_id: string; title: string }[],
+    subagents: {} as Record<string, Record<string, unknown>[]>,
     titleSeen: undefined as string | undefined,
     // DX-4423: null while the session holds a key
     signedOut: (options.signedOut ?? null) as 'signed-out' | 'lapsed' | 'revoked' | null,
@@ -281,6 +330,19 @@ export function dashboard(
             : { attached: options.attached ?? world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
       })
+    }
+    // DX-4499: the live sessions of the plan, newest activity first, and a session's sub-agents (danxbot DX-4498)
+    if (method === 'GET' && path === '/api/plan-sessions') {
+      if (options.sessionsFail) return reply({ error: 'sessions boom' }, 500)
+      if (options.sessionsShape === 'noList') return reply({})
+      const rows = world.sessions.map(x => ({ ...x, plan_id: world.planId, plan_name: 'Danxbot plugin', last_active_at: 1 }))
+      return reply({ sessions: options.sessionsShape === 'noTitle' ? rows.map(({ title, ...r }) => r) : rows })
+    }
+    const subs = /^\/api\/plan-sessions\/([^/]+)\/subagents$/.exec(path)
+    if (method === 'GET' && subs) {
+      if ([options.subagentsFail ?? []].flat().includes(subs[1])) return reply({ error: 'subagents boom' }, 500)
+      if (options.subagentsNoList) return reply({})
+      return reply({ subagents: world.subagents[subs[1]] ?? [] })
     }
     // DX-4448: the boards (danxbot's own and gpt-manager's), whose `issue_prefix` the card links are built on
     if (method === 'GET' && path === '/api/boards') {

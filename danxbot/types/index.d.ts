@@ -105,6 +105,51 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // EVERY card on the connected plan, any status (GET /api/plans/:id/cards, unscoped by board, closed cards included). Empty when not connected.
 export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: string[] } | { state: 'error'; message: string }
 
+// DX-4499: one sub-agent of a connected session, as GET /api/plan-sessions/:sessionId/subagents (DX-4498) answers it, in the
+// shape the pane draws a card from. `state` is the server's (running, or how it ended); the pane counts a running one's
+// runtime up from `startedAt` on its own clock and drops an ended one at `visibleUntil` (epoch ms, both).
+export type SubagentState = 'running' | 'done' | 'failed' | 'stopped'
+export type SubagentCard = {
+  id: string
+  title: string
+  // how the server learned the card: the one the sub-agent claimed, or the one its brief opens with
+  via: 'claim' | 'brief'
+}
+export type SubagentRow = {
+  // `agent-<agent id>`: the key `parentId` of another row names
+  id: string
+  sessionId: string
+  // the readable title of the session the sub-agent runs under
+  sessionTitle: string
+  parentId: string | null
+  // the label its spawning call gave it; null when it was given none
+  label: string | null
+  agentType: string | null
+  model: string | null
+  effort: string | null
+  state: SubagentState
+  startedAt: number
+  // null while it runs
+  finishedAt: number | null
+  // null while it runs
+  visibleUntil: number | null
+  tokensTotal: number
+  costUsd: number
+  toolCalls: number
+  // its latest tool call as the server words it (a tool name and at most a label the agent wrote); null before its first
+  activity: string | null
+  card: SubagentCard | null
+}
+
+// The pane's sub-agents: every row the live sessions of the plan answered, and one person-facing line per read that failed
+// (the plan view stays `ready` either way, as with `links` and `cardErrors`). `sessionsCapped`: the plan has as many live
+// sessions as one load reads, so there may be more than were read.
+export type SubagentsView = {
+  rows: SubagentRow[]
+  errors: string[]
+  sessionsCapped: boolean
+}
+
 export type PlanView = {
   phase: 'loading' | 'ready' | 'error' | 'no-mcp' | 'signed-out' | 'key-revoked'
   error: string | null
@@ -125,6 +170,8 @@ export type PlanView = {
   // status count's: a card in progress with an open problem sits in needs-you).
   inProgress: InProgressRow[]
   inProgressTotal: number
+  // DX-4499: the sub-agents of the plan's live sessions, read in the same refresh as everything above.
+  subagents: SubagentsView
   // DX-4448: what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready` and says so in the pane, and replies are then drawn as written.
   links: CardLinks
@@ -178,6 +225,9 @@ declare module 'claude-code' {
       approvalOpened: string | null
       // DX-4435: the model's undecided permission requests, oldest first.
       permissionRequests: PermissionRequest[]
+      // DX-4499: the clock (epoch ms) a running sub-agent's runtime counts up against: advanced once a second, only while one is
+      // shown, and used for nothing but drawing (no call is made on it).
+      tick: number
     }
   }
 }

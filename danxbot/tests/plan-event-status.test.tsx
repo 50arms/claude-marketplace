@@ -116,12 +116,12 @@ for (const surface of SURFACES) {
       expect(await greens(pane)).toHaveLength(0)
     })
 
-    test('R-2: one load reads the same dashboard paths as before; a 60 s tick adds exactly one /api/plans load and updates the line', async ($, on) => {
+    test('R-2: one load reads the same dashboard paths as before, plus two for the sub-agents (DX-4499); a 60 s tick adds exactly one /api/plans load and updates the line', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect([...new Set(d.api.map(a => `${a.method} ${a.path}`))].sort()).toEqual(
-        ['GET /api/boards', 'GET /api/issues/DX-1', 'GET /api/issues/DX-2', 'GET /api/issues/DX-9', 'GET /api/plans', 'GET /api/plans/23', 'GET /api/plans/23/cards'].sort(),
+        ['GET /api/boards', 'GET /api/issues/DX-1', 'GET /api/issues/DX-2', 'GET /api/issues/DX-9', 'GET /api/plan-sessions', 'GET /api/plan-sessions/sess-own/subagents', 'GET /api/plans', 'GET /api/plans/23', 'GET /api/plans/23/cards'].sort(),
       )
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeDefined()
       const before = d.api.filter(a => a.path === '/api/plans').length
