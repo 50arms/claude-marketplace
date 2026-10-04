@@ -28,7 +28,10 @@ throughout; this skill is the plan mechanics.
 Goal record = outcome measured against; rule record = constraint; caveat record = lasting
 trade-off; architecture section (one per concern) = design; card (on the board it changes) =
 actionable work; AC item = a step finishing an existing card; card comment = progress,
-evidence, status, local state; problem on the card it concerns = operator question; plan
+evidence, status, local state; problem on the card it concerns = operator question; steps a
+person must perform (a live check, a manual task) = an `action` problem whose solution steps
+are the procedure, each with a short title and a description saying where (exact link), what
+to do and what to look for, never an AC checklist; plan
 note = real milestone; remove a wrong-plan card from the plan; rename a stale plan.
 
 ## The operator
