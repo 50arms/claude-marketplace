@@ -10,7 +10,7 @@
     "agents/worker-sonnet-low.md": "c3cd31490d50f9e51e54d00717d443445bc361c2d64bc6eb484d881c4af0398b",
     "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
     "hooks/hooks.json": "17f34debd6b4c7bad8e1a63a9df5849d6776d95d33cf5bf1bafbfd80f24a0697",
-    "hooks/plan/approval.ts": "78afd88473dec3ca00b04498cc7a27c1b30e98d1b091440c3610221dddff8318",
+    "hooks/plan/approval.ts": "dcb0693dd913bab49ec1a1874a98a11896f6ea85141f784078c65b3920518eba",
     "hooks/plan/band.tsx": "1f8bf6b899d770579ae222fab50ea403aebab658f9daab8a454b92354e255e03",
     "hooks/plan/browser-output.ts": "df6d3fa4511379c842c8d522b6c42179fe43dc34a53051ab471b5e8ece9aff33",
     "hooks/plan/config.ts": "13a61be554e6a459bc992b923f8206eac4a8681bf51626996110be321a4ac668",
@@ -23,7 +23,7 @@
     "hooks/plan/pane.tsx": "7293738120dd1616eb48c916a89b10bf07318d82d79bed9687bcd614d13b3d3b",
     "hooks/plan/problems.tsx": "96f9feef8245a6e82e72d969f623a01455f68039a231cf5b1a81100e50a3d012",
     "hooks/plan/words.ts": "7947de6fe69e1937ae7e47e48b801f804e0306fc9f8a02cc4a67ad4403bbf359",
-    "hooks/register.tsx": "36fa9334df843a500f44b187caede9a6051fc75cca389651efb3f087256881ee",
+    "hooks/register.tsx": "d26d8d2a013b0eab07913424eeb1d37d0c087a8a3bc881bd1264e9669a39fafa",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
     "scripts/activity-report.mjs": "6379ca4a590e48ddc71b82f9ff6ea74620ad8242589c2cc679520d6e9f1d7093",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
@@ -42,7 +42,7 @@
     "skills/fix-agent-behavior/SKILL.md": "29ad51abcbaefbf35ea80ebee46233fafd4adf148341b84d13cb0c48407f9f11",
     "skills/issue-workflow/SKILL.md": "0d924c0963b6a59522d22cca338d39151c31a21fcbb9fa0ceb0b46e59da4b8f9",
     "skills/issue-workflow/references/card-creation-and-reference.md": "9c05a4d0a6c13f66dcb8fe19b35efa3dfe07d7fa775e51c0ff415768f5c74167",
-    "skills/plan-workflow/SKILL.md": "72aa581efd3035db6e51c0571fdd3cdd4f44d9ff56ede27c014d776abe8405f6",
+    "skills/plan-workflow/SKILL.md": "5ef8787db46b810faa448713531bd210aa5abe510fcb7c63b42fd84e2ef721de",
     "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
     "types/index.d.ts": "1f86802d9f772446e931d7bbe6f30ed1bb5612155e4e421c0e03e4a64b94434f"
   }

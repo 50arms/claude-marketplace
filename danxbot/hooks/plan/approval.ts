@@ -22,8 +22,11 @@ export function approvalRequestOf(text: string | undefined): ApprovalRequest | n
   return { url: approvalUrl, code: confirmCode }
 }
 
-// The code stays up while the person compares it with the page; the link is in it too, since a
-// browser that fails to open leaves the link as the only way in.
-export function approvalToast(a: ApprovalRequest): string {
-  return `Approve this session in the browser. Confirm code ${a.code} must match the page: ${a.url}`
+// What the person is told while the code and the page can be compared: the code is in it either way,
+// and the link too, since a browser that did not open leaves the link as the only way in.
+export type OpenFailure = { step: string; message: string }
+
+export function approvalToast(a: ApprovalRequest, failed: OpenFailure | null): string {
+  if (failed === null) return `Approve this session in the browser. Confirm code ${a.code} must match the page: ${a.url}`
+  return `Could not open the approval page (${failed.step}: ${failed.message}). Open this link and check that confirm code ${a.code} matches: ${a.url}`
 }

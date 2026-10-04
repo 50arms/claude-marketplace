@@ -45,7 +45,24 @@ describe('plan_connect while signed out', () => {
     await d.clock.settle()
     expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
     expect(d.toasts.at(-1)).toBe(`Approve this session in the browser. Confirm code NXGUF88G must match the page: ${URL_A}`)
+    // the failure toast of a plan open never shows for this open: one toast, the outcome
+    expect(d.toasts.some(t => t.startsWith('Browser '))).toBe(false)
     expect(d.toastTimeouts.at(-1)).toBe(60_000)
+  })
+
+  // The shape core gives a hook for an MCP tool (the engine's own typings, ToolCallResult): `{ ref, result, text }`
+  // with `result` the tool's record (an MCP result's content blocks) and `text` the blocks joined as the model reads them.
+  test('reads the answer in the shape core gives for an MCP tool: ref, result content blocks, text', async ($, on) => {
+    const d = dashboard(on, { browserClosed: true })
+    const text = required(URL_A)
+    on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ ref: 7, result: { content: [{ type: 'text', text }] }, text }) as any)
+    await startSession($, d, 'desktop')
+    d.calls.length = 0
+    const ran = await $.tool.call(CALL)
+    await d.clock.settle()
+    expect(ran.text).toBe(text)
+    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
+    expect(d.toasts.at(-1)).toContain('NXGUF88G')
   })
 
   test('the same request repeated opens nothing again; a new request opens its own page', async ($, on) => {
@@ -67,9 +84,10 @@ describe('plan_connect while signed out', () => {
     await startSession($, d, 'desktop')
     await $.tool.call(CALL)
     await d.clock.settle()
-    expect(d.toasts.some(t => t.startsWith('Browser navigate failed'))).toBe(true)
+    // ONE last toast carries the cause, the code and the link, for the longest the host allows
+    expect(d.toasts.at(-1)).toMatch(/^Could not open the approval page \(navigate: .+\)\. Open this link and check that confirm code NXGUF88G matches: /)
     expect(d.toasts.at(-1)).toContain(URL_A)
-    expect(d.toasts.at(-1)).toContain('NXGUF88G')
+    expect(d.toastTimeouts.at(-1)).toBe(60_000)
   })
 
   for (const [name, text] of [
