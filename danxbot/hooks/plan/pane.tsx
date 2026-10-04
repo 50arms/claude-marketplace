@@ -216,7 +216,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
           </Text>
         )}
       </Box>
-      {v.problems.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
+      {v.problems.length === 0 && v.cardErrors.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
       {v.problems.map(p => problemCard(hd, E, ui, p, m.open === p.id))}
       {v.cardErrors.map(line => (
         <Text key={`err-${line}`} color={WARNING}>

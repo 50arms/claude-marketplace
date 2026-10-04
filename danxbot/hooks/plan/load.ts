@@ -245,7 +245,8 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
     problems,
     cardErrors,
     cardsTotal: cards.body.total,
-    cardsRead: rows.length,
+    // DX-4458: only the cards read: an unread card makes the problem list a lower bound, as a cap does
+    cardsRead: cardProblems.length,
     inProgress,
     inProgressTotal: inProg.body.total,
     refreshedAt,

@@ -64,6 +64,40 @@ for (const surface of SURFACES) {
       expect(t).not.toContain('boom')
     })
 
+    test('an unread card makes the list a lower bound: the pane says so and never claims nothing needs you', async ($, on) => {
+      const { pane } = await openPane($, on, surface, { cardFails: 'DX-1' })
+      const t = await text(pane)
+      expect(t).toContain("Couldn't load DX-1")
+      expect(t).toContain('+1 more card with open problems in the browser')
+      const only = await openPane($, on, surface, { cardFails: 'DX-1', cardsTotal: 1 })
+      expect(await text(only.pane)).not.toContain('Nothing needs you')
+    })
+
+    test('an in-progress card whose read fails is still listed, with one line saying its agent is unknown', async ($, on) => {
+      const { pane } = await openPane($, on, surface, { cardFails: 'DX-9' })
+      const t = await text(pane)
+      expect(t).toContain("Couldn't load who is working on DX-9: the dashboard answered 500")
+      expect(t).toContain('In flight card')
+      expect(t).toContain('Which route?')
+    })
+
+    test('an opened problem whose solutions cannot be read is its own line; the pane and its row stay', async ($, on) => {
+      const { pane } = await openPane($, on, surface, { problemsFail: true })
+      await pane.press({ key: 'open-11' })
+      const t = await text(pane)
+      expect(t).toContain("Couldn't load the solutions of PBLM-11: the dashboard answered 500")
+      expect(t).toContain('Second one?')
+      expect(await pane.find({ key: 'use-112' })).toBeUndefined()
+    })
+
+    test('closing a problem reads nothing', async ($, on) => {
+      const { d, pane } = await openPane($, on, surface)
+      await pane.press({ key: 'open-11' })
+      const before = d.api.length
+      await pane.press({ key: 'open-11' })
+      expect(d.api.length).toBe(before)
+    })
+
     test('an oversize answer for one card is a person-facing line, never the host notice', async ($, on) => {
       const { d, pane } = await openPane($, on, surface, { cardOversize: 'DX-2' })
       const t = await text(pane)

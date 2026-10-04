@@ -187,6 +187,8 @@ export function dashboard(
     cardFails?: string
     // DX-4458: ... and the host refuses that card's answer as too large
     cardOversize?: string
+    // DX-4458: GET /api/issues/<id>/problems answers 500
+    problemsFail?: boolean
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -328,6 +330,7 @@ export function dashboard(
     if (method === 'GET' && issue && options.cardFails === issue[1]) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
     const probs = /^\/api\/issues\/([A-Z]+-\d+)\/problems$/.exec(path)
+    if (method === 'GET' && probs && options.problemsFail) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && probs) {
       const c = world.cards.find(x => x.id === probs[1])
       if (!c) return reply({ error: 'nope' }, 404)

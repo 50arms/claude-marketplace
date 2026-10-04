@@ -535,8 +535,9 @@ function handlers($: any): Handlers {
     pickPlan: value => update($, pick, () => value),
     // DX-4458: opening a problem reads its solutions and comments (a refresh reads the open one's)
     toggleExpanded: async id => {
-      await update($, expanded, cur => (cur === id ? null : id))
-      await refresh($, true)
+      const opened = (await read($, expanded)) !== id
+      await update($, expanded, () => (opened ? id : null))
+      if (opened) await refresh($, true)
     },
     toggleTalk: id => update($, talk, cur => (cur === id ? null : id)),
     toggleDraft: (p, solutionId, kind) => toggleDraft($, p, solutionId, kind),
