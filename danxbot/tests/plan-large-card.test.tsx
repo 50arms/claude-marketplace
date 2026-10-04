@@ -3,7 +3,7 @@
 // cannot be read is one line and the rest of the pane still draws.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { loadPlan } from '../hooks/plan/load'
+import { errText, failureReason, loadPlan } from '../hooks/plan/load'
 import { HOST_LIMIT_CHARS, HOST_OVERSIZE, bigCard, SURFACES, dashboard, startSession } from './plan-kit'
 
 const PANE = {
@@ -103,6 +103,52 @@ for (const surface of SURFACES) {
       expect(d.api.length).toBe(before)
     })
 
+    test('an opened problem whose comments cannot be read shows that line and no solutions picker', async ($, on) => {
+      const { pane } = await openPane($, on, surface, { commentsFail: true })
+      await pane.press({ key: 'open-11' })
+      expect(await text(pane)).toContain("Couldn't load the comments of PBLM-11: the dashboard answered 500")
+      expect(await pane.find({ key: 'use-112' })).toBeUndefined()
+    })
+
+    test('an opened problem the narrowed read no longer returns says it is no longer open', async ($, on) => {
+      const { pane } = await openPane($, on, surface, { problemsEmpty: true })
+      await pane.press({ key: 'open-11' })
+      expect(await text(pane)).toContain('PBLM-11 is no longer open on DX-1: refresh the pane.')
+    })
+
+    test('opening a problem reads its detail; a refresh with it open re-reads it; opening another moves the read; closing reads none', async ($, on) => {
+      const { d, pane } = await openPane($, on, surface)
+      const detailReads = () => d.api.filter((a: any) => /\/problems$/.test(a.path)).map((a: any) => a.query.q)
+      await pane.press({ key: 'open-11' })
+      expect(detailReads()).toEqual(['Which route?'])
+      await pane.press({ key: 'refresh' })
+      expect(detailReads()).toEqual(['Which route?', 'Which route?'])
+      await pane.press({ key: 'open-12' })
+      expect(detailReads()).toEqual(['Which route?', 'Which route?', 'Allow the site'])
+      await pane.press({ key: 'open-12' })
+      expect(detailReads()).toHaveLength(3)
+    })
+
+    test('answering an opened problem on a large card with a failing card beside it lands, and no call exceeded the host limit', async ($, on) => {
+      const { d, pane } = await openPane($, on, surface, { bigCard: true, cardFails: 'DX-2' })
+      await pane.press({ key: 'open-305' })
+      await pane.press({ key: 'use-3010' })
+      expect(d.writes().map((w: any) => w.path)).toEqual(['/api/issues/DX-3/problems/305/answer'])
+      const t = await text(pane)
+      expect(t).toContain("Couldn't load DX-2")
+      expect(t).not.toContain('Question 5?')
+      expect(t).not.toMatch(/exceeds maximum/)
+    })
+
+    test('a signed-out answer to a detail read ends the view as signed out, never a line on the problem', async ($, on) => {
+      const { d, pane } = await openPane($, on, surface)
+      d.world.signedOut = 'lapsed'
+      await pane.press({ key: 'open-11' })
+      const t = await text(pane)
+      expect(t).toContain('signed out')
+      expect(t).not.toContain("Couldn't load")
+    })
+
     test('an oversize answer for one card is a person-facing line, never the host notice', async ($, on) => {
       const { d, pane } = await openPane($, on, surface, { cardOversize: 'DX-2' })
       const t = await text(pane)
@@ -120,3 +166,14 @@ for (const surface of SURFACES) {
     })
   })
 }
+
+describe('what a failed call says to a person', () => {
+  const r = (status: number, body: any) => ({ ok: false, status, body })
+  test('the host oversize notice (in error or message) is the too-large line; others say what answered, never the body', () => {
+    expect(failureReason(r(0, { error: HOST_OVERSIZE(85_234) }))).toBe('the dashboard answer was too large')
+    expect(failureReason(r(0, { message: HOST_OVERSIZE(1) }))).toBe('the dashboard answer was too large')
+    expect(errText(r(0, { error: HOST_OVERSIZE(85_234) }))).toBe('the dashboard answer was too large')
+    expect(failureReason(r(500, { error: 'secret server text' }))).toBe('the dashboard answered 500')
+    expect(failureReason(r(0, { error: 'secret' }))).toBe('the dashboard did not answer')
+  })
+})

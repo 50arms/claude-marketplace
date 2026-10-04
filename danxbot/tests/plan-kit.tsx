@@ -189,6 +189,10 @@ export function dashboard(
     cardOversize?: string
     // DX-4458: GET /api/issues/<id>/problems answers 500
     problemsFail?: boolean
+    // DX-4458: ... answers no problem at all (the problem was answered meanwhile)
+    problemsEmpty?: boolean
+    // DX-4458: the comments read of a card answers 500
+    commentsFail?: boolean
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -331,6 +335,7 @@ export function dashboard(
     if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
     const probs = /^\/api\/issues\/([A-Z]+-\d+)\/problems$/.exec(path)
     if (method === 'GET' && probs && options.problemsFail) return reply({ error: 'boom' }, 500)
+    if (method === 'GET' && probs && options.problemsEmpty) return reply({ problems: [] })
     if (method === 'GET' && probs) {
       const c = world.cards.find(x => x.id === probs[1])
       if (!c) return reply({ error: 'nope' }, 404)
@@ -341,6 +346,7 @@ export function dashboard(
       const c = world.inProgress.find(x => x.id === issue[1])!
       return reply({ id: c.id, title: c.title, assigned_agent_name: options.noAgent ? null : 'PLAN-23: danxbot plugin' })
     }
+    if (method === 'GET' && issue && options.commentsFail && query?.fields?.comments) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
       if (!c) return reply({ error: 'nope' }, 404)
