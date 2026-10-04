@@ -1591,8 +1591,8 @@ export function intentFromHookEvent(hookEventName) {
 
 /**
  * Whether a hook's `start` may spawn anything (DX-3392 problems 1762/1764, PLN-11
- * R-10): only for a session with a plan connection record, so the many sessions that never
- * touch a plan spawn nothing. DX-4391: this holds for a `plan_connect` too. The MCP server
+ * R-10): only for a session with a plan connection record, and never on a sign-in answer
+ * (`isSignInAnswer`, refused first), so the many sessions that never touch a plan spawn nothing. DX-4391: this holds for a `plan_connect` too. The MCP server
  * writes the record before it answers a real connect, whereas the answers of a signed-out
  * session (approval_required, approval_pending, signed_in) leave none, and a `start` for those
  * relayed `bridge down: no_connection_record` into the session each time.
@@ -1617,7 +1617,7 @@ export function isSignInAnswer(text) {
   }
 }
 
-/** The hook's stdin JSON carries `session_id`, `hook_event_name` and `transcript_path`; a hand run has none. */
+/** The hook's stdin JSON carries `session_id`, `hook_event_name`, `transcript_path` and (PostToolUse) `tool_response`; a hand run has none. */
 async function readHookInput() {
   const hook = parseHookPayload(await readStdinText());
   // DX-2953: transcriptPath is recorded into .started.json's startInputs so a watchdog restart reuses it.

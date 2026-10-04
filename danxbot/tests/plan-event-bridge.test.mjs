@@ -13,7 +13,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as bridge from "../scripts/plan-event-bridge.mjs";
 import * as state from "../scripts/lib/bridge-state.mjs";
-import { parseHookPayload, toolResponseText } from "../scripts/lib/hook-input.mjs";
+import { parseHookPayload, toolResultText } from "../scripts/lib/hook-input.mjs";
 import * as failureText from "../scripts/lib/failure-notice.mjs";
 import { spawnStandIn } from "./fixtures/spawn-standin.mjs";
 import { started, NOW } from "./fixtures/bridge-records.mjs";
@@ -2686,11 +2686,11 @@ describe("hookMayStart — a hook spawns nothing for a session with no plan conn
 
 describe("a PostToolUse payload's tool answer (DX-4391)", () => {
   const text = '{"state":"signed_in"}';
-  test("toolResponseText reads a string, content blocks, or an object holding them; anything else is empty", () => {
-    assert.equal(toolResponseText(text), text);
-    assert.equal(toolResponseText([{ type: "text", text }, { type: "image" }]), text);
-    assert.equal(toolResponseText({ content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] }), "ab");
-    for (const odd of [undefined, null, 7, {}, { content: "x" }, [null]]) assert.equal(toolResponseText(odd), "");
+  test("toolResultText reads a string, content blocks, or an object holding them; anything else is empty", () => {
+    assert.equal(toolResultText(text), text);
+    assert.equal(toolResultText([{ type: "text", text }, { type: "image" }]), text);
+    assert.equal(toolResultText({ content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] }), "ab");
+    for (const odd of [undefined, null, 7, {}, { content: "x" }, [null]]) assert.equal(toolResultText(odd), "");
   });
 
   test("parseHookPayload carries it; a payload without one reads empty", () => {
@@ -2754,56 +2754,56 @@ describe("start mode's watchdog flags (DX-3997)", () => {
     assert.equal(result.status, 2);
     assert.match(result.stderr, /usage: plan-event-bridge\.mjs start\|stop\|run/);
   });
+});
 
-  // DX-4391: the real CLI, as the PostToolUse(plan_connect) hook runs it. The env lacks the messaging inbox on purpose:
-  // a start that got past the gate would announce that on stderr and exit 2, so a quiet exit 0 proves nothing started.
-  describe("the PostToolUse(plan_connect) hook run for real", () => {
-    const runHook = (home, toolResponse) =>
-      spawnSync(process.execPath, [path.join(here, "..", "scripts", "plan-event-bridge.mjs"), "start"], {
-        encoding: "utf8",
-        input: JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", tool_name: "mcp__danx-dashboard__plan_connect", tool_response: toolResponse }),
-        env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, DANXBOT_PLAN_SESSIONS_HOME: home },
-      });
-
-    test("a plan_connect that left no connection record (approval_required, approval_pending, signed_in) starts nothing and says nothing", () => {
-      const home = tmpDir();
-      try {
-        const result = runHook(home);
-        assert.deepEqual([result.status, result.stdout, result.stderr], [0, "", ""]);
-      } finally {
-        fs.rmSync(home, { recursive: true, force: true });
-      }
+// DX-4391: the real CLI, as the PostToolUse(plan_connect) hook runs it. The env lacks the messaging inbox on purpose:
+// a start that got past the gate would announce that on stderr and exit 2, so a quiet exit 0 proves nothing started.
+describe("the PostToolUse(plan_connect) hook run for real", () => {
+  const runHook = (home, toolResponse) =>
+    spawnSync(process.execPath, [path.join(here, "..", "scripts", "plan-event-bridge.mjs"), "start"], {
+      encoding: "utf8",
+      input: JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", tool_name: "mcp__danx-dashboard__plan_connect", tool_response: toolResponse }),
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, DANXBOT_PLAN_SESSIONS_HOME: home },
     });
 
-    test("a sign-in answer over a stale record (key lapsed, record kept) starts nothing and says nothing, whichever shape tool_response has", () => {
-      const home = tmpDir();
-      try {
-        const dir = path.join(home, ".config", "danxbot", "plan-sessions");
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
-        const text = JSON.stringify({ state: "approval_required", approvalUrl: "https://dash.example/connect/x", confirmCode: "ABCD1234" });
-        const blocks = [{ type: "text", text }];
-        for (const toolResponse of [text, blocks, { content: blocks }]) {
-          const result = runHook(home, toolResponse);
-          assert.deepEqual([result.status, result.stdout, result.stderr], [0, "", ""], JSON.stringify(toolResponse).slice(0, 40));
-        }
-      } finally {
-        fs.rmSync(home, { recursive: true, force: true });
-      }
-    });
+  test("a plan_connect that left no connection record (approval_required, approval_pending, signed_in) starts nothing and says nothing", () => {
+    const home = tmpDir();
+    try {
+      const result = runHook(home);
+      assert.deepEqual([result.status, result.stdout, result.stderr], [0, "", ""]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 
-    test("a plan_connect that left the connection record starts the bridge (here it fails loud on the missing inbox)", () => {
-      const home = tmpDir();
-      try {
-        const dir = path.join(home, ".config", "danxbot", "plan-sessions");
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
-        const result = runHook(home, JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 2 } } }));
-        assert.equal(result.status, 2);
-        assert.match(result.stderr, /could not start/);
-      } finally {
-        fs.rmSync(home, { recursive: true, force: true });
+  test("a sign-in answer over a stale record (key lapsed, record kept) starts nothing and says nothing, whichever shape tool_response has", () => {
+    const home = tmpDir();
+    try {
+      const dir = path.join(home, ".config", "danxbot", "plan-sessions");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
+      const text = JSON.stringify({ state: "approval_required", approvalUrl: "https://dash.example/connect/x", confirmCode: "ABCD1234" });
+      const blocks = [{ type: "text", text }];
+      for (const toolResponse of [text, blocks, { content: blocks }]) {
+        const result = runHook(home, toolResponse);
+        assert.deepEqual([result.status, result.stdout, result.stderr], [0, "", ""], JSON.stringify(toolResponse).slice(0, 40));
       }
-    });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a plan_connect that left the connection record starts the bridge (here it fails loud on the missing inbox)", () => {
+    const home = tmpDir();
+    try {
+      const dir = path.join(home, ".config", "danxbot", "plan-sessions");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
+      const result = runHook(home, JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 2 } } }));
+      assert.equal(result.status, 2);
+      assert.match(result.stderr, /could not start/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

@@ -27,7 +27,7 @@ export async function readStdinText({ stdin = process.stdin, timeoutMs = 500 } =
  * DX-4391: a PostToolUse hook's `tool_response` as the text the tool answered: a string as is, else the
  * `text` blocks of its `content` (or of the array itself) joined. "" when it carries none.
  */
-export function toolResponseText(toolResponse) {
+export function toolResultText(toolResponse) {
   if (typeof toolResponse === "string") return toolResponse;
   const blocks = Array.isArray(toolResponse) ? toolResponse : Array.isArray(toolResponse?.content) ? toolResponse.content : [];
   return blocks.map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : "")).join("");
@@ -42,7 +42,7 @@ export function parseHookPayload(text, env = process.env) {
       sessionId: typeof parsed.session_id === "string" && parsed.session_id !== "" ? parsed.session_id : fallback.sessionId,
       hookEventName: typeof parsed.hook_event_name === "string" ? parsed.hook_event_name : null,
       transcriptPath: typeof parsed.transcript_path === "string" && parsed.transcript_path !== "" ? parsed.transcript_path : null,
-      toolResultText: toolResponseText(parsed.tool_response),
+      toolResultText: toolResultText(parsed.tool_response),
     };
   } catch {
     return fallback;
