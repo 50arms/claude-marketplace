@@ -495,6 +495,7 @@ async function drawBand($: any, e: any, next: any) {
     e.surface === 'desktop',
     e.surface === 'desktop',
     await read($, busy),
+    e.props.bodyColumns,
   )
 }
 
@@ -503,7 +504,7 @@ async function drawBand($: any, e: any, next: any) {
 async function drawSessionMode($: any, e: any, next: any) {
   const label = footerLabel(await read($, view))
   if (label === null) return next(e)
-  return renderFooter($.ui.resolve(e), handlers($), label, await next(e))
+  return renderFooter($.ui.resolve(e), handlers($), label, await next(e), e.surface === 'desktop')
 }
 
 async function drawPane($: any, e: any) {

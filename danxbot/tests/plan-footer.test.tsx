@@ -2,7 +2,7 @@
 // function as /danx-plan) brings the band back and opens the Plan pane.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
+import { FOOTER_PAD, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const counts = (o: Record<string, number>) => ({ 'In Progress': 0, ToDo: 0, Backlog: 0, Review: 0, Done: 0, Cancelled: 0, ...o })
@@ -14,8 +14,11 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface, ['focus & memory paused'])
-      expect((await footer.findAll({ type: 'Button' })).map((b: any) => [b.key, b.text])).toEqual([['footer-plan', 'Danxbot · PLAN-23']])
+      expect((await footer.findAll({ type: 'Button' })).map((b: any) => [b.key, b.text.replace(FOOTER_PAD, '')])).toEqual([['footer-plan', 'Danxbot · PLAN-23']])
       expect((await footer.find({ key: 'footer-plan' }))?.props.plain).toBe(true)
+      // DX-4420: the desktop's native chip takes no padding prop, so its label carries one non-breaking space each side
+      const raw = (await footer.find({ key: 'footer-plan' }))?.text
+      expect(raw).toBe(surface === 'desktop' ? ' Danxbot · PLAN-23 ' : 'Danxbot · PLAN-23')
       expect(await footer.find({ type: 'Svg' })).toBeUndefined()
       // the only Text is the engine's own mode label, which survives beside the button
       expect(await text(footer)).toBe('focus & memory paused')
@@ -25,7 +28,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect((await footer.findAll({ type: 'Button' })).map((b: any) => b.text)).toEqual(['Danxbot'])
+      expect((await footer.findAll({ type: 'Button' })).map((b: any) => b.text.replace(FOOTER_PAD, ''))).toEqual(['Danxbot'])
     })
 
     for (const [name, options] of [

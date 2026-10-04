@@ -1,17 +1,31 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { BAND_PLAN_NAME_MAX, EMPTY } from '../hooks/plan/config'
+import { EMPTY } from '../hooks/plan/config'
 import { bandLabel } from '../hooks/plan/words'
-import { DASHBOARD_URL, SURFACES, problemBadgeOf, dashboard, expectText, mountIndicator, startSession } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, problemBadgeOf, dashboard, expectText, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
 describe('plan band', () => {
-  test('a long plan name is cut with an ellipsis so the band fits; a short one is untouched', () => {
+  test('the full plan name shows with no width limit; with one it is cut with an ellipsis only when it overflows', () => {
     const connected = (name: string) => ({ ...EMPTY, phase: 'ready' as const, connected: { ...(EMPTY as any).connected, ref: 'PLAN-17', name, id: 17, dashboardUrl: 'x' } })
-    const long = 'x'.repeat(BAND_PLAN_NAME_MAX + 20)
-    expect(bandLabel(connected(long) as any)).toBe(`PLAN-17 · ${'x'.repeat(BAND_PLAN_NAME_MAX - 1)}…`)
-    expect(bandLabel(connected('short') as any)).toBe('PLAN-17 · short')
+    const long = 'x'.repeat(80)
+    expect(bandLabel(connected(long) as any)).toBe(`PLAN-17 · ${long}`)
+    expect(bandLabel(connected(long) as any, 30)).toBe(`PLAN-17 · ${'x'.repeat(19)}…`)
+    expect(bandLabel(connected('short') as any, 30)).toBe('PLAN-17 · short')
+    expect(bandLabel(connected(long) as any, 3)).toBe(`PLAN-17 · xxx…`)
+  })
+
+  test('the band cuts the name to the columns its controls leave, never a control', async ($, on) => {
+    const d = dashboard(on, { planName: 'A very long plan name that goes on and on and on' })
+    await startSession($, d, 'desktop')
+    const wide = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
+    const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
+    const labelOf = async (ui: any) => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
+    expect(await labelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
+    expect((await labelOf(narrow)).endsWith('…')).toBe(true)
+    expect((await labelOf(narrow)).length).toBeLessThan(40)
+    for (const ui of [wide, narrow]) for (const key of ['open-pane', 'open-problems', 'open-tab', 'band-close']) expect(await ui.find({ key })).toBeDefined()
   })
 
   test('the first load reads Danxbot Plan: loading…', () => {
@@ -110,7 +124,7 @@ for (const surface of SURFACES) {
       await band.press({ key: 'band-close' })
       expect(await band.find({ key: 'open-pane' })).toBeUndefined()
       // the footer is untouched by the dismissal
-      expect((await footer.find({ key: 'footer-plan' }))?.text).toBe('Danxbot · PLAN-23')
+      expect(await footerText(footer)).toBe('Danxbot · PLAN-23')
 
       await footer.press({ key: 'footer-plan' })
       expect(await band.find({ key: 'open-pane' })).toBeDefined()

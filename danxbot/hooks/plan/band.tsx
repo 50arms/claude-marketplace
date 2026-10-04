@@ -1,8 +1,14 @@
 import type { PlanView } from '../../types'
-import { DANGER, DONUT_BAND_PX, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_SPARE_COLS, DANGER, DONUT_BAND_PX, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { bandLabel, problemBadge, viewPercent } from './words'
+
+// DX-4420: the band button that opens the pane (it read `Plan`).
+const OPEN_PANE_LABEL = 'Panel'
+
+// The widest the Browser tab button reads (it flips to `Opening…`, shorter), for the label budget.
+const BROWSER_TAB_LABEL = 'Browser tab'
 
 // The band above the prompt: the plan line (indicator, label, then Plan / the open-problem count (DX-4420) / Browser tab / Open and a
 // close control hugging the right edge, the label truncating first).
@@ -16,11 +22,12 @@ export function renderBand(
   hasSvg: boolean,
   hasBrowser: boolean,
   busy: string[],
+  columns?: number,
 ): any {
   const { Box, Text, Button, Link } = E
   const openPane = (
     <Button key="open-pane" onPress={() => hd.openPane()}>
-      Plan
+      {OPEN_PANE_LABEL}
     </Button>
   )
   const close = (
@@ -41,6 +48,11 @@ export function renderBand(
   const plan = v.connected
   // DX-4420: a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
   const badge = v.phase === 'error' ? '' : problemBadge(v)
+  // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
+  // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
+  const controls = [OPEN_PANE_LABEL, badge, plan !== null && hasBrowser ? BROWSER_TAB_LABEL : '', plan !== null ? 'Open ↗' : '', '×'].filter(Boolean)
+  const controlCols = controls.reduce((n, c) => n + c.length + BAND_CONTROL_CHROME_COLS + BAND_GAP_COLS, 0)
+  const labelCols = columns === undefined ? undefined : columns - BAND_INDICATOR_COLS - BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
   const failed = v.phase === 'error'
@@ -57,7 +69,7 @@ export function renderBand(
       <Box flexShrink={1}>
         {/* DX-4419: a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
         <Text color={failedColor} dimColor={!failed} wrap="truncate-end">
-          {bandLabel(v)}
+          {bandLabel(v, labelCols)}
         </Text>
       </Box>
       <Box flexGrow={1} />
@@ -77,7 +89,7 @@ export function renderBand(
           ))}
         {plan !== null && hasBrowser && (
           <Button key="open-tab" onPress={() => hd.openBrowserTab(planUrl(plan))}>
-            {busyKey.isOpeningBrowser(busy) ? 'Opening…' : 'Browser tab'}
+            {busyKey.isOpeningBrowser(busy) ? 'Opening…' : BROWSER_TAB_LABEL}
           </Button>
         )}
         {plan !== null && <Link href={planUrl(plan)} label="Open ↗" />}

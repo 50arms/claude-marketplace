@@ -49,6 +49,8 @@ export function dashboard(
   on: On,
   options: {
     connected?: boolean
+    // DX-4420: PLAN-23's name, to try a name longer than the band
+    planName?: string
     // `dashboard_url` on GET /api/plans: the default DASHBOARD_URL, an override (any value, so a bad one can
     // be tried), or NO_DASHBOARD_URL for an answer without the field
     dashboardUrl?: unknown
@@ -172,7 +174,7 @@ export function dashboard(
     ] as Card[],
   }
   const plans = [
-    { id: 23, ref: 'PLAN-23', name: 'Danxbot plugin', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 2 } },
+    { id: 23, ref: 'PLAN-23', name: options.planName ?? 'Danxbot plugin', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 2 } },
     { id: 24, ref: 'PLAN-24', name: 'Agent mode', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 0 } },
     { id: 25, ref: 'PLAN-25', name: 'Archived', status: 'done', archived_at: 'x', bucket_counts: {} },
   ]
@@ -457,7 +459,9 @@ export async function mountIndicator($: any, surface: string, modes: string[] = 
 
 // The footer button's text (the one `SessionMode` button), and the band's progress indicator: an Svg whose alt
 // carries `N% complete` on the desktop, the text glyph on the terminal (no Svg there).
-export const footerText = async (ui: any): Promise<string | undefined> => (await ui.find({ key: 'footer-plan' }))?.text
+// DX-4420: the desktop pads the footer label with non-breaking spaces (footer.tsx); the label is what is compared.
+export const FOOTER_PAD = / /g
+export const footerText = async (ui: any): Promise<string | undefined> => (await ui.find({ key: 'footer-plan' }))?.text?.replace(FOOTER_PAD, '')
 
 export async function expectIndicator(band: any, surface: string, percent: number) {
   const GLYPHS: [number, string][] = [[0, '○'], [37, '◔'], [62, '◑'], [99, '◕'], [100, '●']]

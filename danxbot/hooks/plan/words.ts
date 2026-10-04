@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_PLAN_NAME_MAX, BRAND, PLAN_TITLE, PROBLEM_GLYPH } from './config'
+import { BAND_NAME_MIN_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
 export const WORDS = {
@@ -70,14 +70,17 @@ export function ellipsize(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
-// The band's label for a view that is not the Plan-button-only one.
-export function bandLabel(v: PlanView): string {
+// The band's label for a view that is not the Plan-button-only one. `maxCols`: the columns the label may take (absent:
+// no limit, the layout truncates); a connected plan's name is cut to what `PLAN-NN · ` leaves, with an ellipsis.
+export function bandLabel(v: PlanView, maxCols?: number): string {
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
   if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
   if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
   if (!v.connected) return `${BRAND}: not connected to a plan`
   // DX-4420: a connected band reads `PLAN-NN · name`; the Danxbot prefix stays on the states with no plan.
-  return [v.connected.ref, ellipsize(v.connected.name, BAND_PLAN_NAME_MAX)].filter(Boolean).join(' · ')
+  const { ref, name } = v.connected
+  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - ref.length - ' · '.length)
+  return [ref, ellipsize(name, nameCols)].filter(Boolean).join(' · ')
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at
