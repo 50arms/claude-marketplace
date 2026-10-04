@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_PLAN_NAME_MAX, BRAND, PLAN_TITLE } from './config'
+import { BAND_PLAN_NAME_MAX, BRAND, PLAN_TITLE, PROBLEM_GLYPH } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
 export const WORDS = {
@@ -41,12 +41,11 @@ export function capMark(v: PlanView): string {
   return v.cardsTotal > v.cardsRead ? '+' : ''
 }
 
-// "3 open problems", "3+ open problems" when the view read fewer cards than exist, '' for none.
-export function problemCount(v: PlanView): string {
+// DX-4420: the band button's label: a problem glyph and the count, "3+" when the view read fewer cards than exist,
+// '' for none (the button is then not drawn). The count is a button, not label text: see band.tsx.
+export function problemBadge(v: PlanView): string {
   const n = v.problems.length
-  if (n === 0) return ''
-  const more = capMark(v)
-  return `${n}${more} open problem${n === 1 && !more ? '' : 's'}`
+  return n === 0 ? '' : `${PROBLEM_GLYPH} ${n}${capMark(v)}`
 }
 
 // What the pane says when it read fewer cards than the dashboard has.
@@ -72,8 +71,7 @@ export function bandLabel(v: PlanView): string {
   if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
   if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
   if (!v.connected) return `${BRAND}: not connected to a plan`
-  const count = problemCount(v)
-  return [BRAND, v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX), count].filter(Boolean).join(' · ')
+  return [BRAND, v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX)].filter(Boolean).join(' · ')
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at

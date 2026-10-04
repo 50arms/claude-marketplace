@@ -22,7 +22,7 @@ for (const surface of SURFACES) {
         const d = dashboard(on, { dashboardUrl: origin })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-        expect(await hrefs(band)).toEqual([`${origin}/plans/23`])
+        expect(await hrefs(band)).toEqual(surface === 'desktop' ? [`${origin}/plans/23`] : [`${origin}/plans/23?tab=needs-you`, `${origin}/plans/23`])
       })
 
       test('the pane links the plan, every in-progress card and every problem on that origin', async ($, on) => {

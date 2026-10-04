@@ -15,6 +15,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface, ['focus & memory paused'])
       expect((await footer.findAll({ type: 'Button' })).map((b: any) => [b.key, b.text])).toEqual([['footer-plan', 'Danxbot · PLAN-23']])
+      expect((await footer.find({ key: 'footer-plan' }))?.props.plain).toBe(true)
       expect(await footer.find({ type: 'Svg' })).toBeUndefined()
       // the only Text is the engine's own mode label, which survives beside the button
       expect(await text(footer)).toBe('focus & memory paused')

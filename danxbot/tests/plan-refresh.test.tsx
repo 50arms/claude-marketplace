@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { SURFACES, dashboard, footerText, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -16,7 +16,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await label(band)).toContain('3 open problems')
+      expect(await problemBadgeOf(band)).toBe('⚠ 3')
 
       // a new problem appears on the dashboard; the next tick of the clock picks it up
       d.world.cards[1]!.problems.push({ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] })
@@ -25,7 +25,7 @@ for (const surface of SURFACES) {
       expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(loads)
       await d.clock.advance(1_000)
       expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(loads + 1)
-      expect(await label(band)).toContain('4 open problems')
+      expect(await problemBadgeOf(band)).toBe('⚠ 4')
     })
 
     test('a refresh error shows `Danxbot Plan: Disconnected` in the band and the message in the pane', async ($, on) => {
@@ -41,7 +41,7 @@ for (const surface of SURFACES) {
       // and it recovers on the next good load
       d.failList(false)
       await d.clock.advance(60_000)
-      expect(await label(band)).toContain('3 open problems')
+      expect(await problemBadgeOf(band)).toBe('⚠ 3')
     })
 
     test('the Refresh button forces a load every press', async ($, on) => {
@@ -113,13 +113,13 @@ describe('the hooks that refresh', () => {
     await $.turn.complete(turn)
     await d.clock.settle()
     expect(loads()).toBe(before)
-    expect(await label(band)).toContain('3 open problems')
+    expect(await problemBadgeOf(band)).toBe('⚠ 3')
 
     await d.clock.advance(6_000)
     await $.turn.complete(turn)
     await d.clock.settle()
     expect(loads()).toBe(before + 1)
-    expect(await label(band)).toContain('4 open problems')
+    expect(await problemBadgeOf(band)).toBe('⚠ 4')
   })
 })
 

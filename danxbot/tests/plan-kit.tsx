@@ -469,3 +469,11 @@ export async function expectIndicator(band: any, surface: string, percent: numbe
     expect(await band.find({ type: 'Text', text: glyph })).toBeDefined()
   }
 }
+
+// DX-4420: the band's open-problem count: a Button on the desktop, a Link on the terminal; its text, or undefined
+// when none is drawn. The one finder, so a test never depends on which of the two it is.
+export async function problemBadgeOf(ui: any): Promise<string | undefined> {
+  const all = [...(await ui.findAll({ type: 'Button' })), ...(await ui.findAll({ type: 'Link' }))]
+  const el = all.find((e: any) => String(e.text ?? e.props?.label ?? '').includes('⚠'))
+  return el && (el.text ?? el.props.label)
+}

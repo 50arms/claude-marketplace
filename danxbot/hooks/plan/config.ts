@@ -2,6 +2,8 @@ import type { ConnectedPlan, PlanView } from '../../types'
 
 export const PANE = 'danx-plan'
 // DX-4419: the name every band, footer and pane label carries, so the operator can tell the text is danxbot's.
+// DX-4420: the problem icon on the band's count button (a Button label is text only).
+export const PROBLEM_GLYPH = '⚠'
 export const BRAND = 'Danxbot'
 export const PLAN_TITLE = `${BRAND} Plan`
 export const COMMAND = 'danx-plan'
@@ -83,6 +85,13 @@ export const busyKey = {
 // connected plan: there is no origin constant, so a link always opens the dashboard the data came from.
 export function planUrl(plan: ConnectedPlan): string {
   return `${plan.dashboardUrl}/plans/${plan.id}`
+}
+
+// DX-4420: the plan page's Needs You tab, which the band's problem button opens. `needs-you` is danxbot's
+// NEEDS_YOU_BUCKET.id (frontend/src/lib/plan-buckets.ts), read by PlanDetailScreen from `?tab=`.
+export const NEEDS_YOU_TAB = 'needs-you'
+export function needsYouUrl(plan: ConnectedPlan): string {
+  return `${planUrl(plan)}?tab=${NEEDS_YOU_TAB}`
 }
 
 // The one builder of a card's page: problem links are built on it.

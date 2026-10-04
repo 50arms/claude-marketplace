@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { LOCK_STALE_MS, NO_MCP_RETRY_MS } from '../hooks/plan/config'
-import { dashboard, expectRowCarries, startSession } from './plan-kit'
+import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -39,7 +39,7 @@ describe('session.end by reason', () => {
       await d.clock.advance(60_000)
       expect(loadsOf(d)).toBe(before + 1)
       const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-      expect(await text(band)).toContain('4 open problems')
+      expect(await problemBadgeOf(band)).toBe('⚠ 4')
     })
   }
 

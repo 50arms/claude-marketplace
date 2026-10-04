@@ -4,7 +4,7 @@
 // the stand-in danxbot_api call it caused.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
+import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, problemBadgeOf, startSession, toldModel } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -41,7 +41,8 @@ for (const surface of SURFACES) {
       await pane.press({ key: 'connect' })
       await d.clock.settle()
       expect(d.calls.filter(c => c.tool === 'plan_connect').map(c => c.args.plan_id)).toEqual([23])
-      expect(await text(band)).toContain('PLAN-23 · Danxbot plugin · 4 open problems')
+      expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+      expect(await problemBadgeOf(band)).toBe('⚠ 4')
       await expectIndicator(band, surface, 25)
       expect(toldModel(d)).toHaveLength(1)
 
@@ -72,7 +73,7 @@ for (const surface of SURFACES) {
       // all four answered problems left the pane, and the band counts none
       expect(await text(pane)).toContain('Nothing needs you on this plan.')
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
-      expect(await text(band)).not.toContain('open problem')
+      expect(await problemBadgeOf(band)).toBeUndefined()
       // the connect row plus one per answer, each naming what it is about
       const rows = toldModel(d)
       expect(rows).toHaveLength(5)

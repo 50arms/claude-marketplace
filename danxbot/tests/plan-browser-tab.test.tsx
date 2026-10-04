@@ -67,6 +67,16 @@ describe('Open in browser tab', () => {
     })
   }
 
+  test('pressing the problem count opens the Needs You tab once through the browser-tab path', async ($, on) => {
+    const d = dashboard(on, { tabs: ['tab-1'] })
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    await band.press({ key: 'open-problems' })
+
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'navigate', 'tabs_select'])
+    expect(browserCalls(d)[2].args).toEqual({ url: `${URL}?tab=needs-you`, tabId: 'tab-7' })
+  })
+
   test('the terminal draws no browser-tab button anywhere, the link only', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'terminal')

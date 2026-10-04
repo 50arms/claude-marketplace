@@ -1,8 +1,8 @@
 import type { PlanView } from '../../types'
-import { DANGER, DONUT_BAND_PX, SUCCESS, WARNING, busyKey, planUrl } from './config'
+import { DANGER, DONUT_BAND_PX, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
-import { bandLabel, viewPercent } from './words'
+import { bandLabel, problemBadge, viewPercent } from './words'
 
 // The band above the prompt: the plan line (indicator, label, then Plan / Browser tab / Open and a
 // close control hugging the right edge, the label truncating first).
@@ -39,6 +39,7 @@ export function renderBand(
   }
 
   const plan = v.connected
+  const badge = problemBadge(v)
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
   const failed = v.phase === 'error'
@@ -61,6 +62,18 @@ export function renderBand(
       <Box flexGrow={1} />
       <Box flexDirection="row" gap={1} flexShrink={0}>
         {openPane}
+        {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab: a Button into the
+            in-app browser where there is one (the Browser tab path), a Link elsewhere. A Button carries no colour, so
+            the primary variant stands in for the warning tone. */}
+        {plan !== null &&
+          badge !== '' &&
+          (hasBrowser ? (
+            <Button key="open-problems" variant="primary" onPress={() => hd.openBrowserTab(needsYouUrl(plan))}>
+              {badge}
+            </Button>
+          ) : (
+            <Link href={needsYouUrl(plan)} label={badge} />
+          ))}
         {plan !== null && hasBrowser && (
           <Button key="open-tab" onPress={() => hd.openBrowserTab(planUrl(plan))}>
             {busyKey.isOpeningBrowser(busy) ? 'Opening…' : 'Browser tab'}

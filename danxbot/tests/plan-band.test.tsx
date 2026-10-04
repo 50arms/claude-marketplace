@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
 import { bandLabel } from '../hooks/plan/words'
-import { SURFACES, dashboard, expectText, mountIndicator, startSession } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, problemBadgeOf, dashboard, expectText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
@@ -22,12 +22,37 @@ describe('plan band', () => {
     }
   })
 
+  test('the open-problem count is a call-to-action button on the desktop and a link on the terminal, both to the Needs You tab', async ($, on) => {
+    const d = dashboard(on)
+    for (const surface of SURFACES) {
+      await startSession($, d, surface)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await problemBadgeOf(ui)).toBe('⚠ 3')
+      const button = await ui.find({ type: 'Button', key: 'open-problems' })
+      if (surface === 'desktop') expect(button).toBeDefined()
+      else expect(button).toBeUndefined()
+      if (surface === 'terminal') expect(await ui.find({ type: 'Link', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+
+  test('a plan with no open problems draws no problem button or link', async ($, on) => {
+    const d = dashboard(on)
+    for (const card of d.world.cards) card.problems = []
+    for (const surface of SURFACES) {
+      await startSession($, d, surface)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await problemBadgeOf(ui)).toBeUndefined()
+      await ui.unmount()
+    }
+  })
+
   test('connected: ref, name and the open-problem count; Browser tab only on the desktop, the link on both', async ($, on) => {
     const d = dashboard(on)
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expectText(await ui.find({ type: 'Text', text: /PLAN-23/ }), /Danxbot · PLAN-23 · Danxbot plugin · 3 open problems/)
+      expectText(await ui.find({ type: 'Text', text: /PLAN-23/ }), /Danxbot · PLAN-23 · Danxbot plugin$/)
       expect(await ui.find({ type: 'Link' })).toBeDefined()
       const tab = await ui.find({ type: 'Button', key: 'open-tab' })
       if (surface === 'desktop') expect(tab).toBeDefined()
@@ -157,7 +182,7 @@ for (const surface of SURFACES) {
       expect((await band.find({ type: 'Text', text: /PLAN-23/ }))?.props.wrap).toBe('truncate-end')
       // order and keys unchanged, the close control last
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
-      expect(keys).toEqual(surface === 'desktop' ? ['open-pane', 'open-tab', 'band-close'] : ['open-pane', 'band-close'])
+      expect(keys).toEqual(surface === 'desktop' ? ['open-pane', 'open-problems', 'open-tab', 'band-close'] : ['open-pane', 'band-close'])
       expect(await band.find({ type: 'Link' })).toBeDefined()
       expect((await band.find({ key: 'band-close' }))?.props.role).toBe('dismiss')
     })
