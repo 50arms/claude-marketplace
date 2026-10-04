@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "0e48a7e93a6ff294c47b6ad33d541bdd2607c8e2194daee4e27514f026fc51bb",
+    ".claude-plugin/plugin.json": "fed3e57cd0acef50a9df5f15871495f6f0c98835393bfb9e50e33310f827ed24",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -12,7 +12,7 @@
     "hooks/hooks.json": "17f34debd6b4c7bad8e1a63a9df5849d6776d95d33cf5bf1bafbfd80f24a0697",
     "hooks/plan/approval.ts": "dcb0693dd913bab49ec1a1874a98a11896f6ea85141f784078c65b3920518eba",
     "hooks/plan/band.tsx": "1f8bf6b899d770579ae222fab50ea403aebab658f9daab8a454b92354e255e03",
-    "hooks/plan/browser-output.ts": "df6d3fa4511379c842c8d522b6c42179fe43dc34a53051ab471b5e8ece9aff33",
+    "hooks/plan/browser-output.ts": "79467578a7eb7ec7a51ed2f53eba5b161dd54a97aff49c6862104af8240b9fc2",
     "hooks/plan/config.ts": "13a61be554e6a459bc992b923f8206eac4a8681bf51626996110be321a4ac668",
     "hooks/plan/donut.tsx": "30ccb102b2fb7f44908b75446593030c49527e2f70ba8db6f4f441d8bae27a84",
     "hooks/plan/footer.tsx": "774cb9f03234da29ae8d6bd7c173fb2942235614b0ac9e9819ae971dc5ea035f",
@@ -23,7 +23,7 @@
     "hooks/plan/pane.tsx": "7293738120dd1616eb48c916a89b10bf07318d82d79bed9687bcd614d13b3d3b",
     "hooks/plan/problems.tsx": "96f9feef8245a6e82e72d969f623a01455f68039a231cf5b1a81100e50a3d012",
     "hooks/plan/words.ts": "7947de6fe69e1937ae7e47e48b801f804e0306fc9f8a02cc4a67ad4403bbf359",
-    "hooks/register.tsx": "013c0dbc55f4be1c71210daac6ca990b367df0b52cd872a7008eb535d87a302b",
+    "hooks/register.tsx": "6dc3d0e9f86ad028251e4e04667d2c36619d0c607ac45878e96a1bcb7700cf0b",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
     "scripts/activity-report.mjs": "6379ca4a590e48ddc71b82f9ff6ea74620ad8242589c2cc679520d6e9f1d7093",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
