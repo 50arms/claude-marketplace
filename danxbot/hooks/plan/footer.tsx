@@ -9,7 +9,7 @@ export function renderFooter(E: any, hd: Handlers, label: string, rest: any): an
     <Box flexDirection="row" gap={1}>
       {rest}
       {/* DX-4420: a Button takes no padding, so its background left the text touching its edges: `plain` draws the label
-          without chrome, as the footer's own mode labels are. */}
+          without chrome. */}
       <Button key="footer-plan" plain onPress={() => hd.showPlan()}>
         {label}
       </Button>

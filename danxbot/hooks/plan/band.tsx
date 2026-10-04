@@ -4,7 +4,7 @@ import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { bandLabel, problemBadge, viewPercent } from './words'
 
-// The band above the prompt: the plan line (indicator, label, then Plan / Browser tab / Open and a
+// The band above the prompt: the plan line (indicator, label, then Plan / the open-problem count (DX-4420) / Browser tab / Open and a
 // close control hugging the right edge, the label truncating first).
 // With no danx-dashboard MCP server in the session it is only the Plan button: no label, no error.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text). `hasBrowser`: it has the
@@ -39,7 +39,8 @@ export function renderBand(
   }
 
   const plan = v.connected
-  const badge = problemBadge(v)
+  // DX-4420: a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
+  const badge = v.phase === 'error' ? '' : problemBadge(v)
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
   const failed = v.phase === 'error'

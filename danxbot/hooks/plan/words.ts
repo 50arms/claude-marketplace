@@ -65,13 +65,19 @@ export function updatedText(iso: string): string {
   return `Updated ${time.slice(0, 8)}Z`
 }
 
+// `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.
+export function ellipsize(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
 // The band's label for a view that is not the Plan-button-only one.
 export function bandLabel(v: PlanView): string {
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
   if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
   if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
   if (!v.connected) return `${BRAND}: not connected to a plan`
-  return [BRAND, v.connected.ref, v.connected.name.slice(0, BAND_PLAN_NAME_MAX)].filter(Boolean).join(' · ')
+  // DX-4420: a connected band reads `PLAN-NN · name`; the Danxbot prefix stays on the states with no plan.
+  return [v.connected.ref, ellipsize(v.connected.name, BAND_PLAN_NAME_MAX)].filter(Boolean).join(' · ')
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at

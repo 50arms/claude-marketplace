@@ -1,12 +1,20 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
+import { BAND_PLAN_NAME_MAX } from '../hooks/plan/config'
 import { bandLabel } from '../hooks/plan/words'
 import { DASHBOARD_URL, SURFACES, problemBadgeOf, dashboard, expectText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
 describe('plan band', () => {
+  test('a long plan name is cut with an ellipsis so the band fits; a short one is untouched', () => {
+    const connected = (name: string) => ({ ...EMPTY, phase: 'ready' as const, connected: { ...(EMPTY as any).connected, ref: 'PLAN-17', name, id: 17, dashboardUrl: 'x' } })
+    const long = 'x'.repeat(BAND_PLAN_NAME_MAX + 20)
+    expect(bandLabel(connected(long) as any)).toBe(`PLAN-17 · ${'x'.repeat(BAND_PLAN_NAME_MAX - 1)}…`)
+    expect(bandLabel(connected('short') as any)).toBe('PLAN-17 · short')
+  })
+
   test('the first load reads Danxbot Plan: loading…', () => {
     expect(bandLabel({ ...EMPTY, phase: 'loading', refreshedAt: null })).toBe('Danxbot Plan: loading…')
   })
@@ -52,7 +60,7 @@ describe('plan band', () => {
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expectText(await ui.find({ type: 'Text', text: /PLAN-23/ }), /Danxbot · PLAN-23 · Danxbot plugin$/)
+      expectText(await ui.find({ type: 'Text', text: /PLAN-23/ }), /^PLAN-23 · Danxbot plugin$/)
       expect(await ui.find({ type: 'Link' })).toBeDefined()
       const tab = await ui.find({ type: 'Button', key: 'open-tab' })
       if (surface === 'desktop') expect(tab).toBeDefined()

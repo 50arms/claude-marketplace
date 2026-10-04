@@ -1,11 +1,12 @@
 import type { ConnectedPlan, PlanView } from '../../types'
 
 export const PANE = 'danx-plan'
-// DX-4419: the name every band, footer and pane label carries, so the operator can tell the text is danxbot's.
-// DX-4420: the problem icon on the band's count button (a Button label is text only).
-export const PROBLEM_GLYPH = '⚠'
+// DX-4419: the name every footer and pane label, and the band's not-connected, loading and disconnected states, carry,
+// so the operator can tell the text is danxbot's.
 export const BRAND = 'Danxbot'
 export const PLAN_TITLE = `${BRAND} Plan`
+// DX-4420: the problem icon on the band's count button (a Button label is text only).
+export const PROBLEM_GLYPH = '⚠'
 export const COMMAND = 'danx-plan'
 export const SERVER = 'danx-dashboard'
 export const POLL_MS = 60_000
@@ -27,7 +28,9 @@ export const LOCK_STALE_MS = 120_000
 export const NO_MCP_RETRY_MS = [2_000, 5_000, 15_000]
 
 // Truncation lengths, each for one place.
-export const BAND_PLAN_NAME_MAX = 50
+// DX-4420: the band knows no width, so the plan name is cut to a length that leaves room for `PLAN-NN`, the problem
+// button and Plan / Browser tab / Open / close on one line (an ellipsis marks the cut).
+export const BAND_PLAN_NAME_MAX = 24
 export const PICKER_PLAN_NAME_MAX = 60
 export const CARD_TITLE_MAX = 80
 export const TOAST_ERROR_MAX = 160
