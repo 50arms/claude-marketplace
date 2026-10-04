@@ -244,24 +244,35 @@ async function openInBrowser($: any, url: string): Promise<void> {
 // cannot raise; not yet seen live for this open), which is what the cause then says. A browser already
 // busy with another open is told too. DX-4424: the toast comes once the tab is in front; a later
 // failure of the page load toasts again with the same code and link.
-async function openApprovalPage($: any, approval: ApprovalRequest): Promise<void> {
+async function openApprovalPage($: any, approval: ApprovalRequest, forget: () => Promise<unknown>): Promise<void> {
   let opening: Opening = { failed: { step: 'busy', message: 'another browser open is in progress' }, loaded: Promise.resolve(null) }
   await withBusy($, busyKey.browser, async () => {
     opening = await tryOpen($, approval.url)
   })
+  if (opening.failed !== null) await forget()
   $.ui.toast(approvalToast(approval, opening.failed), { timeoutMs: APPROVAL_TOAST_MS })
-  void opening.loaded.then(failed => failed && $.ui.toast(approvalToast(approval, failed), { timeoutMs: APPROVAL_TOAST_MS }))
+  void opening.loaded.then(async failed => {
+    if (failed === null) return
+    await forget()
+    $.ui.toast(approvalToast(approval, failed), { timeoutMs: APPROVAL_TOAST_MS })
+  })
 }
 
 // DX-4391 / DX-4423: a request's page opens once and its code is shown, wherever the request came from (the model's own
-// `plan_connect` or the Sign in button): the same URL is never opened twice. Recorded before the open on purpose: a skipped
-// or failed open must not re-open on every repeat; the toast carries the link for that case. The open is not awaited: its
-// browser calls take about 1 to 3.5 s each (DX-4424) and the caller, a model's tool answer or a button, must not wait on
-// them. A failure past tryOpen (the busy key, the toast itself) must still leave the link.
-async function showApproval($: any, approval: ApprovalRequest): Promise<void> {
-  if ((await read($, approvalOpened)) === approval.url) return
+// `plan_connect` or the Sign in button): the same URL is not reopened while its open stands. Recorded before the open so a
+// repeat during the open does not start a second one, and cleared when the open fails (a refused site permission, a pane
+// not ready), so the next attempt retries; the toast carries the link meanwhile. `force` is an explicit Sign in press: it
+// opens again even for a URL already recorded. The open is not awaited: its browser calls take about 1 to 3.5 s each
+// (DX-4424) and the caller, a model's tool answer or a button, must not wait on them. A failure past tryOpen (the busy
+// key, the toast itself) must still leave the link.
+async function showApproval($: any, approval: ApprovalRequest, force = false): Promise<void> {
+  if (!force && (await read($, approvalOpened)) === approval.url) return
   await update($, approvalOpened, () => approval.url)
-  openApprovalPage($, approval).catch(() => $.ui.toast(`Approve this session in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS }))
+  const forget = () => update($, approvalOpened, cur => (cur === approval.url ? null : cur))
+  openApprovalPage($, approval, forget).catch(async () => {
+    await forget()
+    $.ui.toast(`Approve this session in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS })
+  })
 }
 
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
@@ -377,8 +388,9 @@ async function signIn($: any): Promise<void> {
       if (step.kind === 'waiting') {
         if (step.request !== null) {
           if (shown !== null && step.request.url !== shown) break
+          // DX-4423: the press itself always tries the open; later rounds of the same wait only repeat the request
+          await showApproval($, step.request, shown === null)
           shown = step.request.url
-          await showApproval($, step.request)
         }
         continue
       }

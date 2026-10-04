@@ -17,7 +17,11 @@ const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b
 const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|lapsed|no longer accepts|STOP ALL WORK|Commit your work|agent-finalize/i
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'danx-dashboard' && c.tool === 'plan_connect')
 const previewStarts = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.tool === 'preview_start')
+// the page loads by preview_start (pane closed) or navigate (pane open)
+const pageOpens = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && (c.tool === 'preview_start' || c.tool === 'navigate'))
 const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
+// the model's own plan_connect call, answering the same approval request the dashboard's world gives the Sign in press
+const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 const answer = (value: unknown, isError = false) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError })
 
 describe('classification: the signed-out answer is its own state, not an error', () => {
@@ -246,6 +250,42 @@ for (const surface of SURFACES) {
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
       expect(connectCalls(d)[0]!.args).toEqual({ plan_id: 23 })
+    })
+
+    // DX-4423: a failed open must not strand the page: neither the next model call nor a Sign in press may be skipped
+    test('a failed open of the approval page is tried again by the next request for the same page', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true, browser: 'denied' })
+      modelConnect(on)
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      d.calls.length = 0
+      await band.press({ key: 'sign-in' })
+      await d.clock.settle()
+      expect(previewStarts(d)).toHaveLength(1)
+      expect(d.toasts.at(-1)).toMatch(/Could not open the approval page \(\w+: .+\)/)
+      // the model's own plan_connect for the same request: the guard was cleared by the failure, so it opens again
+      d.setBrowser('ok')
+      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await d.clock.settle()
+      expect(previewStarts(d)).toHaveLength(2)
+    })
+
+    test('an explicit Sign in press opens the approval page again even when this request was already opened', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+      modelConnect(on)
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      d.calls.length = 0
+      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await d.clock.settle()
+      expect(pageOpens(d)).toHaveLength(1)
+      await band.press({ key: 'sign-in' })
+      await d.clock.settle()
+      expect(pageOpens(d)).toHaveLength(2)
+      // later rounds of the same wait repeat the request and open nothing more
+      await d.clock.advance(45_000)
+      await d.clock.advance(45_000)
+      expect(pageOpens(d)).toHaveLength(2)
     })
 
     test('the request opens its page once and shows the code in one toast, whichever call asked for it', async ($, on) => {
