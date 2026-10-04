@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { NO_EVENT_BRIDGE } from '../hooks/plan/config'
-import { LISTENER_STATES, NEXT_STEP, SURFACES, dashboard, startSession } from './plan-kit'
+import { LISTENER_STATES, NEXT_STEP, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -15,6 +15,7 @@ const YELLOW = 'yellow'
 const texts = async (ui: any): Promise<any[]> => ui.findAll({ type: 'Text' })
 const joined = async (ui: any) => (await texts(ui)).map((t: any) => t.text).join(' | ')
 // the terminal's progress glyph is green too: it is not an event dot
+const yellowDots = async (ui: any) => (await texts(ui)).filter((t: any) => t.text === '●' && t.props.color === YELLOW).length
 const greens = async (ui: any) => (await texts(ui)).filter((t: any) => t.props.color === GREEN && !/^[○◔◑◕]$/.test(t.text)).map((t: any) => t.text)
 
 for (const surface of SURFACES) {
@@ -39,8 +40,9 @@ for (const surface of SURFACES) {
         const d = dashboard(on, { listener: state })
         await startSession($, d, surface)
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-        const named = (await texts(pane)).find((t: any) => t.text.includes(state))
+        const named = (await texts(pane)).find((t: any) => t.text === `events: ${state}`)
         expect(named?.props.color).toBe(YELLOW)
+        expect(await yellowDots(pane)).toBe(1)
         const step = (await texts(pane)).find((t: any) => t.text === NEXT_STEP(state))
         expect(step?.props.color).toBe(YELLOW)
         expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
@@ -52,7 +54,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { listener: 'Healthy' })
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect((await texts(pane)).find((t: any) => t.text.includes('Healthy'))?.props.color).toBe(YELLOW)
+      expect((await texts(pane)).find((t: any) => t.text === 'events: Healthy')?.props.color).toBe(YELLOW)
       expect(await joined(pane)).toContain(NEXT_STEP('Healthy'))
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
       expect(await greens(pane)).toEqual(['● Connected: PLAN-23'])
@@ -62,11 +64,47 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { listener: null })
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      const line = (await texts(pane)).find((t: any) => t.text.includes(NO_EVENT_BRIDGE))
+      const line = (await texts(pane)).find((t: any) => t.text === NO_EVENT_BRIDGE)
       expect(line?.props.color).toBe(YELLOW)
+      expect(await yellowDots(pane)).toBe(1)
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
       expect(await greens(pane)).toEqual(['● Connected: PLAN-23'])
     })
+
+    // the state is the truth, not the `attached` flag: a reader keyed on `attached` would get both of these wrong
+    test('attached true with a non-healthy state is the warning line, never green', async ($, on) => {
+      const d = dashboard(on, { listener: 'credential_mismatch', attached: true })
+      await startSession($, d, surface)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect((await texts(pane)).find((t: any) => t.text === 'events: credential_mismatch')?.props.color).toBe(YELLOW)
+      expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
+      expect(await greens(pane)).toEqual(['● Connected: PLAN-23'])
+    })
+
+    test('attached false with the healthy state is the green line: only the state decides', async ($, on) => {
+      const d = dashboard(on, { listener: 'healthy', attached: false })
+      await startSession($, d, surface)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeDefined()
+    })
+
+    // a present-but-unreadable status fails the load like a bad dashboard_url; absent or null is the no-status line
+    for (const [name, raw] of [
+      ['a state that is not a string', { attached: true, state: 5, nextStep: null }],
+      ['a next step that is neither a string nor null', { attached: true, state: 'stopped', nextStep: 7 }],
+      ['no nextStep at all', { attached: true, state: 'stopped' }],
+      ['a status that is not an object', 'healthy'],
+    ] as const) {
+      test(`${name}: the load is an error naming sessionListenerAttached, the footer reads Plan, and no event line is drawn`, async ($, on) => {
+        const d = dashboard(on, { rawListener: raw })
+        await startSession($, d, surface)
+        const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+        expect(await joined(pane)).toContain('sessionListenerAttached')
+        expect(await joined(pane)).not.toContain(NO_EVENT_BRIDGE)
+        expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
+        expect(await footerText(await mountIndicator($, surface))).toBe('Plan')
+      })
+    }
 
     test('not connected: no event line at all and nothing green', async ($, on) => {
       const d = dashboard(on, { connected: false })

@@ -84,6 +84,8 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await expectIndicator(band, surface, 25)
+      // the band's donut is 16 px, literally
+      if (surface === 'desktop') expect((await band.find({ type: 'Svg' }))?.props.width).toBe(16)
     })
 
     test('a complete plan draws the done mark: alt 100% complete on the desktop, the text 100% on the terminal', async ($, on) => {
@@ -121,7 +123,7 @@ for (const surface of SURFACES) {
       expect(await footerText(footer)).toBe('PLAN-23')
     })
 
-    test('no $.ui.status call remains: the footer entry replaced it (R-1)', async ($, on) => {
+    test('no $.ui.status call remains: the footer button replaced it (R-1)', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })

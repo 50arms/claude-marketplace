@@ -1,3 +1,6 @@
+import { SUCCESS } from './config'
+import { donutGlyph } from './words'
+
 // The plan-progress donut as an SVG document (desktop only: the terminal has no Svg and shows
 // the text glyph). A ring of circumference 100 so the arc length is the percent itself; a complete
 // plan (100) draws the done mark (a filled disc with a tick) instead (DX-4257).
@@ -29,4 +32,15 @@ export function donutSvg(percent: number): string {
 // The alt text a reader that cannot see the drawing gets.
 export function donutAlt(percent: number): string {
   return `${percent}% complete`
+}
+
+// DX-4374: the one donut mark: a real Svg of `px` CSS pixels where the surface draws one (the desktop), the
+// glyph as text elsewhere. The band line (small) and the pane header (large) both draw it.
+export function donutMark(E: any, percent: number, hasSvg: boolean, px: number): any {
+  const { Text, Svg } = E
+  return hasSvg ? (
+    <Svg source={donutSvg(percent)} alt={donutAlt(percent)} width={px} height={px} />
+  ) : (
+    <Text color={SUCCESS}>{donutGlyph(percent)}</Text>
+  )
 }

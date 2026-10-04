@@ -75,7 +75,7 @@ for (const surface of SURFACES) {
         const footer = await mountIndicator($, surface)
         await footer.press({ key: 'footer-plan' })
         await d.clock.settle()
-        expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Plan' }])
+        expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Plan', focus: true }])
         expect(d.stateWrites.filter(w => w.key === 'dismissed').map(w => w.value)).toEqual([false])
         expect(d.toasts).toEqual([])
         expect(toldModel(d)).toEqual([])
@@ -96,6 +96,7 @@ for (const surface of SURFACES) {
       await footer.press({ key: 'footer-plan' })
       expect(await band.find({ key: 'open-pane' })).toBeDefined()
       expect(d.opened.map(o => o.id)).toEqual(['danx-plan', 'danx-plan'])
+      expect(d.opened.map(o => o.focus)).toEqual([true, true])
       expect(d.stateWrites.filter(w => w.key === 'dismissed').map(w => w.value)).toEqual([true, false, false])
     })
 
@@ -113,6 +114,8 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.stateWrites.filter(w => w.key === 'dismissed')).toEqual(footerWrites)
       expect(d.opened).toEqual(footerOpened)
+      // both opened the pane with focus
+      expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Plan', focus: true }])
     })
   })
 }

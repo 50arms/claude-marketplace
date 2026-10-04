@@ -345,7 +345,12 @@ function toggleDraft($: any, p: ProblemRow, solutionId: number, kind: 'note' | '
 // (R-4 covers actions that change plan state; this changes none).
 async function showPlan($: any): Promise<void> {
   await update($, dismissed, () => false)
-  await $.ui.open({ id: PANE, title: 'Plan', focus: true })
+  await openPlanPane($)
+}
+
+// The one open of the Plan pane (the band's Plan button and showPlan): focused, so it takes the keyboard.
+function openPlanPane($: any): Promise<unknown> {
+  return $.ui.open({ id: PANE, title: 'Plan', focus: true })
 }
 
 // The band's close control: the band hides until the footer button or /danx-plan is used.
@@ -356,7 +361,7 @@ async function dismissBand($: any): Promise<void> {
 function handlers($: any): Handlers {
   return {
     refresh: () => refresh($, true),
-    openPane: () => $.ui.open({ id: PANE, title: 'Plan', focus: true }),
+    openPane: () => openPlanPane($),
     openBrowserTab: url => openInBrowser($, url),
     connect: plan => connect($, plan),
     showPlan: () => showPlan($),
@@ -455,7 +460,7 @@ async function onTitle($: any, e: any, next: any) {
 
 async function drawBand($: any, e: any, next: any) {
   if (e.props.hasSurvey) return next(e)
-  // a dismissed band draws nothing, whatever the connection (the footer entry brings it back)
+  // a dismissed band draws nothing, whatever the connection (the footer button brings it back)
   if (await read($, dismissed)) return next(e)
   const v = await read($, view)
   return renderBand(

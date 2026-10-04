@@ -89,5 +89,5 @@ export const DONUT_BAND_PX = 16
 export const DONUT_PANE_PX = 44
 
 // DX-4374: what the pane's event line says for a connected session the server reports no event bridge for
-// (`sessionListenerAttached` null): never green, never silent.
-export const NO_EVENT_BRIDGE = 'no event bridge for this session'
+// (`sessionListenerAttached` null): the plugin knows only that no status came, so it says that; never green, never silent.
+export const NO_EVENT_BRIDGE = 'the dashboard sent no event bridge status for this session'

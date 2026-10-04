@@ -91,7 +91,12 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   // The session in this same response says WHICH plan; the plan itself is read by id below.
   const session = list.body.session
   const connectedId: number | null = session?.plan_id ?? null
+  // DX-4374: an absent or null status is the "no status" line; a present one that is not {state: string,
+  // nextStep: string | null} cannot be read, so the load fails (never nulled to the no-status line).
   const listener = readListener(list.body.sessionListenerAttached)
+  if (listener === MALFORMED_LISTENER) {
+    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event bridge' }
+  }
   const noPlan = { connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
@@ -192,9 +197,12 @@ function readBreakdown(raw: any): StatusBreakdown | null {
   return { 'In Progress': raw['In Progress'], ToDo: raw.ToDo, Backlog: raw.Backlog, Review: raw.Review, Done: raw.Done, Cancelled: raw.Cancelled }
 }
 
-// DX-4374: the event bridge's state and next step, or null when the answer carries no state string (the server
-// answers null for a session on no plan). A missing nextStep is null, never a guessed sentence.
-function readListener(raw: any): ListenerStatus | null {
-  if (raw === null || typeof raw !== 'object' || typeof raw.state !== 'string') return null
-  return { state: raw.state, nextStep: typeof raw.nextStep === 'string' ? raw.nextStep : null }
+// DX-4374: the event bridge's state and next step; null when the answer carries none (the server answers null for
+// a session on no plan); MALFORMED_LISTENER when one is present but not the server's shape.
+const MALFORMED_LISTENER = Symbol('malformed sessionListenerAttached')
+function readListener(raw: any): ListenerStatus | null | typeof MALFORMED_LISTENER {
+  if (raw === null || raw === undefined) return null
+  if (typeof raw !== 'object' || typeof raw.state !== 'string') return MALFORMED_LISTENER
+  if (raw.nextStep !== null && typeof raw.nextStep !== 'string') return MALFORMED_LISTENER
+  return { state: raw.state, nextStep: raw.nextStep }
 }

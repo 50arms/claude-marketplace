@@ -1,8 +1,8 @@
 import type { PlanView } from '../../types'
 import { DONUT_BAND_PX, SUCCESS, WARNING, busyKey, planUrl } from './config'
-import { donutAlt, donutSvg } from './donut'
+import { donutMark } from './donut'
 import type { Handlers } from './handlers'
-import { bandLabel, donutGlyph, viewPercent } from './words'
+import { bandLabel, viewPercent } from './words'
 
 // The band above the prompt: the plan line (indicator, label, then Plan / Browser tab / Open and a
 // close control hugging the right edge, the label truncating first).
@@ -17,7 +17,7 @@ export function renderBand(
   hasBrowser: boolean,
   busy: string[],
 ): any {
-  const { Box, Text, Button, Link, Svg } = E
+  const { Box, Text, Button, Link } = E
   const openPane = (
     <Button key="open-pane" onPress={() => hd.openPane()}>
       Plan
@@ -43,10 +43,8 @@ export function renderBand(
   const indicator =
     percent === null ? (
       <Text color={plan === null ? WARNING : SUCCESS}>●</Text>
-    ) : hasSvg ? (
-      <Svg source={donutSvg(percent)} alt={donutAlt(percent)} width={DONUT_BAND_PX} height={DONUT_BAND_PX} />
     ) : (
-      <Text color={SUCCESS}>{donutGlyph(percent)}</Text>
+      donutMark(E, percent, hasSvg, DONUT_BAND_PX)
     )
   return (
     <Box key="band-line" flexDirection="row" gap={1}>

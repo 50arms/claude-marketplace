@@ -34,7 +34,8 @@ const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, 
 // The seven states the server answers for `sessionListenerAttached.state` (danxbot src/issues/plan-session-listeners.ts
 // ListenerHealthState). The fixture's next step for a state other than `healthy` is `NEXT_STEP(state)`.
 export const LISTENER_STATES = ['unattached', 'stopped', 'reconnecting', 'credential_mismatch', 'plan_has_no_cards', 'inventory_unavailable', 'healthy'] as const
-export const NEXT_STEP = (state: string) => `Next step for ${state}: run plan_connect again.`
+// The next step never contains the state's name, so a test that finds the state name cannot be satisfied by it.
+export const NEXT_STEP = (state: string) => `Run plan_connect again (step ${[...state].reduce((n, c) => n + c.charCodeAt(0), 0)}).`
 
 type Sol = { id: number; title: string; recommended: boolean; body?: string; pro?: string; con?: string; steps?: any[] }
 type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean; solutions: Sol[]; summary?: string; context?: string }
@@ -60,6 +61,10 @@ export function dashboard(
     // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
     // as readCallerSessionOverlay does.
     listener?: string | null
+    // ... and its `attached` flag when it should NOT follow the state (default: attached only when healthy)
+    attached?: boolean
+    // ... or the raw `sessionListenerAttached` value as sent, whatever its shape (overrides the two above)
+    rawListener?: unknown
     // the connected plan's status counts: the default, an override, or none at all
     breakdown?: Record<string, unknown>
     noBreakdown?: boolean
@@ -118,7 +123,7 @@ export function dashboard(
   const toasts: string[] = []
   const toastTimeouts: number[] = []
   const statuses: (string | undefined)[] = []
-  const opened: { id: string; title?: string }[] = []
+  const opened: { id: string; title?: string; focus?: boolean }[] = []
   const stateWrites: { plugin: string; key: string; value: unknown }[] = []
   const commands: string[] = []
   const world = {
@@ -183,9 +188,11 @@ export function dashboard(
             ? null
             : { plan_id: world.planId, plan_name: plans.find(p => p.id === world.planId)?.name ?? 'Far plan' },
         sessionListenerAttached:
-          world.planId === null || world.listener === null
+          options.rawListener !== undefined
+            ? options.rawListener
+            : world.planId === null || world.listener === null
             ? null
-            : { attached: world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
+            : { attached: options.attached ?? world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
       })
     }
@@ -401,7 +408,7 @@ export function dashboard(
     return { value: undefined }
   })
   on('ui.open', (_$: any, e: any) => {
-    opened.push({ id: e.id, title: e.title })
+    opened.push({ id: e.id, title: e.title, focus: e.focus })
     return { value: { isPlaced: true } }
   })
   on('command.register', (_$: any, e: any) => {

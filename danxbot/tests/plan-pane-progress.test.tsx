@@ -2,7 +2,7 @@
 // desktop, the glyph and the same figures as text on the terminal.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DONUT_PANE_PX } from '../hooks/plan/config'
+import { donutSvg } from '../hooks/plan/donut'
 import { donutGlyph, doneTotal } from '../hooks/plan/words'
 import { SURFACES, dashboard, startSession } from './plan-kit'
 
@@ -32,7 +32,8 @@ for (const surface of SURFACES) {
       expect(all).toContain('4 / 16 done')
       const svgs = await pane.findAll({ type: 'Svg' })
       if (surface === 'desktop') {
-        expect(svgs.map((s: any) => [s.props.alt, s.props.width, s.props.height])).toEqual([['25% complete', DONUT_PANE_PX, DONUT_PANE_PX]])
+        // the pane's donut is 44 px, literally; its source is the donut for the plan's own percent
+        expect(svgs.map((s: any) => [s.props.alt, s.props.width, s.props.height, s.props.source])).toEqual([['25% complete', 44, 44, donutSvg(25)]])
         expect(all).not.toContain('◔')
       } else {
         expect(svgs).toHaveLength(0)
@@ -54,7 +55,11 @@ for (const surface of SURFACES) {
         expect(all).toContain(`${percent}%`)
         expect(all).toContain(done)
         expect(all.join(' ')).not.toMatch(/NaN%|NaN \//)
-        if (surface === 'desktop') expect((await pane.find({ type: 'Svg' }))?.props.alt).toBe(`${percent}% complete`)
+        if (surface === 'desktop') {
+          const svg = await pane.find({ type: 'Svg' })
+          expect(svg?.props.alt).toBe(`${percent}% complete`)
+          expect(svg?.props.source).toBe(donutSvg(percent))
+        }
         else expect(all).toContain(donutGlyph(percent))
       })
     }

@@ -1,10 +1,10 @@
 import type { Draft, PlanView, StatusBreakdown } from '../../types'
-import { donutAlt, donutSvg } from './donut'
+import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { problemCard } from './problems'
 import type { Ui } from './problems'
 import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
-import { age, cappedInProgressNote, cappedNote, cappedPlansNote, donutGlyph, doneTotal, planPercent, problemSplit, updatedText } from './words'
+import { age, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
 export type PaneModel = {
@@ -22,19 +22,21 @@ export type PaneModel = {
   hasSvg: boolean
 }
 
+// DX-4374: one status dot, in the colour that says what it means (green working, yellow warning).
+function dot(E: any, color: string): any {
+  const { Text } = E
+  return <Text color={color}>●</Text>
+}
+
 // DX-4374: the progress donut with its percent and done / total: a real Svg on the desktop, the glyph and the
 // same figures as text on the terminal. Only a ready, connected view has counts to show.
 function progress(E: any, counts: StatusBreakdown, hasSvg: boolean): any {
-  const { Box, Text, Svg } = E
+  const { Box, Text } = E
   const percent = planPercent(counts)
   const { done, total } = doneTotal(counts)
   return (
     <Box key="progress" flexDirection="row" gap={1}>
-      {hasSvg ? (
-        <Svg source={donutSvg(percent)} alt={donutAlt(percent)} width={DONUT_PANE_PX} height={DONUT_PANE_PX} />
-      ) : (
-        <Text color={SUCCESS}>{donutGlyph(percent)}</Text>
-      )}
+      {donutMark(E, percent, hasSvg, DONUT_PANE_PX)}
       <Box flexDirection="column">
         <Text bold>{percent}%</Text>
         <Text dimColor>
@@ -53,15 +55,16 @@ function eventLine(E: any, v: PlanView): any {
   const l = v.listener
   if (l === null) {
     return (
-      <Text key="events" color={WARNING}>
-        ● {NO_EVENT_BRIDGE}
-      </Text>
+      <Box key="events" flexDirection="row" gap={1}>
+        {dot(E, WARNING)}
+        <Text color={WARNING}>{NO_EVENT_BRIDGE}</Text>
+      </Box>
     )
   }
   if (l.state === 'healthy') {
     return (
       <Box key="events" flexDirection="row" gap={1}>
-        <Text color={SUCCESS}>●</Text>
+        {dot(E, SUCCESS)}
         <Text>events</Text>
       </Box>
     )
@@ -69,7 +72,7 @@ function eventLine(E: any, v: PlanView): any {
   return (
     <Box key="events" flexDirection="column">
       <Box flexDirection="row" gap={1}>
-        <Text color={WARNING}>●</Text>
+        {dot(E, WARNING)}
         <Text color={WARNING}>events: {l.state}</Text>
       </Box>
       {l.nextStep !== null && <Text color={WARNING}>{l.nextStep}</Text>}
@@ -160,6 +163,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         <Text dimColor>{plan.status}</Text>
         {eventLine(E, v)}
       </Box>
+      {/* a connected view always has its breakdown (loadPlan errors without one); the guard only narrows the type */}
       {v.statusBreakdown && progress(E, v.statusBreakdown, m.hasSvg)}
       <Box flexDirection="row" gap={1}>
         {m.hasBrowser && (

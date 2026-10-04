@@ -113,6 +113,9 @@ export function problemSplit(v: PlanView): { questions: number; actions: number 
 
 // DX-4374: the footer button's label, read from `view.connected` alone (never from the phase's error):
 // `PLAN-NN` when a plan is known, `Plan` otherwise; null where the footer shows nothing (loading, no MCP).
+// The label can flip to `Plan` when a plan-list load fails: that error view carries no connected plan (the
+// session is read from the same failed answer), so the footer cannot name one. An error built after the plan
+// was read keeps it, and the footer keeps `PLAN-NN`.
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' || v.phase === 'no-mcp') return null
   return v.connected ? v.connected.ref : 'Plan'
