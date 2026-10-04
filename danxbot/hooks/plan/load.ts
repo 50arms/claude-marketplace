@@ -132,10 +132,13 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
 
   // One load of everything about the connected plan: the plan itself (its status counts and status),
   // the needs-you cards and the in-progress cards, together.
-  const [planR, cards, inProg] = await Promise.all([
+  const [planR, cards, inProg, boards] = await Promise.all([
     call('GET', `/api/plans/${connectedId}`),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_BUCKET_ID, sort: 'priority', limit: MAX_CARDS } }),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', limit: MAX_CARDS } }),
+    // DX-4448: the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
+    // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
+    call('GET', '/api/boards'),
   ])
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
   if (!planR.ok) return fail(errText(planR))
@@ -150,7 +153,9 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     status: planR.body.status,
     dashboardUrl,
   }
-  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown }
+  // DX-4448: cosmetic, so a boards call that fails costs the links, never the plan view: no prefixes, no links.
+  const cardPrefixes = boards.ok ? readPrefixes(boards.body?.boards) : []
+  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, cardPrefixes }
 
   if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
   if (typeof cards.body.total !== 'number') {
@@ -208,6 +213,13 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     inProgressTotal: inProg.body.total,
     refreshedAt,
   }
+}
+
+// DX-4448: the distinct, well-formed issue prefixes of GET /api/boards' answer (capital letters; a malformed one is dropped).
+function readPrefixes(raw: any): string[] {
+  if (!Array.isArray(raw)) return []
+  const found = raw.map(b => b?.issue_prefix).filter((p): p is string => typeof p === 'string' && /^[A-Z]{1,10}$/.test(p))
+  return [...new Set(found)]
 }
 
 // The origin of an http(s) URL string, or null: a trailing slash or path is dropped, a non-URL is refused.

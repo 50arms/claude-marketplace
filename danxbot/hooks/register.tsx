@@ -5,6 +5,7 @@ import type { ConnectedPlan, Draft, PlanRow, ProblemRow, RefreshGate, SolutionRo
 import { approvalRequestOf, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
+import { linkCardIds } from './plan/card-links'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
 import { footerLabel } from './plan/words'
@@ -654,6 +655,20 @@ async function drawSessionMode($: any, e: any, next: any) {
   return renderFooter($.ui.resolve(e), handlers($), label, await next(e), e.surface === 'desktop')
 }
 
+// DX-4448: card ids in an assistant reply drawn as links. Reads only the `view` atom (filled at refresh): no network in the draw.
+// The stored message is untouched (a rewrite changes the drawing only); anything this cannot link leaves the reply as it is.
+const MARKDOWN_MAX = 10_000
+async function drawAssistantMessage($: any, e: any, next: any) {
+  const v = await read($, view)
+  if (v.phase !== 'ready' || v.connected === null || v.cardPrefixes.length === 0) return next(e)
+  const planCards = new Set<string>([...v.problems.map(p => p.cardId), ...v.inProgress.map(r => r.id)])
+  const text = linkCardIds(e.props.text, v.cardPrefixes, v.connected, planCards)
+  // nothing linked, or the Markdown element's own cap exceeded: draw the reply as the surface would
+  if (text === e.props.text || text.length > MARKDOWN_MAX) return next(e)
+  const { Markdown } = $.ui.resolve(e)
+  return <Markdown text={text} />
+}
+
 async function drawPane($: any, e: any) {
   const m = {
     v: await read($, view),
@@ -681,4 +696,5 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, drawBand)
   on('ui.render', { component: 'SessionMode' }, drawSessionMode)
   on('ui.render', { component: 'Pane', requestId: PANE }, drawPane)
+  on('ui.render', { component: 'AssistantMessage' }, drawAssistantMessage)
 }

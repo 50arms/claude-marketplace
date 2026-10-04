@@ -72,6 +72,7 @@ export const EMPTY: PlanView = {
   statusBreakdown: null,
   inProgress: [],
   inProgressTotal: 0,
+  cardPrefixes: [],
   listener: null,
   refreshedAt: null,
   resumePlan: null,
@@ -109,6 +110,12 @@ export function needsYouUrl(plan: ConnectedPlan): string {
 // The one builder of a card's page: problem links are built on it.
 export function cardUrl(plan: ConnectedPlan, cardId: string): string {
   return `${planUrl(plan)}/cards/${cardId}`
+}
+
+// DX-4448: a card on a board of its own, outside the connected plan: the plan-free card route (danxbot
+// frontend/src/app/routes.tsx `board/:id`). Plan cards go through cardUrl.
+export function boardCardUrl(plan: ConnectedPlan, cardId: string): string {
+  return `${plan.dashboardUrl}/board/${cardId}`
 }
 
 // The donut's size in px (Svg takes CSS pixels): the band line's, and the pane header's.

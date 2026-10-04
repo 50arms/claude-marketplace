@@ -136,6 +136,8 @@ export function dashboard(
     planOutsideList?: boolean
     // comments the API did not return for a card (it pages them)
     commentsTotal?: number
+    // DX-4448: GET /api/boards fails
+    boardsFail?: boolean
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -220,6 +222,16 @@ export function dashboard(
             ? null
             : { attached: options.attached ?? world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
+      })
+    }
+    // DX-4448: the boards (danxbot's own and gpt-manager's), whose `issue_prefix` the card links are built on
+    if (method === 'GET' && path === '/api/boards') {
+      if (options.boardsFail) return reply({ error: 'boards boom' }, 500)
+      return reply({
+        boards: [
+          { id: 'danxbot:danxbot-main', issue_prefix: 'DX' },
+          { id: 'gpt-manager:gpt-manager-main', issue_prefix: 'SG' },
+        ],
       })
     }
     const planOne = /^\/api\/plans\/(\d+)$/.exec(path)
@@ -459,6 +471,11 @@ export function dashboard(
   on('ui.render', { component: 'SessionMode' }, ($: any, e: any) => {
     const { Text } = $.ui.resolve(e)
     return <Text dimColor>{e.props.modes.join(' & ')}</Text>
+  })
+  // DX-4448: what the engine draws for an assistant reply when no plugin rewrites it: the text as it is
+  on('ui.render', { component: 'AssistantMessage' }, ($: any, e: any) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>{e.props.text}</Text>
   })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)

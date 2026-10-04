@@ -112,6 +112,9 @@ export type PlanView = {
   // status count's: a card in progress with an open problem sits in needs-you).
   inProgress: InProgressRow[]
   inProgressTotal: number
+  // DX-4448: the issue prefixes (`DX`, `SG`) of the dashboard's boards, read at refresh from GET /api/boards, so a card id in an
+  // assistant reply can be drawn as a link with no call at draw time. Empty when not connected or the boards call failed.
+  cardPrefixes: string[]
   // The event bridge as GET /api/plans answers it (`sessionListenerAttached`): the server's health state and
   // its next step; null when the answer carries none (a session on no plan, or no session row).
   listener: ListenerStatus | null
