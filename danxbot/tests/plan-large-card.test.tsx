@@ -178,15 +178,15 @@ describe('what a failed call says to a person', () => {
   })
 })
 
-// DX-4490: DX-4378 made the dashboard refuse the old plan-list sort ids ('priority', 'updated', ...) with a 400. The pane's
-// card lists must ask for a <field>-<asc|desc> id; 'priority-desc' is what the retired 'priority' meant.
+// DX-4490 / DX-4492: every dashboard list sorts by `?sort=<field>&order=asc|desc`; any other sort shape is a 400. The pane's card
+// lists ask for the most important first: field `priority`, order `desc`.
 for (const surface of SURFACES) {
   describe(`the pane's card lists on ${surface}`, () => {
-    test('ask the dashboard for a sort id it accepts', async ($, on) => {
+    test('ask the dashboard for a sort field and order it accepts', async ($, on) => {
       const { d } = await openPane($, on, surface)
       const sorted = d.api.filter((a: any) => a.method === 'GET' && /^\/api\/plans\/[^/]+\/cards$/.test(a.path) && a.query?.sort !== undefined)
       expect(sorted.length).toBeGreaterThan(0)
-      for (const a of sorted) expect(a.query.sort).toMatch(/^(created|updated|priority|ref|title)-(asc|desc)$/)
+      for (const a of sorted) expect({ sort: a.query.sort, order: a.query.order }).toEqual({ sort: 'priority', order: 'desc' })
     })
   })
 }
