@@ -3,7 +3,7 @@ import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { problemCard } from './problems'
 import type { Ui } from './problems'
-import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
+import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
 import { age, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
@@ -138,6 +138,18 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
 
   if (v.phase === 'no-mcp') {
     return shell(<Text dimColor>The danx-dashboard MCP server is not connected in this session, so there is no plan to show.</Text>)
+  }
+  // DX-4423: the server's own text for this is written for the agent; the person reads this and presses Sign in.
+  if (v.phase === 'signed-out') {
+    return shell(
+      <Text key="signed-out" color={DANGER} bold>
+        ● {SIGNED_OUT_LABEL}
+      </Text>,
+      <Text>{SIGNED_OUT_LINE}</Text>,
+      <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
+        {busyKey.isSigningIn(m.working) ? 'Signing in…' : SIGN_IN_LABEL}
+      </Button>,
+    )
   }
   if (v.phase === 'error') {
     return shell(<Text color={DANGER}>{v.error ?? 'Unknown error'}</Text>)

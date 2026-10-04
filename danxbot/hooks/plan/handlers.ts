@@ -13,6 +13,7 @@ export type Handlers = {
   openBrowserTab: (url: string) => Promise<unknown>
   connect: (plan: PlanRow) => Promise<unknown>
   disconnect: (plan: ConnectedPlan) => Promise<unknown>
+  signIn: () => Promise<unknown>
   toggleSwitch: () => Promise<unknown>
   cancelSwitch: () => Promise<unknown>
   pickPlan: (value: string) => Promise<unknown>

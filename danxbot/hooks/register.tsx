@@ -22,6 +22,7 @@ import {
   PANE,
   PLAN_TITLE,
   POLL_MS,
+  SIGN_IN_ROUNDS,
   SERVER,
   NOTE_MARKER,
   TOAST_ERROR_MAX,
@@ -32,6 +33,7 @@ import type { Api } from './plan/load'
 import { isServerMissing, mcpText, refusalText, toolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote } from './plan/notes'
 import { renderPane } from './plan/pane'
+import { signInStep } from './plan/sign-in'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -107,7 +109,8 @@ async function refresh($: any, force = false): Promise<void> {
     while (again) {
       try {
         const v = await loadView($)
-        await update($, view, () => v)
+        // DX-4423: the plan a signed-out session was on is kept for Sign in to ask for again
+        await update($, view, cur => (v.phase === 'signed-out' ? { ...v, resumePlan: cur.connected?.id ?? cur.resumePlan } : v))
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -244,6 +247,16 @@ async function openApprovalPage($: any, approval: ApprovalRequest): Promise<void
   void opening.loaded.then(failed => failed && $.ui.toast(approvalToast(approval, failed), { timeoutMs: APPROVAL_TOAST_MS }))
 }
 
+// DX-4391 / DX-4423: a request's page opens once and its code is shown, wherever the request came from (the model's own
+// `plan_connect` or the Sign in button): the same URL is never opened twice. Recorded before the open on purpose: a skipped
+// or failed open must not re-open on every repeat; the toast carries the link for that case. The open is not awaited: it
+// takes seconds (5 to 10 live). A failure past tryOpen (the busy key, the toast itself) must still leave the link.
+async function showApproval($: any, approval: ApprovalRequest): Promise<void> {
+  if ((await read($, approvalOpened)) === approval.url) return
+  await update($, approvalOpened, () => approval.url)
+  openApprovalPage($, approval).catch(() => $.ui.toast(`Approve this session in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS }))
+}
+
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
 // together (a double click, a key repeat) cannot both win. The loser does nothing.
 async function withBusy($: any, key: string, work: () => Promise<void>): Promise<void> {
@@ -317,6 +330,44 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
     await tellModel($, disconnectNote({ ref: plan.ref, name: left.name }))
     await refresh($, true)
   })
+}
+
+// DX-4423: the Sign in button. A session with no dashboard key asks for one through `plan_connect` (with its own title,
+// and the plan it was on): the MCP answers at once with the approval request, which is shown as the model's own would be
+// (showApproval); each next call waits there for the person's approval, so the calls repeat until one answers something
+// final. The whole sign-in holds the sign-in busy key (the buttons read "Signing in…", a second press does nothing).
+async function signIn($: any): Promise<void> {
+  await withBusy($, busyKey.signIn, async () => {
+    const sessionTitle = await read($, title)
+    const resume = (await read($, view)).resumePlan
+    const args = { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
+    for (let round = 0; round < SIGN_IN_ROUNDS; round++) {
+      let r
+      try {
+        r = await $.mcp.call(SERVER, 'plan_connect', args)
+      } catch (err: any) {
+        $.ui.toast(`Sign in failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
+        return
+      }
+      const step = signInStep(r)
+      if (step.kind === 'approval') {
+        await showApproval($, step.request)
+        continue
+      }
+      if (step.kind === 'pending') continue
+      $.ui.toast(step.kind === 'done' ? 'Signed in' : step.message)
+      // signed in (even if the plan was refused): the view reads the truth; a stop leaves the signed-out view as it is
+      if (step.kind !== 'stop') await refresh($, true)
+      return
+    }
+    $.ui.toast('Sign in timed out: the request expired. Press Sign in again.')
+  })
+}
+
+// The button's press returns at once: the sign-in waits minutes for a person, and a press must not.
+function startSignIn($: any): Promise<void> {
+  signIn($).catch(err => $.ui.toast(`Sign in failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`))
+  return Promise.resolve()
 }
 
 // One write to a problem (answer, comment, step tick), inside its busy claim: call, toast a
@@ -431,6 +482,7 @@ function handlers($: any): Handlers {
     showPlan: () => showPlan($),
     dismissBand: () => dismissBand($),
     disconnect: plan => disconnect($, plan),
+    signIn: () => startSignIn($),
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
     pickPlan: value => update($, pick, () => value),
@@ -508,21 +560,14 @@ async function onCommand($: any) {
   return { text: 'Plan pane opened.' }
 }
 
-// The model connected (or moved) this session: show it at once.
+// The model connected (or moved) this session: show it at once. A signed-out session's `approval_required`
+// answer opens the approval page and leaves the code up to compare; the plan page is not opened (there is no
+// connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
   void refresh($, true)
   const approval = approvalRequestOf(ran.text)
-  if (approval !== null && (await read($, approvalOpened)) !== approval.url) {
-    // DX-4391: a signed-out session asked for access: open the approval page once, then leave the
-    // code up to compare. The plan page is not opened (there is no connection to show yet).
-    // recorded before the open on purpose: a skipped or failed open must not re-open on every repeat;
-    // the toast carries the link for that case. Not awaited: the open takes seconds (5 to 10 live) and
-    // the model should read its answer meanwhile, which tells it to show the code too.
-    await update($, approvalOpened, () => approval.url)
-    // a failure past tryOpen (the busy key, the toast itself) must still leave the link, so it is caught here
-    openApprovalPage($, approval).catch(() => $.ui.toast(`Approve this session in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS }))
-  }
+  if (approval !== null) await showApproval($, approval)
   return ran
 }
 

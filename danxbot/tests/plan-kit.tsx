@@ -26,6 +26,17 @@ export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
 export const NAVIGATE_REFUSED = `navigation to ${DASHBOARD_URL} was denied or failed`
 export const PREVIEW_START_OK = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "seed",\n  "reused": true,\n  "type": "browser",\n  "navOk": true\n}\nBrowser pane opened. Use serverId "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0" with read_page / computer / navigate.'
 
+// DX-4423: what the danx-dashboard MCP (0.1.224, session-access.ts) answers every tool but plan_connect while the session holds
+// no key: an error result. REVOKED_HALT is what the first call after a 401 on the session's key answers; both end in the
+// sign-in sentence. These are the server's words, for the agent: the plugin must never show them to the person.
+export const SIGN_IN_HALT = "Not signed in to the danxbot dashboard. Call `plan_connect` (with `title`: your session's own title) to request access; the user approves it in their browser, then this tool works."
+export const REVOKED_HALT = `The dashboard no longer accepts this session's key (it was revoked, or it lapsed after a day unused), so this session is signed out. ${SIGN_IN_HALT}`
+export const APPROVAL_URL = 'http://localhost:5555/connect/abc123'
+export const CONFIRM_CODE = 'WXYZ2345'
+// the approval request plan_connect answers while signed out, and what its next calls answer meanwhile (instruction text as the server words it)
+export const APPROVAL_REQUIRED = { state: 'approval_required', approvalUrl: APPROVAL_URL, confirmCode: CONFIRM_CODE, expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the user the confirm code and open the approval URL in their browser; they check the code matches and approve. Then call `plan_connect` again: it waits up to about 45 seconds for the approval.' }
+export const APPROVAL_PENDING = { ...APPROVAL_REQUIRED, state: 'approval_pending', instruction: 'Still waiting for the user to approve. Remind them of the confirm code and the URL, then call `plan_connect` again.' }
+
 // the connected plan's counts: 4 / (3 + 5 + 1 + 3 + 4) = 25%; Cancelled (2) is not counted
 export const DEFAULT_BREAKDOWN = { 'In Progress': 3, ToDo: 5, Backlog: 1, Review: 3, Done: 4, Cancelled: 2 }
 const SESSION_ID = '41365fb5-6b43-443b-a01b-81245574f648'
@@ -94,6 +105,11 @@ export function dashboard(
     // what tabs_context answers: the list (default), an error result, or text that is no tab list
     tabsContext?: 'list' | 'error' | 'garbage'
     listFails?: boolean
+    // DX-4423: the session holds no dashboard key: every danxbot_api call is the MCP's error result (the first call after a revoke
+    // answers REVOKED_HALT, a session that never signed in SIGN_IN_HALT) and plan_connect runs the request-and-approve dance
+    // (world.signIn): approval_required, then approval_pending after `waitMs` on the fake clock, until a test sets `approved`
+    // (then the key is stored: the tools work again and plan_connect connects to the plan it is given) or `answer`
+    signedOut?: 'signed-out' | 'revoked'
     // plan_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
@@ -133,6 +149,9 @@ export function dashboard(
     inProgress: [{ id: 'DX-9', title: 'In flight card', updatedAt: '2026-10-03T07:58:30.000Z' }] as { id: string; title: string; updatedAt: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
     titleSeen: undefined as string | undefined,
+    // DX-4423: null while the session holds a key
+    signedOut: (options.signedOut ?? null) as 'signed-out' | 'revoked' | null,
+    signIn: { requested: false, approved: false, waitMs: 45_000, answer: undefined as { text: string; isError?: boolean } | undefined, calls: [] as any[] },
     cards: [
       {
         id: 'DX-1',
@@ -262,6 +281,30 @@ export function dashboard(
       // a deny reaches the plugin as a rejection that carries the reason
       if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (world.signedOut !== null && e.tool !== 'plan_connect') {
+        return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? REVOKED_HALT : SIGN_IN_HALT }], isError: true } }
+      }
+      if (world.signedOut !== null && e.tool === 'plan_connect') {
+        const dance = world.signIn
+        dance.calls.push(e.args)
+        if (dance.answer) return { value: { content: [{ type: 'text', text: dance.answer.text }], isError: dance.answer.isError ?? false } }
+        // approved: the key is stored, and the call goes on to connect the plan it was given (or answers signed_in)
+        const approvedAnswer = () => {
+          world.signedOut = null
+          if (e.args.plan_id === undefined) return { value: text({ state: 'signed_in', instruction: 'This session is signed in. Call `plan_connect` with `plan_id` to connect it to a plan.' }) }
+          world.planId = e.args.plan_id
+          world.titleSeen = e.args.title
+          return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id } } }) }
+        }
+        if (dance.approved) return approvedAnswer()
+        if (!dance.requested) {
+          dance.requested = true
+          return { value: text(APPROVAL_REQUIRED) }
+        }
+        // the call waits for the approval (the MCP's ~45 s), and answers the moment it comes
+        await clock.sleep(dance.waitMs)
+        return dance.approved ? approvedAnswer() : { value: text(APPROVAL_PENDING) }
+      }
       if (e.tool === 'plan_connect' && e.args.disconnect) {
         if (options.disconnect === 'rejected') return { deny: 'plan_connect is not available' }
         if (options.disconnectTakesMs) await clock.sleep(options.disconnectTakesMs)

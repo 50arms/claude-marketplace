@@ -90,8 +90,10 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 
 // `no-mcp`: the session has no `danx-dashboard` MCP server (another repo), so the dashboard
 // cannot be reached at all. It is not an error: the band shows only its Panel button.
+// `signed-out` (DX-4423): the server is there but the session holds no dashboard key (revoked, lapsed, or never
+// approved): the band and pane say so and offer Sign in, never the server's agent-facing text.
 export type PlanView = {
-  phase: 'loading' | 'ready' | 'error' | 'no-mcp'
+  phase: 'loading' | 'ready' | 'error' | 'no-mcp' | 'signed-out'
   error: string | null
   connected: ConnectedPlan | null
   plans: PlanRow[]
@@ -112,6 +114,8 @@ export type PlanView = {
   // its next step; null when the answer carries none (a session on no plan, or no session row).
   listener: ListenerStatus | null
   refreshedAt: string | null
+  // DX-4423: the plan this session was on when it was signed out, for Sign in to ask for again; null when not known.
+  resumePlan: number | null
 }
 
 // What the operator is composing on one problem: a note on a solution, or a rejection reason.

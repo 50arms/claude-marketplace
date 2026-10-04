@@ -1,5 +1,5 @@
 import type { PlanView } from '../../types'
-import { DANGER, DONUT_BAND_PX, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { DANGER, DONUT_BAND_PX, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { bandLabel, bandLabelCols, problemBadge, viewPercent } from './words'
@@ -55,7 +55,10 @@ export function renderBand(
   // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
   const showBadge = plan !== null && badge !== ''
+  // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
+  const signedOut = v.phase === 'signed-out'
   const controls = [
+    ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
     ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
     ...(plan !== null && hasBrowser ? [{ label: BROWSER_TAB_LABEL, isButton: true }] : []),
@@ -65,7 +68,7 @@ export function renderBand(
   const labelCols = columns === undefined ? undefined : bandLabelCols(columns, controls)
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
-  const failed = v.phase === 'error'
+  const failed = v.phase === 'error' || signedOut
   const failedColor = failed ? DANGER : undefined
   const indicator =
     percent === null ? (
@@ -84,6 +87,11 @@ export function renderBand(
       </Box>
       <Box flexGrow={1} />
       <Box flexDirection="row" gap={1} flexShrink={0}>
+        {signedOut && (
+          <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
+            {busyKey.isSigningIn(busy) ? 'Signing in…' : SIGN_IN_LABEL}
+          </Button>
+        )}
         {openPane}
         {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab: a Button into the
             in-app browser where there is one (the Browser tab path), a Link elsewhere. A Button carries no colour, so

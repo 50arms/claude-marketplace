@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
 export const WORDS = {
@@ -84,6 +84,8 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
 // The band's label for a view that is not the Panel-button-only one. `maxCols`: the columns the label may take (absent:
 // no limit, the layout truncates); a connected plan's name is cut to what `PLAN-NN · ` leaves, with an ellipsis.
 export function bandLabel(v: PlanView, maxCols?: number): string {
+  // DX-4423: a session with no key reads signed out, in the operator's words, whatever it was connected to before.
+  if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
   if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
   if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
@@ -138,6 +140,7 @@ export function problemSplit(v: PlanView): { questions: number; actions: number 
 // was read keeps it, and the footer keeps `Danxbot · PLAN-NN`.
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' || v.phase === 'no-mcp') return null
+  if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND
 }
 

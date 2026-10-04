@@ -74,6 +74,7 @@ export const EMPTY: PlanView = {
   inProgressTotal: 0,
   listener: null,
   refreshedAt: null,
+  resumePlan: null,
 }
 
 // What `busy` holds while writes are under way: a list of keys, one per connect or problem, so
@@ -84,6 +85,8 @@ export const busyKey = {
   browser: 'browser:open',
   isOpeningBrowser: (busy: string[]) => busy.includes('browser:open'),
   disconnect: (planId: number) => `disconnect:${planId}`,
+  signIn: 'sign-in',
+  isSigningIn: (busy: string[]) => busy.includes('sign-in'),
   isDisconnecting: (busy: string[]) => busy.some(k => k.startsWith('disconnect:')),
   isConnecting: (busy: string[]) => busy.some(k => k.startsWith('connect:')),
   isSaving: (busy: string[], problemId: number) => busy.includes(`problem:${problemId}`),
@@ -114,3 +117,15 @@ export const DONUT_PANE_PX = 44
 // DX-4374: what the pane's event line says for a connected session the server reports no event bridge for
 // (`sessionListenerAttached` null): the plugin knows only that no status came, so it says that; never green, never silent.
 export const NO_EVENT_BRIDGE = 'the dashboard sent no event bridge status for this session'
+
+// DX-4423: a session with no dashboard key. The danx-dashboard MCP answers every tool but `plan_connect` with an error
+// result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key was revoked or lapsed
+// (REVOKED_HALT ends with it): packages/danx-dashboard-mcp session-access.ts. DX-4418's distinct `key_revoked` answer will
+// replace this match for the revoked case. The text is for the agent: the person only ever reads the words below.
+export const SIGNED_OUT_MARK = 'Not signed in to the danxbot dashboard'
+export const SIGNED_OUT_LABEL = `${BRAND}: signed out`
+export const SIGNED_OUT_LINE = "This session's access ended. Sign in to reconnect."
+export const SIGN_IN_LABEL = 'Sign in'
+// Each sign-in call waits up to ~45 s inside the MCP for the approval (session-access.ts AWAIT_APPROVAL_MS), and a request
+// lives 10 minutes, so this many calls cover one request.
+export const SIGN_IN_ROUNDS = 14

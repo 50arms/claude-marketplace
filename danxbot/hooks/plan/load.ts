@@ -1,5 +1,5 @@
 import type { CommentRow, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, STATUS_KEYS } from './config'
+import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, SIGNED_OUT_MARK, STATUS_KEYS } from './config'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -63,7 +63,31 @@ export function toProblems(card: any, priority: number): ProblemRow[] {
     )
 }
 
+// DX-4423: an answer that says the session holds no dashboard key (see SIGNED_OUT_MARK): the call is an error result, so
+// its status is 0 and the text is the error.
+export function isSignedOut(r: Api): boolean {
+  return !r.ok && r.status === 0 && typeof r.body?.error === 'string' && r.body.error.includes(SIGNED_OUT_MARK)
+}
+
+class SignedOut extends Error {}
+
+// The whole load. A signed-out answer to ANY of its calls (the key can be dropped between two of them) ends it as the
+// `signed-out` view, never as a generic error carrying the server's text. `resumePlan` is the caller's to fill.
 export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanView> {
+  const guarded: Call = async (method, path, extra) => {
+    const r = await call(method, path, extra)
+    if (isSignedOut(r)) throw new SignedOut()
+    return r
+  }
+  try {
+    return await readPlan(guarded, refreshedAt)
+  } catch (err) {
+    if (err instanceof SignedOut) return { ...EMPTY, phase: 'signed-out', refreshedAt }
+    throw err
+  }
+}
+
+async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const list = await call('GET', '/api/plans', { query: { limit: MAX_PLANS } })
   if (list.unreachable) return { ...EMPTY, phase: 'no-mcp' }
   if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list) }
