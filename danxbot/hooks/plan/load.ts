@@ -1,5 +1,6 @@
 import type { CommentRow, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, SIGNED_OUT_MARK, STATUS_KEYS } from './config'
+import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, STATUS_KEYS } from './config'
+import { isSignedOut } from './mcp'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -61,12 +62,6 @@ export function toProblems(card: any, priority: number): ProblemRow[] {
         moreComments,
       }),
     )
-}
-
-// DX-4423: an answer that says the session holds no dashboard key (see SIGNED_OUT_MARK): the call is an error result, so
-// its status is 0 and the text is the error.
-export function isSignedOut(r: Api): boolean {
-  return !r.ok && r.status === 0 && typeof r.body?.error === 'string' && r.body.error.includes(SIGNED_OUT_MARK)
 }
 
 class SignedOut extends Error {}
@@ -191,6 +186,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     updatedAt: n.row.updatedAt,
   }))
   return {
+    ...EMPTY,
     ...base,
     phase: 'ready',
     error: null,

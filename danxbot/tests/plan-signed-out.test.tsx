@@ -3,7 +3,9 @@
 // person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { isSignedOut, loadPlan } from '../hooks/plan/load'
+import { SIGN_IN_ROUNDS } from '../hooks/plan/config'
+import { loadPlan } from '../hooks/plan/load'
+import { isSignedOut } from '../hooks/plan/mcp'
 import { signInStep } from '../hooks/plan/sign-in'
 import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, REVOKED_HALT, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
@@ -28,6 +30,9 @@ describe('classification: the signed-out answer is its own state, not an error',
     expect(isSignedOut({ ok: false, status: 500, body: { error: SIGN_IN_HALT } })).toBe(false)
     expect(isSignedOut({ ok: true, status: 200, body: { error: SIGN_IN_HALT } })).toBe(false)
     expect(isSignedOut({ ok: false, status: 0, body: undefined })).toBe(false)
+    // only the server's own sentence: another service's "not signed in", or a bare mention of plan_connect, is a plain failure
+    expect(isSignedOut(halt('Not signed in to Slack'))).toBe(false)
+    expect(isSignedOut(halt('Call `plan_connect` with a plan id'))).toBe(false)
   })
 
   test('the first call, a later call, and the revoked wording each end the load as signed-out', async () => {
@@ -45,6 +50,16 @@ describe('classification: the signed-out answer is its own state, not an error',
   })
 })
 
+describe('the loaded view', () => {
+  test('a ready view carries resumePlan null: the field is never undefined', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    const v = d.stateWrites.filter(w => w.key === 'view').at(-1)!.value as any
+    expect(v.phase).toBe('ready')
+    expect(v.resumePlan).toBeNull()
+  })
+})
+
 describe('what one plan_connect answer means to Sign in', () => {
   test("each answer of the server maps to one step, and the words are never the server's", () => {
     expect(signInStep(answer(APPROVAL_REQUIRED))).toEqual({ kind: 'approval', request: { url: APPROVAL_URL, code: CONFIRM_CODE } })
@@ -55,6 +70,8 @@ describe('what one plan_connect answer means to Sign in', () => {
     expect(signInStep(answer({ state: 'rate_limited', retryAfterSeconds: 60, error: 'x' }, true)).kind).toBe('stop')
     expect(signInStep(answer({ state: 'something_new' }, true))).toEqual({ kind: 'stop', message: 'Sign in stopped (something_new).' })
     expect(signInStep(answer({ state: 'approval_required', approvalUrl: 'javascript:x', confirmCode: 'A' })).kind).toBe('stop')
+    expect(signInStep(answer({ state: 'request_failed', error: 'x' }, true))).toEqual({ kind: 'stop', message: 'Sign in could not reach the dashboard: try again in a moment.' })
+    expect(signInStep(answer({ state: 'request_refused', status: 403 }, true))).toEqual({ kind: 'stop', message: 'The dashboard refused the sign-in request.' })
     expect(signInStep({ content: [{ type: 'text', text: 'plain text' }], isError: true }).kind).toBe('stop')
     const refused = signInStep(answer({ ok: false, status: 409, body: { error: 'plan_archived', message: 'PLAN-23 is archived.' } }))
     expect(refused).toEqual({ kind: 'refused', message: 'Signed in, but the plan connect was refused: 409 PLAN-23 is archived.' })
@@ -142,6 +159,8 @@ for (const surface of SURFACES) {
       expect(await texts(pane)).toContain('Connected: PLAN-23')
       expect(await buttons(pane)).not.toContain('Sign in')
       expect(await buttons(pane)).not.toContain('Signing in…')
+      // not one toast of the whole sign-in carried the server's words
+      expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
     })
 
     test('a session that was on no plan signs in with no plan id and lands on the plan list', async ($, on) => {
@@ -175,15 +194,30 @@ for (const surface of SURFACES) {
       })
     }
 
-    test("a request nobody approves ends after the request's lifetime with a toast, and Sign in is pressable again", async ($, on) => {
+    test('a request nobody approves ends when the call that outlives it answers a new one: a toast, no second page, Sign in pressable again', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+      d.world.signIn.expireAfterCalls = 4
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      await band.press({ key: 'sign-in' })
+      for (let i = 0; i < 6; i++) await d.clock.advance(45_000)
+      await d.clock.settle()
+      expect(d.toasts.at(-1)).toBe('Sign in timed out: the request expired. Press Sign in again.')
+      expect(connectCalls(d)).toHaveLength(4)
+      expect(previewStarts(d).map((c: any) => c.args.url)).toEqual([APPROVAL_URL])
+      expect(d.toasts.join(' ')).not.toContain('NEWCODE9')
+      expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
+    })
+
+    test('a server that never answers anything final ends after SIGN_IN_ROUNDS calls', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await band.press({ key: 'sign-in' })
-      for (let i = 0; i < 20; i++) await d.clock.advance(45_000)
+      for (let i = 0; i < SIGN_IN_ROUNDS + 4; i++) await d.clock.advance(45_000)
       await d.clock.settle()
       expect(d.toasts.at(-1)).toBe('Sign in timed out: the request expired. Press Sign in again.')
-      expect(connectCalls(d)).toHaveLength(14)
+      expect(connectCalls(d)).toHaveLength(SIGN_IN_ROUNDS)
       expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
     })
 

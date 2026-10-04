@@ -1,4 +1,4 @@
-import { ERROR_BODY_MAX } from './config'
+import { ERROR_BODY_MAX, SIGNED_OUT_MARK } from './config'
 
 // What `$.mcp.call` rejects with, as the engine words it.
 
@@ -46,4 +46,11 @@ export function refusalText(o: ToolOutcome): string {
   const said = String(b.message ?? b.error ?? 'no detail')
   const real = b.error === 'plan_mismatch' && b.actual_plan ? ` (PLAN-${b.actual_plan.id} "${b.actual_plan.name}")` : ''
   return `${o.status || 'mcp'} ${said}${real}`
+}
+
+// DX-4423: whether a tool's outcome says the session holds no dashboard key (see SIGNED_OUT_MARK). The server answers it as an
+// error result, which toolOutcome reads as status 0 with the text as the error; a failure with a real status that merely
+// mentions signing in is a plain failure.
+export function isSignedOut(o: ToolOutcome): boolean {
+  return !o.ok && o.status === 0 && typeof o.body?.error === 'string' && o.body.error.includes(SIGNED_OUT_MARK)
 }

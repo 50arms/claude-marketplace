@@ -23,6 +23,8 @@ const STOPPED: Record<string, string> = {
   rate_limited: 'Too many sign-in requests from this machine: wait a minute, then press Sign in again.',
   dashboard_outdated: 'This dashboard cannot approve sessions yet: it needs updating.',
   no_session_id: 'This session has no id, so it cannot sign in.',
+  request_failed: 'Sign in could not reach the dashboard: try again in a moment.',
+  request_refused: 'The dashboard refused the sign-in request.',
 }
 
 export function signInStep(result: any): SignInStep {

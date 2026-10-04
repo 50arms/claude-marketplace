@@ -151,7 +151,7 @@ export function dashboard(
     titleSeen: undefined as string | undefined,
     // DX-4423: null while the session holds a key
     signedOut: (options.signedOut ?? null) as 'signed-out' | 'revoked' | null,
-    signIn: { requested: false, approved: false, waitMs: 45_000, answer: undefined as { text: string; isError?: boolean } | undefined, calls: [] as any[] },
+    signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean } | undefined, calls: [] as any[] },
     cards: [
       {
         id: 'DX-1',
@@ -301,9 +301,14 @@ export function dashboard(
           dance.requested = true
           return { value: text(APPROVAL_REQUIRED) }
         }
-        // the call waits for the approval (the MCP's ~45 s), and answers the moment it comes
+        // the call waits for the approval (the MCP's ~45 s), and answers the moment it comes; one that outlives the request
+        // (`expireAfterCalls` calls in) answers a NEW request, as session-access.ts does after an expiry
         await clock.sleep(dance.waitMs)
-        return dance.approved ? approvedAnswer() : { value: text(APPROVAL_PENDING) }
+        if (dance.approved) return approvedAnswer()
+        if (dance.expireAfterCalls !== undefined && dance.calls.length >= dance.expireAfterCalls) {
+          return { value: text({ ...APPROVAL_REQUIRED, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9', note: 'The previous request expired before it was approved.' }) }
+        }
+        return { value: text(APPROVAL_PENDING) }
       }
       if (e.tool === 'plan_connect' && e.args.disconnect) {
         if (options.disconnect === 'rejected') return { deny: 'plan_connect is not available' }

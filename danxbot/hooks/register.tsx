@@ -249,8 +249,9 @@ async function openApprovalPage($: any, approval: ApprovalRequest): Promise<void
 
 // DX-4391 / DX-4423: a request's page opens once and its code is shown, wherever the request came from (the model's own
 // `plan_connect` or the Sign in button): the same URL is never opened twice. Recorded before the open on purpose: a skipped
-// or failed open must not re-open on every repeat; the toast carries the link for that case. The open is not awaited: it
-// takes seconds (5 to 10 live). A failure past tryOpen (the busy key, the toast itself) must still leave the link.
+// or failed open must not re-open on every repeat; the toast carries the link for that case. The open is not awaited: its
+// browser calls take about 1 to 3.5 s each (DX-4424) and the caller, a model's tool answer or a button, must not wait on
+// them. A failure past tryOpen (the busy key, the toast itself) must still leave the link.
 async function showApproval($: any, approval: ApprovalRequest): Promise<void> {
   if ((await read($, approvalOpened)) === approval.url) return
   await update($, approvalOpened, () => approval.url)
@@ -335,12 +336,15 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
 // DX-4423: the Sign in button. A session with no dashboard key asks for one through `plan_connect` (with its own title,
 // and the plan it was on): the MCP answers at once with the approval request, which is shown as the model's own would be
 // (showApproval); each next call waits there for the person's approval, so the calls repeat until one answers something
-// final. The whole sign-in holds the sign-in busy key (the buttons read "Signing in…", a second press does nothing).
+// final. A call that answers a DIFFERENT request than the one shown means the first expired while it waited: that is the
+// end (a new request nobody asked for is left to lapse), never a second page. The whole sign-in holds the sign-in busy key
+// (the buttons read "Signing in…", a second press does nothing).
 async function signIn($: any): Promise<void> {
   await withBusy($, busyKey.signIn, async () => {
     const sessionTitle = await read($, title)
     const resume = (await read($, view)).resumePlan
     const args = { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
+    let shown: string | null = null
     for (let round = 0; round < SIGN_IN_ROUNDS; round++) {
       let r
       try {
@@ -351,6 +355,8 @@ async function signIn($: any): Promise<void> {
       }
       const step = signInStep(r)
       if (step.kind === 'approval') {
+        if (shown !== null && step.request.url !== shown) break
+        shown = step.request.url
         await showApproval($, step.request)
         continue
       }

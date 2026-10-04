@@ -126,6 +126,8 @@ export const SIGNED_OUT_MARK = 'Not signed in to the danxbot dashboard'
 export const SIGNED_OUT_LABEL = `${BRAND}: signed out`
 export const SIGNED_OUT_LINE = "This session's access ended. Sign in to reconnect."
 export const SIGN_IN_LABEL = 'Sign in'
-// Each sign-in call waits up to ~45 s inside the MCP for the approval (session-access.ts AWAIT_APPROVAL_MS), and a request
-// lives 10 minutes, so this many calls cover one request.
-export const SIGN_IN_ROUNDS = 14
+export const SIGNING_IN_LABEL = 'Signing in…'
+// Each sign-in call waits up to ~45 s inside the MCP for the approval (session-access.ts AWAIT_APPROVAL_MS). The request's
+// own expiry (10 minutes) ends the sign-in first: the call that outlives it answers a NEW request, which is not shown.
+// This bound only guarantees the loop ends if the server never answers either way.
+export const SIGN_IN_ROUNDS = 16

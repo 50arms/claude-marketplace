@@ -1,5 +1,5 @@
 import type { PlanView } from '../../types'
-import { DANGER, DONUT_BAND_PX, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { bandLabel, bandLabelCols, problemBadge, viewPercent } from './words'
@@ -89,7 +89,7 @@ export function renderBand(
       <Box flexDirection="row" gap={1} flexShrink={0}>
         {signedOut && (
           <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
-            {busyKey.isSigningIn(busy) ? 'Signing in…' : SIGN_IN_LABEL}
+            {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
           </Button>
         )}
         {openPane}
