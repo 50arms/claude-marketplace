@@ -15,7 +15,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 |---|---|---|
 | Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
-| Gates | the profile instruction carries them | run by the operator session, never spawned by you ("Gates" below) |
+| Gates | the profile instruction carries them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
 | Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to main, `complete` + retro, report |
 
 Dispatched-only mechanics (`danxbot_complete`, halt, `agent-finalize.sh`, the pre-synced
@@ -37,7 +37,7 @@ worktree, DB resets) live only in danxbot's `work` profile.
 3. Pass its PRE gates ("Gates" below), then build test-first, to the rules under
    "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
-5. Pass its POST gates.
+5. Pass its POST gates ("Gates" below).
 6. Merge first: a dispatched worker runs its profile's end order, `agent-finalize.sh`
    first; an operator-session sub-agent, once told to land, commits and pushes to main.
    Only then transition `complete` with a summary and write the retro (last — it 409s
@@ -50,12 +50,12 @@ A quality gate is a step a card must pass: PRE gates (`plan-*`) run before the b
 gates (`code-*`) on the finished diff. The card's `quality_gates` lists the ones it
 carries, and each board keeps its own text for what a gate does.
 
-An operator-session sub-agent never spawns gate agents: a nested agent's completion notice
-reaches only the top-level session. It runs a gate itself, in its own context, only when its
-brief says to; otherwise it pushes its card branch, reports the tip SHA and stops. The
-operator session runs each gate not yet `pass`, relays the findings for the sub-agent to fix,
-and tells it when to land. Each gate is one sub-agent — `danxbot:worker-opus-high` for an
-architecture gate, `danxbot:worker-sonnet-high` for the rest — briefed to:
+An operator-session sub-agent runs its PRE gates itself, in its own context, then builds,
+pushes its card branch, reports the tip SHA and stops. It never spawns gate agents: a
+background agent's notice reaches only the top-level session. The operator session runs
+each POST gate not yet `pass` as a gate worker (`danxbot:worker-opus-high` for an
+architecture gate, `danxbot:worker-sonnet-high` for the rest), relays the findings and says
+when to land. Whoever runs a gate:
 
 1. Fetch the board's gate text through `danxbot_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
@@ -64,8 +64,9 @@ architecture gate, `danxbot:worker-sonnet-high` for the rest — briefed to:
 3. Record the verdict through `danxbot_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`
    with `{status: "pass"|"fail", message: "<the real finding>"}`.
 
-Fix a `fail`, then run the gate again. A gate that doesn't apply to the card is removed
-(`POST` the same card route with `{action: "remove"}`) with a card comment saying why —
+Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
+that doesn't apply to the card is removed (`POST` the same card route with
+`{action: "remove"}`) with a card comment saying why —
 never passed to get it out of the way.
 
 ## Needing a human

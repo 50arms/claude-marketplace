@@ -19,8 +19,9 @@ const mantra = readFileSync(path.join(here, "../mantra.md"), "utf8");
 const start = skill.indexOf("## Gates");
 const end = skill.indexOf("\n## ", start + 1);
 assert.ok(start > -1 && end > start, "the skill has a `## Gates` section followed by another section");
-// One line, single-spaced, so no assertion depends on where the prose wraps.
-const gates = skill.slice(start, end).replace(/\s+/g, " ");
+/** One line, single-spaced, so no assertion depends on where the prose wraps. */
+const flat = (text) => text.replace(/\s+/g, " ");
+const gates = flat(skill.slice(start, end));
 
 test("the brief has the sub-agent do what the gate text says, card writes included, and nothing else", () => {
   assert.match(gates, /2\. Do what that text says/);
@@ -51,44 +52,50 @@ test("the brief still fetches the board's gate text, records the verdict and rem
 });
 
 // DX-4479 — the section told an operator-session sub-agent (a builder) to spawn
-// its own gate agents in the background. A nested agent's completion notice
+// its own gate agents in the background. A background agent's completion notice
 // reaches only the top-level session, so the builder waited for verdicts that
-// never came (DX-4401, DX-4403, DX-4440; DX-3756 the same symptom). The
-// operator session now runs every gate; the builder pushes its card branch,
-// reports the tip SHA and stops until it is told to land.
+// never came (DX-4401, DX-4403, DX-4440; DX-3756 the same symptom). The builder
+// now runs its PRE gates itself, pushes, reports its tip and stops; the operator
+// session runs the POST gates as gate workers and says when to land.
 
-const flat = (text) => text.replace(/\s+/g, " ");
 const callers = flat(skill.slice(skill.indexOf("## Two callers"), skill.indexOf("## Flow")));
-const step6 = flat(skill.slice(skill.indexOf("\n6. ", skill.indexOf("## Flow")), skill.indexOf("## Gates")));
+const flow = flat(skill.slice(skill.indexOf("## Flow"), skill.indexOf("## Gates")));
 const planWorkflow = readFileSync(path.join(here, "../skills/plan-workflow/SKILL.md"), "utf8");
 const pwStart = planWorkflow.indexOf("## Sub-agents");
 const subAgents = flat(planWorkflow.slice(pwStart, planWorkflow.indexOf("\n## ", pwStart + 1)));
 const creation = flat(readFileSync(path.join(here, "../skills/issue-workflow/references/card-creation-and-reference.md"), "utf8"));
+const NEVER_SPAWNS = /It never spawns gate agents: a background agent's notice reaches only the top-level session\./;
 
-test("an operator-session sub-agent never spawns gate agents, and the section says why", () => {
-  assert.match(gates, /An operator-session sub-agent never spawns gate agents: a nested agent's completion notice reaches only the top-level session\./);
+test("the builder runs its PRE gates in its own context, then pushes, reports the tip SHA and stops", () => {
+  assert.match(gates, /runs its PRE gates itself, in its own context/);
+  assert.match(gates, /pushes its card branch, reports the tip SHA and stops/);
+  assert.match(gates, NEVER_SPAWNS);
 });
 
-test("the builder pushes its card branch, reports the tip SHA and stops; the operator session runs the gates and says when to land", () => {
-  assert.match(gates, /otherwise it pushes its card branch, reports the tip SHA and stops\./);
-  assert.match(gates, /It runs a gate itself, in its own context, only when its brief says to;/);
-  assert.match(gates, /The operator session runs each gate not yet `pass`, relays the findings for the sub-agent to fix, and tells it when to land\./);
-  assert.match(gates, /Each gate is one sub-agent — `danxbot:worker-opus-high` for an architecture gate, `danxbot:worker-sonnet-high` for the rest — briefed to:/);
-  assert.doesNotMatch(gates, /For each gate not yet `pass`, dispatch one sub-agent/);
+test("the operator session runs and re-runs the POST gates as gate workers and says when to land", () => {
+  assert.match(gates, /The operator session runs each POST gate not yet `pass` as a gate worker/);
+  assert.match(gates, /relays the findings and says when to land/);
+  assert.match(gates, /the operator session re-runs a POST gate/);
 });
 
-test("the Two callers table agrees: gates run by the operator session; push the branch, report the tip, land when told", () => {
+test("outside the never-spawns sentence, the section tells no one to spawn or dispatch a gate agent", () => {
+  assert.doesNotMatch(gates.replace(NEVER_SPAWNS, ""), /\b(spawn|dispatch)/i);
+});
+
+test("the Two callers table and Flow agree with the Gates section", () => {
   assert.doesNotMatch(callers, /one sub-agent per gate/);
-  assert.match(callers, /\| Gates \| the profile instruction carries them \| run by the operator session, never spawned by you \("Gates" below\) \|/);
-  assert.match(callers, /\| Merge \+ end \| the `work` profile instruction \| push the card branch, report its tip SHA, stop; when told to land: push to main, `complete` \+ retro, report \|/);
-  assert.match(step6, /an operator-session sub-agent, once told to land, commits and pushes to main\./);
+  assert.match(callers, /PRE gates: in your own context; POST gates: run by the operator session/);
+  assert.match(callers, /push the card branch, report its tip SHA, stop; when told to land/);
+  assert.match(flow, /5\. Pass its POST gates \("Gates" below\)\./);
+  assert.match(flow, /an operator-session sub-agent, once told to land, commits and pushes to main/);
 });
 
-test("plan-workflow's Sub-agents section carries the matching rule in exactly one sentence", () => {
-  const rule = /A builder never spawns gate agents, since their notices reach only you: once it reports its pushed tip SHA, you run its gates, relay the findings and tell it when to land \(issue-workflow § Gates\)\./g;
-  assert.equal([...subAgents.matchAll(rule)].length, 1, subAgents);
+test("plan-workflow's Sub-agents section carries the matching rule once", () => {
+  assert.equal([...subAgents.matchAll(/never spawns gate agents/g)].length, 1, subAgents);
+  assert.match(subAgents, /A builder runs its PRE gates itself/);
+  assert.match(subAgents, /you run its POST gates as gate workers and say when to land/);
 });
 
 test("the creation guide's parent-child line lists Task under an Epic and a Feature", () => {
-  assert.match(creation, /Parent→child: Epic → Feature\/Story\/Bug\/Chore\/Task; Feature → Story\/Bug\/Chore\/Task; leaves have none\./);
+  assert.match(creation, /Epic → Feature\/Story\/Bug\/Chore\/Task; Feature → Story\/Bug\/Chore\/Task;/);
 });

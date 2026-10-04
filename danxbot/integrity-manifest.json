@@ -43,9 +43,9 @@
     "scripts/lib/plan-connection.mjs": "7f2095132c484aebbda1c04760d6a738ab5ce0deed1d246ffd8051c539c9383d",
     "scripts/plan-event-bridge.mjs": "ec2e0d61e96c0a4dd7561049fd65dc3a756c9a84037f3c9c69002ebb6f6cf72f",
     "skills/fix-agent-behavior/SKILL.md": "9f38073c718c331612ee868fa4e5b4e80e23b478b5549823737ab9047882b5fc",
-    "skills/issue-workflow/SKILL.md": "6533540718ca819efea3ee070110faf7d64890186ccd2740d8735e3a874b001c",
+    "skills/issue-workflow/SKILL.md": "29c672a3ecc5b5771b67fd1ec69c522c1658f3d08ff8ce5feef0c53221f6d355",
     "skills/issue-workflow/references/card-creation-and-reference.md": "5a486a62ceaa4f29b9b6254e7323842ae6ae3564ee49af802d94af0b22445d12",
-    "skills/plan-workflow/SKILL.md": "01d670f79d2f64ba60f6cdb17f486c5cca754e39c2e0f220ebd72a9b309e6208",
+    "skills/plan-workflow/SKILL.md": "1bfa9fcc14f51dc98c7f95791357ec0fb4d2f831500110ecd8609d9278d59308",
     "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
     "types/index.d.ts": "854f6511a693fc83662ec9ac37a4582ea7e89c3361447cefb9a54819881b5d5e"
   }
