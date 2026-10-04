@@ -19,15 +19,16 @@ describe('Open in browser tab', () => {
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await band.press({ key: 'open-tab' })
 
-    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'navigate', 'tabs_select'])
-    expect(browserCalls(d)[2].args).toEqual({ url: URL, tabId: 'tab-7' })
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'tabs_select', 'navigate'])
+    expect(browserCalls(d)[3].args).toEqual({ url: URL, tabId: 'tab-7' })
     expect(d.stateWrites.filter(w => w.key === 'tab')).toEqual([{ plugin: 'danxbot', key: 'tab', value: 'tab-7' }])
 
     d.calls.length = 0
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     await pane.press({ key: 'open-plan' })
-    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'navigate', 'tabs_select'])
-    for (const call of browserCalls(d).filter((c: any) => c.tool !== 'tabs_context')) expect(call.args.tabId).toBe('tab-7')
+    // DX-4424: our tab is fronted first and with no tabs_context before it; the navigate follows
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_select', 'navigate'])
+    for (const call of browserCalls(d)) expect(call.args.tabId).toBe('tab-7')
     // two presses, each a start toast and a success toast, and nothing else
     expect(d.toasts).toEqual(Array(2).fill(['Opening the plan in the browser…', 'Plan opened in the browser tab']).flat())
   })
@@ -40,7 +41,9 @@ describe('Open in browser tab', () => {
     d.closeTabs()
     d.calls.length = 0
     await band.press({ key: 'open-tab' })
-    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'navigate', 'tabs_select'])
+    // the held id is refused by tabs_select, so the tabs are re-read and a new tab replaces it
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_select', 'tabs_context', 'tabs_create', 'tabs_select', 'navigate'])
+    expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(2)
   })
 
   test('a denied navigation says so and points at the link', async ($, on) => {
@@ -48,9 +51,14 @@ describe('Open in browser tab', () => {
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await band.press({ key: 'open-tab' })
-    expect(d.toasts).toHaveLength(2)
-    expect(d.toasts[1]).toBe('Browser navigate failed: use the link instead. (navigation to this site is not allowed)')
-    expect(browserCalls(d).map((c: any) => c.tool)).not.toContain('tabs_select')
+    await d.clock.settle()
+    // the tab came forward, then the page load failed and said so
+    expect(d.toasts).toEqual([
+      'Opening the plan in the browser…',
+      'Plan opened in the browser tab',
+      'Browser navigate failed: use the link instead. (navigation to this site is not allowed)',
+    ])
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'tabs_select', 'navigate'])
   })
 
   for (const mode of ['error', 'garbage'] as const) {
@@ -73,8 +81,8 @@ describe('Open in browser tab', () => {
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await band.press({ key: 'open-problems' })
 
-    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'navigate', 'tabs_select'])
-    expect(browserCalls(d)[2].args).toEqual({ url: `${URL}?tab=needs-you`, tabId: 'tab-7' })
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_context', 'tabs_create', 'tabs_select', 'navigate'])
+    expect(browserCalls(d)[3].args).toEqual({ url: `${URL}?tab=needs-you`, tabId: 'tab-7' })
   })
 
   test('the terminal draws no browser-tab button anywhere, the link only', async ($, on) => {

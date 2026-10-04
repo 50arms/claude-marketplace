@@ -3,7 +3,7 @@
 // in: navigate with no tabId opens the pane at the URL and names the tab it used.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { firstJsonObject, parsePreviewStart, parseTabId, parseTabsContext } from '../hooks/plan/browser-output'
+import { firstJsonObject, parsePreviewStart, parseTabId, parseTabsContext, parseTabsSelect } from '../hooks/plan/browser-output'
 import {
   DASHBOARD_URL,
   PREVIEW_START_OK,
@@ -53,6 +53,12 @@ describe('reading the browser tool results', () => {
     expect(() => parseTabsContext('{"browserOpen": true, "tabs": [{"origin": "x"}]}')).toThrow(/listed a tab with no tabId/)
     expect(() => parseTabsContext('{"browserOpen": true, "tabs": [{"tabId": 7}]}')).toThrow(/listed a tab with no tabId/)
     expect(() => parseTabsContext('{"browserOpen": true, "tabs": [null]}')).toThrow(/listed a tab with no tabId/)
+  })
+
+  test('tabs_select: only "Fronted tab <id>." counts, anything else throws', () => {
+    expect(() => parseTabsSelect('Fronted tab tab-2.', 'tab-2')).not.toThrow()
+    expect(() => parseTabsSelect('Fronted tab tab-3.', 'tab-2')).toThrow(/did not front tab-2/)
+    expect(() => parseTabsSelect('The Browser pane is not open.', 'tab-2')).toThrow(/did not front tab-2: The Browser pane is not open/)
   })
 
   test('tabs_create: the id comes from the JSON object only; the pane-closed prose throws', () => {
@@ -118,12 +124,12 @@ describe('Open in browser tab by pane state, on the desktop', () => {
     d.calls.length = 0
     await band.press({ key: 'open-tab' })
 
-    expect(tools(d)).toEqual(['tabs_context', 'navigate', 'tabs_select'])
+    expect(tools(d)).toEqual(['tabs_select', 'navigate'])
     expect(browserCalls(d)[1].args).toEqual({ url: URL, tabId: 'seed' })
     expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(1)
   })
 
-  test('pane OPEN and our tab still listed: navigate and select that tab', async ($, on) => {
+  test('pane OPEN and our tab still held: select that tab, then navigate it', async ($, on) => {
     const d = dashboard(on, { tabs: ['seed'] })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
@@ -131,17 +137,17 @@ describe('Open in browser tab by pane state, on the desktop', () => {
     await band.press({ key: 'open-tab' })
     d.calls.length = 0
     await band.press({ key: 'open-tab' })
-    expect(tools(d)).toEqual(['tabs_context', 'navigate', 'tabs_select'])
+    expect(tools(d)).toEqual(['tabs_select', 'navigate'])
     expect(browserCalls(d)[1].args).toEqual({ url: URL, tabId: 'tab-7' })
   })
 
-  test('pane OPEN and no tab of ours: tabs_create, navigate, select, keep its id', async ($, on) => {
+  test('pane OPEN and no tab of ours: tabs_create, select, navigate, keep its id', async ($, on) => {
     const d = dashboard(on, { tabs: ['seed'] })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await band.press({ key: 'open-tab' })
-    expect(tools(d)).toEqual(['tabs_context', 'tabs_create', 'navigate', 'tabs_select'])
-    expect(browserCalls(d)[2].args).toEqual({ url: URL, tabId: 'tab-7' })
+    expect(tools(d)).toEqual(['tabs_context', 'tabs_create', 'tabs_select', 'navigate'])
+    expect(browserCalls(d)[3].args).toEqual({ url: URL, tabId: 'tab-7' })
     expect(d.stateWrites.filter(w => w.key === 'tab')).toEqual([{ plugin: 'danxbot', key: 'tab', value: 'tab-7' }])
   })
 

@@ -8,7 +8,7 @@ import { renderBand } from './plan/band'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
 import { footerLabel } from './plan/words'
-import { parsePreviewStart, parseTabId, parseTabsContext } from './plan/browser-output'
+import { parsePreviewStart, parseTabId, parseTabsContext, parseTabsSelect } from './plan/browser-output'
 import {
   APPROVAL_TOAST_MS,
   BROWSER_TOAST_MS,
@@ -146,52 +146,86 @@ async function browserOk($: any, tool: string, args: object): Promise<string> {
 }
 
 // Opens `url` in the ONE in-app browser tab this plugin owns (id kept in $.state), so the
-// person's own tabs are never navigated away. Three cases:
+// person's own tabs are never navigated away. DX-4424: measured live (2026-10-04), every call that
+// acts on a page, a `navigate` included, costs ~2.5-3.5 s whatever the page is (the page itself
+// finished loading in 143 ms), while the tab calls (`tabs_context`, `tabs_select`, `tabs_create`) cost
+// ~0.8-1 s. So the tab is brought forward FIRST and the `navigate` is started, never awaited:
+//   tab already ours     tabs_select {tabId}, then navigate {url, tabId} (no tabs_context first). A
+//                        tabs_select that fails (the tab was closed, the pane is gone) is not an
+//                        error: the slow path below revalidates and replaces it;
 //   pane closed          preview_start {url}: the one call that opens the pane (a navigate with no
-//                        tabId is refused). It names the tab, which we keep (navOk must be true).
-//                        A rejected call is a failure with the rejection text, never a navigate;
-//   pane open, tab ours  navigate {url, tabId}, tabs_select;
-//   pane open, no tab    tabs_create, navigate {url, tabId}, keep its id, tabs_select.
+//                        tabId is refused). It names the tab, which we keep (navOk must be true) and
+//                        it loads the page itself, so there is nothing left to wait for;
+//   pane open, tab ours  tabs_context, tabs_select, navigate {url, tabId};
+//   pane open, no tab    tabs_context, tabs_create, tabs_select, navigate {url, tabId}, keep its id.
 // Any step that fails or answers something unreadable is a failure: reading it as "no tabs" would
-// open a new tab on every press. Answers null when the page is open, else the step and the cause.
-// The caller holds the browser busy key.
-async function tryOpen($: any, url: string): Promise<OpenFailure | null> {
-  let step = 'tabs_context'
+// open a new tab on every press. `failed` is null once the tab is in front, else the step and the
+// cause. `loaded` settles (never rejects) when the page has loaded: null, or the navigate failure.
+// The caller holds the browser busy key through `failed` only, never through `loaded`.
+type Opening = { failed: OpenFailure | null; loaded: Promise<OpenFailure | null> }
+
+async function tryOpen($: any, url: string): Promise<Opening> {
+  let step = 'tabs_select'
   try {
-    const ctx = parseTabsContext(await browserOk($, 'tabs_context', {}))
-    if (!ctx.browserOpen) {
-      step = 'preview_start'
-      const made = parsePreviewStart(await browserOk($, 'preview_start', { url }))
-      await update($, tab, () => made)
-    } else {
-      let tabId = await read($, tab)
+    let tabId = await read($, tab)
+    if (tabId && !(await fronted($, tabId))) tabId = null
+    if (!tabId) {
+      step = 'tabs_context'
+      const ctx = parseTabsContext(await browserOk($, 'tabs_context', {}))
+      if (!ctx.browserOpen) {
+        step = 'preview_start'
+        const made = parsePreviewStart(await browserOk($, 'preview_start', { url }))
+        await update($, tab, () => made)
+        return { failed: null, loaded: Promise.resolve(null) }
+      }
+      tabId = await read($, tab)
       if (!tabId || !ctx.tabs.some(t => t.id === tabId)) {
         step = 'tabs_create'
         const made = parseTabId(await browserOk($, 'tabs_create', { foreground: true }))
         await update($, tab, () => made)
         tabId = made
       }
-      step = 'navigate'
-      await browserOk($, 'navigate', { url, tabId })
       step = 'tabs_select'
-      await browserOk($, 'tabs_select', { tabId })
+      parseTabsSelect(await browserOk($, 'tabs_select', { tabId }), tabId)
     }
-    return null
+    const navigating = tabId
+    const loaded = browserOk($, 'navigate', { url, tabId: navigating }).then(
+      () => null,
+      (err: any): OpenFailure => ({ step: 'navigate', message: String(err?.message ?? err).slice(0, TOAST_ERROR_MAX) }),
+    )
+    return { failed: null, loaded }
   } catch (err: any) {
-    return { step, message: String(err?.message ?? err).slice(0, TOAST_ERROR_MAX) }
+    return { failed: { step, message: String(err?.message ?? err).slice(0, TOAST_ERROR_MAX) }, loaded: Promise.resolve(null) }
   }
 }
 
-// The plan's own open (the band and pane buttons). The whole open holds the browser busy key, so
-// the buttons read "Opening…" and a second press while it runs does nothing.
-function openInBrowser($: any, url: string): Promise<void> {
-  return withBusy($, busyKey.browser, async () => {
+// The stored tab brought forward, no tabs_context first. False when the host cannot front it (the
+// answer is an error or not "Fronted tab <id>."): the caller then re-reads the tabs.
+async function fronted($: any, tabId: string): Promise<boolean> {
+  try {
+    parseTabsSelect(await browserOk($, 'tabs_select', { tabId }), tabId)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// The advice first, the (cut) detail last: a cut sentence must not end the toast.
+const openFailedToast = (failed: OpenFailure) => `Browser ${failed.step} failed: use the link instead. (${failed.message})`
+
+// The plan's own open (the band and pane buttons). The open holds the browser busy key until the tab
+// is in front, so the buttons read "Opening…" and a second press while it runs does nothing; the page
+// then loads in the tab on its own, and a failure of that load is toasted when it comes.
+async function openInBrowser($: any, url: string): Promise<void> {
+  let loaded: Promise<OpenFailure | null> = Promise.resolve(null)
+  await withBusy($, busyKey.browser, async () => {
     $.ui.toast('Opening the plan in the browser…', { timeoutMs: BROWSER_TOAST_MS })
-    const failed = await tryOpen($, url)
-    if (failed === null) $.ui.toast('Plan opened in the browser tab', { timeoutMs: BROWSER_TOAST_MS })
-    // the advice first, the (cut) detail last: a cut sentence must not end the toast
-    else $.ui.toast(`Browser ${failed.step} failed: use the link instead. (${failed.message})`)
+    const opening = await tryOpen($, url)
+    loaded = opening.loaded
+    if (opening.failed === null) $.ui.toast('Plan opened in the browser tab', { timeoutMs: BROWSER_TOAST_MS })
+    else $.ui.toast(openFailedToast(opening.failed))
   })
+  void loaded.then(failed => failed && $.ui.toast(openFailedToast(failed)))
 }
 
 // DX-4391: the approval page's open. ONE toast tells the outcome, with the confirm code and the
@@ -199,13 +233,15 @@ function openInBrowser($: any, url: string): Promise<void> {
 // failure toast shown first would be gone before anyone read the cause. The plugin's browser call
 // may be refused (PLAN-23 records that the host asks the person to allow a site first, which a plugin
 // cannot raise; not yet seen live for this open), which is what the cause then says. A browser already
-// busy with another open is told too.
+// busy with another open is told too. DX-4424: the toast comes once the tab is in front; a later
+// failure of the page load toasts again with the same code and link.
 async function openApprovalPage($: any, approval: ApprovalRequest): Promise<void> {
-  let failed: OpenFailure | null = { step: 'busy', message: 'another browser open is in progress' }
+  let opening: Opening = { failed: { step: 'busy', message: 'another browser open is in progress' }, loaded: Promise.resolve(null) }
   await withBusy($, busyKey.browser, async () => {
-    failed = await tryOpen($, approval.url)
+    opening = await tryOpen($, approval.url)
   })
-  $.ui.toast(approvalToast(approval, failed), { timeoutMs: APPROVAL_TOAST_MS })
+  $.ui.toast(approvalToast(approval, opening.failed), { timeoutMs: APPROVAL_TOAST_MS })
+  void opening.loaded.then(failed => failed && $.ui.toast(approvalToast(approval, failed), { timeoutMs: APPROVAL_TOAST_MS }))
 }
 
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing

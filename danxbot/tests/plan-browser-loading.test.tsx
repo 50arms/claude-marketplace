@@ -67,6 +67,29 @@ describe('Open in browser tab shows it is working', () => {
     expect(d.stateWrites.filter(w => w.key === 'tab')).toHaveLength(1)
   })
 
+  // DX-4424: a navigate costs ~2.5-3.5 s in the host whatever the page is, so the open ends when the
+  // tab is in front and the page loads on its own.
+  test('pane open with our tab: the buttons flip back and the toast says opened when the tab is in front, not when the page has loaded', async ($, on) => {
+    const d = dashboard(on, { tabs: ['seed'], navigateTakesMs: 5_000 })
+    const { band, pane } = await mounted($, d)
+    await band.press({ key: 'open-tab' })
+    await d.clock.advance(5_000)
+    await d.clock.settle()
+    d.calls.length = 0
+    d.toasts.length = 0
+
+    await band.press({ key: 'open-tab' })
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_select', 'navigate'])
+    // the navigate is still running on the clock, and nothing waits on it
+    expect(d.toasts).toEqual(['Opening the plan in the browser…', 'Plan opened in the browser tab'])
+    expect(await label(band, 'open-tab')).toBe('Browser tab')
+    expect(await label(pane, 'open-plan')).toBe('Open in browser tab')
+
+    await d.clock.advance(5_000)
+    await d.clock.settle()
+    expect(d.toasts).toHaveLength(2)
+  })
+
   test('a failing step releases the key: the label returns, the failure toast shows, the next press opens again', async ($, on) => {
     const d = dashboard(on, { browserClosed: true, browser: 'denied' })
     const { band } = await mounted($, d)

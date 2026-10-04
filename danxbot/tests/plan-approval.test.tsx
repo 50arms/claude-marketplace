@@ -84,6 +84,26 @@ describe('plan_connect while signed out', () => {
     expect(d.toasts.at(-1)).toContain('NXGUF88G')
   })
 
+  // DX-4424: the toast is about the tab being in front; a slow page load does not hold it back.
+  test('with the pane open on our tab the code and link are up before the page has loaded', async ($, on) => {
+    const d = dashboard(on, { tabs: ['seed'], navigateTakesMs: 5_000 })
+    answering(on, [required(URL_A), required(URL_B, 'ZZZZ1111')])
+    await startSession($, d, 'desktop')
+    await $.tool.call(CALL)
+    await d.clock.advance(5_000)
+    await d.clock.settle()
+    d.calls.length = 0
+    d.toasts.length = 0
+
+    await $.tool.call(CALL)
+    await d.clock.settle()
+    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_select', 'navigate'])
+    expect(d.toasts).toEqual([`Approve this session in the browser. Confirm code ZZZZ1111 must match the page: ${URL_B}`])
+    await d.clock.advance(5_000)
+    await d.clock.settle()
+    expect(d.toasts).toHaveLength(1)
+  })
+
   test('a browser busy with another open says so, with the code and the link, and makes no browser call of its own', async ($, on) => {
     const d = dashboard(on, { browserClosed: true, navigateTakesMs: 5_000 })
     answering(on, [required(URL_A)])

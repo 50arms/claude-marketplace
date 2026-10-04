@@ -358,6 +358,11 @@ export function dashboard(
         options.tabs = [...(options.tabs ?? []), 'tab-7']
         return out(TABS_CREATE_OPEN.replace('tab-1', 'tab-7'))
       }
+      // captured from the desktop app (2026-10-04): "Fronted tab tab-2." and, for an id it does not hold, the error "Tab tab-99 not found."
+      if (e.tool === 'tabs_select') {
+        if (!(options.tabs ?? []).includes(e.args.tabId)) return out(`Tab ${e.args.tabId} not found.`, true)
+        return out(`Fronted tab ${e.args.tabId}.`)
+      }
       if (e.tool === 'navigate' && options.browser === 'denied') return out('navigation to this site is not allowed', true)
       if (e.tool === 'navigate') {
         // a navigate with no tabId on a closed pane is refused (the app, 2026-10-03): only preview_start opens it

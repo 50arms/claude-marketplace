@@ -90,3 +90,9 @@ export function parsePreviewStart(text: string): string {
   if (typeof parsed.tabId !== 'string' || parsed.tabId === '') throw new Error(`preview_start answered no tabId: ${excerpt(text)}`)
   return parsed.tabId
 }
+
+// tabs_select answers prose only: "Fronted tab tab-2." (captured from the desktop app, 2026-10-04).
+// Anything else, even a non-error result, did not bring that tab forward and throws.
+export function parseTabsSelect(text: string, tabId: string): void {
+  if (text.trim() !== `Fronted tab ${tabId}.`) throw new Error(`tabs_select did not front ${tabId}: ${excerpt(text)}`)
+}
