@@ -346,7 +346,8 @@ export function dashboard(
     }
     if (method === 'GET' && issue && world.inProgress.some(c => c.id === issue[1])) {
       const c = world.inProgress.find(x => x.id === issue[1])!
-      return reply({ id: c.id, title: c.title, assigned_agent_name: options.noAgent ? null : 'PLAN-23: danxbot plugin' })
+      // DX-4405: the compact row always; the claimant's name only when `fields` names it, as the real route answers
+      return reply({ id: c.id, title: c.title, ...(query?.fields?.assigned_agent_name ? { assigned_agent_name: options.noAgent ? null : 'PLAN-23: danxbot plugin' } : {}) })
     }
     if (method === 'GET' && issue && options.commentsFail && query?.fields?.comments) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue) {

@@ -52,7 +52,7 @@ carries, and each board keeps its own text for what a gate does. For each gate n
 `danxbot:worker-sonnet-high` for the rest — briefed to:
 
 1. Fetch the board's gate text through `danxbot_api`:
-   `GET /api/quality-gates/<gate>/instruction?board=<the card's board_id>`.
+   `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
 2. Do what that text says for the card, including any card writes it asks for (checklists,
    dependency edges), and nothing else.
 3. Record the verdict through `danxbot_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`

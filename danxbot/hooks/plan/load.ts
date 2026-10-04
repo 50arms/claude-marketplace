@@ -229,7 +229,7 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
     return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
   }
   const ipRows: any[] = inProg.body.cards ?? []
-  const named = await Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`) })))
+  const named = await Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { assigned_agent_name: true } } }) })))
   for (const n of named) if (!n.r.ok) cardErrors.push(`Couldn't load who is working on ${n.row.id}: ${failureReason(n.r)}`)
   const inProgress: InProgressRow[] = named.map(n => ({
     id: n.row.id,
