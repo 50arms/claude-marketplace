@@ -154,7 +154,9 @@ code is your code — never "pre-existing, not mine".
 **Show the work.** Browser-visible work: attach a screenshot to the card (`attach_file`) at
 the first working state, then replace it at each milestone and at completion: attach the
 new one and delete the one it supersedes (`DELETE /api/issues/<id>/attachments/<attachment
-id>`). One current screenshot per view, never a growing list.
+id>`). One current screenshot per view, never a growing list. Frame the component you are
+working on with enough around it to place it (scroll it into view, size the viewport to
+it), not the whole app.
 
 ## Debugging
 

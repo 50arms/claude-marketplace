@@ -68,5 +68,7 @@ test("browser-visible work keeps ONE current screenshot on the card: attach, the
   assert.match(show, /replace it at each milestone and at completion/);
   assert.match(show, /delete the one it supersedes/);
   assert.match(show, /never a growing list/);
+  assert.match(show, /Frame the component you are\s+working on/);
+  assert.match(show, /not the whole app/);
   assert.equal(count(skill, /\*\*Show the work\.\*\*/), 1);
 });
