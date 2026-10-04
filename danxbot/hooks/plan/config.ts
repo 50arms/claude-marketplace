@@ -61,6 +61,8 @@ export const OUTPUT_EXCERPT_MAX = 80
 export const SUBAGENT_LABEL_MAX = 60
 export const SUBAGENT_ACTIVITY_MAX = 90
 export const SUBAGENT_SESSION_MAX = 50
+// DX-4499: the section's one line when the dashboard has no sub-agents route yet (an older dashboard than DX-4498's).
+export const SUBAGENTS_UNAVAILABLE_LINE = 'This dashboard does not report sub-agents yet.'
 
 // How long the short browser-open toasts stay (the default is 4000).
 export const BROWSER_TOAST_MS = 2_500
@@ -103,7 +105,7 @@ export const EMPTY: PlanView = {
   statusBreakdown: null,
   inProgress: [],
   inProgressTotal: 0,
-  subagents: { rows: [], errors: [], sessionsCapped: false },
+  subagents: { rows: [], errors: [], sessionsCapped: false, unavailable: false },
   // DX-4448: nothing to link until a load reads the boards and the plan's cards
   links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,

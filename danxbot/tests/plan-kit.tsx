@@ -239,6 +239,8 @@ export function dashboard(
     // ... GET /api/plan-sessions/<id>/subagents answers 500 for these session ids, or no list at all
     subagentsFail?: string | string[]
     subagentsNoList?: boolean
+    // ... answers 404 for these session ids, or for every one (a dashboard that predates DX-4498 has no such route)
+    subagentsNotFound?: string | string[] | true
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -341,6 +343,7 @@ export function dashboard(
     const subs = /^\/api\/plan-sessions\/([^/]+)\/subagents$/.exec(path)
     if (method === 'GET' && subs) {
       if ([options.subagentsFail ?? []].flat().includes(subs[1])) return reply({ error: 'subagents boom' }, 500)
+      if (options.subagentsNotFound === true || [options.subagentsNotFound ?? []].flat().includes(subs[1])) return reply({ error: 'not found' }, 404)
       if (options.subagentsNoList) return reply({})
       return reply({ subagents: world.subagents[subs[1]] ?? [] })
     }
@@ -655,7 +658,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

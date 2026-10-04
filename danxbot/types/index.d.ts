@@ -148,6 +148,9 @@ export type SubagentsView = {
   rows: SubagentRow[]
   errors: string[]
   sessionsCapped: boolean
+  // every session's sub-agents read answered 404: the dashboard has no such route yet (it predates DX-4498). Not an error line per
+  // session: the section says so once, quietly.
+  unavailable: boolean
 }
 
 export type PlanView = {

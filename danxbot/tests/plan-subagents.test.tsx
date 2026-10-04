@@ -2,7 +2,7 @@
 // same refresh as the rest of the pane (DX-4498's two routes), its runtime counted on a local clock, ended ones dimmed until they drop.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SUBAGENT_STATE_COLOR } from '../hooks/plan/config'
+import { SUBAGENTS_UNAVAILABLE_LINE, SUBAGENT_ACTIVITY_MAX, SUBAGENT_LABEL_MAX, SUBAGENT_SESSION_MAX, SUBAGENT_STATE_COLOR } from '../hooks/plan/config'
 import { compactCount, dollars, duration, nestSubagents, visibleSubagents } from '../hooks/plan/subagents'
 import { CLOCK_START, DASHBOARD_URL, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, endedSubagent, rawSubagent, startSession } from './plan-kit'
 
@@ -75,32 +75,56 @@ describe('which sub-agents show, and in what order', () => {
 })
 
 for (const surface of SURFACES) {
-  for (const columns of [40, 160]) {
-    describe(`a sub-agent card on ${surface}, ${columns} columns`, () => {
-      test('a running sub-agent is its own card: border in its state colour, theme fill, padding, a dot, and every fact the operator asked for', async ($, on) => {
-        const d = dashboard(on)
-        d.world.subagents[OWN] = [rawSubagent('a1')]
-        await startSession($, d, surface)
-        const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane(columns) })
-        const card = await ui.find({ key: 'sa-agent-a1' })
-        expect(card?.props).toMatchObject({ borderStyle: 'round', borderColor: 'green', borderDimColor: false, backgroundColor: 'userMessageBackground', paddingX: 1 })
-        const dot = (await ui.findAll({ type: 'Text', text: '●' })).find((t: any) => t.props.color === SUBAGENT_STATE_COLOR.running)
-        expect(dot).toBeDefined()
-        const shown = card!.text
-        expect(shown).toContain('Build a1')
-        expect(shown).toContain('danxbot:worker-sonnet-high · claude-sonnet-5-5 · high')
-        expect(shown).toContain('session: PLAN-23: danxbot plugin')
-        // 4 minutes 12 seconds before the fake clock's start
-        expect(shown).toContain('4m 12s')
-        expect(shown).toContain('12k tokens · $0.42 · 7 tool calls')
-        expect(shown).toContain('▸ Bash: Run the affected tests')
-        expect(shown).toContain('In flight card')
-        const link = (await ui.findAll({ type: 'Link' })).find((l: any) => l.props.label === 'DX-9')
-        expect(link?.props.href).toBe(`${DASHBOARD_URL}/plans/23/cards/DX-9`)
-        expect(await text(ui)).toContain('1 running')
-      })
+  describe(`a sub-agent card on ${surface}`, () => {
+    test('a running sub-agent is its own card: border in its state colour, theme fill, padding, a dot, and every fact the operator asked for', async ($, on) => {
+      const d = dashboard(on)
+      d.world.subagents[OWN] = [rawSubagent('a1')]
+      await startSession($, d, surface)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
+      const card = await ui.find({ key: 'sa-agent-a1' })
+      expect(card?.props).toMatchObject({ borderStyle: 'round', borderColor: 'green', borderDimColor: false, backgroundColor: 'userMessageBackground', paddingX: 1 })
+      const dot = (await ui.findAll({ type: 'Text', text: '●' })).find((t: any) => t.props.color === SUBAGENT_STATE_COLOR.running)
+      expect(dot).toBeDefined()
+      const shown = card!.text
+      expect(shown).toContain('Build a1')
+      expect(shown).toContain('danxbot:worker-sonnet-high · claude-sonnet-5-5 · high')
+      expect(shown).toContain('session: PLAN-23: danxbot plugin')
+      // 4 minutes 12 seconds before the fake clock's start
+      expect(shown).toContain('4m 12s')
+      expect(shown).toContain('12k tokens · $0.42 · 7 tool calls')
+      expect(shown).toContain('▸ Bash: Run the affected tests')
+      expect(shown).toContain('In flight card')
+      const link = (await ui.findAll({ type: 'Link' })).find((l: any) => l.props.label === 'DX-9')
+      expect(link?.props.href).toBe(`${DASHBOARD_URL}/plans/23/cards/DX-9`)
+      expect(await text(ui)).toContain('1 running')
     })
-  }
+
+    // The harness checks the tree, not the layout, so a narrow pane (40 columns) is guarded by what the tree asks of it: every long
+    // line is cut at a cap and truncates at the card's edge, and the short facts (runtime, card ref) are never the ones that shrink.
+    test('a narrow pane cuts the long lines, never the runtime or the card ref', async ($, on) => {
+      const long = 'x'.repeat(200)
+      const d = dashboard(on)
+      d.world.subagents[OWN] = [
+        endedSubagent('long', 'failed', 30_000, { description: long, current_activity: long, card: { id: 'DX-9', title: long, via: 'brief' } }),
+      ]
+      d.world.sessions = [{ session_id: OWN, title: long }]
+      await startSession($, d, surface)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane(40) })
+      const card = (await ui.find({ key: 'sa-agent-long' }))!
+      const cut = (cap: number) => `${'x'.repeat(cap - 1)}…`
+      expect(card.text).toContain(cut(SUBAGENT_LABEL_MAX))
+      expect(card.text).toContain(`▸ ${cut(SUBAGENT_ACTIVITY_MAX)}`)
+      expect(card.text).toContain(`session: ${cut(SUBAGENT_SESSION_MAX)}`)
+      const texts = await ui.findAll({ type: 'Text' })
+      const long60 = texts.filter((t: any) => t.text.includes('xxxxxxxx'))
+      expect(long60.length).toBeGreaterThanOrEqual(4)
+      for (const t of long60) expect(t.props.wrap).toBe('truncate-end')
+      const runtimeBox = (await ui.findAll({ type: 'Box' })).find((b: any) => b.text === 'failed 1m 30s')
+      expect(runtimeBox?.props.flexShrink).toBe(0)
+      const link = (await ui.findAll({ type: 'Link' })).find((l: any) => l.props.label === 'DX-9')
+      expect(link).toBeDefined()
+    })
+  })
 
   describe(`the Sub-agents section on ${surface}`, () => {
     test('a card outside the plan links its board page, and a sub-agent with no card says so', async ($, on) => {
@@ -275,6 +299,21 @@ for (const surface of SURFACES) {
       expect(reads()).toBe(start + 1)
     })
 
+    test('a session connected to no plan schedules no settle read', async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      const reads = () => d.api.length
+      await d.clock.advance(11_000)
+      const before = reads()
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' })
+      await d.clock.settle()
+      const afterEvent = reads()
+      await d.clock.advance(5_000)
+      expect(reads()).toBe(afterEvent)
+      expect(afterEvent).toBeGreaterThan(before)
+    })
+
     test('a stop event outside the minimum gap reads at once as well', async ($, on) => {
       const d = dashboard(on)
       on('classic.SubagentStop', () => ({}) as any)
@@ -364,6 +403,50 @@ for (const surface of SURFACES) {
       d.world.sessions = d.world.sessions.slice(1)
       await d.clock.advance(60_000)
       expect(await text(ui)).not.toContain('Showing the most recently active sessions only')
+    })
+
+    // Production does not serve the sub-agents route until DX-4498 deploys: every session's read answers 404.
+    test('a dashboard with no sub-agents route yet: one quiet line, no warning per session, the rest of the pane intact', async ($, on) => {
+      const d = dashboard(on, { subagentsNotFound: true })
+      d.world.sessions = [OWN_SESSION, OTHER_SESSION]
+      await startSession($, d, surface)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
+      const all = await text(ui)
+      expect(all).toContain(`Sub-agents | ${SUBAGENTS_UNAVAILABLE_LINE}`)
+      expect(all).not.toContain("Couldn't read")
+      expect(all).not.toContain('404')
+      expect(all).not.toContain('0 running')
+      expect(all).not.toContain('No sub-agents running.')
+      expect((await ui.findAll({ type: 'Text' })).filter((t: any) => t.props.color === 'yellow' && t.text.includes('sub-agents'))).toEqual([])
+      expect(all).toContain('Connected: PLAN-23')
+      expect(await cardKeys(ui)).toEqual([])
+      // no clock runs for a section that shows nothing
+      await d.clock.advance(10_000)
+      expect(d.stateWrites.filter(w => w.key === 'tick')).toHaveLength(0)
+    })
+
+    test('the route appearing (the dashboard deployed) replaces the line on the next refresh', async ($, on) => {
+      const d = dashboard(on, { subagentsNotFound: true })
+      await startSession($, d, surface)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
+      expect(await text(ui)).toContain(SUBAGENTS_UNAVAILABLE_LINE)
+      d.serveSubagents()
+      d.world.subagents[OWN] = [rawSubagent('a1')]
+      await d.clock.advance(60_000)
+      expect(await text(ui)).not.toContain(SUBAGENTS_UNAVAILABLE_LINE)
+      expect(await cardKeys(ui)).toEqual(['sa-agent-a1'])
+    })
+
+    test('a 404 for only one of two sessions is that session failing, named, not the missing route', async ($, on) => {
+      const d = dashboard(on, { subagentsNotFound: OTHER_SESSION.session_id })
+      d.world.sessions = [OWN_SESSION, OTHER_SESSION]
+      d.world.subagents[OWN] = [rawSubagent('a1')]
+      await startSession($, d, surface)
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
+      expect(await cardKeys(ui)).toEqual(['sa-agent-a1'])
+      const all = await text(ui)
+      expect(all).toContain(`Couldn't read the sub-agents of "${OTHER_SESSION.title}": the dashboard answered 404`)
+      expect(all).not.toContain(SUBAGENTS_UNAVAILABLE_LINE)
     })
 
     test('a signed-out answer to the sub-agents read ends the load as signed out, never as a line', async ($, on) => {

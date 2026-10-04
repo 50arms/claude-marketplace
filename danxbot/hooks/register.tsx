@@ -649,6 +649,8 @@ async function onSessionEnd($: any, e: any, next: any) {
     ticker = null
     runtimeClock?.cancel()
     runtimeClock = null
+    settleTimer?.cancel()
+    settleTimer = null
   } else if (e.reason === 'clear' || e.reason === 'resume') {
     // a fresh conversation (or another session taking this one's place) in the same process: what
     // the person had open or half-typed no longer applies, and what the dashboard shows may have
@@ -693,25 +695,22 @@ async function onRequestPermission($: any, e: any, next: any) {
 // more SUBAGENT_SETTLE_MS later. The plugin's own SubagentStart / SubagentStop command hooks report the change to the dashboard
 // at the same moment this hook runs, so the first read can precede the report; the second is after it. One wait pending at a time,
 // so a burst of sub-agents costs one extra read.
-let settling = false
-async function settleSubagents($: any): Promise<void> {
-  if (settling) return
-  settling = true
-  try {
-    await $.clock.sleep(SUBAGENT_SETTLE_MS)
-  } catch {
-    // the wait rejects when the plugin's environment is unloaded (a reload): the read ends with it
-    return
-  } finally {
-    settling = false
-  }
-  await refresh($, true)
+// A `$.clock.after` timer, not a `$.clock.sleep` inside the hook: the wait outlives the event's dispatch (plugin-authoring,
+// "Work that outlives a dispatch"), and a reload cancels it with the environment.
+let settleTimer: { cancel: () => void } | null = null
+function settleSubagents($: any): void {
+  if (settleTimer !== null) return
+  settleTimer = $.clock.after(SUBAGENT_SETTLE_MS, () => {
+    settleTimer = null
+    void refresh($, true)
+  })
 }
 
 async function onSubagentChange($: any, e: any, next: any) {
   const r = await next(e)
   void refresh($)
-  void settleSubagents($)
+  // only a session connected to a plan has a Sub-agents section to settle
+  if ((await read($, view)).connected !== null) settleSubagents($)
   return r
 }
 

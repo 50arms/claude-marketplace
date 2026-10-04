@@ -263,7 +263,7 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
 // `guarded`'s: they end the whole load before they reach here.
 async function loadSubagents(call: Call, planId: number): Promise<SubagentsView> {
   const list = await call('GET', '/api/plan-sessions', { query: { plan_id: planId, live: true, limit: MAX_SESSIONS } })
-  const unreadable = (what: string, detail: string): SubagentsView => ({ rows: [], errors: [`Couldn't read ${what}: ${detail}`], sessionsCapped: false })
+  const unreadable = (what: string, detail: string): SubagentsView => ({ rows: [], errors: [`Couldn't read ${what}: ${detail}`], sessionsCapped: false, unavailable: false })
   if (!list.ok) return unreadable("the plan's sessions", failureReason(list))
   const sessions: unknown = list.body?.sessions
   if (!Array.isArray(sessions)) return unreadable("the plan's sessions", 'the dashboard sent no list of them')
@@ -275,6 +275,11 @@ async function loadSubagents(call: Call, planId: number): Promise<SubagentsView>
   )
   const rows: SubagentRow[] = []
   const errors: string[] = []
+  const sessionsCapped = sessions.length >= MAX_SESSIONS
+  // DX-4499: a dashboard that predates DX-4498 answers 404 to the sub-agents route of EVERY session it lists. That is the route
+  // missing, not a session failing, so it is one quiet line (`unavailable`), never one warning per session. A 404 for only some
+  // sessions is a real failure of those, and stays a line each.
+  if (reads.length > 0 && reads.every(({ r }) => r.status === 404)) return { rows: [], errors: [], sessionsCapped, unavailable: true }
   for (const { s, r } of reads) {
     const named = `the sub-agents of "${s.title}"`
     if (!r.ok) {
@@ -292,8 +297,8 @@ async function loadSubagents(call: Call, planId: number): Promise<SubagentsView>
     else rows.push(...(shaped as SubagentRow[]))
   }
   const looped = parentLoop(rows)
-  if (looped !== null) return { rows: [], errors: [...errors, `Couldn't draw the sub-agents: ${looped} is its own ancestor`], sessionsCapped: sessions.length >= MAX_SESSIONS }
-  return { rows, errors, sessionsCapped: sessions.length >= MAX_SESSIONS }
+  if (looped !== null) return { rows: [], errors: [...errors, `Couldn't draw the sub-agents: ${looped} is its own ancestor`], sessionsCapped, unavailable: false }
+  return { rows, errors, sessionsCapped, unavailable: false }
 }
 
 // DX-4448: the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays

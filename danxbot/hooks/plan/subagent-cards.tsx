@@ -1,5 +1,5 @@
 import type { ConnectedPlan, PlanView, SubagentRow } from '../../types'
-import { SUBAGENT_ACTIVITY_MAX, SUBAGENT_CARD_BACKGROUND, SUBAGENT_LABEL_MAX, SUBAGENT_SESSION_MAX, SUBAGENT_STATE_COLOR, WARNING, boardCardUrl, cardUrl } from './config'
+import { SUBAGENTS_UNAVAILABLE_LINE, SUBAGENT_ACTIVITY_MAX, SUBAGENT_CARD_BACKGROUND, SUBAGENT_LABEL_MAX, SUBAGENT_SESSION_MAX, SUBAGENT_STATE_COLOR, WARNING, boardCardUrl, cardUrl } from './config'
 import { compactCount, dollars, nestSubagents, runtime, visibleSubagents } from './subagents'
 import type { SubagentNode } from './subagents'
 import { ellipsize } from './words'
@@ -43,9 +43,12 @@ function card(E: any, v: PlanView, plan: ConnectedPlan, now: number, node: Subag
             {ellipsize(row.label ?? row.id, SUBAGENT_LABEL_MAX)}
           </Text>
         </Box>
-        <Text color={color} dimColor={ended}>
-          {row.state === 'running' ? runtime(row, now) : `${row.state} ${runtime(row, now)}`}
-        </Text>
+        {/* never shrunk: a narrow pane cuts the label, not the runtime (a shrunk Text would wrap its words onto two rows) */}
+        <Box flexShrink={0}>
+          <Text color={color} dimColor={ended}>
+            {row.state === 'running' ? runtime(row, now) : `${row.state} ${runtime(row, now)}`}
+          </Text>
+        </Box>
       </Box>
       {runs !== '' && (
         <Text dimColor wrap="truncate-end">
@@ -54,7 +57,11 @@ function card(E: any, v: PlanView, plan: ConnectedPlan, now: number, node: Subag
       )}
       <Box flexDirection="row" gap={1}>
         {row.card === null && <Text dimColor>no card</Text>}
-        {row.card !== null && <Link href={cardHref(v, plan, row.card.id)} label={row.card.id} />}
+        {row.card !== null && (
+          <Box flexShrink={0}>
+            <Link href={cardHref(v, plan, row.card.id)} label={row.card.id} />
+          </Box>
+        )}
         {row.card !== null && (
           <Text dimColor={ended} wrap="truncate-end">
             {ellipsize(row.card.title, SUBAGENT_LABEL_MAX)}
@@ -87,7 +94,7 @@ function card(E: any, v: PlanView, plan: ConnectedPlan, now: number, node: Subag
 // The section: its header with the counts, then a card per root, or the empty line. Read errors and the cap note follow.
 export function subagentSection(E: any, v: PlanView, plan: ConnectedPlan, now: number): any {
   const { Box, Text } = E
-  const { rows, errors, sessionsCapped } = v.subagents
+  const { rows, errors, sessionsCapped, unavailable } = v.subagents
   const shown = visibleSubagents(rows, now)
   const running = shown.filter(r => r.state === 'running').length
   const ended = shown.length - running
@@ -95,11 +102,14 @@ export function subagentSection(E: any, v: PlanView, plan: ConnectedPlan, now: n
     <Box key="subagents" flexDirection="column" gap={1}>
       <Box flexDirection="row" gap={1}>
         <Text bold>Sub-agents</Text>
-        <Text dimColor>
-          {running} running{ended > 0 ? `, ${ended} ended` : ''}
-        </Text>
+        {!unavailable && (
+          <Text dimColor>
+            {running} running{ended > 0 ? `, ${ended} ended` : ''}
+          </Text>
+        )}
       </Box>
-      {shown.length === 0 && errors.length === 0 && <Text dimColor>No sub-agents running.</Text>}
+      {unavailable && <Text dimColor>{SUBAGENTS_UNAVAILABLE_LINE}</Text>}
+      {!unavailable && shown.length === 0 && errors.length === 0 && <Text dimColor>No sub-agents running.</Text>}
       {nestSubagents(shown).map(node => card(E, v, plan, now, node, true))}
       {errors.map(line => (
         <Text key={`sa-err-${line}`} color={WARNING}>
