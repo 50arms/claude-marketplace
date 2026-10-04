@@ -252,11 +252,16 @@ export async function versionFor({ sessionStart = false, env = process.env, ...o
   return { version: await recordedOrResolvedVersion({ env, ...options }), keptLine: null };
 }
 
-/** `<name>@<version>` for the recorded version; throws when none is recorded. Sync, no network: for the code that builds a command. */
-export function requireRecordedSpec(env = process.env) {
+/** The recorded version; throws, with the line saying nothing can run, when none is recorded. Sync, no network. */
+export function requireRecordedVersion(env = process.env) {
   const version = recordedVersionOrNull(env);
   if (version === null) throw new VersionError(noVersionLine("no session start has recorded one yet"), REGISTRY_FIX);
-  return specOf(version);
+  return version;
+}
+
+/** `<name>@<version>` for the recorded version; throws when none is recorded. Sync, no network: for the code that builds a command. */
+export function requireRecordedSpec(env = process.env) {
+  return specOf(requireRecordedVersion(env));
 }
 
 async function main(args) {

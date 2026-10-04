@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { LiveSnapshot, LiveSubagents, PlanView, SubagentRow } from '../types'
-import { EMPTY, LIVE_READER_SCRIPT, NO_LIVE, SUBAGENT_ENDED_VISIBLE_MS, liveUnavailableLine } from '../hooks/plan/config'
+import { EMPTY, NO_LIVE, SUBAGENT_ENDED_VISIBLE_MS, liveUnavailableLine } from '../hooks/plan/config'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, parseLiveLine, pruneSnapshots, readPiece, splitLines, stateOfStatus, withLive } from '../hooks/plan/live'
 import { CLOCK_START, OTHER_SESSION, OWN_SESSION, READER_PIECE_MS, SURFACES, dashboard, rawSubagent, startSession } from './plan-kit'
 
@@ -62,8 +62,7 @@ const liveOf = (snapshots: LiveSnapshot[], statuses: Record<string, string> = {}
 // finds the installed danx-dashboard-mcp from its own location and runs its `subagents-live`: the module reads no file of its own.
 describe('how the live reader is started', () => {
   test("node, the plugin's reader script under its root, the main transcript", () => {
-    expect(LIVE_READER_SCRIPT).toBe('scripts/subagents-live.mjs')
-    expect(liveReaderArgv('C:\p\danxbot', MAIN_TRANSCRIPT)).toEqual(['node', 'C:\p\danxbot/scripts/subagents-live.mjs', MAIN_TRANSCRIPT])
+    expect(liveReaderArgv('/plugins/danxbot', MAIN_TRANSCRIPT)).toEqual(['node', '/plugins/danxbot/scripts/subagents-live.mjs', MAIN_TRANSCRIPT])
   })
 })
 

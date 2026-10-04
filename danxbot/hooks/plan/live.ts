@@ -121,7 +121,7 @@ export function stateOfStatus(status: string): SubagentState | null {
 
 // A sub-agent's state, finish and drop time by the engine's `state`: an end the snapshot has not timed yet is its last activity
 // (the engine can report the end before the child's line with the finish arrives), and an end already known keeps its time.
-function engineTimes(state: SubagentState, s: LiveSnapshot, knownFinish: number | null): Pick<SubagentRow, 'state' | 'finishedAt' | 'visibleUntil'> {
+function engineState(state: SubagentState, s: LiveSnapshot, knownFinish: number | null): Pick<SubagentRow, 'state' | 'finishedAt' | 'visibleUntil'> {
   const finishedAt = state === 'running' ? null : (knownFinish ?? s.finishedAt ?? s.lastActivityAt)
   return { state, finishedAt, visibleUntil: finishedAt === null ? null : finishedAt + SUBAGENT_ENDED_VISIBLE_MS }
 }
@@ -129,8 +129,10 @@ function engineTimes(state: SubagentState, s: LiveSnapshot, knownFinish: number 
 // The pane's sub-agent rows with this session's live numbers over them. A dashboard row of the session the child reads
 // (`live.sessionId`) takes the snapshot's identity, numbers, activity and card, and the engine's state (`live.statuses`, the
 // engine's own list): an end that never reached the dashboard (no task notification) would otherwise read `running` there for
-// good. A snapshot the dashboard has no row for yet is a row of its own, its state the engine's. Rows of other sessions are the
-// dashboard's. `errors` names the snapshots that could not become a row.
+// good. The engine's state needs the row's snapshot to time an end, so a row no child of this conversation has reported keeps the
+// dashboard's state (a child's first line reports every sub-agent of the session, so this holds only until one has run). A snapshot
+// the dashboard has no row for yet is a row of its own, its state the engine's. Rows of other sessions are the dashboard's. `errors`
+// names the snapshots that could not become a row.
 export function withLive(v: PlanView, live: LiveSubagents): { rows: SubagentRow[]; errors: string[] } {
   const rows = v.subagents.rows
   if (live.sessionId === null) return { rows, errors: [] }
@@ -145,7 +147,7 @@ export function withLive(v: PlanView, live: LiveSubagents): { rows: SubagentRow[
     const state = status === undefined ? null : stateOfStatus(status)
     return {
       ...row,
-      ...(state === null ? {} : engineTimes(state, s, row.finishedAt)),
+      ...(state === null ? {} : engineState(state, s, row.finishedAt)),
       label: s.description ?? row.label,
       agentType: s.agentType ?? row.agentType,
       model: s.model ?? row.model,
@@ -178,7 +180,7 @@ export function withLive(v: PlanView, live: LiveSubagents): { rows: SubagentRow[
       model: s.model,
       effort: s.effort,
       startedAt: s.startedAt,
-      ...engineTimes(state, s, null),
+      ...engineState(state, s, null),
       tokensTotal: s.tokensTotal,
       costUsd: s.costUsd,
       toolCalls: s.toolCallCount,

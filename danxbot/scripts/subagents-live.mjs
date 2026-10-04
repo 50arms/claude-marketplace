@@ -19,7 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { DASHBOARD_MCP_PACKAGE_NAME, noVersionLine, recordedVersionOrNull } from "./lib/dashboard-mcp-package.mjs";
+import { DASHBOARD_MCP_PACKAGE_NAME, requireRecordedVersion } from "./lib/dashboard-mcp-package.mjs";
 
 export const LIVE_SUBCOMMAND = "subagents-live";
 
@@ -53,11 +53,10 @@ export function resolveLiveBin(root) {
   if ("reason" in data) return { ok: false, reason: data.reason };
   let version;
   try {
-    version = recordedVersionOrNull({ CLAUDE_PLUGIN_DATA: data.dir });
+    version = requireRecordedVersion({ CLAUDE_PLUGIN_DATA: data.dir });
   } catch (err) {
     return { ok: false, reason: err.message };
   }
-  if (version === null) return { ok: false, reason: noVersionLine("no session start has recorded one yet") };
   const bin = installedBin(data.dir, version);
   if (!fs.existsSync(bin)) return { ok: false, reason: `${DASHBOARD_MCP_PACKAGE_NAME} ${version} is not installed at ${bin}` };
   return { ok: true, bin };
@@ -96,4 +95,5 @@ async function main() {
   await import(pathToFileURL(resolved.bin).href);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+// Run as a script only: `import.meta.url` is the real path, so argv[1] is resolved through links (a junctioned plugin root) first.
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

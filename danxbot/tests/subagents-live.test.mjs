@@ -48,8 +48,14 @@ function record(data, text) {
   writeFileSync(path.join(data, "dashboard-mcp", "current"), text);
 }
 
-// The stand-in package entry point: prints the argv it was run with, as the real one would read it.
-const FAKE_BIN = `process.stdout.write(JSON.stringify(process.argv.slice(1)) + "\\n");\n`;
+// The stand-in package entry point: like the real one (danx-dashboard-mcp `isEntrypointModule`), it acts only when it is the process's
+// own script (argv[1] realpathed, as a file URL, equal to its own URL); then it prints the argv it was run with.
+const FAKE_BIN = [
+  'import { realpathSync } from "node:fs";',
+  'import { pathToFileURL } from "node:url";',
+  'if (pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url) process.stdout.write(JSON.stringify(process.argv.slice(1)) + "\\n");',
+  "",
+].join("\n");
 
 describe("resolving and running the recorded version", () => {
   let base;
@@ -84,6 +90,8 @@ describe("resolving and running the recorded version", () => {
     const bin = installedBin(data, "0.1.5");
     mkdirSync(path.dirname(bin), { recursive: true });
     writeFileSync(bin, FAKE_BIN);
+    // an ES module package, as the real one is
+    writeFileSync(path.join(path.dirname(bin), "..", "package.json"), JSON.stringify({ type: "module" }));
     const transcript = path.join(base, "sess.jsonl");
     const r = spawnSync(process.execPath, [script, transcript], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);

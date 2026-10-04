@@ -640,10 +640,9 @@ async function tickClock($: any): Promise<void> {
 // ---- DX-4508: the live sub-agent numbers ------------------------------------
 // While this session is plan-connected and has a running sub-agent (`$.agent.list()`), ONE host child streams its sub-agents'
 // numbers: `node <plugin root>/scripts/subagents-live.mjs <main transcript>` (the installed danx-dashboard-mcp's `subagents-live`), one
-// JSON line per change. Each line
-// is checked and merged into the `live` atom, which redraws the pane with no dashboard read. The child stops once none runs. A
-// child that cannot start, exits, or prints a line that cannot be read is one muted line in the section, the dashboard's
-// numbers stand, and nothing retries until the next sub-agent starts.
+// JSON line per change. Each line is checked and merged into the `live` atom, which redraws the pane with no dashboard read. The
+// child stops once none runs. A child that cannot start, exits, or prints a line that cannot be read is one muted line in the
+// section, the dashboard's numbers stand, and nothing retries until the next sub-agent starts.
 
 function errMessage(err: any): string {
   return String(err?.message ?? err)

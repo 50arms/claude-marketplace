@@ -712,8 +712,6 @@ export function expectRowCarries(row: string, fields: string[]) {
   }
 }
 
-// session.start as the engine raises it (the plugin loads the plan, registers its command and
-// starts its refresh timer), then lets the load it kicked off finish.
 // DX-4508: one start of the live reader child, as the kit's process.spawn stand-in records it (see `readers` in dashboard()).
 export const READER_PIECE_MS = 1_000
 export type FakeReader = {
@@ -723,6 +721,8 @@ export type FakeReader = {
   stopped: boolean
 }
 
+// session.start as the engine raises it (the plugin loads the plan, registers its command and
+// starts its refresh timer), then lets the load it kicked off finish.
 export async function startSession($: any, d: Dashboard, surface: string) {
   await $.session.start({ cwd: '/work', surface, isInteractive: true })
   await d.clock.settle()
