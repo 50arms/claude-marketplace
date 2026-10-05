@@ -60,11 +60,19 @@ test("step 1 signs in with plan_connect and no plan, showing the approval link a
   assert.match(s, /approval URL|approval link/i);
 });
 
+test("step 2 normalizes an ssh:// github.com origin and accepts github.com only", () => {
+  const s = step(2);
+  assert.match(s, /ssh:\/\/git@github\.com\/<owner>\/<repo>\.git/);
+  assert.match(s, /rewrite an `ssh:\/\/` origin to `git@github\.com:<owner>\/<repo>\.git`/);
+  assert.match(s, /host is not `github\.com`/);
+  assert.doesNotMatch(s, /github\.com-/, "an SSH alias host is refused by the server, so the skill never accepts one");
+});
+
 test("step 2 reads the origin URL and refuses, creating nothing, when there is none or it is not GitHub", () => {
   const s = step(2);
   assert.match(s, /git remote get-url origin/);
   assert.match(s, /no `origin` remote|no origin remote/i);
-  assert.match(s, /not (a )?GitHub/i);
+  assert.match(s, /connects `github.com` repos only/);
   assert.match(s, /stop/i);
   assert.match(s, /nothing (has been )?(created|registered)/i);
 });
@@ -87,6 +95,22 @@ test("step 3 registers with {name, url}, derives a valid name and offers the sug
   assert.match(s, /<owner>-<repo>/);
 });
 
+test("step 3 repairs a repo name the server would refuse, and falls back to <owner>-<repo>, then to asking", () => {
+  const s = step(3);
+  assert.match(s, /\^\[a-z0-9\]\[a-z0-9_-\]\{0,63\}\$/);
+  assert.match(s, /leading `-` or `_` removed/);
+  assert.match(s, /`\.github`/);
+  assert.match(s, /still not valid, ask the person for a name/);
+});
+
+test("step 4 gives a repo name with fewer than two letters a prefix from the owner, then asks", () => {
+  const s = step(4);
+  assert.match(s, /letters only/);
+  assert.match(s, /fewer than two letters/);
+  assert.match(s, /owner's first letters/);
+  assert.match(s, /ask the\s+person for a prefix/);
+});
+
 test("step 4 reuses a board the repo already has, else creates one with {repo, name, issue_prefix}", () => {
   const s = step(4);
   assert.match(s, /GET \/api\/boards` with `query: \{"repo"/);
@@ -96,11 +120,19 @@ test("step 4 reuses a board the repo already has, else creates one with {repo, n
   assert.match(s, /two to four capital letters/i);
 });
 
-test("a refusal naming boards.view or boards.manage goes through request_permission, once, with both keys", () => {
-  assert.match(text, /403/);
-  assert.match(text, /`request_permission`/);
-  assert.match(text, /`boards\.view`/);
-  assert.match(text, /`boards\.manage`/);
+test("a refusal naming boards.view or boards.manage goes through ONE request_permission naming both keys", () => {
+  const section = flat(body.slice(body.indexOf("## When a call is refused"), body.indexOf("## Steps")));
+  assert.match(section, /`403` naming `boards\.view` or `boards\.manage`/);
+  assert.match(section, /call `request_permission` once with both `boards\.view` and `boards\.manage`/);
+  assert.match(section, /Ask for nothing else/);
+  assert.equal((section.match(/request_permission/g) ?? []).length, 1);
+});
+
+test("step 5 starts at the plan list: it never claims the connect answer names the session's plan", () => {
+  const s = step(5);
+  assert.match(s, /^### 5\. Start the first plan A plan is where .*? 1\. `GET \/api\/plans`/);
+  assert.doesNotMatch(s, /already on a plan/i);
+  assert.doesNotMatch(flat(body.slice(body.indexOf("### 1."), body.indexOf("### 2."))), /keep that/i);
 });
 
 test("step 5 asks what to build first, creates the plan, and hands over to plan-workflow", () => {
@@ -111,10 +143,18 @@ test("step 5 asks what to build first, creates the plan, and hands over to plan-
   assert.match(s, /GET \/api\/plans/);
 });
 
-test("the session names its board on every card call, and the skill writes no file", () => {
-  assert.match(text, /`board`/);
-  assert.match(text, /<repo>:<slug>/);
-  assert.match(text, /writes? no file/i);
+test("the session names its board on every card call and relearns it from its plan after a restart", () => {
+  const s = step(5);
+  assert.match(s, /every call that works on a card or a plan's cards names the board, the\s+`board` argument of `danxbot_api` set to the board id from step 4 \(`<repo>:<slug>`\)/);
+  assert.match(s, /`POST \/api\/issues` carries it as `board` in its body/);
+  assert.match(s, /After a restart or a compaction the session relearns its board from the plan it reconnects to: `GET \/api\/plans\/mine` answers the plan's `boards`/);
+});
+
+test("the skill writes no file and names no file for a repo to carry the connection", () => {
+  assert.match(text, /It writes no file/);
+  for (const file of [".mcp.json", "settings.json", ".env", "CLAUDE.md"]) {
+    assert.ok(!raw.includes(file), `the skill never mentions ${file}`);
+  }
 });
 
 test("running it again in a connected repo reports what is set up and goes to planning", () => {

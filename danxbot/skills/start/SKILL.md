@@ -32,8 +32,7 @@ the call that was refused. Ask for nothing else.
 
 Call `plan_connect` with no plan. If it answers `approval_required` or `approval_pending`,
 show the person the confirm code and the approval URL (open it in your browser when you
-have one), and call `plan_connect` again once they approve. Signed in, the answer says
-which plan, if any, this session is already on; keep that for step 5.
+have one), and call `plan_connect` again once they approve.
 
 ### 2. Read the repo's origin
 
@@ -43,13 +42,15 @@ Run `git remote get-url origin` in the repo.
   `origin` remote, so danxbot cannot tell which repo it is, and that they can add one
   (`git remote add origin <url>`) or run `/danxbot:start` again inside a clone of their
   GitHub repo. Stop. Nothing has been created.
-- A URL that is not GitHub (its host is neither `github.com` nor an SSH alias that starts
-  `github.com-`): tell the person danxbot connects GitHub repos only. Stop. Nothing has
-  been created.
+- A URL whose host is not `github.com` (another service, or an SSH alias for a host):
+  tell the person danxbot connects `github.com` repos only. Stop. Nothing has been
+  created.
 
-Otherwise keep the URL exactly as printed, and its owner and repo name
-(`https://github.com/<owner>/<repo>.git` and `git@github.com:<owner>/<repo>.git` both
-give `<owner>` and `<repo>`, without `.git`).
+Otherwise take its owner and repo name (`https://github.com/<owner>/<repo>.git`,
+`git@github.com:<owner>/<repo>.git` and `ssh://git@github.com/<owner>/<repo>.git` all give
+`<owner>` and `<repo>`, without `.git`). The URL you register is the `https://` or
+`git@github.com:` form: rewrite an `ssh://` origin to `git@github.com:<owner>/<repo>.git`,
+and keep the others exactly as printed.
 
 ### 3. Register the repo
 
@@ -61,8 +62,11 @@ step 4.
 Not listed: `POST /api/repos` with `{name, url}`.
 
 - `name`: the repo name in lowercase, every character that is not a letter, a digit, `-`
-  or `_` turned into `-`, starting with a letter or digit, at most 64 characters.
-- `url`: the origin URL from step 2.
+  or `_` turned into `-`, any leading `-` or `_` removed, cut to 64 characters. It must then
+  match `^[a-z0-9][a-z0-9_-]{0,63}$`. When nothing is left (the repo `.github` leaves
+  `github`, but a name of only dots leaves nothing), use the owner and repo joined as
+  `<owner>-<repo>` the same way; when that is still not valid, ask the person for a name.
+- `url`: the URL from step 2.
 
 `201` answers the registered repo; use its `name`. `409` means another team already holds
 that name (a repo's name is unique across danxbot): tell the person, offer the
@@ -81,8 +85,10 @@ None: `POST /api/boards` with `{repo, name, issue_prefix}`.
 - `repo`: the registered name from step 3.
 - `name`: the repo's name as written on GitHub.
 - `issue_prefix`: two to four capital letters that start every card id on this board
-  (cards read `ABC-12`). Take the initials of the repo name's words, or its first letters
-  when it is one word. Tell the person the prefix and change it if they prefer another.
+  (cards read `ABC-12`), letters only. Take the initials of the repo name's words, or its
+  first letters when it is one word. A name with fewer than two letters (`x`, `42`) cannot
+  give one: use the owner's first letters, and when that gives fewer than two, ask the
+  person for a prefix. Tell the person the prefix and change it if they prefer another.
 
 The answer's `id` is the board id, `<repo>:<slug>`. Tell the person the repo, the board id
 and the prefix, flagging each that was already there.
@@ -92,14 +98,14 @@ and the prefix, flagging each that was already there.
 A plan is where a goal, its design and its cards live; `danxbot:plan-workflow` is how to
 work one.
 
-1. Step 1 said the session is already on a plan: tell the person which, and continue it
-   with `danxbot:plan-workflow`. Nothing more to create.
-2. Otherwise `GET /api/plans`. When the team has open plans, offer to continue one.
-3. Otherwise ask what they want to build first, in their own words. Name the plan after
+1. `GET /api/plans`. When the team has open plans, offer to continue one.
+2. Otherwise ask what they want to build first, in their own words. Name the plan after
    it and `POST /api/plans` with `{name}`. The answer carries the plan's id.
 
 Then load `danxbot:plan-workflow` and follow its Start steps with that plan: name the
 session, connect with `plan_connect`, and orient from the briefing. This session has no
 default board: every call that works on a card or a plan's cards names the board, the
 `board` argument of `danxbot_api` set to the board id from step 4 (`<repo>:<slug>`), and
-`POST /api/issues` carries it as `board` in its body.
+`POST /api/issues` carries it as `board` in its body. After a restart or a compaction
+the session relearns its board from the plan it reconnects to: `GET /api/plans/mine`
+answers the plan's `boards`.
