@@ -47,7 +47,7 @@
     "scripts/lib/plan-connection.mjs": "7f2095132c484aebbda1c04760d6a738ab5ce0deed1d246ffd8051c539c9383d",
     "scripts/plan-event-bridge.mjs": "ec2e0d61e96c0a4dd7561049fd65dc3a756c9a84037f3c9c69002ebb6f6cf72f",
     "scripts/subagents-live.mjs": "d74258a649e432a883a7dd025cd4e81c0f48a448c2145896ddc09e02992f28ae",
-    "skills/fix-agent-behavior/SKILL.md": "9f38073c718c331612ee868fa4e5b4e80e23b478b5549823737ab9047882b5fc",
+    "skills/fix-agent-behavior/SKILL.md": "da23471eb883907858eda3e2da364c559cda89a013e1b7bff49fd491bb1f251a",
     "skills/issue-workflow/SKILL.md": "8a16aecf1c9383aad226777a24d011fc2662940e3d67408f8fa5bb907a2b80a2",
     "skills/issue-workflow/references/card-creation-and-reference.md": "5a486a62ceaa4f29b9b6254e7323842ae6ae3564ee49af802d94af0b22445d12",
     "skills/plan-workflow/SKILL.md": "1bfa9fcc14f51dc98c7f95791357ec0fb4d2f831500110ecd8609d9278d59308",

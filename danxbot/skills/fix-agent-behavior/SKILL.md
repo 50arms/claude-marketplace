@@ -40,27 +40,39 @@ description/frontmatter, a hook, the MCP server instructions, or a route's spec 
 reminder text. If the failure came from a description/frontmatter, fix that, not just the
 body.
 
-Resolve the plugin source checkout (never `~/.claude/plugins/cache/`, read-only) by
-remote, not by guessing a path: check `~/.claude/plugins/known_marketplaces.json` first,
-then search sibling repos by `git remote get-url origin`. Use what you find; never clone
-a second copy.
+Pick the home by the KIND of rule, never by where the failure showed up:
 
-- Reaches every project, machine, dispatched context → plugin source.
-- This machine only, or the operator's own preference (what needs no ask, what is
-  operator-only) → `~/.claude/CLAUDE.md`, never a plugin or a repo.
-- One repo only → that repo's `.claude/CLAUDE.md` or `.claude/rules/`.
+- **The plugin** ships to the general public: only behaviour every user of it should have,
+  in any project, on any machine. Never one operator's policy (who may deploy, which
+  actions need an ask) and never machine facts (paths, accounts, hosts).
+- **Operator policy and this machine's facts** (what needs no ask, what is operator-only,
+  deploy permission, paths, accounts) → `~/.claude/CLAUDE.md`.
+- **One repo's policy** (its deploy, test or git rules) → that repo's `.claude/CLAUDE.md`
+  or `.claude/rules/`.
 - Never a memory file (it reaches one project on one machine; no dispatched worker, other
   repo or other machine reads it): a correction already saved as one moves to its home above
   and the memory is deleted.
 
-Apply the edit yourself (`Edit`/`Write`). A plugin edit isn't done until published: bump
-the version and push (`scripts/publish.sh` if present) — publishing is standing,
-pre-authorized, never needs approval. Published = done: NEVER test, verify, or file AC or
-problems about a published plugin reaching or loading in a new session — that is the Claude
-Code harness's job, it works, and it is not ours.
+Apply a policy or repo edit yourself (`Edit`/`Write`).
+
+A plugin change depends on whether you are its author. Find the source checkout by remote
+(`~/.claude/plugins/known_marketplaces.json`, then sibling repos' `git remote get-url
+origin`), never `~/.claude/plugins/cache/` (read-only):
+
+- **Editable checkout found** (you are the author): edit it in a worktree off its main,
+  then publish (bump and push, `scripts/publish.sh` if present). Publishing is standing,
+  pre-authorized, never needs approval. Never clone a second copy.
+- **No editable checkout** (you are not the author; the public cannot push to the
+  plugin): never edit the cache or push to its main. Fork or clone its repo, fix it on a
+  new branch, and open a pull request that states the wrong behaviour and the fix.
+
+Published or PR opened = done: NEVER test, verify, or file AC or problems about a plugin
+reaching or loading in a new session — that is the Claude Code harness's job, it works, and
+it is not ours.
 
 ## 4. End state
 
 Every run ends in exactly one of two states — say which:
-- **Resolved:** name the file and the brief edit (or doc expansion) made and published.
+- **Resolved:** name the file and the brief edit (or doc expansion) made, and where it
+  went: published, pushed, or the pull request's link.
 - **Escalated:** name the proposed system change and ask the operator to confirm it.
