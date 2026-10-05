@@ -130,6 +130,7 @@ export const NO_LIVE: LiveSubagents = { sessionId: null, snapshots: {}, statuses
 export const EMPTY: PlanView = {
   phase: 'loading',
   error: null,
+  serverNotConnected: false,
   dashboardUrl: null,
   connected: null,
   plans: [],

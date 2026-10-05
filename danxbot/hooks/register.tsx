@@ -131,8 +131,9 @@ async function api($: any, method: string, path: string, extra: { query?: object
     res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra })
   } catch (err: any) {
     const message = String(err?.message ?? err)
-    // DX-4578: `unreachable` is only the engine's "no such server": the plugin's own server is not connected (yet). The plan load
-    // shows it as its error; the pacing and usage readers stay quiet about it until a read has succeeded.
+    // DX-4578: `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
+    // load carries it on its error view (`serverNotConnected`, which the session-start retry waits out); the pacing and usage readers
+    // stay quiet about it until a read has succeeded.
     return { ok: false, status: 0, ...(isServerNotConnected(message) ? { unreachable: true } : {}), body: { error: message.slice(0, CALL_ERROR_MAX) } }
   }
   return toolOutcome(res)
@@ -756,7 +757,7 @@ async function retryWhileNotConnected($: any): Promise<void> {
       return
     }
     const cur = await read($, view)
-    if (cur.phase !== 'error' || !isServerNotConnected(cur.error ?? '')) return
+    if (cur.phase !== 'error' || !cur.serverNotConnected) return
     await refresh($, true)
   }
 }

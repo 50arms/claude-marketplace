@@ -135,7 +135,7 @@ export async function loadPlan(call: Call, refreshedAt: string, expandedId: numb
 
 async function readPlan(call: Call, refreshedAt: string, expandedId: number | null): Promise<PlanView> {
   const list = await call('GET', '/api/plans', { query: { limit: MAX_PLANS } })
-  if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list) }
+  if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true }
 
   // A paged route that does not say how many there are cannot be read as complete.
   if (typeof list.body.total !== 'number') {

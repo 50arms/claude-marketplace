@@ -34,10 +34,14 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
   const hooks = readJson("hooks/hooks.json");
   assert.deepEqual(hooks.modules, ["./register.tsx"]);
   assert.ok(fs.existsSync(path.join(PLUGIN, "hooks", "register.tsx")));
-  // A matcher may change (DX-4555 widened plan_connect's, DX-4578 narrowed it to the one server; the matcher test below pins it):
-  // the hook is kept when a present hook has the same event and command.
+  // A hook is kept when a present hook has the same event, matcher and command. The one intended rewrite: DX-4578 narrowed the
+  // plan_connect matcher from the three server prefixes to the plugin's (the matcher test below pins the new one).
+  const PLAN_CONNECT_NARROWED = [/^\^\(mcp__.*plan_connect\)\$$/, "^mcp__plugin_danxbot_danx-dashboard__plan_connect$"];
   const present = commandHooks(hooks);
-  const kept = ([event, , command]) => present.some(([e, , c]) => e === event && c === command);
+  const kept = ([event, matcher, command]) => {
+    const expected = matcher !== null && PLAN_CONNECT_NARROWED[0].test(matcher) ? PLAN_CONNECT_NARROWED[1] : matcher;
+    return present.some(([e, m, c]) => e === event && m === expected && c === command);
+  };
   const dropped = commandHooks(originMainHooks()).filter((h) => !kept(h));
   assert.deepEqual(dropped, [], "command hooks on origin/main that hooks.json no longer has");
 });
