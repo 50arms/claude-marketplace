@@ -74,7 +74,10 @@ never passed to get it out of the way.
 Genuinely need a human → open a problem on the card: an `action` when only a person can do
 it (access, credentials, hardware, authority), else a `question`. Never `AskUserQuestion` or
 a plan-mode pause. A card needs a human exactly while it has an open problem; removing its
-last open problem closes that need.
+last open problem closes that need. An open problem puts the card in Needs You and nothing
+more: it never holds a pickup or a dispatch. A card with open problems is picked up and
+worked like any other (In Progress, agent assigned), and stays in Needs You until answered.
+Only `blocked` stops a pickup.
 
 A call refused 403 for a missing permission → `request_permission` with a reason (show the person its code) and keep working; blocked without it, open an action problem.
 
@@ -104,8 +107,8 @@ first, then end `failed`.
 - Waiting on another card to finish first → a `depends_on` dependency, not `block`.
 - Two cards that can't run together → a `conflict_on` dependency.
 - A human is 100% required (a decision, or an action only a person can take) → open a
-  problem with solutions — that holds the card for human review before it can be
-  dispatched or completed. `block` alone does not.
+  problem with solutions: it puts the card in Needs You for a person to answer. It does
+  not hold the card and never stops a pickup or a dispatch; only `block` does.
 - Otherwise, transition `block` with a reason.
 
 ## Mechanics

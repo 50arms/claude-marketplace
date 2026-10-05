@@ -87,7 +87,7 @@ operator input for that card.
 - `answered "…"` → read the card's problems, act on the live decision, record the outcome.
   Retracted or changed → it overrides; already acted → keep, redo or undo.
 - `commented on problem` → a follow-up, not an answer: reply with a comment on that problem.
-- `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
+- `opened a problem` → needs a human (the card is in Needs You, still workable: only `blocked` holds a pickup). Batches can arrive 10 min late — read the card; `…` →
   read it for the full text.
 - `bridge down:` → do the fix it names (usually `plan_connect` again).
 
