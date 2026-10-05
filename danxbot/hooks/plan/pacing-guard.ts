@@ -13,8 +13,8 @@ export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
 const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
 
 // One account's verdict as the guard needs it: the ONLY shape the decision reads, so a DX-4338 field rename touches `parseVerdicts` alone
-// (built against origin/card/DX-4338 9247e5cec). `budget`: null = no cap, 0 = start nothing new, n = most agents running at once across the
-// whole ACCOUNT. `activeAgents` is the account's running agents as the last tick counted them (`active_agents`), null when the verdict has none.
+// (built against danxbot's DX-4340 worktree bf6dd11c2 on DX-4338's fix round: `running_agents`, was `active_agents` at 9247e5cec). `budget`: null = no cap, 0 = start nothing new, n = most agents running at once across the
+// whole ACCOUNT. `activeAgents` is the account's running agents as the last tick counted them (`running_agents`), null when the verdict has none.
 export type PacingVerdict = { account: string; level: PacingLevel; budget: number | null; resetsAt: string | null; activeAgents: number | null }
 
 export type SpawnDecision = { kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'downgrade'; model: 'haiku' }
@@ -84,7 +84,7 @@ export function parseVerdicts(body: any): PacingVerdict[] | string {
       level: raw.level,
       budget: raw.budget,
       resetsAt: decider !== undefined && isString(decider.resets_at) ? decider.resets_at : null,
-      activeAgents: Number.isInteger(raw.active_agents) && raw.active_agents >= 0 ? raw.active_agents : null,
+      activeAgents: Number.isInteger(raw.running_agents) && raw.running_agents >= 0 ? raw.running_agents : null,
     })
   }
   return out

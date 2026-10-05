@@ -15,7 +15,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   level: 'on_pace',
   budget: null,
   binding_limit: 'five_hour',
-  active_agents: 1,
+  running_agents: 1,
   limits: [{ limit: 'five_hour', resets_at: RESET }, { limit: 'weekly', resets_at: WEEK }],
   ...over,
 })
@@ -74,7 +74,7 @@ describe('decideSpawn (the decision table)', () => {
 
 describe('parseVerdicts and pickVerdict', () => {
   test('reads level, budget, the deciding limit\'s reset and the account count', () => {
-    expect(parseVerdicts({ verdicts: [row({ budget: 2, active_agents: 4 })] })).toEqual([
+    expect(parseVerdicts({ verdicts: [row({ budget: 2, running_agents: 4 })] })).toEqual([
       { account: `weekly:${WEEK}`, level: 'on_pace', budget: 2, resetsAt: RESET, activeAgents: 4 },
     ])
     expect(parseVerdicts({ verdicts: [] })).toEqual([])
@@ -125,7 +125,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('denies when the account is at its budget, by the verdict\'s count', async ($, on) => {
-    await session($, on, { pacing: { body: { verdicts: [row({ budget: 2, active_agents: 2 })] } } })
+    await session($, on, { pacing: { body: { verdicts: [row({ budget: 2, running_agents: 2 })] } } })
     expect((await spawn($)).deny).toMatch(/2 agent\(s\) already run/)
   })
 
@@ -137,7 +137,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('rewrites the model down to haiku when the budget is tight, never up', async ($, on) => {
-    await session($, on, { pacing: { body: { verdicts: [row({ budget: 3, active_agents: 2 })] } } })
+    await session($, on, { pacing: { body: { verdicts: [row({ budget: 3, running_agents: 2 })] } } })
     expect((await spawn($, { model: 'opus' })).model).toBe('haiku')
     expect((await spawn($, { model: 'haiku' })).model).toBe('haiku')
   })

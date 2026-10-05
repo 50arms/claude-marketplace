@@ -252,6 +252,8 @@ export function dashboard(
     usageReadFails?: string
     // DX-4340: what GET /api/pacing/verdicts answers: a body (any shape) or an error status; the dashboard's 404 (unrouted) by default
     pacing?: { body: unknown } | { status: number }
+    // ... and GET /api/pacing/line (the sub-agent's pacing line)
+    pacingLine?: { body: unknown } | { status: number }
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -447,6 +449,9 @@ export function dashboard(
           ? { comments: c.comments, ...(options.noCommentsTotal ? {} : { comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length } }) }
           : {}),
       })
+    }
+    if (method === 'GET' && path === '/api/pacing/line' && options.pacingLine !== undefined) {
+      return 'status' in options.pacingLine ? reply({ error: 'line boom' }, options.pacingLine.status) : reply(options.pacingLine.body)
     }
     // DX-4340: the pacing verdict read
     if (method === 'GET' && path === '/api/pacing/verdicts' && options.pacing !== undefined) {

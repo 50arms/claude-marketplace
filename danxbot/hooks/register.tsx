@@ -55,6 +55,7 @@ import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
+import { pacingLine, withLine } from './plan/pacing-line'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -1005,8 +1006,10 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   return r
 }
 
-function onSubagentStart($: any, e: any, next: any) {
-  return onSubagentChange($, e, next, true)
+// DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
+async function onSubagentStart($: any, e: any, next: any) {
+  const r = await onSubagentChange($, e, next, true)
+  return withLine(r, await pacingLine(pacingEnv($)))
 }
 
 function onSubagentStop($: any, e: any, next: any) {
