@@ -39,7 +39,8 @@ import {
   USAGE_PATH,
   USAGE_TICK_MS,
   signInFailedToast,
-  SERVER,
+  SERVERS,
+  toolName,
   NOTE_MARKER,
   TOAST_ERROR_MAX,
   busyKey,
@@ -115,13 +116,26 @@ let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
 // DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
 let liveQueue: Promise<void> = Promise.resolve()
 
+// DX-4555: the session's dashboard MCP server is whichever of SERVERS is connected. Only the engine's "no such server"
+// rejection moves on to the next name; the last one's rejection is thrown, for `api` and the callers to classify.
+async function callDashboard($: any, tool: string, args: object): Promise<any> {
+  for (const server of SERVERS.slice(0, -1)) {
+    try {
+      return await $.mcp.call(server, tool, args)
+    } catch (err: any) {
+      if (!isServerMissing(String(err?.message ?? err))) throw err
+    }
+  }
+  return $.mcp.call(SERVERS[SERVERS.length - 1], tool, args)
+}
+
 // One dashboard call through the session's own danx-dashboard MCP server: same credential, same
 // x-danx-session-id header. Only the engine's "no such server" rejection (another repo) is
 // `unreachable`, which is not an API error; any other rejection is an error shown as one.
 async function api($: any, method: string, path: string, extra: { query?: object; body?: object } = {}): Promise<Api> {
   let res
   try {
-    res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra })
+    res = await callDashboard($, 'danxbot_api', { method, path, ...extra })
   } catch (err: any) {
     const message = String(err?.message ?? err)
     if (isServerMissing(message)) return { ok: false, status: 0, unreachable: true, body: { error: message } }
@@ -427,7 +441,7 @@ function connect($: any, plan: PlanRow): Promise<void> {
     const sessionTitle = await read($, title)
     let r
     try {
-      r = await $.mcp.call(SERVER, 'plan_connect', {
+      r = await callDashboard($, 'plan_connect', {
         plan_id: plan.id,
         ...(sessionTitle ? { title: sessionTitle } : {}),
       })
@@ -457,7 +471,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
     let r
     try {
-      r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
+      r = await callDashboard($, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
       $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
@@ -523,7 +537,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         const startedAt = await $.clock.now()
         let r
         try {
-          r = await $.mcp.call(SERVER, 'plan_connect', watch.args)
+          r = await callDashboard($, 'plan_connect', watch.args)
         } catch (err: any) {
           if (!ended()) $.ui.toast(signInFailedToast(String(err?.message ?? err)))
           return
@@ -1166,8 +1180,10 @@ export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
-  on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, onPlanConnect)
-  on('tool.call', { tool: 'mcp__danx-dashboard__request_permission' }, onRequestPermission)
+  for (const server of SERVERS) {
+    on('tool.call', { tool: toolName(server, 'plan_connect') }, onPlanConnect)
+    on('tool.call', { tool: toolName(server, 'request_permission') }, onRequestPermission)
+  }
   on('turn.complete', onTurnComplete)
   on('session.measure', onMeasure)
   on('classic.SubagentStart', onSubagentStart)
