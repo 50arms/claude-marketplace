@@ -12,10 +12,31 @@ import { fileURLToPath } from "node:url";
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(PLUGIN, rel), "utf8"));
 
-test("DX-4232: hooks.json declares the module", () => {
+// The command hooks as origin/main ships them, [event, matcher, command]: the baseline this file
+// compares against, so no hand-copied copy can drift from it. A hook may be ADDED (DX-4534's Stop
+// hook did) but never silently dropped or rewritten: a card that migrates or deletes one lands
+// that on origin/main first, or edits this comparison in the same change.
+function commandHooks(hooksJson) {
+  const out = [];
+  for (const [event, groups] of Object.entries(hooksJson.hooks)) {
+    for (const group of groups) for (const h of group.hooks) out.push([event, group.matcher ?? null, h.command]);
+  }
+  return out;
+}
+
+function originMainHooks() {
+  const r = spawnSync("git", ["show", "origin/main:danxbot/hooks/hooks.json"], { cwd: PLUGIN, encoding: "utf8" });
+  assert.equal(r.status, 0, `cannot read origin/main's hooks.json (git fetch origin first): ${r.stderr}`);
+  return JSON.parse(r.stdout);
+}
+
+test("DX-4232: hooks.json declares the module and keeps every origin/main command hook", () => {
   const hooks = readJson("hooks/hooks.json");
   assert.deepEqual(hooks.modules, ["./register.tsx"]);
   assert.ok(fs.existsSync(path.join(PLUGIN, "hooks", "register.tsx")));
+  const present = new Set(commandHooks(hooks).map((h) => JSON.stringify(h)));
+  const dropped = commandHooks(originMainHooks()).filter((h) => !present.has(JSON.stringify(h)));
+  assert.deepEqual(dropped, [], "command hooks on origin/main that hooks.json no longer has");
 });
 
 test("DX-4232: plugin.json names the $.state contract, and the file exists", () => {

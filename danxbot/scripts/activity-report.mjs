@@ -97,11 +97,11 @@ export function failureFile(dir, sessionId) {
  * The installed package's entry point, via ensure-dashboard-mcp.sh. `{ok:true, bin}` or
  * `{ok:false, reason}` — the script prints one line naming its reason on failure.
  */
-export function ensureInstalled({ env = process.env, spawnFn = spawnSync } = {}) {
+export function ensureInstalled({ env = process.env, spawnFn = spawnSync, timeoutMs = ENSURE_SPAWN_TIMEOUT_MS } = {}) {
   const result = spawnFn("bash", [path.join(here, "ensure-dashboard-mcp.sh")], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: ENSURE_SPAWN_TIMEOUT_MS,
+    timeout: timeoutMs,
     windowsHide: true,
     encoding: "utf8",
   });

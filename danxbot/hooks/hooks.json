@@ -132,7 +132,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" scripts/ready-cards-stop.mjs",
-            "timeout": 30
+            "timeout": 15
           }
         ]
       }

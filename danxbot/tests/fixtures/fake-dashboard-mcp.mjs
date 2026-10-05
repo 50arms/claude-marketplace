@@ -49,6 +49,7 @@ export function installedBinPath(dataDir, version = recordedVersion(dataDir)) {
 export const FAKE_BIN_SOURCE = `
 const fs = require("node:fs");
 if (process.env.FAKE_MCP_ARGS_FILE) fs.writeFileSync(process.env.FAKE_MCP_ARGS_FILE, process.argv.slice(2).join(" ") + "\\n");
+if (process.env.FAKE_MCP_ENV_FILE) fs.writeFileSync(process.env.FAKE_MCP_ENV_FILE, JSON.stringify({ session: process.env.CLAUDE_CODE_SESSION_ID, messagingToken: process.env.CLAUDE_CODE_MESSAGING_TOKEN, messagingSocket: process.env.CLAUDE_CODE_MESSAGING_SOCKET }));
 switch (process.env.FAKE_MCP_MODE || "fail") {
   case "success": process.stdout.write(process.env.FAKE_MCP_TEXT || ""); break;
   case "empty": break;

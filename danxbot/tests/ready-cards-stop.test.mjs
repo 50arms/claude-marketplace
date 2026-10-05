@@ -10,8 +10,8 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fakeNpm, installFakeMcp, makeFakeBinDir, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
-import { MAX_LISTED_CARDS, MAX_TITLE_CHARS, blockReason, parseReadyCards } from "../scripts/ready-cards-stop.mjs";
+import { PKG_NAME, TEST_VERSION, fakeNpm, installFakeMcp, makeFakeBinDir, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
+import { EXPECTED_REASONS, MAX_LISTED_CARDS, MAX_TITLE_CHARS, READY_CARDS_TIMEOUT_MS, blockReason, parseReadyCards } from "../scripts/ready-cards-stop.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.join(here, "..");
@@ -24,11 +24,12 @@ const SESSION = "plan-session-1";
  * Runs the hook for `payload`. `mode` is the fake bin's FAKE_MCP_MODE, `text` its stdout; `connected`
  * writes the session's plan-connection record; `installed: false` leaves the data dir without a bin.
  */
-function runHook({ payload = { session_id: SESSION }, mode = "success", text = "", stderrText = "", connected = true, installed = true } = {}) {
+function runHook({ payload = { session_id: SESSION }, rawInput, mode = "success", text = "", stderrText = "", connected = true, installed = true, extraEnv = {} } = {}) {
   const fakeBinDir = makeFakeBinDir({ npm: fakeNpm() });
   const home = mkdtempSync(path.join(tmpdir(), "ready-cards-home-"));
   const dataDir = mkdtempSync(path.join(tmpdir(), "ready-cards-data-"));
   const argsFile = path.join(dataDir, "args.txt");
+  const envFile = path.join(dataDir, "env.json");
   try {
     if (connected) {
       const dir = path.join(home, ".config", "danxbot", "plan-sessions");
@@ -39,7 +40,7 @@ function runHook({ payload = { session_id: SESSION }, mode = "success", text = "
     if (installed) installFakeMcp(dataDir);
     else recordVersion(dataDir);
     const result = spawnSync(process.execPath, [SCRIPT], {
-      input: JSON.stringify(payload),
+      input: rawInput ?? JSON.stringify(payload),
       encoding: "utf8",
       env: {
         ...process.env,
@@ -53,15 +54,23 @@ function runHook({ payload = { session_id: SESSION }, mode = "success", text = "
         FAKE_MCP_TEXT: text,
         FAKE_MCP_STDERR: stderrText,
         FAKE_MCP_ARGS_FILE: argsFile,
+        FAKE_MCP_ENV_FILE: envFile,
+        ...extraEnv,
       },
     });
     let calledArgs = null;
+    let childEnv = null;
     try {
       calledArgs = readFileSync(argsFile, "utf8").trim();
     } catch {
       // the fake never ran
     }
-    return { ...result, calledArgs };
+    try {
+      childEnv = JSON.parse(readFileSync(envFile, "utf8"));
+    } catch {
+      // the fake never ran
+    }
+    return { ...result, calledArgs, childEnv };
   } finally {
     rmSync(fakeBinDir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -102,6 +111,21 @@ describe("ready-cards-stop.mjs: allows the stop silently", () => {
     assert.equal(result.calledArgs, null);
   });
 
+  test("no usable stdin payload (empty, not JSON, not an object): no output, and the read never runs, even with the session id in the environment", () => {
+    for (const rawInput of ["", "not json", "[1]", "null"]) {
+      const result = runHook({ rawInput, text: readyLine([card(1)]), extraEnv: { CLAUDE_CODE_SESSION_ID: SESSION } });
+      assert.equal(result.status, 0, rawInput);
+      assert.equal(result.stdout, "", rawInput);
+      assert.equal(result.calledArgs, null, rawInput);
+    }
+  });
+
+  test("a payload with no session_id is never connected: the environment's session id is not used instead", () => {
+    const result = runHook({ payload: {}, text: readyLine([card(1)]), extraEnv: { CLAUDE_CODE_SESSION_ID: SESSION } });
+    assert.equal(result.stdout, "");
+    assert.equal(result.calledArgs, null);
+  });
+
   test("no plan connected: no output, and the read never runs", () => {
     const result = runHook({ connected: false, text: readyLine([card(1)]) });
     assert.equal(result.status, 0);
@@ -123,34 +147,65 @@ describe("ready-cards-stop.mjs: allows the stop silently", () => {
 });
 
 describe("ready-cards-stop.mjs: a failed read allows the stop and names the reason on one line", () => {
-  function assertSkipped(result, reasonPattern) {
+  const PREFIX = "danxbot ready-cards check skipped (the stop is allowed): ";
+
+  /** The result is ONE stdout line, a systemMessage that is PREFIX plus exactly `reason`. */
+  function assertSkipped(result, reason) {
     assert.equal(result.status, 0);
     const lines = result.stdout.trim().split("\n");
     assert.equal(lines.length, 1);
-    const answer = JSON.parse(lines[0]);
-    assert.deepEqual(Object.keys(answer), ["systemMessage"]);
-    assert.match(answer.systemMessage, /^danxbot ready-cards check skipped \(the stop is allowed\): /);
-    assert.match(answer.systemMessage, reasonPattern);
+    assert.deepEqual(JSON.parse(lines[0]), { systemMessage: `${PREFIX}${reason}` });
   }
 
   test("the subcommand exits 1 (dashboard down, signed out): its stderr reason is named", () => {
-    assertSkipped(runHook({ mode: "fail", stderrText: "request_failed: could not read the plan's ready cards from the dashboard" }), /request_failed/);
+    const line = "request_failed: could not read the plan's ready cards from the dashboard";
+    assertSkipped(runHook({ mode: "fail", stderrText: line }), line);
   });
 
   test("the subcommand exits non-zero with no message: the exit code is named", () => {
-    assertSkipped(runHook({ mode: "silent-fail" }), /ready_cards_failed: exit_3/);
+    assertSkipped(runHook({ mode: "silent-fail" }), "ready_cards_failed: exit_3 with no message");
   });
 
   test("the subcommand prints something that is not its JSON line", () => {
-    assertSkipped(runHook({ text: "not json" }), /bad_response/);
+    assertSkipped(runHook({ text: "not json" }), "bad_response: ready-cards did not print its JSON line");
   });
 
   test("the subcommand prints cards of the wrong shape", () => {
-    assertSkipped(runHook({ text: `${JSON.stringify({ plan_id: 1, cards: [{ id: 5 }] })}\n` }), /bad_response/);
+    assertSkipped(runHook({ text: `${JSON.stringify({ plan_id: 1, cards: [{ id: 5 }] })}\n` }), "bad_response: ready-cards did not print its JSON line");
   });
 
   test("no installed package and no way to install it: the ensure step's reason is named", () => {
-    assertSkipped(runHook({ installed: false }), /dashboard_mcp_unavailable|npm|install/i);
+    const result = runHook({ installed: false });
+    assertSkipped(
+      result,
+      `ensure_failed: install_failed: npm install ${PKG_NAME}@${TEST_VERSION} exited 1: npm error 404 Not Found - registry unreachable`,
+    );
+    assert.equal(result.calledArgs, null);
+  });
+});
+
+describe("ready-cards-stop.mjs: a signed-out or keyless session allows the stop silently", () => {
+  for (const reason of EXPECTED_REASONS) {
+    test(`the subcommand's ${reason} (no sign-in on this machine): no output at all`, () => {
+      const result = runHook({ mode: "fail", stderrText: `${reason}: nothing to read a credential from. Fix: call plan_connect.` });
+      assert.equal(result.status, 0);
+      assert.equal(result.stdout, "");
+      assert.equal(result.calledArgs, "ready-cards");
+    });
+  }
+
+  test("exactly the two sign-in reasons are expected: event-hook.sh and activity-report.mjs treat the same two as ordinary", () => {
+    assert.deepEqual([...EXPECTED_REASONS].sort(), ["credential_unavailable", "no_connection_record"]);
+  });
+});
+
+describe("ready-cards-stop.mjs: the read runs in the bridge's child environment", () => {
+  test("the session id comes from the payload and the inbox token and socket are stripped", () => {
+    const result = runHook({
+      text: readyLine([]),
+      extraEnv: { CLAUDE_CODE_MESSAGING_TOKEN: "secret", CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/sock", CLAUDE_CODE_SESSION_ID: "ambient-other" },
+    });
+    assert.deepEqual(result.childEnv, { session: SESSION });
   });
 });
 
@@ -186,7 +241,7 @@ describe("hooks.json wiring", () => {
     assert.match(entry.command, /launch\.mjs" scripts\/ready-cards-stop\.mjs$/);
     assert.notEqual(entry.async, true);
     assert.equal(entry.asyncRewake, undefined);
-    assert.ok(entry.timeout >= 20, "the timeout must outlast the subcommand's own read budget");
+    assert.ok(entry.timeout * 1000 > READY_CARDS_TIMEOUT_MS, "hooks.json's timeout (seconds) must outlast the hook's own install + read budget");
   });
 
   test("it is wired to Stop only", () => {
