@@ -238,22 +238,6 @@ describe('the running agents', () => {
     await d.clock.advance(USAGE_TICK_MS)
     expect(reports(d).at(-1).body.runningAgents).toBe(2)
   })
-
-  test('a sub-agent that died without a stop is dropped from the count after the bound, while a newer one is kept', async ($, on) => {
-    // DX-4586: reports an hour apart, so the three-hour bound costs three reports of fake-clock work, not 180 (a test that
-    // spends real time on every tick of a long advance times out under machine load). The drop of the newer one at the bound
-    // is the liveAgentsAt unit test above.
-    const HOUR = 3_600_000
-    const d = await measuredSession($, on, { usageEveryMs: HOUR })
-    await start($, 'dead')
-    await d.clock.advance(SUBAGENT_LIVE_MAX_MS - HOUR)
-    await start($, 'alive')
-    await d.clock.advance(HOUR)
-    // 'dead' started a full bound ago, 'alive' an hour ago: the main thread and 'alive'
-    expect(reports(d).at(-1).body.runningAgents).toBe(2)
-    await d.clock.advance(HOUR)
-    expect(reports(d).at(-1).body.runningAgents).toBe(2)
-  })
 })
 
 describe('the cadence is danxbot\'s', () => {

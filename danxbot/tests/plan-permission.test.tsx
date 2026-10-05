@@ -123,14 +123,15 @@ describe('request_permission', () => {
   }
 
   // DX-4530: a request has no expiry clock: it waits for the person until the requesting session ends
-  test('a request still pending is kept well past the old 10-minute window, and the model is told nothing', async ($, on) => {
+  test('a request still pending is kept past the old 10-minute window, and the model is told nothing', async ($, on) => {
     const d = dashboard(on, { tabs: ['seed'] })
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     const band = await $.ui.mount(BAND)
     await $.tool.call(CALL(['team.members.view']))
-    // twice the old fixed window, polled all the while (a longer wait only repeats the same pending claim)
-    await d.clock.advance(1_200_000)
+    // past the old 10-minute window, polled all the while (a longer wait only repeats the same pending claim; DX-4586: every poll tick of a
+    // longer advance is real time that times the test out under machine load)
+    await d.clock.advance(660_000)
     await d.clock.settle()
     expect(await band.find({ key: 'open-permission' })).toBeDefined()
     expect(toldModel(d)).toEqual([])

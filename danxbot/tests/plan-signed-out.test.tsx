@@ -451,16 +451,18 @@ for (const surface of SURFACES) {
     // DX-4548: a request stays open while its session lives, so the wait has no round limit
     test('a request nobody decides is waited on past any round count: no timeout toast, still Signing in…, and approval ends it', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out' })
+      // DX-4586: five-second rounds (the shortest the plugin allows), so the 40 rounds cost 200 s of fake clock, not 30 minutes
+      d.world.signIn.waitMs = 5_000
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await band.press({ key: 'sign-in' })
-      for (let i = 0; i < 40; i++) await d.clock.advance(45_000)
+      for (let i = 0; i < 40; i++) await d.clock.advance(5_000)
       await d.clock.settle()
       expect(connectCalls(d).length).toBeGreaterThan(30)
       expect(d.toasts.join(' ')).not.toMatch(/timed out/)
       expect((await band.find({ key: 'sign-in' })).text).toBe('Signing in…')
       d.world.signIn.approved = true
-      await d.clock.advance(45_000)
+      await d.clock.advance(5_000)
       await d.clock.settle()
       expect(d.toasts).toContain('Signed in')
     })
