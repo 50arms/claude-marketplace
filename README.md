@@ -5,17 +5,26 @@ every dev rule used while working a card, and the hooks that serve them.
 
 ## Install
 
-Needs `node` and `bash` on your PATH (on Windows, Git Bash).
+Needs `node` and `bash` on the PATH Claude Code itself starts with, not just on the PATH of a shell you open later (on Windows, Git Bash; on WSL, a login shell that has not loaded nvm has no `node`, and the server then fails to start with `ENOENT`).
+
+In a Claude Code session:
+
+```
+/plugin marketplace add newms87/claude-plugins
+/plugin install danxbot@newms-plugins
+```
+
+Or from a shell:
 
 ```bash
-claude plugin marketplace add github:newms87/claude-plugins
+claude plugin marketplace add newms87/claude-plugins
 claude plugin install danxbot@newms-plugins
 ```
 
 After installing:
 
 1. Restart Claude Code. The plugin's `danx-dashboard` server starts with the session; there is no `.mcp.json` to write.
-2. Claude Code asks for the **Dashboard URL**. Accept the default, `https://danxbot.sageus.ai`, unless you run your own dashboard. It is kept in your user settings and editable in `/config`.
+2. Claude Code asks for the **Dashboard URL**. Leave it at its default, `https://danxbot.sageus.ai`, unless you run your own dashboard. If you installed from a shell, it prints `1 userConfig option not yet set`: that is this option, and it works unset because the default applies. It is kept in your user settings and editable in `/config`.
 3. Ask Claude to connect a plan (or call `plan_connect`). The first call opens a sign-in approval; approve it on the dashboard and the session is signed in.
 
 ## The dashboard MCP server
