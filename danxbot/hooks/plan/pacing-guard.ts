@@ -1,6 +1,6 @@
 import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
-import { currentPacing } from './pacing-line'
+import { currentPacing, recordSpawn } from './pacing-line'
 import type { PacingEnv, PacingVerdict } from './pacing-line'
 
 // DX-4340 (PLAN-29 R-10): the usage-pacing guard on sub-agent spawns. danxbot serves the calling session's own account's verdict at
@@ -11,7 +11,9 @@ import type { PacingEnv, PacingVerdict } from './pacing-line'
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits,
 // pushes, card writes) however tight the budget. It also never blocks work it cannot see: no verdict (the line's `reason` set: no usage
 // report, no verdict, pacing off; the dashboard unreachable or signed out; a malformed answer; nothing cached) ALLOWS the spawn. A
-// failed read is never silent: it is toasted once per distinct text.
+// failed read (an unreachable dashboard
+// included) is never silent: it is toasted once per distinct text, and not retried for a minute. A burst of spawns inside one turn is held to
+// the budget: the spawns this guard allowed since the cached read are added to danxbot's running count until a fresh read lands.
 
 export type SpawnDecision = { kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'downgrade'; model: 'haiku' }
 
@@ -27,9 +29,10 @@ export function tierOf(model: string | undefined): Tier | null {
   return TIERS.find(t => lower.includes(t)) ?? null
 }
 
-// "Tight": the spawn would take the last free slot under a budget (budget - running <= 1). One rule, documented here and tested.
+// "Tight": the spawn would take the last free slot under a budget (at most TIGHT_FREE_SLOTS slots free). One rule, documented here and tested.
+export const TIGHT_FREE_SLOTS = 1
 export function isTight(budget: number | null, running: number): boolean {
-  return budget !== null && budget - running <= 1
+  return budget !== null && budget - running <= TIGHT_FREE_SLOTS
 }
 
 function denyReason(v: PacingVerdict, why: 'level' | 'budget'): string {
@@ -63,16 +66,28 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
     let decision: SpawnDecision = { kind: 'allow' }
+    let counted = false
     try {
       const pacing = await currentPacing(env)
       // a fork always inherits the parent's model, so the model it would run on is the parent's
       decision = decideSpawn(pacing?.verdict ?? null, e.fork ? e.parentModel : (e.model ?? e.parentModel))
+      if (decision.kind !== 'deny' && pacing !== null) {
+        // counted BEFORE the spawn starts, so concurrent spawns see each other; taken back below if it does not start
+        recordSpawn(1)
+        counted = true
+      }
     } catch (err: any) {
       env.toast(`Usage pacing skipped this spawn check: ${String(err?.message ?? err).slice(0, 200)}`)
     }
     if (decision.kind === 'deny') return { deny: decision.reason }
-    // a fork ignores `model`, so there is nothing to rewrite
-    if (decision.kind === 'downgrade' && !e.fork) return next({ ...e, model: decision.model })
-    return next(e)
+    try {
+      // a fork ignores `model`, so there is nothing to rewrite
+      const started = await next(decision.kind === 'downgrade' && !e.fork ? { ...e, model: decision.model } : e)
+      if (counted && started.deny !== undefined) recordSpawn(-1)
+      return started
+    } catch (err) {
+      if (counted) recordSpawn(-1)
+      throw err
+    }
   }
 }

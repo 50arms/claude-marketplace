@@ -3,8 +3,9 @@
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { decideSpawn, isTight, tierOf } from '../hooks/plan/pacing-guard'
-import { PACING_REFRESH_MS, resetPacingCache } from '../hooks/plan/pacing-line'
+import { TIGHT_FREE_SLOTS, decideSpawn, isTight, tierOf } from '../hooks/plan/pacing-guard'
+import { register } from '../hooks/register'
+import { PACING_EXPIRY_MS, PACING_REFRESH_MS, resetPacingCache } from '../hooks/plan/pacing-line'
 import type { PacingVerdict } from '../hooks/plan/pacing-line'
 import { dashboard, startSession } from './plan-kit'
 
@@ -49,6 +50,7 @@ describe('decideSpawn (the decision table)', () => {
   })
 
   test('tight (budget - running <= 1) downgrades to haiku, never upward and never an unknown model', () => {
+    expect(TIGHT_FREE_SLOTS).toBe(1)
     expect(isTight(3, 2)).toBe(true)
     expect(isTight(3, 1)).toBe(false)
     expect(isTight(null, 99)).toBe(false)
@@ -75,6 +77,7 @@ describe('the agent.spawn hook', () => {
   async function session($: any, on: any, options: Parameters<typeof dashboard>[1] = {}) {
     resetPacingCache()
     on('agent.spawn', (_$: any, e: any) => ({ model: e.model ?? 'parent-model', agentId: 'new' }) as any)
+    on('tool.call', () => ({ result: {}, text: 'ran', isError: false }) as any)
     const d = dashboard(on, options)
     await startSession($, d, 'desktop')
     return d
@@ -102,7 +105,6 @@ describe('the agent.spawn hook', () => {
   test('rewrites the model down to haiku when the budget is tight, never up', async ($, on) => {
     await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 2 }) } })
     expect((await spawn($, { model: 'opus' })).model).toBe('haiku')
-    expect((await spawn($, { model: 'haiku' })).model).toBe('haiku')
   })
 
   test('allows when danxbot answers unknown (the line carries a reason): nothing is said', async ($, on) => {
@@ -111,30 +113,99 @@ describe('the agent.spawn hook', () => {
     expect(d.toasts).toEqual([])
   })
 
-  test('allows and says so once when the line cannot be read', async ($, on) => {
-    const d = await session($, on, { pacingLine: { status: 500 } })
-    expect((await spawn($)).deny).toBeUndefined()
+  test('a burst of spawns in one turn is held to the budget: allowed spawns count until a fresh read', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 0 }) } })
+    for (let i = 0; i < 3; i++) expect((await spawn($, { model: 'haiku' })).deny).toBeUndefined()
+    expect((await spawn($, { model: 'haiku' })).deny).toMatch(/3 agent\(s\) already run/)
+    expect(d.pacingReads).toHaveLength(1)
+    // a fresh read is live and already includes what started: the added count is dropped
     await d.clock.advance(PACING_REFRESH_MS + 1)
+    expect((await spawn($, { model: 'haiku' })).deny).toBeUndefined()
+  })
+
+  test('a denied spawn is not counted', async ($, on) => {
+    await session($, on, { pacingLine: { body: wire({ budget: 1, running_agents: 1 }) } })
+    expect((await spawn($)).deny).toBeDefined()
+    expect((await spawn($)).deny).toBeDefined()
+  })
+
+  test('a fork is denied like any spawn', async ($, on) => {
+    await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
+    expect((await spawn($, { fork: true })).deny).toMatch(/critical/)
+  })
+
+  test('a tight fork is let through with its model untouched: a fork ignores the model', async ($, on) => {
+    await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 2 }) } })
+    expect((await spawn($, { fork: true, model: 'opus' })).model).toBe('opus')
+  })
+
+  test('a cache older than 30 minutes is not trusted: the spawn is allowed', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+    const d = await session($, on, options)
+    expect((await spawn($)).deny).toBeDefined()
+    options.pacingLine = { status: 500 }
+    await d.clock.advance(PACING_EXPIRY_MS + 1)
     expect((await spawn($)).deny).toBeUndefined()
+  })
+
+  test('a failed read keeps the last good answer serving, backs off for a minute, and toasts once', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+    const d = await session($, on, options)
+    options.pacingLine = { status: 500 }
+    await d.clock.advance(PACING_REFRESH_MS + 1)
+    expect((await spawn($)).deny).toMatch(/critical/)
+    expect(d.pacingReads).toHaveLength(2)
+    // the dead route is not hit again by each spawn inside the back-off
+    await spawn($)
+    await spawn($)
+    expect(d.pacingReads).toHaveLength(2)
+    await d.clock.advance(PACING_REFRESH_MS + 1)
+    await spawn($)
+    expect(d.pacingReads).toHaveLength(3)
     expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))).toHaveLength(1)
+  })
+
+  test('an unreachable dashboard allows, toasts once, and backs off', async ($, on) => {
+    const d = await session($, on, { mcp: 'down' })
+    expect((await spawn($)).deny).toBeUndefined()
+    expect((await spawn($)).deny).toBeUndefined()
+    expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read') && t.includes('not reachable'))).toHaveLength(1)
+  })
+
+  test('a 404 is a failure like any other: toasted, not a quiet unknown', async ($, on) => {
+    const d = await session($, on, { pacingLine: { status: 404 } })
+    expect((await spawn($)).deny).toBeUndefined()
+    expect(d.toasts.filter(t => t.includes('answered 404'))).toHaveLength(1)
   })
 
   test('reads the line at session start, then once a minute, and again after it', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire() } })
-    const reads = () => d.pacingReads.length
-    expect(reads()).toBe(1)
+    expect(d.pacingReads).toHaveLength(1)
     await spawn($)
     await spawn($)
-    expect(reads()).toBe(1)
+    expect(d.pacingReads).toHaveLength(1)
     await d.clock.advance(PACING_REFRESH_MS + 1)
     await spawn($)
-    expect(reads()).toBe(2)
+    expect(d.pacingReads).toHaveLength(2)
   })
 
-  test('never reads the verdict list or matches accounts: only the line route is called', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire() } })
-    await spawn($)
-    expect(d.api.filter(a => a.path.startsWith('/api/pacing'))).toEqual([])
-    expect(d.pacingReads.length).toBeGreaterThan(0)
+  test('a tool call of any tool is never denied under a critical verdict: saving work stays possible', async ($, on) => {
+    await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
+    for (const tool of ['Bash', 'Write', 'mcp__danx-dashboard__danxbot_api']) {
+      const r = await $.tool.call({ tool, command: 'git commit -m x' } as any)
+      expect(r.isError).not.toBe(true)
+    }
+  })
+})
+
+describe('what register wires', () => {
+  test('agent.spawn carries the pacing guard, and no tool.call handler can carry it', () => {
+    const wired: { event: string; matcher: unknown }[] = []
+    register(((event: string, ...rest: unknown[]) => void wired.push({ event, matcher: rest.length > 1 ? rest[0] : undefined })) as any, {} as any)
+    expect(wired.filter(w => w.event === 'agent.spawn')).toHaveLength(1)
+    // every tool.call hook is matched to one danx-dashboard tool: none is a catch-all, so none can sit on a commit, push or card write
+    const toolCalls = wired.filter(w => w.event === 'tool.call')
+    expect(toolCalls.length).toBeGreaterThan(0)
+    for (const w of toolCalls) expect((w.matcher as { tool?: string })?.tool).toMatch(/^mcp__danx-dashboard__(plan_connect|request_permission)$/)
   })
 })

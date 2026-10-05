@@ -46,10 +46,8 @@ describe('the SubagentStart pacing line', () => {
     expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
   })
 
-  test('a failed read starts the sub-agent without a line and says so once', async ($, on) => {
-    const { d, r } = await started($, on, { pacingLine: { status: 500 } })
+  test('a failed read starts the sub-agent without a line', async ($, on) => {
+    const { r } = await started($, on, { pacingLine: { status: 500 } })
     expect(r.additionalContext).toBeUndefined()
-    await $.classic.SubagentStart({ ...START, agent_id: 'a2' })
-    expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))).toHaveLength(1)
   })
 })

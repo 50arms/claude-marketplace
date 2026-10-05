@@ -5,7 +5,8 @@
 //
 // Unknown is explicit on the wire (`reason` set, every other field null: no session, no usage report, no verdict, pacing off) and means
 // the guard allows and no line is handed. A read that fails is never silent (one toast per distinct text) and keeps the last good answer
-// until it expires.
+// until it expires, and a failed read is not retried for PACING_REFRESH_MS (each spawn or sub-agent start would otherwise re-hit a dead
+// route). An unreachable danx-dashboard server (a session on a repo with no danxbot) is a failure like any other: one toast, then the same back-off.
 
 export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
 const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
@@ -40,31 +41,34 @@ export function parsePacing(body: any): Pacing | null | { error: string } {
   }
 }
 
-// `pacing` null = danxbot answered unknown. A module-state cache: a reload starts it over and the next read refetches.
-type Cache = { pacing: Pacing | null; fetchedAt: number }
+// `pacing` null = danxbot answered unknown. `allowed` is the spawns the guard let through since this read: danxbot's running count is as of
+// the read, so a burst of spawns inside one turn is held to the budget by adding them (recordSpawn), and a fresh read resets it (its count
+// is live and already includes them). A module-state cache: a reload starts it over and the next read refetches.
+type Cache = { pacing: Pacing | null; fetchedAt: number; allowed: number }
 let cache: Cache | null = null
+// when the last read was ATTEMPTED (success or failure): the back-off clock
+let lastReadAt: number | null = null
 let lastError: string | null = null
 let inflight: Promise<void> | null = null
 
 export function resetPacingCache(): void {
   cache = null
+  lastReadAt = null
   lastError = null
   inflight = null
 }
 
 async function fetchPacing(env: PacingEnv): Promise<void> {
   let failure: string | null = null
+  lastReadAt = await env.now()
   try {
     const r = await env.call('GET', LINE_PATH)
-    // another repo's session has no danxbot dashboard: nothing to pace against, nothing to complain about
-    if (r.unreachable) return
-    // a dashboard that predates the route (DX-4340) has nothing to pace against: unknown, as for another repo's session
-    if (r.status === 404) cache = { pacing: null, fetchedAt: await env.now() }
+    if (r.unreachable) failure = 'the danx-dashboard MCP server is not reachable from this session'
     else if (!r.ok) failure = `the pacing line read answered ${r.status}`
     else {
       const parsed = parsePacing(r.body)
       if (parsed !== null && 'error' in parsed) failure = parsed.error
-      else cache = { pacing: parsed, fetchedAt: await env.now() }
+      else cache = { pacing: parsed, fetchedAt: lastReadAt, allowed: 0 }
     }
   } catch (err: any) {
     failure = String(err?.message ?? err)
@@ -75,18 +79,25 @@ async function fetchPacing(env: PacingEnv): Promise<void> {
   if (failure !== null) env.toast(`Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): ${failure}`)
 }
 
-// Refetch now when `force`, else when the cache is a minute old; concurrent callers share one read.
+// Read now when `force`, else when the last read ATTEMPT (it succeeded or failed) is a minute old; concurrent callers share one read.
 export async function refreshPacing(env: PacingEnv, force = false): Promise<void> {
   const now = await env.now()
-  if (!force && cache !== null && now - cache.fetchedAt < PACING_REFRESH_MS) return
+  if (!force && lastReadAt !== null && now - lastReadAt < PACING_REFRESH_MS) return
   inflight ??= fetchPacing(env).finally(() => void (inflight = null))
   await inflight
 }
 
-// The session's pacing (null when unknown or expired), refreshed when stale. Never throws on a failed read.
+// The session's pacing (null when unknown or expired), refreshed when due, its running count raised by the spawns allowed since the read.
+// A failed read leaves the last good answer serving until it expires.
 export async function currentPacing(env: PacingEnv): Promise<Pacing | null> {
   await refreshPacing(env)
-  return cache !== null && (await env.now()) - cache.fetchedAt <= PACING_EXPIRY_MS ? cache.pacing : null
+  if (cache === null || cache.pacing === null || (await env.now()) - cache.fetchedAt > PACING_EXPIRY_MS) return null
+  return { ...cache.pacing, verdict: { ...cache.pacing.verdict, runningAgents: cache.pacing.verdict.runningAgents + cache.allowed } }
+}
+
+// A spawn the guard let through (+1) or one that did not start after all (-1): counted until the next fresh read.
+export function recordSpawn(delta: 1 | -1): void {
+  if (cache !== null) cache.allowed = Math.max(0, cache.allowed + delta)
 }
 
 // The sub-agent's pacing line, null when danxbot has none for this session.
