@@ -62,7 +62,13 @@ and says when to land. Whoever runs a gate:
 2. Do what that text says for the card, including any card writes it asks for (checklists,
    dependency edges), and nothing else.
 3. Record the verdict through `danxbot_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`
-   with `{status: "pass"|"fail", message: "<the real finding>"}`.
+   with `{status: "pass"|"fail", message: "<the real finding>", reviewed_ref: "<ref>"}`.
+   Always send `reviewed_ref`, the ref of what the verdict covers. A code gate (`code-*`) covers
+   a diff: send the commit (`git rev-parse HEAD` of the gated branch). A plan gate (`plan-*`)
+   covers the card: send its current `content_hash`, read after your own card writes; a stale
+   hash is refused 409 and the reply carries the current one. A verdict already recorded is
+   replaced only by one naming a different ref, so a re-run after the work or the card changed
+   records normally, and a second verdict on the same ref is refused.
 
 Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
 that doesn't apply to the card is removed (`POST` the same card route with
