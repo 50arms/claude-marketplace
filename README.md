@@ -6,24 +6,17 @@ every dev rule used while working a card, and the hooks that serve them.
 ## Install
 
 ```bash
-# Add this marketplace from GitHub — machine-independent, use this by default
 claude plugin marketplace add github:newms87/claude-plugins
-
-# Or point at your own local checkout of this repo. There is NO canonical
-# location for it — pass the path to wherever YOU cloned it; do not copy a
-# path out of any doc.
-# claude plugin marketplace add /path/to/your/claude-plugins
-
 claude plugin install danxbot@newms-plugins
 ```
 
-Or declare in a project's `.claude/settings.json`:
+## The dashboard MCP server
 
-```json
-{
-  "plugins": ["danxbot@newms-plugins"]
-}
-```
+The plugin ships the `danx-dashboard` MCP server (`danxbot/scripts/dashboard-mcp-server.mjs`, declared in `plugin.json` `mcpServers`), pointed at the hosted dashboard by default. A repo needs no `.mcp.json`. No board is set: name it per call (the `board` argument) or let `plan_connect` connect the session. Claude Code lists the plugin's tools as `mcp__plugin_danxbot_danx-dashboard__*`.
+
+To use another dashboard, set `DANXBOT_DASHBOARD_URL` (your shell, or the `env` block of a repo's committed `.claude/settings.json` for a per-repo or per-company default). It beats the plugin's `dashboard_url` option (default `https://danxbot.sageus.ai`, asked when the plugin is enabled and kept in your user settings: Claude Code does not read plugin options from a project's settings).
+
+A repo that has its own `.mcp.json` entry named `danx-dashboard` (danxbot, gpt-manager) wins: the plugin's copy then answers the MCP handshake as an empty server, so the session lists exactly one set of dashboard tools, the repo's, as `mcp__danx-dashboard__*`.
 
 ## Editing a plugin — MANDATORY version bump
 
