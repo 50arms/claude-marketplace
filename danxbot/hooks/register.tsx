@@ -56,6 +56,8 @@ import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots,
 import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
+import { spawnGuard } from './plan/pacing-guard'
+import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -971,6 +973,9 @@ async function onSessionStart($: any, e: any, next: any) {
   permissionTicker?.cancel()
   permissionTicker = null
   await syncPermissionPoll($)
+  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer), reads the verdict now, and later reads happen when it is a minute old, at a spawn or sub-agent start
+  resetPacing()
+  void refreshPacing(pacingEnv($), true)
   void refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($))
   return next(e)
 }
@@ -1095,8 +1100,10 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   return r
 }
 
-function onSubagentStart($: any, e: any, next: any) {
-  return onSubagentChange($, e, next, true)
+// DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
+async function onSubagentStart($: any, e: any, next: any) {
+  const r = await onSubagentChange($, e, next, true)
+  return withLine(r, await pacingLine(pacingEnv($)))
 }
 
 function onSubagentStop($: any, e: any, next: any) {
@@ -1176,6 +1183,15 @@ async function drawPane($: any, e: any) {
   return renderPane($.ui.resolve(e), handlers($), m)
 }
 
+// DX-4340: the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
+function pacingEnv($: any) {
+  return {
+    now: () => $.clock.now(),
+    call: (method: string, path: string) => api($, method, path),
+    toast: (text: string) => $.ui.toast(text),
+  }
+}
+
 export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
@@ -1186,6 +1202,8 @@ export const register: Register = on => {
   }
   on('turn.complete', onTurnComplete)
   on('session.measure', onMeasure)
+  // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
+  on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onTitle)
