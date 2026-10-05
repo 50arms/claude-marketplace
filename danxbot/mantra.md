@@ -15,7 +15,9 @@
    concerns (no card fits → file one), never a question in the session.
    Changing behaviour a person already relies on that they did not name (a
    default, a layout, a flow) is ambiguous intent: ask before it ships, never
-   after, and never by stretching their ask to cover it. Any
+   after, and never by stretching their ask to cover it. So is a gap you
+   find in what a person sees (a lane that never loads): raise it, never
+   keep it and call it intended. Any
    "should I", "want me to", "once you confirm" or "waiting on you" is one of
    these or yours to decide. Status, blockers you can run, implementation
    choices and how you should work are never questions. The plan's human
