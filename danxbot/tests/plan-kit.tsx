@@ -675,12 +675,15 @@ export function dashboard(
   })
   // what the plugin keeps in $.state (a test has no `$.state` of its own to read back)
   const flags = { viewWriteFails: false, refusedViewWrites: 0 }
+  // DX-4586: a sub-agent whose stored start time is made older by the given ms as it is written, so a test reaches the 3 h bound with no 3 h of clock
+  const aged = new Map<string, number>()
   on('state.set', async (_$: any, e: any, next: any) => {
     // a write of the plugin's view that the host refuses: the one way a refresh can throw past its own catch
     if (flags.viewWriteFails && e.key === 'view') {
       flags.refusedViewWrites++
       return { deny: 'view write refused' } as any
     }
+    if (e.key === 'liveAgents' && Array.isArray(e.value)) e = { ...e, value: e.value.map((a: any) => (aged.has(a.id) ? { ...a, since: a.since - aged.get(a.id)! } : a)) }
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
     return next(e)
   })
@@ -761,7 +764,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { release: hung.release, pacingReads, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

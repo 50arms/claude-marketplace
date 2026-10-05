@@ -238,6 +238,19 @@ describe('the running agents', () => {
     await d.clock.advance(USAGE_TICK_MS)
     expect(reports(d).at(-1).body.runningAgents).toBe(2)
   })
+
+  // DX-4586: a sub-agent that died with no stop is dropped by the count AND by the next start's rewrite of the stored list; the stored start time
+  // is aged past the bound through the kit, so no 3 h of fake clock passes
+  test('a sub-agent that died without a stop is dropped from the count after the bound, and from the stored list at the next start', async ($, on) => {
+    const d = await session($, on)
+    d.ageLiveAgent('dead', SUBAGENT_LIVE_MAX_MS)
+    await start($, 'dead')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(1)
+    await start($, 'alive')
+    const stored = d.stateWrites.filter(w => w.key === 'liveAgents').at(-1)!.value as { id: string }[]
+    expect(stored.map(a => a.id)).toEqual(['alive'])
+  })
 })
 
 describe('the cadence is danxbot\'s', () => {
