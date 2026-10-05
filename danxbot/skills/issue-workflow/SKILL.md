@@ -170,7 +170,8 @@ code is your code — never "pre-existing, not mine".
 **Show the work.** Browser-visible work: attach a screenshot with `attach_file` and `primary: true`
 at the first working state, then `replaces: <attachment_id from that reply>` at each milestone and
 at completion, never a growing list. Frame the component you are working on with enough around
-it to place it (scroll it into view, size the viewport to it), not the whole app.
+it to place it (scroll it into view, size the viewport to it), not the whole app. A browser-pane
+capture is for your own viewing (an 800px-wide JPEG); attach a full-resolution PNG instead.
 
 ## Debugging
 
