@@ -37,7 +37,7 @@ const SEVERITY: Record<PacingLevel, number> = { on_pace: 0, over_pace: 1, critic
 const SAME_RESET_MS = 60_000
 
 // The level the thresholds alone give (danxbot's projection can only make it worse, and arrives as the verdict).
-export function thresholdLevel(used: number, s: LimitSettings): PacingLevel {
+function thresholdLevel(used: number, s: LimitSettings): PacingLevel {
   return used >= s.criticalPercent ? 'critical' : used >= s.targetPercent ? 'over_pace' : 'on_pace'
 }
 
@@ -65,6 +65,3 @@ export function buildPanel(state: PanelState): PanelModel {
   }
   return { entries, local, error: read.state === 'error' ? read.message : null, settingsAt: state.settingsAt, verdict }
 }
-
-// What the band draws when it is given no pacing (a surface or test that does not say): nothing.
-export const EMPTY_PANEL: PanelModel = buildPanel(EMPTY_PANEL_STATE)

@@ -830,22 +830,25 @@ async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpaw
   }
 }
 
+// What the session's usage reading came to: its windows, or why they could not be read (DX-4339: the tick reads them itself).
+type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
+
 // DX-4336 (PLAN-29 R-1, CAV-4, CAV-6): send this session's rate-limit windows to danxbot. Only a plan-connected session reports (a session
 // with no plan connection is neither paced nor resumed, and danxbot refuses its report). The whole agent tree's burn is in the session's
 // own figure (R-9), so there is one report per session and none per sub-agent. The report says when the figure was MEASURED (the last
 // API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and danxbot must tell it from one that is working.
-// Every step is inside the try, so a failure is a toast, never a hook that threw and was skipped silently: toasted once per distinct text
-// (`usageError`), cleared when a report is accepted again or there is nothing to report.
-async function reportUsage($: any, limits: readonly SessionRateLimit[] | { error: string }): Promise<void> {
+// A failed reading, a failed report or a failure of the plugin's own state is a toast, never a hook that threw and was skipped silently: toasted
+// once per distinct text (`usageError`), cleared when a report is accepted again or there is nothing to report.
+async function reportUsage($: any, reading: UsageReading): Promise<void> {
   try {
     if ((await read($, view)).connected === null) return
     let failure: string | null = null
     try {
       // DX-4339: `{error}` is the session's own usage reading failing (the tick read it): the failure is toasted like any other
-      if ('error' in limits) failure = limits.error
+      if ('error' in reading) failure = reading.error
       else {
         const now = await $.clock.now()
-        const body = usageBody(limits, now, await read($, measuredAt), liveAgentsAt(await read($, liveAgents), now).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+        const body = usageBody(reading.limits, now, await read($, measuredAt), liveAgentsAt(await read($, liveAgents), now).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
         if (body !== null) {
           const r = await api($, 'PUT', USAGE_PATH, { body })
           if (r.unreachable) return
@@ -876,24 +879,23 @@ async function noteLimits($: any, limits: readonly SessionRateLimit[]): Promise<
   await update($, panel, cur => ({ ...cur, limits: limits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })) }))
 }
 
-// The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure.
+// The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure. A reading that fails clears the
+// panel's windows (a frozen figure must not stand as current) and, for a connected session, is toasted by the report.
 async function reportUsageNow($: any): Promise<void> {
-  let limits: readonly SessionRateLimit[] | { error: string }
+  let reading: UsageReading
   try {
-    limits = (await $.session.usage()).rateLimits
+    reading = { limits: (await $.session.usage()).rateLimits }
   } catch (err: any) {
-    limits = { error: errMessage(err) }
+    reading = { error: errMessage(err) }
   }
   try {
-    await noteLimits($, 'error' in limits ? [] : limits)
-    // only a connected session reports, and so only one toasts a failed reading (as before DX-4339)
-    if ('error' in limits && (await read($, view)).connected === null) return
+    await noteLimits($, 'error' in reading ? [] : reading.limits)
   } catch (err: any) {
-    // a tick runs with nobody awaiting it: reading or writing the plugin's own state can only fail into the toast, never a rejection
+    // a tick runs with nobody awaiting it: writing the plugin's own state can only fail into the toast, never a rejection
     $.ui.toast(`Usage not reported to danxbot: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
     return
   }
-  return reportUsage($, limits)
+  return reportUsage($, reading)
 }
 
 // DX-4339: the team's pacing settings (GET /api/team/pacing) and the account verdict (the DX-4340 cache) into the panel's state. The settings
@@ -936,10 +938,12 @@ async function markMeasured($: any): Promise<void> {
 // A window moved (or a turn ended): the event carries the windows as the harness has them.
 async function onMeasure($: any, e: any, next: any) {
   await markMeasured($)
-  // a measure with no windows (off a subscription) carries none: that is no figure, not a crash before `next`
-  const limits: readonly SessionRateLimit[] = Array.isArray(e.rateLimits) ? e.rateLimits : []
-  await noteLimits($, limits)
-  void reportUsage($, limits)
+  // a measure that does not carry `rateLimits` says nothing about the windows: the last values stand (an empty array is the harness saying
+  // there are none, and clears them)
+  if (Array.isArray(e.rateLimits)) {
+    await noteLimits($, e.rateLimits)
+    void reportUsage($, { limits: e.rateLimits })
+  }
   return next(e)
 }
 

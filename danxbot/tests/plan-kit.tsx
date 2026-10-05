@@ -252,7 +252,7 @@ export function dashboard(
     usageReadFails?: string
     // DX-4340: what GET /api/pacing/line answers (the session's pacing verdict and line): a body (any shape) or an error status; the dashboard's 404 (unrouted) by default
     pacingLine?: { body: unknown } | { status: number }
-    // DX-4339: what GET /api/team/pacing answers (the team's pacing settings): a body (any shape) or an error status; the dashboard's 404 (unrouted) by default, which the panel reads as danxbot unreachable (local)
+    // DX-4339: what GET /api/team/pacing answers (the team's pacing settings): a body (any shape) or an error status; unreachable by default (the panel's silent, local state)
     teamPacing?: { body: unknown } | { status: number }
   } = {},
 ) {
@@ -495,9 +495,12 @@ export function dashboard(
     if (e.server === 'danx-dashboard' && e.tool === 'danxbot_api' && e.args.path === '/api/team/pacing') {
       if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      // DX-4339: a session with no key (or a revoked one) is halted on EVERY danx-dashboard tool, this read included
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       teamPacingReads.push(teamPacingReads.length + 1)
       const given = options.teamPacing
-      if (given === undefined) return { value: reply({ error: 'unrouted GET /api/team/pacing' }, 404) }
+      // no `teamPacing` given: a session whose pacing settings cannot be reached at all (the silent state), so no other suite draws a pacing error
+      if (given === undefined) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
       return { value: 'status' in given ? reply({ error: 'settings boom' }, given.status) : reply(given.body) }
     }
     calls.push({ server: e.server, tool: e.tool, args: e.args })

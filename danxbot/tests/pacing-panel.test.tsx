@@ -176,10 +176,13 @@ for (const surface of SURFACES)
       expect((await band.find({ type: 'Text', text: /^5h 96%/ })).props.color).toBe(DANGER)
     })
 
-    test('a measure that carries no windows is no figure, never a crash before the rest of the chain', async ($, on) => {
+    test('a measure that carries no windows says nothing about them: the last values stand; an empty list clears them', async ($, on) => {
       const d = await paced($, on, surface, { teamPacing: { body: SETTINGS } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await $.session.measure({ context: {}, changed: [] } as any)
+      await d.clock.settle()
+      expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70%')
+      await $.session.measure({ context: {}, rateLimits: [], changed: ['rateLimits'] } as any)
       await d.clock.settle()
       expect(await joined(band)).toContain('5h … 7d …')
     })
@@ -237,8 +240,11 @@ for (const surface of SURFACES)
       // the verdict is not shown as current
       expect(all).not.toContain('Account:')
       expect(all).not.toContain('Holding')
-      // the panel itself toasts nothing: only DX-4340's own pacing-line read toasts on a real outage
+      // the panel itself toasts nothing: the one toast is DX-4340's own pacing-line read, told once, now that a read had succeeded
       expect(d.toasts.filter(t => /panel|settings/i.test(t))).toEqual([])
+      expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))).toEqual([
+        'Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): the danx-dashboard MCP server is not reachable from this session',
+      ])
       // the MCP is back: the marker clears
       d.setMcp('up')
       await d.clock.advance(POLL_MS + 1)
@@ -267,8 +273,29 @@ for (const surface of SURFACES)
       expect(await joined(pane)).toContain('no readable five_hour and weekly settings')
     })
 
+    for (const signedOut of ['signed-out', 'revoked'] as const)
+      test(`a session that is ${signedOut} is local with nothing said about it, its own usage still shown`, async ($, on) => {
+        const d = dashboard(on, { signedOut, teamPacing: { body: SETTINGS } })
+        d.world.rateLimits = WINDOWS
+        await startSession($, d, surface)
+        const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+        const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+        expect(await joined(band)).toContain('5h 62% 7d 41% local')
+        expect(await joined(pane)).toContain('local')
+        expect(await joined(pane)).not.toContain('could not be read')
+        expect(d.toasts.filter(t => /panel|settings/i.test(t))).toEqual([])
+      })
+
+    test('a real settings error shows in the pane even when there is no window figure to draw', async ($, on) => {
+      const d = dashboard(on, { teamPacing: { status: 500 } })
+      await startSession($, d, surface)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await joined(pane)).toContain('Pacing settings could not be read: the team pacing read answered 500.')
+      expect(await joined(pane)).not.toContain('own figures')
+    })
+
     test('a session that never read settings (an old dashboard answers 404) shows its own usage with no targets and names the 404', async ($, on) => {
-      await paced($, on, surface, {})
+      await paced($, on, surface, { teamPacing: { status: 404 } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await joined(band)).toContain('5h 62% 7d 41% local')

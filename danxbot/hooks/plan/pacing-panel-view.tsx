@@ -10,8 +10,8 @@ export const LEVEL_COLOR: Record<PacingLevel, string> = { on_pace: SUCCESS, over
 const colorOf = (level: PacingLevel | null): string | undefined => (level === null ? undefined : LEVEL_COLOR[level])
 
 // The band's pacing segments, one short Text each. null when there is nothing to show.
-export function pacingBand(E: any, m: PanelModel): any {
-  const segments = bandSegments(m)
+export function pacingBand(E: any, m: PanelModel | undefined): any {
+  const segments = m === undefined ? [] : bandSegments(m)
   if (segments.length === 0) return null
   const { Box, Text } = E
   return (
@@ -53,7 +53,8 @@ function entryLines(E: any, e: PanelEntry, now: number): any {
 // reset). While the settings read is not working the section is marked local: quietly when there is no danxbot to read (silent), and with the
 // named error when danxbot answered and the answer was unusable. null when there is nothing to show.
 export function pacingPane(E: any, m: PanelModel, now: number): any {
-  if (m.entries.length === 0) return null
+  // a real settings error shows even with no window figures: it is the one thing the pane can say
+  if (m.entries.length === 0 && m.error === null) return null
   const { Box, Text } = E
   const targets = m.settingsAt === null ? 'no known targets' : `the targets last read ${age(new Date(m.settingsAt).toISOString(), now)}`
   return (
@@ -66,7 +67,7 @@ export function pacingPane(E: any, m: PanelModel, now: number): any {
       {m.verdict !== null && verdictLines(m.verdict, now).map(line => <Text key={line}>{line}</Text>)}
       {m.error !== null && (
         <Text color={WARNING}>
-          Pacing settings could not be read: {m.error}. These are this session's own figures against {targets}, with no verdict.
+          Pacing settings could not be read: {m.error}.{m.entries.length > 0 && ` These are this session's own figures against ${targets}, with no verdict.`}
         </Text>
       )}
     </Box>
