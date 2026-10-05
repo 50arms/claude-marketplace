@@ -74,7 +74,7 @@
         ]
       },
       {
-        "matcher": "^(mcp__danx_dashboard__plan_connect|mcp__danx-dashboard__plan_connect)$",
+        "matcher": "^(mcp__danx_dashboard__plan_connect|mcp__danx-dashboard__plan_connect|mcp__plugin_danxbot_danx-dashboard__plan_connect)$",
         "hooks": [
           {
             "type": "command",

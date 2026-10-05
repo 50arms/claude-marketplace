@@ -5,7 +5,7 @@ import type { ConnectedPlan, Draft, PermissionRequest, PlanRow, ProblemRow, Refr
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
-import { asApproval, claimPath, permissionRequestOf, settle } from './plan/permission'
+import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
 import { linkCardIds } from './plan/card-links'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
@@ -30,15 +30,17 @@ import {
   POLL_MS,
   SIGNED_IN_TOAST,
   keyRevokedLabel,
-  SIGN_IN_ROUNDS,
+  SIGN_IN_DENIED_TOAST,
+  SIGN_IN_EXPIRED_TOAST,
+  SIGN_IN_MIN_ROUND_MS,
   SUBAGENT_SETTLE_MS,
   TICK_MS,
   MIN_USAGE_TICK_MS,
   USAGE_PATH,
   USAGE_TICK_MS,
-  SIGN_IN_TIMEOUT_TOAST,
   signInFailedToast,
-  SERVER,
+  SERVERS,
+  toolName,
   NOTE_MARKER,
   TOAST_ERROR_MAX,
   busyKey,
@@ -47,13 +49,15 @@ import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
 import { isServerMissing, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
-import { answerNote, connectNote, disconnectNote, signInNote } from './plan/notes'
+import { answerNote, connectNote, disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
 import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
+import { spawnGuard } from './plan/pacing-guard'
+import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -114,13 +118,26 @@ let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
 // DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
 let liveQueue: Promise<void> = Promise.resolve()
 
+// DX-4555: the session's dashboard MCP server is whichever of SERVERS is connected. Only the engine's "no such server"
+// rejection moves on to the next name; the last one's rejection is thrown, for `api` and the callers to classify.
+async function callDashboard($: any, tool: string, args: object): Promise<any> {
+  for (const server of SERVERS.slice(0, -1)) {
+    try {
+      return await $.mcp.call(server, tool, args)
+    } catch (err: any) {
+      if (!isServerMissing(String(err?.message ?? err))) throw err
+    }
+  }
+  return $.mcp.call(SERVERS[SERVERS.length - 1], tool, args)
+}
+
 // One dashboard call through the session's own danx-dashboard MCP server: same credential, same
 // x-danx-session-id header. Only the engine's "no such server" rejection (another repo) is
 // `unreachable`, which is not an API error; any other rejection is an error shown as one.
 async function api($: any, method: string, path: string, extra: { query?: object; body?: object } = {}): Promise<Api> {
   let res
   try {
-    res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra })
+    res = await callDashboard($, 'danxbot_api', { method, path, ...extra })
   } catch (err: any) {
     const message = String(err?.message ?? err)
     if (isServerMissing(message)) return { ok: false, status: 0, unreachable: true, body: { error: message } }
@@ -395,7 +412,8 @@ async function showApproval($: any, approval: ApprovalRequest, force = false): P
 
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
 // together (a double click, a key repeat) cannot both win. The loser does nothing.
-async function withBusy($: any, key: string, work: () => Promise<void>): Promise<void> {
+// `release` (DX-4548): false when something else already freed the key and a newer holder may own it now (an aborted sign-in watch)
+async function withBusy($: any, key: string, work: () => Promise<void>, release: () => boolean = () => true): Promise<void> {
   let won = false
   await update($, busy, cur => {
     won = !cur.includes(key)
@@ -405,7 +423,7 @@ async function withBusy($: any, key: string, work: () => Promise<void>): Promise
   try {
     await work()
   } finally {
-    await update($, busy, cur => cur.filter(k => k !== key))
+    if (release()) await update($, busy, cur => cur.filter(k => k !== key))
   }
 }
 
@@ -425,7 +443,7 @@ function connect($: any, plan: PlanRow): Promise<void> {
     const sessionTitle = await read($, title)
     let r
     try {
-      r = await $.mcp.call(SERVER, 'plan_connect', {
+      r = await callDashboard($, 'plan_connect', {
         plan_id: plan.id,
         ...(sessionTitle ? { title: sessionTitle } : {}),
       })
@@ -455,7 +473,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
     let r
     try {
-      r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
+      r = await callDashboard($, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
       $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
@@ -481,60 +499,115 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   })
 }
 
-// DX-4423: the Sign in button. A session with no dashboard key asks for one through `plan_connect` (with its own title, and
-// the plan it was on). The MCP answers with the approval request, which is shown as the model's own would be (showApproval):
-// at once when this call makes the request, else after waiting on the one already pending. Each call waits there for the
-// person's approval, so the calls repeat until one answers something final. A call that answers a DIFFERENT request than the
-// one shown means the first expired while it waited: that is the end (a new request nobody asked for is left to lapse),
-// never a second page. The whole sign-in holds the sign-in busy key (the buttons read "Signing in…", a second press does
-// nothing).
-async function signIn($: any): Promise<void> {
+// DX-4423 / DX-4548: the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
+// `plan_connect`; the MCP answers with the approval request, shown as the model's own would be (showApproval). Each call waits
+// there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
+// request stays open for as long as its session lives (DX-4530). The status of the request cannot be read any other way: its
+// claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
+// person's login. A call that answers a DIFFERENT request than the one watched means the first expired while it waited: the
+// model is told, and the renewed request is shown and watched in its place, so nobody has to relay it.
+//
+// Two starts: the Sign in button (`byPress`: the person is waiting, the page opens again, and the model is told once that it is
+// signed in), and the model's own `plan_connect` answering `approval_required` (`known`: the request already shown; the model is
+// told the outcome once, approved, denied or expired, so the person never has to type "approved"). The whole watch holds the
+// sign-in busy key (the buttons read "Signing in…", a second start does nothing).
+let signInWatching: ApprovalRequest | null = null
+// DX-4548: bumped when the conversation (or the process) ends; a watch of an older generation stops at its next step, so it
+// never calls plan_connect with the old conversation's arguments or tells the new conversation about a request it never made
+let signInGeneration = 0
+
+type SignInWatch = { args: object } & ({ byPress: true } | { byPress: false; known: ApprovalRequest })
+
+async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
+  const generation = signInGeneration
   await withBusy($, busyKey.signIn, async () => {
-    const sessionTitle = await read($, title)
-    const resume = (await read($, view)).resumePlan
-    const args = { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
-    let shown: string | null = null
-    for (let round = 0; round < SIGN_IN_ROUNDS; round++) {
-      let r
-      try {
-        r = await $.mcp.call(SERVER, 'plan_connect', args)
-      } catch (err: any) {
-        $.ui.toast(signInFailedToast(String(err?.message ?? err)))
-        return
-      }
-      const step = signInStep(r)
-      if (step.kind === 'waiting') {
-        if (step.request !== null) {
-          if (shown !== null && step.request.url !== shown) break
-          // DX-4423: the press itself always tries the open; later rounds of the same wait only repeat the request
-          const firstOfPress = shown === null
-          await showApproval($, step.request, firstOfPress)
-          shown = step.request.url
-        }
-        continue
-      }
-      if (step.kind === 'revoked') {
-        $.ui.toast(`${keyRevokedLabel(step.by)}. This session must stop.`)
-        await refresh($, true)
-        return
-      }
-      $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
-      // signed in (even if the plan was refused): the view reads the truth; a stop leaves the signed-out view as it is
-      if (step.kind !== 'stop') {
-        // DX-4530: the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
-        await tellModel($, signInNote(resume, step.kind === 'done'))
-        await refresh($, true)
-      }
-      return
+    const ended = () => generation !== signInGeneration
+    let shown: ApprovalRequest | null = watch.byPress ? null : watch.known
+    signInWatching = shown
+    // DX-4530: each outcome is told once (the told-once guard, keyed by the request). The model's request always has an id
+    // (onPlanConnect and the renewal below refuse one without); only the press may see one with none, and it tells once per watch.
+    const tell = async (request: ApprovalRequest | null, text: string) => {
+      const key = request === null ? undefined : publicIdOf(request.url)
+      if (key === undefined ? watch.byPress : await markToldOnce($, key)) await tellModel($, text)
     }
-    $.ui.toast(SIGN_IN_TIMEOUT_TOAST)
+    const shownRequest = (): ApprovalRequest => {
+      if (shown === null) throw new Error('sign-in watch: the model path has no shown request')
+      return shown
+    }
+    try {
+      for (;;) {
+        const startedAt = await $.clock.now()
+        let r
+        try {
+          r = await callDashboard($, 'plan_connect', watch.args)
+        } catch (err: any) {
+          if (!ended()) $.ui.toast(signInFailedToast(String(err?.message ?? err)))
+          return
+        }
+        if (ended()) return
+        const step = signInStep(r)
+        if (step.kind === 'waiting') {
+          if (shown !== null && step.request.url !== shown.url) {
+            // the request watched is over without a decision reaching this call: it lapsed, and this answer is its renewal
+            $.ui.toast(SIGN_IN_EXPIRED_TOAST)
+            if (!watch.byPress) await tell(shown, signInExpiredNote(shown.code))
+            if (!watch.byPress && publicIdOf(step.request.url) === undefined) {
+              $.ui.toast(signInFailedToast('the renewed approval request had no id'))
+              return
+            }
+          }
+          if (shown === null || step.request.url !== shown.url) await showApproval($, step.request)
+          shown = step.request
+          signInWatching = shown
+          // DX-4548: an answer that came back sooner than the MCP's own wait must not turn this into a tight loop
+          const took = (await $.clock.now()) - startedAt
+          if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
+          if (ended()) return
+          continue
+        }
+        if (step.kind === 'revoked') {
+          $.ui.toast(`${keyRevokedLabel(step.by)}. This session must stop.`)
+          await refresh($, true)
+          return
+        }
+        if (step.kind === 'denied') {
+          $.ui.toast(SIGN_IN_DENIED_TOAST)
+          if (!watch.byPress) await tell(shown, signInDeniedNote(shownRequest().code))
+          return
+        }
+        if (step.kind === 'stop') {
+          $.ui.toast(step.message)
+          return
+        }
+        // signed in (even if the plan was refused): the view reads the truth
+        $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
+        // DX-4530: the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
+        const planId = typeof (watch.args as any).plan_id === 'number' ? (watch.args as any).plan_id : null
+        await tell(shown, watch.byPress ? signInNote(planId, step.kind === 'done') : signInApprovedNote(shownRequest().code, planId))
+        await refresh($, true)
+        return
+      }
+    } finally {
+      if (!ended()) signInWatching = null
+    }
+    // DX-4548: an aborted watch's key was freed at the abort (onSessionEnd); a new watch may hold it by now, so this one never frees it
+  }, () => generation === signInGeneration)
+}
+
+// The button's press returns at once: the sign-in waits minutes for a person, and a press must not. A watch already running
+// (the model's own sign-in) opens its page again instead of starting a second wait.
+function startSignIn($: any): Promise<void> {
+  if (signInWatching !== null) return showApproval($, signInWatching, true)
+  return signInArgs($).then(args => {
+    void watchSignIn($, { args, byPress: true }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
   })
 }
 
-// The button's press returns at once: the sign-in waits minutes for a person, and a press must not.
-function startSignIn($: any): Promise<void> {
-  signIn($).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
-  return Promise.resolve()
+// The sign-in's own `plan_connect` arguments: the session's title, and the plan it was on.
+async function signInArgs($: any): Promise<object> {
+  const sessionTitle = await read($, title)
+  const resume = (await read($, view)).resumePlan
+  return { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
 }
 
 // One write to a problem (answer, comment, step tick), inside its busy claim: call, toast a
@@ -900,6 +973,9 @@ async function onSessionStart($: any, e: any, next: any) {
   permissionTicker?.cancel()
   permissionTicker = null
   await syncPermissionPoll($)
+  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer), reads the verdict now, and later reads happen when it is a minute old, at a spawn or sub-agent start
+  resetPacing()
+  void refreshPacing(pacingEnv($), true)
   void refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($))
   return next(e)
 }
@@ -911,6 +987,13 @@ async function onSessionStart($: any, e: any, next: any) {
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
 async function onSessionEnd($: any, e: any, next: any) {
+  // DX-4548: the sign-in watch belongs to the conversation that started it
+  if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
+    signInGeneration++
+    signInWatching = null
+    // DX-4548: free the sign-in key at once; the aborted watch's in-flight plan_connect (up to ~45s) must not hold it
+    await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
+  }
   if (PROCESS_ENDS.includes(e.reason)) {
     ticker?.cancel()
     ticker = null
@@ -952,8 +1035,21 @@ async function onCommand($: any) {
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
   void refresh($, true).then(() => reportUsageNow($))
-  const approval = approvalRequestOf(ran.text)
-  if (approval !== null) await showApproval($, approval)
+  const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
+  if (approval === null) return ran
+  // DX-4548: a request is shown by its URL (showApproval opens each URL once), never by the answer's state: a request renewed
+  // after an expiry answers `approval_pending` to the model's next call and must still reach the person
+  await showApproval($, approval)
+  // the model started this sign-in, so the plugin waits on it and tells the model how it ended; a request with no id cannot be
+  // told once, so it is refused here as permissionRequestOf refuses one
+  if (signInWatching === null) {
+    if (publicIdOf(approval.url) === undefined) {
+      $.ui.toast(signInFailedToast('the approval request had no id'))
+      return ran
+    }
+    const args = { ...(typeof e.plan_id === 'number' ? { plan_id: e.plan_id } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
+    void watchSignIn($, { args, byPress: false, known: approval }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
+  }
   return ran
 }
 
@@ -1004,8 +1100,10 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   return r
 }
 
-function onSubagentStart($: any, e: any, next: any) {
-  return onSubagentChange($, e, next, true)
+// DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
+async function onSubagentStart($: any, e: any, next: any) {
+  const r = await onSubagentChange($, e, next, true)
+  return withLine(r, await pacingLine(pacingEnv($)))
 }
 
 function onSubagentStop($: any, e: any, next: any) {
@@ -1044,7 +1142,7 @@ async function drawBand($: any, e: any, next: any) {
 }
 
 // The footer: the engine's own mode labels (next) stay, with ONE plan button beside them. Nothing
-// to say (loading, no MCP server) leaves the site untouched.
+// to say (loading) leaves the site untouched; no MCP server reads `Danxbot · off`.
 async function drawSessionMode($: any, e: any, next: any) {
   const label = footerLabel(await read($, view))
   if (label === null) return next(e)
@@ -1085,14 +1183,27 @@ async function drawPane($: any, e: any) {
   return renderPane($.ui.resolve(e), handlers($), m)
 }
 
+// DX-4340: the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
+function pacingEnv($: any) {
+  return {
+    now: () => $.clock.now(),
+    call: (method: string, path: string) => api($, method, path),
+    toast: (text: string) => $.ui.toast(text),
+  }
+}
+
 export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
-  on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, onPlanConnect)
-  on('tool.call', { tool: 'mcp__danx-dashboard__request_permission' }, onRequestPermission)
+  for (const server of SERVERS) {
+    on('tool.call', { tool: toolName(server, 'plan_connect') }, onPlanConnect)
+    on('tool.call', { tool: toolName(server, 'request_permission') }, onRequestPermission)
+  }
   on('turn.complete', onTurnComplete)
   on('session.measure', onMeasure)
+  // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
+  on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onTitle)

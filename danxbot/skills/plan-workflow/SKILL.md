@@ -162,6 +162,22 @@ Worktrees you create go under the repo's git-ignored `.claude/worktrees/<name>`,
 sibling checkout. Remove each once `git status --porcelain` and `git cherry origin/main
 <branch>` are empty, delete its branch, and name what you removed.
 
+## Usage pacing
+
+A pacing message (`Usage pacing for your Claude account changed: …`) or a spawn refused with
+`Usage pacing: …` states the level, the agent budget of the whole account and the reset
+time; trust those numbers, never your own estimate. Never retry a refused spawn.
+
+- **On pace**: carry on. A spawn is still refused while the account's budget is full, and
+  may be moved to haiku when the budget is nearly full.
+- **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.
+  Let running agents finish; do only cheap work yourself (verify landed commits, card writes),
+  and record anything else on its card as paused.
+- **Critical**: every running agent makes a work-in-progress commit, pushes its branch, writes
+  on its card where it is, and stops; do the same for your own state, note on each card what is
+  paused, and go idle. A later message back to on pace means: read those cards and resume
+  what was paused.
+
 ## Liveness
 
 "Running" needs a counter (e.g. `tokensOut`) read twice ≥60s apart with both timestamps, or

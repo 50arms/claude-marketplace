@@ -4,7 +4,7 @@ import type { Handlers } from './handlers'
 import { problemCard } from './problems'
 import { subagentSection } from './subagent-cards'
 import type { Ui } from './problems'
-import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
+import { CARD_TITLE_MAX, NO_MCP_DETAIL, NO_MCP_LABEL, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
 import { age, bandLabel, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
@@ -140,7 +140,13 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
   )
 
   if (v.phase === 'no-mcp') {
-    return shell(<Text dimColor>The danx-dashboard MCP server is not connected in this session, so there is no plan to show.</Text>)
+    // DX-4547: the same words as the band.
+    return shell(
+      <Text key="no-mcp" color={WARNING} bold>
+        {NO_MCP_LABEL}
+      </Text>,
+      <Text>{NO_MCP_DETAIL}</Text>,
+    )
   }
   // DX-4423: the server's own text for this is written for the agent; the person reads this and presses Sign in.
   if (v.phase === 'signed-out') {

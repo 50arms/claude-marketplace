@@ -82,19 +82,6 @@ describe('plan band', () => {
     }
   })
 
-  test('without the danx-dashboard MCP server the band is only a Plan button and shows no error', async ($, on) => {
-    const d = dashboard(on, { mcp: 'down' })
-    for (const surface of SURFACES) {
-      await startSession($, d, surface)
-      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      const buttons = await ui.findAll({ type: 'Button' })
-      expect(buttons.map(b => b.key)).toEqual(['open-pane', 'band-close'])
-      expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
-      await ui.unmount()
-    }
-    expect(d.statuses.filter(s => s !== undefined)).toEqual([])
-  })
-
   test('yields to a survey', async ($, on) => {
     const d = dashboard(on)
     // a survey keeps the band to itself: the plugin passes, so only the engine's own (here empty) tree is drawn

@@ -96,7 +96,8 @@ export type InProgressRow = {
 export type ListenerStatus = { state: string; nextStep: string | null }
 
 // `no-mcp`: the session has no `danx-dashboard` MCP server (another repo), so the dashboard
-// cannot be reached at all. It is not an error: the band shows only its Panel button.
+// cannot be reached at all. It is not an error: the band says Danxbot is not available
+// (with the next step) and the footer reads `Danxbot · off`.
 // `signed-out` (DX-4423): the server is there but the session holds no dashboard key (lapsed, or never approved):
 // the band and pane say so and offer Sign in, never the server's agent-facing text.
 // `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band and pane say so and offer NO

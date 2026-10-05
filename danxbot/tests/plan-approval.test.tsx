@@ -18,6 +18,10 @@ const CALL = { tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any
 const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 const navigations = (d: any) => browserCalls(d).filter((c: any) => c.tool === 'navigate' || c.tool === 'preview_start')
 
+// DX-4548: the plugin waits on a request the model's plan_connect started, through the MCP: the stand-in MCP answers the same
+// request as still pending, so the wait stays open and tells the model nothing.
+const stillPending = (d: any) => void (d.world.signIn.answer = { text: pending, waits: true })
+
 // The tool answers `text` the way the host reports an MCP result.
 function answering(on: any, texts: string[]) {
   let i = 0
@@ -38,7 +42,8 @@ describe('approvalRequestOf', () => {
 
 describe('plan_connect while signed out', () => {
   test('approval_required opens the approval page once and leaves the confirm code up', async ($, on) => {
-    const d = dashboard(on, { browserClosed: true })
+    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+    stillPending(d)
     answering(on, [required(URL_A)])
     await startSession($, d, 'desktop')
     d.calls.length = 0
@@ -54,7 +59,8 @@ describe('plan_connect while signed out', () => {
   // The shape core gives a hook for an MCP tool (the engine's own typings, ToolCallResult): `{ ref, result, text }`
   // with `result` the tool's record (an MCP result's content blocks) and `text` the blocks joined as the model reads them.
   test('reads the answer in the shape core gives for an MCP tool: ref, result content blocks, text', async ($, on) => {
-    const d = dashboard(on, { browserClosed: true })
+    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+    stillPending(d)
     const text = required(URL_A)
     on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ ref: 7, result: { content: [{ type: 'text', text }] }, text }) as any)
     await startSession($, d, 'desktop')
@@ -67,7 +73,8 @@ describe('plan_connect while signed out', () => {
   })
 
   test('the open does not hold the plan_connect answer: the model reads it at once, the toast follows the open', async ($, on) => {
-    const d = dashboard(on, { browserClosed: true, navigateTakesMs: 5_000 })
+    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true, navigateTakesMs: 5_000 })
+    stillPending(d)
     answering(on, [required(URL_A)])
     await startSession($, d, 'desktop')
     let answered = false
@@ -86,7 +93,8 @@ describe('plan_connect while signed out', () => {
 
   // DX-4424: the toast is about the tab being in front; a slow page load does not hold it back.
   test('with the pane open on our tab the code and link are up before the page has loaded', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'], navigateTakesMs: 5_000 })
+    const d = dashboard(on, { signedOut: 'signed-out', tabs: ['seed'], navigateTakesMs: 5_000 })
+    stillPending(d)
     answering(on, [required(URL_A), required(URL_B, 'ZZZZ1111')])
     await startSession($, d, 'desktop')
     await $.tool.call(CALL)
@@ -112,6 +120,8 @@ describe('plan_connect while signed out', () => {
     const planOpen = band.press({ key: 'open-tab' })
     await d.clock.settle()
     const calls = browserCalls(d).length
+    d.world.signedOut = 'signed-out'
+    stillPending(d)
     await $.tool.call(CALL)
     await d.clock.settle()
     expect(browserCalls(d)).toHaveLength(calls)
@@ -121,7 +131,8 @@ describe('plan_connect while signed out', () => {
   })
 
   test('the same request repeated opens nothing again; a new request opens its own page', async ($, on) => {
-    const d = dashboard(on, { tabs: ['tab-1'] })
+    const d = dashboard(on, { signedOut: 'signed-out', tabs: ['tab-1'] })
+    stillPending(d)
     answering(on, [required(URL_A), required(URL_A), required(URL_B, 'ZZZZ1111')])
     await startSession($, d, 'desktop')
     d.calls.length = 0
@@ -134,7 +145,8 @@ describe('plan_connect while signed out', () => {
   })
 
   test('a failed browser open still leaves the code and the link', async ($, on) => {
-    const d = dashboard(on, { browser: 'denied' })
+    const d = dashboard(on, { signedOut: 'signed-out', browser: 'denied' })
+    stillPending(d)
     answering(on, [required(URL_A)])
     await startSession($, d, 'desktop')
     await $.tool.call(CALL)
@@ -147,8 +159,19 @@ describe('plan_connect while signed out', () => {
     expect(d.toastTimeouts.at(-1)).toBe(60_000)
   })
 
+  // DX-4548: a request is shown by its URL, not by the answer's state: one this session has not shown opens even as approval_pending
+  test('approval_pending of a request not yet shown opens its page and shows its code', async ($, on) => {
+    const d = dashboard(on, { tabs: ['tab-1'] })
+    answering(on, [pending])
+    await startSession($, d, 'desktop')
+    d.calls.length = 0
+    await $.tool.call(CALL)
+    await d.clock.settle()
+    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
+    expect(d.toasts.some(t => t.includes('NXGUF88G'))).toBe(true)
+  })
+
   for (const [name, text] of [
-    ['approval_pending', pending],
     ['a normal connect', connected],
     ['text that is not JSON', 'plan_connect: bad arguments'],
   ] as const) {

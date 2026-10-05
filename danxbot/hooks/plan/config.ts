@@ -8,7 +8,13 @@ export const PLAN_TITLE = `${BRAND} Plan`
 // DX-4420: the problem icon on the band's count button (a Button label is text only).
 export const PROBLEM_GLYPH = '⚠'
 export const COMMAND = 'danx-plan'
-export const SERVER = 'danx-dashboard'
+// DX-4555: the names the dashboard MCP server answers to, in the order a call tries them: a repo's own `.mcp.json` entry
+// first (it wins, and the plugin's copy then offers no tools), the danxbot plugin's own server second. Verified live with
+// `claude mcp list`: a plugin's server is named `plugin:<plugin>:<server>`. The tool-call listeners and the hooks.json
+// plan_connect matcher are derived from this list (a test holds the matcher to it).
+export const SERVERS = ['danx-dashboard', 'plugin:danxbot:danx-dashboard'] as const
+// A tool's name as the session sees it: `mcp__<server with : as _>__<tool>`.
+export const toolName = (server: string, tool: string) => `mcp__${server.replace(/:/g, '_')}__${tool}`
 export const POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
 // DX-4530: while a permission request is open its claim is polled this often (POLL_MS otherwise), so the model hears the
@@ -167,6 +173,14 @@ export function planUrl(plan: ConnectedPlan): string {
   return `${plan.dashboardUrl}/plans/${plan.id}`
 }
 
+// DX-4547: the origin a no-mcp session's links use when none was ever remembered (DX-4521's $.store value is preferred).
+export const FALLBACK_ORIGIN = 'https://danxbot.sageus.ai'
+
+// DX-4547: what a session with no danx-dashboard connection says, band and pane alike (never blank).
+export const NO_MCP_LABEL = `${BRAND}: not available in this session`
+export const NO_MCP_DETAIL = 'No danx-dashboard connection in this folder. Open Claude Code in a connected repo to use it.'
+export const NO_MCP_FOOTER = `${BRAND} · off`
+
 // DX-4521: the dashboard's plans list, where the band's links go while no plan is connected.
 export function plansUrl(dashboardUrl: string): string {
   return `${dashboardUrl}/plans`
@@ -208,12 +222,12 @@ export const SIGNED_OUT_LINE = "This session's access ended. Sign in to reconnec
 export const SIGN_IN_LABEL = 'Sign in'
 export const SIGNING_IN_LABEL = 'Signing in…'
 export const SIGNED_IN_TOAST = 'Signed in'
-export const SIGN_IN_TIMEOUT_TOAST = 'Sign in timed out. Press Sign in again.'
+// DX-4548: a sign-in request has no round limit (it stays open while its session lives); these end it
+export const SIGN_IN_EXPIRED_TOAST = 'Sign in expired. A new request is open.'
+// the shortest a watch's round may take: the MCP's own ~45 s wait normally paces it; an answer that returns at once must not spin it
+export const SIGN_IN_MIN_ROUND_MS = 5_000
+export const SIGN_IN_DENIED_TOAST = 'Sign in was denied.'
 export const signInFailedToast = (message: string) => `Sign in failed: ${message.slice(0, CONNECT_ERROR_MAX)}`
-// Each sign-in call waits up to ~45 s inside the MCP for the approval (session-access.ts AWAIT_APPROVAL_MS). The request's
-// own expiry (10 minutes) ends the sign-in first: the call that outlives it answers a NEW request, which is not shown.
-// This bound only guarantees the loop ends if the server never answers either way.
-export const SIGN_IN_ROUNDS = 16
 
 // DX-4418: a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
 // makes no access request: `keyRevokedHalt` in packages/danx-dashboard-mcp key-revoked-halt.ts, which begins

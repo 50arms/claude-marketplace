@@ -2,7 +2,7 @@
 // connects, the plan-list cap, and one write per answer however many presses land together.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LOCK_STALE_MS, NO_MCP_RETRY_MS } from '../hooks/plan/config'
+import { LOCK_STALE_MS, NO_MCP_RETRY_MS, SERVERS } from '../hooks/plan/config'
 import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -69,7 +69,7 @@ describe('the MCP server connects after session start', () => {
     const d = dashboard(on, { mcp: 'down' })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await band.findAll({ type: 'Text' })).toHaveLength(0)
+    expect(await text(band)).toContain('not available in this session')
     d.setMcp('up')
     await d.clock.advance(2_000)
     expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
@@ -78,7 +78,8 @@ describe('the MCP server connects after session start', () => {
   test('the retries are bounded: one more load per wait, then the view settles on no-mcp', async ($, on) => {
     const d = dashboard(on, { mcp: 'down' })
     await startSession($, d, 'desktop')
-    const apiCalls = () => d.calls.filter(c => c.tool === 'danxbot_api').length
+    // DX-4555: one attempt tries every server name in turn, so an attempt is one call to the first name
+    const apiCalls = () => d.calls.filter(c => c.tool === 'danxbot_api' && c.server === SERVERS[0]).length
     expect(apiCalls()).toBe(1)
     // each wait is advanced on its own, so no 60 s timer tick can land inside the sequence
     for (const wait of NO_MCP_RETRY_MS) await d.clock.advance(wait)
@@ -86,7 +87,7 @@ describe('the MCP server connects after session start', () => {
     await d.clock.advance(30_000)
     expect(apiCalls()).toBe(1 + NO_MCP_RETRY_MS.length)
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect((await band.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['open-pane', 'band-close'])
+    expect(await text(band)).toContain('not available in this session')
   })
 
   test('a server that is up needs no retry', async ($, on) => {

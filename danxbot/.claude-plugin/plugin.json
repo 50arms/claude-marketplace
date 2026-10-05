@@ -1,10 +1,29 @@
 {
   "name": "danxbot",
   "description": "Danxbot's way of working: plan-workflow, issue-workflow, worker tiers, plan event hooks and the mantra.",
-  "version": "0.12.45",
+  "version": "0.12.54",
   "author": {
     "name": "Dan Newman",
     "email": "newms87@gmail.com"
   },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "mcpServers": {
+    "danx-dashboard": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/dashboard-mcp-server.mjs"
+      ],
+      "env": {
+        "DANXBOT_PLUGIN_DASHBOARD_URL": "${user_config.dashboard_url}"
+      }
+    }
+  },
+  "userConfig": {
+    "dashboard_url": {
+      "type": "string",
+      "title": "Dashboard URL",
+      "description": "The danxbot dashboard this plugin's danx-dashboard MCP server talks to. Leave the default for the hosted dashboard; set it to run against another dashboard.",
+      "default": "https://danxbot.sageus.ai"
+    }
+  }
 }

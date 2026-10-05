@@ -3,7 +3,6 @@
 // person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SIGN_IN_ROUNDS } from '../hooks/plan/config'
 import { loadPlan } from '../hooks/plan/load'
 import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
 import { signInNote } from '../hooks/plan/notes'
@@ -111,12 +110,12 @@ describe('a key a person revoked (DX-4418): the stop halt of MCP 0.1.225', () =>
 describe('what one plan_connect answer means to Sign in', () => {
   test("each answer of the server maps to one step, and the words are never the server's", () => {
     expect(signInStep(answer(APPROVAL_REQUIRED))).toEqual({ kind: 'waiting', request: { url: APPROVAL_URL, code: CONFIRM_CODE } })
-    // a waiting call names the request it waits on; one that names none is still waiting
+    // a waiting call names the request it waits on; one that names none is a stop (DX-4548: the wait has no round limit, so it must not repeat)
     expect(signInStep(answer(APPROVAL_PENDING))).toEqual({ kind: 'waiting', request: { url: APPROVAL_URL, code: CONFIRM_CODE } })
-    expect(signInStep(answer({ state: 'approval_pending' }))).toEqual({ kind: 'waiting', request: null })
+    expect(signInStep(answer({ state: 'approval_pending' }))).toEqual({ kind: 'stop', message: 'Sign in failed: the approval request had no usable link.' })
     expect(signInStep(answer({ state: 'signed_in' }))).toEqual({ kind: 'done' })
     expect(signInStep(answer({ ok: true, status: 200, body: { session: { plan_id: 23 } } }))).toEqual({ kind: 'done' })
-    expect(signInStep(answer({ state: 'denied', instruction: 'The user denied the request. Do not retry unless they ask.' }))).toEqual({ kind: 'stop', message: 'Sign in was denied.' })
+    expect(signInStep(answer({ state: 'denied', instruction: 'The user denied the request. Do not retry unless they ask.' }))).toEqual({ kind: 'denied' })
     expect(signInStep(answer({ state: 'rate_limited', retryAfterSeconds: 60, error: 'x' }, true)).kind).toBe('stop')
     expect(signInStep(answer({ state: 'something_new' }, true))).toEqual({ kind: 'stop', message: 'Sign in stopped (something_new).' })
     expect(signInStep(answer({ state: 'approval_required', approvalUrl: 'javascript:x', confirmCode: 'A' })).kind).toBe('stop')
@@ -431,22 +430,8 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('a request nobody approves ends when the call that outlives it answers a new one: a toast, no second page, Sign in pressable again', async ($, on) => {
-      const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
-      d.world.signIn.expireAfterCalls = 4
-      await startSession($, d, surface)
-      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      await band.press({ key: 'sign-in' })
-      for (let i = 0; i < 6; i++) await d.clock.advance(45_000)
-      await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe('Sign in timed out. Press Sign in again.')
-      expect(connectCalls(d)).toHaveLength(4)
-      expect(previewStarts(d).map((c: any) => c.args.url)).toEqual([APPROVAL_URL])
-      expect(d.toasts.join(' ')).not.toContain('NEWCODE9')
-      expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
-    })
-
-    test('after an expiry a new press waits on the request the last call left, and shows its page and code', async ($, on) => {
+    // DX-4548: the call that outlives a request answers its renewal: shown to the person and watched in its place
+    test('a request that expires is replaced by the renewed one: its page and code are shown and the wait goes on until it is approved', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
       d.world.signIn.expireAfterCalls = 3
       await startSession($, d, surface)
@@ -454,28 +439,30 @@ for (const surface of SURFACES) {
       await band.press({ key: 'sign-in' })
       for (let i = 0; i < 4; i++) await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe('Sign in timed out. Press Sign in again.')
-      // the server now holds the renewed request: its waiting answers name it
-      d.world.signIn.answer = { text: JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' }) }
-      d.world.signIn.expireAfterCalls = undefined
-      await band.press({ key: 'sign-in' })
-      await d.clock.advance(45_000)
-      // the pane is open by now, so the second page goes through the held tab (navigate), not preview_start
-      const pages = d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.args?.url).map((c: any) => c.args.url)
-      expect(pages).toEqual([APPROVAL_URL, `${APPROVAL_URL}-renewed`])
+      expect(d.toasts).toContain('Sign in expired. A new request is open.')
       expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
+      expect((await band.find({ key: 'sign-in' })).text).toBe('Signing in…')
+      d.world.signIn.approved = true
+      await d.clock.advance(45_000)
+      await d.clock.settle()
+      expect(d.toasts).toContain('Signed in')
     })
 
-    test('a server that never answers anything final ends after SIGN_IN_ROUNDS calls', async ($, on) => {
+    // DX-4548: a request stays open while its session lives, so the wait has no round limit
+    test('a request nobody decides is waited on past any round count: no timeout toast, still Signing in…, and approval ends it', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await band.press({ key: 'sign-in' })
-      for (let i = 0; i < SIGN_IN_ROUNDS + 4; i++) await d.clock.advance(45_000)
+      for (let i = 0; i < 40; i++) await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe('Sign in timed out. Press Sign in again.')
-      expect(connectCalls(d)).toHaveLength(SIGN_IN_ROUNDS)
-      expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
+      expect(connectCalls(d).length).toBeGreaterThan(30)
+      expect(d.toasts.join(' ')).not.toMatch(/timed out/)
+      expect((await band.find({ key: 'sign-in' })).text).toBe('Signing in…')
+      d.world.signIn.approved = true
+      await d.clock.advance(45_000)
+      await d.clock.settle()
+      expect(d.toasts).toContain('Signed in')
     })
 
     test('a call that throws is one toast, and the key is released', async ($, on) => {
