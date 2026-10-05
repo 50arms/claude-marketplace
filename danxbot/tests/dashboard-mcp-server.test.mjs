@@ -51,6 +51,22 @@ describe("the launcher", () => {
     assert.deepEqual(JSON.parse(result.stdout), { url: "https://danxbot.sageus.ai", cred: null, repo: null });
   });
 
+  test("a folder whose .mcp.json declares danx-dashboard still gets the real server: the launcher has no standby mode", () => {
+    recordVersion(dataDir, "0.1.50");
+    const bin = installedBinPath(dataDir, "0.1.50");
+    mkdirSync(path.dirname(bin), { recursive: true });
+    writeFileSync(bin, `process.stdout.write("real-server"); process.exit(4);`);
+    const project = mkdtempSync(path.join(tmpdir(), "dash-mcp-project-"));
+    try {
+      writeFileSync(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "danx-dashboard": { command: "node", args: ["x.mjs"] } } }));
+      const result = run("", { CLAUDE_PROJECT_DIR: project, DANXBOT_DASHBOARD_URL: "https://danxbot.sageus.ai" });
+      assert.equal(result.status, 4, result.stderr);
+      assert.equal(result.stdout, "real-server");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   test("an install failure exits 1 naming the reason on stderr and writes nothing to stdout", () => {
     const result = run("", { CLAUDE_PLUGIN_DATA: "" });
     assert.equal(result.status, 1);

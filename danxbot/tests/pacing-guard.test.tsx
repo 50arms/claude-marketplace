@@ -253,7 +253,7 @@ describe('the agent.spawn hook', () => {
 
   test('a tool call of any tool is never denied under a critical verdict: saving work stays possible', async ($, on) => {
     await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
-    for (const tool of ['Bash', 'Write', 'mcp__danx-dashboard__danxbot_api']) {
+    for (const tool of ['Bash', 'Write', 'mcp__plugin_danxbot_danx-dashboard__danxbot_api']) {
       const r = await $.tool.call({ tool, command: 'git commit -m x' } as any)
       expect(r.deny).toBeUndefined()
       expect(r.isError).not.toBe(true)

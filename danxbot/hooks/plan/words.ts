@@ -136,13 +136,12 @@ export function problemSplit(v: PlanView): { questions: number; actions: number 
 }
 
 // DX-4374: the footer button's label, read from `view.connected` alone (never from the phase's error):
-// `Danxbot · PLAN-NN` when a plan is known, `Danxbot` otherwise (DX-4419); null where the footer shows nothing (loading); `Danxbot · off` with no MCP (DX-4547).
+// `Danxbot · PLAN-NN` when a plan is known, `Danxbot` otherwise (DX-4419); null where the footer shows nothing (loading).
 // The label can flip to `Danxbot` when a plan-list load fails: that error view carries no connected plan (the
 // session is read from the same failed answer), so the footer cannot name one. An error built after the plan
 // was read keeps it, and the footer keeps `Danxbot · PLAN-NN`.
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading') return null
-  // DX-4547: never blank without the MCP server.
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   if (v.phase === 'key-revoked') return KEY_REVOKED_FOOTER
   return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND

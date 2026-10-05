@@ -89,6 +89,14 @@ describe('the MCP server connects after session start', () => {
     expect(await text(band)).toContain('Disconnected')
   })
 
+  test('a first load that fails with any other error (a refusal, a 500) is not retried at session start', async ($, on) => {
+    const d = dashboard(on, { listFails: true })
+    await startSession($, d, 'desktop')
+    expect(loadsOf(d)).toBe(1)
+    for (const wait of START_RETRY_MS) await d.clock.advance(wait)
+    expect(loadsOf(d)).toBe(1)
+  })
+
   test('a server that is up needs no retry', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
