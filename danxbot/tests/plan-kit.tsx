@@ -147,8 +147,6 @@ export function dashboard(
     dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky'
-    // DX-4555: which dashboard server name is connected (default the project's own `danx-dashboard`); the other is "no such server"
-    server?: 'danx-dashboard' | 'plugin:danxbot:danx-dashboard'
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
@@ -487,15 +485,12 @@ export function dashboard(
   // ... every attempt, including the ones the MCP being down refuses
   const pacingAttempts = { n: 0 }
   const teamPacingReads: number[] = []
-  // DX-4555: the pacing reads are kept out of `calls` and `api` on either server name, but only the connected server answers them
-  const pacingPath = (e: any, path: string) => (e.server === 'danx-dashboard' || e.server === 'plugin:danxbot:danx-dashboard') && e.tool === 'danxbot_api' && e.args.path === path
+  // DX-4578: the pacing reads are kept out of `calls` and `api`; the plugin's server is the one every call goes to
+  const pacingPath = (e: any, path: string) => e.server === 'plugin:danxbot:danx-dashboard' && e.tool === 'danxbot_api' && e.args.path === path
   on('mcp.call', async (_$: any, e: any) => {
-    if (pacingPath(e, '/api/pacing/line') || pacingPath(e, '/api/team/pacing')) {
-      if (e.server !== (options.server ?? 'danx-dashboard')) return { deny: `$.mcp.call: no connected MCP tool "${e.tool}" on a server named "${e.server}"` }
-    }
     if (pacingPath(e, '/api/pacing/line')) {
       pacingAttempts.n++
-      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
+      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       pacingReads.push(pacingReads.length + 1)
       const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
@@ -503,21 +498,20 @@ export function dashboard(
     }
     // DX-4339: the team's pacing settings are read at session start and by the poll: also kept out of `calls` and `api`; `teamPacingReads` counts them
     if (pacingPath(e, '/api/team/pacing')) {
-      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
+      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       // DX-4339: a session with no key (or a revoked one) is halted on EVERY danx-dashboard tool, this read included
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       teamPacingReads.push(teamPacingReads.length + 1)
       const given = options.teamPacing
       // no `teamPacing` given: a session whose pacing settings cannot be reached at all (the silent state), so no other suite draws a pacing error
-      if (given === undefined) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
+      if (given === undefined) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       return { value: 'status' in given ? reply({ error: 'settings boom' }, given.status) : reply(given.body) }
     }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
-    if (e.server === 'danx-dashboard' || e.server === 'plugin:danxbot:danx-dashboard') {
-      if (e.server !== (options.server ?? 'danx-dashboard')) return { deny: `$.mcp.call: no connected MCP tool "${e.tool}" on a server named "${e.server}"` }
+    if (e.server === 'plugin:danxbot:danx-dashboard') {
       // a deny reaches the plugin as a rejection that carries the reason
-      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
+      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       const haltText = () => (world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT)
       // a revoked key stops EVERY tool, plan_connect included, and asks for nothing

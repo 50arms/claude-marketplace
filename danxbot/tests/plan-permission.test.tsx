@@ -12,7 +12,7 @@ const URL_B = 'https://danxbot.example/connect/bbbb'
 // the MCP's answer as it is today, `expiresAt` included (the plugin does not read it)
 const answer = (state: string, url: string, code: string) =>
   JSON.stringify({ state, approvalUrl: url, confirmCode: code, expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the code.' })
-const TOOL = 'mcp__danx-dashboard__request_permission'
+const TOOL = 'mcp__plugin_danxbot_danx-dashboard__request_permission'
 const CALL = (permissions: string[]) => ({ tool: TOOL, permissions, reason: 'to read members' }) as any
 const BAND = { plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const navigations = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && (c.tool === 'navigate' || c.tool === 'preview_start'))

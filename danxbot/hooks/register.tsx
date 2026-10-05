@@ -23,7 +23,6 @@ import {
   LOCK_STALE_MS,
   MIN_GAP_MS,
   NO_LIVE,
-  NO_MCP_RETRY_MS,
   PANE,
   PERMISSION_POLL_MS,
   PERMISSION_TOLD_MAX,
@@ -40,7 +39,8 @@ import {
   USAGE_PATH,
   USAGE_TICK_MS,
   signInFailedToast,
-  SERVERS,
+  SERVER,
+  START_RETRY_MS,
   toolName,
   NOTE_MARKER,
   TOAST_ERROR_MAX,
@@ -48,7 +48,7 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { isServerMissing, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
+import { isServerNotConnected, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { renderPane } from './plan/pane'
@@ -123,30 +123,18 @@ let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
 // DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
 let liveQueue: Promise<void> = Promise.resolve()
 
-// DX-4555: the session's dashboard MCP server is whichever of SERVERS is connected. Only the engine's "no such server"
-// rejection moves on to the next name; the last one's rejection is thrown, for `api` and the callers to classify.
-async function callDashboard($: any, tool: string, args: object): Promise<any> {
-  for (const server of SERVERS.slice(0, -1)) {
-    try {
-      return await $.mcp.call(server, tool, args)
-    } catch (err: any) {
-      if (!isServerMissing(String(err?.message ?? err))) throw err
-    }
-  }
-  return $.mcp.call(SERVERS[SERVERS.length - 1], tool, args)
-}
-
-// One dashboard call through the session's own danx-dashboard MCP server: same credential, same
-// x-danx-session-id header. Only the engine's "no such server" rejection (another repo) is
-// `unreachable`, which is not an API error; any other rejection is an error shown as one.
+// One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
+// x-danx-session-id header. Any rejection (including the engine's "no such server") is an error shown as one.
 async function api($: any, method: string, path: string, extra: { query?: object; body?: object } = {}): Promise<Api> {
   let res
   try {
-    res = await callDashboard($, 'danxbot_api', { method, path, ...extra })
+    res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra })
   } catch (err: any) {
     const message = String(err?.message ?? err)
-    if (isServerMissing(message)) return { ok: false, status: 0, unreachable: true, body: { error: message } }
-    return { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
+    // DX-4578: `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
+    // load carries it on its error view (`serverNotConnected`, which the session-start retry waits out); the pacing and usage readers
+    // stay quiet about it until a read has succeeded.
+    return { ok: false, status: 0, ...(isServerNotConnected(message) ? { unreachable: true } : {}), body: { error: message.slice(0, CALL_ERROR_MAX) } }
   }
   return toolOutcome(res)
 }
@@ -448,7 +436,7 @@ function connect($: any, plan: PlanRow): Promise<void> {
     const sessionTitle = await read($, title)
     let r
     try {
-      r = await callDashboard($, 'plan_connect', {
+      r = await $.mcp.call(SERVER, 'plan_connect', {
         plan_id: plan.id,
         ...(sessionTitle ? { title: sessionTitle } : {}),
       })
@@ -478,7 +466,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
     let r
     try {
-      r = await callDashboard($, 'plan_connect', { plan_id: plan.id, disconnect: true })
+      r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
       $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
@@ -544,7 +532,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         const startedAt = await $.clock.now()
         let r
         try {
-          r = await callDashboard($, 'plan_connect', watch.args)
+          r = await $.mcp.call(SERVER, 'plan_connect', watch.args)
         } catch (err: any) {
           if (!ended()) $.ui.toast(signInFailedToast(String(err?.message ?? err)))
           return
@@ -758,17 +746,18 @@ function handlers($: any): Handlers {
 
 // ---- hooks ----------------------------------------------------------------
 
-// The first load can run before the MCP server connects. A no-mcp view at session start is retried
-// after each wait in NO_MCP_RETRY_MS (on the clock, so a test moves it) and then left as no-mcp.
-async function retryWhileNoMcp($: any): Promise<void> {
-  for (const wait of NO_MCP_RETRY_MS) {
+// The first load can run before the plugin's MCP server connects. A view that failed on exactly that at session start is retried
+// after each wait in START_RETRY_MS (on the clock, so a test moves it) and then left as the error.
+async function retryWhileNotConnected($: any): Promise<void> {
+  for (const wait of START_RETRY_MS) {
     try {
       await $.clock.sleep(wait)
     } catch {
       // the wait rejects when the plugin's environment is unloaded (a reload): the retries end with it
       return
     }
-    if ((await read($, view)).phase !== 'no-mcp') return
+    const cur = await read($, view)
+    if (cur.phase !== 'error' || !cur.serverNotConnected) return
     await refresh($, true)
   }
 }
@@ -1035,7 +1024,7 @@ async function onSessionStart($: any, e: any, next: any) {
   // DX-4340: a new session starts with no pacing state (never the previous session's last good answer), reads the verdict now, and later reads happen when it is a minute old, at a spawn or sub-agent start
   resetPacing()
   void settleDetached(refreshPacingPanel($))
-  void settleDetached(refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($)))
+  void settleDetached(refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
   return next(e)
 }
 
@@ -1257,10 +1246,8 @@ export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
-  for (const server of SERVERS) {
-    on('tool.call', { tool: toolName(server, 'plan_connect') }, onPlanConnect)
-    on('tool.call', { tool: toolName(server, 'request_permission') }, onRequestPermission)
-  }
+  on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
+  on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('turn.complete', onTurnComplete)
   on('session.measure', onMeasure)
   // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)

@@ -56,7 +56,7 @@ describe('plan pane connects', () => {
       await d.clock.settle()
 
       expect(d.calls.filter(c => c.tool === 'plan_connect')).toEqual([
-        { server: 'danx-dashboard', tool: 'plan_connect', args: { plan_id: 23, title: 'PLAN-23: danxbot plugin' } },
+        { server: 'plugin:danxbot:danx-dashboard', tool: 'plan_connect', args: { plan_id: 23, title: 'PLAN-23: danxbot plugin' } },
       ])
       await expectIndicator(band, surface, 25)
       expectText(await band.find({ type: 'Text', text: /PLAN-23/ }), /PLAN-23 · Danxbot plugin/)

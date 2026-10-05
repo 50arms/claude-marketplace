@@ -80,7 +80,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(60_000)
       expect(callsTo(d, 'needs-you')).toBe(2)
       expect(callsTo(d, 'in-progress')).toBe(2)
-      expect(d.calls.every(c => c.server !== 'danx-dashboard' || c.tool === 'danxbot_api' || c.tool === 'plan_connect')).toBe(true)
+      expect(d.calls.every(c => c.server !== 'plugin:danxbot:danx-dashboard' || c.tool === 'danxbot_api' || c.tool === 'plan_connect')).toBe(true)
     })
 
     test('a failed in-progress call fails the load as an error shown in footer and pane, never a missing section', async ($, on) => {

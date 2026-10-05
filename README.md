@@ -33,7 +33,7 @@ The plugin ships the `danx-dashboard` MCP server (`danxbot/scripts/dashboard-mcp
 
 To use another dashboard, set `DANXBOT_DASHBOARD_URL` (your shell, or the `env` block of a repo's committed `.claude/settings.json` for a per-repo or per-company default). It beats the `dashboard_url` option above. Claude Code reads plugin options from user and managed settings only, never from a project's, so the `env` block is the per-repo route.
 
-A repo whose root `.mcp.json` has its own entry named `danx-dashboard` (danxbot, gpt-manager) keeps that server: the plugin's copy sees the entry, offers no tools and installs nothing, so the session has one set of dashboard tools, `mcp__danx-dashboard__*`. Only the repo-root `.mcp.json` is checked. A `danx-dashboard` server added with `claude mcp add` at user or local scope is not detected, and the session then lists both servers.
+This is the session's one dashboard server: a connected repo declares no `danx-dashboard` server of its own, and a repo's own `.mcp.json` entry would run beside it as a second set of tools under another name (`mcp__danx-dashboard__*`) that the plugin's band, hooks and listeners never use.
 
 ## Editing a plugin — MANDATORY version bump
 

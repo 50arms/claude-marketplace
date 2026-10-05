@@ -4,12 +4,11 @@ import { ERROR_BODY_MAX, KEY_REVOKED_HALT, SIGNED_OUT_MARK } from './config'
 
 // The engine's rejection when the session has no such server or tool:
 //   `<plugin>: $.mcp.call: no connected MCP tool "<tool>" on a server named "<server>"`
-// (Claude Code 2.1.286). Only this one means "this session has no danx-dashboard server" (another
-// repo); a timeout, a transport failure or a refusal is a real error the pane must show.
-const SERVER_MISSING = /\$\.mcp\.call: no connected MCP tool/
+// (Claude Code 2.1.286). At session start it means the plugin's server has not connected yet (DX-4578).
+const SERVER_NOT_CONNECTED = /\$\.mcp\.call: no connected MCP tool/
 
-export function isServerMissing(message: string): boolean {
-  return SERVER_MISSING.test(message)
+export function isServerNotConnected(message: string): boolean {
+  return SERVER_NOT_CONNECTED.test(message)
 }
 
 export function mcpText(r: any): string {

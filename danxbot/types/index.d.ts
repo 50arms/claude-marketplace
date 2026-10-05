@@ -95,9 +95,6 @@ export type InProgressRow = {
 // state `healthy` is a working bridge; `nextStep` is the server's own wording (null when it has none).
 export type ListenerStatus = { state: string; nextStep: string | null }
 
-// `no-mcp`: the session has no `danx-dashboard` MCP server (another repo), so the dashboard
-// cannot be reached at all. It is not an error: the band says Danxbot is not available
-// (with the next step) and the footer reads `Danxbot · off`.
 // `signed-out` (DX-4423): the server is there but the session holds no dashboard key (lapsed, or never approved):
 // the band and pane say so and offer Sign in, never the server's agent-facing text.
 // `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band and pane say so and offer NO
@@ -186,8 +183,10 @@ export type LiveSubagents = {
 }
 
 export type PlanView = {
-  phase: 'loading' | 'ready' | 'error' | 'no-mcp' | 'signed-out' | 'key-revoked'
+  phase: 'loading' | 'ready' | 'error' | 'signed-out' | 'key-revoked'
   error: string | null
+  // DX-4578: the load failed because the plugin's own MCP server is not connected (yet), the one failure the session-start retry waits out
+  serverNotConnected: boolean
   // DX-4521: the dashboard origin the band's links are built on: the one the plan list answered, else (a failed or signed-out load) the
   // last one this machine saw answered; null only while none has ever been seen.
   dashboardUrl: string | null

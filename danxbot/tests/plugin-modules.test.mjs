@@ -24,12 +24,6 @@ function commandHooks(hooksJson) {
   return out;
 }
 
-// `^(a|b)$` -> [a, b]; any other matcher is its own single alternative.
-function alternatives(matcher) {
-  const m = /^\^\((.*)\)\$$/.exec(matcher);
-  return m ? m[1].split("|") : [matcher];
-}
-
 function originMainHooks() {
   const r = spawnSync("git", ["show", "origin/main:danxbot/hooks/hooks.json"], { cwd: PLUGIN, encoding: "utf8" });
   assert.equal(r.status, 0, `cannot read origin/main's hooks.json (git fetch origin first): ${r.stderr}`);
@@ -40,11 +34,14 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
   const hooks = readJson("hooks/hooks.json");
   assert.deepEqual(hooks.modules, ["./register.tsx"]);
   assert.ok(fs.existsSync(path.join(PLUGIN, "hooks", "register.tsx")));
-  // A matcher may be WIDENED (DX-4555 added a server name to plan_connect's alternation): the hook is kept when a present
-  // hook has the same event and command and a matcher that matches every alternative the origin/main one did.
+  // A hook is kept when a present hook has the same event, matcher and command. The one intended rewrite: DX-4578 narrowed the
+  // plan_connect matcher from the three server prefixes to the plugin's (the matcher test below pins the new one).
+  const PLAN_CONNECT_NARROWED = [/^\^\(mcp__.*plan_connect\)\$$/, "^mcp__plugin_danxbot_danx-dashboard__plan_connect$"];
   const present = commandHooks(hooks);
-  const kept = ([event, matcher, command]) =>
-    present.some(([e, m, c]) => e === event && c === command && (m === matcher || (matcher !== null && m !== null && alternatives(matcher).every((a) => alternatives(m).includes(a)))));
+  const kept = ([event, matcher, command]) => {
+    const expected = matcher !== null && PLAN_CONNECT_NARROWED[0].test(matcher) ? PLAN_CONNECT_NARROWED[1] : matcher;
+    return present.some(([e, m, c]) => e === event && m === expected && c === command);
+  };
   const dropped = commandHooks(originMainHooks()).filter((h) => !kept(h));
   assert.deepEqual(dropped, [], "command hooks on origin/main that hooks.json no longer has");
 });
@@ -71,14 +68,10 @@ test("DX-4232: claude plugin validate danxbot exits 0", () => {
 ${r.stderr}`);
 });
 
-test("DX-4555: the plan_connect hook's matcher names exactly the tool every dashboard server name in config.ts SERVERS can answer to", () => {
+test("DX-4578: the plan_connect hook's matcher names exactly the one tool config.ts SERVER can answer to", () => {
   const config = fs.readFileSync(path.join(PLUGIN, "hooks", "plan", "config.ts"), "utf8");
-  const servers = [...(/export const SERVERS = \[([^\]]*)\]/.exec(config)?.[1] ?? "").matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  assert.ok(servers.length >= 2, "SERVERS lists the project's and the plugin's server names");
-  const derived = servers.map((s) => `mcp__${s.replace(/:/g, "_")}__plan_connect`);
+  const server = /export const SERVER = '([^']+)'/.exec(config)?.[1];
+  assert.ok(server, "config.ts names the one dashboard server");
   const group = readJson("hooks/hooks.json").hooks.PostToolUse.find((g) => g.hooks.some((h) => h.command.endsWith("plan-event-bridge.mjs start")));
-  const matched = alternatives(group.matcher);
-  for (const tool of derived) assert.ok(matched.includes(tool), `${tool} is in the matcher`);
-  // the one other name is the underscore spelling of the project's own server this matcher has always carried
-  assert.deepEqual(matched.filter((a) => !derived.includes(a)), ["mcp__danx_dashboard__plan_connect"]);
+  assert.equal(group.matcher, `^mcp__${server.replace(/:/g, "_")}__plan_connect$`);
 });
