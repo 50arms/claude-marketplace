@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PKG_NAME, TEST_VERSION, fakeNpm, installFakeMcp, makeFakeBinDir, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
-import { EXPECTED_REASONS, MAX_LISTED_CARDS, MAX_TITLE_CHARS, READY_CARDS_TIMEOUT_MS, blockReason, parseReadyCards } from "../scripts/ready-cards-stop.mjs";
+import { ENSURE_TIMEOUT_MS, EXPECTED_REASONS, MAX_LISTED_CARDS, MAX_TITLE_CHARS, READ_TIMEOUT_MS, READY_CARDS_TIMEOUT_MS, blockReason, decide, parseReadyCards, readFailure } from "../scripts/ready-cards-stop.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.join(here, "..");
@@ -248,6 +248,80 @@ describe("hooks.json wiring", () => {
     for (const [event, groups] of Object.entries(HOOKS_JSON.hooks)) {
       if (event === "Stop") continue;
       assert.ok(!JSON.stringify(groups).includes("ready-cards-stop"), `${event} must not run it`);
+    }
+  });
+});
+
+describe("readFailure", () => {
+  test("a killed read (ETIMEDOUT) is the reason timeout", () => {
+    assert.deepEqual(readFailure({ error: Object.assign(new Error("spawnSync ETIMEDOUT"), { code: "ETIMEDOUT" }) }), {
+      reason: "timeout",
+      line: "ready_cards_failed: timeout",
+    });
+  });
+
+  test("a read that could not start is spawn_error, carrying the error's message", () => {
+    assert.deepEqual(readFailure({ error: Object.assign(new Error("spawn node ENOENT"), { code: "ENOENT" }) }), {
+      reason: "spawn_error",
+      line: "ready_cards_failed: spawn node ENOENT",
+    });
+  });
+
+  test("a stderr line's reason is the text before its first colon", () => {
+    assert.deepEqual(readFailure({ status: 1, stderr: "\ncredential_unavailable: no key. Fix: sign in\nmore" }), {
+      reason: "credential_unavailable",
+      line: "credential_unavailable: no key. Fix: sign in",
+    });
+  });
+});
+
+describe("decide: the budgets it hands its children", () => {
+  const connectedHome = () => {
+    const home = mkdtempSync(path.join(tmpdir(), "ready-cards-decide-"));
+    const dir = path.join(home, ".config", "danxbot", "plan-sessions");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, `${SESSION}.json`), "{}");
+    return home;
+  };
+
+  test("the install check gets ENSURE_TIMEOUT_MS and the read READ_TIMEOUT_MS", () => {
+    const home = connectedHome();
+    try {
+      let ensureArgs;
+      let readOptions;
+      const answer = decide({
+        payload: { session_id: SESSION },
+        env: { DANXBOT_PLAN_SESSIONS_HOME: home },
+        ensure: (args) => {
+          ensureArgs = args;
+          return { ok: true, bin: "/fake/index.js" };
+        },
+        run: (_cmd, _args, options) => {
+          readOptions = options;
+          return { status: 0, stdout: readyLine([]) };
+        },
+      });
+      assert.deepEqual(answer, {});
+      assert.equal(ensureArgs.timeoutMs, ENSURE_TIMEOUT_MS);
+      assert.equal(readOptions.timeout, READ_TIMEOUT_MS);
+      assert.equal(ENSURE_TIMEOUT_MS + READ_TIMEOUT_MS, READY_CARDS_TIMEOUT_MS);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a read killed at its budget is one skipped line naming the timeout", () => {
+    const home = connectedHome();
+    try {
+      const answer = decide({
+        payload: { session_id: SESSION },
+        env: { DANXBOT_PLAN_SESSIONS_HOME: home },
+        ensure: () => ({ ok: true, bin: "/fake/index.js" }),
+        run: () => ({ error: Object.assign(new Error("spawnSync ETIMEDOUT"), { code: "ETIMEDOUT" }) }),
+      });
+      assert.deepEqual(answer, { systemMessage: "danxbot ready-cards check skipped (the stop is allowed): ready_cards_failed: timeout" });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });
