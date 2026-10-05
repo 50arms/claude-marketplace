@@ -187,6 +187,8 @@ export type PlanView = {
   error: string | null
   // DX-4578: the load failed because the plugin's own MCP server is not connected (yet), the one failure the session-start retry waits out
   serverNotConnected: boolean
+  // DX-4610: ... and this session's plugin server is the old standby one a restart replaces (a subset of serverNotConnected)
+  staleServer: boolean
   // DX-4521: the dashboard origin the band's links are built on: the one the plan list answered, else (a failed or signed-out load) the
   // last one this machine saw answered; null only while none has ever been seen.
   dashboardUrl: string | null

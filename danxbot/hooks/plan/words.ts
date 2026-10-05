@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, keyRevokedLabel } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, RESTART_BAND_LABEL, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, keyRevokedLabel } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
 export const WORDS = {
@@ -89,7 +89,8 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
   // DX-4418: a revoked key names who revoked it.
   if (v.phase === 'key-revoked') return keyRevokedLabel(v.revokedBy as string) // always set with the phase
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
-  if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
+  // DX-4610: a session on the old standby server is told what fixes it.
+  if (v.phase === 'error') return `${PLAN_TITLE}: ${v.staleServer ? RESTART_BAND_LABEL : 'Disconnected'}`
   if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
   if (!v.connected) return `${BRAND}: not connected to a plan`
   // DX-4420: a connected band reads `PLAN-NN · name`; the Danxbot prefix stays on the states with no plan.

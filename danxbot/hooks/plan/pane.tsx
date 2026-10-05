@@ -6,7 +6,7 @@ import { pacingPane } from './pacing-panel-view'
 import { problemCard } from './problems'
 import { subagentSection } from './subagent-cards'
 import type { Ui } from './problems'
-import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
+import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, RESTART_LINE, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
 import { age, bandLabel, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
@@ -166,7 +166,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
     )
   }
   if (v.phase === 'error') {
-    return shell(<Text color={DANGER}>{v.error ?? 'Unknown error'}</Text>)
+    return shell(<Text color={DANGER}>{v.staleServer ? RESTART_LINE : (v.error ?? 'Unknown error')}</Text>)
   }
   if (v.phase === 'loading' && !v.refreshedAt) {
     return shell(<Text dimColor>Loading…</Text>)

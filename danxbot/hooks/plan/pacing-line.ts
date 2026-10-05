@@ -1,3 +1,4 @@
+import { RESTART_LINE } from './config'
 import type { Api } from './load'
 
 // DX-4340 (PLAN-29 section 3): the ONE pacing cache. danxbot serves the calling session's own account's verdict, and the one-sentence line
@@ -92,6 +93,8 @@ async function fetchPacing(env: PacingEnv): Promise<void> {
     const r = await env.call('GET', LINE_PATH)
     // a session start came while this read was out: its answer is the previous session's
     if (gen !== generation) return
+    // DX-4610: a session on the old standby server never gets a read, so it is told once, at once, to restart
+    if (r.staleServer) return report(env, RESTART_LINE)
     if (r.unreachable) {
       // silent and not backed off until a read has succeeded (see the header)
       if (hasSucceeded) report(env, 'the danx-dashboard MCP server is not reachable from this session')

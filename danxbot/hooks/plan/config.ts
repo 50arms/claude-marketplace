@@ -13,6 +13,12 @@ export const COMMAND = 'danx-plan'
 // declares a `danx-dashboard` server of its own any more, so there is no second name to try.
 export const SERVER = 'plugin:danxbot:danx-dashboard'
 export const toolName = (tool: string) => `mcp__${SERVER.replace(/:/g, '_')}__${tool}`
+// DX-4610: a session started by plugin 0.12.57 or older, in a repo that declared its own `danx-dashboard` server, runs the plugin's server as
+// an idle standby that lists no tool, and keeps it across a hot reload to a newer plugin. Its calls fail like a server not yet connected, so what
+// marks it is its tool list: the repo's own server's tool, and none of the plugin's (`isStandbySession` in register.tsx).
+export const LEGACY_PROJECT_API_TOOL = 'mcp__danx-dashboard__danxbot_api'
+export const RESTART_LINE = 'Restart this session to reconnect the dashboard. It started before an update changed how the connection works, so it shows no plan and sends no usage until then.'
+export const RESTART_BAND_LABEL = 'Restart to reconnect'
 export const POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
 // DX-4530: while a permission request is open its claim is polled this often (POLL_MS otherwise), so the model hears the
@@ -131,6 +137,7 @@ export const EMPTY: PlanView = {
   phase: 'loading',
   error: null,
   serverNotConnected: false,
+  staleServer: false,
   dashboardUrl: null,
   connected: null,
   plans: [],

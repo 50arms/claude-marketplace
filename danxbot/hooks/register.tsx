@@ -39,6 +39,7 @@ import {
   USAGE_PATH,
   USAGE_TICK_MS,
   signInFailedToast,
+  LEGACY_PROJECT_API_TOOL,
   SERVER,
   START_RETRY_MS,
   toolName,
@@ -134,9 +135,20 @@ async function api($: any, method: string, path: string, extra: { query?: object
     // DX-4578: `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
     // load carries it on its error view (`serverNotConnected`, which the session-start retry waits out); the pacing and usage readers
     // stay quiet about it until a read has succeeded.
-    return { ok: false, status: 0, ...(isServerNotConnected(message) ? { unreachable: true } : {}), body: { error: message.slice(0, CALL_ERROR_MAX) } }
+    const notConnected = isServerNotConnected(message)
+    const stale = notConnected && (await isStandbySession($))
+    return { ok: false, status: 0, ...(notConnected ? { unreachable: true } : {}), ...(stale ? { staleServer: true } : {}), body: { error: message.slice(0, CALL_ERROR_MAX) } }
   }
   return toolOutcome(res)
+}
+
+// DX-4610: whether this session runs the plugin's server as the old idle standby (plugin 0.12.57 and older, started in a repo with its own
+// `danx-dashboard` entry): the engine words that server's missing tools like a server not connected yet, so the rejection cannot say. The
+// session's tool list can: it has the repo's own `danx-dashboard` tool and none of the plugin's. A fresh session in a checkout that still has
+// the repo entry matches too until its server connects; its next load (the start retries, then the refresh) reads connected and clears it.
+async function isStandbySession($: any): Promise<boolean> {
+  const names = (await $.tool.list()).map((t: any) => t.name)
+  return names.includes(LEGACY_PROJECT_API_TOOL) && !names.includes(toolName('danxbot_api'))
 }
 
 const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
