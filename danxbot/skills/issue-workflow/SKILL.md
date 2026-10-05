@@ -171,7 +171,13 @@ code is your code — never "pre-existing, not mine".
 at the first working state, then `replaces: <attachment_id from that reply>` at each milestone and
 at completion, never a growing list. Frame the component you are working on with enough around
 it to place it (scroll it into view, size the viewport to it), not the whole app. A browser-pane
-capture is for your own viewing (an 800px-wide JPEG); attach a full-resolution PNG instead.
+capture is for your own viewing (an 800px-wide JPEG); attach a full-resolution PNG instead,
+made by the plugin's own tool from any repo (it drives the machine's Chrome or Edge, so a
+containerised dispatch with no browser cannot run it):
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/capture-screenshot.mjs" <url> <out.png> [--login <dev-login-url>]
+[--wait-for <selector>]` (defaults `--width 1440 --height 900 --dpr 2`; phone `--width 390 --height 844
+--dpr 3`). Pass `--wait-for` whenever the app has a readiness signal; it exits non-zero on a bad
+response, a sign-in form, or a page that never becomes ready.
 
 ## Debugging
 
