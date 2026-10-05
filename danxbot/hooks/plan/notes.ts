@@ -1,4 +1,4 @@
-import type { PlanRow, ProblemRow } from '../../types'
+import type { PermissionRequest, PlanRow, ProblemRow } from '../../types'
 
 // The rows the operator's pane actions append for the model (R-4): the model did not make
 // these calls, so it is told. The person never reads them.
@@ -14,4 +14,34 @@ export function disconnectNote(plan: { ref: string; name: string }): string {
 
 export function answerNote(p: ProblemRow, label: string): string {
   return `[danxbot plan] The operator answered ${p.cardId} PBLM-${p.id} "${p.statement}" from the Plan pane: ${label}. Read the card's problems before acting on it.`
+}
+
+// DX-4530: the Sign in button (band or pane) signed this session in: the model did not press it, so it is told, as connect
+// tells it. `planId` is the plan the sign-in asked to rejoin (null: none, so where it lands is the dashboard's to say); `connected`
+// is false when that connect was refused.
+export function signInNote(planId: number | null, connected: boolean): string {
+  const head = '[danxbot plan] The operator signed this session in to the danxbot dashboard with the Sign in button. Its dashboard tools work again: retry any call that was refused as signed out.'
+  if (planId === null) return `${head} It asked to rejoin no plan: call plan_connect to see which plan, if any, it is on.`
+  if (!connected) return `${head} Reconnecting it to plan_id ${planId} was refused: call plan_connect to see which plan it is on.`
+  return `${head} It is back on plan_id ${planId}: call plan_connect with plan_id ${planId} yourself to read its briefing and start the event bridge.`
+}
+
+// DX-4530: the decision on one of the model's `request_permission` requests (DX-4435), told once in its chat: the MCP only frees
+// its slot, so without this the model learns the outcome only by retrying (DX-4435 comment 10745).
+type Asked = Pick<PermissionRequest, 'code' | 'permissions'>
+const askedList = (permissions: readonly string[]) => (permissions.length > 0 ? permissions.join(', ') : 'the permissions it asked for')
+
+export function permissionGrantedNote(r: Asked, granted: readonly string[]): string {
+  const missing = r.permissions.filter(p => !granted.includes(p))
+  const head = `[danxbot] The person approved permission request ${r.code} (asked: ${askedList(r.permissions)})`
+  if (granted.length === 0) return `${head} but granted none of it: do not retry the refused call.`
+  return `${head}: this session's key was granted ${granted.join(', ')}.${missing.length > 0 ? ` Not granted: ${missing.join(', ')}.` : ''} Retry the call that was refused for lacking it.`
+}
+
+export function permissionDeniedNote(r: Asked): string {
+  return `[danxbot] The person denied permission request ${r.code} (asked: ${askedList(r.permissions)}). This session's key did not gain it: do not retry the refused call, and ask again only if the person says to.`
+}
+
+export function permissionExpiredNote(r: Asked): string {
+  return `[danxbot] Permission request ${r.code} (asked: ${askedList(r.permissions)}) expired before it was decided: this session's dashboard session or key ended. Reconnect the session (call plan_connect), then call request_permission again for ${askedList(r.permissions)}.`
 }

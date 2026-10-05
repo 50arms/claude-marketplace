@@ -236,8 +236,8 @@ export type RefreshGate = {
   at: number | null
 }
 
-// DX-4435: a `request_permission` request the band counts until it is decided; `expiresAt` is epoch ms.
-export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[]; expiresAt: number }
+// DX-4435: a `request_permission` request the band counts until it is decided. DX-4530: no expiry clock (the claim decides it).
+export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[] }
 
 declare module 'claude-code' {
   interface PluginState {

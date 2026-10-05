@@ -6,8 +6,9 @@ import { describe, expect, test } from 'claude-code/testing'
 import { SIGN_IN_ROUNDS } from '../hooks/plan/config'
 import { loadPlan } from '../hooks/plan/load'
 import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
+import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
-import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
@@ -15,6 +16,8 @@ const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: an
 const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => b.text)
 // the server's agent-facing wording: none of it may reach the person, in any drawing or toast
 const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|lapsed|no longer accepts|STOP ALL WORK|Commit your work|agent-finalize/i
+// DX-4530: the toasts the person reads; the kit can deliver the model's own rows only as a toast (toldModel)
+const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('Could not tell the model'))
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'danx-dashboard' && c.tool === 'plan_connect')
 const previewStarts = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.tool === 'preview_start')
 // the page loads by preview_start (pane closed) or navigate (pane open)
@@ -122,6 +125,19 @@ describe('what one plan_connect answer means to Sign in', () => {
     expect(signInStep({ content: [{ type: 'text', text: 'plain text' }], isError: true }).kind).toBe('stop')
     const refused = signInStep(answer({ ok: false, status: 409, body: { error: 'plan_archived', message: 'PLAN-23 is archived.' } }))
     expect(refused).toEqual({ kind: 'refused', message: 'Signed in, but the plan connect was refused: 409 PLAN-23 is archived.' })
+  })
+})
+
+// DX-4530: the row the model reads once the Sign in button signed its session in (it did not press it, so it is told)
+describe('signInNote', () => {
+  test('back on the plan it was on, on no plan, or signed in with the plan connect refused', () => {
+    expect(signInNote(23, true)).toContain('call plan_connect with plan_id 23')
+    expect(signInNote(null, true)).toContain('call plan_connect to see which plan')
+    const refused = signInNote(23, false)
+    expect(refused).toContain('signed this session in')
+    expect(refused).toContain('plan_id 23 was refused')
+    expect(refused).not.toContain('call plan_connect with plan_id 23 yourself to read its briefing')
+    for (const note of [signInNote(23, true), signInNote(null, true), refused]) expect(note).toMatch(/retry/i)
   })
 })
 
@@ -236,6 +252,14 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(connectCalls(d)[0]!.args).toEqual({ plan_id: 23, title: 'PLAN-23: danxbot plugin' })
       expect(connectCalls(d).every((c: any) => c.args.disconnect === undefined)).toBe(true)
+      // DX-4530: approved: the model is told, once, that it is signed in and back on the plan it was on
+      d.world.signIn.approved = true
+      await d.clock.advance(45_000)
+      await d.clock.settle()
+      const told = toldModel(d)
+      expect(told).toHaveLength(1)
+      expect(told[0]).toContain('signed this session in')
+      expect(told[0]).toContain('call plan_connect with plan_id 23')
     })
 
     test('a failed load before the revoke does not make the session forget its plan', async ($, on) => {
@@ -342,8 +366,12 @@ for (const surface of SURFACES) {
       expect(await texts(pane)).toContain('Connected: PLAN-23')
       expect(await buttons(pane)).not.toContain('Sign in')
       expect(await buttons(pane)).not.toContain('Signing in…')
-      // not one toast of the whole sign-in carried the server's words
-      expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
+      // not one toast of the whole sign-in carried the server's words (the model's own row, which the kit can only toast, aside)
+      expect(personToasts(d).join(' ')).not.toMatch(AGENT_TEXT)
+      // DX-4530: the model did not press Sign in, so it is told, once
+      const told = toldModel(d)
+      expect(told).toHaveLength(1)
+      expect(told[0]).toContain('signed this session in')
     })
 
     test('a session that was on no plan signs in with no plan id and lands on the plan list', async ($, on) => {
@@ -357,6 +385,30 @@ for (const surface of SURFACES) {
       await d.clock.advance(45_000)
       await d.clock.settle()
       expect(await texts(band)).toContain('Danxbot: not connected to a plan')
+      // DX-4530: told it is signed in, with no plan named (it asked for none)
+      const told = toldModel(d)
+      expect(told).toHaveLength(1)
+      expect(told[0]).toContain('signed this session in')
+      expect(told[0]).toContain('call plan_connect to see which plan')
+      expect(told[0]).not.toContain('plan_id')
+    })
+
+    test('signed in, but the plan connect refused: the model is told it is signed in and that the plan was refused', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      // on PLAN-23, the key lapses: Sign in asks for plan 23 again
+      d.world.signedOut = 'lapsed'
+      await d.clock.advance(60_000)
+      d.world.signIn.answer = { text: JSON.stringify({ ok: false, status: 409, body: { error: 'plan_archived', message: 'PLAN-23 is archived.' } }) }
+      await band.press({ key: 'sign-in' })
+      await d.clock.settle()
+      expect(connectCalls(d)[0]!.args.plan_id).toBe(23)
+      expect(d.toasts).toContain('Signed in, but the plan connect was refused: 409 PLAN-23 is archived.')
+      const told = toldModel(d)
+      expect(told).toHaveLength(1)
+      expect(told[0]).toContain('signed this session in')
+      expect(told[0]).toContain('plan_id 23 was refused')
     })
 
     for (const [name, value, expected] of [
@@ -371,6 +423,8 @@ for (const surface of SURFACES) {
         await band.press({ key: 'sign-in' })
         await d.clock.settle()
         expect(d.toasts.at(-1)).toBe(expected)
+        // DX-4530: nothing was signed in, so the model is told nothing
+        expect(toldModel(d)).toEqual([])
         expect(connectCalls(d)).toHaveLength(1)
         expect(await texts(band)).toContain('Danxbot: signed out')
         expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')

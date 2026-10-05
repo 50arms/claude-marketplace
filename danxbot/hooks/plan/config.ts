@@ -11,6 +11,13 @@ export const COMMAND = 'danx-plan'
 export const SERVER = 'danx-dashboard'
 export const POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
+// DX-4530: while a permission request is open its claim is polled this often (POLL_MS otherwise), so the model hears the
+// decision within seconds. The server's per-key claim limit (danxbot permission-request-routes.ts: twice one 3 s poll, about
+// 0.67 claims a second) fits the MCP's own 3 s poll plus this one for ONE open request; with more open at once the MCP's poll
+// alone passes it, and this poll's 429 only keeps the request for the next tick.
+export const PERMISSION_POLL_MS = 10_000
+// DX-4530: how many decided permission requests the told-once guard ($.store) remembers; ids are unique, so the oldest go first.
+export const PERMISSION_TOLD_MAX = 100
 
 // The dashboard's six card statuses, in the order a view's breakdown is read.
 export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const

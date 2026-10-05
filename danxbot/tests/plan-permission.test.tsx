@@ -3,13 +3,15 @@
 // still open and a press opens the newest one's page, and a request leaves the count when it is decided or expires.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { permissionRequestOf } from '../hooks/plan/permission'
-import { dashboard, startSession } from './plan-kit'
+import { PERMISSION_POLL_MS } from '../hooks/plan/config'
+import { claimStatus, permissionRequestOf } from '../hooks/plan/permission'
+import { dashboard, startSession, toldModel } from './plan-kit'
 
 const URL_A = 'https://danxbot.example/connect/aaaa'
 const URL_B = 'https://danxbot.example/connect/bbbb'
-const answer = (state: string, url: string, code: string, expiresAt = '2026-10-03T08:10:00.000Z') =>
-  JSON.stringify({ state, approvalUrl: url, confirmCode: code, expiresAt, instruction: 'Show the code.' })
+// the MCP's answer as it is today, `expiresAt` included (the plugin does not read it)
+const answer = (state: string, url: string, code: string) =>
+  JSON.stringify({ state, approvalUrl: url, confirmCode: code, expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the code.' })
 const TOOL = 'mcp__danx-dashboard__request_permission'
 const CALL = (permissions: string[]) => ({ tool: TOOL, permissions, reason: 'to read members' }) as any
 const BAND = { plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -23,14 +25,33 @@ function answering(on: any, texts: string[]) {
 
 describe('permissionRequestOf', () => {
   test('reads a required or pending answer with the permissions asked for; anything else is null', () => {
-    const want = { url: URL_A, code: 'CODE1', publicId: 'aaaa', permissions: ['team.members.view'], expiresAt: Date.parse('2026-10-03T08:10:00.000Z') }
+    const want = { url: URL_A, code: 'CODE1', publicId: 'aaaa', permissions: ['team.members.view'] }
     expect(permissionRequestOf(answer('approval_required', URL_A, 'CODE1'), ['team.members.view'])).toEqual(want)
     expect(permissionRequestOf(answer('approval_pending', URL_A, 'CODE1'), ['team.members.view'])).toEqual(want)
     expect(permissionRequestOf(answer('approval_required', URL_A, 'CODE1'), undefined)?.permissions).toEqual([])
-    expect(permissionRequestOf(answer('approval_required', URL_A, 'CODE1', 'soon'), [])).toBeNull()
+    // DX-4530: a request has no expiry clock (it is open until the requesting session ends), so the answer's expiry is not read
+    expect(permissionRequestOf(JSON.stringify({ state: 'approval_required', approvalUrl: URL_A, confirmCode: 'CODE1', instruction: 'Show the code.' }), [])).toEqual({ ...want, permissions: [] })
     expect(permissionRequestOf(JSON.stringify({ ok: false, status: 400, body: { error: 'already_held' } }), [])).toBeNull()
     expect(permissionRequestOf('Not signed in to the danxbot dashboard.', [])).toBeNull()
     expect(permissionRequestOf(undefined, [])).toBeNull()
+  })
+})
+
+describe('claimStatus', () => {
+  test('answers the decision the claim route gives, with the permissions granted', () => {
+    expect(claimStatus({ status: 'pending', granted: null })).toEqual({ kind: 'pending' })
+    expect(claimStatus({ status: 'approved', granted: ['team.members.view'] })).toEqual({ kind: 'granted', granted: ['team.members.view'] })
+    expect(claimStatus({ status: 'claimed', granted: ['boards.view'] })).toEqual({ kind: 'granted', granted: ['boards.view'] })
+    expect(claimStatus({ status: 'denied', granted: null })).toEqual({ kind: 'denied' })
+    expect(claimStatus({ status: 'expired', granted: null })).toEqual({ kind: 'expired' })
+  })
+
+  test('anything it cannot read is unknown: a strange status, or an approval that names no grant', () => {
+    expect(claimStatus({ status: 'maybe' })).toEqual({ kind: 'unknown' })
+    expect(claimStatus({ status: 'approved', granted: null })).toEqual({ kind: 'unknown' })
+    expect(claimStatus({ status: 'approved', granted: ['ok', 3] })).toEqual({ kind: 'unknown' })
+    expect(claimStatus(null)).toEqual({ kind: 'unknown' })
+    expect(claimStatus('approved')).toEqual({ kind: 'unknown' })
   })
 })
 
@@ -101,19 +122,18 @@ describe('request_permission', () => {
     })
   }
 
-  test('a request still pending is kept, until its expiry passes', async ($, on) => {
+  // DX-4530: a request has no expiry clock: it waits for the person until the requesting session ends
+  test('a request still pending is kept well past the old 10-minute window, and the model is told nothing', async ($, on) => {
     const d = dashboard(on, { tabs: ['seed'] })
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     const band = await $.ui.mount(BAND)
     await $.tool.call(CALL(['team.members.view']))
-    await d.clock.advance(120_000)
+    // twice the old fixed window, polled all the while (a longer wait only repeats the same pending claim)
+    await d.clock.advance(1_200_000)
     await d.clock.settle()
     expect(await band.find({ key: 'open-permission' })).toBeDefined()
-    // past its expiry (10 minutes): gone by its own time, whatever the claim says
-    await d.clock.advance(600_000)
-    await d.clock.settle()
-    expect(await band.find({ key: 'open-permission' })).toBeUndefined()
+    expect(toldModel(d)).toEqual([])
   })
 
   test('asking again for a request already open keeps one request in the band', async ($, on) => {
@@ -158,5 +178,143 @@ describe('request_permission', () => {
     await d.clock.advance(120_000)
     await d.clock.settle()
     expect(claims(d)).toHaveLength(0)
+  })
+
+  // DX-4530: the poll runs every PERMISSION_POLL_MS while a request is open, and stops once none is
+  test('an open request is claimed on the fast poll, and claiming stops once it is decided', async ($, on) => {
+    const d = dashboard(on, { tabs: ['seed'] })
+    answering(on, [answer('approval_required', URL_A, 'CODE1')])
+    await startSession($, d, 'desktop')
+    await $.tool.call(CALL(['team.members.view']))
+    await d.clock.settle()
+    const before = claims(d).length
+    await d.clock.advance(PERMISSION_POLL_MS)
+    await d.clock.settle()
+    expect(claims(d).length).toBeGreaterThan(before)
+    d.world.permissionClaim = 'approved'
+    await d.clock.advance(PERMISSION_POLL_MS)
+    await d.clock.settle()
+    const decided = claims(d).length
+    await d.clock.advance(180_000)
+    await d.clock.settle()
+    expect(claims(d)).toHaveLength(decided)
+  })
+
+  test('a session start (a reload, or a new process) resumes the fast poll for a request still open', async ($, on) => {
+    const d = dashboard(on, { tabs: ['seed'] })
+    answering(on, [answer('approval_required', URL_A, 'CODE1')])
+    await startSession($, d, 'desktop')
+    await $.tool.call(CALL(['team.members.view']))
+    await startSession($, d, 'desktop')
+    const before = claims(d).length
+    await d.clock.advance(PERMISSION_POLL_MS)
+    await d.clock.settle()
+    expect(claims(d).length).toBeGreaterThan(before)
+    d.world.permissionClaim = 'approved'
+    await d.clock.advance(PERMISSION_POLL_MS)
+    await d.clock.settle()
+    // one poll, not two stacked ones: told once
+    expect(toldModel(d)).toHaveLength(1)
+  })
+})
+
+// DX-4530: the requesting session is told the decision once, in its chat (the MCP only frees its slot, DX-4435 comment 10745)
+describe('the model is told the decision', () => {
+  async function decide($: any, on: any, set: (d: any) => void, asked = ['team.members.view']) {
+    const d = dashboard(on, { tabs: ['seed'] })
+    answering(on, [answer('approval_required', URL_A, 'CODE1'), answer('approval_pending', URL_A, 'CODE1')])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount(BAND)
+    await $.tool.call(CALL(asked))
+    await d.clock.advance(PERMISSION_POLL_MS)
+    await d.clock.settle()
+    expect(toldModel(d)).toEqual([])
+    set(d)
+    await d.clock.advance(PERMISSION_POLL_MS)
+    await d.clock.settle()
+    return { d, band }
+  }
+
+  for (const status of ['approved', 'claimed'] as const) {
+    test(`${status}: told once which permissions were granted and to retry the refused call`, async ($, on) => {
+      const { d, band } = await decide($, on, d => void (d.world.permissionClaim = status))
+      expect(await band.find({ key: 'open-permission' })).toBeUndefined()
+      const told = toldModel(d)
+      expect(told).toHaveLength(1)
+      expect(told[0]).toContain('CODE1')
+      expect(told[0]).toContain('granted team.members.view')
+      expect(told[0]).toMatch(/[Rr]etry the call/)
+      expect(told[0]).not.toContain('Not granted')
+      // later polls and refreshes tell nothing more
+      await d.clock.advance(180_000)
+      await d.clock.settle()
+      expect(toldModel(d)).toHaveLength(1)
+    })
+  }
+
+  test('a grant of part of what was asked names what was not granted', async ($, on) => {
+    const { d } = await decide($, on, d => {
+      d.world.permissionClaim = 'approved'
+      d.world.permissionGranted = ['boards.view']
+    }, ['team.members.view', 'boards.view'])
+    const told = toldModel(d)
+    expect(told).toHaveLength(1)
+    expect(told[0]).toContain('granted boards.view')
+    expect(told[0]).toContain('Not granted: team.members.view')
+  })
+
+  test('denied: told once that the person denied it', async ($, on) => {
+    const { d, band } = await decide($, on, d => void (d.world.permissionClaim = 'denied'))
+    expect(await band.find({ key: 'open-permission' })).toBeUndefined()
+    const told = toldModel(d)
+    expect(told).toHaveLength(1)
+    expect(told[0]).toContain('CODE1')
+    expect(told[0]).toContain('denied')
+    expect(told[0]).toContain('team.members.view')
+    expect(told[0]).not.toMatch(/[Rr]etry the call/)
+  })
+
+  for (const [name, set] of [
+    ['expired', (d: any) => void (d.world.permissionClaim = 'expired')],
+    // a request the dashboard no longer knows (another key now, or gone): the same as expired
+    ['not found', (d: any) => void (d.world.permissionClaim = 'notFound')],
+    // the key lapsed while the request waited: the session ended
+    ['the key lapsed', (d: any) => void (d.world.signedOut = 'lapsed')],
+  ] as const) {
+    test(`${name}: told once the session ended, to reconnect it and request the permission again`, async ($, on) => {
+      const { d, band } = await decide($, on, set)
+      expect(await band.find({ key: 'open-permission' })).toBeUndefined()
+      const told = toldModel(d)
+      expect(told).toHaveLength(1)
+      expect(told[0]).toContain('CODE1')
+      expect(told[0]).toContain('expired')
+      expect(told[0]).toContain('plan_connect')
+      expect(told[0]).toContain('request_permission again for team.members.view')
+    })
+  }
+
+  test('a key a person revoked drops the request and tells nothing: the session must stop, not ask again', async ($, on) => {
+    const { d, band } = await decide($, on, d => void (d.world.signedOut = 'revoked'))
+    expect(await band.find({ key: 'open-permission' })).toBeUndefined()
+    expect(toldModel(d)).toEqual([])
+  })
+
+  test('a claim that fails for another reason tells nothing and keeps the request', async ($, on) => {
+    const { d, band } = await decide($, on, d => void (d.world.permissionClaim = 'boom'))
+    expect(await band.find({ key: 'open-permission' })).toBeDefined()
+    expect(toldModel(d)).toEqual([])
+  })
+
+  test('a request told once is never told again, even when it comes back into the list', async ($, on) => {
+    const { d, band } = await decide($, on, d => void (d.world.permissionClaim = 'approved'))
+    expect(toldModel(d)).toHaveLength(1)
+    // the same request back in the list (the model asked again and was answered the same request): its next claim says claimed
+    await $.tool.call(CALL(['team.members.view']))
+    expect(await band.find({ key: 'open-permission' })).toBeDefined()
+    d.world.permissionClaim = 'claimed'
+    await d.clock.advance(PERMISSION_POLL_MS)
+    await d.clock.settle()
+    expect(await band.find({ key: 'open-permission' })).toBeUndefined()
+    expect(toldModel(d)).toHaveLength(1)
   })
 })

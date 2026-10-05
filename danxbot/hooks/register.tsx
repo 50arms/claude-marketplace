@@ -5,7 +5,7 @@ import type { ConnectedPlan, Draft, PermissionRequest, PlanRow, ProblemRow, Refr
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
-import { asApproval, claimPath, claimStatus, livePermissionRequests, permissionRequestOf } from './plan/permission'
+import { asApproval, claimPath, permissionRequestOf, settle } from './plan/permission'
 import { linkCardIds } from './plan/card-links'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
@@ -24,6 +24,8 @@ import {
   NO_LIVE,
   NO_MCP_RETRY_MS,
   PANE,
+  PERMISSION_POLL_MS,
+  PERMISSION_TOLD_MAX,
   PLAN_TITLE,
   POLL_MS,
   SIGNED_IN_TOAST,
@@ -43,7 +45,7 @@ import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
 import { isServerMissing, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
-import { answerNote, connectNote, disconnectNote } from './plan/notes'
+import { answerNote, connectNote, disconnectNote, signInNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
@@ -93,6 +95,11 @@ let ticker: { cancel: () => void } | null = null
 let usageTicker: { cancel: () => void } | null = null
 // DX-4499: the runtime clock's timer, one per session like the refresh timer.
 let runtimeClock: { cancel: () => void } | null = null
+// DX-4530: the fast claim poll, running only while a permission request is open (syncPermissionPoll).
+let permissionTicker: { cancel: () => void } | null = null
+// DX-4530: a fast tick is skipped while the last one's claims are still out (slow answers must not stack claim traffic). A
+// module variable: a reload starts with no claim of its own in flight.
+let permissionTickBusy = false
 // DX-4508: the live child's stream, at most one; a handle, so a module variable (a reload kills the child with the module).
 let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
 // DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
@@ -176,18 +183,64 @@ async function refresh($: any, force = false): Promise<void> {
   }
 }
 
-// DX-4435: a request leaves the list when it expires, or its claim (the key's own route) says it was approved, denied or expired,
-// or the session lost its key. A claim that fails for any other reason leaves it for the next refresh: its expiry ends it anyway.
+// DX-4435 / DX-4530: a request leaves the list once its claim (the key's own route) decides it (settle): granted, denied,
+// expired, unknown to the dashboard, or the session lost its key. A claim that fails for any other reason keeps it for the next
+// poll: a request has no expiry clock of its own. The model is told each decision once, in its chat.
 async function settlePermissionRequests($: any): Promise<void> {
-  const now = await $.clock.now()
-  const open = livePermissionRequests(await read($, permissionRequests), now)
-  const decided = new Set<string>()
-  for (const r of open) {
-    const out = await api($, 'POST', claimPath(r))
-    // a 404 is a request the dashboard no longer knows
-    if (out.status === 404 || isSignedOut(out) || outcomeRevokedBy(out) !== null || (out.ok && claimStatus(out.body) === 'over')) decided.add(r.publicId)
+  const notes = new Map<string, string | null>()
+  for (const r of await read($, permissionRequests)) {
+    const settled = settle(r, await api($, 'POST', claimPath(r)))
+    if (settled.kind === 'drop') notes.set(r.publicId, settled.note)
   }
-  await update($, permissionRequests, cur => livePermissionRequests(cur, now).filter(r => !decided.has(r.publicId)))
+  // only what this run takes out of the list is told by it: a settle running beside it (the fast poll and a refresh) takes
+  // none of the same requests
+  let taken: PermissionRequest[] = []
+  await update($, permissionRequests, cur => {
+    taken = cur.filter(r => notes.has(r.publicId))
+    return cur.filter(r => !notes.has(r.publicId))
+  })
+  for (const r of taken) {
+    const note = notes.get(r.publicId)
+    if (typeof note === 'string' && (await markToldOnce($, r.publicId))) await tellModel($, note)
+  }
+  await syncPermissionPoll($)
+}
+
+// DX-4530: one fast-poll tick; skipped while the last one is still out (permissionTickBusy).
+async function permissionTick($: any): Promise<void> {
+  if (permissionTickBusy) return
+  permissionTickBusy = true
+  try {
+    await settlePermissionRequests($)
+  } finally {
+    permissionTickBusy = false
+  }
+}
+
+// DX-4530: the told-once guard, in $.store so it outlives a reload and a restart (the request list itself may come back, or the
+// model may be answered the same request again): true the first time a request's decision is to be told, false ever after.
+// Marked before the telling, so a telling that fails is toasted (tellModel) and never repeated. The read-then-write is not atomic:
+// two settles marking different ids at once can lose one id, which only matters if that request comes back into the list later.
+// Each telling is exclusive anyway: a settle tells only the requests its own `update` took out of the list.
+const PERMISSION_TOLD_KEY = 'permissionTold'
+
+async function markToldOnce($: any, publicId: string): Promise<boolean> {
+  const seen = await $.store.get(PERMISSION_TOLD_KEY)
+  const told: string[] = Array.isArray(seen) ? seen.filter((id: unknown): id is string => typeof id === 'string') : []
+  if (told.includes(publicId)) return false
+  await $.store.set(PERMISSION_TOLD_KEY, [...told, publicId].slice(-PERMISSION_TOLD_MAX))
+  return true
+}
+
+// DX-4530: the claim is polled every PERMISSION_POLL_MS while a request is open, so the model hears the decision within
+// seconds; the timer stops once none is (the refresh tick's own settle is all that runs then, and it claims nothing).
+async function syncPermissionPoll($: any): Promise<void> {
+  const open = (await read($, permissionRequests)).length > 0
+  if (open && permissionTicker === null) permissionTicker = $.clock.every(PERMISSION_POLL_MS, () => permissionTick($))
+  else if (!open && permissionTicker !== null) {
+    permissionTicker.cancel()
+    permissionTicker = null
+  }
 }
 
 // The model did not make this call, so tell it (it reads this, the person does not). R-4.
@@ -458,7 +511,11 @@ async function signIn($: any): Promise<void> {
       }
       $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
       // signed in (even if the plan was refused): the view reads the truth; a stop leaves the signed-out view as it is
-      if (step.kind !== 'stop') await refresh($, true)
+      if (step.kind !== 'stop') {
+        // DX-4530: the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
+        await tellModel($, signInNote(resume, step.kind === 'done'))
+        await refresh($, true)
+      }
       return
     }
     $.ui.toast(SIGN_IN_TIMEOUT_TOAST)
@@ -576,8 +633,7 @@ async function dismissBand($: any): Promise<void> {
 
 // The band's permission button: the newest open request's page again, with its code (a press is an explicit open).
 async function openNewestPermissionRequest($: any): Promise<void> {
-  const open = livePermissionRequests(await read($, permissionRequests), await $.clock.now())
-  const newest = open.at(-1)
+  const newest = (await read($, permissionRequests)).at(-1)
   if (newest !== undefined) await showApproval($, asApproval(newest), true)
 }
 
@@ -801,6 +857,10 @@ async function onSessionStart($: any, e: any, next: any) {
   ticker = $.clock.every(POLL_MS, () => refresh($))
   usageTicker?.cancel()
   usageTicker = $.clock.every(USAGE_TICK_MS, () => reportUsageNow($))
+  // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
+  permissionTicker?.cancel()
+  permissionTicker = null
+  await syncPermissionPoll($)
   void refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($))
   return next(e)
 }
@@ -819,6 +879,8 @@ async function onSessionEnd($: any, e: any, next: any) {
     usageTicker = null
     runtimeClock?.cancel()
     runtimeClock = null
+    permissionTicker?.cancel()
+    permissionTicker = null
     settleTimer?.cancel()
     settleTimer = null
     stopLive()
@@ -862,6 +924,7 @@ async function onRequestPermission($: any, e: any, next: any) {
   const request = permissionRequestOf(ran.text, e.permissions)
   if (request === null) return ran
   await update($, permissionRequests, cur => [...cur.filter(r => r.publicId !== request.publicId), request])
+  await syncPermissionPoll($)
   await showApproval($, asApproval(request))
   return ran
 }
@@ -926,7 +989,7 @@ async function drawBand($: any, e: any, next: any) {
     e.surface === 'desktop',
     e.surface === 'desktop',
     await read($, busy),
-    livePermissionRequests(await read($, permissionRequests), await $.clock.now()).length,
+    (await read($, permissionRequests)).length,
     e.props.bodyColumns,
   )
 }
