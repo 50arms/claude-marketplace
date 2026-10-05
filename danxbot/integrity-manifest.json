@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "aeceee773db8c1e7283dab3ac18a2e265d35688d377372ce826453acc56b8c88",
+    ".claude-plugin/plugin.json": "d943bb968d341082c52fe6b6b6d199e945acc176ae78d105f155bb66985aca4c",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -31,7 +31,7 @@
     "hooks/plan/usage.ts": "2d2a369ae237a12722dc42d6ccb33ffc2c6211ef90c9415a8857428e5d223aa5",
     "hooks/plan/words.ts": "63d09986ef840ddab69f5fc3952802d98db57b2e3ea1abe402c3e4e7bfebf060",
     "hooks/register.tsx": "12f1322a96194e158f96363cb47a3876d3cba94f9e1f161b82bb6c910c7373cc",
-    "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
+    "mantra.md": "b55dc5629f60ac05417d133a22a9904727eb9c7808ec09b721e5cc9c96e7bfe6",
     "scripts/activity-report.mjs": "6379ca4a590e48ddc71b82f9ff6ea74620ad8242589c2cc679520d6e9f1d7093",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
     "scripts/bridge-watchdog.mjs": "de04f8030169495ccfc583c96127ceeee9ae699cedd2316d517ea50427a58d77",
