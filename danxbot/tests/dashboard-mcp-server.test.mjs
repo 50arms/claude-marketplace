@@ -95,6 +95,24 @@ describe("the launcher", () => {
     assert.deepEqual(JSON.parse(result.stdout), { url: "https://danxbot.sageus.ai", cred: null, repo: null });
   });
 
+  test("a malformed line on the empty server is answered with a parse error and the server keeps serving", () => {
+    writeMcpJson({ "danx-dashboard": { command: "node" } });
+    const result = run(`{ not json
+${INITIALIZE}
+`);
+    assert.equal(result.status, 0, result.stderr);
+    const [bad, good] = result.stdout.trim().split(String.fromCharCode(10)).map((l) => JSON.parse(l));
+    assert.equal(bad.error.code, -32700);
+    assert.deepEqual(good.result.capabilities, {});
+  });
+
+  test("a missing CLAUDE_PROJECT_DIR exits 1 naming it, with nothing on stdout", () => {
+    const result = run("", { CLAUDE_PROJECT_DIR: "" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /CLAUDE_PROJECT_DIR is not set/);
+    assert.equal(result.stdout, "");
+  });
+
   test("an install failure exits 1 naming the reason on stderr and writes nothing to stdout", () => {
     const result = run("", { CLAUDE_PLUGIN_DATA: "" });
     assert.equal(result.status, 1);

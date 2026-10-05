@@ -28,6 +28,11 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 export const SERVER_NAME = "danx-dashboard";
+// The MCP protocol revision an empty server answers with when the client names none, and its placeholder version.
+const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
+const STANDBY_VERSION = "0.0.0";
+const PARSE_ERROR = -32700;
+const METHOD_NOT_FOUND = -32601;
 
 /** True when `<projectDir>/.mcp.json` declares an `mcpServers["danx-dashboard"]` entry. Unreadable or malformed JSON throws: a half-written file must not silently double the tools. */
 export function projectDeclaresDashboardServer(projectDir) {
@@ -52,22 +57,27 @@ export function standbyReply(message) {
       jsonrpc: "2.0",
       id: message.id,
       result: {
-        protocolVersion: message.params?.protocolVersion ?? "2025-03-26",
+        protocolVersion: message.params?.protocolVersion ?? DEFAULT_PROTOCOL_VERSION,
         capabilities: {},
-        serverInfo: { name: `${SERVER_NAME}-standby`, version: "0.0.0" },
+        serverInfo: { name: `${SERVER_NAME}-standby`, version: STANDBY_VERSION },
         instructions: "This repo's own .mcp.json provides the danx-dashboard server; this plugin copy is idle.",
       },
     };
   }
   if (message.method === "ping") return { jsonrpc: "2.0", id: message.id, result: {} };
-  return { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: `method not found: ${message.method}` } };
+  return { jsonrpc: "2.0", id: message.id, error: { code: METHOD_NOT_FOUND, message: `method not found: ${message.method}` } };
 }
 
 function runStandby() {
   const lines = createInterface({ input: process.stdin });
   lines.on("line", (line) => {
     if (line.trim() === "") return;
-    const reply = standbyReply(JSON.parse(line));
+    let reply;
+    try {
+      reply = standbyReply(JSON.parse(line));
+    } catch {
+      reply = { jsonrpc: "2.0", id: null, error: { code: PARSE_ERROR, message: "parse error: not a JSON-RPC message" } };
+    }
     if (reply !== null) process.stdout.write(`${JSON.stringify(reply)}\n`);
   });
 }
@@ -102,9 +112,14 @@ function runServer() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  // Claude Code sets CLAUDE_PROJECT_DIR for a plugin's MCP server (checked live against claude 2.1.286, where it also
+  // equals the server's cwd), though the manifest reference lists only the plugin root and data dir as exported. No cwd
+  // fallback: a client that stops exporting it fails here, loudly.
+  const projectDir = process.env.CLAUDE_PROJECT_DIR;
+  if (!projectDir) fail("CLAUDE_PROJECT_DIR is not set: Claude Code exports it to a plugin's MCP server, and this launcher needs the project to check its .mcp.json");
   let own;
   try {
-    own = projectDeclaresDashboardServer(process.env.CLAUDE_PROJECT_DIR || process.cwd());
+    own = projectDeclaresDashboardServer(projectDir);
   } catch (err) {
     fail(`could not read the project's .mcp.json: ${err.message}`);
   }

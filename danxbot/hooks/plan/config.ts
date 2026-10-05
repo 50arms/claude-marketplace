@@ -8,7 +8,13 @@ export const PLAN_TITLE = `${BRAND} Plan`
 // DX-4420: the problem icon on the band's count button (a Button label is text only).
 export const PROBLEM_GLYPH = '⚠'
 export const COMMAND = 'danx-plan'
-export const SERVER = 'danx-dashboard'
+// DX-4555: the names the dashboard MCP server answers to, in the order a call tries them: a repo's own `.mcp.json` entry
+// first (it wins, and the plugin's copy then offers no tools), the danxbot plugin's own server second. Verified live with
+// `claude mcp list`: a plugin's server is named `plugin:<plugin>:<server>`. The tool-call listeners and the hooks.json
+// plan_connect matcher are derived from this list (a test holds the matcher to it).
+export const SERVERS = ['danx-dashboard', 'plugin:danxbot:danx-dashboard'] as const
+// A tool's name as the session sees it: `mcp__<server with : as _>__<tool>`.
+export const toolName = (server: string, tool: string) => `mcp__${server.replace(/:/g, '_')}__${tool}`
 export const POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
 // DX-4530: while a permission request is open its claim is polled this often (POLL_MS otherwise), so the model hears the
