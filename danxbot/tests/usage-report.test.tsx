@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { USAGE_PATH, USAGE_TICK_MS } from '../hooks/plan/config'
-import { usageBody } from '../hooks/plan/usage'
+import { SUBAGENT_LIVE_MAX_MS, liveAgentsAt, usageBody } from '../hooks/plan/usage'
 import { CLOCK_START, dashboard, startSession } from './plan-kit'
 
 const FIVE = '2026-10-03T11:10:00.000Z'
@@ -27,12 +27,22 @@ async function measuredSession($: any, on: any, options: Parameters<typeof dashb
   on('session.measure', () => ({ changed: ['rateLimits'] }) as any)
   on('session.end', () => ({ sessionId: 's1' }) as any)
   on('turn.complete', () => ({ text: 'done' }) as any)
+  on('classic.SubagentStart', () => ({}) as any)
   on('classic.SubagentStop', () => ({}) as any)
   await startSession($, d, 'desktop')
   await $.session.measure(MEASURE)
   await d.clock.settle()
   return d
 }
+
+describe('liveAgentsAt', () => {
+  test('keeps a sub-agent started less than the bound ago and drops one at or past it', () => {
+    const agents = [{ id: 'old', since: 0 }, { id: 'new', since: 1_000 }]
+    expect(liveAgentsAt(agents, SUBAGENT_LIVE_MAX_MS - 1).map(a => a.id)).toEqual(['old', 'new'])
+    expect(liveAgentsAt(agents, SUBAGENT_LIVE_MAX_MS).map(a => a.id)).toEqual(['new'])
+    expect(liveAgentsAt(agents, SUBAGENT_LIVE_MAX_MS + 1_000)).toEqual([])
+  })
+})
 
 describe('usageBody (the report as danxbot takes it)', () => {
   const NOW = CLOCK_START
@@ -166,6 +176,81 @@ describe('the report', () => {
     const before = reports(d).length
     await d.clock.advance(USAGE_TICK_MS * 3)
     expect(reports(d)).toHaveLength(before)
+  })
+})
+
+const start = ($: any, id: string) => $.classic.SubagentStart({ agent_id: id, agent_type: 'danxbot:worker-sonnet-high' })
+const stop = ($: any, id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: 'danxbot:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
+
+describe('the running agents', () => {
+  async function session($: any, on: any) {
+    return measuredSession($, on)
+  }
+
+  test('are the main thread plus the live sub-agents, following their starts and stops', async ($, on) => {
+    const d = await session($, on)
+    expect(reports(d).at(-1).body.runningAgents).toBe(1)
+    await start($, 'a1')
+    await start($, 'a2')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(3)
+    await stop($, 'a1')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(2)
+    await stop($, 'a2')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(1)
+  })
+
+  test('a stop with no matching start, or a second stop, never takes the count below the main thread', async ($, on) => {
+    const d = await session($, on)
+    await stop($, 'never-started')
+    await start($, 'a1')
+    await stop($, 'a1')
+    await stop($, 'a1')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(1)
+  })
+
+  test('a start heard twice counts once', async ($, on) => {
+    const d = await session($, on)
+    await start($, 'a1')
+    await start($, 'a1')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(2)
+  })
+
+  for (const reason of ['clear', 'resume']) {
+    test(`a ${reason} starts the count again: the old conversation's sub-agents are not this one's`, async ($, on) => {
+      const d = await session($, on)
+      await start($, 'a1')
+      await $.session.end({ reason } as any)
+      await d.clock.advance(USAGE_TICK_MS)
+      expect(reports(d).at(-1).body.runningAgents).toBe(1)
+    })
+  }
+
+  test('a start after a stop counts again', async ($, on) => {
+    const d = await session($, on)
+    await start($, 'a1')
+    await stop($, 'a1')
+    await start($, 'a1')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(2)
+  })
+
+  test('a sub-agent that died without a stop is dropped from the count after the bound, while a newer one is kept', async ($, on) => {
+    const d = await session($, on)
+    await start($, 'dead')
+    await d.clock.advance(SUBAGENT_LIVE_MAX_MS - USAGE_TICK_MS)
+    await start($, 'alive')
+    await d.clock.advance(USAGE_TICK_MS)
+    // 'dead' started a full bound ago, 'alive' one tick ago
+    expect(reports(d).at(-1).body.runningAgents).toBe(2)
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(2)
+    await d.clock.advance(SUBAGENT_LIVE_MAX_MS)
+    expect(reports(d).at(-1).body.runningAgents).toBe(1)
   })
 })
 

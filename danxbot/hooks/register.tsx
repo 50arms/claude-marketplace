@@ -52,7 +52,8 @@ import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
 import { shownSubagents } from './plan/subagent-cards'
-import { usageBody } from './plan/usage'
+import { liveAgentsAt, usageBody } from './plan/usage'
+import type { LiveAgent } from './plan/usage'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -84,9 +85,10 @@ const live = atom({ plugin: 'danxbot', key: 'live' } as const, NO_LIVE)
 const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null as string | null)
 // DX-4336: when the last API response arrived (epoch ms), the age of the usage figure; null until the session has seen one.
 const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null as number | null)
-// DX-4336: the ids of the sub-agents running now, from SubagentStart / SubagentStop. A set of ids, not a counter: a stop for an agent that
-// was never counted (a reload lost the start, a duplicate stop) changes nothing, so the count cannot go negative.
-const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as string[])
+// DX-4336: the sub-agents running now (id and start time), from SubagentStart / SubagentStop. Keyed by id, not a counter: a stop for an agent
+// that was never counted (a reload lost the start, a duplicate stop) changes nothing, so the count cannot go negative; an entry older than
+// SUBAGENT_LIVE_MAX_MS (an agent that died with no stop) is no longer counted.
+const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -833,7 +835,8 @@ async function reportUsage($: any, readLimits: () => Promise<readonly SessionRat
     if ((await read($, view)).connected === null) return
     let failure: string | null = null
     try {
-      const body = usageBody(await readLimits(), await $.clock.now(), await read($, measuredAt), (await read($, liveAgents)).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+      const now = await $.clock.now()
+      const body = usageBody(await readLimits(), now, await read($, measuredAt), liveAgentsAt(await read($, liveAgents), now).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
       if (body !== null) {
         const r = await api($, 'PUT', USAGE_PATH, { body })
         if (r.unreachable) return
@@ -983,7 +986,8 @@ function settleSubagents($: any): void {
 
 async function trackAgent($: any, agentId: unknown, isStart: boolean): Promise<void> {
   if (typeof agentId !== 'string' || agentId === '') return
-  await update($, liveAgents, cur => (isStart ? (cur.includes(agentId) ? cur : [...cur, agentId]) : cur.filter(id => id !== agentId)))
+  const now = await $.clock.now()
+  await update($, liveAgents, cur => (isStart ? [...liveAgentsAt(cur, now).filter(a => a.id !== agentId), { id: agentId, since: now }] : cur.filter(a => a.id !== agentId)))
 }
 
 async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {

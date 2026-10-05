@@ -7,6 +7,18 @@ export type UsageWindowBody = { percentUsed: number; resetsAt: string }
 // The report's body: danxbot's parseSessionUsage (src/issues/db/plan-session-usage.ts) refuses any other key.
 export type UsageBody = { reportedAt: string; measuredAt: string; runningAgents: number; accountUuid?: string; fiveHour?: UsageWindowBody; sevenDay?: UsageWindowBody }
 
+// A sub-agent that died without a SubagentStop would stay counted for good, so a live entry older than this is dropped from the count: no
+// sub-agent a session runs is expected to outlive it, and a count that is too high for hours is the worse error (danxbot sums it over an
+// account's sessions to tell how many agents burn it).
+export const SUBAGENT_LIVE_MAX_MS = 3 * 60 * 60 * 1000
+
+export type LiveAgent = { id: string; since: number }
+
+// The sub-agents counted as running at `nowMs`: those started less than SUBAGENT_LIVE_MAX_MS ago.
+export function liveAgentsAt(agents: readonly LiveAgent[], nowMs: number): LiveAgent[] {
+  return agents.filter(a => nowMs - a.since < SUBAGENT_LIVE_MAX_MS)
+}
+
 // The windows the harness names `five_hour` and `seven_day`; a gateway's `spend_limit` is not a rate-limit window and is left out.
 type WindowKind = 'five_hour' | 'seven_day'
 

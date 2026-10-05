@@ -28,9 +28,9 @@
     "hooks/plan/sign-in.ts": "c37913348a5b2343fd65bdce703069dfa20d255a34a65b6bb2c93c23c55d6267",
     "hooks/plan/subagent-cards.tsx": "e21aca5f7ceeb854ba8f0954ebe748ac29246a001310d10368a5b1208e1e10c9",
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
-    "hooks/plan/usage.ts": "cb515b2ed6808d4517fed04c48d96693bf31cf10105375718a698174cef693dc",
+    "hooks/plan/usage.ts": "d0d3152a3010a6ab87ccb16a6532326ad03b39aa91d2b6284d6d984c7942e08c",
     "hooks/plan/words.ts": "63d09986ef840ddab69f5fc3952802d98db57b2e3ea1abe402c3e4e7bfebf060",
-    "hooks/register.tsx": "ec8283aff77aadcd373906cb9af76b1864d0cf08cace319480c29d5b49dde80c",
+    "hooks/register.tsx": "d38ac8a9103b1df14a26065ac131983a36989182e57e050112850e1c5d9ae5aa",
     "mantra.md": "b55dc5629f60ac05417d133a22a9904727eb9c7808ec09b721e5cc9c96e7bfe6",
     "scripts/activity-report.mjs": "f3ec925ab64cb5854792a63fc061f876a6688879db41b7ccbb808f1c5cf7cdcc",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
@@ -56,6 +56,6 @@
     "skills/issue-workflow/references/card-creation-and-reference.md": "5a486a62ceaa4f29b9b6254e7323842ae6ae3564ee49af802d94af0b22445d12",
     "skills/plan-workflow/SKILL.md": "1bfa9fcc14f51dc98c7f95791357ec0fb4d2f831500110ecd8609d9278d59308",
     "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
-    "types/index.d.ts": "2752eda9fdc226741d136d341726ea9af6b09717ddb8140b3e18c7505cf24944"
+    "types/index.d.ts": "c9c5eedcd1adb8f7c3a8fcc06ecfe1bc65ed0cb0c91c33c02132a7be94d54c85"
   }
 }
