@@ -250,9 +250,7 @@ export function dashboard(
     usageEveryMs?: number
     // ... or `$.session.usage()` rejecting with this reason (a host that has no usage reading)
     usageReadFails?: string
-    // DX-4340: what GET /api/pacing/verdicts answers: a body (any shape) or an error status; the dashboard's 404 (unrouted) by default
-    pacing?: { body: unknown } | { status: number }
-    // ... and GET /api/pacing/line (the sub-agent's pacing line)
+    // DX-4340: what GET /api/pacing/line answers (the session's pacing verdict and line): a body (any shape) or an error status; the dashboard's 404 (unrouted) by default
     pacingLine?: { body: unknown } | { status: number }
   } = {},
 ) {
@@ -450,13 +448,6 @@ export function dashboard(
           : {}),
       })
     }
-    if (method === 'GET' && path === '/api/pacing/line' && options.pacingLine !== undefined) {
-      return 'status' in options.pacingLine ? reply({ error: 'line boom' }, options.pacingLine.status) : reply(options.pacingLine.body)
-    }
-    // DX-4340: the pacing verdict read
-    if (method === 'GET' && path === '/api/pacing/verdicts' && options.pacing !== undefined) {
-      return 'status' in options.pacing ? reply({ error: 'pacing boom' }, options.pacing.status) : reply(options.pacing.body)
-    }
     // DX-4336: the usage route as it answers a report (danxbot handleUsage's view)
     if (method === 'PUT' && path === '/api/plan-sessions/me/usage') {
       if (options.usageReply === 'boom') return reply({ error: 'usage boom' }, 500)
@@ -483,7 +474,17 @@ export function dashboard(
     return reply({ error: `unrouted ${method} ${path}` }, 404)
   }
 
+  // DX-4340: the pacing line is read by every session at start and by each spawn: kept out of `calls` and `api` so the suites that count a
+  // load's reads stay about their own subject, and answered unknown (pacing off) unless a test gives `pacingLine`
+  const pacingReads: number[] = []
   on('mcp.call', async (_$: any, e: any) => {
+    if (e.server === 'danx-dashboard' && e.tool === 'danxbot_api' && e.args.path === '/api/pacing/line') {
+      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
+      if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      pacingReads.push(pacingReads.length + 1)
+      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
+      return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
+    }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.server === 'danx-dashboard') {
       // a deny reaches the plugin as a rejection that carries the reason
@@ -729,7 +730,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { pacingReads, agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
