@@ -2762,7 +2762,7 @@ describe("the PostToolUse(plan_connect) hook run for real", () => {
   const runHook = (home, toolResponse) =>
     spawnSync(process.execPath, [path.join(here, "..", "scripts", "plan-event-bridge.mjs"), "start"], {
       encoding: "utf8",
-      input: JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", tool_name: "mcp__danx-dashboard__plan_connect", tool_response: toolResponse }),
+      input: JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", tool_name: "mcp__plugin_danxbot_danx-dashboard__plan_connect", tool_response: toolResponse }),
       env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, DANXBOT_PLAN_SESSIONS_HOME: home },
     });
 

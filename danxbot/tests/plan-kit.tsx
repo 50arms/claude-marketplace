@@ -147,8 +147,6 @@ export function dashboard(
     dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky'
-    // DX-4555: which dashboard server name is connected (default the project's own `danx-dashboard`); the other is "no such server"
-    server?: 'danx-dashboard' | 'plugin:danxbot:danx-dashboard'
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
@@ -514,10 +512,9 @@ export function dashboard(
       return { value: 'status' in given ? reply({ error: 'settings boom' }, given.status) : reply(given.body) }
     }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
-    if (e.server === 'danx-dashboard' || e.server === 'plugin:danxbot:danx-dashboard') {
-      if (e.server !== (options.server ?? 'danx-dashboard')) return { deny: `$.mcp.call: no connected MCP tool "${e.tool}" on a server named "${e.server}"` }
+    if (e.server === 'plugin:danxbot:danx-dashboard') {
       // a deny reaches the plugin as a rejection that carries the reason
-      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "danx-dashboard"' }
+      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       const haltText = () => (world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT)
       // a revoked key stops EVERY tool, plan_connect included, and asks for nothing

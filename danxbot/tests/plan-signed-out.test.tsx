@@ -23,7 +23,7 @@ const previewStarts = (d: any) => d.calls.filter((c: any) => c.server === 'Claud
 const pageOpens = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && (c.tool === 'preview_start' || c.tool === 'navigate'))
 const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
 // the model's own plan_connect call, answering the same approval request the dashboard's world gives the Sign in press
-const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
+const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 const answer = (value: unknown, isError = false) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError })
 
 describe('classification: the signed-out answer is its own state, not an error', () => {
@@ -288,7 +288,7 @@ for (const surface of SURFACES) {
       expect(d.toasts.at(-1)).toMatch(/Could not open the approval page \(\w+: .+\)/)
       // the model's own plan_connect for the same request: the guard was cleared by the failure, so it opens again
       d.setBrowser('ok')
-      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any)
       await d.clock.settle()
       expect(previewStarts(d)).toHaveLength(2)
     })
@@ -298,11 +298,11 @@ for (const surface of SURFACES) {
       modelConnect(on)
       await startSession($, d, surface)
       d.calls.length = 0
-      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any)
       await d.clock.settle()
       expect(pageOpens(d)).toHaveLength(1)
       d.setBrowser('ok')
-      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any)
       await d.clock.settle()
       expect(pageOpens(d)).toHaveLength(2)
     })
@@ -313,7 +313,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.calls.length = 0
-      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any)
       await d.clock.settle()
       expect(pageOpens(d)).toHaveLength(1)
       await band.press({ key: 'sign-in' })

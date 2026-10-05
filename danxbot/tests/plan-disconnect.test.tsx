@@ -117,14 +117,14 @@ for (const surface of SURFACES) {
 
     test('the model disconnecting (tool.call plan_connect) ends with the band showing not connected', async ($, on) => {
       const d = dashboard(on)
-      on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => {
+      on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => {
         d.world.planId = null
         return { result: {}, text: 'disconnected', isError: false } as any
       })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
-      await $.tool.call({ tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23, disconnect: true } as any)
+      await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23, disconnect: true } as any)
       await d.clock.settle()
       expect(await text(band)).toContain('Danxbot: not connected to a plan')
     })

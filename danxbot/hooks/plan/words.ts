@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, NO_MCP_FOOTER, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, keyRevokedLabel } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, keyRevokedLabel } from './config'
 
 // The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
 export const WORDS = {
@@ -143,7 +143,6 @@ export function problemSplit(v: PlanView): { questions: number; actions: number 
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading') return null
   // DX-4547: never blank without the MCP server.
-  if (v.phase === 'no-mcp') return NO_MCP_FOOTER
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   if (v.phase === 'key-revoked') return KEY_REVOKED_FOOTER
   return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND

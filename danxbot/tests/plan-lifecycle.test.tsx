@@ -2,7 +2,7 @@
 // connects, the plan-list cap, and one write per answer however many presses land together.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LOCK_STALE_MS, NO_MCP_RETRY_MS, SERVERS } from '../hooks/plan/config'
+import { LOCK_STALE_MS, SERVER, START_RETRY_MS } from '../hooks/plan/config'
 import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -65,29 +65,28 @@ describe('session.end by reason', () => {
 })
 
 describe('the MCP server connects after session start', () => {
-  test('a no-mcp first load is retried on a backoff and shows the plan once the server is there', async ($, on) => {
+  test('a failed first load is retried on a backoff and shows the plan once the server is there', async ($, on) => {
     const d = dashboard(on, { mcp: 'down' })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await text(band)).toContain('not available in this session')
+    expect(await text(band)).toContain('Disconnected')
     d.setMcp('up')
     await d.clock.advance(2_000)
     expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
   })
 
-  test('the retries are bounded: one more load per wait, then the view settles on no-mcp', async ($, on) => {
+  test('the retries are bounded: one more load per wait, then the view settles on the error', async ($, on) => {
     const d = dashboard(on, { mcp: 'down' })
     await startSession($, d, 'desktop')
-    // DX-4555: one attempt tries every server name in turn, so an attempt is one call to the first name
-    const apiCalls = () => d.calls.filter(c => c.tool === 'danxbot_api' && c.server === SERVERS[0]).length
+    const apiCalls = () => d.calls.filter(c => c.tool === 'danxbot_api' && c.server === SERVER).length
     expect(apiCalls()).toBe(1)
     // each wait is advanced on its own, so no 60 s timer tick can land inside the sequence
-    for (const wait of NO_MCP_RETRY_MS) await d.clock.advance(wait)
-    expect(apiCalls()).toBe(1 + NO_MCP_RETRY_MS.length)
+    for (const wait of START_RETRY_MS) await d.clock.advance(wait)
+    expect(apiCalls()).toBe(1 + START_RETRY_MS.length)
     await d.clock.advance(30_000)
-    expect(apiCalls()).toBe(1 + NO_MCP_RETRY_MS.length)
+    expect(apiCalls()).toBe(1 + START_RETRY_MS.length)
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await text(band)).toContain('not available in this session')
+    expect(await text(band)).toContain('Disconnected')
   })
 
   test('a server that is up needs no retry', async ($, on) => {

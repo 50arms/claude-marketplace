@@ -14,7 +14,7 @@ const pending = JSON.stringify({ state: 'approval_pending', approvalUrl: URL_A, 
 const connected = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 23 } } })
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const CALL = { tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23 } as any
+const CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any
 const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 const navigations = (d: any) => browserCalls(d).filter((c: any) => c.tool === 'navigate' || c.tool === 'preview_start')
 
@@ -25,7 +25,7 @@ const stillPending = (d: any) => void (d.world.signIn.answer = { text: pending, 
 // The tool answers `text` the way the host reports an MCP result.
 function answering(on: any, texts: string[]) {
   let i = 0
-  on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ result: {}, text: texts[Math.min(i++, texts.length - 1)], isError: false }) as any)
+  on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ result: {}, text: texts[Math.min(i++, texts.length - 1)], isError: false }) as any)
 }
 
 describe('approvalRequestOf', () => {
@@ -62,7 +62,7 @@ describe('plan_connect while signed out', () => {
     const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
     stillPending(d)
     const text = required(URL_A)
-    on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ ref: 7, result: { content: [{ type: 'text', text }] }, text }) as any)
+    on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ ref: 7, result: { content: [{ type: 'text', text }] }, text }) as any)
     await startSession($, d, 'desktop')
     d.calls.length = 0
     const ran = await $.tool.call(CALL)
@@ -190,7 +190,7 @@ describe('plan_connect while signed out', () => {
 
   test('a denied call opens nothing', async ($, on) => {
     const d = dashboard(on, { tabs: ['tab-1'] })
-    on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ deny: 'plan_connect is not available' }) as any)
+    on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ deny: 'plan_connect is not available' }) as any)
     await startSession($, d, 'desktop')
     d.calls.length = 0
     await $.tool.call(CALL)

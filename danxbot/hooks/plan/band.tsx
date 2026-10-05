@@ -1,5 +1,5 @@
 import type { PlanView } from '../../types'
-import { DANGER, FALLBACK_ORIGIN, NO_MCP_DETAIL, NO_MCP_LABEL, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
+import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { permissionBadge } from './permission'
@@ -18,7 +18,6 @@ const BROWSER_TAB_LABEL = 'Browser tab'
 
 // The band above the prompt: the plan line (indicator, label, then Panel / the open-problem count (DX-4420) / Browser tab / Open and a
 // close control hugging the right edge, the label truncating first).
-// With no danx-dashboard MCP server in the session (DX-4547) it says so, with the next step, Panel, both links and close.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text). `hasBrowser`: it has the
 // in-app browser (also the desktop today, but a different fact).
 export function renderBand(
@@ -47,36 +46,6 @@ export function renderBand(
       {CLOSE_LABEL}
     </Button>
   )
-  if (v.phase === 'no-mcp') {
-    // DX-4547: never blank: what is wrong, the next step, and both browser links on the remembered origin (else the default).
-    const url = plansUrl(v.dashboardUrl ?? FALLBACK_ORIGIN)
-    return (
-      <Box key="band-line" flexDirection="row" gap={1}>
-        <Box flexShrink={1} flexDirection="column">
-          <Text color={WARNING} wrap="truncate-end">
-            {NO_MCP_LABEL}
-          </Text>
-          {/* DX-4547: wraps (never truncates): the next step is the end of the sentence and must stay readable. */}
-          <Text dimColor wrap="wrap">
-            {NO_MCP_DETAIL}
-          </Text>
-        </Box>
-        <Box flexGrow={1} />
-        <Box flexDirection="row" gap={1} flexShrink={0}>
-          {pacingBand(E, pacing)}
-          {openPane}
-          {hasBrowser && (
-            <Button key="open-tab" onPress={() => hd.openBrowserTab(url)}>
-              {busyKey.isOpeningBrowser(busy) ? 'Opening…' : BROWSER_TAB_LABEL}
-            </Button>
-          )}
-          <Link href={url} label={OPEN_LINK_LABEL} />
-          {close}
-        </Box>
-      </Box>
-    )
-  }
-
   const plan = v.connected
   // DX-4420: a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
   const badge = v.phase === 'error' ? '' : problemBadge(v)
