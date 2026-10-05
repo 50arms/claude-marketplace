@@ -273,6 +273,8 @@ declare module 'claude-code' {
       usageError: string | null
       // DX-4336: when the last API response arrived (epoch ms): the age of the usage figure. null until one has.
       measuredAt: number | null
+      // DX-4336: the ids of the sub-agents running now (the report's runningAgents is this plus the main thread).
+      liveAgents: string[]
     }
   }
 }

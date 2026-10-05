@@ -5,7 +5,7 @@ import type { SessionRateLimit } from 'claude-code'
 
 export type UsageWindowBody = { percentUsed: number; resetsAt: string }
 // The report's body: danxbot's parseSessionUsage (src/issues/db/plan-session-usage.ts) refuses any other key.
-export type UsageBody = { reportedAt: string; measuredAt: string; accountUuid?: string; fiveHour?: UsageWindowBody; sevenDay?: UsageWindowBody }
+export type UsageBody = { reportedAt: string; measuredAt: string; runningAgents: number; accountUuid?: string; fiveHour?: UsageWindowBody; sevenDay?: UsageWindowBody }
 
 // The windows the harness names `five_hour` and `seven_day`; a gateway's `spend_limit` is not a rate-limit window and is left out.
 type WindowKind = 'five_hour' | 'seven_day'
@@ -23,8 +23,9 @@ function windowOf(limits: readonly SessionRateLimit[], kind: WindowKind): UsageW
 // until a response has been seen (`measuredAtMs` null) there is no figure whose age could be told. `measuredAtMs` is when the last API
 // response the figure came from arrived (CAV-6): only a response advances it, never the tick that re-sends an idle session's frozen
 // figure, so danxbot can tell the session that is working from the one that is only ticking. `accountUuid` is
-// CLAUDE_CODE_ACCOUNT_UUID, set only by a desktop-hosted session.
-export function usageBody(limits: readonly SessionRateLimit[], nowMs: number, measuredAtMs: number | null, accountUuid: string | undefined): UsageBody | null {
+// CLAUDE_CODE_ACCOUNT_UUID, set only by a desktop-hosted session. `liveSubAgents` are the sub-agents running now; the session itself is
+// one more agent (its main thread), so `runningAgents` is never below 1, and danxbot sums it over an account's sessions.
+export function usageBody(limits: readonly SessionRateLimit[], nowMs: number, measuredAtMs: number | null, liveSubAgents: number, accountUuid: string | undefined): UsageBody | null {
   if (measuredAtMs === null) return null
   const fiveHour = windowOf(limits, 'five_hour')
   const sevenDay = windowOf(limits, 'seven_day')
@@ -33,6 +34,7 @@ export function usageBody(limits: readonly SessionRateLimit[], nowMs: number, me
     reportedAt: new Date(nowMs).toISOString(),
     // a response cannot have arrived after this report is sent
     measuredAt: new Date(Math.min(measuredAtMs, nowMs)).toISOString(),
+    runningAgents: 1 + liveSubAgents,
     ...(accountUuid === undefined || accountUuid === '' ? {} : { accountUuid }),
     ...(fiveHour === null ? {} : { fiveHour }),
     ...(sevenDay === null ? {} : { sevenDay }),

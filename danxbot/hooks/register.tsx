@@ -84,6 +84,9 @@ const live = atom({ plugin: 'danxbot', key: 'live' } as const, NO_LIVE)
 const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null as string | null)
 // DX-4336: when the last API response arrived (epoch ms), the age of the usage figure; null until the session has seen one.
 const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null as number | null)
+// DX-4336: the ids of the sub-agents running now, from SubagentStart / SubagentStop. A set of ids, not a counter: a stop for an agent that
+// was never counted (a reload lost the start, a duplicate stop) changes nothing, so the count cannot go negative.
+const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as string[])
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -830,7 +833,7 @@ async function reportUsage($: any, readLimits: () => Promise<readonly SessionRat
     if ((await read($, view)).connected === null) return
     let failure: string | null = null
     try {
-      const body = usageBody(await readLimits(), await $.clock.now(), await read($, measuredAt), await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+      const body = usageBody(await readLimits(), await $.clock.now(), await read($, measuredAt), (await read($, liveAgents)).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
       if (body !== null) {
         const r = await api($, 'PUT', USAGE_PATH, { body })
         if (r.unreachable) return
@@ -920,6 +923,7 @@ async function onSessionEnd($: any, e: any, next: any) {
   } else if (e.reason === 'clear' || e.reason === 'resume') {
     // DX-4508: another conversation: its sub-agents and transcript are not this one's
     stopLive()
+    await update($, liveAgents, () => [])
     await update($, live, () => NO_LIVE)
     await update($, transcript, () => null)
     // a fresh conversation (or another session taking this one's place) in the same process: what
@@ -977,10 +981,16 @@ function settleSubagents($: any): void {
   })
 }
 
+async function trackAgent($: any, agentId: unknown, isStart: boolean): Promise<void> {
+  if (typeof agentId !== 'string' || agentId === '') return
+  await update($, liveAgents, cur => (isStart ? (cur.includes(agentId) ? cur : [...cur, agentId]) : cur.filter(id => id !== agentId)))
+}
+
 async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   await noteTranscript($, e)
   const r = await next(e)
-  // DX-4336: a finished sub-agent's last response moved the parent's figure
+  // DX-4336: the running-agent count follows the sub-agents' starts and stops; a finished one's last response also moved the parent's figure
+  await trackAgent($, e.agent_id, isStart)
   if (!isStart) await markMeasured($)
   void refresh($)
   // only a session connected to a plan has a Sub-agents section to settle

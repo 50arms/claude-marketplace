@@ -39,37 +39,43 @@ describe('usageBody (the report as danxbot takes it)', () => {
   const MEASURED = CLOCK_START - 90_000
 
   test('carries each window with its reset time, when it was sent and when the figure was measured', () => {
-    expect(usageBody(WINDOWS, NOW, MEASURED, undefined)).toEqual({
+    expect(usageBody(WINDOWS, NOW, MEASURED, 0, undefined)).toEqual({
       reportedAt: iso(NOW),
       measuredAt: iso(MEASURED),
+      runningAgents: 1,
       fiveHour: { percentUsed: 22, resetsAt: FIVE },
       sevenDay: { percentUsed: 61, resetsAt: WEEK },
     })
   })
 
   test('reports nothing until a response has been seen: a figure with no age cannot be ranked', () => {
-    expect(usageBody(WINDOWS, NOW, null, undefined)).toBeNull()
+    expect(usageBody(WINDOWS, NOW, null, 0, undefined)).toBeNull()
+  })
+
+  test('counts the main thread and every live sub-agent as the agents running', () => {
+    expect(usageBody(WINDOWS, NOW, MEASURED, 0, undefined)?.runningAgents).toBe(1)
+    expect(usageBody(WINDOWS, NOW, MEASURED, 3, undefined)?.runningAgents).toBe(4)
   })
 
   test('never claims a measurement after the send', () => {
-    expect(usageBody(WINDOWS, NOW, NOW + 5_000, undefined)?.measuredAt).toBe(iso(NOW))
+    expect(usageBody(WINDOWS, NOW, NOW + 5_000, 0, undefined)?.measuredAt).toBe(iso(NOW))
   })
 
   test('normalizes a reset time the harness wrote with an offset to UTC', () => {
-    expect(usageBody([{ kind: 'five_hour', percentUsed: 5, resetsAt: '2026-10-03T13:10:00+02:00' }], NOW, MEASURED, undefined)?.fiveHour?.resetsAt).toBe(FIVE)
+    expect(usageBody([{ kind: 'five_hour', percentUsed: 5, resetsAt: '2026-10-03T13:10:00+02:00' }], NOW, MEASURED, 0, undefined)?.fiveHour?.resetsAt).toBe(FIVE)
   })
 
   test('adds the account uuid only when the host set one', () => {
-    expect(usageBody(WINDOWS, NOW, MEASURED, 'ab12-cd34')?.accountUuid).toBe('ab12-cd34')
-    expect(usageBody(WINDOWS, NOW, MEASURED, '')).not.toHaveProperty('accountUuid')
-    expect(usageBody(WINDOWS, NOW, MEASURED, undefined)).not.toHaveProperty('accountUuid')
+    expect(usageBody(WINDOWS, NOW, MEASURED, 0, 'ab12-cd34')?.accountUuid).toBe('ab12-cd34')
+    expect(usageBody(WINDOWS, NOW, MEASURED, 0, '')).not.toHaveProperty('accountUuid')
+    expect(usageBody(WINDOWS, NOW, MEASURED, 0, undefined)).not.toHaveProperty('accountUuid')
   })
 
   test('leaves out a window with no reset time, a spend limit and an unreadable time; reports nothing when none is left', () => {
-    expect(usageBody([{ kind: 'five_hour', percentUsed: 5 }, WINDOWS[1]!], NOW, MEASURED, undefined)).not.toHaveProperty('fiveHour')
-    expect(usageBody([{ kind: 'spend_limit', percentUsed: 120, resetsAt: FIVE }], NOW, MEASURED, undefined)).toBeNull()
-    expect(usageBody([{ kind: 'five_hour', percentUsed: 5, resetsAt: 'tomorrow' }], NOW, MEASURED, undefined)).toBeNull()
-    expect(usageBody([], NOW, MEASURED, undefined)).toBeNull()
+    expect(usageBody([{ kind: 'five_hour', percentUsed: 5 }, WINDOWS[1]!], NOW, MEASURED, 0, undefined)).not.toHaveProperty('fiveHour')
+    expect(usageBody([{ kind: 'spend_limit', percentUsed: 120, resetsAt: FIVE }], NOW, MEASURED, 0, undefined)).toBeNull()
+    expect(usageBody([{ kind: 'five_hour', percentUsed: 5, resetsAt: 'tomorrow' }], NOW, MEASURED, 0, undefined)).toBeNull()
+    expect(usageBody([], NOW, MEASURED, 0, undefined)).toBeNull()
   })
 })
 
@@ -80,6 +86,7 @@ describe('the report', () => {
     expect(reports(d)[0].body).toEqual({
       reportedAt: iso(CLOCK_START),
       measuredAt: iso(CLOCK_START),
+      runningAgents: 1,
       fiveHour: { percentUsed: 22, resetsAt: FIVE },
       sevenDay: { percentUsed: 61, resetsAt: WEEK },
     })
