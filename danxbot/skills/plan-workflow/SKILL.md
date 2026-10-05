@@ -88,7 +88,10 @@ dashboard's input for the card it names.
 - `commented on problem` → a follow-up, not an answer: reply with a comment on that problem.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
   read it for the full text.
-- `bridge down:` → do the fix it names (usually `plan_connect` again).
+- `N events arrived as the last turn ended: a | b` → events that reached you after your last step: act on each as the same kind of event.
+- `events stopped:` → events are NOT reaching this session: do the fix it names (usually
+  `plan_connect` again). Read the card by hand until it is done.
+- `events delayed:` → the relay is retrying on its own; act only if it never clears.
 
 ## Records
 

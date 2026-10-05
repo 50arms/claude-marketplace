@@ -4,7 +4,8 @@
 import { expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { NOTE_MARKER } from '../hooks/plan/config'
+import { NOTE_MARKER, toolName } from '../hooks/plan/config'
+import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/relay/config'
 
 export const SURFACES = ['terminal', 'desktop'] as const
 
@@ -275,6 +276,8 @@ export function dashboard(
   const stateWrites: { plugin: string; key: string; value: unknown }[] = []
   const commands: string[] = []
   const world = {
+    // the session id the engine answers: another one after a /clear or a resume
+    sessionId: OWN_SESSION.session_id,
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card', updatedAt: '2026-10-03T07:58:30.000Z' }] as { id: string; title: string; updatedAt: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
@@ -483,6 +486,63 @@ export function dashboard(
     return reply({ error: `unrouted ${method} ${path}` }, 404)
   }
 
+  // DX-4233: the danx-dashboard server's `plan_events_wait` as the contract words it (danxbot packages/danx-dashboard-mcp): answers
+  // the records after the call's cursor, RETAINED (an answer is never a drain), or an empty list
+  // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
+  const server = {
+    calls: [] as { plan_id: number; cursor: string | null; timeout_ms: number; transcript_path?: string }[],
+    buffer: [] as { cursor: string; text: string }[],
+    plan: undefined as number | undefined,
+    script: [] as (() => any)[],
+    stopped: undefined as { reason: string; detail: string; fix: string } | undefined,
+    wake: null as (() => void) | null,
+    // a call that finds nothing waits until an event is pushed and never on the fake clock, so a test that moves the clock a long way
+    // (a 30-minute cache, a sub-agent's life) does not also run a 20 s wait per step. A test of the wait itself sets how long it lasts
+    // on the fake clock: the call's own `timeout_ms`, or this many ms.
+    holdMs: undefined as number | 'timeout_ms' | undefined,
+  }
+  async function planEventsWait(args: any) {
+    server.calls.push(args)
+    const scripted = server.script.shift()
+    if (scripted) return scripted()
+    if (server.stopped) return { value: text({ stopped: server.stopped }) }
+    // one plan: a call naming another plan than the last starts clean
+    if (server.plan !== args.plan_id) server.buffer = []
+    server.plan = args.plan_id
+    // one cursor, opaque: what follows the record that carries it. Records are RETAINED (an answer is never a drain), so a cursor the
+    // buffer does not hold (one the test seeded) leaves every record newer than it
+    const ready = () => {
+      if (args.cursor === null) return server.buffer
+      const at = server.buffer.findIndex(r => r.cursor === args.cursor)
+      return at === -1 ? server.buffer : server.buffer.slice(at + 1)
+    }
+    if (ready().length === 0) {
+      const woken = new Promise<void>(resolve => (server.wake = resolve))
+      await (server.holdMs === undefined ? woken : Promise.race([clock.sleep(server.holdMs === 'timeout_ms' ? args.timeout_ms : server.holdMs), woken]))
+      server.wake = null
+    }
+    return { value: text({ events: ready() }) }
+  }
+  // what the plugin handed the session as a prompt (the relayed events only: a test's own prompts are not recorded). `claude plugin test`
+  // has no seam that lets the plugin's own $.session.append succeed, or even see it (see toldModel below): the engine rejects it, so a
+  // turn-in-flight delivery shows as a failed delivery, and what follows a successful append is covered where it is pure (relay/delivery.ts)
+  // and on a live session.
+  const delivered: { text: string }[] = []
+  const deliveryFlags = {
+    submitDrops: undefined as string | undefined,
+    submitRejects: undefined as string | undefined,
+    duringPrompt: undefined as undefined | (() => Promise<void>),
+  }
+  // the engine answers a turn's start with its id
+  on('turn.start', () => ({ turnId: 't1' }) as any)
+  on('prompt.submit', async (_$: any, e: any) => {
+    await deliveryFlags.duringPrompt?.()
+    if (deliveryFlags.submitRejects !== undefined) throw new Error(deliveryFlags.submitRejects)
+    if (deliveryFlags.submitDrops !== undefined) return { drop: deliveryFlags.submitDrops } as any
+    if (e.text.startsWith(RELAY_MARKER)) delivered.push({ text: e.text })
+    return { text: e.text } as any
+  })
+
   // DX-4340: the pacing line is read by every session at start and by each spawn: kept out of `calls` and `api` so the suites that count a
   // load's reads stay about their own subject, and answered unknown (pacing off) unless a test gives `pacingLine`
   const notConnected = () => options.mcp === 'down' || options.mcp === 'stale'
@@ -551,6 +611,7 @@ export function dashboard(
         }
         return { value: text(APPROVAL_PENDING) }
       }
+      if (e.tool === 'plan_events_wait') return planEventsWait(e.args)
       if (e.tool === 'plan_connect' && e.args.disconnect) {
         if (options.disconnect === 'rejected') return { deny: 'plan_connect is not available' }
         if (options.disconnectTakesMs) await clock.sleep(options.disconnectTakesMs)
@@ -676,11 +737,24 @@ export function dashboard(
   const flags = { viewWriteFails: false, refusedViewWrites: 0 }
   // DX-4586: a sub-agent whose stored start time is made older by the given ms as it is written, so a test reaches the 3 h bound with no 3 h of clock
   const aged = new Map<string, number>()
+  let seededUnseen: string[] | undefined
+  let seededRelay: { phase: string; planId: number | null; detail: string | null } | undefined
   on('state.set', async (_$: any, e: any, next: any) => {
     // a write of the plugin's view that the host refuses: the one way a refresh can throw past its own catch
     if (flags.viewWriteFails && e.key === 'view') {
       flags.refusedViewWrites++
       return { deny: 'view write refused' } as any
+    }
+    // DX-4233: the next write of a turn in flight carries these rows as the ones its model requests have not read yet (a row the plugin
+    // appends can never succeed under `claude plugin test`, so the state it would leave is seeded)
+    // DX-4233: the next write of the relay's state is this one instead (a state left behind by a run on another plan)
+    if (e.key === 'relay' && seededRelay !== undefined) {
+      e = { ...e, value: seededRelay }
+      seededRelay = undefined
+    }
+    if (e.key === 'turn' && e.value?.isInFlight === true && seededUnseen !== undefined) {
+      e = { ...e, value: { ...e.value, unseen: seededUnseen } }
+      seededUnseen = undefined
     }
     if (e.key === 'liveAgents' && Array.isArray(e.value)) e = { ...e, value: e.value.map((a: any) => (aged.has(a.id) ? { ...a, since: a.since - aged.get(a.id)! } : a)) }
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
@@ -688,15 +762,21 @@ export function dashboard(
   })
   // DX-4521: the plugin's $.store (what survives the session), one fresh map per fixture
   const stored = new Map<string, unknown>()
+  let storeSetFails: string | undefined
   on('store.get', (_$: any, e: any) => ({ value: stored.get(e.key) }) as any)
-  on('store.set', (_$: any, e: any) => (stored.set(e.key, e.value), { value: undefined }) as any)
+  on('store.set', (_$: any, e: any) => {
+    if (storeSetFails !== undefined && String(e.key).startsWith(RELAY_CURSOR_PREFIX)) return { deny: storeSetFails } as any
+    return (stored.set(e.key, e.value), { value: undefined }) as any
+  })
+  on('store.keys', () => ({ value: [...stored.keys()] }) as any)
+  on('store.delete', (_$: any, e: any) => (stored.delete(e.key), { value: undefined }) as any)
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
   // sub-agents (world.agents).
   const agentLists = { count: 0 }
   // DX-4610: the tools the session lists: the plugin's when its server is connected, the repo's own server's when the plugin's is the old standby
   on('tool.list', () => options.toolList === 'rejects' ? ({ deny: 'tool list unavailable' } as any) : options.toolList === 'both' ? ({ value: [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }, { name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] } as any) : ({ value: options.mcp === 'stale' ? [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }] : notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any)
-  on('session.id', () => ({ value: OWN_SESSION.session_id }) as any)
+  on('session.id', () => ({ value: world.sessionId }) as any)
   on('agent.list', () => {
     agentLists.count++
     return { value: world.agents } as any
@@ -765,7 +845,28 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  const relay = {
+    server,
+    delivered,
+    // the plan_events_wait calls the plugin made
+    calls: server.calls,
+    // events appear on the dashboard: a held wait answers at once
+    push: (...events: { cursor: string; text: string }[]) => {
+      server.buffer.push(...events)
+      server.wake?.()
+    },
+    // the relay's cursor writes to $.store are refused with this reason (a failure that is none of the relay's own)
+    failCursorWrites: (reason: string) => void (storeSetFails = reason),
+    // runs inside the next prompt submit, before it answers: a plan move at the very moment an event is delivered
+    duringPrompt: (fn: () => Promise<void>) => void (deliveryFlags.duringPrompt = fn),
+    dropPrompts: (reason: string) => void (deliveryFlags.submitDrops = reason),
+    rejectPrompts: (reason: string) => void (deliveryFlags.submitRejects = reason),
+    acceptPrompts: () => {
+      deliveryFlags.submitDrops = undefined
+      deliveryFlags.submitRejects = undefined
+    },
+  }
+  return { stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
@@ -836,4 +937,20 @@ export async function problemBadgeOf(ui: any): Promise<string | undefined> {
   const all = [...(await ui.findAll({ type: 'Button' })), ...(await ui.findAll({ type: 'Link' }))]
   const el = all.find((e: any) => String(e.text ?? e.props?.label ?? '').includes('⚠'))
   return el && (el.text ?? el.props.label)
+}
+
+// The model's plan_connect as the host runs it (the engine has no implementation of its own): the dashboard connects the plan the call names,
+// and the call answers. Registered before the test first uses `$`, like every hook.
+export function answerPlanConnect(on: On, d: { world: { planId: number | null } }) {
+  on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => {
+    if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
+    return { result: {}, text: 'connected', isError: false } as any
+  })
+}
+
+// DX-4233: there is no polling timer any more, so a refresh a test used to wait 60 s of the fake clock for is asked for here: the
+// `/danx-plan` command forces one (it also opens the pane), and the load is let to finish.
+export async function forceRefresh($: any, d: Dashboard) {
+  await $.command.run({ command: 'danx-plan' })
+  await d.clock.settle()
 }

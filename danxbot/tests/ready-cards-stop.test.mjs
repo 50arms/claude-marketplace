@@ -199,8 +199,8 @@ describe("ready-cards-stop.mjs: a signed-out or keyless session allows the stop 
   });
 });
 
-describe("ready-cards-stop.mjs: the read runs in the bridge's child environment", () => {
-  test("the session id comes from the payload and the inbox token and socket are stripped", () => {
+describe("ready-cards-stop.mjs: the read runs in the shared child environment (lib/report-support.mjs)", () => {
+  test("the session id comes from the payload and the messaging token and socket are stripped", () => {
     const result = runHook({
       text: readyLine([]),
       extraEnv: { CLAUDE_CODE_MESSAGING_TOKEN: "secret", CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/sock", CLAUDE_CODE_SESSION_ID: "ambient-other" },

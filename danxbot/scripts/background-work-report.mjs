@@ -36,8 +36,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPlanConnected, isValidSessionId } from "./lib/plan-connection.mjs";
 import { requireRecordedSpec, versionFor } from "./lib/dashboard-mcp-package.mjs";
-// The bridge's env builder: strips the session's inbox token/socket from the child env.
-import { childEnv } from "./plan-event-bridge.mjs";
+// The shared env builder: strips the session's messaging token/socket from the child env.
+import { childEnv, writeFileAtomic } from "./lib/report-support.mjs";
 
 export { isValidSessionId, childEnv };
 
@@ -108,7 +108,7 @@ export function ignoredTypesFromSnapshot(backgroundTasks) {
   return ignored;
 }
 
-/** `${CLAUDE_PLUGIN_DATA}/background-work/` — a new state dir, sibling to plan-event-bridge.mjs's own `stateDir()`. */
+/** `${CLAUDE_PLUGIN_DATA}/background-work/` — a new state dir, sibling to activity-report.mjs's `activity/` dir. */
 export function stateDir(env = process.env) {
   if (!env.CLAUDE_PLUGIN_DATA) throw new Error("CLAUDE_PLUGIN_DATA is not set — this script only runs from the danxbot plugin's hooks");
   const dir = path.join(env.CLAUDE_PLUGIN_DATA, "background-work");
@@ -126,13 +126,6 @@ export function sessionPaths(dir, sessionId) {
     state: `${base}.json`,
     heartbeat: `${base}.heartbeat.json`,
   };
-}
-
-/** Write-then-rename: a reader sees the old file or the new one, never a torn write (same idiom as plan-event-bridge.mjs's writeFileAtomic). */
-export function writeFileAtomic(file, text) {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, text);
-  fs.renameSync(tmp, file);
 }
 
 export function readJsonFile(file) {
@@ -184,7 +177,7 @@ export function countFromSnapshot(backgroundTasks) {
  * The command that reports to the dashboard — never through a shell. On
  * Windows `npx` is a `.cmd` shim Node can't spawn directly, so run npm's own
  * JS entry with this node instead; elsewhere `npx` is an executable and is
- * spawned directly. Mirrors plan-event-bridge.mjs's `bridgeCommand`. `spec` is
+ * spawned directly. `spec` is
  * `<name>@<recorded version>` (DX-4321), never a literal here.
  */
 export function reportCommand({ countOrClear, eventAt, spec, platform = process.platform, execPath = process.execPath, exists = fs.existsSync }) {

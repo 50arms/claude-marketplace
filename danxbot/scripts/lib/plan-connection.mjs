@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Is this session connected to a danxbot plan? The ONE answer (PLN-11 R-10: the
 // plugin stays quiet until a plan is connected), shared by event-hook.sh,
-// background-work-report.mjs and the plan event bridge's SessionStart and plan_connect starts (DX-4391).
+// background-work-report.mjs and the plan hooks' connection checks (DX-4391).
 // A successful `plan_connect` makes the
 // danx-dashboard MCP server write `~/.config/danxbot/plan-sessions/<session>.json`
 // (its `session-connection.ts` owns the schema); this only checks the file
@@ -49,8 +49,7 @@ function readStdinJson() {
 /**
  * CLI mode for bash consumers (`event-hook.sh`):
  * reads the hook's stdin JSON, falls back to `CLAUDE_CODE_SESSION_ID` when
- * stdin carries no `session_id` (mirrors `plan-event-bridge.mjs`'s
- * `readHookInput` fallback), and prints exactly `1` or `0` — nothing else,
+ * stdin carries no `session_id` (the same fallback the hooks use), and prints exactly `1` or `0` — nothing else,
  * so `$(...)` capture in bash needs no parsing.
  */
 function main() {

@@ -4,7 +4,7 @@
 //
 // Functional behavior (stop/subagent-stop/session-start/stop-failure/
 // heartbeat) is tested by importing the mode handlers directly and injecting
-// a fake `spawnFn` — mirroring plan-event-bridge.test.mjs's injected
+// a fake `spawnFn` — mirroring activity-report.test.mjs's injected
 // `spawnRun` — so no test ever shells out to a real `npx` (network, slow,
 // non-deterministic). Only the input-robustness cases that never reach a
 // spawn at all (malformed/empty stdin, an unknown mode) are exercised as a
@@ -39,7 +39,7 @@ import {
   runHeartbeat,
   runHook,
 } from "../scripts/background-work-report.mjs";
-import { childEnv as bridgeChildEnv } from "../scripts/plan-event-bridge.mjs";
+import { childEnv as supportChildEnv } from "../scripts/lib/report-support.mjs";
 import { PKG_NAME, TEST_VERSION, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
 import { REGISTRY_BASE_URL_ENV } from "./fixtures/fake-registry.mjs";
 
@@ -161,7 +161,7 @@ describe("countFromSnapshot — pure logic", () => {
 
 const EVENT_AT = "2026-09-30T00:00:00.000Z";
 
-describe("reportCommand — spawn shape (mirrors plan-event-bridge.mjs's bridgeCommand)", () => {
+describe("reportCommand — spawn shape (mirrors activity-report.mjs's reportCommand)", () => {
   test("non-windows spawns npx directly with the recorded package spec + subcommand + count", () => {
     assert.deepEqual(reportCommand({ countOrClear: "3", eventAt: EVENT_AT, spec: SPEC, platform: "linux" }), {
       command: "npx",
@@ -179,9 +179,9 @@ describe("reportCommand — spawn shape (mirrors plan-event-bridge.mjs's bridgeC
   });
 });
 
-describe("childEnv — reused from plan-event-bridge.mjs (review finding 6)", () => {
-  test("is literally the bridge's own export, not a re-implementation", () => {
-    assert.equal(childEnv, bridgeChildEnv);
+describe("childEnv — the one exported by lib/report-support.mjs (review finding 6)", () => {
+  test("is literally lib/report-support.mjs's export, not a re-implementation", () => {
+    assert.equal(childEnv, supportChildEnv);
   });
   test("sets CLAUDE_CODE_SESSION_ID onto a copy of the given env", () => {
     const base = { FOO: "bar" };

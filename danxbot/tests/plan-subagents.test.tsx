@@ -4,7 +4,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { SUBAGENTS_UNAVAILABLE_LINE, SUBAGENT_ACTIVITY_MAX, SUBAGENT_CARD_BACKGROUND, SUBAGENT_LABEL_MAX, SUBAGENT_STATE_COLOR, SUBAGENT_UNTITLED } from '../hooks/plan/config'
 import { compactCount, dollars, duration, nestSubagents, visibleSubagents } from '../hooks/plan/subagents'
-import { CLOCK_START, DASHBOARD_URL, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, endedSubagent, rawSubagent, startSession } from './plan-kit'
+import { CLOCK_START, DASHBOARD_URL, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, endedSubagent, rawSubagent, startSession, forceRefresh } from './plan-kit'
 
 const pane = (bodyColumns = 100) =>
   ({ component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns, placement: 'dock' } }) as any
@@ -291,7 +291,7 @@ for (const surface of SURFACES) {
       expect(d.stateWrites.filter(w => w.key === 'tick')).toHaveLength(ticks)
     })
 
-    test('a refresh brings a new sub-agent and an ended one disappears from the server: no extra loop, the 60 s tick reads it', async ($, on) => {
+    test('a refresh brings a new sub-agent and an ended one disappears from the server: no extra loop, a reload reads it', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
@@ -299,9 +299,10 @@ for (const surface of SURFACES) {
       d.world.subagents[OWN] = [rawSubagent('a1')]
       const reads = () => d.api.filter(a => a.path === '/api/plan-sessions').length
       const before = reads()
-      await d.clock.advance(59_000)
+      // no polling timer: the clock alone reads nothing
+      await d.clock.advance(60_000)
       expect(reads()).toBe(before)
-      await d.clock.advance(1_000)
+      await forceRefresh($, d)
       expect(reads()).toBe(before + 1)
       expect(await cardKeys(ui)).toEqual(['sa-agent-a1'])
     })
@@ -324,7 +325,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(5_000)
       expect(reads()).toBe(start + 1)
       expect(await cardKeys(ui)).toEqual(['sa-agent-a1'])
-      // nothing repeats on its own before the 60 s tick
+      // nothing repeats on its own: no poll reads the plan, only events, turns and presses do
       await d.clock.advance(20_000)
       expect(reads()).toBe(start + 1)
     })
@@ -431,7 +432,7 @@ for (const surface of SURFACES) {
       expect(await text(ui)).toContain('Showing the most recently active sessions only')
       // one fewer: no note
       d.world.sessions = d.world.sessions.slice(1)
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       expect(await text(ui)).not.toContain('Showing the most recently active sessions only')
     })
 
@@ -462,7 +463,7 @@ for (const surface of SURFACES) {
       expect(await text(ui)).toContain(SUBAGENTS_UNAVAILABLE_LINE)
       d.serveSubagents()
       d.world.subagents[OWN] = [rawSubagent('a1')]
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       expect(await text(ui)).not.toContain(SUBAGENTS_UNAVAILABLE_LINE)
       expect(await cardKeys(ui)).toEqual(['sa-agent-a1'])
     })

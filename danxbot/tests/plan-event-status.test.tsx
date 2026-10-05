@@ -1,9 +1,9 @@
-// DX-4374: the Plan pane's event line, beside the plan connection line: a green dot and `events` while the bridge
-// is `healthy`, the server's state and next step in the warning colour otherwise, never green without a bridge.
+// DX-4374: the Plan pane's event line, beside the plan connection line: a green dot and `events` while the listener
+// is `healthy`, the server's state and next step in the warning colour otherwise, never green without a listener.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NO_EVENT_BRIDGE } from '../hooks/plan/config'
-import { LISTENER_STATES, NEXT_STEP, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { NO_EVENT_STATUS } from '../hooks/plan/config'
+import { LISTENER_STATES, NEXT_STEP, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -32,7 +32,7 @@ for (const surface of SURFACES) {
       expect(all).toContain('● Connected: PLAN-23')
       expect(all.indexOf('● Connected: PLAN-23')).toBeLessThan(all.indexOf('events'))
       expect(all).not.toContain('Next step')
-      expect(all).not.toContain(NO_EVENT_BRIDGE)
+      expect(all).not.toContain(NO_EVENT_STATUS)
     })
 
     for (const state of LISTENER_STATES.filter(s => s !== 'healthy')) {
@@ -64,7 +64,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { listener: null })
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      const line = (await texts(pane)).find((t: any) => t.text === NO_EVENT_BRIDGE)
+      const line = (await texts(pane)).find((t: any) => t.text === NO_EVENT_STATUS)
       expect(line?.props.color).toBe(YELLOW)
       expect(await yellowDots(pane)).toBe(1)
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
@@ -100,7 +100,7 @@ for (const surface of SURFACES) {
         await startSession($, d, surface)
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
         expect(await joined(pane)).toContain('sessionListenerAttached')
-        expect(await joined(pane)).not.toContain(NO_EVENT_BRIDGE)
+        expect(await joined(pane)).not.toContain(NO_EVENT_STATUS)
         expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
         expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
       })
@@ -112,11 +112,11 @@ for (const surface of SURFACES) {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       const all = await joined(pane)
       expect(all).not.toMatch(/events/)
-      expect(all).not.toContain(NO_EVENT_BRIDGE)
+      expect(all).not.toContain(NO_EVENT_STATUS)
       expect(await greens(pane)).toHaveLength(0)
     })
 
-    test('R-2: one load reads the same dashboard paths as before, plus two for the sub-agents (DX-4499); a 60 s tick adds exactly one /api/plans load and updates the line', async ($, on) => {
+    test('R-2: one load reads the same dashboard paths as before, plus two for the sub-agents (DX-4499); a reload adds exactly one /api/plans load and updates the line', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
@@ -126,7 +126,7 @@ for (const surface of SURFACES) {
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeDefined()
       const before = d.api.filter(a => a.path === '/api/plans').length
       d.setListener('unattached')
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(before + 1)
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
       expect(await joined(pane)).toContain(NEXT_STEP('unattached'))

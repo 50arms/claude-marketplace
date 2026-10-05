@@ -1,4 +1,4 @@
-import type { Draft, LiveSubagents, PlanView, StatusBreakdown } from '../../types'
+import type { Draft, LiveSubagents, PlanView, RelayState, StatusBreakdown } from '../../types'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import type { PanelModel } from './pacing-panel'
@@ -6,7 +6,7 @@ import { pacingPane } from './pacing-panel-view'
 import { problemCard } from './problems'
 import { subagentSection } from './subagent-cards'
 import type { Ui } from './problems'
-import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_BRIDGE, PICKER_PLAN_NAME_MAX, RESTART_LINE, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
+import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_STATUS, PICKER_PLAN_NAME_MAX, RESTART_LINE, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
 import { age, bandLabel, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
@@ -27,6 +27,8 @@ export type PaneModel = {
   live: LiveSubagents
   // DX-4339: the usage pacing panel, shown in every state the pane has (the session's usage does not depend on the plan)
   pacing: PanelModel
+  // DX-4233: the plugin's own event relay (see RelayState)
+  relay: RelayState
 }
 
 // DX-4374: one status dot, in the colour that says what it means (green working, yellow warning).
@@ -54,17 +56,31 @@ function progress(E: any, counts: StatusBreakdown, hasSvg: boolean): any {
   )
 }
 
-// DX-4374: the event bridge beside the connection line. Only the exact state `healthy` is the green dot and
+// DX-4374: the event listener beside the connection line. Only the exact state `healthy` is the green dot and
 // `events`; any other state is shown as the server names it, in the warning colour, with its next step
 // verbatim; no status at all says so (never green).
-function eventLine(E: any, v: PlanView): any {
+// DX-4233: the relay is this plugin's own loop, so when it is not streaming its own failure is shown first, in the warning
+// colour with its cause or fix: a relay that retries or stopped is never drawn green, whatever the dashboard last read.
+function eventLine(E: any, v: PlanView, relay: RelayState): any {
   const { Box, Text } = E
+  // the relay's state belongs to the plan it serves: one left over from another plan says nothing about this one
+  if ((relay.phase === 'retrying' || relay.phase === 'stopped') && v.connected !== null && relay.planId === v.connected.id) {
+    return (
+      <Box key="events" flexDirection="column">
+        <Box flexDirection="row" gap={1}>
+          {dot(E, WARNING)}
+          <Text color={WARNING}>events: {relay.phase === 'stopped' ? 'relay stopped' : 'relay retrying'}</Text>
+        </Box>
+        {relay.detail !== null && <Text color={WARNING}>{relay.detail}</Text>}
+      </Box>
+    )
+  }
   const l = v.listener
   if (l === null) {
     return (
       <Box key="events" flexDirection="row" gap={1}>
         {dot(E, WARNING)}
-        <Text color={WARNING}>{NO_EVENT_BRIDGE}</Text>
+        <Text color={WARNING}>{NO_EVENT_STATUS}</Text>
       </Box>
     )
   }
@@ -188,7 +204,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         <Text color={SUCCESS}>● Connected: {plan.ref}</Text>
         <Text>{plan.name}</Text>
         <Text dimColor>{plan.status}</Text>
-        {eventLine(E, v)}
+        {eventLine(E, v, m.relay)}
       </Box>
       {/* a connected view always has its breakdown (loadPlan errors without one); the guard only narrows the type */}
       {v.statusBreakdown && progress(E, v.statusBreakdown, m.hasSvg)}

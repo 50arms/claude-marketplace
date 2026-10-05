@@ -7,7 +7,7 @@ import { loadPlan } from '../hooks/plan/load'
 import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
-import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
+import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
@@ -191,7 +191,7 @@ for (const surface of SURFACES) {
     test('the plugin never calls plan_connect for a revoked session, however long it polls', async ($, on) => {
       const d = dashboard(on, { signedOut: 'revoked' })
       await startSession($, d, surface)
-      for (let i = 0; i < 5; i++) await d.clock.advance(60_000)
+      for (let i = 0; i < 5; i++) await forceRefresh($, d)
       expect(connectCalls(d)).toEqual([])
     })
 
@@ -201,7 +201,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await texts(band)).toContain('Danxbot: signed out')
       d.world.signedOut = 'revoked'
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       expect(await texts(band)).toContain('Danxbot: access revoked by dana')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
     })
@@ -245,7 +245,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.world.signedOut = 'lapsed'
       // three polls while signed out: the plan it was on is still remembered after the first
-      for (let i = 0; i < 3; i++) await d.clock.advance(60_000)
+      for (let i = 0; i < 3; i++) await forceRefresh($, d)
       expect(await texts(band)).toContain('Danxbot: signed out')
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
@@ -265,10 +265,10 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       d.failList()
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       d.failList(false)
       d.world.signedOut = 'lapsed'
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
@@ -398,7 +398,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       // on PLAN-23, the key lapses: Sign in asks for plan 23 again
       d.world.signedOut = 'lapsed'
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       d.world.signIn.answer = { text: JSON.stringify({ ok: false, status: 409, body: { error: 'plan_archived', message: 'PLAN-23 is archived.' } }) }
       await band.press({ key: 'sign-in' })
       await d.clock.settle()

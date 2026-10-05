@@ -1,8 +1,7 @@
 // DX-3673 / DX-4321 — the registry's CURRENT `@thehammer/danx-dashboard-mcp` version
 // (`latest`, the one the plugin records and runs at every session start,
 // danxbot/scripts/lib/dashboard-mcp-package.mjs) must actually support every
-// subcommand this plugin's scripts invoke on it: `bridge` (plan-event-bridge.mjs),
-// `background-work` (background-work-report.mjs), `activity` (activity-report.mjs, DX-3284), `event-text` (event-hook.sh) and
+// subcommand this plugin's scripts invoke on it: `background-work` (background-work-report.mjs), `activity` (activity-report.mjs, DX-3284), `event-text` (event-hook.sh) and
 // `subagents-live` (subagents-live.mjs, the plan pane's live reader, DX-4508).
 // The plugin has no version to fall behind any more (DX-4321), so the failure this guards is the
 // other direction: a danxbot publish that REMOVES a subcommand the plugin still calls now
@@ -18,7 +17,7 @@
 // plugin's own source still invokes is in that list.
 //
 // Unlike every other test in this directory (background-work-report.test.mjs,
-// plan-event-bridge.test.mjs, event-hook.test.mjs, which use a fake registry), this one
+// event-hook.test.mjs, which use a fake registry), this one
 // intentionally does NOT mock the registry or spawn: a mock can never catch a real drift
 // between the plugin and what the registry actually publishes, which is the one thing this
 // guard exists to catch. Network + registry-cache dependent by design; slower than this
@@ -31,7 +30,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveLatestVersion, specOf } from "../scripts/lib/dashboard-mcp-package.mjs";
-import { BRIDGE_SUBCOMMAND } from "../scripts/plan-event-bridge.mjs";
 import { reportCommand } from "../scripts/background-work-report.mjs";
 import { ACTIVITY_SUBCOMMAND } from "../scripts/activity-report.mjs";
 import { LIVE_SUBCOMMAND } from "../scripts/subagents-live.mjs";
@@ -68,7 +66,7 @@ test(
   { timeout: NPX_TIMEOUT_MS + 10_000 },
   async () => {
     const spec = await currentSpec();
-    const required = [BRIDGE_SUBCOMMAND, backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, eventTextSubcommandFromSource(), RESTART_NOTICE_SUBCOMMAND, LIVE_SUBCOMMAND];
+    const required = [backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, eventTextSubcommandFromSource(), RESTART_NOTICE_SUBCOMMAND, LIVE_SUBCOMMAND];
 
     // An unknown subcommand makes the real published `dist/index.js` refuse with its
     // own "the only ones are ..." message, which names every subcommand the current

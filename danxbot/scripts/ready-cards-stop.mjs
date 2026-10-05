@@ -38,7 +38,7 @@ import { fileURLToPath } from "node:url";
 import { readStdinText } from "./lib/hook-input.mjs";
 import { isPlanConnected, isValidSessionId } from "./lib/plan-connection.mjs";
 import { ensureInstalled } from "./activity-report.mjs";
-import { childEnv } from "./plan-event-bridge.mjs";
+import { childEnv } from "./lib/report-support.mjs";
 
 /** Cards named in the block reason; the rest are counted, not listed. */
 export const MAX_LISTED_CARDS = 5;

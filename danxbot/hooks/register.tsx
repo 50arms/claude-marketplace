@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, Draft, PanelState, PermissionRequest, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
+import type { ConnectedPlan, Draft, PanelState, PermissionRequest, PlanRow, ProblemRow, RefreshGate, RelayState, SolutionRow, StepRow, TurnState } from '../types'
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
@@ -27,7 +27,7 @@ import {
   PERMISSION_POLL_MS,
   PERMISSION_TOLD_MAX,
   PLAN_TITLE,
-  POLL_MS,
+  PACING_POLL_MS,
   SIGNED_IN_TOAST,
   keyRevokedLabel,
   SIGN_IN_DENIED_TOAST,
@@ -55,6 +55,12 @@ import { answerNote, connectNote, disconnectNote, signInApprovedNote, signInDeni
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
+import { classifyCallError, readWaitAnswer, waitArgs } from './relay/answer'
+import type { RelayEvent, WaitAnswer } from './relay/answer'
+import { BACKOFF_MS, CURSOR_PREFIX, MIN_ROUND_MS, RELAY_OFF, RELAY_TOOL } from './relay/config'
+import { IDLE, deliveryMode, eventRow, requestSent, rowAppended, turnEnded, turnStarted } from './relay/delivery'
+import { backoffMs, cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
+import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, stoppedLine } from './relay/text'
 import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
@@ -99,6 +105,9 @@ const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null 
 const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
 // DX-4339: what the usage pacing panel draws from: the session's own windows, the team's settings and the account verdict as last read.
 const panel = atom({ plugin: 'danxbot', key: 'panel' } as const, EMPTY_PANEL_STATE as PanelState)
+// DX-4233: the plan event relay's state (the pane's event line), and the main loop's turn (TurnState).
+const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
+const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -106,13 +115,21 @@ const panel = atom({ plugin: 'danxbot', key: 'panel' } as const, EMPTY_PANEL_STA
 // drawing, shaping and constants live in ./plan/* as pure code, and this file hands the
 // drawings their handlers (handlers()).
 
-// The refresh timer: one per session. A module variable is right for a handle (it cannot live in
-// $.state, which holds JSON); a reload cancels the old environment's waits and runs session.start
-// again, which starts a new one.
-let ticker: { cancel: () => void } | null = null
-// DX-4336: the usage report's timer, one per session like the refresh timer.
+// DX-4233: the plan event relay's loop, at most one (a handle, so a module variable: a reload cancels the old environment's
+// waits, ends its loop, and session.start starts the new one). `dead` ends a loop at its next step and makes whatever its pending
+// call answers late be ignored.
+// `told`: the last failure line told to the session by this run (the same text is told once until a wait succeeds): per run, so an ended run
+// can never clear or set what the new run has told.
+type RelayRun = { planId: number; dead: boolean; told: string | null }
+let relayRun: RelayRun | null = null
+// The plan whose relay the server stopped, or that is signed out: it is not started again until something asks (a connect, the
+// model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
+let relayHalted: number | null = null
+// DX-4339: the pacing panel's poll, one per session.
+let pacingTicker: { cancel: () => void } | null = null
+// DX-4336: the usage report's timer, one per session.
 let usageTicker: { cancel: () => void } | null = null
-// DX-4499: the runtime clock's timer, one per session like the refresh timer.
+// DX-4499: the runtime clock's timer, one per session.
 let runtimeClock: { cancel: () => void } | null = null
 // DX-4530: the fast claim poll, running only while a permission request is open (syncPermissionPoll).
 let permissionTicker: { cancel: () => void } | null = null
@@ -202,6 +219,8 @@ async function refresh($: any, force = false): Promise<void> {
         // DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one)
         // for Sign in to ask for again; a loaded view knows its own
         await update($, view, cur => (v.phase === 'ready' ? v : { ...v, resumePlan: cur.connected?.id ?? cur.resumePlan }))
+        // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
+        await syncRelay($)
         await syncRuntimeClock($)
         await syncLive($, false)
       } catch (err: any) {
@@ -283,10 +302,13 @@ async function syncPermissionPoll($: any): Promise<void> {
   }
 }
 
+// A user-role row the model reads and the person does not see typed ($.session.append's argument).
+const modelRow = (text: string) => ({ message: { type: 'user' as const, content: [{ type: 'text' as const, text }] } })
+
 // The model did not make this call, so tell it (it reads this, the person does not). R-4.
 async function tellModel($: any, text: string): Promise<void> {
   try {
-    const r = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
+    const r = await $.session.append(modelRow(text))
     if (r.deny) throw new Error(r.deny)
   } catch (err: any) {
     // The write the operator asked for already happened: say the model was not told, and carry the
@@ -475,6 +497,7 @@ function connect($: any, plan: PlanRow): Promise<void> {
     $.ui.toast(`Connected to ${plan.ref}`)
     await update($, switching, () => false)
     await tellModel($, connectNote(plan))
+    // DX-4233: the refresh starts the relay of the plan connected (syncRelay), a halt of another plan being cleared there
     await refresh($, true)
   })
 }
@@ -1032,13 +1055,238 @@ async function onMeasure($: any, e: any, next: any) {
   return next(e)
 }
 
+// ---- DX-4233: the plan event relay -------------------------------------------------------------------------------------------------
+// The module's own loop on the session's danx-dashboard MCP server's `plan_events_wait` tool (PLAN-23 "Event relay in-process"): the
+// server keeps the dashboard's stream open and answers each call with the events after the cursor (or none, when the wait ends);
+// each event is handed to the session and the cursor of each delivered record stored. Nothing is spawned and no file is written: the
+// loop is this module's code, so it lives as long as the process, through /clear and compaction, and ends with it. The server
+// heartbeats the dashboard only while calls keep coming, so a dead or unloaded module reads as not healthy there.
+
+// Which plan the relay should serve, from the view the last refresh read: null when none (not connected, signed out, no server).
+// A view that failed to load (`error`, `loading`) changes nothing: a read blip must not stop a working relay.
+async function syncRelay($: any): Promise<void> {
+  const v = await read($, view)
+  if (v.phase === 'error' || v.phase === 'loading') return
+  const planId = v.phase === 'ready' ? (v.connected?.id ?? null) : null
+  if (planId === null) {
+    relayHalted = null
+    stopRelay()
+    return
+  }
+  if (relayRun !== null && relayRun.planId === planId) return
+  // a halt belongs to the plan it happened on: any other plan starts a relay of its own
+  if (relayHalted !== null && relayHalted !== planId) relayHalted = null
+  if (relayHalted === planId) return
+  stopRelay()
+  const run: RelayRun = { planId, dead: false, told: null }
+  relayRun = run
+  void settleDetached(relayLoop($, run))
+}
+
+// Ends the loop: its pending call is left to the server (a newer wait supersedes it, or it times out), and everything it answers late is
+// ignored (relay state, cursor and delivery are each gated on `dead`). It leaves the relay state as it was: the pane draws that state
+// only for the plan it belongs to, and the next run of that plan writes its own first.
+function stopRelay(): void {
+  if (relayRun === null) return
+  relayRun.dead = true
+  relayRun = null
+}
+
+// DX-4233: THE gate for what an ended run (a move to another plan, the process's end) may say: its relay state, the halt that follows from
+// it and the line told to the model all come after this write, which does not happen for a dead run (false). The new run owns the state.
+async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detail: string | null): Promise<boolean> {
+  if (run.dead) return false
+  await update($, relay, cur => (cur.phase === phase && cur.detail === detail && cur.planId === run.planId ? cur : { phase, planId: run.planId, detail }))
+  return true
+}
+
+// One failure, shown in the pane's event line and told to the session ONCE (the same text is not told again until a wait succeeds).
+// `stopped` also halts the relay for this plan until something asks for it again (syncRelay).
+async function relayFailed($: any, run: RelayRun, phase: 'retrying' | 'stopped', detail: string, line: string): Promise<void> {
+  if (!(await setRelay($, run, phase, detail))) return
+  if (phase === 'stopped') relayHalted = run.planId
+  if (run.told === line) return
+  run.told = line
+  await tellModel($, line)
+}
+
+async function loadCursor($: any, planId: number): Promise<string | null> {
+  return cursorFor(await $.store.get(cursorKey(await $.session.id())), planId)
+}
+
+// The cursor is stored AFTER the event was delivered, under the session id as it is now (a /clear or a resume changes it).
+// A run that was ended while it delivered (a move to another plan) must not write over the new run's cursor.
+async function saveCursor($: any, run: RelayRun, cursor: string): Promise<void> {
+  if (run.dead) return
+  await $.store.set(cursorKey(await $.session.id()), { planId: run.planId, cursor, at: await $.clock.now() })
+}
+
+// The store keeps one record per session ever held: the oldest past CURSOR_KEEP go.
+async function pruneCursors($: any): Promise<void> {
+  const entries: { key: string; at: number }[] = []
+  for (const key of await $.store.keys()) {
+    if (!key.startsWith(CURSOR_PREFIX)) continue
+    const rec: any = await $.store.get(key)
+    entries.push({ key, at: typeof rec?.at === 'number' ? rec.at : 0 })
+  }
+  for (const key of staleCursorKeys(entries)) await $.store.delete(key)
+}
+
+// A prompt that wakes an idle session (or queues behind the running turn). Null when it entered, else why it did not.
+async function submitEvent($: any, row: string): Promise<string | null> {
+  try {
+    const r = await $.prompt.submit({ text: row })
+    return typeof r?.drop === 'string' ? `the session did not take the event: ${r.drop}` : null
+  } catch (err: any) {
+    return `the session did not take the event: ${errMessage(err)}`
+  }
+}
+
+// A row the model reads in the turn that is running. A refused or throwing append is a failure like any other (no silent fallback to
+// a prompt): the event is not delivered, the cursor does not move, and the loop's backoff asks for it again.
+async function appendRow($: any, row: string): Promise<string | null> {
+  try {
+    const r = await $.session.append(modelRow(row))
+    return typeof r?.deny === 'string' ? `the session did not take the event: ${r.deny}` : null
+  } catch (err: any) {
+    return `the session did not take the event: ${errMessage(err)}`
+  }
+}
+
+// The wake prompt for rows the session will not read on its own (relay/delivery.ts): detached from the hook or delivery that found them,
+// its failure told in a toast.
+async function wakeSession($: any, wake: string): Promise<void> {
+  const failure = await submitEvent($, wake)
+  if (failure !== null) $.ui.toast(`Plan events not told to the session: ${failure}`.slice(0, TOAST_ERROR_MAX))
+}
+
+// One event into the session, the same `[danxbot plan event] ...` text as ever, by the one decision in relay/delivery.ts. A row appended
+// is remembered until the turn's next model request (`turn.step`) has carried it: one still unseen when the turn ends is told again
+// (onTurnComplete), and one appended after the turn already ended is told at once (rowAppended). Null when delivered, else the cause.
+async function deliverEvent($: any, text: string): Promise<string | null> {
+  const row = eventRow(text)
+  if (deliveryMode(await read($, turn)) === 'prompt') return submitEvent($, row)
+  const failure = await appendRow($, row)
+  if (failure !== null) return failure
+  // `wake` is set inside the updater, which sees the turn as it is when the write happens
+  let wake = null as string | null
+  await update($, turn, cur => {
+    const appended = rowAppended(cur, text)
+    wake = appended.wake
+    return appended.turn
+  })
+  if (wake !== null) void settleDetached(wakeSession($, wake))
+  return null
+}
+
+// The records of one answer, in the order the server sent them, each one's cursor stored as the resume cursor once it is delivered (never
+// compared with another: the server decides what comes after a cursor). Stops at the first that cannot be delivered; the server answers
+// everything after the last stored cursor on the next call. A crash between a delivery and its store may repeat that one record, never
+// lose one.
+async function deliverAll($: any, run: RelayRun, events: RelayEvent[], from: string | null): Promise<{ cursor: string | null; delivered: number; failure: string | null }> {
+  let cursor = from
+  let delivered = 0
+  for (const ev of events) {
+    if (run.dead) break
+    const failure = await deliverEvent($, ev.text)
+    if (failure !== null) return { cursor, delivered, failure }
+    delivered++
+    cursor = ev.cursor
+    await saveCursor($, run, cursor)
+  }
+  return { cursor, delivered, failure: null }
+}
+
+async function waitForEvents($: any, planId: number, cursor: string | null): Promise<WaitAnswer> {
+  const path = await read($, transcript)
+  try {
+    return readWaitAnswer(await $.mcp.call(SERVER, RELAY_TOOL, waitArgs(planId, cursor, path)))
+  } catch (err: any) {
+    return classifyCallError(errMessage(err))
+  }
+}
+
+// What one answer to a wait asks of the loop: `again` (the next wait, at once), `retry` (the next wait after the backoff: the answer or its
+// delivery failed) or `end` (signed out, or the server said it cannot go on). `cursor` is the loop's, moved by the events delivered.
+type Handled = { next: 'again' | 'retry' | 'end'; cursor: string | null }
+
+async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: string | null, startedAt: number): Promise<Handled> {
+  if (got.kind === 'events') {
+    const out = await deliverAll($, run, got.events, cursor)
+    // the refresh is detached (DX-4586): the environment going away under it is not a failure
+    if (out.delivered > 0) void settleDetached(refresh($, true))
+    if (out.failure !== null) {
+      await relayFailed($, run, 'retrying', out.failure, delayedLine(out.failure))
+      return { next: 'retry', cursor: out.cursor }
+    }
+    run.told = null
+    await setRelay($, run, 'streaming', null)
+    // a server that answers an empty list at once is not a wait: sleep the rest of the round
+    const took = (await $.clock.now()) - startedAt
+    if (out.delivered === 0 && took < MIN_ROUND_MS) await $.clock.sleep(MIN_ROUND_MS - took)
+    return { next: 'again', cursor: out.cursor }
+  }
+  if (got.kind === 'signed-out') {
+    // the band and the pane already say it (and offer Sign in unless a person revoked the key): nothing more is told
+    if (await setRelay($, run, 'off', null)) relayHalted = run.planId
+    return { next: 'end', cursor }
+  }
+  if (got.kind === 'stopped' || got.kind === 'old-server') {
+    const detail = got.kind === 'stopped' ? got.detail : OLD_SERVER_DETAIL
+    const fix = got.kind === 'stopped' ? got.fix : OLD_SERVER_FIX
+    await relayFailed($, run, 'stopped', fix, stoppedLine(detail, fix))
+    return { next: 'end', cursor }
+  }
+  await relayFailed($, run, 'retrying', got.message, delayedLine(got.message))
+  return { next: 'retry', cursor }
+}
+
+async function relayLoop($: any, run: RelayRun): Promise<void> {
+  let failures = 0
+  try {
+    await pruneCursors($)
+    let cursor = await loadCursor($, run.planId)
+    let keyedBy = await $.session.id()
+    await setRelay($, run, 'streaming', null)
+    while (!run.dead) {
+      const startedAt = await $.clock.now()
+      const got = await waitForEvents($, run.planId, cursor)
+      // a /clear or a resume gives the process another session id: keep the cursor under the one in use now
+      const sid = await $.session.id()
+      if (sid !== keyedBy) {
+        keyedBy = sid
+        if (cursor !== null) await saveCursor($, run, cursor)
+      }
+      const handled = await handleAnswer($, run, got, cursor, startedAt)
+      cursor = handled.cursor
+      if (handled.next === 'end') return
+      if (handled.next === 'again') {
+        failures = 0
+        continue
+      }
+      failures++
+      await $.clock.sleep(backoffMs(BACKOFF_MS, failures))
+    }
+  } catch (err: any) {
+    // An error nothing above anticipated halts the relay for this plan, shown in the pane and told once, never restarted by a refresh
+    // behind the person's back (an ended run says nothing: relayFailed's gate). When the environment itself is gone the writes below
+    // reject, and settleDetached (the loop's caller) is what drops that one rejection.
+    const detail = `the relay hit an error: ${errMessage(err)}`
+    await relayFailed($, run, 'stopped', RELAY_ERROR_FIX, stoppedLine(detail, RELAY_ERROR_FIX))
+  } finally {
+    if (relayRun === run) relayRun = null
+  }
+}
+
 async function onSessionStart($: any, e: any, next: any) {
   await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
-  ticker?.cancel()
-  ticker = $.clock.every(POLL_MS, () => Promise.all([refresh($), refreshPacingPanel($)]))
+  // DX-4233: no plan polling timer (the relay's events, the turns and the sub-agents refresh the view). DX-4339: the pacing panel has no
+  // event to ride, so only it is read on the poll
+  pacingTicker?.cancel()
+  pacingTicker = $.clock.every(PACING_POLL_MS, () => refreshPacingPanel($))
   startUsageTicker($, USAGE_TICK_MS)
   // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
   permissionTicker?.cancel()
@@ -1052,8 +1300,8 @@ async function onSessionStart($: any, e: any, next: any) {
 }
 
 // Reasons after which the process is gone. `clear` and `resume` end THIS session but the process
-// goes on, and no session.start follows a /clear: the refresh timer must keep running then, or
-// the band shows stale data for the rest of the process. Any reason not listed keeps the timer
+// goes on, and no session.start follows a /clear: the timers and the relay must keep running then, or
+// the band shows stale data and no event arrives for the rest of the process. Any reason not listed keeps them
 // too: stopping a timer in a live process is the harm, a timer left in a dying one is not.
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
@@ -1066,8 +1314,11 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
   }
   if (PROCESS_ENDS.includes(e.reason)) {
-    ticker?.cancel()
-    ticker = null
+    // DX-4233: the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh below
+    // restarts it only if the new conversation is on another plan)
+    stopRelay()
+    pacingTicker?.cancel()
+    pacingTicker = null
     usageTicker?.cancel()
     usageTicker = null
     runtimeClock?.cancel()
@@ -1105,6 +1356,8 @@ async function onCommand($: any) {
 // connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
+  // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan), once the view knows the plan
+  relayHalted = null
   void settleDetached(refresh($, true).then(() => reportUsageNow($)))
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
   if (approval === null) return ran
@@ -1181,10 +1434,37 @@ function onSubagentStop($: any, e: any, next: any) {
   return onSubagentChange($, e, next, false)
 }
 
+// DX-4233: the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this). What it did not read is told
+// again in one prompt (relay/delivery.ts says why the rows appended since its last model request are exactly those).
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
+  if (e.agentId === undefined) {
+    // `wake` is set inside the updater, which sees the turn as it is when the write happens
+    let wake = null as string | null
+    await update($, turn, cur => {
+      const ended = turnEnded(cur, e.isAborted === true)
+      wake = ended.wake
+      return ended.turn
+    })
+    // detached: the turn.complete hook does not wait on the session taking a prompt
+    if (wake !== null) void settleDetached(wakeSession($, wake))
+  }
   void settleDetached(refresh($))
   return r
+}
+
+// DX-4233: the main loop's turn began (turn.start never fires for a sub-agent).
+async function onTurnStart($: any, e: any, next: any) {
+  await update($, turn, () => turnStarted())
+  return next(e)
+}
+
+// DX-4233: the main loop is about to send a model request, which carries every row appended so far. `turn.step` streams, so its hook is
+// a generator that forwards the stream untouched.
+async function* onTurnStep($: any, e: any, next: any) {
+  // no state write per request when there is nothing to forget
+  if (e.agentId === undefined && (await read($, turn)).unseen.length > 0) await update($, turn, cur => requestSent(cur))
+  return yield* next(e)
 }
 
 // The app's session title, handed to `plan_connect` from the pane's Connect; and (DX-4508) the main transcript's path.
@@ -1252,6 +1532,7 @@ async function drawPane($: any, e: any) {
     hasSvg: e.surface === 'desktop',
     live: await read($, live),
     pacing: buildPanel(await read($, panel)),
+    relay: await read($, relay),
   }
   return renderPane($.ui.resolve(e), handlers($), m)
 }
@@ -1271,6 +1552,8 @@ export const register: Register = on => {
   on('command.run', { command: COMMAND }, onCommand)
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
+  on('turn.start', onTurnStart)
+  on('turn.step', onTurnStep)
   on('turn.complete', onTurnComplete)
   on('session.measure', onMeasure)
   // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)

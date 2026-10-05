@@ -52,12 +52,11 @@ made a deny guard fail OPEN for its entire life, letting through every command i
 
 ## Every danxbot hook runs through the integrity launcher (DX-3997)
 
-A machine crash once left six cached plugin files the same size but all NUL bytes; every hook then failed silently, including the plan event bridge, and the operator's answer to a card went unseen for hours. So every command in `danxbot/hooks/hooks.json` is `node "${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs" [--via stdout|rewake] <script> [args]`:
+A machine crash once left six cached plugin files the same size but all NUL bytes; every hook then failed silently, including the plan hooks, and the operator's answer to a card went unseen for hours. So every command in `danxbot/hooks/hooks.json` is `node "${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs" [--via stdout|rewake] <script> [args]`:
 
 - `danxbot/integrity-manifest.json` holds the sha256 of every shipped file (tests excluded). `scripts/publish.sh` rewrites it twice, before its injection-budget check and again after the version bump; never hand-edit it, and a new hook script must be added to `hooks.json` through the launcher (a test enforces this).
 - Before the hook's script starts the launcher hashes every manifest file. A damaged one is restored from the marketplace clone (`~/.claude/plugins/marketplaces/<marketplace>/<plugin>`) only if the clone's copy matches the manifest hash. Whatever cannot be restored is reported: on stdout for `--via stdout` hooks (SessionStart / UserPromptSubmit, the only events whose plain stdout reaches the model), as exit 2 plus stderr for `--via rewake` hooks, otherwise on stderr. At most one warning per problem per 10 minutes.
 - The launcher imports only node builtins. A zeroed `launch.mjs` cannot repair itself; the two `--via stdout` hooks print a fallback line when it fails to run.
-- The bridge restart check lives in `scripts/bridge-watchdog.mjs`, not in `plan-event-bridge.mjs`, so a damaged bridge file can still be detected and reported.
 - `.gitattributes` marks `danxbot/**` as `-text` so no checkout rewrites line endings under the hashes.
 
 ## danxbot also ships a native hooks module (DX-4232)
@@ -70,7 +69,7 @@ A machine crash once left six cached plugin files the same size but all NUL byte
 
 ## The danxbot plugin carries no `@thehammer/danx-dashboard-mcp` version (DX-4321)
 
-The version is the npm registry's `latest`: the four session-start entry points (`ensure-dashboard-mcp.sh --prewarm`, `event-hook.sh SessionStart`, `background-work-report.mjs session-start`, `plan-event-bridge.mjs start`) resolve it through `danxbot/scripts/lib/dashboard-mcp-package.mjs` and record it in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`, every other hook reads that record with no network request, and a refresh that fails keeps the recorded version and says so in one line (with no record nothing runs and the line says so), so a danxbot publish reaches the next session start with no plugin release and never a version literal here (a test scans for one).
+The version is the npm registry's `latest`: the three session-start entry points (`ensure-dashboard-mcp.sh --prewarm`, `event-hook.sh SessionStart`, `background-work-report.mjs session-start`) resolve it through `danxbot/scripts/lib/dashboard-mcp-package.mjs` and record it in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`, every other hook reads that record with no network request, and a refresh that fails keeps the recorded version and says so in one line (with no record nothing runs and the line says so), so a danxbot publish reaches the next session start with no plugin release and never a version literal here (a test scans for one).
 
 ## Publishing is TWO steps, and the second one is not optional
 

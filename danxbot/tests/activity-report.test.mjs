@@ -54,8 +54,8 @@ function connect(sessionId = SESSION) {
 const env = () => ({
   CLAUDE_PLUGIN_DATA: pluginData,
   DANXBOT_PLAN_SESSIONS_HOME: planHome,
-  CLAUDE_CODE_MESSAGING_TOKEN: "inbox-secret",
-  CLAUDE_CODE_MESSAGING_SOCKET: "inbox-socket",
+  CLAUDE_CODE_MESSAGING_TOKEN: "messaging-secret",
+  CLAUDE_CODE_MESSAGING_SOCKET: "messaging-socket",
 });
 
 const startPayload = JSON.stringify({ session_id: SESSION, hook_event_name: "SubagentStart", agent_id: "a1", agent_type: "Explore" });
@@ -141,7 +141,7 @@ describe("runActivity — what it runs", () => {
       assert.deepEqual(args, ["/installed/dist/index.js", ACTIVITY_SUBCOMMAND, event, "2026-10-01T02:00:00.000Z"]);
       assert.equal(opts.input, payload, "the hook's own envelope, verbatim");
       assert.equal(opts.env.CLAUDE_CODE_SESSION_ID, SESSION);
-      assert.equal(opts.env.CLAUDE_CODE_MESSAGING_TOKEN, undefined, "the inbox token never reaches the child");
+      assert.equal(opts.env.CLAUDE_CODE_MESSAGING_TOKEN, undefined, "the messaging token never reaches the child");
       assert.equal(opts.env.CLAUDE_CODE_MESSAGING_SOCKET, undefined);
     }
   });
@@ -232,7 +232,7 @@ describe("runActivity — failures leave a trace, successes and the ordinary 'no
     assert.equal(trace().reason, "no_output");
   });
 
-  test("stale traces are pruned (the bridge's own pruning), fresh ones and other files are kept; no tmp file is left behind", () => {
+  test("stale traces are pruned (lib/report-support.mjs's pruneStale), fresh ones and other files are kept; no tmp file is left behind", () => {
     connect();
     const dir = stateDir(env());
     const old = path.join(dir, "11111111-1111-4111-8111-111111111111.last-failure.json");

@@ -92,7 +92,7 @@ export type InProgressRow = {
 }
 
 // DX-4374: the server's `sessionListenerAttached {attached, state, nextStep}`, less `attached`. Only the exact
-// state `healthy` is a working bridge; `nextStep` is the server's own wording (null when it has none).
+// state `healthy` is a working listener; `nextStep` is the server's own wording (null when it has none).
 export type ListenerStatus = { state: string; nextStep: string | null }
 
 // `signed-out` (DX-4423): the server is there but the session holds no dashboard key (lapsed, or never approved):
@@ -214,7 +214,7 @@ export type PlanView = {
   // DX-4448: what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready` and says so in the pane, and replies are then drawn as written.
   links: CardLinks
-  // The event bridge as GET /api/plans answers it (`sessionListenerAttached`): the server's health state and
+  // The event listener as GET /api/plans answers it (`sessionListenerAttached`): the server's health state and
   // its next step; null when the answer carries none (a session on no plan, or no session row).
   listener: ListenerStatus | null
   refreshedAt: string | null
@@ -270,6 +270,15 @@ export type PanelState = {
 // DX-4435: a `request_permission` request the band counts until it is decided. DX-4530: no expiry clock (the claim decides it).
 export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[] }
 
+// DX-4233: whether the main loop is in a turn (turn.start .. turn.complete), and the texts of the rows appended since its last model
+// request (`turn.step`): the ones a turn that is ending never reads.
+export type TurnState = { isInFlight: boolean; unseen: string[] }
+
+// DX-4233: the event relay's state, as the pane's event line shows it. `streaming`: waiting on the server for events (or just
+// delivered some); `retrying`: the last wait or delivery failed and the relay tries again on its own (`detail` is the cause);
+// `stopped`: the server said the relay cannot go on (`detail` is its fix); `off`: no relay runs (not connected, signed out).
+export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; planId: number | null; detail: string | null }
+
 declare module 'claude-code' {
   interface PluginState {
     danxbot: {
@@ -308,6 +317,10 @@ declare module 'claude-code' {
       liveAgents: { id: string; since: number }[]
       // DX-4339: what the usage pacing panel draws: the session's own windows, the team's pacing settings and the account verdict as last read.
       panel: PanelState
+      // DX-4233: the event relay's state (see RelayState): the pane's event line says it when it is not streaming.
+      relay: RelayState
+      // DX-4233: the main loop's turn as the delivery of a relayed event needs it (see TurnState).
+      turn: TurnState
     }
   }
 }
