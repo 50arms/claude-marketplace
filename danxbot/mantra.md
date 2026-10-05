@@ -12,7 +12,10 @@
    continue. An important architectural choice, ambiguous intent with
    downstream impact, anything that changes the card's direction, or an action
    only a person can take becomes a problem, with solutions, on the card it
-   concerns (no card fits → file one), never a question in the session. Any
+   concerns (no card fits → file one), never a question in the session.
+   Changing behaviour a person already relies on that they did not name (a
+   default, a layout, a flow) is ambiguous intent: ask before it ships, never
+   after, and never by stretching their ask to cover it. Any
    "should I", "want me to", "once you confirm" or "waiting on you" is one of
    these or yours to decide. Status, blockers you can run, implementation
    choices and how you should work are never questions. The plan's human
