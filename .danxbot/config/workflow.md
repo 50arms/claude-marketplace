@@ -24,7 +24,7 @@ For every code dispatch, in order:
    NOT push** (it detects `DANX_AGENT_WORKTREE` and skips the push) — the
    finalize step below owns the push to `main`.
 
-3. **Finalize** — the unconditional last action before `danxbot_complete`:
+3. **Finalize** — the unconditional last action before the dispatch-complete call:
 
    ```bash
    bash "$DANX_SCRIPTS_DIR/agent-finalize.sh" <AGENT> <CARD-ID> "<title>" "<bullet>" ...
@@ -41,7 +41,7 @@ The marketplace loader compares the `version` field in
 version ships **NOTHING** — every consumer keeps its cached version. The
 edit looks shipped on GitHub but reaches no one.
 
-**Mechanical pre-`danxbot_complete` check:** did `./scripts/publish.sh
+**Mechanical pre-complete check:** did `./scripts/publish.sh
 <bump> <plugin>` run for every plugin you edited, and did `agent-finalize.sh`
 print `PUSHED <sha>`? If either is missing, the change is unshipped —
 period. No "I'll bump later", no "the consumer will pick it up anyway".
