@@ -54,6 +54,7 @@ import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots,
 import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
+import { spawnGuard } from './plan/pacing-guard'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -1085,6 +1086,18 @@ async function drawPane($: any, e: any) {
   return renderPane($.ui.resolve(e), handlers($), m)
 }
 
+// DX-4340: the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
+function pacingEnv($: any) {
+  return {
+    now: () => $.clock.now(),
+    call: (method: string, path: string) => api($, method, path),
+    usage: () => $.session.usage(),
+    accountUuid: () => $.env.get('CLAUDE_CODE_ACCOUNT_UUID'),
+    agents: () => $.agent.list(),
+    toast: (text: string) => $.ui.toast(text),
+  }
+}
+
 export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
@@ -1093,6 +1106,8 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__danx-dashboard__request_permission' }, onRequestPermission)
   on('turn.complete', onTurnComplete)
   on('session.measure', onMeasure)
+  // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
+  on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onTitle)

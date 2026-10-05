@@ -250,6 +250,8 @@ export function dashboard(
     usageEveryMs?: number
     // ... or `$.session.usage()` rejecting with this reason (a host that has no usage reading)
     usageReadFails?: string
+    // DX-4340: what GET /api/pacing/verdicts answers: a body (any shape) or an error status; the dashboard's 404 (unrouted) by default
+    pacing?: { body: unknown } | { status: number }
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -445,6 +447,10 @@ export function dashboard(
           ? { comments: c.comments, ...(options.noCommentsTotal ? {} : { comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length } }) }
           : {}),
       })
+    }
+    // DX-4340: the pacing verdict read
+    if (method === 'GET' && path === '/api/pacing/verdicts' && options.pacing !== undefined) {
+      return 'status' in options.pacing ? reply({ error: 'pacing boom' }, options.pacing.status) : reply(options.pacing.body)
     }
     // DX-4336: the usage route as it answers a report (danxbot handleUsage's view)
     if (method === 'PUT' && path === '/api/plan-sessions/me/usage') {
