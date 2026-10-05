@@ -18,9 +18,7 @@ for (const surface of SURFACES) {
       expect(t).toContain('Danxbot: not available in this session')
       expect(t).toContain('No danx-dashboard connection in this folder')
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
-      expect(keys).toContain('open-pane')
-      expect(keys).toContain('band-close')
-      expect(keys.includes('open-tab')).toBe(surface === 'desktop')
+      expect(keys).toEqual(surface === 'desktop' ? ['open-pane', 'open-tab', 'band-close'] : ['open-pane', 'band-close'])
       expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toEqual([DEFAULT_PLANS])
       if (surface === 'desktop') {
         await band.press({ key: 'open-tab' })

@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { donutGlyph, planPercent } from '../hooks/plan/words'
-import { FOOTER_PAD, SURFACES, dashboard, expectIndicator, footerText, mountIndicator, startSession } from './plan-kit'
+import { SURFACES, dashboard, expectIndicator, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -107,13 +107,6 @@ for (const surface of SURFACES) {
       expect(d.opened.map(o => o.id)).toEqual(['danx-plan'])
     })
 
-    test('with no danx-dashboard MCP server the footer draws nothing of its own and shows no error', async ($, on) => {
-      const d = dashboard(on, { mcp: 'down' })
-      await startSession($, d, surface)
-      const footer = await mountIndicator($, surface, ['focus'])
-      expect((await footer.find({ key: 'footer-plan' }))?.text.replace(FOOTER_PAD, '')).toBe('Danxbot · off')
-      expect(await text(footer)).toBe('focus')
-    })
 
     test('the engine\'s own mode labels survive beside the plan entry', async ($, on) => {
       const d = dashboard(on)

@@ -60,13 +60,6 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('with no danx-dashboard MCP server the button reads Danxbot · off (DX-4547)', async ($, on) => {
-      const d = dashboard(on, { mcp: 'down' })
-      await startSession($, d, surface)
-      const footer = await mountIndicator($, surface, ['focus'])
-      expect((await footer.find({ key: 'footer-plan' }))?.text.replace(FOOTER_PAD, '')).toBe('Danxbot · off')
-      expect(await text(footer)).toBe('focus')
-    })
 
     for (const [name, options] of [
       ['connected', {}],

@@ -1044,7 +1044,7 @@ async function drawBand($: any, e: any, next: any) {
 }
 
 // The footer: the engine's own mode labels (next) stay, with ONE plan button beside them. Nothing
-// to say (loading, no MCP server) leaves the site untouched.
+// to say (loading) leaves the site untouched; no MCP server reads `Danxbot · off`.
 async function drawSessionMode($: any, e: any, next: any) {
   const label = footerLabel(await read($, view))
   if (label === null) return next(e)

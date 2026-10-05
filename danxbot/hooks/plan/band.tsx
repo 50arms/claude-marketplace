@@ -51,7 +51,8 @@ export function renderBand(
           <Text color={WARNING} wrap="truncate-end">
             {NO_MCP_LABEL}
           </Text>
-          <Text dimColor wrap="truncate-end">
+          {/* DX-4547: wraps (never truncates): the next step is the end of the sentence and must stay readable. */}
+          <Text dimColor wrap="wrap">
             {NO_MCP_DETAIL}
           </Text>
         </Box>
