@@ -167,7 +167,7 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
   if (listener === MALFORMED_LISTENER) {
     return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event bridge' }
   }
-  const noPlan = { connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
+  const noPlan = { dashboardUrl, connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
   // One load of everything about the connected plan: the plan itself (its status counts and status),
@@ -199,7 +199,7 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
     status: planR.body.status,
     dashboardUrl,
   }
-  const base = { connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
+  const base = { dashboardUrl, connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
 
   if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
   if (typeof cards.body.total !== 'number') {

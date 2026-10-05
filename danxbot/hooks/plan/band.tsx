@@ -1,5 +1,5 @@
 import type { PlanView } from '../../types'
-import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { permissionBadge } from './permission'
@@ -63,13 +63,16 @@ export function renderBand(
   const signedOut = v.phase === 'signed-out'
   // DX-4418: a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
+  // DX-4521: both links are in every state: the plan's page when connected, else the dashboard's plans list. Only an origin never
+  // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
+  const linkUrl = plan !== null ? planUrl(plan) : v.dashboardUrl !== null ? plansUrl(v.dashboardUrl) : null
   const controls = [
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
     ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
     ...(permissionLabel !== '' ? [{ label: permissionLabel, isButton: true }] : []),
-    ...(plan !== null && hasBrowser ? [{ label: BROWSER_TAB_LABEL, isButton: true }] : []),
-    ...(plan !== null ? [{ label: OPEN_LINK_LABEL, isButton: false }] : []),
+    ...(linkUrl !== null && hasBrowser ? [{ label: BROWSER_TAB_LABEL, isButton: true }] : []),
+    ...(linkUrl !== null ? [{ label: OPEN_LINK_LABEL, isButton: false }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
   const labelCols = columns === undefined ? undefined : bandLabelCols(columns, controls)
@@ -117,12 +120,12 @@ export function renderBand(
             {permissionLabel}
           </Button>
         )}
-        {plan !== null && hasBrowser && (
-          <Button key="open-tab" onPress={() => hd.openBrowserTab(planUrl(plan))}>
+        {linkUrl !== null && hasBrowser && (
+          <Button key="open-tab" onPress={() => hd.openBrowserTab(linkUrl)}>
             {busyKey.isOpeningBrowser(busy) ? 'Opening…' : BROWSER_TAB_LABEL}
           </Button>
         )}
-        {plan !== null && <Link href={planUrl(plan)} label={OPEN_LINK_LABEL} />}
+        {linkUrl !== null && <Link href={linkUrl} label={OPEN_LINK_LABEL} />}
         {close}
       </Box>
     </Box>

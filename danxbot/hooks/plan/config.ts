@@ -112,6 +112,7 @@ export const NO_LIVE: LiveSubagents = { sessionId: null, snapshots: {}, statuses
 export const EMPTY: PlanView = {
   phase: 'loading',
   error: null,
+  dashboardUrl: null,
   connected: null,
   plans: [],
   problems: [],
@@ -150,6 +151,11 @@ export const busyKey = {
 // connected plan: there is no origin constant, so a link always opens the dashboard the data came from.
 export function planUrl(plan: ConnectedPlan): string {
   return `${plan.dashboardUrl}/plans/${plan.id}`
+}
+
+// DX-4521: the dashboard's plans list, where the band's links go while no plan is connected.
+export function plansUrl(dashboardUrl: string): string {
+  return `${dashboardUrl}/plans`
 }
 
 // DX-4420: the plan page's Needs You tab, which the band's problem button opens. `needs-you` is danxbot's

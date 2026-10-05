@@ -620,6 +620,10 @@ export function dashboard(
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
     return next(e)
   })
+  // DX-4521: the plugin's $.store (what survives the session), one fresh map per fixture
+  const stored = new Map<string, unknown>()
+  on('store.get', (_$: any, e: any) => ({ value: stored.get(e.key) }) as any)
+  on('store.set', (_$: any, e: any) => (stored.set(e.key, e.value), { value: undefined }) as any)
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
   // sub-agents (world.agents).

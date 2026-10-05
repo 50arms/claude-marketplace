@@ -187,6 +187,9 @@ export type LiveSubagents = {
 export type PlanView = {
   phase: 'loading' | 'ready' | 'error' | 'no-mcp' | 'signed-out' | 'key-revoked'
   error: string | null
+  // DX-4521: the dashboard origin the band's links are built on: the one the plan list answered, else (a failed or signed-out load) the
+  // last one this machine saw answered; null only while none has ever been seen.
+  dashboardUrl: string | null
   connected: ConnectedPlan | null
   plans: PlanRow[]
   problems: ProblemRow[]

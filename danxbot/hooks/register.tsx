@@ -106,9 +106,19 @@ async function api($: any, method: string, path: string, extra: { query?: object
   return toolOutcome(res)
 }
 
+const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
+
 async function loadView($: any) {
   const refreshedAt = new Date(await $.clock.now()).toISOString()
-  return loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt, await read($, expanded))
+  const loaded = await loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt, await read($, expanded))
+  // DX-4521: the band's links need the dashboard origin even when this load could not read it (signed out, a failed call, a
+  // session just started): the last origin a plan list answered is kept in $.store (across sessions) and stands in for it.
+  if (loaded.dashboardUrl !== null) {
+    await $.store.set(DASHBOARD_ORIGIN_KEY, loaded.dashboardUrl)
+    return loaded
+  }
+  const seen = await $.store.get(DASHBOARD_ORIGIN_KEY)
+  return typeof seen === 'string' ? { ...loaded, dashboardUrl: seen } : loaded
 }
 
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked

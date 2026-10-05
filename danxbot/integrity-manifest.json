@@ -11,15 +11,15 @@
     "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
     "hooks/hooks.json": "17f34debd6b4c7bad8e1a63a9df5849d6776d95d33cf5bf1bafbfd80f24a0697",
     "hooks/plan/approval.ts": "5c0f2978f75b579c08d66b5b9bf0e0fcea1e86d3e08df2b37ef391275527b50d",
-    "hooks/plan/band.tsx": "bc00916dd408c5f35c19e4b5462991eddf3a4661e807b6aaf423eb2ac144259a",
+    "hooks/plan/band.tsx": "8045c64879c06ed09aff35d60b17f6aed07387239c8db19e9bbfd89fd112a434",
     "hooks/plan/browser-output.ts": "79467578a7eb7ec7a51ed2f53eba5b161dd54a97aff49c6862104af8240b9fc2",
     "hooks/plan/card-links.ts": "ff9802f516bd7945d281868fb8d70a563d4d0598a70381fcaae1e2a16dba8954",
-    "hooks/plan/config.ts": "d05a7518a2a74b3eb72a1e631a00a47b0af0cb50a9ce65dde14e2f9e7ab8af7f",
+    "hooks/plan/config.ts": "577efb3e372fe502660df59e76c2400206ebfb60e4166857dda35a471ed308d0",
     "hooks/plan/donut.tsx": "30ccb102b2fb7f44908b75446593030c49527e2f70ba8db6f4f441d8bae27a84",
     "hooks/plan/footer.tsx": "774cb9f03234da29ae8d6bd7c173fb2942235614b0ac9e9819ae971dc5ea035f",
     "hooks/plan/handlers.ts": "a0954a4470a2ff9254fc79aca3bb5da7e03e6a2c1977873712da3215243efba3",
     "hooks/plan/live.ts": "5d0aaebea72cf0763e905357fff8eaea267fe08039cd5c1e4881d155c5a60666",
-    "hooks/plan/load.ts": "fa6d6930946783b2af04987db45a7dc6421366a739570cc2d39e5390575a4f79",
+    "hooks/plan/load.ts": "240c614f7a0d800b0cb2ed3803f314906497eb2914a486e781ea2b7f155d2d37",
     "hooks/plan/mcp.ts": "6ab095681260b54b584168d0881fe3c24cf2125d0ad2e3e9a6017dbeb096168f",
     "hooks/plan/notes.ts": "da1f33a0d1dd86b730204300b8bab842c3e8bb5de46af7119062f52ac5002ab2",
     "hooks/plan/pane.tsx": "032ff750f0d015cb0d51e8f4817b7e7226b8281d5d98bbed41b1ef06db14bf9d",
@@ -29,7 +29,7 @@
     "hooks/plan/subagent-cards.tsx": "e21aca5f7ceeb854ba8f0954ebe748ac29246a001310d10368a5b1208e1e10c9",
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/words.ts": "63d09986ef840ddab69f5fc3952802d98db57b2e3ea1abe402c3e4e7bfebf060",
-    "hooks/register.tsx": "6574c62d1413a2f478c64ce4af3a3020393a344349e95ac6149ba9cf70e96519",
+    "hooks/register.tsx": "f9f5540cf16360cc5b38187a8c933763b2e909bb807178995b78d75d91b449ce",
     "mantra.md": "01714f739c9fc60c65d4bd1716110a80f3220c1c1d0e316207cf578115ff874a",
     "scripts/activity-report.mjs": "6379ca4a590e48ddc71b82f9ff6ea74620ad8242589c2cc679520d6e9f1d7093",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
@@ -51,6 +51,6 @@
     "skills/issue-workflow/references/card-creation-and-reference.md": "5a486a62ceaa4f29b9b6254e7323842ae6ae3564ee49af802d94af0b22445d12",
     "skills/plan-workflow/SKILL.md": "1bfa9fcc14f51dc98c7f95791357ec0fb4d2f831500110ecd8609d9278d59308",
     "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
-    "types/index.d.ts": "505d44810f586e6f480dfbbc12f1975e4c889d6bf8cdbf75907b74e0d0e564c0"
+    "types/index.d.ts": "2acc4fd60848d57e40a71d490f03e1f114aa24463b526979e269cec7e536e2c7"
   }
 }
