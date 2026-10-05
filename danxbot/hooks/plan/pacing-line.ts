@@ -1,12 +1,17 @@
+import type { Api } from './load'
+
 // DX-4340 (PLAN-29 section 3): the ONE pacing cache. danxbot serves the calling session's own account's verdict, and the one-sentence line
 // a new sub-agent is handed, at GET /api/pacing/line (the account is placed server-side from the x-danx-session-id header the dashboard
 // MCP sends; src/team-pacing/session-pacing.ts). Both consumers read this cache: the `agent.spawn` guard (pacing-guard.ts) and the
 // SubagentStart pacing line (register.tsx). No account matching happens in the plugin.
 //
 // Unknown is explicit on the wire (`reason` set, every other field null: no session, no usage report, no verdict, pacing off) and means
-// the guard allows and no line is handed. A read that fails is never silent (one toast per distinct text) and keeps the last good answer
-// until it expires, and a failed read is not retried for PACING_REFRESH_MS (each spawn or sub-agent start would otherwise re-hit a dead
-// route). An unreachable danx-dashboard server (a session on a repo with no danxbot) is a failure like any other: one toast, then the same back-off.
+// the guard allows and no line is handed.
+//
+// A failed read is never silent: one toast per distinct text. It keeps the last good answer serving until it expires, and it is not
+// retried for PACING_REFRESH_MS, so each spawn or sub-agent start does not re-hit a dead route. The one exception is an unreachable
+// danx-dashboard MCP server (a session on a repo with no danxbot, as in reportUsage and DX-3421): that is silent and not backed off,
+// the next spawn simply looks again, until a read has succeeded in this session. After a success it is a failure like any other.
 
 export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
 const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
@@ -16,7 +21,7 @@ const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
 export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number }
 export type Pacing = { verdict: PacingVerdict; line: string }
 
-export type Call = (method: string, path: string) => Promise<{ ok: boolean; status: number; body: any; unreachable?: boolean }>
+export type Call = (method: string, path: string) => Promise<Api>
 // The engine calls pacing makes, as closures built in register.tsx (the engine follows `$` only into a function in that file).
 export type PacingEnv = { now: () => Promise<number>; call: Call; toast: (text: string) => void }
 
@@ -46,52 +51,69 @@ export function parsePacing(body: any): Pacing | null | { error: string } {
 // is live and already includes them). A module-state cache: a reload starts it over and the next read refetches.
 type Cache = { pacing: Pacing | null; fetchedAt: number; allowed: number }
 let cache: Cache | null = null
-// when the last read was ATTEMPTED (success or failure): the back-off clock
+// when the last read was ATTEMPTED and the server was reachable (success or failure): the back-off clock
 let lastReadAt: number | null = null
+// a read has succeeded in this session: from then on an unreachable server is worth a toast
+let hasSucceeded = false
 let lastError: string | null = null
 let inflight: Promise<void> | null = null
 
 export function resetPacingCache(): void {
   cache = null
   lastReadAt = null
+  hasSucceeded = false
   lastError = null
   inflight = null
 }
 
-async function fetchPacing(env: PacingEnv): Promise<void> {
-  let failure: string | null = null
-  lastReadAt = await env.now()
-  try {
-    const r = await env.call('GET', LINE_PATH)
-    if (r.unreachable) failure = 'the danx-dashboard MCP server is not reachable from this session'
-    else if (!r.ok) failure = `the pacing line read answered ${r.status}`
-    else {
-      const parsed = parsePacing(r.body)
-      if (parsed !== null && 'error' in parsed) failure = parsed.error
-      else cache = { pacing: parsed, fetchedAt: lastReadAt, allowed: 0 }
-    }
-  } catch (err: any) {
-    failure = String(err?.message ?? err)
-  }
-  failure = failure === null ? null : failure.slice(0, ERROR_MAX)
+// One toast per distinct failure text.
+function report(env: PacingEnv, failure: string): void {
+  failure = failure.slice(0, ERROR_MAX)
   if (failure === lastError) return
   lastError = failure
-  if (failure !== null) env.toast(`Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): ${failure}`)
+  env.toast(`Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): ${failure}`)
 }
 
-// Read now when `force`, else when the last read ATTEMPT (it succeeded or failed) is a minute old; concurrent callers share one read.
+async function fetchPacing(env: PacingEnv): Promise<void> {
+  try {
+    const at = await env.now()
+    const r = await env.call('GET', LINE_PATH)
+    if (r.unreachable) {
+      // silent and not backed off until a read has succeeded (see the header)
+      if (hasSucceeded) report(env, 'the danx-dashboard MCP server is not reachable from this session')
+      return
+    }
+    lastReadAt = at
+    if (!r.ok) return report(env, `the pacing line read answered ${r.status}`)
+    const parsed = parsePacing(r.body)
+    if (parsed !== null && 'error' in parsed) return report(env, parsed.error)
+    cache = { pacing: parsed, fetchedAt: at, allowed: 0 }
+    hasSucceeded = true
+    // a good read clears the failure, so the same failure is told again if it comes back
+    lastError = null
+  } catch (err: any) {
+    report(env, String(err?.message ?? err))
+  }
+}
+
+// Read now when `force`, else when the last reachable read attempt is a minute old; concurrent callers share one read. Never rejects: a
+// clock that fails is a failed read like any other.
 export async function refreshPacing(env: PacingEnv, force = false): Promise<void> {
-  const now = await env.now()
-  if (!force && lastReadAt !== null && now - lastReadAt < PACING_REFRESH_MS) return
-  inflight ??= fetchPacing(env).finally(() => void (inflight = null))
-  await inflight
+  try {
+    const now = await env.now()
+    if (!force && lastReadAt !== null && now - lastReadAt < PACING_REFRESH_MS) return
+    inflight ??= fetchPacing(env).finally(() => void (inflight = null))
+    await inflight
+  } catch (err: any) {
+    report(env, String(err?.message ?? err))
+  }
 }
 
-// The session's pacing (null when unknown or expired), refreshed when due, its running count raised by the spawns allowed since the read.
-// A failed read leaves the last good answer serving until it expires.
-export async function currentPacing(env: PacingEnv): Promise<Pacing | null> {
-  await refreshPacing(env)
-  if (cache === null || cache.pacing === null || (await env.now()) - cache.fetchedAt > PACING_EXPIRY_MS) return null
+// SYNCHRONOUS: the session's pacing at `nowMs` (null when unknown or expired), its running count raised by the spawns allowed since the
+// read. A failed read leaves the last good answer serving until it expires. No await: a caller that reads this and then calls
+// recordSpawn with no await between them reserves atomically, whatever the host's concurrency.
+export function peekPacing(nowMs: number): Pacing | null {
+  if (cache === null || cache.pacing === null || nowMs - cache.fetchedAt > PACING_EXPIRY_MS) return null
   return { ...cache.pacing, verdict: { ...cache.pacing.verdict, runningAgents: cache.pacing.verdict.runningAgents + cache.allowed } }
 }
 
@@ -100,9 +122,15 @@ export function recordSpawn(delta: 1 | -1): void {
   if (cache !== null) cache.allowed = Math.max(0, cache.allowed + delta)
 }
 
-// The sub-agent's pacing line, null when danxbot has none for this session.
+// The sub-agent's pacing line, null when danxbot has none for this session. Never rejects.
 export async function pacingLine(env: PacingEnv): Promise<string | null> {
-  return (await currentPacing(env))?.line ?? null
+  try {
+    await refreshPacing(env)
+    return peekPacing(await env.now())?.line ?? null
+  } catch (err: any) {
+    report(env, String(err?.message ?? err))
+    return null
+  }
 }
 
 // `result` of the SubagentStart chain with the line appended to its additionalContext (one entry per hook).

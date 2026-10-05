@@ -1,6 +1,6 @@
 import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
-import { currentPacing, recordSpawn } from './pacing-line'
+import { peekPacing, recordSpawn, refreshPacing } from './pacing-line'
 import type { PacingEnv, PacingVerdict } from './pacing-line'
 
 // DX-4340 (PLAN-29 R-10): the usage-pacing guard on sub-agent spawns. danxbot serves the calling session's own account's verdict at
@@ -10,10 +10,11 @@ import type { PacingEnv, PacingVerdict } from './pacing-line'
 //
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits,
 // pushes, card writes) however tight the budget. It also never blocks work it cannot see: no verdict (the line's `reason` set: no usage
-// report, no verdict, pacing off; the dashboard unreachable or signed out; a malformed answer; nothing cached) ALLOWS the spawn. A
-// failed read (an unreachable dashboard
-// included) is never silent: it is toasted once per distinct text, and not retried for a minute. A burst of spawns inside one turn is held to
-// the budget: the spawns this guard allowed since the cached read are added to danxbot's running count until a fresh read lands.
+// report, no verdict, pacing off; the dashboard unreachable or signed out; a malformed answer; nothing cached) ALLOWS the spawn.
+//
+// A failed read is never silent: toasted once per distinct text and not retried for a minute, except that an unreachable dashboard is
+// silent until a read has succeeded (see pacing-line.ts). A burst of spawns inside one turn is held to the budget: the spawns this guard
+// allowed since the cached read are added to danxbot's running count until a fresh read lands.
 
 export type SpawnDecision = { kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'downgrade'; model: 'haiku' }
 
@@ -62,20 +63,29 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
   return { kind: 'allow' }
 }
 
-// The `agent.spawn` hook. Never throws: any failure to LOOK means allow (see the header), and the person is told.
+// Decide AND reserve, atomically: every await comes first (the refresh, the clock), then the cache is read, the decision made and the
+// spawn counted with NO await between them, so parallel spawns each see the others' reservations whatever the host's concurrency.
+// Returns the decision and whether a slot was reserved (to be given back if the spawn does not start).
+async function reserve(env: PacingEnv, e: AgentSpawnInput): Promise<{ decision: SpawnDecision; counted: boolean }> {
+  await refreshPacing(env)
+  const now = await env.now()
+  const pacing = peekPacing(now)
+  // a fork always inherits the parent's model, so the model it would run on is the parent's
+  const decision = decideSpawn(pacing?.verdict ?? null, e.fork ? e.parentModel : (e.model ?? e.parentModel))
+  if (decision.kind === 'deny' || pacing === null) return { decision, counted: false }
+  recordSpawn(1)
+  return { decision, counted: true }
+}
+
+// The `agent.spawn` hook. Pacing's own failures never stop a spawn: any failure to LOOK means allow (see the header), and the person is told.
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
     let decision: SpawnDecision = { kind: 'allow' }
     let counted = false
     try {
-      const pacing = await currentPacing(env)
-      // a fork always inherits the parent's model, so the model it would run on is the parent's
-      decision = decideSpawn(pacing?.verdict ?? null, e.fork ? e.parentModel : (e.model ?? e.parentModel))
-      if (decision.kind !== 'deny' && pacing !== null) {
-        // counted BEFORE the spawn starts, so concurrent spawns see each other; taken back below if it does not start
-        recordSpawn(1)
-        counted = true
-      }
+      const reserved = await reserve(env, e)
+      decision = reserved.decision
+      counted = reserved.counted
     } catch (err: any) {
       env.toast(`Usage pacing skipped this spawn check: ${String(err?.message ?? err).slice(0, 200)}`)
     }

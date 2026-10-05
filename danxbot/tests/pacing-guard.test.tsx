@@ -123,10 +123,12 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($, { model: 'haiku' })).deny).toBeUndefined()
   })
 
-  test('a denied spawn is not counted', async ($, on) => {
-    await session($, on, { pacingLine: { body: wire({ budget: 1, running_agents: 1 }) } })
-    expect((await spawn($)).deny).toBeDefined()
-    expect((await spawn($)).deny).toBeDefined()
+  test('parallel spawns are held to the budget exactly: 6 at once against a budget of 3 let 3 through', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 0 }) } })
+    const results = await Promise.all(Array.from({ length: 6 }, () => spawn($, { model: 'haiku' })))
+    expect(results.filter(r => r.deny === undefined)).toHaveLength(3)
+    expect(results.filter(r => r.deny !== undefined)).toHaveLength(3)
+    expect(d.pacingReads).toHaveLength(1)
   })
 
   test('a fork is denied like any spawn', async ($, on) => {
@@ -165,10 +167,26 @@ describe('the agent.spawn hook', () => {
     expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))).toHaveLength(1)
   })
 
-  test('an unreachable dashboard allows, toasts once, and backs off', async ($, on) => {
-    const d = await session($, on, { mcp: 'down' })
+  test('unreachable at session start is silent and not backed off: the next spawn looks again', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { mcp: 'down' }
+    const d = await session($, on, options)
     expect((await spawn($)).deny).toBeUndefined()
     expect((await spawn($)).deny).toBeUndefined()
+    expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
+    // no wait between: every look is an attempt, and the server coming up is seen at once
+    expect(d.pacingAttempts.n).toBe(3)
+    options.mcp = 'up'
+    options.pacingLine = { body: wire({ level: 'critical', budget: 0 }) }
+    expect((await spawn($)).deny).toMatch(/critical/)
+  })
+
+  test('unreachable AFTER a successful read is a failure like any other: toasted once, backed off, last good answer kept', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+    const d = await session($, on, options)
+    options.mcp = 'down'
+    await d.clock.advance(PACING_REFRESH_MS + 1)
+    expect((await spawn($)).deny).toMatch(/critical/)
+    await spawn($)
     expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read') && t.includes('not reachable'))).toHaveLength(1)
   })
 
@@ -193,7 +211,9 @@ describe('the agent.spawn hook', () => {
     await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
     for (const tool of ['Bash', 'Write', 'mcp__danx-dashboard__danxbot_api']) {
       const r = await $.tool.call({ tool, command: 'git commit -m x' } as any)
+      expect(r.deny).toBeUndefined()
       expect(r.isError).not.toBe(true)
+      expect(r.text).toBe('ran')
     }
   })
 })

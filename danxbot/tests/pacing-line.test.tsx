@@ -3,7 +3,8 @@
 // read starts the sub-agent without a line and toasts once.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { parsePacing, resetPacingCache } from '../hooks/plan/pacing-line'
+import { parsePacing, pacingLine, refreshPacing, resetPacingCache } from '../hooks/plan/pacing-line'
+import type { PacingEnv } from '../hooks/plan/pacing-line'
 import { dashboard, startSession } from './plan-kit'
 
 const LINE = 'Pacing: this account is over pace; 0 agents may run on the account until 2026-10-08 12:00 UTC. Do the work yourself, cheaply.'
@@ -49,5 +50,19 @@ describe('the SubagentStart pacing line', () => {
   test('a failed read starts the sub-agent without a line', async ($, on) => {
     const { r } = await started($, on, { pacingLine: { status: 500 } })
     expect(r.additionalContext).toBeUndefined()
+  })
+})
+
+describe('a clock that rejects', () => {
+  const env = (toasts: string[]): PacingEnv => ({ now: () => Promise.reject(new Error('clock down')), call: () => Promise.reject(new Error('never reached')), toast: t => void toasts.push(t) })
+
+  test('is a failed read, told once: neither the line nor a forced session-start read rejects', async () => {
+    resetPacingCache()
+    const toasts: string[] = []
+    expect(await pacingLine(env(toasts))).toBeNull()
+    await expect(refreshPacing(env(toasts), true)).resolves.toBeUndefined()
+    expect(await pacingLine(env(toasts))).toBeNull()
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]).toContain('clock down')
   })
 })
