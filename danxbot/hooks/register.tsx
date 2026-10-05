@@ -861,7 +861,9 @@ async function startLive($: any): Promise<void> {
   liveChild = child
   // a new child's first line carries every sub-agent; until it comes, what this session's last child said stands
   await update($, live, cur => ({ ...cur, sessionId, warning: null, failed: false, snapshots: cur.sessionId === sessionId ? cur.snapshots : {} }))
-  void readLive($, child)
+  // DX-4546: this detached promise has no caller to reject to. When the module is unloaded under it (a reload, the end of a test
+  // file), its last state write refuses and would surface as an unhandled rejection that fails the whole file: nothing is left to tell.
+  void readLive($, child).catch(() => {})
 }
 
 // The child's life, detached from the event that started it (plugin-authoring: "a child for the session's life").
