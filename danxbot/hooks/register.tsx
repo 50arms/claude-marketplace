@@ -396,7 +396,8 @@ async function showApproval($: any, approval: ApprovalRequest, force = false): P
 
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
 // together (a double click, a key repeat) cannot both win. The loser does nothing.
-async function withBusy($: any, key: string, work: () => Promise<void>): Promise<void> {
+// `release` (DX-4548): false when something else already freed the key and a newer holder may own it now (an aborted sign-in watch)
+async function withBusy($: any, key: string, work: () => Promise<void>, release: () => boolean = () => true): Promise<void> {
   let won = false
   await update($, busy, cur => {
     won = !cur.includes(key)
@@ -406,7 +407,7 @@ async function withBusy($: any, key: string, work: () => Promise<void>): Promise
   try {
     await work()
   } finally {
-    await update($, busy, cur => cur.filter(k => k !== key))
+    if (release()) await update($, busy, cur => cur.filter(k => k !== key))
   }
 }
 
@@ -502,8 +503,8 @@ let signInGeneration = 0
 type SignInWatch = { args: object } & ({ byPress: true } | { byPress: false; known: ApprovalRequest })
 
 async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
+  const generation = signInGeneration
   await withBusy($, busyKey.signIn, async () => {
-    const generation = signInGeneration
     const ended = () => generation !== signInGeneration
     let shown: ApprovalRequest | null = watch.byPress ? null : watch.known
     signInWatching = shown
@@ -573,7 +574,8 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
     } finally {
       if (!ended()) signInWatching = null
     }
-  })
+    // DX-4548: an aborted watch's key was freed at the abort (onSessionEnd); a new watch may hold it by now, so this one never frees it
+  }, () => generation === signInGeneration)
 }
 
 // The button's press returns at once: the sign-in waits minutes for a person, and a press must not. A watch already running
@@ -970,6 +972,8 @@ async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
     signInGeneration++
     signInWatching = null
+    // DX-4548: free the sign-in key at once; the aborted watch's in-flight plan_connect (up to ~45s) must not hold it
+    await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
   }
   if (PROCESS_ENDS.includes(e.reason)) {
     ticker?.cancel()

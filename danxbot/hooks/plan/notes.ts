@@ -58,5 +58,5 @@ export function signInDeniedNote(code: string): string {
 }
 
 export function signInExpiredNote(code: string): string {
-  return `[danxbot] Sign-in request ${code} expired before it was decided: the request expired, call plan_connect to ask again.`
+  return `[danxbot] Sign-in request ${code} expired before it was decided: a renewed request is already open for the person, so wait for its outcome (or call plan_connect to see it).`
 }

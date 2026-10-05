@@ -69,7 +69,7 @@ describe('a sign-in the model started', () => {
     expect(d.toasts).toContain('Sign in was denied.')
   })
 
-  test('expired: the model is told to ask again, and the renewed request is shown and watched, so its approval is told too', async ($, on) => {
+  test('expired: the model is told a renewed request is open, and the renewed request is shown and watched, so its approval is told too', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
     d.world.signIn.expireAfterCalls = 3
     modelConnect(on)
@@ -78,7 +78,7 @@ describe('a sign-in the model started', () => {
     for (let i = 0; i < 5; i++) await d.clock.advance(45_000)
     await d.clock.settle()
     expect(toldModel(d)).toEqual([signInExpiredNote(CONFIRM_CODE)])
-    expect(toldModel(d)[0]).toContain('the request expired, call plan_connect to ask again')
+    expect(toldModel(d)[0]).toContain('a renewed request is already open')
     expect(d.toasts).toContain('Sign in expired. A new request is open.')
     // the renewed request reached the person
     expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
@@ -125,6 +125,19 @@ describe('a sign-in the model started', () => {
       expect(toldModel(d)).toEqual([])
     })
   }
+
+  test('/clear while plan_connect is in flight frees the sign-in key at once: the new conversation watch runs', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    modelConnect(on)
+    on('session.end', () => ({ sessionId: 's1' }) as any)
+    await startSession($, d, 'desktop')
+    await modelAsks($, d)
+    // the first watch's plan_connect is still out (the MCP's wait); abort it
+    await $.session.end({ reason: 'clear' } as any)
+    const calls = connectCalls(d).length
+    await modelAsks($, d)
+    expect(connectCalls(d).length).toBeGreaterThan(calls)
+  })
 
   test('an MCP that answers pending at once is not spun: rounds are paced by the minimum round duration', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
