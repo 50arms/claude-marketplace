@@ -168,6 +168,24 @@ async function loadView($: any) {
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked
 // while one runs makes it run once more, so a write's result is never left unread. The gate is
 // $.state, not module variables (lost on reload).
+// DX-4586: a task detached from the event that started it (a refresh, the live reader) reports its own failures in the pane. What can still
+// escape it is its environment going away under it (a reload, the process ending): every state call then rejects, and there is nobody
+// left to tell. That is told from a real failure by asking the engine for the time: if even that is refused the environment is gone and
+// the rejection ends here; if it answers, the failure is real and rethrown, loud as before. Without this a detached task in flight at the
+// end of a test (or a reload) was an unhandled rejection, and the host failed the file for it.
+async function detach($: any, task: Promise<unknown>): Promise<void> {
+  try {
+    await task
+  } catch (err) {
+    try {
+      await $.clock.now()
+    } catch {
+      return
+    }
+    throw err
+  }
+}
+
 async function refresh($: any, force = false): Promise<void> {
   const now = await $.clock.now()
   let go = false
@@ -865,9 +883,8 @@ async function startLive($: any): Promise<void> {
   liveChild = child
   // a new child's first line carries every sub-agent; until it comes, what this session's last child said stands
   await update($, live, cur => ({ ...cur, sessionId, warning: null, failed: false, snapshots: cur.sessionId === sessionId ? cur.snapshots : {} }))
-  // DX-4546: this detached promise has no caller to reject to. When the module is unloaded under it (a reload, the end of a test
-  // file), its last state write refuses and would surface as an unhandled rejection that fails the whole file: nothing is left to tell.
-  void readLive($, child).catch(() => {})
+  // DX-4546 / DX-4586: this detached promise has no caller to reject to; see `detach`
+  detach($, readLive($, child))
 }
 
 // The child's life, detached from the event that started it (plugin-authoring: "a child for the session's life").
@@ -1034,8 +1051,8 @@ async function onSessionStart($: any, e: any, next: any) {
   await syncPermissionPoll($)
   // DX-4340: a new session starts with no pacing state (never the previous session's last good answer), reads the verdict now, and later reads happen when it is a minute old, at a spawn or sub-agent start
   resetPacing()
-  void refreshPacingPanel($)
-  void refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($))
+  detach($, refreshPacingPanel($))
+  detach($, refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($)))
   return next(e)
 }
 
@@ -1077,14 +1094,14 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, expanded, () => null)
     await update($, draft, () => null)
     await update($, talk, () => null)
-    void refresh($, true)
+    detach($, refresh($, true))
   }
   return next(e)
 }
 
 async function onCommand($: any) {
   await showPlan($)
-  void refresh($, true)
+  detach($, refresh($, true))
   return { text: 'Plan pane opened.' }
 }
 
@@ -1093,7 +1110,7 @@ async function onCommand($: any) {
 // connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
-  void refresh($, true).then(() => reportUsageNow($))
+  detach($, refresh($, true).then(() => reportUsageNow($)))
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
   if (approval === null) return ran
   // DX-4548: a request is shown by its URL (showApproval opens each URL once), never by the answer's state: a request renewed
@@ -1135,7 +1152,7 @@ function settleSubagents($: any): void {
   if (settleTimer !== null) return
   settleTimer = $.clock.after(SUBAGENT_SETTLE_MS, () => {
     settleTimer = null
-    void refresh($, true)
+    detach($, refresh($, true))
   })
 }
 
@@ -1151,7 +1168,7 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   // DX-4336: the running-agent count follows the sub-agents' starts and stops; a finished one's last response also moved the parent's figure
   await trackAgent($, e.agent_id, isStart)
   if (!isStart) await markMeasured($)
-  void refresh($)
+  detach($, refresh($))
   // only a session connected to a plan has a Sub-agents section to settle
   if ((await read($, view)).connected !== null) settleSubagents($)
   // DX-4508: start the live child for a new sub-agent, or stop it with the last one
@@ -1171,7 +1188,7 @@ function onSubagentStop($: any, e: any, next: any) {
 
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
-  void refresh($)
+  detach($, refresh($))
   return r
 }
 

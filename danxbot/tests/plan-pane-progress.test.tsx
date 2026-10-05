@@ -92,7 +92,8 @@ for (const surface of SURFACES) {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await pane.find({ type: 'Svg' })).toBeUndefined()
       expect((await texts(pane)).join(' | ')).toContain('Loading')
-      await d.clock.advance(3_600_000)
+      d.release()
+      await d.clock.settle()
     })
   })
 }

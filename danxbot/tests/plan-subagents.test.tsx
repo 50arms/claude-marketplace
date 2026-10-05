@@ -275,12 +275,13 @@ for (const surface of SURFACES) {
 
     test('an ended sub-agent drops at its visibleUntil on the pane clock, with no read, and the clock stops with the last one', async ($, on) => {
       const d = dashboard(on)
-      // it finished 30 s before the fake clock's start and stays listed 10 minutes after finishing: 570 s from now
-      d.world.subagents[OWN] = [endedSubagent('gone', 'failed', 30_000)]
+      // it finished 9 min 50 s before the fake clock's start and stays listed 10 minutes after finishing: 10 s from now
+      // (DX-4586: the pane clock ticks every second, so a nearer drop costs fewer ticks of real time under machine load)
+      d.world.subagents[OWN] = [endedSubagent('gone', 'failed', 590_000)]
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       expect(await cardKeys(ui)).toEqual(['sa-agent-gone'])
-      await d.clock.advance(569_000)
+      await d.clock.advance(9_000)
       expect(await cardKeys(ui)).toEqual(['sa-agent-gone'])
       await d.clock.advance(2_000)
       expect(await cardKeys(ui)).toEqual([])

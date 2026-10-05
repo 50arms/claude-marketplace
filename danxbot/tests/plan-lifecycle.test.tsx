@@ -226,7 +226,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await pane.press({ key: 'use-112' })
     await d.clock.settle()
     expect(d.writes()).toHaveLength(2)
-    await d.clock.advance(3_600_000)
+    d.release()
     await hung
   })
 })

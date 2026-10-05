@@ -36,7 +36,7 @@
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/usage.ts": "d0d3152a3010a6ab87ccb16a6532326ad03b39aa91d2b6284d6d984c7942e08c",
     "hooks/plan/words.ts": "c15b0b5bc19abeed1ef4d40b29057be7d817df90ee4817b0d1c61221ab8216e3",
-    "hooks/register.tsx": "61eba5c85f6832ecb1215c4741a1f6911edf39b00713f0aa0f712159d6d4d5eb",
+    "hooks/register.tsx": "e219ef51556a6ff81989c0e66044942ae61e1cc7eb61833ba7a6ba33c2b4284d",
     "mantra.md": "8024f1a86682dab394c0916937025f74f950c776628a9924627beff878121b4c",
     "scripts/activity-report.mjs": "f3ec925ab64cb5854792a63fc061f876a6688879db41b7ccbb808f1c5cf7cdcc",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
