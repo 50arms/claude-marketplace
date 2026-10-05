@@ -6,7 +6,9 @@ export const CAPTURE_DEFAULTS = {
   dpr: 2,
   /** Below this viewport width the capture emulates a phone (mobile viewport semantics). */
   mobileBelowWidth: 768,
-  /** Bound on waiting for the page to be ready; the script exits non-zero past it. */
+  /** Bound on the browser starting and each page loading. */
+  loadTimeoutMs: 15_000,
+  /** Bound on each readiness wait after load; the script exits non-zero past it. */
   readyTimeoutMs: 15_000,
 };
 
@@ -16,22 +18,7 @@ export const SIGN_IN_FORM_SELECTOR = 'input[type="password"]';
 /** Present while any part of the page is still loading; the default readiness wait is for it to go. */
 export const BUSY_SELECTOR = '[aria-busy="true"]';
 
-/**
- * DX-4539: a page whose app never mounted (a script threw during load) has no busy element, so the busy wait
- * alone passes on a blank page. Rendered means the body shows text, or a visible replaced/form element
- * (image, svg, canvas, video, iframe, input, button, ...) with a box: generic, no app-specific selector.
- */
-export const RENDERED_EXPRESSION = `(() => {
-  const body = document.body;
-  if (!body) return false;
-  if (body.innerText.trim() !== "") return true;
-  return [...body.querySelectorAll("img,svg,canvas,video,iframe,input,button,select,textarea,object,embed")].some((e) => {
-    const r = e.getBoundingClientRect();
-    return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== "hidden";
-  });
-})()`;
-
-const FLAGS = ["login", "width", "height", "dpr", "wait-for"];
+const FLAGS = ["login", "width", "height", "dpr", "wait-for", "ready-timeout"];
 
 export const CAPTURE_USAGE =
   "usage: node capture-screenshot.mjs <url> <out.png> " + FLAGS.map((f) => `[--${f} <value>]`).join(" ");
@@ -44,7 +31,7 @@ function positive(flag, raw) {
   return n;
 }
 
-/** @returns {{url:string,out:string,login:string|null,waitFor:string|null,width:number,height:number,dpr:number,isMobile:boolean}} */
+/** @returns {{url:string,out:string,login:string|null,waitFor:string|null,width:number,height:number,dpr:number,isMobile:boolean,readyTimeoutMs:number}} */
 export function parseCaptureArgs(argv) {
   const positionals = [];
   const flags = {};
@@ -76,6 +63,8 @@ export function parseCaptureArgs(argv) {
     width,
     height: flags.height === undefined ? CAPTURE_DEFAULTS.height : positive("height", flags.height),
     dpr: flags.dpr === undefined ? CAPTURE_DEFAULTS.dpr : positive("dpr", flags.dpr),
+    readyTimeoutMs:
+      flags["ready-timeout"] === undefined ? CAPTURE_DEFAULTS.readyTimeoutMs : positive("ready-timeout", flags["ready-timeout"]),
     isMobile: width < CAPTURE_DEFAULTS.mobileBelowWidth,
   };
 }

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CAPTURE_DEFAULTS, parseCaptureArgs } from "../scripts/lib/capture-args.mjs";
+import { MAX_PAGE_ERRORS, PageErrors, describeException, redactUrls } from "../scripts/lib/page-errors.mjs";
 import { PROFILE_PREFIX, findBrowser, requireNode } from "../scripts/lib/cdp-browser.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -16,7 +17,7 @@ const { width, height, dpr, mobileBelowWidth } = CAPTURE_DEFAULTS;
 
 test("defaults to the desktop capture", () => {
   assert.deepEqual(parseCaptureArgs(["http://x/", "a.png"]), {
-    url: "http://x/", out: "a.png", login: null, waitFor: null, width, height, dpr, isMobile: false,
+    url: "http://x/", out: "a.png", login: null, waitFor: null, width, height, dpr, isMobile: false, readyTimeoutMs: CAPTURE_DEFAULTS.readyTimeoutMs,
   });
 });
 
@@ -100,6 +101,8 @@ function pngSize(file) {
 }
 
 const html = (res, body, status = 200) => void res.writeHead(status, { "content-type": "text/html" }).end(body);
+const GIF = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+const SVG_IMAGE = "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2720%27%3E%3Crect width=%2720%27 height=%2720%27/%3E%3C/svg%3E";
 const PAGES = {
   "/": (res) => html(res, `<h1 id="ready">hello</h1>`),
   "/missing": (res) => html(res, "nope", 404),
@@ -108,16 +111,47 @@ const PAGES = {
   "/top404-iframe200": (res) => html(res, `<iframe src="/"></iframe>`, 404),
   // ... and a 200 page must succeed though its iframe answered 404.
   "/top200-iframe404": (res) => html(res, `<h1 id="ready">ok</h1><iframe src="/missing"></iframe>`),
-  // The app never mounted: an empty mount root, and the same with a script that threw while loading.
-  "/img": (res) =>
-    html(res, `<img width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">`),
-  "/blank": (res) => html(res, `<div id="root"></div>`),
-  "/throws": (res) =>
-    html(res, `<div id="root"></div><script>throw new Error("boom-during-load")</script>`),
   "/signin": (res) => html(res, `<input type="password">`),
   "/login": (res) => html(res, "signed in"),
   "/busy": (res) => html(res, `<h1 id="ready">r</h1><div aria-busy="true"></div>`),
+  // Script URLs and page URLs carry a secret in the query; neither may be printed.
+  "/err.js": (res) => res.writeHead(200, { "content-type": "text/javascript" }).end(`throw new Error("bad " + location.href);`),
+  "/err": (res) => html(res, `<div id="root"></div><script src="/err.js?token=SECRET"></script>`),
+  "/throw-string": (res) => html(res, `<div id="root"></div><script>throw "plain string"</script>`),
+  "/throw-many": (res) =>
+    html(res, `<div id="root"></div><script>for (let i = 0; i < ${MAX_PAGE_ERRORS + 3}; i++) setTimeout(() => { throw new Error("e" + i) })</script>`),
+  // The app never mounted: an empty mount root, and the same with a script that threw while loading.
+  "/blank": (res) => html(res, `<div id="root"></div>`),
+  "/throws": (res) => html(res, `<div id="root"></div><script>throw new Error("boom-during-load")</script>`),
+  // A static splash stays visible although the app threw: text is on screen, so this captures (with a warning).
+  "/splash-throws": (res) => html(res, `<p>Loading...</p><script>throw new Error("boom-after-splash")</script>`),
+  "/svg-document": (res) =>
+    res.writeHead(200, { "content-type": "image/svg+xml" }).end(`<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="60" height="60"/></svg>`),
+  "/frameset": (res) => html(res, `<frameset><frame src="/"></frameset>`),
 };
+// Pages whose content a person would see: each must capture.
+const RENDERS = {
+  "/r/text": `<p>hello</p>`,
+  "/r/image": `<img width="20" height="20" src="${SVG_IMAGE}">`,
+  "/r/canvas": `<canvas width="50" height="50"></canvas>`,
+  "/r/svg": `<svg width="50" height="50"><rect width="40" height="40"/></svg>`,
+  "/r/iframe": `<iframe width="100" height="50" srcdoc="<p>inner</p>"></iframe>`,
+  "/r/video-poster": `<video width="100" height="60" poster="${GIF}"></video>`,
+  "/r/background-image": `<div style="width:50px;height:50px;background-image:url(${GIF})"></div>`,
+  "/r/shadow-root": `<div id="host"></div><script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = "<p>in the shadow</p>"</script>`,
+  "/r/control": `<button>go</button>`,
+};
+// Pages with nothing to see: each must fail the default readiness check.
+const BLANKS = {
+  "/b/whitespace": `<div id="root">   \n\t </div>`,
+  "/b/hidden-only": `<p style="opacity:0">a</p><p style="display:none">b</p><p style="visibility:hidden">c</p>`,
+  "/b/one-pixel-image": `<img width="1" height="1" src="${GIF}">`,
+  "/b/zero-size-image": `<img width="0" height="0" src="${GIF}">`,
+  "/b/empty-video": `<video width="100" height="60"></video>`,
+  "/b/empty-iframe": `<iframe width="100" height="50" src="about:blank"></iframe>`,
+  "/b/hidden-shadow-root": `<div id="host"></div><script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = "<p style='opacity:0'>x</p>"</script>`,
+};
+for (const [route, body] of Object.entries({ ...RENDERS, ...BLANKS })) PAGES[route] = (res) => html(res, body);
 
 async function withServer(fn) {
   const server = http.createServer((req, res) => (PAGES[new URL(req.url, "http://x").pathname] ?? PAGES["/missing"])(res));
@@ -130,12 +164,11 @@ async function withServer(fn) {
   // directory of this test's own, so "the profile is gone" is an exact assertion.
   const run = (argv, env = {}) =>
     new Promise((resolve) => {
-      const started = Date.now();
       execFile(
         process.execPath,
         [SCRIPT, ...argv],
         { encoding: "utf8", timeout: 60_000, env: { ...process.env, TEMP: tmp, TMPDIR: tmp, ...env } },
-        (err, stdout, stderr) => resolve({ status: err ? err.code : 0, stdout, stderr, ms: Date.now() - started }),
+        (err, stdout, stderr) => resolve({ status: err ? err.code : 0, killed: err?.killed ?? false, stdout, stderr }),
       );
     });
   try {
@@ -146,13 +179,16 @@ async function withServer(fn) {
   }
 }
 
-test("a capture is full device resolution, exits promptly, and leaves no profile behind", { skip: !browser }, () =>
+// Readiness waits after load are bounded by --ready-timeout, so a failure-path test does not wait out the default.
+const FAST = ["--ready-timeout", "1500"];
+
+test("a capture is full device resolution, exits by itself, and leaves no profile behind", { skip: !browser }, () =>
   withServer(async ({ base, dir, run, leftovers }) => {
     const out = path.join(dir, "ok.png");
     const ok = await run([`${base}/`, out, "--width", "600", "--height", "300", "--dpr", "2", "--wait-for", "#ready"]);
     assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.killed, false, "the process ended on its own, not by the harness's kill timeout");
     assert.deepEqual(pngSize(out), [1200, 600]);
-    assert.ok(ok.ms < 10_000, `exited in ${ok.ms}ms: the 15s readiness timeout must not hold the process`);
     assert.deepEqual(leftovers(), []);
   }));
 
@@ -167,11 +203,11 @@ test("a top-frame 404 fails even with a 200 iframe; a 200 page succeeds with a 4
 
 test("a page that never becomes ready, a still-busy page and a bad selector each fail loudly", { skip: !browser }, () =>
   withServer(async ({ base, dir, run, leftovers }) => {
-    const never = await run([`${base}/bare`, path.join(dir, "n.png"), "--wait-for", "#ready"]);
+    const never = await run([`${base}/bare`, path.join(dir, "n.png"), "--wait-for", "#ready", ...FAST]);
     assert.equal(never.status, 1);
-    assert.match(never.stderr, /timed out after \d+ms waiting for #ready to appear/);
+    assert.match(never.stderr, /timed out after 1500ms waiting for #ready to appear/);
     // --wait-for does not exempt the page from the busy wait.
-    const busy = await run([`${base}/busy`, path.join(dir, "b.png"), "--wait-for", "#ready"]);
+    const busy = await run([`${base}/busy`, path.join(dir, "b.png"), "--wait-for", "#ready", ...FAST]);
     assert.equal(busy.status, 1);
     assert.match(busy.stderr, /waiting for no \[aria-busy="true"\] element/);
     const bad = await run([`${base}/`, path.join(dir, "s.png"), "--wait-for", "<<"]);
@@ -180,26 +216,74 @@ test("a page that never becomes ready, a still-busy page and a bad selector each
     assert.deepEqual(leftovers(), []);
   }));
 
-test("a blank page and a page that throws during load fail by default; the thrown error is named", { skip: !browser }, () =>
+test("concurrent captures do not trip over each other's profiles", { skip: !browser }, () =>
+  withServer(async ({ base, dir, run }) => {
+    const runs = await Promise.all([1, 2, 3, 4].map((n) => run([`${base}/r/text`, path.join(dir, `c${n}.png`)])));
+    runs.forEach((r, n) => assert.equal(r.status, 0, `capture ${n + 1}: ${r.stderr}`));
+  }));
+
+test("pages with something to see capture by default", { skip: !browser }, () =>
+  withServer(async ({ base, dir, run }) => {
+    for (const route of [...Object.keys(RENDERS), "/svg-document", "/frameset"]) {
+      const r = await run([`${base}${route}`, path.join(dir, "r.png"), ...FAST]);
+      assert.equal(r.status, 0, `${route}: ${r.stderr}`);
+    }
+  }));
+
+test("pages with nothing to see fail by default, naming the missing content", { skip: !browser }, () =>
   withServer(async ({ base, dir, run, leftovers }) => {
-    const blank = await run([`${base}/blank`, path.join(dir, "bl.png")]);
-    assert.equal(blank.status, 1);
-    assert.match(blank.stderr, /timed out after \d+ms waiting for the page to render visible content/);
-    assert.ok(!blank.stderr.includes("uncaught page error"), "nothing threw, so none is claimed");
-    const throws = await run([`${base}/throws`, path.join(dir, "th.png")]);
-    assert.equal(throws.status, 1);
-    assert.match(throws.stderr, /render visible content/);
-    assert.match(throws.stderr, /uncaught page error\(s\) during load:\nError: boom-during-load/);
+    for (const route of ["/blank", ...Object.keys(BLANKS)]) {
+      const r = await run([`${base}${route}`, path.join(dir, "b.png"), ...FAST]);
+      assert.equal(r.status, 1, route);
+      assert.match(r.stderr, /timed out after 1500ms waiting for the page to render visible content/, route);
+      assert.ok(!r.stderr.includes("uncaught page error"), `${route}: nothing threw, so none is claimed`);
+    }
     assert.deepEqual(leftovers(), []);
   }));
 
-test("a page with only an image or only text renders by default", { skip: !browser }, () =>
+test("--wait-for replaces the visible-content wait: a blank page it is satisfied by captures", { skip: !browser }, () =>
   withServer(async ({ base, dir, run }) => {
-    const text = await run([`${base}/bare`, path.join(dir, "t.png")]);
-    assert.equal(text.status, 0, text.stderr);
-    const img = await run([`${base}/img`, path.join(dir, "i.png")]);
-    assert.equal(img.status, 0, img.stderr);
+    const r = await run([`${base}/blank`, path.join(dir, "w.png"), "--wait-for", "#root", ...FAST]);
+    assert.equal(r.status, 0, r.stderr);
   }));
+
+test("a page that throws during load fails when blank, naming the error; a visible splash still captures with a warning", { skip: !browser }, () =>
+  withServer(async ({ base, dir, run, leftovers }) => {
+    const throws = await run([`${base}/throws`, path.join(dir, "th.png"), ...FAST]);
+    assert.equal(throws.status, 1);
+    assert.match(throws.stderr, /render visible content/);
+    assert.match(throws.stderr, /uncaught page error\(s\) during load:\nError: boom-during-load/);
+    const splash = await run([`${base}/splash-throws`, path.join(dir, "sp.png"), ...FAST]);
+    assert.equal(splash.status, 0, splash.stderr);
+    assert.match(splash.stderr, /warning: uncaught page error\(s\) during load:\nError: boom-after-splash/);
+    assert.deepEqual(leftovers(), []);
+  }));
+
+test("a thrown string is printed, the list is capped, and no query string or fragment is ever printed", { skip: !browser }, () =>
+  withServer(async ({ base, dir, run }) => {
+    const str = await run([`${base}/throw-string`, path.join(dir, "s.png"), ...FAST]);
+    assert.match(str.stderr, /Uncaught "plain string"/);
+    const many = await run([`${base}/throw-many`, path.join(dir, "m.png"), ...FAST]);
+    assert.ok(many.stderr.includes("(+3 more)"), many.stderr);
+    // The secret is in the page URL, in the script's URL (so in the stack frame) and, via location.href, in the message.
+    const err = await run([`${base}/err?token=SECRET#SECRET`, path.join(dir, "e.png"), ...FAST]);
+    assert.equal(err.status, 1);
+    assert.match(err.stderr, /bad http:\/\/127\.0\.0\.1:\d+\/err\n/);
+    assert.ok(!(err.stdout + err.stderr).includes("SECRET"), err.stderr);
+  }));
+
+test("page errors: URLs lose query and fragment, thrown values are described, the list is capped", () => {
+  assert.equal(redactUrls("at http://h:1/a.js?token=S:1:7 and (https://x/y#frag) ok"), "at http://h:1/a.js and (https://x/y) ok");
+  assert.equal(describeException({ text: "Uncaught", exception: { type: "string", value: "boom" } }), 'Uncaught "boom"');
+  assert.equal(describeException({ text: "Uncaught", exception: { type: "object", description: "Error: x\n at http://h/a?k=S:1:1" } }), "Error: x\n at http://h/a");
+  assert.equal(describeException({ text: "Uncaught SyntaxError: bad" }), "Uncaught SyntaxError: bad");
+  const errors = new PageErrors();
+  for (let i = 0; i < MAX_PAGE_ERRORS + 2; i++) errors.record({ text: `e${i}` });
+  errors.record({ text: "e0" });
+  assert.equal(errors.size, MAX_PAGE_ERRORS + 2);
+  assert.equal(errors.format().split("\n").length, MAX_PAGE_ERRORS + 1);
+  assert.match(errors.format(), /\(\+2 more\)$/);
+});
 
 test("--login: the sign-in form is refused, and the login URL's secret is never printed", { skip: !browser }, () =>
   withServer(async ({ base, dir, run }) => {

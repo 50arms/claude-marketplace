@@ -187,7 +187,13 @@ export async function launchPage(executable, timeoutMs) {
       if (spawnError) throw new Error(`could not start ${executable}: ${spawnError.message}`);
       if (exited) throw new Error(`${executable} exited ${child.exitCode} before it was ready`);
       const file = path.join(profile, "DevToolsActivePort");
-      return existsSync(file) ? readFileSync(file, "utf8").split("\n")[0] : null;
+      try {
+        return readFileSync(file, "utf8").split("\n")[0] || null;
+      } catch (e) {
+        // Absent until the browser writes it; on Windows another process can hold it briefly (EBUSY with two concurrent captures).
+        if (e.code === "ENOENT" || e.code === "EBUSY" || e.code === "EPERM") return null;
+        throw e;
+      }
     });
     const wsUrl = await poll("a page target", timeoutMs, async () => {
       const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();

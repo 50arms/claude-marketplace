@@ -176,7 +176,7 @@ made by the plugin's own tool from any repo (it drives the machine's Chrome or E
 containerised dispatch with no browser cannot run it):
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/capture-screenshot.mjs" <url> <out.png> [--login <dev-login-url>]
 [--wait-for <selector>]` (defaults `--width 1440 --height 900 --dpr 2`; phone `--width 390 --height 844
---dpr 3`). Pass `--wait-for` whenever the app has a readiness signal (the wait for no `[aria-busy="true"]` element always follows it); it exits non-zero on a bad
+--dpr 3`). Pass `--wait-for` whenever the app has a readiness signal (the wait for no `[aria-busy="true"]` element always follows it, and without it the page must also show visible content); it exits non-zero on a bad
 response, a sign-in form, or a page that never becomes ready.
 
 ## Debugging

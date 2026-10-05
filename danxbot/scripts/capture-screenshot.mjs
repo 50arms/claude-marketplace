@@ -9,7 +9,9 @@
 //          [--login <single-use sign-in url>] [--wait-for <css selector>]
 //          [--width 1440] [--height 900] [--dpr 2]      (phone: --width 390 --height 844 --dpr 3)
 import { writeFileSync } from "node:fs";
-import { BUSY_SELECTOR, CAPTURE_DEFAULTS, RENDERED_EXPRESSION, SIGN_IN_FORM_SELECTOR, parseCaptureArgs } from "./lib/capture-args.mjs";
+import { BUSY_SELECTOR, CAPTURE_DEFAULTS, SIGN_IN_FORM_SELECTOR, parseCaptureArgs } from "./lib/capture-args.mjs";
+import { PageErrors, redactUrls } from "./lib/page-errors.mjs";
+import { PAGE_RENDERS_CONTENT } from "./lib/page-programs.mjs";
 import { findBrowser, launchPage, poll, requireNode } from "./lib/cdp-browser.mjs";
 
 /**
@@ -52,14 +54,12 @@ const present = (selector) => `!!document.querySelector(${JSON.stringify(selecto
 async function main() {
   requireNode();
   const args = parseCaptureArgs(process.argv.slice(2));
-  const timeout = CAPTURE_DEFAULTS.readyTimeoutMs;
-  const { session, close } = await launchPage(findBrowser(), timeout);
+  const loadTimeout = CAPTURE_DEFAULTS.loadTimeoutMs;
+  const { session, close } = await launchPage(findBrowser(), loadTimeout);
   // DX-4539: uncaught page errors, kept to name the cause when the page never renders or never becomes ready.
-  const pageErrors = new Set();
+  const pageErrors = new PageErrors();
   session.on((method, p) => {
-    if (method === "Runtime.exceptionThrown") {
-      pageErrors.add(p.exceptionDetails.exception?.description ?? p.exceptionDetails.text);
-    }
+    if (method === "Runtime.exceptionThrown") pageErrors.record(p.exceptionDetails);
   });
   try {
     await session.send("Page.enable");
@@ -74,30 +74,36 @@ async function main() {
       mobile: args.isMobile,
     });
     // The single-use sign-in URL signs this throwaway profile in before the real page loads.
-    if (args.login) await visit(session, mainFrameId, args.login, "the --login visit", timeout);
-    await visit(session, mainFrameId, args.url, `GET ${args.url}`, timeout);
+    if (args.login) await visit(session, mainFrameId, args.login, "the --login visit", loadTimeout);
+    await visit(session, mainFrameId, args.url, `GET ${args.url}`, loadTimeout);
     // A spent --login ticket leaves the sign-in form up: say so now, before the readiness wait times out.
     if (args.login && (await evaluate(session, present(SIGN_IN_FORM_SELECTOR)))) {
       throw new Error("the page shows the sign-in form: the --login ticket did not sign this capture in");
     }
     // Apps that hold an open stream never go network-idle: wait on readiness signals instead, bounded.
     // The app's own selector first, then nothing on screen may still be loading.
-    if (args.waitFor) await poll(`${args.waitFor} to appear`, timeout, () => evaluate(session, present(args.waitFor)));
-    await poll(`no ${BUSY_SELECTOR} element`, timeout, () => evaluate(session, `!${present(BUSY_SELECTOR)}`));
-    // An app that threw while loading never mounts and shows no busy element: a blank page is not ready either.
-    await poll("the page to render visible content", timeout, () => evaluate(session, RENDERED_EXPRESSION));
+    const ready = args.readyTimeoutMs;
+    if (args.waitFor) await poll(`${args.waitFor} to appear`, ready, () => evaluate(session, present(args.waitFor)));
+    await poll(`no ${BUSY_SELECTOR} element`, ready, () => evaluate(session, `!${present(BUSY_SELECTOR)}`));
+    // Without --wait-for (the escape hatch for unusual pages): an app that threw while loading never mounts and
+    // shows no busy element, so a blank page must not count as ready.
+    if (!args.waitFor) await poll("the page to render visible content", ready, () => evaluate(session, PAGE_RENDERS_CONTENT));
     const shot = await session.send("Page.captureScreenshot", { format: "png" });
     writeFileSync(args.out, Buffer.from(shot.data, "base64"));
     console.log(`${args.out} (${args.width}x${args.height} @${args.dpr}x)`);
+    // The capture stands (text may be on screen); the cause of a half-broken page is still worth naming.
+    if (pageErrors.size > 0) console.warn(`warning: uncaught page error(s) during load:
+${pageErrors.format()}`);
   } catch (e) {
     if (pageErrors.size === 0) throw e;
-    throw new Error(`${e.message}\nuncaught page error(s) during load:\n${[...pageErrors].join("\n")}`);
+    throw new Error(`${e.message}\nuncaught page error(s) during load:\n${pageErrors.format()}`);
   } finally {
     await close();
   }
 }
 
 main().catch((e) => {
-  console.error(e instanceof Error ? e.message : e);
+  // No URL reaches the output with a query or fragment: a page URL or a stack frame can carry a credential.
+  console.error(redactUrls(e instanceof Error ? e.message : e));
   process.exit(process.exitCode || 1);
 });
