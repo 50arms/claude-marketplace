@@ -45,3 +45,18 @@ export function permissionDeniedNote(r: Asked): string {
 export function permissionExpiredNote(r: Asked): string {
   return `[danxbot] Permission request ${r.code} (asked: ${askedList(r.permissions)}) expired before it was decided: this session's dashboard session or key ended. Reconnect the session (call plan_connect), then call request_permission again for ${askedList(r.permissions)}.`
 }
+
+// DX-4548: the outcome of a sign-in the model itself started (its `plan_connect` answered `approval_required`), told once in its
+// chat so the person never has to type "approved". `planId` is the plan its own call asked for.
+export function signInApprovedNote(code: string, planId: number | null): string {
+  const again = planId === null ? 'call plan_connect again now' : `call plan_connect again now with plan_id ${planId}`
+  return `[danxbot] The person approved sign-in request ${code}: this session's dashboard key is stored and its tools work. Approved: ${again}.`
+}
+
+export function signInDeniedNote(code: string): string {
+  return `[danxbot] The person denied sign-in request ${code}. This session stays signed out: do not retry unless the person asks.`
+}
+
+export function signInExpiredNote(code: string): string {
+  return `[danxbot] Sign-in request ${code} expired before it was decided: the request expired, call plan_connect to ask again.`
+}

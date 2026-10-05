@@ -216,12 +216,10 @@ export const SIGNED_OUT_LINE = "This session's access ended. Sign in to reconnec
 export const SIGN_IN_LABEL = 'Sign in'
 export const SIGNING_IN_LABEL = 'Signing in…'
 export const SIGNED_IN_TOAST = 'Signed in'
-export const SIGN_IN_TIMEOUT_TOAST = 'Sign in timed out. Press Sign in again.'
+// DX-4548: a sign-in request has no round limit (it stays open while its session lives); these end it
+export const SIGN_IN_EXPIRED_TOAST = 'Sign in expired. Press Sign in again.'
+export const SIGN_IN_DENIED_TOAST = 'Sign in was denied.'
 export const signInFailedToast = (message: string) => `Sign in failed: ${message.slice(0, CONNECT_ERROR_MAX)}`
-// Each sign-in call waits up to ~45 s inside the MCP for the approval (session-access.ts AWAIT_APPROVAL_MS). The request's
-// own expiry (10 minutes) ends the sign-in first: the call that outlives it answers a NEW request, which is not shown.
-// This bound only guarantees the loop ends if the server never answers either way.
-export const SIGN_IN_ROUNDS = 16
 
 // DX-4418: a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
 // makes no access request: `keyRevokedHalt` in packages/danx-dashboard-mcp key-revoked-halt.ts, which begins

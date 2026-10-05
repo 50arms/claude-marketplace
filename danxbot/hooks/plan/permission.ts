@@ -15,12 +15,15 @@ import { permissionDeniedNote, permissionExpiredNote, permissionGrantedNote } fr
 // DX-4530: a request has no expiry clock: it stays open until the session that asked ends (its key revoked or lapsed), when
 // the claim answers `expired`. Only the claim decides it, so an `expiresAt` in the answer is not read.
 
+// DX-4548: the request's id, the last segment of its approval page (`<dashboard>/connect/<publicId>`); undefined when it has none.
+export const publicIdOf = (url: string): string | undefined => new URL(url).pathname.split('/').filter(Boolean).pop()
+
 // The request a `request_permission` answer carries, with the permissions the model asked for (its call's own argument),
 // or null when the answer is anything else (a refusal, a halt, a malformed answer).
 export function permissionRequestOf(text: string | undefined, asked: unknown): PermissionRequest | null {
   const approval = approvalRequestOf(text, ['approval_required', 'approval_pending'])
   if (approval === null) return null
-  const publicId = new URL(approval.url).pathname.split('/').filter(Boolean).pop()
+  const publicId = publicIdOf(approval.url)
   if (!publicId) return null
   const permissions = Array.isArray(asked) ? asked.filter((p): p is string => typeof p === 'string') : []
   return { url: approval.url, code: approval.code, publicId, permissions }

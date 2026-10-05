@@ -5,7 +5,7 @@ import type { ConnectedPlan, Draft, PermissionRequest, PlanRow, ProblemRow, Refr
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
-import { asApproval, claimPath, permissionRequestOf, settle } from './plan/permission'
+import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
 import { linkCardIds } from './plan/card-links'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
@@ -30,13 +30,13 @@ import {
   POLL_MS,
   SIGNED_IN_TOAST,
   keyRevokedLabel,
-  SIGN_IN_ROUNDS,
+  SIGN_IN_DENIED_TOAST,
+  SIGN_IN_EXPIRED_TOAST,
   SUBAGENT_SETTLE_MS,
   TICK_MS,
   MIN_USAGE_TICK_MS,
   USAGE_PATH,
   USAGE_TICK_MS,
-  SIGN_IN_TIMEOUT_TOAST,
   signInFailedToast,
   SERVER,
   NOTE_MARKER,
@@ -47,7 +47,7 @@ import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
 import { isServerMissing, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
-import { answerNote, connectNote, disconnectNote, signInNote } from './plan/notes'
+import { answerNote, connectNote, disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
@@ -481,60 +481,93 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   })
 }
 
-// DX-4423: the Sign in button. A session with no dashboard key asks for one through `plan_connect` (with its own title, and
-// the plan it was on). The MCP answers with the approval request, which is shown as the model's own would be (showApproval):
-// at once when this call makes the request, else after waiting on the one already pending. Each call waits there for the
-// person's approval, so the calls repeat until one answers something final. A call that answers a DIFFERENT request than the
-// one shown means the first expired while it waited: that is the end (a new request nobody asked for is left to lapse),
-// never a second page. The whole sign-in holds the sign-in busy key (the buttons read "Signing in…", a second press does
-// nothing).
-async function signIn($: any): Promise<void> {
+// DX-4423 / DX-4548: the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
+// `plan_connect`; the MCP answers with the approval request, shown as the model's own would be (showApproval). Each call waits
+// there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
+// request stays open for as long as its session lives (DX-4530). The status of the request cannot be read any other way: its
+// claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
+// person's login. A call that answers a DIFFERENT request than the one watched means the first expired while it waited: that
+// is the end (the new request nobody asked for is left to lapse), never a second page.
+//
+// Two starts: the Sign in button (`byPress`: the person is waiting, the page opens again, and the model is told once that it is
+// signed in), and the model's own `plan_connect` answering `approval_required` (`known`: the request already shown; the model is
+// told the outcome once, approved, denied or expired, so the person never has to type "approved"). The whole watch holds the
+// sign-in busy key (the buttons read "Signing in…", a second start does nothing).
+let signInWatching: ApprovalRequest | null = null
+
+async function watchSignIn($: any, args: object, known: ApprovalRequest | null, byPress: boolean): Promise<void> {
   await withBusy($, busyKey.signIn, async () => {
-    const sessionTitle = await read($, title)
-    const resume = (await read($, view)).resumePlan
-    const args = { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
-    let shown: string | null = null
-    for (let round = 0; round < SIGN_IN_ROUNDS; round++) {
-      let r
-      try {
-        r = await $.mcp.call(SERVER, 'plan_connect', args)
-      } catch (err: any) {
-        $.ui.toast(signInFailedToast(String(err?.message ?? err)))
-        return
-      }
-      const step = signInStep(r)
-      if (step.kind === 'waiting') {
-        if (step.request !== null) {
-          if (shown !== null && step.request.url !== shown) break
-          // DX-4423: the press itself always tries the open; later rounds of the same wait only repeat the request
-          const firstOfPress = shown === null
-          await showApproval($, step.request, firstOfPress)
-          shown = step.request.url
-        }
-        continue
-      }
-      if (step.kind === 'revoked') {
-        $.ui.toast(`${keyRevokedLabel(step.by)}. This session must stop.`)
-        await refresh($, true)
-        return
-      }
-      $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
-      // signed in (even if the plan was refused): the view reads the truth; a stop leaves the signed-out view as it is
-      if (step.kind !== 'stop') {
-        // DX-4530: the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
-        await tellModel($, signInNote(resume, step.kind === 'done'))
-        await refresh($, true)
-      }
-      return
+    let shown = known
+    signInWatching = known
+    // DX-4530: each outcome is told once (the told-once guard, keyed by the request); a sign-in that saw no request has no key
+    const tell = async (key: string | undefined, text: string) => {
+      if (key === undefined || (await markToldOnce($, key))) await tellModel($, text)
     }
-    $.ui.toast(SIGN_IN_TIMEOUT_TOAST)
+    try {
+      for (;;) {
+        let r
+        try {
+          r = await $.mcp.call(SERVER, 'plan_connect', args)
+        } catch (err: any) {
+          $.ui.toast(signInFailedToast(String(err?.message ?? err)))
+          return
+        }
+        const step = signInStep(r)
+        const key = shown === null ? undefined : publicIdOf(shown.url)
+        if (step.kind === 'waiting') {
+          if (shown !== null && step.request.url !== shown.url) {
+            // the request watched is over without a decision reaching this call: it lapsed
+            $.ui.toast(SIGN_IN_EXPIRED_TOAST)
+            if (!byPress) await tell(key, signInExpiredNote(shown.code))
+            return
+          }
+          if (shown === null) await showApproval($, step.request, byPress)
+          shown = step.request
+          signInWatching = shown
+          continue
+        }
+        if (step.kind === 'revoked') {
+          $.ui.toast(`${keyRevokedLabel(step.by)}. This session must stop.`)
+          await refresh($, true)
+          return
+        }
+        if (step.kind === 'denied') {
+          $.ui.toast(SIGN_IN_DENIED_TOAST)
+          if (!byPress && shown !== null) await tell(key, signInDeniedNote(shown.code))
+          return
+        }
+        if (step.kind === 'stop') {
+          $.ui.toast(step.message)
+          return
+        }
+        // signed in (even if the plan was refused): the view reads the truth
+        $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
+        // DX-4530: the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
+        const planId = typeof (args as any).plan_id === 'number' ? (args as any).plan_id : null
+        await tell(key, byPress ? signInNote(planId, step.kind === 'done') : signInApprovedNote(shown?.code ?? '', planId))
+        await refresh($, true)
+        return
+      }
+    } finally {
+      signInWatching = null
+    }
   })
 }
 
-// The button's press returns at once: the sign-in waits minutes for a person, and a press must not.
+// The button's press returns at once: the sign-in waits minutes for a person, and a press must not. A watch already running
+// (the model's own sign-in) opens its page again instead of starting a second wait.
 function startSignIn($: any): Promise<void> {
-  signIn($).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
-  return Promise.resolve()
+  if (signInWatching !== null) return showApproval($, signInWatching, true)
+  return signInArgs($).then(args => {
+    void watchSignIn($, args, null, true).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
+  })
+}
+
+// The sign-in's own `plan_connect` arguments: the session's title, and the plan it was on.
+async function signInArgs($: any): Promise<object> {
+  const sessionTitle = await read($, title)
+  const resume = (await read($, view)).resumePlan
+  return { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
 }
 
 // One write to a problem (answer, comment, step tick), inside its busy claim: call, toast a
@@ -952,8 +985,15 @@ async function onCommand($: any) {
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
   void refresh($, true).then(() => reportUsageNow($))
-  const approval = approvalRequestOf(ran.text)
-  if (approval !== null) await showApproval($, approval)
+  const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
+  if (approval === null) return ran
+  // only a NEW request opens its page (a repeat call answers `approval_pending`)
+  if (approvalRequestOf(ran.text) !== null) await showApproval($, approval)
+  // DX-4548: the model started this sign-in, so the plugin waits on it and tells the model how it ended
+  if (signInWatching === null) {
+    const args = { ...(typeof e.plan_id === 'number' ? { plan_id: e.plan_id } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
+    void watchSignIn($, args, approval, false).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
+  }
   return ran
 }
 
