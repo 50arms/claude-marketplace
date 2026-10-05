@@ -277,7 +277,7 @@ export function dashboard(
     rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
     // DX-4423: null while the session holds a key
     signedOut: (options.signedOut ?? null) as 'signed-out' | 'lapsed' | 'revoked' | null,
-    signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean } | undefined, calls: [] as any[] },
+    signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean; waits?: boolean } | undefined, calls: [] as any[] },
     // DX-4435: what the key's own claim route (POST /api/permission-requests/:publicId/claim) answers: a status, or 'notFound'
     permissionClaim: 'pending' as 'pending' | 'approved' | 'claimed' | 'denied' | 'expired' | 'notFound' | 'boom',
     // DX-4530: the subset the owner granted, which the claim answers once approved (and on every later, `claimed`, claim)
@@ -486,6 +486,8 @@ export function dashboard(
       if (world.signedOut !== null && e.tool === 'plan_connect') {
         const dance = world.signIn
         dance.calls.push(e.args)
+        // `waits`: the answer comes after the MCP's wait, as a still-pending request's does (a repeating caller must not spin)
+        if (dance.answer?.waits) await clock.sleep(dance.waitMs)
         if (dance.answer) return { value: { content: [{ type: 'text', text: dance.answer.text }], isError: dance.answer.isError ?? false } }
         // approved: the key is stored, and the call goes on to connect the plan it was given (or answers signed_in)
         const approvedAnswer = () => {

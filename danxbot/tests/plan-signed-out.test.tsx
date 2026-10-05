@@ -455,7 +455,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.toasts.at(-1)).toBe('Sign in expired. Press Sign in again.')
       // the server now holds the renewed request: its waiting answers name it
-      d.world.signIn.answer = { text: JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' }) }
+      d.world.signIn.answer = { text: JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' }), waits: true }
       d.world.signIn.expireAfterCalls = undefined
       await band.press({ key: 'sign-in' })
       await d.clock.advance(45_000)
