@@ -9,7 +9,7 @@
 //          [--login <single-use sign-in url>] [--wait-for <css selector>]
 //          [--width 1440] [--height 900] [--dpr 2]      (phone: --width 390 --height 844 --dpr 3)
 import { writeFileSync } from "node:fs";
-import { BUSY_SELECTOR, CAPTURE_DEFAULTS, SIGN_IN_FORM_SELECTOR, parseCaptureArgs } from "./lib/capture-args.mjs";
+import { BUSY_SELECTOR, CAPTURE_DEFAULTS, RENDERED_EXPRESSION, SIGN_IN_FORM_SELECTOR, parseCaptureArgs } from "./lib/capture-args.mjs";
 import { findBrowser, launchPage, poll, requireNode } from "./lib/cdp-browser.mjs";
 
 /**
@@ -54,9 +54,17 @@ async function main() {
   const args = parseCaptureArgs(process.argv.slice(2));
   const timeout = CAPTURE_DEFAULTS.readyTimeoutMs;
   const { session, close } = await launchPage(findBrowser(), timeout);
+  // DX-4539: uncaught page errors, kept to name the cause when the page never renders or never becomes ready.
+  const pageErrors = new Set();
+  session.on((method, p) => {
+    if (method === "Runtime.exceptionThrown") {
+      pageErrors.add(p.exceptionDetails.exception?.description ?? p.exceptionDetails.text);
+    }
+  });
   try {
     await session.send("Page.enable");
     await session.send("Network.enable");
+    await session.send("Runtime.enable");
     const { frameTree } = await session.send("Page.getFrameTree");
     const mainFrameId = frameTree.frame.id;
     await session.send("Emulation.setDeviceMetricsOverride", {
@@ -76,9 +84,14 @@ async function main() {
     // The app's own selector first, then nothing on screen may still be loading.
     if (args.waitFor) await poll(`${args.waitFor} to appear`, timeout, () => evaluate(session, present(args.waitFor)));
     await poll(`no ${BUSY_SELECTOR} element`, timeout, () => evaluate(session, `!${present(BUSY_SELECTOR)}`));
+    // An app that threw while loading never mounts and shows no busy element: a blank page is not ready either.
+    await poll("the page to render visible content", timeout, () => evaluate(session, RENDERED_EXPRESSION));
     const shot = await session.send("Page.captureScreenshot", { format: "png" });
     writeFileSync(args.out, Buffer.from(shot.data, "base64"));
     console.log(`${args.out} (${args.width}x${args.height} @${args.dpr}x)`);
+  } catch (e) {
+    if (pageErrors.size === 0) throw e;
+    throw new Error(`${e.message}\nuncaught page error(s) during load:\n${[...pageErrors].join("\n")}`);
   } finally {
     await close();
   }

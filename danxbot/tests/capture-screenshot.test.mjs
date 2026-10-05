@@ -108,6 +108,12 @@ const PAGES = {
   "/top404-iframe200": (res) => html(res, `<iframe src="/"></iframe>`, 404),
   // ... and a 200 page must succeed though its iframe answered 404.
   "/top200-iframe404": (res) => html(res, `<h1 id="ready">ok</h1><iframe src="/missing"></iframe>`),
+  // The app never mounted: an empty mount root, and the same with a script that threw while loading.
+  "/img": (res) =>
+    html(res, `<img width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">`),
+  "/blank": (res) => html(res, `<div id="root"></div>`),
+  "/throws": (res) =>
+    html(res, `<div id="root"></div><script>throw new Error("boom-during-load")</script>`),
   "/signin": (res) => html(res, `<input type="password">`),
   "/login": (res) => html(res, "signed in"),
   "/busy": (res) => html(res, `<h1 id="ready">r</h1><div aria-busy="true"></div>`),
@@ -172,6 +178,27 @@ test("a page that never becomes ready, a still-busy page and a bad selector each
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /page script failed: .*not a valid selector/);
     assert.deepEqual(leftovers(), []);
+  }));
+
+test("a blank page and a page that throws during load fail by default; the thrown error is named", { skip: !browser }, () =>
+  withServer(async ({ base, dir, run, leftovers }) => {
+    const blank = await run([`${base}/blank`, path.join(dir, "bl.png")]);
+    assert.equal(blank.status, 1);
+    assert.match(blank.stderr, /timed out after \d+ms waiting for the page to render visible content/);
+    assert.ok(!blank.stderr.includes("uncaught page error"), "nothing threw, so none is claimed");
+    const throws = await run([`${base}/throws`, path.join(dir, "th.png")]);
+    assert.equal(throws.status, 1);
+    assert.match(throws.stderr, /render visible content/);
+    assert.match(throws.stderr, /uncaught page error\(s\) during load:\nError: boom-during-load/);
+    assert.deepEqual(leftovers(), []);
+  }));
+
+test("a page with only an image or only text renders by default", { skip: !browser }, () =>
+  withServer(async ({ base, dir, run }) => {
+    const text = await run([`${base}/bare`, path.join(dir, "t.png")]);
+    assert.equal(text.status, 0, text.stderr);
+    const img = await run([`${base}/img`, path.join(dir, "i.png")]);
+    assert.equal(img.status, 0, img.stderr);
   }));
 
 test("--login: the sign-in form is refused, and the login URL's secret is never printed", { skip: !browser }, () =>

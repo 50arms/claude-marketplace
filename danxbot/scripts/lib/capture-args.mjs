@@ -16,6 +16,21 @@ export const SIGN_IN_FORM_SELECTOR = 'input[type="password"]';
 /** Present while any part of the page is still loading; the default readiness wait is for it to go. */
 export const BUSY_SELECTOR = '[aria-busy="true"]';
 
+/**
+ * DX-4539: a page whose app never mounted (a script threw during load) has no busy element, so the busy wait
+ * alone passes on a blank page. Rendered means the body shows text, or a visible replaced/form element
+ * (image, svg, canvas, video, iframe, input, button, ...) with a box: generic, no app-specific selector.
+ */
+export const RENDERED_EXPRESSION = `(() => {
+  const body = document.body;
+  if (!body) return false;
+  if (body.innerText.trim() !== "") return true;
+  return [...body.querySelectorAll("img,svg,canvas,video,iframe,input,button,select,textarea,object,embed")].some((e) => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== "hidden";
+  });
+})()`;
+
 const FLAGS = ["login", "width", "height", "dpr", "wait-for"];
 
 export const CAPTURE_USAGE =
