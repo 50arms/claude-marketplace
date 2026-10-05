@@ -7,8 +7,8 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CAPTURE_DEFAULTS, parseCaptureArgs } from "../scripts/lib/capture-args.mjs";
-import { MAX_PAGE_ERRORS, PageErrors, describeException, redactUrls } from "../scripts/lib/page-errors.mjs";
+import { CAPTURE_DEFAULTS, CAPTURE_USAGE, parseCaptureArgs } from "../scripts/lib/capture-args.mjs";
+import { MAX_ERROR_CHARS, MAX_PAGE_ERRORS, PageErrors, describeException, redactUrls } from "../scripts/lib/page-errors.mjs";
 import { PROFILE_PREFIX, findBrowser, requireNode } from "../scripts/lib/cdp-browser.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -139,6 +139,7 @@ const RENDERS = {
   "/r/video-poster": `<video width="100" height="60" poster="${GIF}"></video>`,
   "/r/background-image": `<div style="width:50px;height:50px;background-image:url(${GIF})"></div>`,
   "/r/shadow-root": `<div id="host"></div><script>document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = "<p>in the shadow</p>"</script>`,
+  "/r/display-contents": `<div style="display:contents"><span style="display:contents">inside contents</span></div>`,
   "/r/control": `<button>go</button>`,
 };
 // Pages with nothing to see: each must fail the default readiness check.
@@ -271,6 +272,13 @@ test("a thrown string is printed, the list is capped, and no query string or fra
     assert.match(err.stderr, /bad http:\/\/127\.0\.0\.1:\d+\/err\n/);
     assert.ok(!(err.stdout + err.stderr).includes("SECRET"), err.stderr);
   }));
+
+test("one error is capped in length, and the usage says --ready-timeout is milliseconds", () => {
+  const long = describeException({ text: "x".repeat(MAX_ERROR_CHARS * 3) });
+  assert.equal(long.length, MAX_ERROR_CHARS + 3);
+  assert.ok(long.endsWith("..."));
+  assert.match(CAPTURE_USAGE, /--ready-timeout <milliseconds>/);
+});
 
 test("page errors: URLs lose query and fragment, thrown values are described, the list is capped", () => {
   assert.equal(redactUrls("at http://h:1/a.js?token=S:1:7 and (https://x/y#frag) ok"), "at http://h:1/a.js and (https://x/y) ok");

@@ -18,10 +18,11 @@ export const SIGN_IN_FORM_SELECTOR = 'input[type="password"]';
 /** Present while any part of the page is still loading; the default readiness wait is for it to go. */
 export const BUSY_SELECTOR = '[aria-busy="true"]';
 
-const FLAGS = ["login", "width", "height", "dpr", "wait-for", "ready-timeout"];
+const FLAG_VALUES = { login: "<url>", width: "<px>", height: "<px>", dpr: "<ratio>", "wait-for": "<css selector>", "ready-timeout": "<milliseconds>" };
+const FLAGS = Object.keys(FLAG_VALUES);
 
 export const CAPTURE_USAGE =
-  "usage: node capture-screenshot.mjs <url> <out.png> " + FLAGS.map((f) => `[--${f} <value>]`).join(" ");
+  "usage: node capture-screenshot.mjs <url> <out.png> " + FLAGS.map((f) => `[--${f} ${FLAG_VALUES[f]}]`).join(" ");
 
 function positive(flag, raw) {
   const n = Number(raw);

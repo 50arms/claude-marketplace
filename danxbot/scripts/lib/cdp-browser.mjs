@@ -9,7 +9,7 @@ import path from "node:path";
 /** Interval of every wait in this tool: the one `poll` loop. */
 export const POLL_MS = 100;
 export const PROFILE_PREFIX = "danx-capture-";
-/** Windows holds a profile's files briefly after the browser exits. */
+/** Windows holds a profile's files briefly after the browser exits (Crashpad); rmSync retries EBUSY/EPERM/ENOTEMPTY with this. */
 const RM_RETRY = { maxRetries: 10, retryDelay: 200 };
 const STDERR_TAIL_CHARS = 2000;
 const EXIT_WAIT_MS = 5000;

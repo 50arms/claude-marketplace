@@ -19,7 +19,7 @@ function pageRendersContent() {
     const walk = (node, shown) => {
       for (const child of node.childNodes) {
         if (child.nodeType === 3) {
-          if (shown && child.nodeValue.trim() !== "" && hasBox(node, 0)) return true;
+          if (shown && child.nodeValue.trim() !== "" && hasBox(boxOwner(node), 0)) return true;
           continue;
         }
         if (child.nodeType !== 1 || SKIP.has(child.tagName)) continue;
@@ -33,7 +33,15 @@ function pageRendersContent() {
       }
       return false;
     };
+    // A display:contents element (or a shadow root) has no box of its own: its text sits in the nearest ancestor's.
+    const boxOwner = (el) => {
+      while (el && (el.nodeType === 11 || view.getComputedStyle(el).display === "contents")) {
+        el = el.nodeType === 11 ? el.host : el.parentElement || el.getRootNode().host;
+      }
+      return el;
+    };
     const hasBox = (el, min) => {
+      if (!el) return false;
       if (!el.getBoundingClientRect) return false;
       const r = el.getBoundingClientRect();
       return r.width > min && r.height > min;

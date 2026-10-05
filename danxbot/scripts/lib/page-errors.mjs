@@ -1,6 +1,9 @@
 // DX-4539: uncaught page exceptions, made safe to print. The page URL, a script URL or a stack frame can
 // carry a credential in its query string or fragment, so no URL is ever printed with either.
 
+/** The longest one error is printed; a thrown payload can be arbitrarily large. */
+export const MAX_ERROR_CHARS = 500;
+
 /** The most errors a message lists; the rest are counted. */
 export const MAX_PAGE_ERRORS = 5;
 
@@ -15,7 +18,8 @@ export function redactUrls(text) {
 export function describeException(details) {
   const ex = details.exception;
   const text = ex?.description ?? (ex && "value" in ex ? `Uncaught ${JSON.stringify(ex.value)}` : details.text);
-  return redactUrls(text);
+  const safe = redactUrls(text);
+  return safe.length > MAX_ERROR_CHARS ? `${safe.slice(0, MAX_ERROR_CHARS)}...` : safe;
 }
 
 /** Distinct errors in the order thrown. */
