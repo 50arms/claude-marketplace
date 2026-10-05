@@ -62,7 +62,11 @@ and says when to land. Whoever runs a gate:
 2. Do what that text says for the card, including any card writes it asks for (checklists,
    dependency edges), and nothing else.
 3. Record the verdict through `danxbot_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`
-   with `{status: "pass"|"fail", message: "<the real finding>"}`.
+   with `{status: "pass"|"fail", message: "<the real finding>", reviewed_sha: "<commit>"}`.
+   Always send `reviewed_sha`: the commit the verdict covers (`git rev-parse HEAD` of the
+   gated branch; for a plan gate, the tip of `origin/main`). A verdict already recorded is
+   replaced only by one naming a different commit, so a re-run after a fix records normally
+   and a second verdict on the same commit is refused.
 
 Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
 that doesn't apply to the card is removed (`POST` the same card route with
