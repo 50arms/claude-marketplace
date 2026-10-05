@@ -1,7 +1,8 @@
 import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
+import type { PacingVerdict } from '../../types'
 import { peekPacing, refreshPacing, releaseSlot, report, reserveSlot } from './pacing-line'
-import type { PacingEnv, PacingVerdict } from './pacing-line'
+import type { PacingEnv } from './pacing-line'
 
 // DX-4340 (PLAN-29 R-10): the usage-pacing guard on sub-agent spawns. danxbot serves the calling session's own account's verdict at
 // GET /api/pacing/line (it places the session on its account itself: no account matching here), which `pacing-line.ts` caches; this

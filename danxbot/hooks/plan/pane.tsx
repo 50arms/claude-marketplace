@@ -1,6 +1,8 @@
 import type { Draft, LiveSubagents, PlanView, StatusBreakdown } from '../../types'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
+import type { PanelModel } from './pacing-panel'
+import { pacingPane } from './pacing-panel-view'
 import { problemCard } from './problems'
 import { subagentSection } from './subagent-cards'
 import type { Ui } from './problems'
@@ -23,6 +25,8 @@ export type PaneModel = {
   hasSvg: boolean
   // DX-4508: the live child's numbers for this session's sub-agents
   live: LiveSubagents
+  // DX-4339: the usage pacing panel, shown in every state the pane has (the session's usage does not depend on the plan)
+  pacing: PanelModel
 }
 
 // DX-4374: one status dot, in the colour that says what it means (green working, yellow warning).
@@ -135,6 +139,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
   const shell = (...lines: any[]) => (
     <Box flexDirection="column" gap={1}>
       {header}
+      {pacingPane(E, m.pacing, m.now)}
       {lines}
     </Box>
   )
@@ -187,6 +192,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
   return (
     <Box flexDirection="column" gap={1}>
       {header}
+      {pacingPane(E, m.pacing, m.now)}
       <Box flexDirection="column">
         <Text color={SUCCESS}>● Connected: {plan.ref}</Text>
         <Text>{plan.name}</Text>
