@@ -18,7 +18,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 | Gates | the profile instruction carries them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
 | Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to main, `complete` + retro, report |
 
-Dispatched-only mechanics (`danxbot_complete`, halt, `agent-finalize.sh`, the pre-synced
+Dispatched-only mechanics (the dispatch-complete call, halt, `agent-finalize.sh`, the pre-synced
 worktree, DB resets) live only in danxbot's `work` profile.
 
 ## Flow

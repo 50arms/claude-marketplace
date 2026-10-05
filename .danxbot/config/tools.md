@@ -40,7 +40,7 @@ server or long-running process for this repo.
   commits the bump. Inside an agent worktree it detects
   `DANX_AGENT_WORKTREE` and **skips its push** (finalize owns the push).
 - `bash "$DANX_SCRIPTS_DIR/agent-finalize.sh" <agent> <CARD-ID> "<title>" "<bullet>" ...`
-  — the unconditional last step before `danxbot_complete`: squashes the
+  — the unconditional last step before the dispatch-complete call: squashes the
   branch onto `origin/main` and pushes. Prints `PUSHED <sha>` on success.
 
 ## The load-bearing rule
