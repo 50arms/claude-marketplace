@@ -14,6 +14,9 @@ const RM_RETRY = { maxRetries: 10, retryDelay: 200 };
 const STDERR_TAIL_CHARS = 2000;
 const EXIT_WAIT_MS = 5000;
 const MIN_NODE_MAJOR = 22;
+/** Shell convention: 128 + the signal number. */
+const EXIT_SIGINT = 130;
+const EXIT_SIGTERM = 143;
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -80,6 +83,7 @@ class Session {
       const msg = JSON.parse(ev.data);
       if (msg.id) {
         const p = this.#pending.get(msg.id);
+        if (!p) return console.warn(`capture-screenshot: ignoring a reply to unknown request ${msg.id}`);
         this.#pending.delete(msg.id);
         if (msg.error) p.reject(new Error(`${p.method}: ${msg.error.message}`));
         else p.resolve(msg.result);
@@ -135,15 +139,23 @@ export async function launchPage(executable, timeoutMs) {
         child.kill("SIGKILL");
       }
     }
-    if (profile) rmSync(profile, { recursive: true, force: true, ...RM_RETRY });
+    if (profile) {
+      // A profile that will not delete must not mask a capture already written (or the real launch error).
+      try {
+        rmSync(profile, { recursive: true, force: true, ...RM_RETRY });
+      } catch (e) {
+        console.warn(`capture-screenshot: could not remove ${profile}: ${e.message}`);
+      }
+    }
   };
   // The kill itself makes an in-flight wait fail; the signal's exit code outranks that error (see the script's catch).
   const onSignal = (code) => () => {
     process.exitCode = code;
     void close().finally(() => process.exit(code));
   };
-  const onSigint = onSignal(130);
-  const onSigterm = onSignal(143);
+  const onSigint = onSignal(EXIT_SIGINT);
+  const onSigterm = onSignal(EXIT_SIGTERM);
+  // Windows delivers no SIGTERM to a handler (and SIGINT only from a console), so there this path is best effort.
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
 
