@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "d12fbc3cecca3dedc5abe876c6e55d962422b77dcd1df374be6fea918ade6c4a",
+    ".claude-plugin/plugin.json": "e83add249a5c1662f6511b3703399f2f58ad53330570ecfbe54bf32e523e5223",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
