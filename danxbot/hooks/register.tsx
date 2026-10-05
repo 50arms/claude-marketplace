@@ -871,8 +871,8 @@ function startUsageTicker($: any, everyMs: number): void {
   usageTicker = $.clock.every(everyMs, () => reportUsageNow($))
 }
 
-// An API response arrived: the figure the harness holds is current as of now. Called for every kind of response the session sees
-// (a window moved, a main-thread turn ended, a sub-agent finished: its burn moves the parent's figure, R-9), never from the tick.
+// An API response arrived: the figure the harness holds is current as of now. Called when `session.measure` fires (after every main-thread
+// turn and whenever a window moves) and when a sub-agent finishes (its burn moves the parent's figure, R-9), never from the tick.
 async function markMeasured($: any): Promise<void> {
   const now = await $.clock.now()
   await update($, measuredAt, cur => (cur === null || now > cur ? now : cur))
@@ -1010,8 +1010,6 @@ function onSubagentStop($: any, e: any, next: any) {
 
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
-  // DX-4336: a main-thread turn that ended with a response (not an interruption or an API error) is a measurement of the figure
-  if (e.agentId === undefined && (e.reason === 'answer' || e.reason === 'refusal')) await markMeasured($)
   void refresh($)
   return r
 }

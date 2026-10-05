@@ -136,18 +136,18 @@ describe('the report', () => {
     expect(reports(d).at(-1).body.fiveHour.resetsAt).toBe('2026-10-03T11:20:00.000Z')
   })
 
-  test('measuredAt advances on a main-thread turn that ended with a response', async ($, on) => {
+  test('measuredAt advances on every session.measure, which fires after each main-thread turn', async ($, on) => {
     const d = await measuredSession($, on)
     await d.clock.advance(USAGE_TICK_MS * 2)
-    await $.turn.complete(ANSWER)
+    await $.session.measure(MEASURE)
     await d.clock.advance(USAGE_TICK_MS)
     expect(reports(d).at(-1).body.measuredAt).toBe(iso(CLOCK_START + USAGE_TICK_MS * 2))
   })
 
-  test('measuredAt does not advance on an interrupted turn, an API error or a sub-agent turn', async ($, on) => {
+  test('measuredAt does not advance on a turn that is not a measurement: turn.complete alone leaves it where session.measure put it', async ($, on) => {
     const d = await measuredSession($, on)
     await d.clock.advance(USAGE_TICK_MS)
-    for (const turn of [{ ...ANSWER, reason: 'aborted', isAborted: true }, { ...ANSWER, reason: 'error' }, { ...ANSWER, agentId: 'a1' }]) await $.turn.complete(turn)
+    await $.turn.complete(ANSWER)
     await d.clock.advance(USAGE_TICK_MS)
     expect(reports(d).at(-1).body.measuredAt).toBe(iso(CLOCK_START))
   })

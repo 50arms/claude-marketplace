@@ -30,7 +30,7 @@
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/usage.ts": "cb515b2ed6808d4517fed04c48d96693bf31cf10105375718a698174cef693dc",
     "hooks/plan/words.ts": "63d09986ef840ddab69f5fc3952802d98db57b2e3ea1abe402c3e4e7bfebf060",
-    "hooks/register.tsx": "9953fee4acb6ded8306a5917e5a2df38be268a3347162f6f3da9b8383d746ccf",
+    "hooks/register.tsx": "ec8283aff77aadcd373906cb9af76b1864d0cf08cace319480c29d5b49dde80c",
     "mantra.md": "b55dc5629f60ac05417d133a22a9904727eb9c7808ec09b721e5cc9c96e7bfe6",
     "scripts/activity-report.mjs": "f3ec925ab64cb5854792a63fc061f876a6688879db41b7ccbb808f1c5cf7cdcc",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
