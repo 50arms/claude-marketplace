@@ -269,6 +269,8 @@ declare module 'claude-code' {
       transcript: string | null
       // DX-4508: the live child's reports for this session (see LiveSubagents).
       live: LiveSubagents
+      // DX-4336: the failure text of the last usage report to danxbot, null while reports are accepted (a repeat is toasted once).
+      usageError: string | null
     }
   }
 }

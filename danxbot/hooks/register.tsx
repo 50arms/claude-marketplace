@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register } from 'claude-code'
+import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
 import type { ConnectedPlan, Draft, PermissionRequest, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
@@ -31,6 +31,7 @@ import {
   SIGN_IN_ROUNDS,
   SUBAGENT_SETTLE_MS,
   TICK_MS,
+  USAGE_TICK_MS,
   SIGN_IN_TIMEOUT_TOAST,
   signInFailedToast,
   SERVER,
@@ -47,6 +48,7 @@ import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
 import { shownSubagents } from './plan/subagent-cards'
+import { usageBody } from './plan/usage'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -73,6 +75,9 @@ const tick = atom({ plugin: 'danxbot', key: 'tick' } as const, 0)
 // DX-4508: the main session's transcript path (the classic events carry it) and the live child's reports for this session.
 const transcript = atom({ plugin: 'danxbot', key: 'transcript' } as const, null as string | null)
 const live = atom({ plugin: 'danxbot', key: 'live' } as const, NO_LIVE)
+// DX-4336: the text of the last usage report's failure (null while the reports are accepted), so a failure that repeats every tick is
+// shown once, not every minute.
+const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null as string | null)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -84,6 +89,8 @@ const live = atom({ plugin: 'danxbot', key: 'live' } as const, NO_LIVE)
 // $.state, which holds JSON); a reload cancels the old environment's waits and runs session.start
 // again, which starts a new one.
 let ticker: { cancel: () => void } | null = null
+// DX-4336: the usage report's timer, one per session like the refresh timer.
+let usageTicker: { cancel: () => void } | null = null
 // DX-4499: the runtime clock's timer, one per session like the refresh timer.
 let runtimeClock: { cancel: () => void } | null = null
 // DX-4508: the live child's stream, at most one; a handle, so a module variable (a reload kills the child with the module).
@@ -752,6 +759,39 @@ async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpaw
   }
 }
 
+// DX-4336 (PLAN-29 R-1, CAV-4, CAV-6): send this session's rate-limit windows on its heartbeat. Only a plan-connected session reports (a
+// session with no plan connection is neither paced nor resumed, and danxbot refuses its heartbeat). The whole agent tree's burn is in the
+// session's own figure (R-9), so there is one report per session and none per sub-agent. A failure of any step is toasted once per
+// distinct text (`usageError`) and cleared when a report is accepted again; a hook that threw would only be skipped, silently.
+async function reportUsage($: any, readLimits: () => Promise<readonly SessionRateLimit[]>): Promise<void> {
+  if ((await read($, view)).connected === null) return
+  let failure: string | null = null
+  try {
+    const body = usageBody(await readLimits(), await $.clock.now(), await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+    if (body === null) return
+    const r = await api($, 'POST', '/api/plan-sessions/me/heartbeat', { body: { usage: body } })
+    if (r.unreachable) return
+    if (!r.ok) failure = errText(r)
+  } catch (err: any) {
+    failure = errMessage(err)
+  }
+  failure = failure === null ? null : failure.slice(0, TOAST_ERROR_MAX)
+  if (failure === (await read($, usageError))) return
+  await update($, usageError, () => failure)
+  if (failure !== null) $.ui.toast(`Usage not reported to danxbot: ${failure}`)
+}
+
+// The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure.
+function reportUsageNow($: any): Promise<void> {
+  return reportUsage($, async () => (await $.session.usage()).rateLimits)
+}
+
+// A window moved (or a turn ended): the event carries the windows as the harness has them.
+async function onMeasure($: any, e: any, next: any) {
+  void reportUsage($, async () => e.rateLimits)
+  return next(e)
+}
+
 async function onSessionStart($: any, e: any, next: any) {
   await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
@@ -759,7 +799,9 @@ async function onSessionStart($: any, e: any, next: any) {
   await update($, busy, () => [])
   ticker?.cancel()
   ticker = $.clock.every(POLL_MS, () => refresh($))
-  void refresh($, true).then(() => retryWhileNoMcp($))
+  usageTicker?.cancel()
+  usageTicker = $.clock.every(USAGE_TICK_MS, () => reportUsageNow($))
+  void refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($))
   return next(e)
 }
 
@@ -773,6 +815,8 @@ async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason)) {
     ticker?.cancel()
     ticker = null
+    usageTicker?.cancel()
+    usageTicker = null
     runtimeClock?.cancel()
     runtimeClock = null
     settleTimer?.cancel()
@@ -805,7 +849,7 @@ async function onCommand($: any) {
 // connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
-  void refresh($, true)
+  void refresh($, true).then(() => reportUsageNow($))
   const approval = approvalRequestOf(ran.text)
   if (approval !== null) await showApproval($, approval)
   return ran
@@ -936,6 +980,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, onPlanConnect)
   on('tool.call', { tool: 'mcp__danx-dashboard__request_permission' }, onRequestPermission)
   on('turn.complete', onTurnComplete)
+  on('session.measure', onMeasure)
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onTitle)

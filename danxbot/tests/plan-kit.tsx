@@ -241,6 +241,13 @@ export function dashboard(
     subagentsNoList?: boolean
     // ... answers 404 for these session ids, or for every one (a dashboard that predates DX-4498 has no such route)
     subagentsNotFound?: string | string[] | true
+    // DX-4336: the session's account uuid (CLAUDE_CODE_ACCOUNT_UUID, set only by a desktop-hosted session); none by default
+    accountUuid?: string
+    // ... what the heartbeat route answers a usage report with: accepted (default), the dashboard's refusal of a session on no plan (409),
+    // a server error (500) or a report it dropped as out of order (applied: false)
+    usageReply?: 'ok' | 'notConnected' | 'boom' | 'stale'
+    // ... or `$.session.usage()` rejecting with this reason (a host that has no usage reading)
+    usageReadFails?: string
   } = {},
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
@@ -264,6 +271,8 @@ export function dashboard(
     // DX-4508: this session's sub-agents as `$.agent.list()` answers them (the engine's own list), none by default
     agents: [] as { id: string; type: string; description: string; status: string }[],
     titleSeen: undefined as string | undefined,
+    // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
+    rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
     // DX-4423: null while the session holds a key
     signedOut: (options.signedOut ?? null) as 'signed-out' | 'lapsed' | 'revoked' | null,
     signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean } | undefined, calls: [] as any[] },
@@ -432,6 +441,12 @@ export function dashboard(
           ? { comments: c.comments, ...(options.noCommentsTotal ? {} : { comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length } }) }
           : {}),
       })
+    }
+    // DX-4336: the heartbeat route as it answers a `usage` report (danxbot handleHeartbeat's view)
+    if (method === 'POST' && path === '/api/plan-sessions/me/heartbeat') {
+      if (options.usageReply === 'boom') return reply({ error: 'heartbeat boom' }, 500)
+      if (options.usageReply === 'notConnected') return reply({ error: 'session_not_connected', message: 'This session is not connected to a plan.' }, 409)
+      return reply({ health: null, dispatchStatus: 'running', stats: {}, title: null, usage: { applied: options.usageReply !== 'stale' } })
     }
     if (method === 'POST' && /^\/api\/permission-requests\/[^/]+\/claim$/.test(path)) {
       if (world.permissionClaim === 'notFound') return reply({ error: 'Not found' }, 404)
@@ -676,6 +691,9 @@ export function dashboard(
       </Box>
     )
   })
+  // DX-4336: what the harness knows of the account's windows
+  on('session.usage', () => (options.usageReadFails === undefined ? { value: { startedAt: 0, context: {}, rateLimits: world.rateLimits } } : { deny: options.usageReadFails }) as any)
+  mock.env(on, options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)
     if (e.timeoutMs !== undefined) toastTimeouts.push(e.timeoutMs)
