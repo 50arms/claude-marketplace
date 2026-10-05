@@ -11,7 +11,7 @@
     "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
     "hooks/hooks.json": "aad921806b1835e9c616c665b3172a25790e2d30a0f43e640c15f5e7c083e954",
     "hooks/plan/approval.ts": "5c0f2978f75b579c08d66b5b9bf0e0fcea1e86d3e08df2b37ef391275527b50d",
-    "hooks/plan/band.tsx": "0e809455345d4c8e061eabf31505e5ba4aec9331d206ba22f94c37a27fdcdc2b",
+    "hooks/plan/band.tsx": "d90c46a5ff3d7425108798173875967ec0100eb11cebb7f27063b37fdcb5821d",
     "hooks/plan/browser-output.ts": "79467578a7eb7ec7a51ed2f53eba5b161dd54a97aff49c6862104af8240b9fc2",
     "hooks/plan/card-links.ts": "ff9802f516bd7945d281868fb8d70a563d4d0598a70381fcaae1e2a16dba8954",
     "hooks/plan/config.ts": "33a55f589ae628b14fb635a92b2350eb0b1b9237391b853294b8c07483969538",
@@ -22,9 +22,13 @@
     "hooks/plan/load.ts": "240c614f7a0d800b0cb2ed3803f314906497eb2914a486e781ea2b7f155d2d37",
     "hooks/plan/mcp.ts": "6ab095681260b54b584168d0881fe3c24cf2125d0ad2e3e9a6017dbeb096168f",
     "hooks/plan/notes.ts": "a0609a795f8cfc6e920b51cb237a7088112d896ecea408b7a211c13d894016f6",
-    "hooks/plan/pacing-guard.ts": "32c66752e3c2e357aa3dd1e3f8e57ba64eac53da36782556dd3d433afe129f20",
-    "hooks/plan/pacing-line.ts": "002a28d12c4795e2ef1ec96427fc4d76fa870224ef46c38f87209c055f9ea6f6",
-    "hooks/plan/pane.tsx": "dff293e5c6db06393198e33bc6aaa51d20c92d72d2fc39e1e5481f0ad097730b",
+    "hooks/plan/pacing-format.ts": "a462f12bfbe4c8b52a0dc81644b8bf82bc3c1aae91cafc3503e30f25e4c0eae7",
+    "hooks/plan/pacing-guard.ts": "b6dda17bbf5d0475ba4fbf25e16ad3fc66a91ce332e01e3da6fbfdcf42dccd6c",
+    "hooks/plan/pacing-line.ts": "de935b7dd2aed574df3cea94b15a018b6da68a9f3bc68c07fa0f0ae7686fcd06",
+    "hooks/plan/pacing-panel-view.tsx": "1005e58af13e180d734200f11505014983ebfaa50c052fdb908e37596d9b25a3",
+    "hooks/plan/pacing-panel.ts": "0403da8e798b6a2665e865917aa084d414e2c027b1daec8ccc01b9d363f04784",
+    "hooks/plan/pacing-settings.ts": "4f4a08ad33c92d7228fe25cad02b9ba1809eab6a2373d9ebb3260085e3cd9f89",
+    "hooks/plan/pane.tsx": "fc94a445a3526de231ae09e107dbece0c713b1e1293821fbbd019e499ead8785",
     "hooks/plan/permission.ts": "10e63ad473550cea0853a0729137d4c930c63c27751b963effbf4ccfa898a363",
     "hooks/plan/problems.tsx": "48afc9c93eaa36ff79bb4cce555721eccb15a011f4ded3a1826abab0d79156bd",
     "hooks/plan/sign-in.ts": "c37913348a5b2343fd65bdce703069dfa20d255a34a65b6bb2c93c23c55d6267",
@@ -32,7 +36,7 @@
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/usage.ts": "d0d3152a3010a6ab87ccb16a6532326ad03b39aa91d2b6284d6d984c7942e08c",
     "hooks/plan/words.ts": "c15b0b5bc19abeed1ef4d40b29057be7d817df90ee4817b0d1c61221ab8216e3",
-    "hooks/register.tsx": "857e684d072c324c450a978fef15fb301db8fc45b99204976c48fc338a6531a0",
+    "hooks/register.tsx": "92a96514b36604c259892e1ca88a87a47b9432bce09d1a1ba720b00094e50ea1",
     "mantra.md": "b55dc5629f60ac05417d133a22a9904727eb9c7808ec09b721e5cc9c96e7bfe6",
     "scripts/activity-report.mjs": "f3ec925ab64cb5854792a63fc061f876a6688879db41b7ccbb808f1c5cf7cdcc",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
@@ -60,6 +64,6 @@
     "skills/issue-workflow/references/card-creation-and-reference.md": "5a486a62ceaa4f29b9b6254e7323842ae6ae3564ee49af802d94af0b22445d12",
     "skills/plan-workflow/SKILL.md": "1bfa9fcc14f51dc98c7f95791357ec0fb4d2f831500110ecd8609d9278d59308",
     "skills/prepare-for-compaction/SKILL.md": "b9cb9f4158349775c57730944f2b8ef6d2643f384271dba53c4a2902af04da7a",
-    "types/index.d.ts": "c9c5eedcd1adb8f7c3a8fcc06ecfe1bc65ed0cb0c91c33c02132a7be94d54c85"
+    "types/index.d.ts": "629c883fa8c61a3b6c4f3be233632d2045acff5d43e5269aca272c1bd2828748"
   }
 }

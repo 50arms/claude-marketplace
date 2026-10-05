@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, Draft, PermissionRequest, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
+import type { ConnectedPlan, Draft, PanelState, PermissionRequest, PlanRow, ProblemRow, RefreshGate, SolutionRow, StepRow } from '../types'
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
@@ -55,7 +55,9 @@ import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
-import { pacingLine, refreshPacing, withLine } from './plan/pacing-line'
+import { pacingLine, peekPacing, refreshPacing, withLine } from './plan/pacing-line'
+import { EMPTY_PANEL_STATE, buildPanel } from './plan/pacing-panel'
+import { readTeamSettings } from './plan/pacing-settings'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -91,6 +93,8 @@ const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null 
 // that was never counted (a reload lost the start, a duplicate stop) changes nothing, so the count cannot go negative; an entry older than
 // SUBAGENT_LIVE_MAX_MS (an agent that died with no stop) is no longer counted.
 const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
+// DX-4339: what the usage pacing panel draws from: the session's own windows, the team's settings and the account verdict as last read.
+const panel = atom({ plugin: 'danxbot', key: 'panel' } as const, EMPTY_PANEL_STATE as PanelState)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -832,21 +836,25 @@ async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpaw
 // API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and danxbot must tell it from one that is working.
 // Every step is inside the try, so a failure is a toast, never a hook that threw and was skipped silently: toasted once per distinct text
 // (`usageError`), cleared when a report is accepted again or there is nothing to report.
-async function reportUsage($: any, readLimits: () => Promise<readonly SessionRateLimit[]>): Promise<void> {
+async function reportUsage($: any, limits: readonly SessionRateLimit[] | { error: string }): Promise<void> {
   try {
     if ((await read($, view)).connected === null) return
     let failure: string | null = null
     try {
-      const now = await $.clock.now()
-      const body = usageBody(await readLimits(), now, await read($, measuredAt), liveAgentsAt(await read($, liveAgents), now).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
-      if (body !== null) {
-        const r = await api($, 'PUT', USAGE_PATH, { body })
-        if (r.unreachable) return
-        if (!r.ok) failure = errText(r)
-        else {
-          const every = r.body?.report_every_ms
-          if (!Number.isInteger(every) || every < MIN_USAGE_TICK_MS) failure = `the answer named no usable report_every_ms (${JSON.stringify(every)})`
-          else if (every !== usageEveryMs) startUsageTicker($, every)
+      // DX-4339: `{error}` is the session's own usage reading failing (the tick read it): the failure is toasted like any other
+      if ('error' in limits) failure = limits.error
+      else {
+        const now = await $.clock.now()
+        const body = usageBody(limits, now, await read($, measuredAt), liveAgentsAt(await read($, liveAgents), now).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+        if (body !== null) {
+          const r = await api($, 'PUT', USAGE_PATH, { body })
+          if (r.unreachable) return
+          if (!r.ok) failure = errText(r)
+          else {
+            const every = r.body?.report_every_ms
+            if (!Number.isInteger(every) || every < MIN_USAGE_TICK_MS) failure = `the answer named no usable report_every_ms (${JSON.stringify(every)})`
+            else if (every !== usageEveryMs) startUsageTicker($, every)
+          }
         }
       }
     } catch (err: any) {
@@ -862,9 +870,51 @@ async function reportUsage($: any, readLimits: () => Promise<readonly SessionRat
   }
 }
 
+// DX-4339: the panel draws the session's own windows whether or not the session is connected to a plan, so they are kept here, apart from
+// the report (which only a connected session makes). An unreadable usage clears them: a frozen figure must not stand as current.
+async function noteLimits($: any, limits: readonly SessionRateLimit[]): Promise<void> {
+  await update($, panel, cur => ({ ...cur, limits: limits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })) }))
+}
+
 // The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure.
-function reportUsageNow($: any): Promise<void> {
-  return reportUsage($, async () => (await $.session.usage()).rateLimits)
+async function reportUsageNow($: any): Promise<void> {
+  let limits: readonly SessionRateLimit[] | { error: string }
+  try {
+    limits = (await $.session.usage()).rateLimits
+  } catch (err: any) {
+    limits = { error: errMessage(err) }
+  }
+  try {
+    await noteLimits($, 'error' in limits ? [] : limits)
+    // only a connected session reports, and so only one toasts a failed reading (as before DX-4339)
+    if ('error' in limits && (await read($, view)).connected === null) return
+  } catch (err: any) {
+    // a tick runs with nobody awaiting it: reading or writing the plugin's own state can only fail into the toast, never a rejection
+    $.ui.toast(`Usage not reported to danxbot: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+    return
+  }
+  return reportUsage($, limits)
+}
+
+// DX-4339: the team's pacing settings (GET /api/team/pacing) and the account verdict (the DX-4340 cache) into the panel's state. The settings
+// read's outcome is kept (`settingsRead`) so the pane tells a quiet start or a session with no danxbot from a real error; a failed read keeps
+// the last settings and toasts nothing (DX-4340's decision). The verdict is re-read every poll (danxbot itself changes it every 10 minutes, so
+// a change shows within a poll or two). Run at session start and on the poll; a throw here is toasted, never an unhandled rejection.
+async function refreshPacingPanel($: any): Promise<void> {
+  try {
+    const env = pacingEnv($)
+    const fetched = await readTeamSettings(env.call)
+    await refreshPacing(env, true)
+    const now = await $.clock.now()
+    const verdict = peekPacing(now)?.verdict ?? null
+    await update($, panel, cur =>
+      'settings' in fetched
+        ? { ...cur, settings: fetched.settings, settingsAt: now, settingsRead: { state: 'ok' }, verdict }
+        : { ...cur, settingsRead: fetched.read, verdict: null },
+    )
+  } catch (err: any) {
+    $.ui.toast(`Usage pacing panel could not refresh: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+  }
 }
 
 // danxbot says how often to report in every answer (its expiry is derived from that cadence), so the plugin carries only a first guess
@@ -886,7 +936,10 @@ async function markMeasured($: any): Promise<void> {
 // A window moved (or a turn ended): the event carries the windows as the harness has them.
 async function onMeasure($: any, e: any, next: any) {
   await markMeasured($)
-  void reportUsage($, async () => e.rateLimits)
+  // a measure with no windows (off a subscription) carries none: that is no figure, not a crash before `next`
+  const limits: readonly SessionRateLimit[] = Array.isArray(e.rateLimits) ? e.rateLimits : []
+  await noteLimits($, limits)
+  void reportUsage($, limits)
   return next(e)
 }
 
@@ -896,14 +949,14 @@ async function onSessionStart($: any, e: any, next: any) {
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
   ticker?.cancel()
-  ticker = $.clock.every(POLL_MS, () => refresh($))
+  ticker = $.clock.every(POLL_MS, () => Promise.all([refresh($), refreshPacingPanel($)]))
   startUsageTicker($, USAGE_TICK_MS)
   // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
   permissionTicker?.cancel()
   permissionTicker = null
   await syncPermissionPoll($)
   // DX-4340: read the pacing verdict at session start; later reads happen when it is a minute old, at a spawn or sub-agent start
-  void refreshPacing(pacingEnv($), true)
+  void refreshPacingPanel($)
   void refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($))
   return next(e)
 }
@@ -1046,6 +1099,7 @@ async function drawBand($: any, e: any, next: any) {
     await read($, busy),
     (await read($, permissionRequests)).length,
     e.props.bodyColumns,
+    buildPanel(await read($, panel)),
   )
 }
 
@@ -1087,6 +1141,7 @@ async function drawPane($: any, e: any) {
     hasBrowser: e.surface === 'desktop',
     hasSvg: e.surface === 'desktop',
     live: await read($, live),
+    pacing: buildPanel(await read($, panel)),
   }
   return renderPane($.ui.resolve(e), handlers($), m)
 }

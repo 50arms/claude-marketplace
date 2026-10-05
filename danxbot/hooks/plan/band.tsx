@@ -3,6 +3,10 @@ import { DANGER, FALLBACK_ORIGIN, NO_MCP_DETAIL, NO_MCP_LABEL, DONUT_BAND_PX, SI
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { permissionBadge } from './permission'
+import { bandText } from './pacing-format'
+import { EMPTY_PANEL } from './pacing-panel'
+import type { PanelModel } from './pacing-panel'
+import { pacingBand } from './pacing-panel-view'
 import { bandLabel, bandLabelCols, problemBadge, viewPercent } from './words'
 
 // DX-4420: the band button that opens the pane (it read `Plan`), and the other controls' labels the width budget counts.
@@ -30,6 +34,8 @@ export function renderBand(
   // The band's width in columns (`bodyColumns`); absent in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns?: number,
+  // DX-4339: the pacing entries beside the controls: each enabled limit's usage against its target, coloured by level.
+  pacing: PanelModel = EMPTY_PANEL,
 ): any {
   const { Box, Text, Button, Link } = E
   const openPane = (
@@ -57,6 +63,7 @@ export function renderBand(
         </Box>
         <Box flexGrow={1} />
         <Box flexDirection="row" gap={1} flexShrink={0}>
+          {pacingBand(E, pacing)}
           {openPane}
           {hasBrowser && (
             <Button key="open-tab" onPress={() => hd.openBrowserTab(url)}>
@@ -84,7 +91,9 @@ export function renderBand(
   // DX-4521: both links are in every state: the plan's page when connected, else the dashboard's plans list. Only an origin never
   // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
   const linkUrl = plan !== null ? planUrl(plan) : v.dashboardUrl !== null ? plansUrl(v.dashboardUrl) : null
+  const pacingLabel = bandText(pacing)
   const controls = [
+    ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
     ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
@@ -115,6 +124,7 @@ export function renderBand(
       </Box>
       <Box flexGrow={1} />
       <Box flexDirection="row" gap={1} flexShrink={0}>
+        {pacingBand(E, pacing)}
         {signedOut && (
           <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
             {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}

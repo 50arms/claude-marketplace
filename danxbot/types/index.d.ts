@@ -236,6 +236,28 @@ export type RefreshGate = {
   at: number | null
 }
 
+// DX-4339: the usage pacing panel's state (see hooks/plan/pacing-panel.ts).
+export type PacingMode = 'fast_then_hold' | 'spread_evenly'
+export type LimitSettings = { enabled: boolean; targetPercent: number; mode: PacingMode; criticalPercent: number }
+export type TeamSettings = { five_hour: LimitSettings; weekly: LimitSettings }
+export type PanelLimit = { kind: string; percentUsed: number; resetsAt?: string }
+export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
+// The account's verdict for this session (DX-4340's cache): `budget` null = no cap, 0 = start nothing new, n = most agents at once.
+export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number }
+// How the last read of the team's settings went. `pending`: none yet (session start), quiet. `silent`: no danx-dashboard MCP, no danxbot or no key
+// (DX-3421 / DX-4340: said nowhere but the band's `local`). `error`: danxbot answered and the answer was unusable; the pane names it.
+export type SettingsRead = { state: 'pending' | 'ok' | 'silent' } | { state: 'error'; message: string }
+export type PanelState = {
+  // the last settings read, and when; kept through a failed read so the panel can still show them, marked local
+  settings: TeamSettings | null
+  settingsAt: number | null
+  settingsRead: SettingsRead
+  // the account verdict as of the last refresh (null: none, or not trusted while the settings read is failing)
+  verdict: PacingVerdict | null
+  // the session's own windows, as the harness last reported them (empty when its usage could not be read)
+  limits: PanelLimit[]
+}
+
 // DX-4435: a `request_permission` request the band counts until it is decided. DX-4530: no expiry clock (the claim decides it).
 export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[] }
 
@@ -275,6 +297,8 @@ declare module 'claude-code' {
       measuredAt: number | null
       // DX-4336: the sub-agents running now, by id and start time (the report's runningAgents is this plus the main thread).
       liveAgents: { id: string; since: number }[]
+      // DX-4339: what the usage pacing panel draws: the session's own windows, the team's pacing settings and the account verdict as last read.
+      panel: PanelState
     }
   }
 }

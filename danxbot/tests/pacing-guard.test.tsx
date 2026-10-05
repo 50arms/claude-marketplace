@@ -6,7 +6,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { TIGHT_FREE_SLOTS, decideSpawn, isTight, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { PACING_EXPIRY_MS, PACING_REFRESH_MS, resetPacingCache } from '../hooks/plan/pacing-line'
-import type { PacingVerdict } from '../hooks/plan/pacing-line'
+import type { PacingVerdict } from '../types'
 import { dashboard, startSession } from './plan-kit'
 
 const RESET = '2026-10-08T12:00:00.000Z'
