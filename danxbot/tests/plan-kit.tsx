@@ -243,9 +243,11 @@ export function dashboard(
     subagentsNotFound?: string | string[] | true
     // DX-4336: the session's account uuid (CLAUDE_CODE_ACCOUNT_UUID, set only by a desktop-hosted session); none by default
     accountUuid?: string
-    // ... what the heartbeat route answers a usage report with: accepted (default), the dashboard's refusal of a session on no plan (409),
-    // a server error (500) or a report it dropped as out of order (applied: false)
-    usageReply?: 'ok' | 'notConnected' | 'boom' | 'stale'
+    // ... what the usage route answers a report with: accepted (default), the dashboard's refusal of a session on no plan (409), a server
+    // error (500) or an answer that names no usable cadence
+    usageReply?: 'ok' | 'notConnected' | 'boom' | 'noCadence'
+    // ... and the cadence it asks for (`report_every_ms`; default 60 s, danxbot's own)
+    usageEveryMs?: number
     // ... or `$.session.usage()` rejecting with this reason (a host that has no usage reading)
     usageReadFails?: string
   } = {},
@@ -444,11 +446,12 @@ export function dashboard(
           : {}),
       })
     }
-    // DX-4336: the heartbeat route as it answers a `usage` report (danxbot handleHeartbeat's view)
-    if (method === 'POST' && path === '/api/plan-sessions/me/heartbeat') {
-      if (options.usageReply === 'boom') return reply({ error: 'heartbeat boom' }, 500)
+    // DX-4336: the usage route as it answers a report (danxbot handleUsage's view)
+    if (method === 'PUT' && path === '/api/plan-sessions/me/usage') {
+      if (options.usageReply === 'boom') return reply({ error: 'usage boom' }, 500)
       if (options.usageReply === 'notConnected') return reply({ error: 'session_not_connected', message: 'This session is not connected to a plan.' }, 409)
-      return reply({ health: null, dispatchStatus: 'running', stats: {}, title: null, usage: { applied: options.usageReply !== 'stale' } })
+      if (options.usageReply === 'noCadence') return reply({ applied: true })
+      return reply({ applied: true, report_every_ms: options.usageEveryMs ?? 60_000 })
     }
     if (method === 'POST' && /^\/api\/permission-requests\/[^/]+\/claim$/.test(path)) {
       if (world.permissionClaim === 'notFound') return reply({ error: 'Not found' }, 404)

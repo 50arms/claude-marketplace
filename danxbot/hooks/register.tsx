@@ -33,6 +33,8 @@ import {
   SIGN_IN_ROUNDS,
   SUBAGENT_SETTLE_MS,
   TICK_MS,
+  MIN_USAGE_TICK_MS,
+  USAGE_PATH,
   USAGE_TICK_MS,
   SIGN_IN_TIMEOUT_TOAST,
   signInFailedToast,
@@ -80,6 +82,8 @@ const live = atom({ plugin: 'danxbot', key: 'live' } as const, NO_LIVE)
 // DX-4336: the text of the last usage report's failure (null while the reports are accepted), so a failure that repeats every tick is
 // shown once, not every minute.
 const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null as string | null)
+// DX-4336: when the last API response arrived (epoch ms), the age of the usage figure; null until the session has seen one.
+const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null as number | null)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -815,26 +819,39 @@ async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpaw
   }
 }
 
-// DX-4336 (PLAN-29 R-1, CAV-4, CAV-6): send this session's rate-limit windows on its heartbeat. Only a plan-connected session reports (a
-// session with no plan connection is neither paced nor resumed, and danxbot refuses its heartbeat). The whole agent tree's burn is in the
-// session's own figure (R-9), so there is one report per session and none per sub-agent. A failure of any step is toasted once per
-// distinct text (`usageError`) and cleared when a report is accepted again; a hook that threw would only be skipped, silently.
+// DX-4336 (PLAN-29 R-1, CAV-4, CAV-6): send this session's rate-limit windows to danxbot. Only a plan-connected session reports (a session
+// with no plan connection is neither paced nor resumed, and danxbot refuses its report). The whole agent tree's burn is in the session's
+// own figure (R-9), so there is one report per session and none per sub-agent. The report says when the figure was MEASURED (the last
+// API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and danxbot must tell it from one that is working.
+// Every step is inside the try, so a failure is a toast, never a hook that threw and was skipped silently: toasted once per distinct text
+// (`usageError`), cleared when a report is accepted again or there is nothing to report.
 async function reportUsage($: any, readLimits: () => Promise<readonly SessionRateLimit[]>): Promise<void> {
-  if ((await read($, view)).connected === null) return
-  let failure: string | null = null
   try {
-    const body = usageBody(await readLimits(), await $.clock.now(), await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
-    if (body === null) return
-    const r = await api($, 'POST', '/api/plan-sessions/me/heartbeat', { body: { usage: body } })
-    if (r.unreachable) return
-    if (!r.ok) failure = errText(r)
+    if ((await read($, view)).connected === null) return
+    let failure: string | null = null
+    try {
+      const body = usageBody(await readLimits(), await $.clock.now(), await read($, measuredAt), await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+      if (body !== null) {
+        const r = await api($, 'PUT', USAGE_PATH, { body })
+        if (r.unreachable) return
+        if (!r.ok) failure = errText(r)
+        else {
+          const every = r.body?.report_every_ms
+          if (!Number.isInteger(every) || every < MIN_USAGE_TICK_MS) failure = `the answer named no usable report_every_ms (${JSON.stringify(every)})`
+          else if (every !== usageEveryMs) startUsageTicker($, every)
+        }
+      }
+    } catch (err: any) {
+      failure = errMessage(err)
+    }
+    failure = failure === null ? null : failure.slice(0, TOAST_ERROR_MAX)
+    if (failure === (await read($, usageError))) return
+    await update($, usageError, () => failure)
+    if (failure !== null) $.ui.toast(`Usage not reported to danxbot: ${failure}`)
   } catch (err: any) {
-    failure = errMessage(err)
+    // only reading or writing the plugin's own state can land here: nothing is left to report it through but the toast
+    $.ui.toast(`Usage not reported to danxbot: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
   }
-  failure = failure === null ? null : failure.slice(0, TOAST_ERROR_MAX)
-  if (failure === (await read($, usageError))) return
-  await update($, usageError, () => failure)
-  if (failure !== null) $.ui.toast(`Usage not reported to danxbot: ${failure}`)
 }
 
 // The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure.
@@ -842,8 +859,25 @@ function reportUsageNow($: any): Promise<void> {
   return reportUsage($, async () => (await $.session.usage()).rateLimits)
 }
 
+// danxbot says how often to report in every answer (its expiry is derived from that cadence), so the plugin carries only a first guess
+// (USAGE_TICK_MS) and takes the server's value as soon as one answer arrives.
+let usageEveryMs = USAGE_TICK_MS
+function startUsageTicker($: any, everyMs: number): void {
+  usageTicker?.cancel()
+  usageEveryMs = everyMs
+  usageTicker = $.clock.every(everyMs, () => reportUsageNow($))
+}
+
+// An API response arrived: the figure the harness holds is current as of now. Called for every kind of response the session sees
+// (a window moved, a main-thread turn ended, a sub-agent finished: its burn moves the parent's figure, R-9), never from the tick.
+async function markMeasured($: any): Promise<void> {
+  const now = await $.clock.now()
+  await update($, measuredAt, cur => (cur === null || now > cur ? now : cur))
+}
+
 // A window moved (or a turn ended): the event carries the windows as the harness has them.
 async function onMeasure($: any, e: any, next: any) {
+  await markMeasured($)
   void reportUsage($, async () => e.rateLimits)
   return next(e)
 }
@@ -855,8 +889,7 @@ async function onSessionStart($: any, e: any, next: any) {
   await update($, busy, () => [])
   ticker?.cancel()
   ticker = $.clock.every(POLL_MS, () => refresh($))
-  usageTicker?.cancel()
-  usageTicker = $.clock.every(USAGE_TICK_MS, () => reportUsageNow($))
+  startUsageTicker($, USAGE_TICK_MS)
   // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
   permissionTicker?.cancel()
   permissionTicker = null
@@ -947,6 +980,8 @@ function settleSubagents($: any): void {
 async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   await noteTranscript($, e)
   const r = await next(e)
+  // DX-4336: a finished sub-agent's last response moved the parent's figure
+  if (!isStart) await markMeasured($)
   void refresh($)
   // only a session connected to a plan has a Sub-agents section to settle
   if ((await read($, view)).connected !== null) settleSubagents($)
@@ -965,6 +1000,8 @@ function onSubagentStop($: any, e: any, next: any) {
 
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
+  // DX-4336: a main-thread turn that ended with a response (not an interruption or an API error) is a measurement of the figure
+  if (e.agentId === undefined && (e.reason === 'answer' || e.reason === 'refusal')) await markMeasured($)
   void refresh($)
   return r
 }

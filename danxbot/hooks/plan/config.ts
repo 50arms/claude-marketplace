@@ -40,10 +40,13 @@ export const PREFIX_PATTERN = new RegExp(`^[A-Z]{1,${PREFIX_MAX}}$`)
 export const SUBAGENT_SETTLE_MS = 5_000
 // DX-4499: how often the pane's clock advances while it shows a sub-agent: the runtime's seconds, drawn only, no call.
 export const TICK_MS = 1_000
-// DX-4336: how often the session reports its rate-limit windows even when nothing moved: an idle session's figure freezes at its last
-// response and `session.measure` skips a moved reset time at an unchanged percent (CAV-6). danxbot's USAGE_REPORT_TICK_MS
-// (src/issues/usage-accounts.ts) is this value, and it expires a report older than two of these plus 30 s.
+// DX-4336: where the session reports its rate-limit windows, and how often it does so before danxbot has said (every answer carries
+// `report_every_ms`, danxbot's own USAGE_REPORT_TICK_MS, which the plugin then follows). The tick matters even when nothing moved: an idle
+// session's figure freezes at its last response and `session.measure` skips a moved reset time at an unchanged percent (CAV-6).
+export const USAGE_PATH = '/api/plan-sessions/me/usage'
 export const USAGE_TICK_MS = 60_000
+// ... and the shortest cadence the plugin accepts from danxbot: a smaller one is a malformed answer, not a request to report in a loop.
+export const MIN_USAGE_TICK_MS = 5_000
 
 // A refresh lock held longer than this is a dead load's, not a running one's.
 export const LOCK_STALE_MS = 120_000
