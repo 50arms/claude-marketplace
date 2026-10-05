@@ -7,7 +7,7 @@ import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, isTight, spawnGuard, tie
 import { register } from '../hooks/register'
 import { PACING_EXPIRY_MS, PACING_REFRESH_MS, RESERVATION_TTL_MS, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
-import type { PacingVerdict } from '../hooks/plan/pacing-line'
+import type { PacingVerdict } from '../types'
 import { dashboard, startSession } from './plan-kit'
 
 const RESET = '2026-10-08T12:00:00.000Z'

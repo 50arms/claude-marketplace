@@ -13,12 +13,11 @@ import type { Api } from './load'
 // danx-dashboard MCP server (a session on a repo with no danxbot, as in reportUsage and DX-3421): that is silent and not backed off,
 // the next spawn simply looks again, until a read has succeeded in this session. After a success it is a failure like any other.
 
-export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
+import type { PacingLevel, PacingVerdict } from '../../types'
+
 const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
 
-// The verdict as the guard reads it. `budget`: null = no cap, 0 = start nothing new, n = most agents running at once across the whole
-// account; `runningAgents` is the account's running agents when danxbot computed it.
-export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number }
+// The verdict as the guard reads it (`PacingVerdict`, types/index.d.ts, shared with the plan panel) and danxbot's one-sentence line.
 export type Pacing = { verdict: PacingVerdict; line: string }
 
 export type PacingCall = (method: string, path: string) => Promise<Api>
