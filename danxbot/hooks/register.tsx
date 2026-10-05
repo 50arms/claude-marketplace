@@ -1089,8 +1089,11 @@ export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
+  // DX-4555: the same server answers under the project's `.mcp.json` name and under the danxbot plugin's own.
   on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, onPlanConnect)
   on('tool.call', { tool: 'mcp__danx-dashboard__request_permission' }, onRequestPermission)
+  on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, onPlanConnect)
+  on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__request_permission' }, onRequestPermission)
   on('turn.complete', onTurnComplete)
   on('session.measure', onMeasure)
   on('classic.SubagentStart', onSubagentStart)

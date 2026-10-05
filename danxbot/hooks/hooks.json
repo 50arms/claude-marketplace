@@ -85,6 +85,17 @@
         ]
       },
       {
+        "matcher": "^mcp__plugin_danxbot_danx-dashboard__plan_connect$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via rewake scripts/plan-event-bridge.mjs start",
+            "async": true,
+            "asyncRewake": true
+          }
+        ]
+      },
+      {
         "matcher": ".*",
         "hooks": [
           {
