@@ -167,6 +167,14 @@ export function planUrl(plan: ConnectedPlan): string {
   return `${plan.dashboardUrl}/plans/${plan.id}`
 }
 
+// DX-4547: the origin a no-mcp session's links use when none was ever remembered (DX-4521's $.store value is preferred).
+export const FALLBACK_ORIGIN = 'https://danxbot.sageus.ai'
+
+// DX-4547: what a session with no danx-dashboard connection says, band and pane alike (never blank).
+export const NO_MCP_LABEL = `${BRAND}: not available in this session`
+export const NO_MCP_DETAIL = 'No danx-dashboard connection in this folder. Open Claude Code in a connected repo to use it.'
+export const NO_MCP_FOOTER = `${BRAND} · off`
+
 // DX-4521: the dashboard's plans list, where the band's links go while no plan is connected.
 export function plansUrl(dashboardUrl: string): string {
   return `${dashboardUrl}/plans`

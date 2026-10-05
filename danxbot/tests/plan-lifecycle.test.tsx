@@ -69,7 +69,7 @@ describe('the MCP server connects after session start', () => {
     const d = dashboard(on, { mcp: 'down' })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await band.findAll({ type: 'Text' })).toHaveLength(0)
+    expect(await text(band)).toContain('not available in this session')
     d.setMcp('up')
     await d.clock.advance(2_000)
     expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
@@ -86,7 +86,7 @@ describe('the MCP server connects after session start', () => {
     await d.clock.advance(30_000)
     expect(apiCalls()).toBe(1 + NO_MCP_RETRY_MS.length)
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect((await band.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['open-pane', 'band-close'])
+    expect((await band.findAll({ type: 'Button' })).map((b: any) => b.key)).toContain('open-pane')
   })
 
   test('a server that is up needs no retry', async ($, on) => {

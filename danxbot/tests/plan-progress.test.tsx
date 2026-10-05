@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { donutGlyph, planPercent } from '../hooks/plan/words'
-import { SURFACES, dashboard, expectIndicator, footerText, mountIndicator, startSession } from './plan-kit'
+import { FOOTER_PAD, SURFACES, dashboard, expectIndicator, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -111,7 +111,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { mcp: 'down' })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface, ['focus'])
-      expect(await footer.find({ key: 'footer-plan' })).toBeUndefined()
+      expect((await footer.find({ key: 'footer-plan' }))?.text.replace(FOOTER_PAD, '')).toBe('Danxbot · off')
       expect(await text(footer)).toBe('focus')
     })
 
