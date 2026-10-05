@@ -60,12 +60,13 @@ test("step 1 signs in with plan_connect and no plan, showing the approval link a
   assert.match(s, /approval URL|approval link/i);
 });
 
-test("step 2 normalizes an ssh:// github.com origin and accepts github.com only", () => {
+test("step 2 normalizes ssh:// and github.com-<alias> origins and refuses every other host", () => {
   const s = step(2);
   assert.match(s, /ssh:\/\/git@github\.com\/<owner>\/<repo>\.git/);
-  assert.match(s, /rewrite an `ssh:\/\/` origin to `git@github\.com:<owner>\/<repo>\.git`/);
-  assert.match(s, /host is not `github\.com`/);
-  assert.doesNotMatch(s, /github\.com-/, "an SSH alias host is refused by the server, so the skill never accepts one");
+  assert.match(s, /git@github\.com-<alias>:<owner>\/<repo>\.git/);
+  assert.match(s, /rewrite an `ssh:\/\/` or\s+alias origin to `git@github\.com:<owner>\/<repo>\.git`/);
+  assert.match(s, /neither `github\.com` nor an SSH config alias for it\s+\(`github\.com-<alias>`/);
+  assert.match(s, /connects `github\.com` repos only/);
 });
 
 test("step 2 reads the origin URL and refuses, creating nothing, when there is none or it is not GitHub", () => {

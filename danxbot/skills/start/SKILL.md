@@ -42,15 +42,15 @@ Run `git remote get-url origin` in the repo.
   `origin` remote, so danxbot cannot tell which repo it is, and that they can add one
   (`git remote add origin <url>`) or run `/danxbot:start` again inside a clone of their
   GitHub repo. Stop. Nothing has been created.
-- A URL whose host is not `github.com` (another service, or an SSH alias for a host):
-  tell the person danxbot connects `github.com` repos only. Stop. Nothing has been
-  created.
+- A URL whose host is neither `github.com` nor an SSH config alias for it
+  (`github.com-<alias>`, which people with several GitHub accounts use): tell the person
+  danxbot connects `github.com` repos only. Stop. Nothing has been created.
 
 Otherwise take its owner and repo name (`https://github.com/<owner>/<repo>.git`,
-`git@github.com:<owner>/<repo>.git` and `ssh://git@github.com/<owner>/<repo>.git` all give
-`<owner>` and `<repo>`, without `.git`). The URL you register is the `https://` or
-`git@github.com:` form: rewrite an `ssh://` origin to `git@github.com:<owner>/<repo>.git`,
-and keep the others exactly as printed.
+`git@github.com:<owner>/<repo>.git`, `git@github.com-<alias>:<owner>/<repo>.git` and
+`ssh://git@github.com/<owner>/<repo>.git` all give `<owner>` and `<repo>`, without `.git`).
+The URL you register is the `https://` or `git@github.com:` form: rewrite an `ssh://` or
+alias origin to `git@github.com:<owner>/<repo>.git`, and keep the others exactly as printed.
 
 ### 3. Register the repo
 
