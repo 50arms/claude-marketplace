@@ -159,8 +159,19 @@ describe('plan_connect while signed out', () => {
     expect(d.toastTimeouts.at(-1)).toBe(60_000)
   })
 
+  // DX-4548: a request is shown by its URL, not by the answer's state: one this session has not shown opens even as approval_pending
+  test('approval_pending of a request not yet shown opens its page and shows its code', async ($, on) => {
+    const d = dashboard(on, { tabs: ['tab-1'] })
+    answering(on, [pending])
+    await startSession($, d, 'desktop')
+    d.calls.length = 0
+    await $.tool.call(CALL)
+    await d.clock.settle()
+    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
+    expect(d.toasts.some(t => t.includes('NXGUF88G'))).toBe(true)
+  })
+
   for (const [name, text] of [
-    ['approval_pending', pending],
     ['a normal connect', connected],
     ['text that is not JSON', 'plan_connect: bad arguments'],
   ] as const) {

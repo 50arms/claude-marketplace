@@ -430,22 +430,8 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('a request nobody approves ends when the call that outlives it answers a new one: a toast, no second page, Sign in pressable again', async ($, on) => {
-      const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
-      d.world.signIn.expireAfterCalls = 4
-      await startSession($, d, surface)
-      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      await band.press({ key: 'sign-in' })
-      for (let i = 0; i < 6; i++) await d.clock.advance(45_000)
-      await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe('Sign in expired. Press Sign in again.')
-      expect(connectCalls(d)).toHaveLength(4)
-      expect(previewStarts(d).map((c: any) => c.args.url)).toEqual([APPROVAL_URL])
-      expect(d.toasts.join(' ')).not.toContain('NEWCODE9')
-      expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
-    })
-
-    test('after an expiry a new press waits on the request the last call left, and shows its page and code', async ($, on) => {
+    // DX-4548: the call that outlives a request answers its renewal: shown to the person and watched in its place
+    test('a request that expires is replaced by the renewed one: its page and code are shown and the wait goes on until it is approved', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
       d.world.signIn.expireAfterCalls = 3
       await startSession($, d, surface)
@@ -453,16 +439,13 @@ for (const surface of SURFACES) {
       await band.press({ key: 'sign-in' })
       for (let i = 0; i < 4; i++) await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe('Sign in expired. Press Sign in again.')
-      // the server now holds the renewed request: its waiting answers name it
-      d.world.signIn.answer = { text: JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' }), waits: true }
-      d.world.signIn.expireAfterCalls = undefined
-      await band.press({ key: 'sign-in' })
-      await d.clock.advance(45_000)
-      // the pane is open by now, so the second page goes through the held tab (navigate), not preview_start
-      const pages = d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.args?.url).map((c: any) => c.args.url)
-      expect(pages).toEqual([APPROVAL_URL, `${APPROVAL_URL}-renewed`])
+      expect(d.toasts).toContain('Sign in expired. A new request is open.')
       expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
+      expect((await band.find({ key: 'sign-in' })).text).toBe('Signing in…')
+      d.world.signIn.approved = true
+      await d.clock.advance(45_000)
+      await d.clock.settle()
+      expect(d.toasts).toContain('Signed in')
     })
 
     // DX-4548: a request stays open while its session lives, so the wait has no round limit

@@ -217,7 +217,9 @@ export const SIGN_IN_LABEL = 'Sign in'
 export const SIGNING_IN_LABEL = 'Signing in…'
 export const SIGNED_IN_TOAST = 'Signed in'
 // DX-4548: a sign-in request has no round limit (it stays open while its session lives); these end it
-export const SIGN_IN_EXPIRED_TOAST = 'Sign in expired. Press Sign in again.'
+export const SIGN_IN_EXPIRED_TOAST = 'Sign in expired. A new request is open.'
+// the shortest a watch's round may take: the MCP's own ~45 s wait normally paces it; an answer that returns at once must not spin it
+export const SIGN_IN_MIN_ROUND_MS = 5_000
 export const SIGN_IN_DENIED_TOAST = 'Sign in was denied.'
 export const signInFailedToast = (message: string) => `Sign in failed: ${message.slice(0, CONNECT_ERROR_MAX)}`
 

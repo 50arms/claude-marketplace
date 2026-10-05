@@ -2,8 +2,9 @@
 // model once how it ended (approved, denied or expired), so the person never has to type "approved" into the chat.
 import { describe, expect, test } from 'claude-code/testing'
 
+import { SIGN_IN_MIN_ROUND_MS } from '../hooks/plan/config'
 import { signInApprovedNote, signInDeniedNote, signInExpiredNote } from '../hooks/plan/notes'
-import { APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, toldModel } from './plan-kit'
+import { APPROVAL_PENDING, APPROVAL_URL, APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, toldModel } from './plan-kit'
 
 const CALL = { tool: 'mcp__danx-dashboard__plan_connect', plan_id: 23, title: 'PLAN-23: danxbot plugin' } as any
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'danx-dashboard' && c.tool === 'plan_connect')
@@ -68,7 +69,7 @@ describe('a sign-in the model started', () => {
     expect(d.toasts).toContain('Sign in was denied.')
   })
 
-  test('expired: the call that outlives the request answers a new one, and the model is told to ask again', async ($, on) => {
+  test('expired: the model is told to ask again, and the renewed request is shown and watched, so its approval is told too', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
     d.world.signIn.expireAfterCalls = 3
     modelConnect(on)
@@ -78,8 +79,64 @@ describe('a sign-in the model started', () => {
     await d.clock.settle()
     expect(toldModel(d)).toEqual([signInExpiredNote(CONFIRM_CODE)])
     expect(toldModel(d)[0]).toContain('the request expired, call plan_connect to ask again')
-    expect(d.toasts).toContain('Sign in expired. Press Sign in again.')
-    expect(connectCalls(d)).toHaveLength(3)
+    expect(d.toasts).toContain('Sign in expired. A new request is open.')
+    // the renewed request reached the person
+    expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
+    // and is watched: its approval is told once, with its own code
+    d.world.signIn.approved = true
+    await d.clock.advance(45_000)
+    await d.clock.settle()
+    expect(toldModel(d)).toEqual([signInExpiredNote(CONFIRM_CODE), signInApprovedNote('NEWCODE9', 23)])
+  })
+
+  test('a renewed request the model receives as approval_pending is still shown to the person', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    // the model's own call answers a request this session has not shown yet, but as pending
+    on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' }), isError: false }) as any)
+    await startSession($, d, 'desktop')
+    await modelAsks($, d)
+    expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
+    expect(connectCalls(d).length).toBeGreaterThan(0)
+  })
+
+  test('a request with no id is refused: it is not watched and nothing is told', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    on('tool.call', { tool: 'mcp__danx-dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify({ ...APPROVAL_REQUIRED, approvalUrl: 'http://localhost:5555/' }), isError: false }) as any)
+    await startSession($, d, 'desktop')
+    await modelAsks($, d)
+    expect(connectCalls(d)).toHaveLength(0)
+    expect(d.toasts.some(t => t.includes('had no id'))).toBe(true)
+    expect(toldModel(d)).toEqual([])
+  })
+
+  for (const reason of ['clear', 'resume'] as const) {
+    test(`/${reason} mid-watch ends the watch: no further plan_connect call, nothing told to the new conversation`, async ($, on) => {
+      const d = dashboard(on, { signedOut: 'signed-out' })
+      modelConnect(on)
+      on('session.end', () => ({ sessionId: 's1' }) as any)
+      await startSession($, d, 'desktop')
+      await modelAsks($, d)
+      await $.session.end({ reason } as any)
+      const calls = connectCalls(d).length
+      d.world.signIn.approved = true
+      await d.clock.advance(300_000)
+      await d.clock.settle()
+      expect(connectCalls(d)).toHaveLength(calls)
+      expect(toldModel(d)).toEqual([])
+    })
+  }
+
+  test('an MCP that answers pending at once is not spun: rounds are paced by the minimum round duration', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    d.world.signIn.answer = { text: JSON.stringify(APPROVAL_PENDING) }
+    modelConnect(on)
+    await startSession($, d, 'desktop')
+    await modelAsks($, d)
+    await d.clock.advance(60_000)
+    await d.clock.settle()
+    // 60 s at one round per SIGN_IN_MIN_ROUND_MS
+    expect(connectCalls(d).length).toBeLessThanOrEqual(60_000 / SIGN_IN_MIN_ROUND_MS + 2)
+    expect(connectCalls(d).length).toBeGreaterThan(1)
   })
 
   test('a repeat call of the model (the request pending) starts no second wait', async ($, on) => {

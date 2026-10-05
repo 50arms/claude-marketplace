@@ -32,6 +32,7 @@ import {
   keyRevokedLabel,
   SIGN_IN_DENIED_TOAST,
   SIGN_IN_EXPIRED_TOAST,
+  SIGN_IN_MIN_ROUND_MS,
   SUBAGENT_SETTLE_MS,
   TICK_MS,
   MIN_USAGE_TICK_MS,
@@ -486,44 +487,65 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
 // there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
 // request stays open for as long as its session lives (DX-4530). The status of the request cannot be read any other way: its
 // claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
-// person's login. A call that answers a DIFFERENT request than the one watched means the first expired while it waited: that
-// is the end (the new request nobody asked for is left to lapse), never a second page.
+// person's login. A call that answers a DIFFERENT request than the one watched means the first expired while it waited: the
+// model is told, and the renewed request is shown and watched in its place, so nobody has to relay it.
 //
 // Two starts: the Sign in button (`byPress`: the person is waiting, the page opens again, and the model is told once that it is
 // signed in), and the model's own `plan_connect` answering `approval_required` (`known`: the request already shown; the model is
 // told the outcome once, approved, denied or expired, so the person never has to type "approved"). The whole watch holds the
 // sign-in busy key (the buttons read "Signing in…", a second start does nothing).
 let signInWatching: ApprovalRequest | null = null
+// DX-4548: bumped when the conversation (or the process) ends; a watch of an older generation stops at its next step, so it
+// never calls plan_connect with the old conversation's arguments or tells the new conversation about a request it never made
+let signInGeneration = 0
 
-async function watchSignIn($: any, args: object, known: ApprovalRequest | null, byPress: boolean): Promise<void> {
+type SignInWatch = { args: object } & ({ byPress: true } | { byPress: false; known: ApprovalRequest })
+
+async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
   await withBusy($, busyKey.signIn, async () => {
-    let shown = known
-    signInWatching = known
-    // DX-4530: each outcome is told once (the told-once guard, keyed by the request); a sign-in that saw no request has no key
-    const tell = async (key: string | undefined, text: string) => {
-      if (key === undefined || (await markToldOnce($, key))) await tellModel($, text)
+    const generation = signInGeneration
+    const ended = () => generation !== signInGeneration
+    let shown: ApprovalRequest | null = watch.byPress ? null : watch.known
+    signInWatching = shown
+    // DX-4530: each outcome is told once (the told-once guard, keyed by the request). The model's request always has an id
+    // (onPlanConnect and the renewal below refuse one without); only the press may see one with none, and it tells once per watch.
+    const tell = async (request: ApprovalRequest | null, text: string) => {
+      const key = request === null ? undefined : publicIdOf(request.url)
+      if (key === undefined ? watch.byPress : await markToldOnce($, key)) await tellModel($, text)
+    }
+    const shownRequest = (): ApprovalRequest => {
+      if (shown === null) throw new Error('sign-in watch: the model path has no shown request')
+      return shown
     }
     try {
       for (;;) {
+        const startedAt = await $.clock.now()
         let r
         try {
-          r = await $.mcp.call(SERVER, 'plan_connect', args)
+          r = await $.mcp.call(SERVER, 'plan_connect', watch.args)
         } catch (err: any) {
-          $.ui.toast(signInFailedToast(String(err?.message ?? err)))
+          if (!ended()) $.ui.toast(signInFailedToast(String(err?.message ?? err)))
           return
         }
+        if (ended()) return
         const step = signInStep(r)
-        const key = shown === null ? undefined : publicIdOf(shown.url)
         if (step.kind === 'waiting') {
           if (shown !== null && step.request.url !== shown.url) {
-            // the request watched is over without a decision reaching this call: it lapsed
+            // the request watched is over without a decision reaching this call: it lapsed, and this answer is its renewal
             $.ui.toast(SIGN_IN_EXPIRED_TOAST)
-            if (!byPress) await tell(key, signInExpiredNote(shown.code))
-            return
+            if (!watch.byPress) await tell(shown, signInExpiredNote(shown.code))
+            if (!watch.byPress && publicIdOf(step.request.url) === undefined) {
+              $.ui.toast(signInFailedToast('the renewed approval request had no id'))
+              return
+            }
           }
-          if (shown === null) await showApproval($, step.request, byPress)
+          if (shown === null || step.request.url !== shown.url) await showApproval($, step.request)
           shown = step.request
           signInWatching = shown
+          // DX-4548: an answer that came back sooner than the MCP's own wait must not turn this into a tight loop
+          const took = (await $.clock.now()) - startedAt
+          if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
+          if (ended()) return
           continue
         }
         if (step.kind === 'revoked') {
@@ -533,7 +555,7 @@ async function watchSignIn($: any, args: object, known: ApprovalRequest | null, 
         }
         if (step.kind === 'denied') {
           $.ui.toast(SIGN_IN_DENIED_TOAST)
-          if (!byPress && shown !== null) await tell(key, signInDeniedNote(shown.code))
+          if (!watch.byPress) await tell(shown, signInDeniedNote(shownRequest().code))
           return
         }
         if (step.kind === 'stop') {
@@ -543,13 +565,13 @@ async function watchSignIn($: any, args: object, known: ApprovalRequest | null, 
         // signed in (even if the plan was refused): the view reads the truth
         $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
         // DX-4530: the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
-        const planId = typeof (args as any).plan_id === 'number' ? (args as any).plan_id : null
-        await tell(key, byPress ? signInNote(planId, step.kind === 'done') : signInApprovedNote(shown?.code ?? '', planId))
+        const planId = typeof (watch.args as any).plan_id === 'number' ? (watch.args as any).plan_id : null
+        await tell(shown, watch.byPress ? signInNote(planId, step.kind === 'done') : signInApprovedNote(shownRequest().code, planId))
         await refresh($, true)
         return
       }
     } finally {
-      signInWatching = null
+      if (!ended()) signInWatching = null
     }
   })
 }
@@ -559,7 +581,7 @@ async function watchSignIn($: any, args: object, known: ApprovalRequest | null, 
 function startSignIn($: any): Promise<void> {
   if (signInWatching !== null) return showApproval($, signInWatching, true)
   return signInArgs($).then(args => {
-    void watchSignIn($, args, null, true).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
+    void watchSignIn($, { args, byPress: true }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
   })
 }
 
@@ -944,6 +966,11 @@ async function onSessionStart($: any, e: any, next: any) {
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
 async function onSessionEnd($: any, e: any, next: any) {
+  // DX-4548: the sign-in watch belongs to the conversation that started it
+  if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
+    signInGeneration++
+    signInWatching = null
+  }
   if (PROCESS_ENDS.includes(e.reason)) {
     ticker?.cancel()
     ticker = null
@@ -987,12 +1014,18 @@ async function onPlanConnect($: any, e: any, next: any) {
   void refresh($, true).then(() => reportUsageNow($))
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
   if (approval === null) return ran
-  // only a NEW request opens its page (a repeat call answers `approval_pending`)
-  if (approvalRequestOf(ran.text) !== null) await showApproval($, approval)
-  // DX-4548: the model started this sign-in, so the plugin waits on it and tells the model how it ended
+  // DX-4548: a request is shown by its URL (showApproval opens each URL once), never by the answer's state: a request renewed
+  // after an expiry answers `approval_pending` to the model's next call and must still reach the person
+  await showApproval($, approval)
+  // the model started this sign-in, so the plugin waits on it and tells the model how it ended; a request with no id cannot be
+  // told once, so it is refused here as permissionRequestOf refuses one
   if (signInWatching === null) {
+    if (publicIdOf(approval.url) === undefined) {
+      $.ui.toast(signInFailedToast('the approval request had no id'))
+      return ran
+    }
     const args = { ...(typeof e.plan_id === 'number' ? { plan_id: e.plan_id } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
-    void watchSignIn($, args, approval, false).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
+    void watchSignIn($, { args, byPress: false, known: approval }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
   }
   return ran
 }
