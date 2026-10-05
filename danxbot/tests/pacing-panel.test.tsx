@@ -72,8 +72,8 @@ describe('the panel model', () => {
     expect([79, 80, 94, 95, 100].map(level)).toEqual(['on_pace', 'over_pace', 'over_pace', 'critical', 'critical'])
   })
 
-  // DX-4591: a team may set the critical threshold equal to the target; then there is no over-pace band, only on pace and critical.
-  test('a critical threshold equal to the target leaves no over-pace band: on pace below it, critical at it', () => {
+  // DX-4591: a team may set the critical threshold equal to the target; then the used percent alone has no over-pace band (on pace below it, critical at it); the server's verdict can still call over pace below the target from its reserve or projection.
+  test('a critical threshold equal to the target leaves no over-pace band by used percent: on pace below it, critical at it', () => {
     const equal = state({ settings: { five_hour: { enabled: true, targetPercent: 80, mode: 'spread_evenly', criticalPercent: 80 }, weekly: { enabled: false, targetPercent: 85, mode: 'fast_then_hold', criticalPercent: 85 } } })
     const level = (used: number) => buildPanel({ ...equal, limits: [{ kind: 'five_hour', percentUsed: used, resetsAt: FIVE }] }).entries[0]!.level
     expect([79, 79.9, 80, 100].map(level)).toEqual(['on_pace', 'on_pace', 'critical', 'critical'])
