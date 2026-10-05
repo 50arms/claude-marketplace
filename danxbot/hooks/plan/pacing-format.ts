@@ -1,9 +1,14 @@
 import type { PacingLevel, PacingMode, PacingVerdict } from '../../types'
-import type { PacingLimitKey, PanelEntry, PanelModel } from './pacing-panel'
+import type { PacingLimitKey, PanelEntry, PanelModel, SpendEntry } from './pacing-panel'
 
 // DX-4339: the pacing panel's wording, pure: the band's entries, times, and the pane's verdict lines.
 
 export const LIMIT_LABEL: Record<PacingLimitKey, { band: string; pane: string }> = { five_hour: { band: '5h', pane: '5-hour' }, weekly: { band: '7d', pane: 'weekly' } }
+// DX-4595: the third limit; the server's PACING_LIMIT_LABELS names it "spend"
+export const SPEND_LABEL = 'spend'
+export const NEEDS_DANXBOT = 'needs danxbot'
+export const SPEND_UNJUDGED = 'danxbot has not judged spend for this account yet'
+export const usd = (n: number): string => `$${n.toFixed(2)}`
 export const MODE_LABEL: Record<PacingMode, string> = { fast_then_hold: 'fast then hold', spread_evenly: 'spread evenly' }
 export const LEVEL_LABEL: Record<PacingLevel, string> = { on_pace: 'on pace', over_pace: 'over pace', critical: 'critical' }
 // a mark besides the colour, so the level reads on a terminal with no colour
@@ -16,12 +21,23 @@ function entryText(e: PanelEntry): string {
   return [LIMIT_LABEL[e.limit].band, figure, e.level === null ? '' : LEVEL_MARK[e.level]].filter(Boolean).join(' ')
 }
 
+// `spend 62%/80% ▲`, `spend …` while danxbot has not judged it, `spend needs danxbot` with no dashboard.
+function spendText(s: SpendEntry): string {
+  if (s.state === 'needs_danxbot') return `${SPEND_LABEL} ${NEEDS_DANXBOT}`
+  if (s.state === 'unjudged') return `${SPEND_LABEL} …`
+  return [SPEND_LABEL, `${s.used}%/${s.settings.targetPercent}%`, s.level === null ? '' : LEVEL_MARK[s.level]].filter(Boolean).join(' ')
+}
+
 export type BandSegment = { key: string; text: string; level: PacingLevel | null }
 
 // The band's segments, the ONE composition both the drawing and the width budget read: an entry per limit, then `local`. Empty with nothing to show.
 export function bandSegments(m: PanelModel): BandSegment[] {
-  if (m.entries.length === 0) return []
-  return [...m.entries.map(e => ({ key: e.limit, text: entryText(e), level: e.level })), ...(m.local ? [{ key: 'local', text: LOCAL_MARK, level: null }] : [])]
+  if (m.entries.length === 0 && m.spend === null) return []
+  return [
+    ...m.entries.map(e => ({ key: e.limit, text: entryText(e), level: e.level })),
+    ...(m.spend === null ? [] : [{ key: 'spend', text: spendText(m.spend), level: m.spend.level }]),
+    ...(m.local ? [{ key: 'local', text: LOCAL_MARK, level: null }] : []),
+  ]
 }
 
 // What the band's label budget counts.

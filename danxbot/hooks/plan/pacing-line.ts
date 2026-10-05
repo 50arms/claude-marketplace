@@ -16,12 +16,13 @@ import type { Api } from './load'
 // The second exception (DX-4610): a session on the old standby plugin server (`staleServer`) is told to restart, once, after it has failed that way
 // for STALE_GRACE_MS, the time a fresh session's server needs to connect.
 
-import type { PacingLevel, PacingVerdict } from '../../types'
+import type { PacingLevel, PacingVerdict, SpendFigure } from '../../types'
 
 const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
 
 // The verdict as the guard reads it (`PacingVerdict`, types/index.d.ts, shared with the plan panel) and danxbot's one-sentence line.
-export type Pacing = { verdict: PacingVerdict; line: string }
+// `spend` (DX-4595) is the server's own pricing of the account's spend limit, or null when it has none; the plugin never computes one.
+export type Pacing = { verdict: PacingVerdict; line: string; spend: SpendFigure | null }
 
 export type PacingCall = (method: string, path: string) => Promise<Api>
 // The engine calls pacing makes, as closures built in register.tsx (the engine follows `$` only into a function in that file).
@@ -34,6 +35,16 @@ export const PACING_REFRESH_MS = 60_000
 export const PACING_EXPIRY_MS = 30 * 60_000
 const ERROR_MAX = 200
 
+const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0
+
+// DX-4595: `spend` of a known answer: null, or the server's figure. Absent is an error (one canonical shape).
+function parseSpendFigure(raw: any): SpendFigure | null | { error: string } {
+  if (raw === null) return null
+  if (raw === undefined || typeof raw !== 'object') return { error: 'the pacing line answer has no valid spend' }
+  if (!finite(raw.used_percent) || !LEVELS.includes(raw.level) || typeof raw.resets_at !== 'string' || !finite(raw.spent_usd) || !finite(raw.budget_usd)) return { error: 'the pacing line answer has no valid spend' }
+  return { usedPercent: raw.used_percent, level: raw.level, resetsAt: raw.resets_at, spentUsd: raw.spent_usd, budgetUsd: raw.budget_usd }
+}
+
 // `body` of GET /api/pacing/line: a known answer, null for the explicit unknown, an error for anything else.
 export function parsePacing(body: any): Pacing | null | { error: string } {
   if (body === null || typeof body !== 'object') return { error: 'the pacing line answer is not an object' }
@@ -42,7 +53,10 @@ export function parsePacing(body: any): Pacing | null | { error: string } {
   if (body.budget !== null && !(Number.isInteger(body.budget) && body.budget >= 0)) return { error: 'the pacing line answer has no valid budget' }
   if (!Number.isInteger(body.running_agents) || body.running_agents < 0) return { error: 'the pacing line answer has no running_agents' }
   if (typeof body.line !== 'string' || body.line.trim() === '') return { error: 'the pacing line answer has no readable line' }
+  const spend = parseSpendFigure(body.spend)
+  if (spend !== null && 'error' in spend) return spend
   return {
+    spend,
     verdict: { level: body.level, budget: body.budget, resetsAt: typeof body.resets_at === 'string' ? body.resets_at : null, runningAgents: body.running_agents },
     line: body.line,
   }

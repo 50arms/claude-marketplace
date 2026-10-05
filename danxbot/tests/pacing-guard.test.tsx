@@ -19,6 +19,7 @@ const wire = (over: Record<string, unknown> = {}) => ({
   resets_at: RESET,
   running_agents: 1,
   line: 'Pacing line.',
+  spend: null,
   reason: null,
   ...over,
 })

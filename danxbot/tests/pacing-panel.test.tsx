@@ -24,13 +24,15 @@ const WINDOWS = [
 ]
 const five = { enabled: true, target_percent: 80, mode: 'spread_evenly', critical_percent: 95 }
 const weekly = { enabled: true, target_percent: 70, mode: 'fast_then_hold', critical_percent: 90 }
-const SETTINGS = { five_hour: five, weekly }
+const spendOff = { enabled: false, target_percent: 80, mode: 'spread_evenly', critical_percent: 95, budget_usd: 50, period: { kind: 'days', count: 7 } }
+const spendOn = { ...spendOff, enabled: true }
+const SETTINGS = { five_hour: five, weekly, spend: spendOff }
 const NOW = Date.parse('2026-10-03T08:00:00.000Z')
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const LINE = 'Pacing: this account is over pace; 0 agents may run on the account until 2026-10-09 09:00 UTC. Do the work yourself, cheaply.'
-const verdictBody = (over: Record<string, unknown> = {}) => ({ account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: FIVE, running_agents: 3, line: LINE, reason: null, ...over })
+const verdictBody = (over: Record<string, unknown> = {}) => ({ account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: FIVE, running_agents: 3, line: LINE, spend: null, reason: null, ...over })
 
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text as string)
 const joined = async (ui: any) => (await texts(ui)).join(' ')
@@ -46,9 +48,10 @@ async function paced($: any, on: any, surface: string, options: Parameters<typeo
   return d
 }
 
+const SPEND_OFF = { enabled: false, targetPercent: 80, mode: 'spread_evenly' as const, criticalPercent: 95, budgetUsd: 50, period: { kind: 'days' as const, count: 7 } }
 const state = (over: Partial<PanelState> = {}): PanelState => ({
   ...EMPTY_PANEL_STATE,
-  settings: { five_hour: { enabled: true, targetPercent: 80, mode: 'spread_evenly', criticalPercent: 95 }, weekly: { enabled: true, targetPercent: 70, mode: 'fast_then_hold', criticalPercent: 90 } },
+  settings: { five_hour: { enabled: true, targetPercent: 80, mode: 'spread_evenly', criticalPercent: 95 }, weekly: { enabled: true, targetPercent: 70, mode: 'fast_then_hold', criticalPercent: 90 }, spend: SPEND_OFF },
   settingsAt: NOW,
   settingsRead: { state: 'ok' },
   limits: WINDOWS.map(w => ({ ...w })),
@@ -60,11 +63,66 @@ describe('the panel model', () => {
     expect(parseTeamPacing({ id: 1, ...SETTINGS })).toEqual({
       five_hour: { enabled: true, targetPercent: 80, mode: 'spread_evenly', criticalPercent: 95 },
       weekly: { enabled: true, targetPercent: 70, mode: 'fast_then_hold', criticalPercent: 90 },
+      spend: SPEND_OFF,
     })
     expect(parseTeamPacing({ five_hour: five })).toEqual({ error: expect.any(String) })
     expect(parseTeamPacing({ ...SETTINGS, weekly: { ...weekly, mode: 'sprint' } })).toEqual({ error: expect.any(String) })
     expect(parseTeamPacing({ ...SETTINGS, weekly: { ...weekly, target_percent: '70' } })).toEqual({ error: expect.any(String) })
     expect(parseTeamPacing(null)).toEqual({ error: expect.any(String) })
+  })
+
+  // DX-4595
+  test('parseTeamPacing reads the spend settings and fails loud without a readable spend object', () => {
+    const parsed = parseTeamPacing({ ...SETTINGS, spend: { ...spendOn, budget_usd: null, period: { kind: 'hours', count: 12 } } }) as any
+    expect(parsed.spend).toEqual({ enabled: true, targetPercent: 80, mode: 'spread_evenly', criticalPercent: 95, budgetUsd: null, period: { kind: 'hours', count: 12 } })
+    const { spend: _omit, ...without } = SETTINGS
+    expect(parseTeamPacing(without)).toEqual({ error: expect.stringContaining('spend') })
+    expect(parseTeamPacing({ ...SETTINGS, spend: { ...spendOn, period: { kind: 'weeks', count: 1 } } })).toEqual({ error: expect.stringContaining('spend') })
+    expect(parseTeamPacing({ ...SETTINGS, spend: { ...spendOn, budget_usd: '50' } })).toEqual({ error: expect.stringContaining('spend') })
+  })
+
+  describe('the spend limit (DX-4595)', () => {
+    const enabled = (over: Partial<PanelState> = {}) => state({ settings: { ...state().settings!, spend: { ...SPEND_OFF, enabled: true } }, ...over })
+    const figure = { usedPercent: 61.6, level: 'over_pace' as const, resetsAt: WEEK, spentUsd: 30.8, budgetUsd: 50 }
+
+    test('is hidden while the team has not enabled it, even when the line carries a figure', () => {
+      const m = buildPanel(state({ spend: figure }))
+      expect(m.spend).toBeNull()
+      expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70%')
+    })
+
+    test("its figure and level come straight from the server's spend, and the money shows", () => {
+      const m = buildPanel(enabled({ spend: figure }))
+      expect(m.spend).toMatchObject({ state: 'figure', used: 62, resetsAt: Date.parse(WEEK), spentUsd: 30.8, budgetUsd: 50, level: 'over_pace' })
+      expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70% spend 62%/80% ▲')
+    })
+
+    test('the server level stands even when it is worse than the thresholds would give', () => {
+      const m = buildPanel(enabled({ spend: { ...figure, usedPercent: 10, level: 'critical' } }))
+      expect(m.spend).toMatchObject({ used: 10, level: 'critical' })
+      expect(bandText(m)).toContain('spend 10%/80% ‼')
+    })
+
+    test('with no spend on the line there is no figure and no level', () => {
+      const m = buildPanel(enabled({ spend: null }))
+      expect(m.spend).toMatchObject({ state: 'unjudged', used: null, level: null, spentUsd: null })
+      expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70% spend …')
+    })
+
+    test('with the dashboard unreachable it needs danxbot, while 5-hour and weekly keep their local figures', () => {
+      for (const settingsRead of [{ state: 'silent' }, { state: 'error', message: 'boom' }] as const) {
+        const m = buildPanel(enabled({ settingsRead, spend: figure }))
+        expect(m.spend).toMatchObject({ state: 'needs_danxbot', used: null, level: null })
+        expect(m.local).toBe(true)
+        expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70% spend needs danxbot local')
+      }
+    })
+
+    test('shows alone when the session has no window figures and the windows are off', () => {
+      const s = enabled().settings!
+      const m = buildPanel(enabled({ limits: [], settings: { ...s, five_hour: { ...s.five_hour, enabled: false }, weekly: { ...s.weekly, enabled: false } }, spend: figure }))
+      expect(bandText(m)).toBe('spend 62%/80% ▲')
+    })
   })
 
   test('each limit is judged by its own thresholds: on pace below the target, over pace at it, critical at the threshold', () => {
@@ -170,6 +228,38 @@ for (const surface of SURFACES)
       expect(d.toasts.filter(t => /pacing/i.test(t))).toEqual([])
     })
 
+    // DX-4595
+    test('the spend limit shows its server figure, the money, target, critical and reset, in the level colour', async ($, on) => {
+      const spend = { used_percent: 61.6, level: 'critical', resets_at: WEEK, spent_usd: 12.4, budget_usd: 50 }
+      await paced($, on, surface, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: verdictBody({ spend }) } })
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await joined(band)).toContain('spend 62%/80% ‼')
+      expect((await band.find({ type: 'Text', text: /^spend 62%/ })).props.color).toBe(DANGER)
+      const all = await joined(pane)
+      expect(all).toContain('62% used')
+      expect(all).toContain('$12.40 of $50.00 · target 80% · critical 95% · spread evenly · resets in 6d 1h')
+    })
+
+    test('spend with no spend on the line says danxbot has not judged it; with the MCP down it needs danxbot', async ($, on) => {
+      const d = await paced($, on, surface, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: verdictBody() } })
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await joined(band)).toContain('spend …')
+      expect(await joined(pane)).toContain('danxbot has not judged spend for this account yet')
+      d.setMcp('down')
+      await d.clock.advance(POLL_MS + 1)
+      await d.clock.settle()
+      expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70% spend needs danxbot local')
+      expect(await joined(pane)).toContain('needs danxbot')
+    })
+
+    test('a team with spend off draws no spend', async ($, on) => {
+      await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody() } })
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await joined(band)).not.toContain('spend')
+    })
+
     test('the figures move with the session: a new reading redraws the band and the pane', async ($, on) => {
       const d = await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody({ level: 'on_pace', budget: null }) } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
@@ -211,7 +301,7 @@ for (const surface of SURFACES)
       const d = await paced($, on, surface, { teamPacing: { body: SETTINGS } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70%')
-      d.setTeamPacing({ body: { five_hour: { ...five, target_percent: 60 }, weekly: { ...weekly, enabled: false } } })
+      d.setTeamPacing({ body: { ...SETTINGS, five_hour: { ...five, target_percent: 60 }, weekly: { ...weekly, enabled: false } } })
       await d.clock.advance(POLL_MS + 1)
       await d.clock.settle()
       expect(await joined(band)).toContain('5h 62%/60% ▲')

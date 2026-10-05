@@ -15,12 +15,24 @@ function parseLimit(raw: any) {
   return { enabled: raw.enabled, targetPercent: raw.target_percent, mode: raw.mode, criticalPercent: raw.critical_percent }
 }
 
+// DX-4595: the spend limit adds the money budget (null = not set yet) and the period it is spent over.
+function parseSpend(raw: any) {
+  const base = parseLimit(raw)
+  if (base === null) return null
+  if (raw.budget_usd !== null && !(typeof raw.budget_usd === 'number' && Number.isFinite(raw.budget_usd) && raw.budget_usd >= 0)) return null
+  const p = raw.period
+  if (p === null || typeof p !== 'object' || (p.kind !== 'hours' && p.kind !== 'days') || !Number.isInteger(p.count) || p.count < 1) return null
+  return { ...base, budgetUsd: raw.budget_usd as number | null, period: { kind: p.kind as 'hours' | 'days', count: p.count as number } }
+}
+
 // `body` of GET /api/team/pacing (danxbot's wire names, src/team-pacing/settings.ts): the settings, or an error text for anything else.
 export function parseTeamPacing(body: any): TeamSettings | { error: string } {
   const five = parseLimit(body?.five_hour)
   const weekly = parseLimit(body?.weekly)
   if (five === null || weekly === null) return { error: 'the team pacing answer has no readable five_hour and weekly settings' }
-  return { five_hour: five, weekly }
+  const spend = parseSpend(body?.spend)
+  if (spend === null) return { error: 'the team pacing answer has no readable spend settings' }
+  return { five_hour: five, weekly, spend }
 }
 
 export type SettingsOutcome = { settings: TeamSettings } | { read: Exclude<SettingsRead, { state: 'pending' | 'ok' }> }

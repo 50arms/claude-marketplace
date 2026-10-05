@@ -1,4 +1,4 @@
-import type { LimitSettings, PacingLevel, PacingVerdict, PanelState } from '../../types'
+import type { LimitSettings, PacingLevel, PacingVerdict, PanelState, SpendSettings } from '../../types'
 
 // DX-4339 (PLAN-29): the pacing panel's model, pure (no `$`): the session's own usage windows (`$.session.usage().rateLimits`, which move live)
 // set against the team's pacing settings (pacing-settings.ts) and the session's account verdict (the DX-4340 cache, pacing-line.ts). A limit the
@@ -9,7 +9,7 @@ export const LIMIT_KEYS: readonly PacingLimitKey[] = ['five_hour', 'weekly']
 // the harness names the weekly window `seven_day`
 const WINDOW_KIND: Record<PacingLimitKey, string> = { five_hour: 'five_hour', weekly: 'seven_day' }
 
-export const EMPTY_PANEL_STATE: PanelState = { settings: null, settingsAt: null, settingsRead: { state: 'pending' }, verdict: null, limits: [] }
+export const EMPTY_PANEL_STATE: PanelState = { settings: null, settingsAt: null, settingsRead: { state: 'pending' }, verdict: null, spend: null, limits: [] }
 
 export type PanelEntry = {
   limit: PacingLimitKey
@@ -22,8 +22,24 @@ export type PanelEntry = {
   // the limit's own level; null with no figure or no settings to judge it by
   level: PacingLevel | null
 }
+// DX-4595 (PLAN-29 G-5): spend, the third limit, shown only when the team enabled it. The plugin cannot price tokens, so there is no local figure and
+// no local level: both are the server's (`figure`), exactly as the line answered. `unjudged`: danxbot answered but has no spend verdict for this account
+// yet. `needs_danxbot`: the dashboard is not reachable (local mode), so there is nothing to show but that.
+export type SpendEntry = {
+  settings: SpendSettings
+  state: 'figure' | 'unjudged' | 'needs_danxbot'
+  // percent used of the budget, rounded for display; null without a figure
+  used: number | null
+  // epoch ms the spend period ends; null without a figure
+  resetsAt: number | null
+  spentUsd: number | null
+  budgetUsd: number | null
+  // the server's level, never recomputed here; null without a figure
+  level: PacingLevel | null
+}
 export type PanelModel = {
   entries: PanelEntry[]
+  spend: SpendEntry | null
   // the settings read is not working (`silent` or `error`): the figures are the session's own, the targets the last read, and there is no verdict
   local: boolean
   // the settings read's failure to name in the pane, else null
@@ -39,6 +55,17 @@ const SAME_RESET_MS = 60_000
 // The level the thresholds alone give (danxbot's projection can only make it worse, and arrives as the verdict).
 function thresholdLevel(used: number, s: LimitSettings): PacingLevel {
   return used >= s.criticalPercent ? 'critical' : used >= s.targetPercent ? 'over_pace' : 'on_pace'
+}
+
+function buildSpend(state: PanelState, local: boolean): SpendEntry | null {
+  const settings = state.settings?.spend
+  if (settings === undefined || !settings.enabled) return null
+  const none = { used: null, resetsAt: null, spentUsd: null, budgetUsd: null, level: null }
+  if (local) return { settings, state: 'needs_danxbot', ...none }
+  const f = state.spend
+  if (f === null) return { settings, state: 'unjudged', ...none }
+  const resets = Date.parse(f.resetsAt)
+  return { settings, state: 'figure', used: Math.round(f.usedPercent), resetsAt: Number.isNaN(resets) ? null : resets, spentUsd: f.spentUsd, budgetUsd: f.budgetUsd, level: f.level }
 }
 
 export function buildPanel(state: PanelState): PanelModel {
@@ -63,5 +90,5 @@ export function buildPanel(state: PanelState): PanelModel {
     }
     entries.push({ limit, used: win === undefined ? null : Math.round(win.percentUsed), resetsAt, settings, level })
   }
-  return { entries, local, error: read.state === 'error' ? read.message : null, settingsAt: state.settingsAt, verdict }
+  return { entries, spend: buildSpend(state, local), local, error: read.state === 'error' ? read.message : null, settingsAt: state.settingsAt, verdict }
 }

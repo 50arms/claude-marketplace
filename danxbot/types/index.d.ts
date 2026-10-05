@@ -241,10 +241,15 @@ export type RefreshGate = {
 // DX-4339: the usage pacing panel's state (see hooks/plan/pacing-panel.ts).
 export type PacingMode = 'fast_then_hold' | 'spread_evenly'
 export type LimitSettings = { enabled: boolean; targetPercent: number; mode: PacingMode; criticalPercent: number }
-export type TeamSettings = { five_hour: LimitSettings; weekly: LimitSettings }
+// DX-4595 (PLAN-29 G-5): spend is the third limit. Its settings carry the money budget and the period it is spent over; its figure is never computed here
+// (the plugin cannot price tokens) but read from the line answer (`SpendFigure`).
+export type SpendSettings = LimitSettings & { budgetUsd: number | null; period: { kind: 'hours' | 'days'; count: number } }
+export type TeamSettings = { five_hour: LimitSettings; weekly: LimitSettings; spend: SpendSettings }
 export type PanelLimit = { kind: string; percentUsed: number; resetsAt?: string }
 export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
 // The account's verdict for this session (DX-4340's cache): `budget` null = no cap, 0 = start nothing new, n = most agents at once.
+// DX-4595: the account's spend limit as the server priced it (GET /api/pacing/line `spend`): percent of the account's budget spent in the current period, the period end as `resetsAt`.
+export type SpendFigure = { usedPercent: number; level: PacingLevel; resetsAt: string; spentUsd: number; budgetUsd: number }
 export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number }
 // How the last read of the team's settings went. `pending`: none yet (session start), quiet. `silent`: no danx-dashboard MCP, no danxbot or no key
 // (DX-3421 / DX-4340: said nowhere but the band's `local`). `error`: danxbot answered and the answer was unusable; the pane names it.
@@ -256,6 +261,8 @@ export type PanelState = {
   settingsRead: SettingsRead
   // the account verdict as of the last refresh (null: none, or not trusted while the settings read is failing)
   verdict: PacingVerdict | null
+  // DX-4595: the account's spend figure from the same line answer (null: none, or not trusted while the settings read is failing)
+  spend: SpendFigure | null
   // the session's own windows, as the harness last reported them (empty when its usage could not be read)
   limits: PanelLimit[]
 }
