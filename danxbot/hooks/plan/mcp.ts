@@ -2,6 +2,15 @@ import { ERROR_BODY_MAX, KEY_REVOKED_HALT, SIGNED_OUT_MARK } from './config'
 
 // What `$.mcp.call` rejects with, as the engine words it.
 
+// The engine's rejection when the session has no such server or tool:
+//   `<plugin>: $.mcp.call: no connected MCP tool "<tool>" on a server named "<server>"`
+// (Claude Code 2.1.286). At session start it means the plugin's server has not connected yet (DX-4578).
+const SERVER_NOT_CONNECTED = /\$\.mcp\.call: no connected MCP tool/
+
+export function isServerNotConnected(message: string): boolean {
+  return SERVER_NOT_CONNECTED.test(message)
+}
+
 export function mcpText(r: any): string {
   return (r?.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
 }

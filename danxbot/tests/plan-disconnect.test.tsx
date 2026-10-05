@@ -31,7 +31,7 @@ for (const surface of SURFACES) {
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
 
-      expect(disconnectCalls(d)).toEqual([{ server: 'danx-dashboard', tool: 'plan_connect', args: { plan_id: 23, disconnect: true } }])
+      expect(disconnectCalls(d)).toEqual([{ server: 'plugin:danxbot:danx-dashboard', tool: 'plan_connect', args: { plan_id: 23, disconnect: true } }])
       expect(d.toasts).toContain('Disconnected from PLAN-23')
       expect(await text(band)).toContain('Danxbot: not connected to a plan')
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('yellow')

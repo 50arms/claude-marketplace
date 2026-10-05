@@ -17,7 +17,7 @@ const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b
 const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|lapsed|no longer accepts|STOP ALL WORK|Commit your work|agent-finalize/i
 // DX-4530: the toasts the person reads; the kit can deliver the model's own rows only as a toast (toldModel)
 const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('Could not tell the model'))
-const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'danx-dashboard' && c.tool === 'plan_connect')
+const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:danxbot:danx-dashboard' && c.tool === 'plan_connect')
 const previewStarts = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.tool === 'preview_start')
 // the page loads by preview_start (pane closed) or navigate (pane open)
 const pageOpens = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && (c.tool === 'preview_start' || c.tool === 'navigate'))

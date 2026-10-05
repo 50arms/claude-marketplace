@@ -48,7 +48,7 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
+import { isServerNotConnected, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
 import { answerNote, connectNote, disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { renderPane } from './plan/pane'
@@ -745,9 +745,9 @@ function handlers($: any): Handlers {
 
 // ---- hooks ----------------------------------------------------------------
 
-// The first load can run before the MCP server connects. An error view at session start is retried
+// The first load can run before the plugin's MCP server connects. A view that failed on exactly that at session start is retried
 // after each wait in START_RETRY_MS (on the clock, so a test moves it) and then left as the error.
-async function retryWhileFailed($: any): Promise<void> {
+async function retryWhileNotConnected($: any): Promise<void> {
   for (const wait of START_RETRY_MS) {
     try {
       await $.clock.sleep(wait)
@@ -755,7 +755,8 @@ async function retryWhileFailed($: any): Promise<void> {
       // the wait rejects when the plugin's environment is unloaded (a reload): the retries end with it
       return
     }
-    if ((await read($, view)).phase !== 'error') return
+    const cur = await read($, view)
+    if (cur.phase !== 'error' || !isServerNotConnected(cur.error ?? '')) return
     await refresh($, true)
   }
 }
@@ -1021,13 +1022,8 @@ async function onSessionStart($: any, e: any, next: any) {
   await syncPermissionPoll($)
   // DX-4340: a new session starts with no pacing state (never the previous session's last good answer), reads the verdict now, and later reads happen when it is a minute old, at a spawn or sub-agent start
   resetPacing()
-<<<<<<< HEAD
   void settleDetached(refreshPacingPanel($))
-  void settleDetached(refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNoMcp($)))
-=======
-  detach($, refreshPacingPanel($))
-  detach($, refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileFailed($)))
->>>>>>> d2faf6a (feat(DX-4578): one dashboard server name: drop the dual-name fallback, the standby mode and the no-connection band copy)
+  void settleDetached(refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
   return next(e)
 }
 
