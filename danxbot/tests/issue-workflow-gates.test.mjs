@@ -31,8 +31,8 @@ test("the brief has the sub-agent do what the gate text says, card writes includ
 
 test("nothing in the section frames a gate as review-only", () => {
   assert.doesNotMatch(gates, /that text alone/);
-  // the `reviewed_sha` field name is the one allowed "review" word
-  assert.doesNotMatch(gates, /\breview(?!ed_sha)/i);
+  // the `reviewed_ref` field name is the one allowed "review" word
+  assert.doesNotMatch(gates, /\breview(?!ed_ref)/i);
 });
 
 test("the section names no gate and copies no gate's behaviour or mantra rule", () => {
@@ -48,8 +48,8 @@ test("the section names no gate and copies no gate's behaviour or mantra rule", 
 
 test("the brief still fetches the board's gate text, records the verdict and removes a gate that doesn't apply", () => {
   assert.match(gates, /1\. Fetch the board's gate text through `danxbot_api`: `GET \/api\/quality-gates\/<gate>\/instruction\?board=<the board the card lives on, as repo:slug>`/);
-  assert.match(gates, /3\. Record the verdict through `danxbot_api`: `PATCH \/api\/issues\/<id>\/quality-gates\/<gate>` with `\{status: "pass"\|"fail", message: "<the real finding>", reviewed_sha: "<commit>"\}`/);
-  assert.match(gates, /Always send `reviewed_sha`: the commit the verdict covers/);
+  assert.match(gates, /3\. Record the verdict through `danxbot_api`: `PATCH \/api\/issues\/<id>\/quality-gates\/<gate>` with `\{status: "pass"\|"fail", message: "<the real finding>", reviewed_ref: "<ref>"\}`/);
+  assert.match(gates, /Always send `reviewed_ref`, the ref of what the verdict covers/);
   assert.match(gates, /A gate that doesn't apply to the card is removed \(`POST` the same card route with `\{action: "remove"\}`\) with a card comment saying why — never passed/);
 });
 
