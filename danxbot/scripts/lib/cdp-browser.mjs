@@ -3,54 +3,76 @@
 // WebSocket plus an installed Chromium-family browser is all a capture needs.
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
-const WIN = [process.env["ProgramFiles"], process.env["ProgramFiles(x86)"], process.env["LOCALAPPDATA"]]
-  .filter(Boolean)
-  .flatMap((root) => [
-    path.join(root, "Google", "Chrome", "Application", "chrome.exe"),
-    path.join(root, "Microsoft", "Edge", "Application", "msedge.exe"),
-  ]);
-const MAC = [
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-  "/Applications/Chromium.app/Contents/MacOS/Chromium",
-];
-const LINUX = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"].flatMap((n) =>
-  ["/usr/bin", "/usr/local/bin", "/snap/bin", "/opt/google/chrome"].map((d) => path.join(d, n)),
-);
+/** Interval of every wait in this tool: the one `poll` loop. */
+export const POLL_MS = 100;
+export const PROFILE_PREFIX = "danx-capture-";
+/** Windows holds a profile's files briefly after the browser exits. */
+const RM_RETRY = { maxRetries: 10, retryDelay: 200 };
+const STDERR_TAIL_CHARS = 2000;
+const EXIT_WAIT_MS = 5000;
+const MIN_NODE_MAJOR = 22;
 
-/** CHROME_PATH wins; otherwise the first installed Chrome/Edge. Throws when there is none. */
-export function findBrowser(env = process.env, exists = existsSync) {
-  if (env.CHROME_PATH) {
-    if (!exists(env.CHROME_PATH)) throw new Error(`CHROME_PATH points at ${env.CHROME_PATH}, which does not exist`);
-    return env.CHROME_PATH;
-  }
-  const found = [...WIN, ...MAC, ...LINUX].find((p) => exists(p));
-  if (!found) {
-    throw new Error("no Chrome or Edge found: install one or set CHROME_PATH to a Chromium-family executable");
-  }
-  return found;
-}
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function waitFor(what, timeoutMs, probe) {
+/** The single wait loop: resolves with the first truthy probe, throws once `timeoutMs` has passed. */
+export async function poll(what, timeoutMs, probe) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const v = await probe();
     if (v) return v;
     if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
-    await sleep(100);
+    await sleep(POLL_MS);
   }
+}
+
+/** Node's global WebSocket arrived in 22; older Nodes would fail mid-run with a confusing ReferenceError. */
+export function requireNode(version = process.versions.node) {
+  if (Number(version.split(".")[0]) < MIN_NODE_MAJOR) {
+    throw new Error(`capture-screenshot needs Node ${MIN_NODE_MAJOR} or newer (this is ${version}): its WebSocket is built in`);
+  }
+}
+
+const WIN_APPS = ["Google\\Chrome\\Application\\chrome.exe", "Microsoft\\Edge\\Application\\msedge.exe"];
+const MAC_APPS = ["Google Chrome.app/Contents/MacOS/Google Chrome", "Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "Chromium.app/Contents/MacOS/Chromium"];
+const LINUX_NAMES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "microsoft-edge-stable"];
+
+function candidates({ env, platform, home }) {
+  if (platform === "win32") {
+    return [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]
+      .filter(Boolean)
+      .flatMap((root) => WIN_APPS.map((app) => path.win32.join(root, app)));
+  }
+  if (platform === "darwin") {
+    return ["/Applications", path.join(home, "Applications")].flatMap((root) => MAC_APPS.map((app) => path.join(root, app)));
+  }
+  const dirs = [...(env.PATH ?? "").split(path.delimiter).filter(Boolean), "/opt/google/chrome", "/snap/bin"];
+  return dirs.flatMap((dir) => LINUX_NAMES.map((name) => path.join(dir, name)));
+}
+
+/**
+ * CHROME_PATH wins; otherwise the first installed Chrome/Edge for this platform. Throws when there is none.
+ * From WSL a Windows browser under /mnt/c is deliberately not used: it would need a Windows-side profile
+ * directory and a DevTools port WSL cannot reliably reach, so WSL needs a browser installed inside it.
+ */
+export function findBrowser({ env = process.env, exists = existsSync, platform = process.platform, home = homedir() } = {}) {
+  if (env.CHROME_PATH) {
+    if (!exists(env.CHROME_PATH)) throw new Error(`CHROME_PATH points at ${env.CHROME_PATH}, which does not exist`);
+    return env.CHROME_PATH;
+  }
+  const found = candidates({ env, platform, home }).find((p) => exists(p));
+  if (found) return found;
+  const wsl = env.WSL_DISTRO_NAME ? " (inside WSL a Windows browser cannot be driven: install Chromium in WSL)" : "";
+  throw new Error(`no Chrome or Edge found: install one or set CHROME_PATH to a Chromium-family executable${wsl}`);
 }
 
 class Session {
   #ws;
   #next = 1;
   #pending = new Map();
-  #listeners = [];
+  #listeners = new Set();
 
   constructor(ws) {
     this.#ws = ws;
@@ -79,8 +101,10 @@ class Session {
     });
   }
 
+  /** Subscribes to protocol events; returns the unsubscribe function. */
   on(listener) {
-    this.#listeners.push(listener);
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
   }
 
   close() {
@@ -88,39 +112,72 @@ class Session {
   }
 }
 
-/** Launches a headless browser on a throwaway profile; returns a page session and a close(). */
+/**
+ * Launches a headless browser on a throwaway profile; returns a page session and a close().
+ * Whatever fails, and on SIGINT/SIGTERM, the browser is killed and the profile removed.
+ */
 export async function launchPage(executable, timeoutMs) {
-  const profile = mkdtempSync(path.join(tmpdir(), "danx-capture-"));
-  const child = spawn(
-    executable,
-    [
-      "--headless=new",
-      "--remote-debugging-port=0",
-      `--user-data-dir=${profile}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-gpu",
-      "--hide-scrollbars",
-      "about:blank",
-    ],
-    { stdio: "ignore" },
-  );
-  const exited = new Promise((resolve) => child.once("exit", resolve));
-  child.once("error", () => {});
-  let session;
+  let profile = null;
+  let child = null;
+  let session = null;
+  let exited = false;
+  let stderrTail = "";
+
   const close = async () => {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
     session?.close();
-    child.kill();
-    await exited;
-    rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    if (child && !exited) {
+      child.kill();
+      try {
+        await poll("the browser to exit", EXIT_WAIT_MS, () => exited);
+      } catch {
+        child.kill("SIGKILL");
+      }
+    }
+    if (profile) rmSync(profile, { recursive: true, force: true, ...RM_RETRY });
   };
+  // The kill itself makes an in-flight wait fail; the signal's exit code outranks that error (see the script's catch).
+  const onSignal = (code) => () => {
+    process.exitCode = code;
+    void close().finally(() => process.exit(code));
+  };
+  const onSigint = onSignal(130);
+  const onSigterm = onSignal(143);
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+
   try {
-    const port = await waitFor("the browser's DevTools port", timeoutMs, async () => {
-      if (child.exitCode !== null) throw new Error(`${executable} exited ${child.exitCode} before it was ready`);
+    profile = mkdtempSync(path.join(tmpdir(), PROFILE_PREFIX));
+    child = spawn(
+      executable,
+      [
+        "--headless=new",
+        "--remote-debugging-port=0",
+        `--user-data-dir=${profile}`,
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-gpu",
+        "--hide-scrollbars",
+        "about:blank",
+      ],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let spawnError = null;
+    child.stderr.on("data", (d) => (stderrTail = (stderrTail + d).slice(-STDERR_TAIL_CHARS)));
+    child.once("exit", () => (exited = true));
+    // A spawn failure (ENOENT, EACCES) emits `error` and never `exit`.
+    child.once("error", (e) => {
+      exited = true;
+      spawnError = e;
+    });
+    const port = await poll("the browser's DevTools port", timeoutMs, () => {
+      if (spawnError) throw new Error(`could not start ${executable}: ${spawnError.message}`);
+      if (exited) throw new Error(`${executable} exited ${child.exitCode} before it was ready`);
       const file = path.join(profile, "DevToolsActivePort");
       return existsSync(file) ? readFileSync(file, "utf8").split("\n")[0] : null;
     });
-    const wsUrl = await waitFor("a page target", timeoutMs, async () => {
+    const wsUrl = await poll("a page target", timeoutMs, async () => {
       const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
       return targets.find((t) => t.type === "page")?.webSocketDebuggerUrl ?? null;
     });
@@ -133,6 +190,6 @@ export async function launchPage(executable, timeoutMs) {
     return { session, close };
   } catch (e) {
     await close();
-    throw e;
+    throw stderrTail.trim() ? new Error(`${e.message}\nbrowser stderr (tail):\n${stderrTail.trim()}`) : e;
   }
 }

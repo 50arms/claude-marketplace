@@ -10,58 +10,55 @@
 //          [--width 1440] [--height 900] [--dpr 2]      (phone: --width 390 --height 844 --dpr 3)
 import { writeFileSync } from "node:fs";
 import { BUSY_SELECTOR, CAPTURE_DEFAULTS, SIGN_IN_FORM_SELECTOR, parseCaptureArgs } from "./lib/capture-args.mjs";
-import { findBrowser, launchPage } from "./lib/cdp-browser.mjs";
+import { findBrowser, launchPage, poll, requireNode } from "./lib/cdp-browser.mjs";
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** Navigates and resolves once the load event fired; rejects on a non-2xx main-document response. */
-async function visit(session, url, timeoutMs) {
+/**
+ * Navigates and resolves once the main frame's load event fired. `what` names the visit in every error:
+ * a sign-in URL carries a secret, so no URL is ever put in a message for it.
+ */
+async function visit(session, mainFrameId, url, what, timeoutMs) {
   let status = null;
-  let documentUrl = null;
-  let loaded;
-  const done = new Promise((resolve) => (loaded = resolve));
-  session.on((method, p) => {
-    // The last Document response before load is the one the page rendered (redirects precede it).
-    if (method === "Network.responseReceived" && p.type === "Document") {
+  let loaded = false;
+  const stop = session.on((method, p) => {
+    // Only the top frame's Document answers for the page (an iframe's status says nothing about it);
+    // the last one before load is the page itself, redirects precede it.
+    if (method === "Network.responseReceived" && p.type === "Document" && p.frameId === mainFrameId) {
       status = p.response.status;
-      documentUrl = p.response.url;
     }
-    if (method === "Page.loadEventFired") loaded();
+    if (method === "Page.loadEventFired") loaded = true;
   });
-  const nav = await session.send("Page.navigate", { url });
-  if (nav.errorText) throw new Error(`GET ${url} failed: ${nav.errorText}`);
-  await Promise.race([
-    done,
-    sleep(timeoutMs).then(() => {
-      throw new Error(`GET ${url} did not finish loading within ${timeoutMs}ms`);
-    }),
-  ]);
+  try {
+    const nav = await session.send("Page.navigate", { url });
+    if (nav.errorText) throw new Error(`${what} failed: ${nav.errorText}`);
+    await poll(`${what} to finish loading`, timeoutMs, () => loaded);
+  } finally {
+    stop();
+  }
   if (status === null || status < 200 || status >= 300) {
-    throw new Error(`GET ${documentUrl ?? url} answered ${status ?? "no response"}`);
+    throw new Error(`${what} answered ${status ?? "no response"}`);
   }
 }
 
 async function evaluate(session, expression) {
   const r = await session.send("Runtime.evaluate", { expression, returnByValue: true });
-  if (r.exceptionDetails) throw new Error(`page script failed: ${r.exceptionDetails.text}`);
+  if (r.exceptionDetails) {
+    throw new Error(`page script failed: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+  }
   return r.result.value;
 }
 
-async function waitUntil(session, what, expression, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (!(await evaluate(session, expression))) {
-    if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
-    await sleep(100);
-  }
-}
+const present = (selector) => `!!document.querySelector(${JSON.stringify(selector)})`;
 
 async function main() {
+  requireNode();
   const args = parseCaptureArgs(process.argv.slice(2));
   const timeout = CAPTURE_DEFAULTS.readyTimeoutMs;
   const { session, close } = await launchPage(findBrowser(), timeout);
   try {
     await session.send("Page.enable");
     await session.send("Network.enable");
+    const { frameTree } = await session.send("Page.getFrameTree");
+    const mainFrameId = frameTree.frame.id;
     await session.send("Emulation.setDeviceMetricsOverride", {
       width: args.width,
       height: args.height,
@@ -69,18 +66,16 @@ async function main() {
       mobile: args.isMobile,
     });
     // The single-use sign-in URL signs this throwaway profile in before the real page loads.
-    if (args.login) await visit(session, args.login, timeout);
-    await visit(session, args.url, timeout);
+    if (args.login) await visit(session, mainFrameId, args.login, "the --login visit", timeout);
+    await visit(session, mainFrameId, args.url, `GET ${args.url}`, timeout);
     // A spent --login ticket leaves the sign-in form up: say so now, before the readiness wait times out.
-    if (args.login && (await evaluate(session, `!!document.querySelector(${JSON.stringify(SIGN_IN_FORM_SELECTOR)})`))) {
+    if (args.login && (await evaluate(session, present(SIGN_IN_FORM_SELECTOR)))) {
       throw new Error("the page shows the sign-in form: the --login ticket did not sign this capture in");
     }
-    // Apps that hold an open stream never go network-idle: wait on a readiness signal instead, bounded.
-    if (args.waitFor) {
-      await waitUntil(session, args.waitFor, `!!document.querySelector(${JSON.stringify(args.waitFor)})`, timeout);
-    } else {
-      await waitUntil(session, `no ${BUSY_SELECTOR} element`, `!document.querySelector(${JSON.stringify(BUSY_SELECTOR)})`, timeout);
-    }
+    // Apps that hold an open stream never go network-idle: wait on readiness signals instead, bounded.
+    // The app's own selector first, then nothing on screen may still be loading.
+    if (args.waitFor) await poll(`${args.waitFor} to appear`, timeout, () => evaluate(session, present(args.waitFor)));
+    await poll(`no ${BUSY_SELECTOR} element`, timeout, () => evaluate(session, `!${present(BUSY_SELECTOR)}`));
     const shot = await session.send("Page.captureScreenshot", { format: "png" });
     writeFileSync(args.out, Buffer.from(shot.data, "base64"));
     console.log(`${args.out} (${args.width}x${args.height} @${args.dpr}x)`);
@@ -91,5 +86,5 @@ async function main() {
 
 main().catch((e) => {
   console.error(e instanceof Error ? e.message : e);
-  process.exit(1);
+  process.exit(process.exitCode || 1);
 });
