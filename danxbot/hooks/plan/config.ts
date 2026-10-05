@@ -13,6 +13,13 @@ export const COMMAND = 'danx-plan'
 // declares a `danx-dashboard` server of its own any more, so there is no second name to try.
 export const SERVER = 'plugin:danxbot:danx-dashboard'
 export const toolName = (tool: string) => `mcp__${SERVER.replace(/:/g, '_')}__${tool}`
+// DX-4610: a session started by plugin 0.12.57 or older, in a repo that declared its own `danx-dashboard` server, runs the plugin's server as
+// an idle standby that lists no tool, and keeps it across a hot reload to a newer plugin. Its calls fail like a server not yet connected, so what
+// marks it is its tool list: the repo's own server's tool, and none of the plugin's (`isStandbySession` in register.tsx).
+// Removal trigger: delete this and the standby detection once no operator checkout can hold a session started before plugin 0.12.58 (after the next release).
+export const LEGACY_PROJECT_API_TOOL = 'mcp__danx-dashboard__danxbot_api'
+export const RESTART_LINE = 'Restart this session to reconnect the dashboard. It started before an update changed how the connection works, so it shows no plan and sends no usage until then.'
+export const RESTART_BAND_LABEL = 'Restart to reconnect'
 export const POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
 // DX-4530: while a permission request is open its claim is polled this often (POLL_MS otherwise), so the model hears the
@@ -58,6 +65,9 @@ export const LOCK_STALE_MS = 120_000
 // At session start the MCP server may not be connected yet: a failed first load is retried after
 // each of these waits (clock-driven) before the view settles on the error.
 export const START_RETRY_MS = [2_000, 5_000, 15_000]
+// DX-4610: pacing says "restart" only once a session has failed as the old standby for as long as the start retries last: before that a fresh session in an old checkout that
+// still declares `danx-dashboard` may just be waiting for its server.
+export const STALE_GRACE_MS = START_RETRY_MS.reduce((a, b) => a + b, 0)
 
 // Truncation lengths, each for one place.
 // DX-4420: the band's plan name is cut to the columns the band has left after its controls (`bandLabelCols` in words.ts), never to a fixed
@@ -131,6 +141,7 @@ export const EMPTY: PlanView = {
   phase: 'loading',
   error: null,
   serverNotConnected: false,
+  staleServer: false,
   dashboardUrl: null,
   connected: null,
   plans: [],

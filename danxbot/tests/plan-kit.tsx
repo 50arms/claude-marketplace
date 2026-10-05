@@ -145,8 +145,12 @@ export function dashboard(
     // `dashboard_url` on GET /api/plans: the default DASHBOARD_URL, an override (any value, so a bad one can
     // be tried), or NO_DASHBOARD_URL for an answer without the field
     dashboardUrl?: unknown
-    // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
-    mcp?: 'up' | 'down' | 'flaky'
+    // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection; 'stale' (DX-4610): the same rejection from a
+    // session that runs plugin 0.12.57's empty standby server (tests/fixtures/old-standby-server.mjs), whose tool list shows only the repo's own
+    // `danx-dashboard` server, never the plugin's
+    mcp?: 'up' | 'down' | 'flaky' | 'stale'
+    // DX-4610: what the session's tool list answers (default: follows `mcp`): both servers' tools, or a rejection
+    toolList?: 'both' | 'rejects'
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
@@ -481,6 +485,7 @@ export function dashboard(
 
   // DX-4340: the pacing line is read by every session at start and by each spawn: kept out of `calls` and `api` so the suites that count a
   // load's reads stay about their own subject, and answered unknown (pacing off) unless a test gives `pacingLine`
+  const notConnected = () => options.mcp === 'down' || options.mcp === 'stale'
   const pacingReads: number[] = []
   // ... every attempt, including the ones the MCP being down refuses
   const pacingAttempts = { n: 0 }
@@ -490,7 +495,7 @@ export function dashboard(
   on('mcp.call', async (_$: any, e: any) => {
     if (pacingPath(e, '/api/pacing/line')) {
       pacingAttempts.n++
-      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       pacingReads.push(pacingReads.length + 1)
       const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
@@ -498,7 +503,7 @@ export function dashboard(
     }
     // DX-4339: the team's pacing settings are read at session start and by the poll: also kept out of `calls` and `api`; `teamPacingReads` counts them
     if (pacingPath(e, '/api/team/pacing')) {
-      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       // DX-4339: a session with no key (or a revoked one) is halted on EVERY danx-dashboard tool, this read included
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
@@ -511,7 +516,7 @@ export function dashboard(
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.server === 'plugin:danxbot:danx-dashboard') {
       // a deny reaches the plugin as a rejection that carries the reason
-      if (options.mcp === 'down') return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       const haltText = () => (world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT)
       // a revoked key stops EVERY tool, plan_connect included, and asks for nothing
@@ -689,6 +694,8 @@ export function dashboard(
   // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
   // sub-agents (world.agents).
   const agentLists = { count: 0 }
+  // DX-4610: the tools the session lists: the plugin's when its server is connected, the repo's own server's when the plugin's is the old standby
+  on('tool.list', () => options.toolList === 'rejects' ? ({ deny: 'tool list unavailable' } as any) : options.toolList === 'both' ? ({ value: [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }, { name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] } as any) : ({ value: options.mcp === 'stale' ? [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }] : notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any)
   on('session.id', () => ({ value: OWN_SESSION.session_id }) as any)
   on('agent.list', () => {
     agentLists.count++
@@ -758,7 +765,7 @@ export function dashboard(
     return { value: { isRegistered: true } } as any
   })
 
-  return { release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

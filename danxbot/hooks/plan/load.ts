@@ -5,7 +5,7 @@ import { parentLoop, toSubagent } from './subagents'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
-export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean }
+export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean; staleServer?: boolean }
 export type Call = (method: string, path: string, extra?: { query?: object; body?: object }) => Promise<Api>
 
 // DX-4458: the host's notice for a result over its size limit (written for the model, never shown to a person).
@@ -135,7 +135,7 @@ export async function loadPlan(call: Call, refreshedAt: string, expandedId: numb
 
 async function readPlan(call: Call, refreshedAt: string, expandedId: number | null): Promise<PlanView> {
   const list = await call('GET', '/api/plans', { query: { limit: MAX_PLANS } })
-  if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true }
+  if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true, staleServer: list.staleServer === true }
 
   // A paged route that does not say how many there are cannot be read as complete.
   if (typeof list.body.total !== 'number') {
