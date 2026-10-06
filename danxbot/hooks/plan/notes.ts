@@ -1,4 +1,4 @@
-import type { PermissionRequest, PlanRow, ProblemRow } from '../../types'
+import type { PermissionRequest, PlanRow } from '../../types'
 
 // The rows the operator's pane actions append for the model (R-4): the model did not make
 // these calls, so it is told. The person never reads them.
@@ -10,10 +10,6 @@ export function connectNote(plan: PlanRow): string {
 // plan routes until it connects again.
 export function disconnectNote(plan: { ref: string; name: string }): string {
   return `[danxbot plan] The operator disconnected this session from ${plan.ref} "${plan.name}" from the Plan pane. This session is on no plan; do not write to /api/plans/mine routes until it connects again.`
-}
-
-export function answerNote(p: ProblemRow, label: string): string {
-  return `[danxbot plan] The operator answered ${p.cardId} PBLM-${p.id} "${p.statement}" from the Plan pane: ${label}. Read the card's problems before acting on it.`
 }
 
 // DX-4530: the Sign in button (band or pane) signed this session in: the model did not press it, so it is told, as connect

@@ -59,23 +59,17 @@ function hostLimited(result: { content: { text: string }[]; isError: boolean }) 
   return chars > HOST_LIMIT_CHARS ? { content: [{ type: 'text', text: HOST_OVERSIZE(chars) }], isError: true } : result
 }
 
-// DX-3: 49 open questions, two solutions each, with markdown bodies: the problems alone are small, with their solutions too large.
+// DX-3: 49 open questions on one card.
 export function bigCard(): Card {
   return {
     id: 'DX-3',
     title: 'Big card',
     priority: 1,
-    comments: [],
     problems: Array.from({ length: 49 }, (_, i) => ({
       id: 300 + i,
       type: 'question' as const,
       statement: `Question ${i}?`,
       open: true,
-      context: 'c'.repeat(300),
-      solutions: [
-        { id: 3000 + i * 2, title: 'Port it', recommended: false, body: 'b'.repeat(900) },
-        { id: 3001 + i * 2, title: 'Drop it', recommended: false, body: 'b'.repeat(900) },
-      ],
     })),
   }
 }
@@ -126,17 +120,15 @@ export function endedSubagent(id: string, state: 'done' | 'failed' | 'stopped', 
   return rawSubagent(id, { state, end_status: state === 'done' ? 'completed' : state, finished_at: finished, runtime_ms: 90_000, started_at: finished - 90_000, visible_until: finished + 600_000, ...over })
 }
 
-type Sol = { id: number; title: string; recommended: boolean; body?: string; pro?: string; con?: string; steps?: any[] }
-type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean; solutions: Sol[]; summary?: string; context?: string }
-type Card = { id: string; title: string; priority: number; problems: Prob[]; comments: any[] }
+type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean }
+type Card = { id: string; title: string; priority: number; problems: Prob[] }
 
 // DX-4448: the plan's every card id (all statuses, two boards): the fixture's own cards plus DX-30 (ToDo), DX-31 (Done) and SG-7 (gpt-manager)
 const PLAN_CARD_IDS = ['DX-1', 'DX-2', 'DX-9', 'DX-30', 'DX-31', 'SG-7']
 
 export type Dashboard = ReturnType<typeof dashboard>
 
-// The fixture: two cards in priority order. DX-1 holds a question (its recommended solution is
-// listed LAST so the plugin's reordering shows) and an action; DX-2 holds one question.
+// The fixture: two cards in priority order. DX-1 holds a question and an action; DX-2 holds one question.
 export function dashboard(
   on: On,
   options: {
@@ -206,16 +198,10 @@ export function dashboard(
     noTotal?: boolean
     // the first /api/plans call never settles until `release()`
     hangFirstLoad?: boolean
-    // the first answer POST never settles (a write in flight when a process dies)
-    hangFirstAnswer?: boolean
-    // the issue route answers comments with no comments_page.total
-    noCommentsTotal?: boolean
     // the plan list comes back empty although the dashboard has this many plans
     emptyPlanListOf?: number
     // the connected plan is not in the (capped) plan list
     planOutsideList?: boolean
-    // comments the API did not return for a card (it pages them)
-    commentsTotal?: number
     // DX-4448: GET /api/boards fails
     boardsFail?: boolean
     // ... answers boards the plugin cannot read: none at all, or a prefix that is not capital letters
@@ -225,19 +211,12 @@ export function dashboard(
     planCardsTotal?: number
     // ... answers no total, a row with no id, no list, or a plan card_count the cards do not add up to
     planCardsShape?: 'noTotal' | 'noId' | 'noList' | 'otherCount'
-    // DX-4458: DX-3, a needs-you card with 49 open problems whose headline read fits the host's limit and whose
-    // problems-with-solutions read does not (DX-4443's shape)
+    // DX-4458: DX-3, a needs-you card with 49 open problems (DX-4443's shape)
     bigCard?: boolean
     // DX-4458: GET /api/issues/<id> answers 500 for this card
     cardFails?: string | string[]
     // DX-4458: ... and the host refuses that card's answer as too large
     cardOversize?: string
-    // DX-4458: GET /api/issues/<id>/problems answers 500
-    problemsFail?: boolean
-    // DX-4458: ... answers no problem at all (the problem was answered meanwhile)
-    problemsEmpty?: boolean
-    // DX-4458: the comments read of a card answers 500
-    commentsFail?: boolean
     // DX-4499: GET /api/plan-sessions fails (500) / answers something that is no list / a session with no title
     sessionsFail?: boolean
     sessionsShape?: 'noList' | 'noTitle'
@@ -263,7 +242,7 @@ export function dashboard(
 ) {
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
   const clock = mock.clock(on, { now: Date.parse('2026-10-03T08:00:00.000Z') })
-  // DX-4586: a call that never settles (hangFirstLoad, hangFirstAnswer) waits on this, not on an hour of fake clock: advancing an hour fires every
+  // DX-4586: a call that never settles (hangFirstLoad) waits on this, not on an hour of fake clock: advancing an hour fires every
   // timer in it (a poll a minute, a report a minute), real time that times a test out under machine load. `release()` lets it answer.
   const hung = (() => { let release!: () => void; const promise = new Promise<void>(r => { release = r }); return { promise, release } })()
   let browserOpen = !options.browserClosed
@@ -301,38 +280,16 @@ export function dashboard(
         id: 'DX-1',
         title: 'First card',
         priority: 5,
-        comments: [{ id: 1, problem_id: 11, author: 'dan', timestamp: '2026-10-03T08:00:00.000Z', text: 'a comment' }],
         problems: [
-          {
-            id: 11,
-            type: 'question',
-            statement: 'Which route?',
-            open: true,
-            summary: 'It matters',
-            context: 'Some **details**',
-            solutions: [
-              { id: 111, title: 'Plain', recommended: false, steps: [{ id: 1111, label: '1', title: 'step', description: '', checked_at: null, steps: [] }] },
-              { id: 112, title: 'Best', recommended: true, pro: 'fast', con: 'costly' },
-            ],
-          },
-          {
-            id: 12,
-            type: 'action',
-            statement: 'Allow the site',
-            open: true,
-            summary: 'Do it once',
-            solutions: [{ id: 121, title: 'Allow it', recommended: true }],
-          },
+          { id: 11, type: 'question', statement: 'Which route?', open: true },
+          { id: 12, type: 'action', statement: 'Allow the site', open: true },
         ],
       },
       {
         id: 'DX-2',
         title: 'Second card',
         priority: 3,
-        comments: [],
-        problems: [
-          { id: 21, type: 'question', statement: 'Second one?', open: true, solutions: [{ id: 211, title: 'Yes', recommended: false }] },
-        ],
+        problems: [{ id: 21, type: 'question', statement: 'Second one?', open: true }],
       },
     ] as Card[],
   }
@@ -429,36 +386,16 @@ export function dashboard(
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
-    const probs = /^\/api\/issues\/([A-Z]+-\d+)\/problems$/.exec(path)
-    if (method === 'GET' && probs && options.problemsFail) return reply({ error: 'boom' }, 500)
-    if (method === 'GET' && probs && options.problemsEmpty) return reply({ problems: [] })
-    if (method === 'GET' && probs) {
-      const c = world.cards.find(x => x.id === probs[1])
-      if (!c) return reply({ error: 'nope' }, 404)
-      const q = String(query?.q ?? '').toLowerCase()
-      return reply({ problems: c.problems.filter(p => p.open && p.statement.toLowerCase().includes(q)) })
-    }
     if (method === 'GET' && issue && world.inProgress.some(c => c.id === issue[1])) {
       const c = world.inProgress.find(x => x.id === issue[1])!
       // DX-4405: the compact row always; the claimant's name only when `fields` names it, as the real route answers
       return reply({ id: c.id, title: c.title, ...(query?.fields?.assigned_agent_name ? { assigned_agent_name: options.noAgent ? null : 'PLAN-23: danxbot plugin' } : {}) })
     }
-    if (method === 'GET' && issue && options.commentsFail && query?.fields?.comments) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
       if (!c) return reply({ error: 'nope' }, 404)
-      // as the real route answers: scalars always, a relation only when `fields` names it (problems' own solutions likewise)
-      const fields = query?.fields ?? {}
-      return reply({
-        id: c.id,
-        title: c.title,
-        ...(fields.problems
-          ? { problems: c.problems.map(({ solutions, ...row }) => (fields.problems.solutions ? { ...row, solutions } : row)) }
-          : {}),
-        ...(fields.comments
-          ? { comments: c.comments, ...(options.noCommentsTotal ? {} : { comments_page: { limit: 20, total: options.commentsTotal ?? c.comments.length } }) }
-          : {}),
-      })
+      // as the real route answers: scalars always, a relation only when `fields` names it
+      return reply({ id: c.id, title: c.title, ...(query?.fields?.problems ? { problems: c.problems } : {}) })
     }
     // DX-4336: the usage route as it answers a report (danxbot handleUsage's view)
     if (method === 'PUT' && path === '/api/plan-sessions/me/usage') {
@@ -473,16 +410,6 @@ export function dashboard(
       const decided = world.permissionClaim === 'approved' || world.permissionClaim === 'claimed'
       return reply({ status: world.permissionClaim, granted: decided ? world.permissionGranted : null })
     }
-    const ans = /^\/api\/issues\/([A-Z]+-\d+)\/problems\/(\d+)\/answer$/.exec(path)
-    if (method === 'POST' && ans) {
-      const p = world.cards.find(x => x.id === ans[1])?.problems.find(x => x.id === Number(ans[2]))
-      if (!p) return reply({ error: 'nope' }, 404)
-      if (p.statement === 'FAIL') return reply({ message: 'refused' }, 409)
-      p.open = false
-      return reply({ ok: true })
-    }
-    if (/\/steps\/\d+\/check$/.test(path) && method === 'PATCH') return reply({ ok: true })
-    if (/\/comments$/.test(path) && method === 'POST') return reply({ id: 99 })
     return reply({ error: `unrouted ${method} ${path}` }, 404)
   }
 
@@ -680,9 +607,6 @@ export function dashboard(
         return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id } } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
-      if (options.hangFirstAnswer && e.args.method === 'POST' && /\/answer$/.test(e.args.path) && api.filter(a => a.method === 'POST').length === 1) {
-        return hung.promise.then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
-      }
       if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
         return hung.promise.then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
       }

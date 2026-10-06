@@ -163,11 +163,9 @@ export const EMPTY: PlanView = {
   revokedBy: null,
 }
 
-// What `busy` holds while writes are under way: a list of keys, one per connect or problem, so
-// two different problems can be answered at once and the same one cannot be answered twice.
+// What `busy` holds while writes are under way: a list of keys, one per connect, disconnect, sign-in or browser open.
 export const busyKey = {
   connect: (planId: number) => `connect:${planId}`,
-  problem: (problemId: number) => `problem:${problemId}`,
   browser: 'browser:open',
   isOpeningBrowser: (busy: string[]) => busy.includes('browser:open'),
   disconnect: (planId: number) => `disconnect:${planId}`,
@@ -175,7 +173,6 @@ export const busyKey = {
   isSigningIn: (busy: string[]) => busy.includes('sign-in'),
   isDisconnecting: (busy: string[]) => busy.some(k => k.startsWith('disconnect:')),
   isConnecting: (busy: string[]) => busy.some(k => k.startsWith('connect:')),
-  isSaving: (busy: string[], problemId: number) => busy.includes(`problem:${problemId}`),
 }
 
 // DX-4317: every link is built on the origin the plan list answered (`dashboard_url`), carried on the

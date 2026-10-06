@@ -1,6 +1,8 @@
+// DX-4609 (PLAN-23 G-1): the pane's Needs You is a read-only list, one titled link per open problem, in the dashboard's card-priority
+// order. Every interaction with a problem is in the browser, so nothing in the pane writes to a card.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, expectRowCarries, footerText, mountIndicator, problemBadgeOf, startSession, toldModel } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, dashboard, forceRefresh, problemBadgeOf, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -15,178 +17,90 @@ async function openPane($: any, on: any, surface: (typeof SURFACES)[number], opt
   return { d, pane }
 }
 
-const keys = async (pane: any, type = 'Button') => (await pane.findAll({ type })).map((b: any) => b.key)
+const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+// every problem link: the pane's other links go to the plan and to in-progress cards, never to a problem
+const problemLinks = async (ui: any) =>
+  (await ui.findAll({ type: 'Link' }))
+    .map((l: any) => ({ label: l.props.label as string, href: l.props.href as string }))
+    .filter((l: { href: string }) => l.href.includes('/problems/'))
 
 for (const surface of SURFACES) {
   describe(`open problems on ${surface}`, () => {
-    test('list in card-priority order; the recommended solution is listed first and badged', async ($, on) => {
+    test('one row per open problem, titled with the card ref and the statement, linking to the problem on its card', async ($, on) => {
       const { pane } = await openPane($, on, surface)
-      expect((await keys(pane)).filter((k: string) => k?.startsWith('open-') && k !== 'open-plan')).toEqual(['open-11', 'open-12', 'open-21'])
-
-      await pane.press({ key: 'open-11' })
-      const uses = (await keys(pane)).filter((k: string) => k?.startsWith('use-'))
-      expect(uses).toEqual(['use-112', 'use-111'])
-      expect((await pane.find({ type: 'Text', text: /Recommended/ }))?.text).toMatch(/Recommended/)
-      expect((await pane.find({ key: 'use-112' }))?.props.variant).toBe('primary')
-      expect((await pane.find({ key: 'use-111' }))?.props.variant).toBe('secondary')
-      // an action problem's own words
-      await pane.press({ key: 'open-12' })
-      expect((await pane.find({ type: 'Text', text: /Start here/ }))?.text).toMatch(/Start here/)
-      expect((await pane.find({ key: 'use-121' }))?.text).toBe('Mark done')
-    })
-
-    test('an option button answers {solution_id}; the problem leaves the pane at once and the model is told', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      await pane.press({ key: 'open-11' })
-      await pane.press({ key: 'use-112' })
-      await d.clock.settle()
-      expect(d.writes()).toEqual([
-        { method: 'POST', path: '/api/issues/DX-1/problems/11/answer', body: { solution_id: 112 }, query: undefined },
+      expect(await problemLinks(pane)).toEqual([
+        { label: 'DX-1 · Which route?', href: `${DASHBOARD_URL}/plans/23/cards/DX-1/problems/PBLM-11` },
+        { label: 'DX-1 · Allow the site', href: `${DASHBOARD_URL}/plans/23/cards/DX-1/problems/PBLM-12` },
+        { label: 'DX-2 · Second one?', href: `${DASHBOARD_URL}/plans/23/cards/DX-2/problems/PBLM-21` },
       ])
-      // PBLM-1913: no answered rendering, no unanswer / change answer: the problem is simply gone
-      expect(await keys(pane)).not.toContain('open-11')
-      expect(await keys(pane)).toContain('open-12')
-      expect(d.toasts).toContain('Answered: Best')
-      const rows = toldModel(d)
-      expect(rows).toHaveLength(1)
-      expectRowCarries(rows[0]!, ['DX-1', 'PBLM-11', 'Which route?', 'Best'])
     })
 
-    test('This but… sends {solution_id, note}, refuses an empty note with no call, and labels the answer with the note', async ($, on) => {
+    test('the rows follow the dashboard\'s card order, and a refresh re-reads it', async ($, on) => {
       const { d, pane } = await openPane($, on, surface)
-      await pane.press({ key: 'open-11' })
-      await pane.press({ key: 'note-111' })
-      await pane.input({ key: 'note-in-111', text: '   ' })
-      await d.clock.settle()
-      expect(d.writes()).toHaveLength(0)
-      expect(d.toasts).toContain('A note is required.')
-      await pane.input({ key: 'note-in-111', text: 'because' })
-      await d.clock.settle()
-      expect(d.writes().map(w => w.body)).toEqual([{ solution_id: 111, note: 'because' }])
-      expect(d.toasts).toContain('Answered: Plain (note: because)')
-      const rows = toldModel(d)
-      expect(rows).toHaveLength(1)
-      expectRowCarries(rows[0]!, ['DX-1', 'PBLM-11', 'Which route?', 'Plain (note: because)'])
-    })
-
-    test('a typed answer sends {freeform} and labels the answer with the text', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      await pane.press({ key: 'open-11' })
-      await pane.input({ key: 'free-11', text: '  my own way ' })
-      await d.clock.settle()
-      expect(d.writes().map(w => [w.path, w.body])).toEqual([['/api/issues/DX-1/problems/11/answer', { freeform: 'my own way' }]])
-      expect(d.toasts).toContain('Answered: "my own way"')
-      const rows = toldModel(d)
-      expect(rows).toHaveLength(1)
-      expectRowCarries(rows[0]!, ['DX-1', 'PBLM-11', 'Which route?', '"my own way"'])
-    })
-
-    test('Mark done approves an action problem with {solution_id}', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      await pane.press({ key: 'open-12' })
-      await pane.press({ key: 'use-121' })
-      await d.clock.settle()
-      expect(d.writes().map(w => [w.path, w.body])).toEqual([['/api/issues/DX-1/problems/12/answer', { solution_id: 121 }]])
-      expect(await keys(pane)).not.toContain('open-12')
-      expect(d.toasts).toContain('Answered: Allow it')
-      const rows = toldModel(d)
-      expect(rows).toHaveLength(1)
-      expectRowCarries(rows[0]!, ['DX-1', 'PBLM-12', 'Allow the site', 'Allow it'])
-    })
-
-    test('an action problem is rejected with {outcome: "rejected", note}; an empty note is refused with no call', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      await pane.press({ key: 'open-12' })
-      await pane.press({ key: 'rej-121' })
-      await pane.input({ key: 'rej-in-121', text: '' })
-      await d.clock.settle()
-      expect(d.writes()).toHaveLength(0)
-      expect(d.toasts).toContain('A note is required to reject.')
-      await pane.input({ key: 'rej-in-121', text: 'not now' })
-      await d.clock.settle()
-      expect(d.writes().map(w => [w.path, w.body])).toEqual([
-        ['/api/issues/DX-1/problems/12/answer', { solution_id: 121, outcome: 'rejected', note: 'not now' }],
+      d.world.cards.reverse()
+      await forceRefresh($, d)
+      expect((await problemLinks(pane)).map((l: { label: string }) => l.label)).toEqual([
+        'DX-2 · Second one?',
+        'DX-1 · Which route?',
+        'DX-1 · Allow the site',
       ])
-      expect(d.toasts).toContain('Answered: REJECTED "Allow it" (reason: not now)')
-      const rows = toldModel(d)
-      expect(rows).toHaveLength(1)
-      expectRowCarries(rows[0]!, ['DX-1', 'PBLM-12', 'Allow the site', 'REJECTED', 'Allow it', 'not now'])
     })
 
-    test('a refused answer shows the error, tells the model nothing and keeps the problem', async ($, on) => {
+    test('the section header counts the open problems, split into actions and questions', async ($, on) => {
+      const { pane } = await openPane($, on, surface)
+      const t = await text(pane)
+      expect(t).toContain('Needs You | 3 open | 1 action | 2 questions')
+    })
+
+    test('a long statement is the whole title, never cut', async ($, on) => {
+      const long = 'Should the importer keep the legacy column or drop it, given that three downstream reports still read it every night?'
       const { d, pane } = await openPane($, on, surface)
-      d.world.cards[1]!.problems[0]!.statement = 'FAIL'
+      d.world.cards[0]!.problems[0]!.statement = long
+      await forceRefresh($, d)
+      expect((await problemLinks(pane))[0]).toMatchObject({ label: `DX-1 · ${long}` })
+    })
+
+    test('no open problem: the empty state and no problem link', async ($, on) => {
+      const { d, pane } = await openPane($, on, surface)
+      for (const c of d.world.cards) for (const p of c.problems) p.open = false
+      await forceRefresh($, d)
+      expect(await text(pane)).toContain('Nothing needs you on this plan.')
+      expect(await text(pane)).toContain('Needs You | 0 open')
+      expect(await problemLinks(pane)).toEqual([])
+    })
+
+    test('the pane offers no control to answer, reject or comment, and pressing what it does offer writes nothing to a card', async ($, on) => {
+      const { d, pane } = await openPane($, on, surface)
+      expect(await pane.findAll({ type: 'Input' })).toEqual([])
+      const keys = (await pane.findAll({ type: 'Button' })).map((b: any) => b.key)
+      expect(keys).toEqual(expect.arrayContaining(['refresh', 'switch', 'disconnect']))
+      expect(keys.filter((k: string) => /^(open|use|note|rej|tick|talk|comment|free)-\d/.test(k))).toEqual([])
       await pane.press({ key: 'refresh' })
+      await pane.press({ key: 'switch' })
       await d.clock.settle()
-      await pane.press({ key: 'open-21' })
-      await pane.press({ key: 'use-211' })
-      await d.clock.settle()
-      expect(d.toasts.some(t => t.includes('DX-2 PBLM-21: 409: refused'))).toBe(true)
-      expect(toldModel(d)).toHaveLength(0)
-      expect(await keys(pane)).toContain('open-21')
+      expect(d.writes()).toEqual([])
     })
 
-    test('a step tick calls PATCH …/steps/:id/check; Post comment calls POST …/comments', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      await pane.press({ key: 'open-11' })
-      await pane.press({ key: 'tick-1111' })
-      await d.clock.settle()
-      await pane.press({ key: 'talk-11' })
-      expect((await pane.find({ type: 'Markdown', text: 'a comment' })) ?? (await pane.find({ type: 'Text', text: 'a comment' }))).toBeDefined()
-      await pane.input({ key: 'comment-11', text: '  hello there ' })
-      await d.clock.settle()
-      expect(d.writes().map(w => [w.method, w.path, w.body])).toEqual([
-        ['PATCH', '/api/issues/DX-1/problems/11/solutions/111/steps/1111/check', { checked: true }],
-        ['POST', '/api/issues/DX-1/comments', { text: 'hello there', problem_id: 11 }],
-      ])
-      // neither tells the model anything
-      expect(toldModel(d)).toHaveLength(0)
-    })
-
-    test('a step tick or a comment does not wipe the note being composed; an answer does', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      await pane.press({ key: 'open-11' })
-      await pane.press({ key: 'note-112' })
-      expect(await pane.find({ key: 'note-in-112' })).toBeDefined()
-
-      await pane.press({ key: 'tick-1111' })
-      await d.clock.settle()
-      expect(await pane.find({ key: 'note-in-112' })).toBeDefined()
-
-      await pane.press({ key: 'talk-11' })
-      await pane.input({ key: 'comment-11', text: 'meanwhile' })
-      await d.clock.settle()
-      expect(await pane.find({ key: 'note-in-112' })).toBeDefined()
-
-      await pane.input({ key: 'note-in-112', text: 'done' })
-      await d.clock.settle()
-      expect(d.writes().at(-1)?.body).toEqual({ solution_id: 112, note: 'done' })
-      expect(await pane.find({ key: 'note-in-112' })).toBeUndefined()
+    test('the band still counts the open problems', async ($, on) => {
+      await openPane($, on, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      expect(await problemBadgeOf(band)).toBe('⚠ 3')
     })
   })
 
   describe(`what one load reads, on ${surface}`, () => {
     test('more needs-you cards than were read: the pane says how many are in the browser and the band counts a lower bound', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface, { cardsTotal: 20 })
-      const texts = (await pane.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
-      expect(texts).toContain('+18 more cards with open problems in the browser')
+      const { pane } = await openPane($, on, surface, { cardsTotal: 20 })
+      expect(await text(pane)).toContain('+18 more cards with open problems in the browser')
       const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
       expect(await problemBadgeOf(band)).toBe('⚠ 3+')
     })
 
     test('a plan beyond the plan list cap still labels correctly, from the session in the same response', async ($, on) => {
       const { pane } = await openPane($, on, surface, { planOutsideList: true })
-      const texts = (await pane.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
-      expect(texts).toContain('Connected: PLAN-23')
-      expect(texts).toContain('Danxbot plugin')
-    })
-
-    test('comments the API paged away: the count is a lower bound and the pane says more exist', async ($, on) => {
-      const { pane } = await openPane($, on, surface, { commentsTotal: 25 })
-      await pane.press({ key: 'open-11' })
-      expect((await pane.find({ key: 'talk-11' }))?.text).toBe('▸ Discussion (1+)')
-      await pane.press({ key: 'talk-11' })
-      expect((await pane.find({ type: 'Text', text: /Up to 24 more comments on this card in the browser/ }))?.text).toMatch(/24 more/)
+      const t = await text(pane)
+      expect(t).toContain('Connected: PLAN-23')
+      expect(t).toContain('Danxbot plugin')
     })
   })
 }

@@ -108,9 +108,8 @@ describe('Open in browser tab', () => {
     await startSession($, d, 'terminal')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', ...BAND })
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', ...PANE })
-    await pane.press({ key: 'open-11' })
     for (const ui of [band, pane]) {
-      for (const key of ['open-tab', 'open-plan', 'tab-11']) expect(await ui.find({ key })).toBeUndefined()
+      for (const key of ['open-tab', 'open-plan']) expect(await ui.find({ key })).toBeUndefined()
       expect(await ui.find({ type: 'Link' })).toBeDefined()
     }
     expect(browserCalls(d)).toHaveLength(0)

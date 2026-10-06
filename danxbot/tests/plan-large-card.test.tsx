@@ -1,17 +1,18 @@
-// DX-4458: a card with dozens of problems (DX-4443: 49 questions, two solutions each) answers over the host's size limit when
-// its solutions come with it. The load reads problem rows only; an opened problem reads its own solutions; one card that
-// cannot be read is one line and the rest of the pane still draws.
+// DX-4458: a card with dozens of problems (DX-4443: 49 questions) is read for its problem rows only; one card that cannot be
+// read is one line and the rest of the pane still draws.
 import { describe, expect, test } from 'claude-code/testing'
 
 import { errText, failureReason, loadPlan } from '../hooks/plan/load'
-import { HOST_LIMIT_CHARS, HOST_OVERSIZE, bigCard, SURFACES, dashboard, startSession } from './plan-kit'
+import { HOST_OVERSIZE, SURFACES, dashboard, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
   requestId: 'danx-plan',
   props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
 } as any
-const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+// the pane's text, with its links' titles (a problem is a link, not a Text)
+const text = async (ui: any) =>
+  [...(await ui.findAll({ type: 'Text' })).map((t: any) => t.text), ...(await ui.findAll({ type: 'Link' })).map((l: any) => l.props.label)].join(' | ')
 
 async function openPane($: any, on: any, surface: (typeof SURFACES)[number], options: any = {}) {
   const d = dashboard(on, options)
@@ -24,12 +25,6 @@ const issueReads = (d: any) => d.api.filter((a: any) => a.method === 'GET' && /^
 
 for (const surface of SURFACES) {
   describe(`a card with many problems on ${surface}`, () => {
-    test('the fixture is what it claims: the problem rows fit the host limit, the rows with their solutions do not', async () => {
-      const { problems } = bigCard()
-      expect(JSON.stringify(problems.map(({ solutions, ...row }) => row)).length).toBeLessThan(HOST_LIMIT_CHARS)
-      expect(JSON.stringify(problems).length).toBeGreaterThan(HOST_LIMIT_CHARS)
-    })
-
     test('the load reads each card for its problem rows only: no solutions, no comments, no descriptions', async ($, on) => {
       const { d, pane } = await openPane($, on, surface, { bigCard: true })
       const reads = issueReads(d).filter((a: any) => a.path !== '/api/issues/DX-9')
@@ -42,16 +37,6 @@ for (const surface of SURFACES) {
       expect(t).toContain('Question 48?')
       expect(t).not.toContain('exceeds')
       expect(t).not.toContain('Couldn')
-    })
-
-    test('opening a problem reads its solutions and comments, narrowed to it; closing it reads nothing more', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface, { bigCard: true })
-      await pane.press({ key: 'open-310' })
-      const problems = d.api.filter((a: any) => /\/problems$/.test(a.path))
-      expect(problems).toHaveLength(1)
-      expect(problems[0]).toMatchObject({ path: '/api/issues/DX-3/problems', query: { q: 'Question 10?', status: 'open' } })
-      expect(issueReads(d).filter((a: any) => a.path === '/api/issues/DX-3').some((a: any) => a.query?.fields?.comments === true)).toBe(true)
-      expect((await pane.findAll({ type: 'Button' })).map((b: any) => b.key).filter((k: string) => k?.startsWith('use-'))).toEqual(['use-3020', 'use-3021'])
     })
 
     test('one card that cannot be read is one line naming it; the other cards and the in-progress list still show', async ($, on) => {
@@ -86,69 +71,6 @@ for (const surface of SURFACES) {
       expect(t).toContain('Which route?')
     })
 
-    test('an opened problem whose solutions cannot be read is its own line; the pane and its row stay', async ($, on) => {
-      const { pane } = await openPane($, on, surface, { problemsFail: true })
-      await pane.press({ key: 'open-11' })
-      const t = await text(pane)
-      expect(t).toContain("Couldn't load the solutions of PBLM-11: the dashboard answered 500")
-      expect(t).toContain('Second one?')
-      expect(await pane.find({ key: 'use-112' })).toBeUndefined()
-    })
-
-    test('closing a problem reads nothing', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      await pane.press({ key: 'open-11' })
-      const before = d.api.length
-      await pane.press({ key: 'open-11' })
-      expect(d.api.length).toBe(before)
-    })
-
-    test('an opened problem whose comments cannot be read shows that line and no solutions picker', async ($, on) => {
-      const { pane } = await openPane($, on, surface, { commentsFail: true })
-      await pane.press({ key: 'open-11' })
-      expect(await text(pane)).toContain("Couldn't load the comments of PBLM-11: the dashboard answered 500")
-      expect(await pane.find({ key: 'use-112' })).toBeUndefined()
-    })
-
-    test('an opened problem the narrowed read no longer returns says it is no longer open', async ($, on) => {
-      const { pane } = await openPane($, on, surface, { problemsEmpty: true })
-      await pane.press({ key: 'open-11' })
-      expect(await text(pane)).toContain('PBLM-11 is no longer open on DX-1: refresh the pane.')
-    })
-
-    test('opening a problem reads its detail; a refresh with it open re-reads it; opening another moves the read; closing reads none', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      const detailReads = () => d.api.filter((a: any) => /\/problems$/.test(a.path)).map((a: any) => a.query.q)
-      await pane.press({ key: 'open-11' })
-      expect(detailReads()).toEqual(['Which route?'])
-      await pane.press({ key: 'refresh' })
-      expect(detailReads()).toEqual(['Which route?', 'Which route?'])
-      await pane.press({ key: 'open-12' })
-      expect(detailReads()).toEqual(['Which route?', 'Which route?', 'Allow the site'])
-      await pane.press({ key: 'open-12' })
-      expect(detailReads()).toHaveLength(3)
-    })
-
-    test('answering an opened problem on a large card with a failing card beside it lands, and no call exceeded the host limit', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface, { bigCard: true, cardFails: 'DX-2' })
-      await pane.press({ key: 'open-305' })
-      await pane.press({ key: 'use-3010' })
-      expect(d.writes().map((w: any) => w.path)).toEqual(['/api/issues/DX-3/problems/305/answer'])
-      const t = await text(pane)
-      expect(t).toContain("Couldn't load DX-2")
-      expect(t).not.toContain('Question 5?')
-      expect(t).not.toMatch(/exceeds maximum/)
-    })
-
-    test('a signed-out answer to a detail read ends the view as signed out, never a line on the problem', async ($, on) => {
-      const { d, pane } = await openPane($, on, surface)
-      d.world.signedOut = 'lapsed'
-      await pane.press({ key: 'open-11' })
-      const t = await text(pane)
-      expect(t).toContain('signed out')
-      expect(t).not.toContain("Couldn't load")
-    })
-
     test('an oversize answer for one card is a person-facing line, never the host notice', async ($, on) => {
       const { d, pane } = await openPane($, on, surface, { cardOversize: 'DX-2' })
       const t = await text(pane)
@@ -160,7 +82,7 @@ for (const surface of SURFACES) {
 
     test('the host notice on any call of the load is never the pane text', async () => {
       const oversize = async () => ({ ok: false, status: 0, body: { error: HOST_OVERSIZE(85_234) } })
-      const v = await loadPlan(oversize, 't', null)
+      const v = await loadPlan(oversize, 't')
       expect(v.phase).toBe('error')
       expect(v.error).toBe('the dashboard answer was too large')
     })

@@ -70,7 +70,7 @@ describe('state keys', () => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await pane.press({ key: 'open-11' })
+    await pane.press({ key: 'refresh' })
     expect(d.stateWrites.length).toBeGreaterThan(0)
     expect([...new Set(d.stateWrites.map(w => w.plugin))]).toEqual(['danxbot'])
   })
