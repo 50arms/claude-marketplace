@@ -284,6 +284,9 @@ export function dashboard(
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card', updatedAt: '2026-10-03T07:58:30.000Z' }] as { id: string; title: string; updatedAt: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
+    // DX-4234: the context reads never answer (a hung dashboard), or answer after this many ms of the fake clock
+    contextHangs: false,
+    contextDelayMs: 0,
     // DX-4234: the connection records on disk (see the fs hooks); undefined: the directory does not exist
     records: undefined as Record<string, unknown> | undefined,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
@@ -551,6 +554,8 @@ export function dashboard(
     // kept out of `calls` and `api` like the pacing reads, so the suites that count a load's reads stay about their own subject
     if (e.server === SERVER && e.tool === 'danxbot_api' && isContextRead(e.args)) {
       contextReads.push(e.args.path)
+      if (world.contextHangs) await hung.promise
+      if (world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }

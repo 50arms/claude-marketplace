@@ -3,7 +3,7 @@
 // the notice is the registry's `plan_restart.waiting_events` text, read through the session's own server.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { RESTART_NOTICE_KEY, restartFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, RESTART_NOTICE_KEY, deadlineReason, eventFailureLine, restartFailureLine } from '../hooks/context/events'
 import { SURFACES, dashboard, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
@@ -76,12 +76,31 @@ for (const surface of SURFACES) {
       expect((await $.classic.SessionStart({ source: 'resume', cwd: '/work' })).additionalContext).toBeUndefined()
     })
 
-    test('a failed lookup is one warning line when no earlier session answered', async ($, on) => {
+    test('a failed lookup with no notice to say is one warning line', async ($, on) => {
       const d = await started($, on, { 'a.json': record('a') })
       d.world.restart.a = { status: 500 }
       const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      expect(r.additionalContext).toEqual([restartFailureLine('no earlier session answered (1 of 1 failed): a: 500: restart boom')])
+      expect(r.additionalContext).toEqual([restartFailureLine('1 of 1 earlier sessions did not answer: a: 500: restart boom')])
       expect(r.additionalContext![0]).toMatch(/^⚠ Could not load the restart notice \(.*\)\. Tell the operator if this session should be plan-connected\.$/)
+    })
+
+    test('one earlier session failing and another answering "nothing" is the warning line too: the failed one may have held the notice', async ($, on) => {
+      const d = await started($, on, { 'a.json': record('a', { connectedAt: '2026-10-03T07:30:00.000Z' }), 'b.json': record('b') })
+      d.world.restart.a = { status: 500 }
+      const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      expect(r.additionalContext).toEqual([restartFailureLine('1 of 2 earlier sessions did not answer: a: 500: restart boom')])
+      expect(RESTART_READS(d.contextReads)).toEqual(['/api/plan-sessions/a/restart-notice', '/api/plan-sessions/b/restart-notice'])
+    })
+
+    test('ONE deadline over the whole lookup: three earlier sessions that each answer after 3 s are cut at 8 s, with the session_start timeout line', async ($, on) => {
+      const d = await started($, on, { 'a.json': record('a', { connectedAt: '2026-10-03T07:50:00.000Z' }), 'b.json': record('b', { connectedAt: '2026-10-03T07:40:00.000Z' }), 'c.json': record('c') })
+      d.world.contextDelayMs = 3_000
+      const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      const r = await pending
+      expect(r.additionalContext).toEqual([eventFailureLine('session_start', deadlineReason())])
+      // the lookup was cut with reads still to make
+      expect(RESTART_READS(d.contextReads).length).toBeLessThan(3)
     })
 
     test('one failing and one answering: the answer speaks, no warning', async ($, on) => {

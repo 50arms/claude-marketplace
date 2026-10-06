@@ -69,6 +69,8 @@ export const START_RETRY_MS = [2_000, 5_000, 15_000]
 // DX-4610: pacing says "restart" only once a session has failed as the old standby for as long as the start retries last: before that a fresh session in an old checkout that
 // still declares `danx-dashboard` may just be waiting for its server.
 export const STALE_GRACE_MS = START_RETRY_MS.reduce((a, b) => a + b, 0)
+// DX-4234: how often a session start looks for the plugin's own server in the session's tool list, up to STALE_GRACE_MS
+export const SERVER_POLL_MS = 500
 
 // Truncation lengths, each for one place.
 // DX-4420: the band's plan name is cut to the columns the band has left after its controls (`bandLabelCols` in words.ts), never to a fixed

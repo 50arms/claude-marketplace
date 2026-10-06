@@ -58,3 +58,8 @@ export const eventFailureLine = (event: DanxEvent, reason: string) =>
 
 export const restartFailureLine = (reason: string) =>
   `⚠ Could not load the restart notice (${reason}). Tell the operator if this session should be plan-connected.`
+
+// DX-4234: ONE deadline over the whole of a context lookup (every read of a session start or of a sub-agent start together), as the bash hook's
+// `timeout 8s` was: a hung dashboard answers the failure line below instead of holding the start.
+export const CONTEXT_DEADLINE_MS = 8_000
+export const deadlineReason = () => `timeout: no response within ${CONTEXT_DEADLINE_MS / 1000}s`
