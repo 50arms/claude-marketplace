@@ -66,7 +66,7 @@ import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
-import { pacingLine, peekPacing, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
+import { isPacingMessage, pacingLine, peekPacing, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { EMPTY_PANEL_STATE, buildPanel } from './plan/pacing-panel'
 import { readTeamSettings } from './plan/pacing-settings'
 
@@ -1120,6 +1120,8 @@ async function deliverAll($: any, run: RelayRun, events: RelayEvent[], from: str
   for (const ev of events) {
     // DX-4233: an ended run delivers nothing more (its events are the new plan's server's to answer)
     if (run.dead) break
+    // DX-4631: a pacing message is a new verdict: the cache (and the panel) read it before the session does, so its next spawn is decided on it
+    if (isPacingMessage(ev.text)) await refreshPacingPanel($)
     const failure = await deliverEvent($, ev.text)
     if (failure !== null) return { cursor, delivered, failure }
     delivered++

@@ -29,6 +29,11 @@ export type PacingCall = (method: string, path: string) => Promise<Api>
 export type PacingEnv = { now: () => Promise<number>; call: PacingCall; toast: (text: string) => void }
 
 export const LINE_PATH = '/api/pacing/line'
+// DX-4631: the start of danxbot's pacing message (the `pacing.session_message` reminder row's text, which the plan-workflow skill quotes and
+// pacing-prefixes.test.mjs pins). A relayed event that carries it is a new verdict the session is being told, so the cache is read again at
+// once (register.tsx, before the event reaches the model): the next spawn is decided on what the session was just told, in both directions.
+export const PACING_MESSAGE_PREFIX = 'Usage pacing for your Claude account changed:'
+export const isPacingMessage = (text: string): boolean => text.includes(PACING_MESSAGE_PREFIX)
 // danxbot changes the verdict only at its 10-minute tick; the plugin cannot hear `pacing-verdicts:updated` (a hooks module has no
 // dashboard event source), so the cache is refreshed when it is a minute old, and on session start (`refreshPacing`).
 export const PACING_REFRESH_MS = 60_000
@@ -137,12 +142,15 @@ async function fetchPacing(env: PacingEnv): Promise<void> {
   }
 }
 
-// Read now when `force`, else when the last reachable read attempt is a minute old; concurrent callers share one read. Never rejects: a
-// clock that fails is a failed read like any other.
+// Read now when `force`, else when the last reachable read attempt is a minute old; concurrent unforced callers share one read. A forced
+// read never shares one that is already out (DX-4631): that read was asked before whatever forces this one (a pacing message), so its
+// answer may be the verdict the session was just told is gone; it waits for that read and then asks again. Never rejects: a clock that
+// fails is a failed read like any other.
 export async function refreshPacing(env: PacingEnv, force = false): Promise<void> {
   try {
     const now = await env.now()
     if (!force && lastReadAt !== null && now - lastReadAt < PACING_REFRESH_MS) return
+    if (force && inflight !== null) await inflight
     inflight ??= fetchPacing(env).finally(() => void (inflight = null))
     await inflight
   } catch (err: any) {

@@ -186,6 +186,39 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($, { fork: true, model: 'opus' })).model).toBe('opus')
   })
 
+  // DX-4631: a delivered pacing message is the new verdict; the cache is read before the session reads it, inside the one-minute window
+  const MESSAGE = '[danx-dashboard stream] Usage pacing for your Claude account changed: on pace; 12 agents may run on the account.'
+
+  test('a pacing message refreshes the cache at once: over budget before it, the very next spawn is allowed after it', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+    const d = await session($, on, options)
+    expect((await spawn($)).deny).toMatch(/critical/)
+    options.pacingLine = { body: wire({ budget: 12, running_agents: 5 }) }
+    await d.clock.advance(1_000)
+    d.relay.push({ cursor: 'c1', text: MESSAGE })
+    await d.clock.settle()
+    expect((await spawn($)).deny).toBeUndefined()
+  })
+
+  test('a pacing message refreshes the cache at once the other way: allowed before it, the very next spawn is refused after it', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+    const d = await session($, on, options)
+    expect((await spawn($)).deny).toBeUndefined()
+    options.pacingLine = { body: wire({ budget: 3, running_agents: 11 }) }
+    await d.clock.advance(1_000)
+    d.relay.push({ cursor: 'c1', text: MESSAGE })
+    await d.clock.settle()
+    expect((await spawn($)).deny).toMatch(/agent\(s\) already run on this account against budget 3/)
+  })
+
+  test('an event that is not a pacing message does not read the cache', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12 }) } })
+    const before = d.pacingReads.length
+    d.relay.push({ cursor: 'c1', text: 'operator commented on problem 3' })
+    await d.clock.settle()
+    expect(d.pacingReads).toHaveLength(before)
+  })
+
   test('a cache older than 30 minutes is not trusted: the spawn is allowed', async ($, on) => {
     const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
     const d = await session($, on, options)
