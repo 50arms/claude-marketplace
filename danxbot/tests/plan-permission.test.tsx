@@ -6,6 +6,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { PERMISSION_POLL_MS } from '../hooks/plan/config'
 import { claimStatus, permissionRequestOf } from '../hooks/plan/permission'
 import { dashboard, startSession, toldModel } from './plan-kit'
+import { RELAY_MARKER } from '../hooks/relay/config'
 
 const URL_A = 'https://danxbot.example/connect/aaaa'
 const URL_B = 'https://danxbot.example/connect/bbbb'
@@ -17,6 +18,9 @@ const CALL = (permissions: string[]) => ({ tool: TOOL, permissions, reason: 'to 
 const BAND = { plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const navigations = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && (c.tool === 'navigate' || c.tool === 'preview_start'))
 const claims = (d: any) => d.api.filter((a: any) => /\/claim$/.test(a.path))
+
+// DX-4625: a decision reaches an IDLE session as a submitted prompt (the plan event bridge's own delivery, relay/delivery.ts), which wakes it
+const promptsOf = (d: any): string[] => d.relay.delivered.map((x: { text: string }) => x.text)
 
 function answering(on: any, texts: string[]) {
   let i = 0
@@ -34,6 +38,15 @@ describe('permissionRequestOf', () => {
     expect(permissionRequestOf(JSON.stringify({ ok: false, status: 400, body: { error: 'already_held' } }), [])).toBeNull()
     expect(permissionRequestOf('Not signed in to the danxbot dashboard.', [])).toBeNull()
     expect(permissionRequestOf(undefined, [])).toBeNull()
+  })
+
+  // DX-4625 (moved from DX-4435): an answer with no confirm code is not a request; it reads as null and never throws
+  test('an approval answer with no confirmCode is null, without throwing', () => {
+    const noCode = (extra: object = {}) => JSON.stringify({ state: 'approval_required', approvalUrl: URL_A, instruction: 'Show the code.', ...extra })
+    expect(() => permissionRequestOf(noCode(), ['team.members.view'])).not.toThrow()
+    expect(permissionRequestOf(noCode(), ['team.members.view'])).toBeNull()
+    expect(permissionRequestOf(noCode({ confirmCode: '' }), ['team.members.view'])).toBeNull()
+    expect(permissionRequestOf(noCode({ confirmCode: 7 }), ['team.members.view'])).toBeNull()
   })
 })
 
@@ -134,7 +147,7 @@ describe('request_permission', () => {
     await d.clock.advance(660_000)
     await d.clock.settle()
     expect(await band.find({ key: 'open-permission' })).toBeDefined()
-    expect(toldModel(d)).toEqual([])
+    expect(promptsOf(d)).toEqual([])
   })
 
   test('asking again for a request already open keeps one request in the band', async ($, on) => {
@@ -215,7 +228,7 @@ describe('request_permission', () => {
     await d.clock.advance(PERMISSION_POLL_MS)
     await d.clock.settle()
     // one poll, not two stacked ones: told once
-    expect(toldModel(d)).toHaveLength(1)
+    expect(promptsOf(d)).toHaveLength(1)
   })
 })
 
@@ -229,7 +242,7 @@ describe('the model is told the decision', () => {
     await $.tool.call(CALL(asked))
     await d.clock.advance(PERMISSION_POLL_MS)
     await d.clock.settle()
-    expect(toldModel(d)).toEqual([])
+    expect(promptsOf(d)).toEqual([])
     set(d)
     await d.clock.advance(PERMISSION_POLL_MS)
     await d.clock.settle()
@@ -240,7 +253,7 @@ describe('the model is told the decision', () => {
     test(`${status}: told once which permissions were granted and to retry the refused call`, async ($, on) => {
       const { d, band } = await decide($, on, d => void (d.world.permissionClaim = status))
       expect(await band.find({ key: 'open-permission' })).toBeUndefined()
-      const told = toldModel(d)
+      const told = promptsOf(d)
       expect(told).toHaveLength(1)
       expect(told[0]).toContain('CODE1')
       expect(told[0]).toContain('granted team.members.view')
@@ -249,16 +262,40 @@ describe('the model is told the decision', () => {
       // later polls and refreshes tell nothing more
       await d.clock.advance(180_000)
       await d.clock.settle()
-      expect(toldModel(d)).toHaveLength(1)
+      expect(promptsOf(d)).toHaveLength(1)
     })
   }
+
+  // DX-4625: an idle agent is woken by the decision itself (a submitted prompt through the plan event bridge's delivery), so the
+  // person types nothing; a grant tells it to retry, a denial tells it not to
+  test('an idle session is woken by a prompt carrying the decision, in the bridge format', async ($, on) => {
+    const { d } = await decide($, on, d => void (d.world.permissionClaim = 'approved'))
+    expect(promptsOf(d)).toHaveLength(1)
+    expect(promptsOf(d)[0].startsWith(RELAY_MARKER)).toBe(true)
+    expect(toldModel(d)).toEqual([])
+  })
+
+  test('a turn in flight gets a row, never a prompt (the same decision as a relayed event)', async ($, on) => {
+    const d = dashboard(on, { tabs: ['seed'] })
+    answering(on, [answer('approval_required', URL_A, 'CODE1')])
+    await startSession($, d, 'desktop')
+    await $.tool.call(CALL(['team.members.view']))
+    await $.turn.start({ turnId: 't1' } as any)
+    d.world.permissionClaim = 'approved'
+    await d.clock.advance(PERMISSION_POLL_MS)
+    await d.clock.settle()
+    expect(promptsOf(d)).toEqual([])
+    // the kit cannot take a plugin's own append, so the refused row shows as the toast carrying it
+    expect(toldModel(d)).toHaveLength(1)
+    expect(toldModel(d)[0]).toContain('granted team.members.view')
+  })
 
   test('a grant of part of what was asked names what was not granted', async ($, on) => {
     const { d } = await decide($, on, d => {
       d.world.permissionClaim = 'approved'
       d.world.permissionGranted = ['boards.view']
     }, ['team.members.view', 'boards.view'])
-    const told = toldModel(d)
+    const told = promptsOf(d)
     expect(told).toHaveLength(1)
     expect(told[0]).toContain('granted boards.view')
     expect(told[0]).toContain('Not granted: team.members.view')
@@ -267,7 +304,7 @@ describe('the model is told the decision', () => {
   test('denied: told once that the person denied it', async ($, on) => {
     const { d, band } = await decide($, on, d => void (d.world.permissionClaim = 'denied'))
     expect(await band.find({ key: 'open-permission' })).toBeUndefined()
-    const told = toldModel(d)
+    const told = promptsOf(d)
     expect(told).toHaveLength(1)
     expect(told[0]).toContain('CODE1')
     expect(told[0]).toContain('denied')
@@ -285,7 +322,7 @@ describe('the model is told the decision', () => {
     test(`${name}: told once the session ended, to reconnect it and request the permission again`, async ($, on) => {
       const { d, band } = await decide($, on, set)
       expect(await band.find({ key: 'open-permission' })).toBeUndefined()
-      const told = toldModel(d)
+      const told = promptsOf(d)
       expect(told).toHaveLength(1)
       expect(told[0]).toContain('CODE1')
       expect(told[0]).toContain('expired')
@@ -297,18 +334,18 @@ describe('the model is told the decision', () => {
   test('a key a person revoked drops the request and tells nothing: the session must stop, not ask again', async ($, on) => {
     const { d, band } = await decide($, on, d => void (d.world.signedOut = 'revoked'))
     expect(await band.find({ key: 'open-permission' })).toBeUndefined()
-    expect(toldModel(d)).toEqual([])
+    expect(promptsOf(d)).toEqual([])
   })
 
   test('a claim that fails for another reason tells nothing and keeps the request', async ($, on) => {
     const { d, band } = await decide($, on, d => void (d.world.permissionClaim = 'boom'))
     expect(await band.find({ key: 'open-permission' })).toBeDefined()
-    expect(toldModel(d)).toEqual([])
+    expect(promptsOf(d)).toEqual([])
   })
 
   test('a request told once is never told again, even when it comes back into the list', async ($, on) => {
     const { d, band } = await decide($, on, d => void (d.world.permissionClaim = 'approved'))
-    expect(toldModel(d)).toHaveLength(1)
+    expect(promptsOf(d)).toHaveLength(1)
     // the same request back in the list (the model asked again and was answered the same request): its next claim says claimed
     await $.tool.call(CALL(['team.members.view']))
     expect(await band.find({ key: 'open-permission' })).toBeDefined()
@@ -316,6 +353,6 @@ describe('the model is told the decision', () => {
     await d.clock.advance(PERMISSION_POLL_MS)
     await d.clock.settle()
     expect(await band.find({ key: 'open-permission' })).toBeUndefined()
-    expect(toldModel(d)).toHaveLength(1)
+    expect(promptsOf(d)).toHaveLength(1)
   })
 })

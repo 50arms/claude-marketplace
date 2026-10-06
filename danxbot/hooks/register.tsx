@@ -242,7 +242,7 @@ async function refresh($: any, force = false): Promise<void> {
 
 // DX-4435 / DX-4530: a request leaves the list once its claim (the key's own route) decides it (settle): granted, denied,
 // expired, unknown to the dashboard, or the session lost its key. A claim that fails for any other reason keeps it for the next
-// poll: a request has no expiry clock of its own. The model is told each decision once, in its chat.
+// poll: a request has no expiry clock of its own. The model is told each decision once, waking it when it is idle (tellModelAwake).
 async function settlePermissionRequests($: any): Promise<void> {
   const notes = new Map<string, string | null>()
   for (const r of await read($, permissionRequests)) {
@@ -258,7 +258,7 @@ async function settlePermissionRequests($: any): Promise<void> {
   })
   for (const r of taken) {
     const note = notes.get(r.publicId)
-    if (typeof note === 'string' && (await markToldOnce($, r.publicId))) await tellModel($, note)
+    if (typeof note === 'string' && (await markToldOnce($, r.publicId))) await tellModelAwake($, note)
   }
   await syncPermissionPoll($)
 }
@@ -309,10 +309,22 @@ async function tellModel($: any, text: string): Promise<void> {
     const r = await $.session.append(modelRow(text))
     if (r.deny) throw new Error(r.deny)
   } catch (err: any) {
-    // The write the operator asked for already happened: say the model was not told, and carry the
-    // row it was meant to read (the operator can paste it), never hide it.
-    $.ui.toast(`Could not tell the model: ${String(err?.message ?? err).slice(0, TOAST_ERROR_MAX)}${NOTE_MARKER}${text}`)
+    notToldToast($, err?.message ?? err, text)
   }
+}
+
+// DX-4625: tell the model something it must ACT on while the person types nothing (a permission decision): by the plan event
+// bridge's own delivery (deliverEvent), so an idle session is woken by a prompt and a turn in flight reads a row. `tellModel`'s
+// append is only read on the session's next turn, which an idle agent waiting on the person never starts.
+async function tellModelAwake($: any, text: string): Promise<void> {
+  const failure = await deliverEvent($, text)
+  if (failure !== null) notToldToast($, failure, text)
+}
+
+// The write the operator asked for already happened: say the model was not told, and carry the row it was meant to read (the
+// operator can paste it), never hide it.
+function notToldToast($: any, cause: unknown, text: string): void {
+  $.ui.toast(`Could not tell the model: ${String(cause).slice(0, TOAST_ERROR_MAX)}${NOTE_MARKER}${text}`)
 }
 
 // One Claude_Browser call; an error result throws with its text.
