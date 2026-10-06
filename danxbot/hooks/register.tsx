@@ -5,7 +5,7 @@ import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
+import { approvalRequestOf, approvalSubject, approvalToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
@@ -87,8 +87,12 @@ const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 // lost on reload and shared by nothing else).
 const tab = atom({ plugin: 'danxbot', key: 'tab' } as const, null as string | null)
 const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string | null)
-// DX-4391: the approval URL last opened (a request opens its page once).
+// DX-4391: the approval URL last opened (a permission request opens its page once).
 const approvalOpened = atom({ plugin: 'danxbot', key: 'approvalOpened' } as const, null as string | null)
+// DX-4630: the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
+// ends (approved, denied, expired and renewed, or the conversation ended). The band and the pane draw it as a Link and the code,
+// so the person never waits on a browser call to see them. Also what tells a watch is running.
+const signInRequest = atom({ plugin: 'danxbot', key: 'signInRequest' } as const, null as ApprovalRequest | null)
 // DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
 // DX-4499: the clock a running sub-agent's runtime counts up against (see tickClock).
@@ -423,7 +427,7 @@ async function openInBrowser($: any, url: string): Promise<void> {
   void loaded.then(failed => failed && $.ui.toast(openFailedToast(failed)))
 }
 
-// DX-4391: the approval page's open. ONE toast tells the outcome, with the confirm code and the
+// DX-4391: a PERMISSION request's approval page open (a sign-in's link is drawn without a browser, showSignInRequest). ONE toast tells the outcome, with the confirm code and the
 // link in it either way, for 60 s (the host's longest): a toast replaces the one before it, so a
 // failure toast shown first would be gone before anyone read the cause. The plugin's browser call
 // may be refused (PLAN-23 records that the host asks the person to allow a site first, which a plugin
@@ -453,11 +457,11 @@ function approvalOpenNote(approval: ApprovalRequest, failed: OpenFailure | null)
   return `The danxbot plugin could not open the approval page (${failed.step}: ${failed.message}). Open ${approval.url} yourself in the browser if you have one, and show the user confirm code ${approval.code}.`
 }
 
-// DX-4391 / DX-4423: a request's page opens once and its code is shown, wherever the request came from (the model's own
-// `plan_connect` or the Sign in button): the same URL is not reopened while its open stands. Recorded before the open so a
+// DX-4391 / DX-4423: a permission request's page opens once and its code is shown (the model's `request_permission`, or the
+// band's permission button): the same URL is not reopened while its open stands. Recorded before the open so a
 // repeat during the open does not start a second one, and cleared when the open fails (a refused site permission, a pane
-// not ready), so the next attempt retries; the toast carries the link meanwhile. `force` is an explicit Sign in press: it
-// opens again even for a URL already recorded. The open is not awaited: its browser calls take about 1 to 3.5 s each
+// not ready), so the next attempt retries; the toast carries the link meanwhile. `force` is an explicit press of the band's
+// permission button: it opens again even for a URL already recorded. The open is not awaited: its browser calls take about 1 to 3.5 s each
 // (DX-4424) and the caller, a model's tool answer or a button, must not wait on them. A failure past tryOpen (the busy
 // key, the toast itself) must still leave the link.
 // DX-4627: it answers how the open ended (null: the page is in front, or this URL's open already stands), so a model's tool
@@ -475,6 +479,20 @@ async function showApproval($: any, approval: ApprovalRequest, force = false): P
 
 // DX-4627: the tool answer, with the note on whether the plugin opened the page, as context the model reads after the result.
 const withOpenNote = (ran: any, approval: ApprovalRequest, failed: OpenFailure | null) => ({ ...ran, context: [...(ran.context ?? []), approvalOpenNote(approval, failed)] })
+
+// DX-4630: the sign-in request's toast: link and code together, for the longest the host allows.
+const toastSignIn = ($: any, approval: ApprovalRequest) => $.ui.toast(signInToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
+
+// DX-4630: a sign-in request, drawn the moment it exists: the band and the pane read it from $.state and draw its Link and confirm
+// code, and the toast carries both. No browser call comes first (each cost 1 to 3.5 s, DX-4424, so the person waited 10 to 30 s
+// for a link they could already follow): the Link opens the page itself.
+async function showSignInRequest($: any, approval: ApprovalRequest): Promise<void> {
+  await update($, signInRequest, () => approval)
+  toastSignIn($, approval)
+}
+
+// DX-4630: the tool answer, with the note that the person already has the link and code, as context the model reads after the result.
+const withSignInNote = (ran: any, approval: ApprovalRequest) => ({ ...ran, context: [...(ran.context ?? []), signInShownNote(approval)] })
 
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
 // together (a double click, a key repeat) cannot both win. The loser does nothing.
@@ -574,18 +592,17 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
 }
 
 // DX-4423 / DX-4548: the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
-// `plan_connect`; the MCP answers with the approval request, shown as the model's own would be (showApproval). Each call waits
+// `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's and the pane's Link and code, no browser call). Each call waits
 // there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
 // request stays open for as long as its session lives (DX-4530). The status of the request cannot be read any other way: its
 // claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
 // person's login. A call that answers a DIFFERENT request than the one watched means the first expired while it waited: the
 // model is told, and the renewed request is shown and watched in its place, so nobody has to relay it.
 //
-// Two starts: the Sign in button (`byPress`: the person is waiting, the page opens again, and the model is told once that it is
+// Two starts: the Sign in button (`byPress`: the person is waiting, and the model is told once that it is
 // signed in), and the model's own `plan_connect` answering `approval_required` (`known`: the request already shown; the model is
 // told the outcome once, approved, denied or expired, so the person never has to type "approved"). The whole watch holds the
 // sign-in busy key (the buttons read "Signing in…", a second start does nothing).
-let signInWatching: ApprovalRequest | null = null
 // DX-4548: bumped when the conversation (or the process) ends; a watch of an older generation stops at its next step, so it
 // never calls plan_connect with the old conversation's arguments or tells the new conversation about a request it never made
 let signInGeneration = 0
@@ -597,7 +614,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
   await withBusy($, busyKey.signIn, async () => {
     const ended = () => generation !== signInGeneration
     let shown: ApprovalRequest | null = watch.byPress ? null : watch.known
-    signInWatching = shown
+    await update($, signInRequest, () => shown)
     // DX-4530: each outcome is told once (the told-once guard, keyed by the request). The model's request always has an id
     // (onPlanConnect and the renewal below refuse one without); only the press may see one with none, and it tells once per watch.
     const tell = async (request: ApprovalRequest | null, text: string) => {
@@ -630,9 +647,8 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
               return
             }
           }
-          if (shown === null || step.request.url !== shown.url) await showApproval($, step.request)
+          if (shown === null || step.request.url !== shown.url) await showSignInRequest($, step.request)
           shown = step.request
-          signInWatching = shown
           // DX-4548: an answer that came back sooner than the MCP's own wait must not turn this into a tight loop
           const took = (await $.clock.now()) - startedAt
           if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
@@ -662,19 +678,22 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         return
       }
     } finally {
-      if (!ended()) signInWatching = null
+      if (!ended()) await update($, signInRequest, () => null)
     }
     // DX-4548: an aborted watch's key was freed at the abort (onSessionEnd); a new watch may hold it by now, so this one never frees it
   }, () => generation === signInGeneration)
 }
 
 // The button's press returns at once: the sign-in waits minutes for a person, and a press must not. A watch already running
-// (the model's own sign-in) opens its page again instead of starting a second wait.
-function startSignIn($: any): Promise<void> {
-  if (signInWatching !== null) return showApproval($, signInWatching, true)
-  return signInArgs($).then(args => {
-    void watchSignIn($, { args, byPress: true }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
-  })
+// (the model's own sign-in) says its link and code again instead of starting a second wait.
+async function startSignIn($: any): Promise<void> {
+  const waiting = await read($, signInRequest)
+  if (waiting !== null) {
+    toastSignIn($, waiting)
+    return
+  }
+  const args = await signInArgs($)
+  void watchSignIn($, { args, byPress: true }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
 }
 
 // The sign-in's own `plan_connect` arguments: the session's title, and the plan it was on.
@@ -1225,6 +1244,8 @@ async function onSessionStart($: any, e: any, next: any) {
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
+  // DX-4630: nor a sign-in request: its watch died with the old process
+  await update($, signInRequest, () => null)
   // DX-4233: no plan polling timer (the relay's events, the turns and the sub-agents refresh the view). DX-4339: the pacing panel has no
   // event to ride, so only it is read on the poll
   pacingTicker?.cancel()
@@ -1251,7 +1272,7 @@ async function onSessionEnd($: any, e: any, next: any) {
   // DX-4548: the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
     signInGeneration++
-    signInWatching = null
+    await update($, signInRequest, () => null)
     // DX-4548: free the sign-in key at once; the aborted watch's in-flight plan_connect (up to ~45s) must not hold it
     await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
   }
@@ -1290,8 +1311,8 @@ async function onCommand($: any) {
 }
 
 // The model connected (or moved) this session: show it at once. A signed-out session's `approval_required`
-// answer opens the approval page and leaves the code up to compare; the plan page is not opened (there is no
-// connection to show yet).
+// answer draws the approval Link and the code in the band and the pane (no browser call); the plan page is not opened (there is
+// no connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
   // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan), once the view knows the plan
@@ -1299,24 +1320,26 @@ async function onPlanConnect($: any, e: any, next: any) {
   void settleDetached(refresh($, true).then(() => reportUsageNow($)))
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
   if (approval === null) return ran
-  // DX-4548: a request is shown by its URL (showApproval opens each URL once), never by the answer's state: a request renewed
-  // after an expiry answers `approval_pending` to the model's next call and must still reach the person
-  const failed = await showApproval($, approval)
-  // the model started this sign-in, so the plugin waits on it and tells the model how it ended; a request with no id cannot be
-  // told once, so it is refused here as permissionRequestOf refuses one
-  if (signInWatching === null) {
-    if (publicIdOf(approval.url) === undefined) {
-      $.ui.toast(signInFailedToast('the approval request had no id'))
-      return withOpenNote(ran, approval, failed)
-    }
+  const waiting = await read($, signInRequest)
+  // a request with no id cannot be told once, so it is refused before anything is drawn (as permissionRequestOf refuses one):
+  // nothing stays in $.state for it
+  if (waiting === null && publicIdOf(approval.url) === undefined) {
+    $.ui.toast(signInFailedToast('the approval request had no id'))
+    return withSignInNote(ran, approval)
+  }
+  // DX-4548: a request is shown by its URL, never by the answer's state: a request renewed after an expiry answers
+  // `approval_pending` to the model's next call and must still reach the person
+  if (waiting?.url !== approval.url) await showSignInRequest($, approval)
+  // the model started this sign-in, so the plugin waits on it and tells the model how it ended
+  if (waiting === null) {
     const args = { ...(typeof e.plan_id === 'number' ? { plan_id: e.plan_id } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
     void watchSignIn($, { args, byPress: false, known: approval }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
   }
-  return withOpenNote(ran, approval, failed)
+  return withSignInNote(ran, approval)
 }
 
-// DX-4435: the model asked for a permission: open the approval page once with its code and the permissions asked for (the
-// sign-in's open, showApproval), and keep the request for the band until it is decided.
+// DX-4435: the model asked for a permission: open the approval page once with its code and the permissions asked for
+// (showApproval), and keep the request for the band until it is decided.
 async function onRequestPermission($: any, e: any, next: any) {
   const ran = await next(e)
   const request = permissionRequestOf(ran.text, e.permissions)
@@ -1591,6 +1614,7 @@ async function drawBand($: any, e: any, next: any) {
     e.surface === 'desktop',
     await read($, busy),
     (await read($, permissionRequests)).length,
+    await read($, signInRequest),
     e.props.bodyColumns,
     buildPanel(await read($, panel)),
   )
@@ -1633,6 +1657,7 @@ async function drawPane($: any, e: any) {
     live: await read($, live),
     pacing: buildPanel(await read($, panel)),
     relay: await read($, relay),
+    signIn: await read($, signInRequest),
   }
   return renderPane($.ui.resolve(e), handlers($), m)
 }

@@ -12,8 +12,8 @@
     "hooks/context/events.ts": "f33a72e97fb5f2b28cd6489f06e63f6ccf6c71db160850a32fec3d56cc013fbc",
     "hooks/context/stamp.ts": "38cde7b4f6f40d6008dd93319265ec47dfce8a18580cbadda55079277c6c84b6",
     "hooks/hooks.json": "7507e8428a27e7c04e3eb76fe5577de978bc880465105398de86b9c43554deac",
-    "hooks/plan/approval.ts": "5c0f2978f75b579c08d66b5b9bf0e0fcea1e86d3e08df2b37ef391275527b50d",
-    "hooks/plan/band.tsx": "4b0d62555a7d0af6d0f0b51fc61d91b52f867c7ef404d7283f33d9d68b5891fe",
+    "hooks/plan/approval.ts": "d424cf11a711099567441c217f3d12fb3000765e73c5aef015aba23b5bf0dd0c",
+    "hooks/plan/band.tsx": "2fad646a6dd7ecdc7a5c960fb5f00ee2c87a4b08b25cab7c11029747dd8b8dc3",
     "hooks/plan/browser-output.ts": "79467578a7eb7ec7a51ed2f53eba5b161dd54a97aff49c6862104af8240b9fc2",
     "hooks/plan/card-links.ts": "ff9802f516bd7945d281868fb8d70a563d4d0598a70381fcaae1e2a16dba8954",
     "hooks/plan/config.ts": "fcc43b05f02266671c1ca89cf2bd062326a31ab496bd72f7ce094e1d29c32eec",
@@ -31,7 +31,7 @@
     "hooks/plan/pacing-panel-view.tsx": "7e6e499bf386b453e4451d836b8976271edb2280d468deb4569fa44a16f40efd",
     "hooks/plan/pacing-panel.ts": "07961c7a4a6bd261cb70557ae64c6661a31e048b0b291a04a45fd55903622ce7",
     "hooks/plan/pacing-settings.ts": "e7f26eca8aaf2f6f03ea4945d2111e73b5699de47cf7de9a410f756d225dd1fa",
-    "hooks/plan/pane.tsx": "a0c779be402104e62ae27c4048380325d74a61e4527cfb4d7ae4b9dd471a23e8",
+    "hooks/plan/pane.tsx": "4fc6a335843baacb7d247d0ff5900ef1e0ef67a4561ece96d6612ac6b287a0d1",
     "hooks/plan/permission.ts": "23161e2e29f48acc79b2cfbd268640ff29c86a008d2f1de6a72548ac0798fc87",
     "hooks/plan/problems.tsx": "b01bf2100049059a4953a6990454a2099cb09209a0b79ba55811c284c1f42b83",
     "hooks/plan/sign-in.ts": "53ba6b97da04d408930d32fbb90e5af9f208a8a7062be3a75aab280caf5ba1d4",
@@ -39,7 +39,7 @@
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/usage.ts": "d0d3152a3010a6ab87ccb16a6532326ad03b39aa91d2b6284d6d984c7942e08c",
     "hooks/plan/words.ts": "40542d9551118a979bfb4481a11a5b72037d64a2fe1e446176edd9bacb04bc2c",
-    "hooks/register.tsx": "3d9c37416e001d46c7087e11860e4cd0428c5728f7ec7be3494844041c2d4676",
+    "hooks/register.tsx": "6e3998b15b43bd103015d4f0376fc65e2776e6616d5df9a07b36060d9405fbed",
     "hooks/relay/answer.ts": "b0c32465c7c2b39e252ad94fc9f6cbe0c1b1a12d41016c3cb953d71f06d1f9a8",
     "hooks/relay/config.ts": "895dee1b143ce5d7d892a64e241913cf8d6e1fa2024f3cbd701b773d43087e5d",
     "hooks/relay/cursor.ts": "19bc03ba31318f030f04bcd4c2c8bf2fe025204cf36ce54810bee244b57b0678",
@@ -68,6 +68,6 @@
     "skills/plan-workflow/SKILL.md": "ee247d1d43faec18737a61332ad53bde0df55b5db441b218a35fc75886f5db56",
     "skills/prepare-for-compaction/SKILL.md": "8b33a49c2d709268f11ab1af61e9b7a85712c8adc1fb9981b3e091f4c67596d1",
     "skills/start/SKILL.md": "83d8c8f28c06b730175792aa82b12ecf3614e983ed98d22ce23aaf870e40cc59",
-    "types/index.d.ts": "e72fa0cf1d635561a127abfd0adb646608746e63392c59cb9868ee092f9010d0"
+    "types/index.d.ts": "8ac276c463255a47958fd227c9c704df5129deecee310c10046d3d0076523a78"
   }
 }

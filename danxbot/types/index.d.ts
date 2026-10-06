@@ -248,8 +248,10 @@ declare module 'claude-code' {
       tab: string | null
       // The session's title as the app last reported it, passed to `plan_connect`.
       title: string | null
-      // DX-4391: the approval URL last opened, so one request opens its page once.
+      // DX-4391: the approval URL last opened, so one permission request opens its page once.
       approvalOpened: string | null
+      // DX-4630: the sign-in request waiting for the person (its approval link and confirm code), drawn by the band and the pane; null when none.
+      signInRequest: { url: string; code: string } | null
       // DX-4435: the model's undecided permission requests, oldest first.
       permissionRequests: PermissionRequest[]
       // DX-4499: the clock (epoch ms) a running sub-agent's runtime counts up against: advanced once a second, only while one is

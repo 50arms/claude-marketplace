@@ -1,9 +1,10 @@
 // DX-4391: a signed-out session's plan_connect answers `approval_required` (the MCP server,
-// DX-4390). The plugin opens the approval page once and leaves the confirm code up; every other
-// answer (pending, a normal connect, a refusal, a denied call) opens nothing.
+// DX-4390). The plugin draws the approval link and confirm code at once (DX-4630, no browser call); every other
+// answer (a normal connect, a refusal, a denied call) shows nothing.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { approvalRequestOf } from '../hooks/plan/approval'
+import { approvalRequestOf, signInToast } from '../hooks/plan/approval'
+import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
 import { dashboard, startSession } from './plan-kit'
 
 const URL_A = 'https://danxbot.example/connect/aaaa'
@@ -16,7 +17,6 @@ const connected = JSON.stringify({ ok: true, status: 200, body: { session: { pla
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any
 const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
-const navigations = (d: any) => browserCalls(d).filter((c: any) => c.tool === 'navigate' || c.tool === 'preview_start')
 
 // DX-4548: the plugin waits on a request the model's plan_connect started, through the MCP: the stand-in MCP answers the same
 // request as still pending, so the wait stays open and tells the model nothing.
@@ -41,19 +41,19 @@ describe('approvalRequestOf', () => {
 })
 
 describe('plan_connect while signed out', () => {
-  test('approval_required opens the approval page once and leaves the confirm code up', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+  // DX-4630: the link and code are shown the moment the request exists; no browser call is made for them, so a slow or refused
+  // browser cannot delay or hide them.
+  test('approval_required toasts the link and the confirm code with no browser call, whatever the browser would have done', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true, browser: 'denied', navigateTakesMs: 60_000 })
     stillPending(d)
     answering(on, [required(URL_A)])
     await startSession($, d, 'desktop')
     d.calls.length = 0
     await $.tool.call(CALL)
     await d.clock.settle()
-    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
-    expect(d.toasts.at(-1)).toBe(`Approve this session in the browser. Confirm code NXGUF88G must match the page: ${URL_A}`)
-    // the failure toast of a plan open never shows for this open: one toast, the outcome
-    expect(d.toasts.some(t => t.startsWith('Browser '))).toBe(false)
-    expect(d.toastTimeouts.at(-1)).toBe(60_000)
+    expect(browserCalls(d)).toEqual([])
+    expect(d.toasts.at(-1)).toBe(signInToast({ url: URL_A, code: 'NXGUF88G' }))
+    expect(d.toastTimeouts.at(-1)).toBe(APPROVAL_TOAST_MS)
   })
 
   // The shape core gives a hook for an MCP tool (the engine's own typings, ToolCallResult): `{ ref, result, text }`
@@ -68,12 +68,12 @@ describe('plan_connect while signed out', () => {
     const ran = await $.tool.call(CALL)
     await d.clock.settle()
     expect(ran.text).toBe(text)
-    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
+    expect(browserCalls(d)).toEqual([])
     expect(d.toasts.at(-1)).toContain('NXGUF88G')
   })
 
-  // DX-4627: the model learns from the answer whether the plugin opened the page, so it opens it only when the plugin could not.
-  test('a successful open tells the model not to open the page itself', async ($, on) => {
+  // DX-4630: the model learns the person already has the link and code, so it opens nothing itself.
+  test('the model is told the band already shows the link and code, and not to open it', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
     stillPending(d)
     answering(on, [required(URL_A)])
@@ -81,104 +81,46 @@ describe('plan_connect while signed out', () => {
     const ran = await $.tool.call(CALL)
     await d.clock.settle()
     expect(ran.text).toBe(required(URL_A))
-    // DX-4234: the time stamp rides on every tool call too; the approval note is the other entry
-    const note = ran.context.filter((c: string) => c.includes('approval page'))
+    // DX-4234: the time stamp rides on every tool call too; the sign-in note is the other entry
+    const note = ran.context.filter((c: string) => c.includes('approval link'))
     expect(note).toHaveLength(1)
-    expect(note[0]).toContain('already opened the approval page')
-    expect(note[0]).toContain('Do not open it yourself')
+    expect(note[0]).toContain('already shows the person the approval link')
+    expect(note[0]).toContain('Do not open the link yourself')
+    expect(note[0]).toContain('NXGUF88G')
   })
 
-  test('a refused open tells the model to open the page itself', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true, browser: 'denied' })
-    stillPending(d)
-    answering(on, [required(URL_A)])
-    await startSession($, d, 'desktop')
-    const ran = await $.tool.call(CALL)
-    await d.clock.settle()
-    const note = ran.context.filter((c: string) => c.includes('approval page'))
-    expect(note).toHaveLength(1)
-    expect(note[0]).toContain('could not open the approval page')
-    expect(note[0]).toContain(`Open ${URL_A} yourself`)
-  })
-
-  // DX-4424: the toast is about the tab being in front; a slow page load does not hold it back.
-  test('with the pane open on our tab the code and link are up before the page has loaded', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', tabs: ['seed'], navigateTakesMs: 5_000 })
-    stillPending(d)
-    answering(on, [required(URL_A), required(URL_B, 'ZZZZ1111')])
-    await startSession($, d, 'desktop')
-    await $.tool.call(CALL)
-    await d.clock.advance(5_000)
-    await d.clock.settle()
-    d.calls.length = 0
-    d.toasts.length = 0
-
-    await $.tool.call(CALL)
-    await d.clock.settle()
-    expect(browserCalls(d).map((c: any) => c.tool)).toEqual(['tabs_select', 'navigate'])
-    expect(d.toasts).toEqual([`Approve this session in the browser. Confirm code ZZZZ1111 must match the page: ${URL_B}`])
-    await d.clock.advance(5_000)
-    await d.clock.settle()
-    expect(d.toasts).toHaveLength(1)
-  })
-
-  test('a browser busy with another open says so, with the code and the link, and makes no browser call of its own', async ($, on) => {
-    const d = dashboard(on, { browserClosed: true, navigateTakesMs: 5_000 })
-    answering(on, [required(URL_A)])
-    await startSession($, d, 'desktop')
-    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    const planOpen = band.press({ key: 'open-tab' })
-    await d.clock.settle()
-    const calls = browserCalls(d).length
-    d.world.signedOut = 'signed-out'
-    stillPending(d)
-    await $.tool.call(CALL)
-    await d.clock.settle()
-    expect(browserCalls(d)).toHaveLength(calls)
-    expect(d.toasts.at(-1)).toBe(`Could not open the approval page (busy: another browser open is in progress). Open this link and check that confirm code NXGUF88G matches: ${URL_A}`)
-    await d.clock.advance(5_000)
-    await planOpen
-  })
-
-  test('the same request repeated opens nothing again; a new request opens its own page', async ($, on) => {
+  test('the same request repeated shows its toast once; a new request swaps the link and the code', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out', tabs: ['tab-1'] })
     stillPending(d)
     answering(on, [required(URL_A), required(URL_A), required(URL_B, 'ZZZZ1111')])
     await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     d.calls.length = 0
-    for (let n = 0; n < 3; n++) {
-      await $.tool.call(CALL)
-      await d.clock.settle()
-    }
-    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A, URL_B])
-    expect(d.toasts.at(-1)).toContain('ZZZZ1111')
-  })
-
-  test('a failed browser open still leaves the code and the link', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', browser: 'denied' })
-    stillPending(d)
-    answering(on, [required(URL_A)])
-    await startSession($, d, 'desktop')
+    d.toasts.length = 0
+    await $.tool.call(CALL)
     await $.tool.call(CALL)
     await d.clock.settle()
-    // ONE last toast carries the cause, the code and the link, for the longest the host allows
-    expect(d.toasts.at(-1)).toMatch(/^Could not open the approval page \(navigate: .+\)\. Open this link and check that confirm code NXGUF88G matches: /)
-    expect(d.toasts.at(-1)).toContain(URL_A)
-    // the tab came forward first (code and link up), then the failed page load repeats both with its cause
-    expect(d.toasts.filter(t => t.includes('NXGUF88G') && t.includes(URL_A))).toHaveLength(2)
-    expect(d.toastTimeouts.at(-1)).toBe(60_000)
+    expect(d.toasts.filter(t => t.includes('NXGUF88G'))).toHaveLength(1)
+    await $.tool.call(CALL)
+    await d.clock.settle()
+    expect(d.toasts.at(-1)).toContain('ZZZZ1111')
+    expect(browserCalls(d)).toEqual([])
+    const hrefs = (await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)
+    expect(hrefs).toContain(URL_B)
+    expect(hrefs).not.toContain(URL_A)
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code ZZZZ1111')
   })
 
-  // DX-4548: a request is shown by its URL, not by the answer's state: one this session has not shown opens even as approval_pending
-  test('approval_pending of a request not yet shown opens its page and shows its code', async ($, on) => {
+  // DX-4548: a request is shown by its URL, not by the answer's state: one this session has not shown appears even as approval_pending
+  test('approval_pending of a request not yet shown shows its link and code', async ($, on) => {
     const d = dashboard(on, { tabs: ['tab-1'] })
     answering(on, [pending])
     await startSession($, d, 'desktop')
     d.calls.length = 0
     await $.tool.call(CALL)
     await d.clock.settle()
-    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
-    expect(d.toasts.some(t => t.includes('NXGUF88G'))).toBe(true)
+    expect(browserCalls(d)).toEqual([])
+    expect(d.toasts.some(t => t.includes('NXGUF88G') && t.includes(URL_A))).toBe(true)
   })
 
   for (const [name, text] of [
