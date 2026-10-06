@@ -518,8 +518,27 @@ async function accessEnded($: any, outcome: ToolOutcome): Promise<boolean> {
   const by = outcomeRevokedBy(outcome)
   if (by === null && !isSignedOut(outcome)) return false
   $.ui.toast(by !== null ? `${keyRevokedLabel(by)}. This session must stop.` : 'Signed out. Sign in from the band or the pane.')
-  await refresh($, true)
+  detachAfterPress($, refresh($, true))
   return true
+}
+
+// DX-4635: a press ends as soon as its own outcome is known and shown. What follows (the model's note, the full refresh with its relay
+// and live syncs, a second forced pass) runs detached, so the busy label never waits on reads that are not the action's own. The
+// task's failures are shown, never swallowed: a refresh reports its own load failures in the view, and anything it throws past that
+// is a toast. Only the environment ending under it escapes (settleDetached).
+function detachAfterPress($: any, task: Promise<unknown>): void {
+  void settleDetached(task).catch(err => $.ui.toast(`Plan update failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`))
+}
+
+// DX-4635: what a plan_connect answer settles, drawn at once. A connect puts the plan the person pressed on the pane, loading its
+// numbers (the refresh fills them); a leave puts the session on no plan. Everything else of the view stays until the refresh reads it.
+const LOADING_PLAN = { problems: [], cardErrors: [], cardsTotal: 0, cardsRead: 0, statusBreakdown: null, inProgress: [], inProgressTotal: 0 }
+function connectedView(cur: any, plan: PlanRow, refreshedAt: string): any {
+  const connected: ConnectedPlan = { id: plan.id, ref: plan.ref, name: plan.name, status: plan.status, dashboardUrl: cur.dashboardUrl }
+  return { ...cur, ...LOADING_PLAN, phase: 'loading', error: null, connected, refreshedAt: cur.refreshedAt ?? refreshedAt }
+}
+function leftView(cur: any): any {
+  return { ...cur, ...LOADING_PLAN, phase: 'ready', error: null, connected: null, resumePlan: null }
 }
 
 function connect($: any, plan: PlanRow): Promise<void> {
@@ -544,6 +563,8 @@ function connect($: any, plan: PlanRow): Promise<void> {
     }
     $.ui.toast(`Connected to ${plan.ref}`)
     await update($, switching, () => false)
+    const shownAt = new Date(await $.clock.now()).toISOString()
+    await update($, view, cur => connectedView(cur, plan, shownAt))
     // DX-4612: a malformed naming block is shown, never read as "nothing to rename"; the connect itself did happen, so the model is told it
     let naming: Naming = { status: 'ok' }
     try {
@@ -551,9 +572,10 @@ function connect($: any, plan: PlanRow): Promise<void> {
     } catch (err: any) {
       $.ui.toast(`Connected, but the answer's naming block is malformed (${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}): the model was not told to rename its thread`)
     }
-    await tellModel($, connectNote(plan, naming))
-    // DX-4233: the refresh starts the relay of the plan connected (syncRelay), a halt of another plan being cleared there
-    await refresh($, true)
+    // DX-4635 / R-4: the note is APPENDED before the press returns (tellModel's append is its first call), so no later row can pass it;
+    // its answer, then the refresh (DX-4233: it starts the relay of the plan connected, a halt of another plan being cleared there),
+    // are detached.
+    detachAfterPress($, tellModel($, connectNote(plan, naming)).then(() => refresh($, true)))
   })
 }
 
@@ -574,20 +596,20 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
-      if (outcome.status === 409) await refresh($, true)
+      if (outcome.status === 409) detachAfterPress($, refresh($, true))
       return
     }
     const left = outcome.body?.leftPlan
     if (typeof left?.name !== 'string') {
       // a 200 that names no plan left cannot be told to the model as fact: show it, and read the truth
       $.ui.toast('Disconnect failed: the answer named no plan left')
-      await refresh($, true)
+      detachAfterPress($, refresh($, true))
       return
     }
     $.ui.toast(`Disconnected from ${plan.ref}`)
     await update($, switching, () => false)
-    await tellModel($, disconnectNote({ ref: plan.ref, name: left.name }))
-    await refresh($, true)
+    await update($, view, leftView)
+    detachAfterPress($, tellModel($, disconnectNote({ ref: plan.ref, name: left.name })).then(() => refresh($, true)))
   })
 }
 
