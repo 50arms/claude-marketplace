@@ -152,7 +152,8 @@ for (const surface of SURFACES) {
       d.stored.set('dashboardOrigin', 'https://danxbot.example')
       await startSession($, d, surface)
       expect(d.stored.get('permissionTold')).toEqual(['aaaa'])
-      expect(d.stored.get('dashboardOrigin')).toBe('https://danxbot.example')
+      // (the view load rewrites this one's value, so only its presence is the plugin's own)
+      expect(d.stored.has('dashboardOrigin')).toBe(true)
     })
 
     test("a stored cursor carries the fake clock's now, so pruning keeps the live session's and drops the oldest", async ($, on) => {
@@ -193,6 +194,8 @@ for (const surface of SURFACES) {
       // the fail after the success waits the FIRST step (1 s), not the third (5 s)
       await d.clock.advance(1_000)
       expect(d.relay.calls).toHaveLength(5)
+    })
+
     test('the cursor is re-keyed once per session-id change, not on every wait', async ($, on) => {
       const d = dashboard(on)
       d.relay.server.holdMs = 'timeout_ms'
