@@ -24,6 +24,22 @@ export const TABS_CONTEXT_CLOSED_LATER = '{\n  "browserOpen": false,\n  "tabs": 
 export const DASHBOARD_URL = 'http://localhost:5555'
 // `dashboardUrl: NO_DASHBOARD_URL` leaves the field out of the answer (a JSON null is sent as one)
 export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
+// DX-4612: the `naming` block of a plan_connect answer. NAMING_NEEDED is the real block (DX-4608, src/issues/plan-session-naming.ts
+// buildNeededNaming for PLAN-23, a live name Amara, recent names Amara and Kenji, suggested name Aarav), copied verbatim.
+// `naming: NO_NAMING` leaves the field out of the answer.
+export const NO_NAMING = Symbol('no naming')
+export const NAMING_OK = { status: 'ok' }
+export const NAMING_NEEDED = {
+  status: 'needed',
+  format: '{Name}: PLAN-NNN {short title}',
+  planRef: 'PLAN-23',
+  shortTitle: 'Danxbot plugin on native Claude Code',
+  instruction: 'Name this session\'s thread "{Name}: PLAN-NNN {short title}" so the operator can tell the agents on their plans apart. {Name} is one short given name (letters, apostrophes and hyphens, 30 characters at most). Pick a given name that no live session holds; "Aarav" is free. Names in use right now: Amara. The rest is fixed: this plan is PLAN-23 and its short title is "Danxbot plugin on native Claude Code", so the thread is e.g. "Aarav: PLAN-23 Danxbot plugin on native Claude Code". Rename the thread: in Claude Desktop call the set_session_title tool with that title; in a terminal Claude Code session run /rename with it. Then call plan_connect({plan_id: 23, title}) again with the same title.',
+  liveNames: ['Amara'],
+  recentNames: ['Amara', 'Kenji'],
+  suggestedName: 'Aarav',
+  suggestedTitle: 'Aarav: PLAN-23 Danxbot plugin on native Claude Code',
+}
 export const NAVIGATE_REFUSED = `navigation to ${DASHBOARD_URL} was denied or failed`
 export const PREVIEW_START_OK = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "seed",\n  "reused": true,\n  "type": "browser",\n  "navOk": true\n}\nBrowser pane opened. Use serverId "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0" with read_page / computer / navigate.'
 
@@ -190,6 +206,9 @@ export function dashboard(
     // plan_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
+    // DX-4612: the `naming` block a successful plan_connect answers: NAMING_OK (default), NAMING_NEEDED, any other value (a malformed
+    // one, sent as is), or NO_NAMING for an answer without the field
+    naming?: unknown
     // the dashboard has more needs-you cards than the one load reads
     cardsTotal?: number
     // ... and more plans than the plan list returns
@@ -604,7 +623,8 @@ export function dashboard(
         }
         world.planId = e.args.plan_id
         world.titleSeen = e.args.title
-        return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id } } }) }
+        const naming = options.naming === undefined ? NAMING_OK : options.naming
+        return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id }, ...(naming === NO_NAMING ? {} : { naming }) } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
       if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
