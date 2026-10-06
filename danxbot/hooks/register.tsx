@@ -425,7 +425,7 @@ async function openInBrowser($: any, url: string): Promise<void> {
 // busy with another open is told too. DX-4424: the toast comes once the tab is in front; a later
 // failure of the page load toasts again with the same code and link. `forget` is showApproval's: any failure clears its
 // once-per-URL record so the next request retries.
-async function openApprovalPage($: any, approval: ApprovalRequest, forget: () => Promise<unknown>): Promise<void> {
+async function openApprovalPage($: any, approval: ApprovalRequest, forget: () => Promise<unknown>): Promise<OpenFailure | null> {
   let opening: Opening = { failed: { step: 'busy', message: 'another browser open is in progress' }, loaded: Promise.resolve(null) }
   await withBusy($, busyKey.browser, async () => {
     opening = await tryOpen($, approval.url)
@@ -437,6 +437,14 @@ async function openApprovalPage($: any, approval: ApprovalRequest, forget: () =>
     await forget()
     $.ui.toast(approvalToast(approval, failed), { timeoutMs: APPROVAL_TOAST_MS })
   })
+  return opening.failed
+}
+
+// DX-4627: what the model reads after a tool answer that carries an approval request: whether the plugin opened the page, so the
+// model opens it only when the plugin could not (two tabs otherwise). `failed` is showApproval's answer.
+function approvalOpenNote(approval: ApprovalRequest, failed: OpenFailure | null): string {
+  if (failed === null) return `The danxbot plugin already opened the approval page (${approval.url}) in the browser. Do not open it yourself; show the user confirm code ${approval.code}.`
+  return `The danxbot plugin could not open the approval page (${failed.step}: ${failed.message}). Open ${approval.url} yourself in the browser if you have one, and show the user confirm code ${approval.code}.`
 }
 
 // DX-4391 / DX-4423: a request's page opens once and its code is shown, wherever the request came from (the model's own
@@ -446,15 +454,21 @@ async function openApprovalPage($: any, approval: ApprovalRequest, forget: () =>
 // opens again even for a URL already recorded. The open is not awaited: its browser calls take about 1 to 3.5 s each
 // (DX-4424) and the caller, a model's tool answer or a button, must not wait on them. A failure past tryOpen (the busy
 // key, the toast itself) must still leave the link.
-async function showApproval($: any, approval: ApprovalRequest, force = false): Promise<void> {
-  if (!force && (await read($, approvalOpened)) === approval.url) return
+// DX-4627: it answers how the open ended (null: the page is in front, or this URL's open already stands), so a model's tool
+// answer can tell the model whether to open the page itself; a button caller does not await it.
+async function showApproval($: any, approval: ApprovalRequest, force = false): Promise<OpenFailure | null> {
+  if (!force && (await read($, approvalOpened)) === approval.url) return null
   await update($, approvalOpened, () => approval.url)
   const forget = () => update($, approvalOpened, cur => (cur === approval.url ? null : cur))
-  openApprovalPage($, approval, forget).catch(async () => {
+  return openApprovalPage($, approval, forget).catch(async (err: any) => {
     await forget()
     $.ui.toast(`Approve ${approvalSubject(approval)} in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS })
+    return { step: 'open', message: String(err?.message ?? err).slice(0, TOAST_ERROR_MAX) }
   })
 }
+
+// DX-4627: the tool answer, with the note on whether the plugin opened the page, as context the model reads after the result.
+const withOpenNote = (ran: any, approval: ApprovalRequest, failed: OpenFailure | null) => ({ ...ran, context: [...(ran.context ?? []), approvalOpenNote(approval, failed)] })
 
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
 // together (a double click, a key repeat) cannot both win. The loser does nothing.
@@ -1279,18 +1293,18 @@ async function onPlanConnect($: any, e: any, next: any) {
   if (approval === null) return ran
   // DX-4548: a request is shown by its URL (showApproval opens each URL once), never by the answer's state: a request renewed
   // after an expiry answers `approval_pending` to the model's next call and must still reach the person
-  await showApproval($, approval)
+  const failed = await showApproval($, approval)
   // the model started this sign-in, so the plugin waits on it and tells the model how it ended; a request with no id cannot be
   // told once, so it is refused here as permissionRequestOf refuses one
   if (signInWatching === null) {
     if (publicIdOf(approval.url) === undefined) {
       $.ui.toast(signInFailedToast('the approval request had no id'))
-      return ran
+      return withOpenNote(ran, approval, failed)
     }
     const args = { ...(typeof e.plan_id === 'number' ? { plan_id: e.plan_id } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
     void watchSignIn($, { args, byPress: false, known: approval }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
   }
-  return ran
+  return withOpenNote(ran, approval, failed)
 }
 
 // DX-4435: the model asked for a permission: open the approval page once with its code and the permissions asked for (the
@@ -1301,8 +1315,8 @@ async function onRequestPermission($: any, e: any, next: any) {
   if (request === null) return ran
   await update($, permissionRequests, cur => [...cur.filter(r => r.publicId !== request.publicId), request])
   await syncPermissionPoll($)
-  await showApproval($, asApproval(request))
-  return ran
+  const approval = asApproval(request)
+  return withOpenNote(ran, approval, await showApproval($, approval))
 }
 
 // DX-4499: a sub-agent started or stopped: read the dashboard now (not forced: a load within MIN_GAP_MS of the last stands), and once

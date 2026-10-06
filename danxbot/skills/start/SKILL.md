@@ -23,7 +23,7 @@ a repo and creating or listing boards need two more. A call answered `403` namin
 `boards.view` or `boards.manage`: call `request_permission` once with both
 `boards.view` and `boards.manage`, with the reason "danxbot start needs to look up this
 repo and create its board". Show the person its confirm code and approval URL, open the
-URL in your browser when you have one, wait until they say they approved it, then repeat
+URL yourself only when the answer says the plugin could not open it, wait until they say they approved it, then repeat
 the call that was refused. Ask for nothing else.
 
 ## Steps
@@ -31,7 +31,7 @@ the call that was refused. Ask for nothing else.
 ### 1. Sign in
 
 Call `plan_connect` with no plan. If it answers `approval_required` or `approval_pending`,
-show the person the confirm code and the approval URL (open it in your browser when you
+show the person the confirm code and the approval URL (the plugin opens it, and the answer says if it could not; then open it in your browser when you
 have one), and call `plan_connect` again once they approve.
 
 ### 2. Read the repo's origin

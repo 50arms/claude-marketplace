@@ -72,23 +72,30 @@ describe('plan_connect while signed out', () => {
     expect(d.toasts.at(-1)).toContain('NXGUF88G')
   })
 
-  test('the open does not hold the plan_connect answer: the model reads it at once, the toast follows the open', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true, navigateTakesMs: 5_000 })
+  // DX-4627: the model learns from the answer whether the plugin opened the page, so it opens it only when the plugin could not.
+  test('a successful open tells the model not to open the page itself', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
     stillPending(d)
     answering(on, [required(URL_A)])
     await startSession($, d, 'desktop')
-    let answered = false
-    const call = $.tool.call(CALL).then((r: any) => {
-      answered = true
-      return r
-    })
+    const ran = await $.tool.call(CALL)
     await d.clock.settle()
-    expect(answered).toBe(true)
-    expect(d.toasts.some(t => t.includes('NXGUF88G'))).toBe(false)
-    await d.clock.advance(5_000)
+    expect(ran.text).toBe(required(URL_A))
+    expect(ran.context).toHaveLength(1)
+    expect(ran.context[0]).toContain('already opened the approval page')
+    expect(ran.context[0]).toContain('Do not open it yourself')
+  })
+
+  test('a refused open tells the model to open the page itself', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true, browser: 'denied' })
+    stillPending(d)
+    answering(on, [required(URL_A)])
+    await startSession($, d, 'desktop')
+    const ran = await $.tool.call(CALL)
     await d.clock.settle()
-    expect((await call).text).toBe(required(URL_A))
-    expect(d.toasts.at(-1)).toContain('NXGUF88G')
+    expect(ran.context).toHaveLength(1)
+    expect(ran.context[0]).toContain('could not open the approval page')
+    expect(ran.context[0]).toContain(`Open ${URL_A} yourself`)
   })
 
   // DX-4424: the toast is about the tab being in front; a slow page load does not hold it back.
