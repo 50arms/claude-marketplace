@@ -248,6 +248,10 @@ export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; 
 // DX-4234: the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
 export type StampState = { at: number; day: string } | null
 
+// DX-4234: a session start the first prompt has not yet been told about: SessionStart records it (the engine has not bound the session yet, so it
+// cannot call the MCP), and the first prompt.submit consumes it.
+export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null } | null
+
 declare module 'claude-code' {
   interface PluginState {
     danxbot: {
@@ -291,6 +295,8 @@ declare module 'claude-code' {
       turn: TurnState
       // DX-4234: the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState
+      // DX-4234: the session start waiting for the first prompt (see PendingStart).
+      pendingStart: PendingStart
     }
   }
 }

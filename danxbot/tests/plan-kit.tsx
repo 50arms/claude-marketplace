@@ -287,6 +287,10 @@ export function dashboard(
     contextDelayMs: 0,
     // DX-3421: GET /api/plans (the session-plan read) answers this status (a dashboard fault) instead of the session
     plansStatus: undefined as number | undefined,
+    // DX-4234: whether the engine has bound the session. A desktop or headless startup, resume and fork run their SessionStart hook BEFORE it
+    // binds (claude.exe: the session holder is empty until the session is built), where `$.mcp.call` and `$.tool.list` throw; `unbind()` /
+    // `bind()` model that. Every kit session is bound unless a test unbinds it.
+    bound: true,
     // DX-4234: whether this session has a connection record on disk (a connected session does; a signed-out or unconnected one does not)
     localRecord: options.connected !== false,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
@@ -507,6 +511,13 @@ export function dashboard(
 
   // DX-4340: the pacing line is read by every session at start and by each spawn: kept out of `calls` and `api` so the suites that count a
   // load's reads stay about their own subject, and answered unknown (pacing off) unless a test gives `pacingLine`
+  // DX-4234: the engine's own refusal of an engine call made before the session is bound (claude.exe 2.1.286, the `Yu()` guard), and the calls
+  // that hit it: a test asserts a hook made none
+  const unboundCalls: string[] = []
+  const unboundCall = (call: string) => {
+    unboundCalls.push(call)
+    return { deny: `${call} is not available in this mode: no session is bound in this process (the REPL has not mounted and no headless session is built); catch it and carry on` } as any
+  }
   const notConnected = () => options.mcp === 'down'
   const pacingReads: number[] = []
   // DX-4234: the paths of the context reads (see isContextRead), in order
@@ -530,6 +541,7 @@ export function dashboard(
   // DX-4578: the pacing reads are kept out of `calls` and `api`; the plugin's server is the one every call goes to
   const pacingPath = (e: any, path: string) => e.server === 'plugin:danxbot:danx-dashboard' && e.tool === 'danxbot_api' && e.args.path === path
   on('mcp.call', async (_$: any, e: any) => {
+    if (!world.bound) return unboundCall('$.mcp.call')
     if (pacingPath(e, '/api/pacing/line')) {
       pacingAttempts.n++
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
@@ -794,7 +806,7 @@ export function dashboard(
   // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
   const toolLists = { n: 0 }
   const toolListAnswer = () => ({ value: notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any
-  on('tool.list', () => (toolLists.n++, toolListAnswer()))
+  on('tool.list', () => (toolLists.n++, world.bound ? toolListAnswer() : unboundCall('$.tool.list')))
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
   on('fs.exists', (_$: any, e: any) => ({ value: world.localRecord && e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/') === RECORD_PATH(world.sessionId) }) as any)
   on('session.id', () => ({ value: world.sessionId }) as any)
@@ -895,7 +907,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
@@ -931,6 +943,15 @@ export type FakeReader = {
 export async function startSession($: any, d: Dashboard, surface: string) {
   await $.session.start({ cwd: '/work', surface, isInteractive: true })
   await d.clock.settle()
+}
+
+// DX-4234: a session start reaches the model on the FIRST PROMPT's context, beside its time stamp (SessionStart is recorded only: the engine
+// has not bound the session then). `told` is what the start added: the prompt's context after the stamp, or undefined when it added nothing.
+export async function firstPrompt($: any, source: string, input: Record<string, unknown> = {}): Promise<{ told: string[] | undefined; context: string[] }> {
+  await $.classic.SessionStart({ source, cwd: '/work', ...input })
+  const r = await $.prompt.submit({ text: 'hello' })
+  const context: string[] = r.context ?? []
+  return { told: context.length > 1 ? context.slice(1) : undefined, context }
 }
 
 export function expectText(found: { text: string } | undefined, pattern: string | RegExp) {

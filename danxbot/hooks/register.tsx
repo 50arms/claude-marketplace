@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
+import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -115,6 +115,10 @@ const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as Re
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // DX-4234: the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
 const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
+// DX-4234: a session start the first prompt has not been told about. On a desktop or headless startup, resume and fork the engine has not bound
+// the session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the first
+// prompt.submit (bound) reads it, clears it and tells the model what the start has to say.
+const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, null as PendingStart)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -1410,8 +1414,11 @@ async function timeLine($: any): Promise<string> {
 }
 
 // the prompt as typed (a task notification included) reaches the model with its time beside it
+// DX-4234: and the session start the first prompt carries: the restart notice and the start-up text, told once beside the stamp
 async function onPromptStamp($: any, e: any, next: any) {
-  return next({ ...e, context: [...(e.context ?? []), await timeLine($)] })
+  const start = await takePendingStart($)
+  const told = start === null ? null : await sessionContext($, start)
+  return next({ ...e, context: [...(e.context ?? []), await timeLine($), ...(told === null ? [] : [told])] })
 }
 
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside
@@ -1419,6 +1426,16 @@ async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
   if (r.deny !== undefined) return r
   return { ...r, context: [...(r.context ?? []), await timeLine($)] }
+}
+
+// The pending start, read and cleared in one write: two prompts landing together tell it once.
+async function takePendingStart($: any): Promise<PendingStart> {
+  let taken: PendingStart = null
+  await update($, pendingStart, cur => {
+    taken = cur
+    return null
+  })
+  return taken
 }
 
 // DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -1442,8 +1459,7 @@ async function sessionPlan($: any): Promise<SessionPlan> {
 // Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the danx-dashboard MCP server writes
 // at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, session-connection.ts `sessionConnectionPath`; only its existence is
 // read). It decides who a dashboard fault speaks to (DX-3421): a connected session gets one warning line, any other stays silent.
-async function isPlanConnected($: any): Promise<boolean> {
-  const id: string = await $.session.id()
+async function isPlanConnected($: any, id: string): Promise<boolean> {
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
   if (typeof home !== 'string' || home === '' || !/^[A-Za-z0-9_-]+$/.test(id)) return false
   return $.fs.exists(`${home}/.config/danxbot/plan-sessions/${id}.json`)
@@ -1520,15 +1536,15 @@ async function restartNotice($: any): Promise<string | null> {
 // What the plugin's own reads of a session start came to: the line to tell, or that the restart notice is to be asked next.
 type StartReads = { line: string | null; askRestart: boolean }
 
-// SessionStart: the wait for the plugin's server, the plan read and the event text read share ONE deadline. Whatever fails, a session KNOWN to be
+// The first prompt after a start: the wait for the plugin's server, the plan read and the event text read share ONE deadline. Whatever fails, a session KNOWN to be
 // on a plan (its record on disk) is told in one warning line; any other stays silent (DX-3421) and, on a start or resume, still asks the
 // restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
-async function sessionContext($: any, e: any): Promise<string | null> {
-  const event = sessionEvent(e.source)
+async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
+  const event = sessionEvent(start.source)
   if (event === null) return null
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
-  const connected = await isPlanConnected($)
-  const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && isRestartSource(e.source) })
+  const connected = await isPlanConnected($, start.sessionId)
+  const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && isRestartSource(start.source) })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return null
   if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
@@ -1537,7 +1553,7 @@ async function sessionContext($: any, e: any): Promise<string | null> {
     if (plan === 'connected') return { line: await eventContext($, event), askRestart: false }
     if (typeof plan === 'object') return fault(plan.failed)
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
-    return { line: null, askRestart: isRestartSource(e.source) }
+    return { line: null, askRestart: isRestartSource(start.source) }
   }
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
   return done.askRestart ? restartNotice($) : done.line
@@ -1546,14 +1562,17 @@ async function sessionContext($: any, e: any): Promise<string | null> {
 async function readSubagentContext($: any): Promise<string | null> {
   const plan = await sessionPlan($)
   if (plan === 'connected') return eventContext($, 'sub_agent_start')
-  return typeof plan === 'object' && (await isPlanConnected($)) ? eventFailureLine('sub_agent_start', plan.failed) : null
+  return typeof plan === 'object' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine('sub_agent_start', plan.failed) : null
 }
 
-// SessionStart: the session title is noted, then the registry's text for a connected session or the restart notice for one that replaced a
-// connected one is added (additionalContext). One hook: a module may register an event once.
+// SessionStart: the session title is noted and the start is recorded for the first prompt. Nothing else: the session is not bound yet on a
+// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the first prompt tells the model, see onPromptStamp).
 async function onClassicSessionStart($: any, e: any, next: any) {
   const below = await onTitle($, e, next)
-  return withLine(below, await sessionContext($, e))
+  const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
+  const start: NonNullable<PendingStart> = { sessionId: await $.session.id(), source: e.source, transcriptPath: path }
+  await update($, pendingStart, () => start)
+  return below
 }
 
 // DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
