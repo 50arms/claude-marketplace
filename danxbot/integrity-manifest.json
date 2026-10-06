@@ -40,7 +40,7 @@
     "hooks/plan/words.ts": "b800ce7306d73def47b38e4614831cfda74c8453dac433f61fb2c2034af5824f",
     "hooks/register.tsx": "43fc20edd572c8034a6d134d093269ef00c9d7091e30921efad3e4166909e1ca",
     "mantra.md": "13bc62e8a8fd077133cef0aefd2c93b05b8829ed55d72ffe689215f743aadbc5",
-    "package.json": "2434782adf32b565f68fcf06cde37c10464486a7f17556d1451751824cadc6e0",
+    "package.json": "4522486a181da4ae61484c1d00890d5a1b563603afe1c89633694a1ffc9de969",
     "scripts/activity-report.mjs": "f3ec925ab64cb5854792a63fc061f876a6688879db41b7ccbb808f1c5cf7cdcc",
     "scripts/background-work-report.mjs": "c3f934a02236c34a6739b84469ebccc5b2e8fb3d812969755a0fbc9cb2a158fa",
     "scripts/bridge-watchdog.mjs": "9426a815365c0ff3ec87fe2f17b02cb55566fe6e7d5abbe86f0483beaf3d3108",
