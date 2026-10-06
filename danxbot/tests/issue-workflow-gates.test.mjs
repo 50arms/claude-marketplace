@@ -89,7 +89,7 @@ test("the Two callers table and Flow agree with the Gates section", () => {
   assert.match(callers, /PRE gates: in your own context; POST gates: run by the operator session/);
   assert.match(callers, /push the card branch, report its tip SHA, stop; when told to land/);
   assert.match(flow, /5\. Pass its POST gates \("Gates" below\)\./);
-  assert.match(flow, /an operator-session sub-agent, once told to land, commits and pushes to main/);
+  assert.match(flow, /an operator-session sub-agent, once told to land, commits and pushes to the target branch/);
 });
 
 test("plan-workflow's Sub-agents section carries the matching rule once", () => {

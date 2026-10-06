@@ -19,13 +19,13 @@ const step6 = flow.slice(flow.indexOf("\n6. "));
 
 test("the completion step merges before it completes and writes the retro", () => {
   const finalize = step6.indexOf("`agent-finalize.sh`");
-  const push = step6.indexOf("pushes to main");
+  const push = step6.indexOf("pushes to the target");
   const complete = step6.indexOf("`complete`");
   const retro = step6.indexOf("write the retro");
   assert.ok(finalize > -1 && push > -1 && complete > -1 && retro > -1, step6);
   assert.ok(finalize < complete && push < complete, "the merge comes before `complete`");
   assert.ok(complete < retro, "`complete` comes before the retro");
-  assert.match(step6, /citing the sha now on `origin\/main`/);
+  assert.match(step6, /citing the sha now on the target branch/);
 });
 
 test("no step orders complete-then-retro without the merge in front of it", () => {

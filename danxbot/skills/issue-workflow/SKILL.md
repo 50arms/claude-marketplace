@@ -16,7 +16,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 | Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
 | Gates | the profile instruction carries them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
-| Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to main, `complete` + retro, report |
+| Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to the target branch (or open a pull request when "Delivery" below says so), `complete` + retro, report |
 
 Dispatched-only mechanics (the dispatch-complete call, halt, `agent-finalize.sh`, the pre-synced
 worktree, DB resets) live only in danxbot's `work` profile.
@@ -39,9 +39,11 @@ worktree, DB resets) live only in danxbot's `work` profile.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Pass its POST gates ("Gates" below).
 6. Merge first: a dispatched worker runs its profile's end order, `agent-finalize.sh`
-   first; an operator-session sub-agent, once told to land, commits and pushes to main.
+   first; an operator-session sub-agent, once told to land, commits and pushes to the target
+   branch, or opens a pull request when the card's controls require one ("Delivery" below).
    Only then transition `complete` with a summary and write the retro (last — it 409s
-   until terminal), citing the sha now on `origin/main`. A phase card leaves `Notes from
+   until terminal), citing the sha now on the target branch (on a pull request: the pull
+   request link and the branch tip). A phase card leaves `Notes from
    Phase N` on the next phase card.
 
 ## Gates
@@ -207,9 +209,58 @@ Every user-facing bug report, one block per bug:
 `## #N — <name>` then **Affects**, **Env**, **Scenario** (exact steps), **Expected**,
 **Actual** (exact symptom) — never Expected and Actual in one sentence.
 
+## Delivery: push or pull request
+
+Applies to a session that lands its own work (an operator-session sub-agent, or any session
+building a card in a repo danxbot does not run a worker for). A dispatched worker ends as its
+`work` profile says.
+
+Read the card's resolved controls: `GET /api/issues/<id>` with `fields {"controls":true}`, then
+take the value of each key from the entry with that `key`:
+
+- `git.target_branch`: the one branch finished work lands in.
+- `git.pull_request.required`: `true` = open a pull request into the target branch, `false` =
+  push to the target branch.
+- `git.pull_request.done_on`: `opened` or `merged`, whether a card on a pull request is done
+  when the pull request opens or only once it merges.
+
+A key missing from the reply means the dashboard does not know it: open an `action` problem on
+the card saying which key is missing, then stop ("Needing a human"). Never guess `false`.
+
+**`required` is `false`:** commit and push to the target branch, as "Git" below says.
+
+**`required` is `true`:** the target branch is never pushed to.
+
+1. Check the GitHub CLI before any commit leaves the machine: `gh --version`, then
+   `gh auth status --active --hostname github.com` (it checks only the active account and
+   masks the token, so no secret reaches the transcript). `gh` missing → open an
+   `action` problem on the card telling the person to install the GitHub CLI
+   (https://cli.github.com) and run `gh auth login`; not signed in → one telling them to run
+   `gh auth login`. Then stop. Never fall back to pushing the target branch, or to any other
+   way of getting the work onto it.
+2. Work on a branch cut from `origin/<target branch>` (never the target branch itself), commit,
+   and `git push -u origin <branch>`.
+3. Reuse an open pull request for the branch: `gh pr view <branch> --json url,state`. Its
+   `state` is `OPEN` → use its `url`. A non-zero exit (no pull request) or any other `state`
+   (closed, merged) means no open pull request → `gh pr create --base <target branch> --head <branch> --title
+   "<card id>: <card title>" --body-file <file>`, the file holding a summary of the change, a
+   blank line, then `Card: <card link>`. It prints the pull request URL. The card link is
+   `<dashboard>/plans/<plan id>/cards/<card id>` (`<plan id>` is the plan's number), or
+   `<dashboard>/board/<card id>` when the card is on no plan. `<dashboard>` is the dashboard URL
+   the session is connected to.
+4. Write that URL on the card: `PATCH /api/issues/<id>/edit` with `{"pull_request_url": "<url>"}`.
+5. By `git.pull_request.done_on`:
+   - `opened`: transition `complete` with a summary naming the pull request, and write the retro
+     citing the pull request link and the branch tip.
+   - `merged`: do not transition `complete`. Release your claim with `rollback_pickup` and
+     `keep_assignment: true`, then say plainly that the card stays open (it shows ToDo with its
+     on-a-pull-request indicator and its pull request link) until the pull request merges, and
+     that the person completes it then.
+
 ## Git
 
-- Commit each verified, coherent unit without asking, then push. Diverged → `git pull
+- Commit each verified, coherent unit without asking, then push (to the target branch, or to the
+  card's branch when "Delivery" says a pull request is required). Diverged → `git pull
   --rebase`; resolve conflicts by reading both sides and keeping both intents
   (`-Xours`/`-Xtheirs` and whole-file overwrites are forbidden); re-run tests. Push fails
   (auth, headless credential prompt, no upstream) → report and stop. Never force-push without
