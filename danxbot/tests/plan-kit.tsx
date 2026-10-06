@@ -687,6 +687,17 @@ export function dashboard(
       if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
         return hung.promise.then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
       }
+      // DX-4635: every danxbot_api read answers after `apiHoldMs` on the harness clock (a slow dashboard), and the card reads in flight together are counted
+      const isIssueRead = String(e.args.path).startsWith('/api/issues/')
+      if (isIssueRead) {
+        issueReads.active++
+        issueReads.max = Math.max(issueReads.max, issueReads.active)
+      }
+      try {
+        if (flags.apiHoldMs > 0) await clock.sleep(flags.apiHoldMs)
+      } finally {
+        if (isIssueRead) issueReads.active--
+      }
       return { value: hostLimited(route(e.args.method, e.args.path, e.args.body, e.args.query)) }
     }
     if (e.server === 'Claude_Browser') {
@@ -735,7 +746,8 @@ export function dashboard(
     return { deny: `no stand-in for ${e.server}` }
   })
   // what the plugin keeps in $.state (a test has no `$.state` of its own to read back)
-  const flags = { viewWriteFails: false, refusedViewWrites: 0 }
+  const flags = { viewWriteFails: false, refusedViewWrites: 0, apiHoldMs: 0 }
+  const issueReads = { active: 0, max: 0 }
   // DX-4586: a sub-agent whose stored start time is made older by the given ms as it is written, so a test reaches the 3 h bound with no 3 h of clock
   const aged = new Map<string, number>()
   let seededUnseen: string[] | undefined
@@ -887,7 +899,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

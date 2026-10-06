@@ -245,7 +245,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
           </Text>
         )}
       </Box>
-      {v.problems.length === 0 && v.cardErrors.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
+      {v.phase !== 'loading' && v.problems.length === 0 && v.cardErrors.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
       {v.problems.map(p => problemRow(E, plan, p))}
       {v.cardErrors.map(line => (
         <Text key={`err-${line}`} color={WARNING}>
@@ -258,7 +258,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         <Text bold>In progress</Text>
         <Text dimColor>{v.inProgressTotal} not waiting on you</Text>
       </Box>
-      {v.inProgress.length === 0 && <Text dimColor>No cards in progress that are not waiting on you.</Text>}
+      {v.phase !== 'loading' && v.inProgress.length === 0 && <Text dimColor>No cards in progress that are not waiting on you.</Text>}
       {v.inProgress.map(row => (
         <Box key={`ip-${row.id}`} flexDirection="row" gap={1}>
           <Link href={cardUrl(plan, row.id)} label={row.id} />

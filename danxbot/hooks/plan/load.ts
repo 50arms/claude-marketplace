@@ -142,13 +142,24 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   if (typeof cards.body.total !== 'number') {
     return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards answered no total: cannot tell whether the card list is complete` }
   }
+  // The in-progress bucket: the same completeness rule, checked before any card read so the two read groups below can run together.
+  if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
+  if (typeof inProg.body.total !== 'number') {
+    return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
+  }
   const rows: { id: string }[] = (cards.body.cards ?? []).map((c: any) => ({ id: c.id }))
-  const fetched = await Promise.all(
-    rows.map(async row => ({
-      row,
-      r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { problems: true } } }),
-    })),
-  )
+  const ipRows: any[] = inProg.body.cards ?? []
+  // DX-4635: the needs-you card reads and the in-progress card reads (a readable agent name per row: the cards route carries only the
+  // raw session id of a claimed card) are one parallel step, never one hop after the other.
+  const [fetched, named] = await Promise.all([
+    Promise.all(
+      rows.map(async row => ({
+        row,
+        r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { problems: true } } }),
+      })),
+    ),
+    Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { assigned_agent_name: true } } }) }))),
+  ])
   // DX-4458: a card that cannot be read is one line naming it, never the whole pane; the other cards still show.
   const cardErrors: string[] = []
   const cardProblems: ProblemRow[][] = []
@@ -158,15 +169,6 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
   // cards arrive priority-sorted; keep that order
   const problems: ProblemRow[] = cardProblems.flat()
-
-  // The in-progress bucket: the same completeness rule, and a readable agent name per row (the cards
-  // route carries only the raw session id of a claimed card).
-  if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
-  if (typeof inProg.body.total !== 'number') {
-    return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
-  }
-  const ipRows: any[] = inProg.body.cards ?? []
-  const named = await Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { assigned_agent_name: true } } }) })))
   for (const n of named) if (!n.r.ok) cardErrors.push(`Couldn't load who is working on ${n.row.id}: ${failureReason(n.r)}`)
   const inProgress: InProgressRow[] = named.map(n => ({
     id: n.row.id,

@@ -188,7 +188,7 @@ async function isStandbySession($: any): Promise<boolean> {
 const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
 
 async function loadView($: any) {
-  const refreshedAt = new Date(await $.clock.now()).toISOString()
+  const refreshedAt = await isoNow($)
   const loaded = await loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt)
   // DX-4521: the band's links need the dashboard origin even when this load could not read it (signed out, a failed call, a
   // session just started): the last origin a plan list answered is kept in $.store (across sessions) and stands in for it.
@@ -518,8 +518,31 @@ async function accessEnded($: any, outcome: ToolOutcome): Promise<boolean> {
   const by = outcomeRevokedBy(outcome)
   if (by === null && !isSignedOut(outcome)) return false
   $.ui.toast(by !== null ? `${keyRevokedLabel(by)}. This session must stop.` : 'Signed out. Sign in from the band or the pane.')
-  await refresh($, true)
+  detach($, 'Plan refresh', refresh($, true))
   return true
+}
+
+// DX-4635: the one way to run a task apart from the event that started it (a press, a hook, a tick). A press ends as soon as its own
+// outcome is known and shown; what follows (the model's note, the full refresh with its relay and live syncs, a second forced pass)
+// runs here, so the busy label never waits on reads that are not the action's own. The task's failures are shown, never swallowed: a
+// refresh reports its own load failures in the view, and anything it throws past that is a toast. Only the environment ending under
+// it escapes (settleDetached). `what` names the task in that toast.
+function detach($: any, what: string, task: Promise<unknown>): void {
+  void settleDetached(task).catch(err => $.ui.toast(`${what} failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`))
+}
+
+const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
+
+// DX-4635: what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards, sub-agents,
+// listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin and the plan list). A connect puts
+// the plan the person pressed on the pane, loading its numbers (the refresh fills them); a leave puts the session on no plan.
+const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl, plans: cur.plans, plansUnread: cur.plansUnread })
+function connectedView(cur: any, plan: PlanRow, refreshedAt: string): any {
+  const connected: ConnectedPlan = { id: plan.id, ref: plan.ref, name: plan.name, status: plan.status, dashboardUrl: cur.dashboardUrl }
+  return { ...planIndependent(cur), phase: 'loading', connected, refreshedAt: cur.refreshedAt ?? refreshedAt }
+}
+function leftView(cur: any): any {
+  return { ...planIndependent(cur), phase: 'ready', refreshedAt: cur.refreshedAt }
 }
 
 function connect($: any, plan: PlanRow): Promise<void> {
@@ -544,6 +567,10 @@ function connect($: any, plan: PlanRow): Promise<void> {
     }
     $.ui.toast(`Connected to ${plan.ref}`)
     await update($, switching, () => false)
+    const shownAt = await isoNow($)
+    await update($, view, cur => connectedView(cur, plan, shownAt))
+    // the plan the session left stops being listened to now, and the plan it is on starts (syncRelay reads the view just written)
+    await syncRelay($)
     // DX-4612: a malformed naming block is shown, never read as "nothing to rename"; the connect itself did happen, so the model is told it
     let naming: Naming = { status: 'ok' }
     try {
@@ -551,9 +578,10 @@ function connect($: any, plan: PlanRow): Promise<void> {
     } catch (err: any) {
       $.ui.toast(`Connected, but the answer's naming block is malformed (${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}): the model was not told to rename its thread`)
     }
-    await tellModel($, connectNote(plan, naming))
-    // DX-4233: the refresh starts the relay of the plan connected (syncRelay), a halt of another plan being cleared there
-    await refresh($, true)
+    // DX-4635 / R-4: tellModel appends before its first await, so the note is issued here, in press order and before the press returns;
+    // its answer, then the refresh (DX-4233: it starts the relay of the plan connected, a halt of another plan being cleared there),
+    // are detached. The refresh waits for the answer so a failed telling is toasted before the load's own toasts.
+    detach($, 'Plan update', tellModel($, connectNote(plan, naming)).then(() => refresh($, true)))
   })
 }
 
@@ -574,20 +602,20 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
-      if (outcome.status === 409) await refresh($, true)
+      if (outcome.status === 409) detach($, 'Plan refresh', refresh($, true))
       return
     }
     const left = outcome.body?.leftPlan
     if (typeof left?.name !== 'string') {
       // a 200 that names no plan left cannot be told to the model as fact: show it, and read the truth
       $.ui.toast('Disconnect failed: the answer named no plan left')
-      await refresh($, true)
+      detach($, 'Plan refresh', refresh($, true))
       return
     }
     $.ui.toast(`Disconnected from ${plan.ref}`)
     await update($, switching, () => false)
-    await tellModel($, disconnectNote({ ref: plan.ref, name: left.name }))
-    await refresh($, true)
+    await update($, view, leftView)
+    detach($, 'Plan update', tellModel($, disconnectNote({ ref: plan.ref, name: left.name })).then(() => refresh($, true)))
   })
 }
 
@@ -855,8 +883,8 @@ async function startLive($: any): Promise<void> {
   liveChild = child
   // a new child's first line carries every sub-agent; until it comes, what this session's last child said stands
   await update($, live, cur => ({ ...cur, sessionId, warning: null, failed: false, snapshots: cur.sessionId === sessionId ? cur.snapshots : {} }))
-  // DX-4546 / DX-4586: this detached promise has no caller to reject to; see `settleDetached`
-  void settleDetached(readLive($, child))
+  // DX-4546 / DX-4586: this detached promise has no caller to reject to; see `detach`
+  detach($, 'Live sub-agent reader', readLive($, child))
 }
 
 // The child's life, detached from the event that started it (plugin-authoring: "a child for the session's life").
@@ -1022,8 +1050,8 @@ async function onMeasure($: any, e: any, next: any) {
 // A view that failed to load (`error`, `loading`) changes nothing: a read blip must not stop a working relay.
 async function syncRelay($: any): Promise<void> {
   const v = await read($, view)
-  if (v.phase === 'error' || v.phase === 'loading') return
-  const planId = v.phase === 'ready' ? (v.connected?.id ?? null) : null
+  if (v.phase === 'error' || (v.phase === 'loading' && v.connected === null)) return
+  const planId = v.connected?.id ?? null
   if (planId === null) {
     relayHalted = null
     stopRelay()
@@ -1036,7 +1064,7 @@ async function syncRelay($: any): Promise<void> {
   stopRelay()
   const run: RelayRun = { planId, dead: false, told: null }
   relayRun = run
-  void settleDetached(relayLoop($, run))
+  detach($, 'Plan event relay', relayLoop($, run))
 }
 
 // Ends the loop: its pending call is left to the server (a newer wait supersedes it, or it times out), and everything it answers late is
@@ -1131,7 +1159,7 @@ async function deliverEvent($: any, text: string): Promise<string | null> {
     wake = appended.wake
     return appended.turn
   })
-  if (wake !== null) void settleDetached(wakeSession($, wake))
+  if (wake !== null) detach($, 'Waking the session', wakeSession($, wake))
   return null
 }
 
@@ -1171,7 +1199,7 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
   if (got.kind === 'events') {
     const out = await deliverAll($, run, got.events, cursor)
     // the refresh is detached (DX-4586): the environment going away under it is not a failure
-    if (out.delivered > 0) void settleDetached(refresh($, true))
+    if (out.delivered > 0) detach($, 'Plan refresh', refresh($, true))
     if (out.failure !== null) {
       await relayFailed($, run, 'retrying', out.failure, delayedLine(out.failure))
       return { next: 'retry', cursor: out.cursor }
@@ -1255,8 +1283,8 @@ async function onSessionStart($: any, e: any, next: any) {
   await syncPermissionPoll($)
   // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are the panel's poll, a sub-agent start when the cache is a minute old, and every spawn
   resetPacing()
-  void settleDetached(refreshPacingPanel($))
-  void settleDetached(refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
+  detach($, 'Pacing panel', refreshPacingPanel($))
+  detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
   return next(e)
 }
 
@@ -1297,14 +1325,14 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, transcript, () => null)
     // a fresh conversation (or another session taking this one's place) in the same process: what
     // the dashboard shows may have moved while they were in the old one
-    void settleDetached(refresh($, true))
+    detach($, 'Plan refresh', refresh($, true))
   }
   return next(e)
 }
 
 async function onCommand($: any) {
   await showPlan($)
-  void settleDetached(refresh($, true))
+  detach($, 'Plan refresh', refresh($, true))
   return { text: 'Plan pane opened.' }
 }
 
@@ -1315,7 +1343,7 @@ async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
   // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan), once the view knows the plan
   relayHalted = null
-  void settleDetached(refresh($, true).then(() => reportUsageNow($)))
+  detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)))
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
   if (approval === null) return ran
   const waiting = await read($, signInRequest)
@@ -1359,7 +1387,7 @@ function settleSubagents($: any): void {
   if (settleTimer !== null) return
   settleTimer = $.clock.after(SUBAGENT_SETTLE_MS, () => {
     settleTimer = null
-    void settleDetached(refresh($, true))
+    detach($, 'Plan refresh', refresh($, true))
   })
 }
 
@@ -1375,7 +1403,7 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   // DX-4336: the running-agent count follows the sub-agents' starts and stops; a finished one's last response also moved the parent's figure
   await trackAgent($, e.agent_id, isStart)
   if (!isStart) await markMeasured($)
-  void settleDetached(refresh($))
+  detach($, 'Plan refresh', refresh($))
   // only a session connected to a plan has a Sub-agents section to settle
   if ((await read($, view)).connected !== null) settleSubagents($)
   // DX-4508: start the live child for a new sub-agent, or stop it with the last one
@@ -1571,9 +1599,9 @@ async function onTurnComplete($: any, e: any, next: any) {
       return ended.turn
     })
     // detached: the turn.complete hook does not wait on the session taking a prompt
-    if (wake !== null) void settleDetached(wakeSession($, wake))
+    if (wake !== null) detach($, 'Waking the session', wakeSession($, wake))
   }
-  void settleDetached(refresh($))
+  detach($, 'Plan refresh', refresh($))
   return r
 }
 
