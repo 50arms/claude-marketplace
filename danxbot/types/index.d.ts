@@ -248,8 +248,8 @@ export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; 
 // DX-4234: the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
 export type StampState = { at: number; day: string } | null
 
-// DX-4234: a session start the first prompt has not yet been told about: SessionStart records it (the engine has not bound the session yet, so it
-// cannot call the MCP), and the first prompt.submit consumes it.
+// DX-4234: a session start the model has not yet been told about: SessionStart records it (the engine has not bound the session yet, so it
+// cannot call the MCP), and the next prompt.submit or main-loop tool.call result consumes it.
 export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null } | null
 
 declare module 'claude-code' {
@@ -295,7 +295,7 @@ declare module 'claude-code' {
       turn: TurnState
       // DX-4234: the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState
-      // DX-4234: the session start waiting for the first prompt (see PendingStart).
+      // DX-4234: the session start waiting for the next prompt or main-loop tool result (see PendingStart).
       pendingStart: PendingStart
       // DX-4234: the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
       endedSession: string | null

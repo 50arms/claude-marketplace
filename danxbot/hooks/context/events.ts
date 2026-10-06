@@ -23,21 +23,14 @@ export function sessionEvent(source: unknown): DanxEvent | null {
   }
 }
 
-// The restart notice is for a session that STARTED, RESUMED or was CLEARED into (it replaced one), never after a compaction (the same session).
-export const isRestartSource = (source: unknown): boolean => source === 'startup' || source === 'resume' || source === 'clear'
-
-// What `restart_notice` is asked with, by how the session started (the server's contract: a named predecessor asks only that record, a transcript
-// path finds the nearest ancestor in the transcript's copied prefix, neither scans the project). A resume (a desktop fork reports it too) names its
-// transcript; a clear names the session that just ended; a startup names neither. A start that lacks what its source needs is a failure, never a
-// silent fall back to the project scan.
-export function restartAsk(start: { source: string; transcriptPath: string | null; predecessorId: string | null }): { kind: 'ask'; args: Record<string, string> } | { kind: 'failed'; reason: string } {
-  if (start.source === 'resume') {
-    return start.transcriptPath === null ? { kind: 'failed', reason: 'no_transcript_path: SessionStart resume carried no transcript_path' } : { kind: 'ask', args: { transcript_path: start.transcriptPath } }
-  }
-  if (start.source === 'clear') {
-    return start.predecessorId === null ? { kind: 'failed', reason: 'no_predecessor_id: SessionStart clear came with no session.end to name the session that ended' } : { kind: 'ask', args: { predecessor_id: start.predecessorId } }
-  }
-  return { kind: 'ask', args: {} }
+// What `restart_notice` is asked with, by how the session started (the server's contract: a transcript path finds the nearest ancestor in the
+// transcript's copied prefix, a named predecessor asks only that record, neither scans the project). A resume (a desktop fork reports it too)
+// names its transcript and a startup names neither; a start that lacks what its source needs is a failure, never a silent fall back to the project
+// scan. A clear names the session that just ended and is asked from `clearNotice`; a compaction is the same session and asks nothing.
+export type RestartAsk = { kind: 'ask'; args: Record<string, string> } | { kind: 'failed'; reason: string }
+export function restartAsk(start: { source: string; transcriptPath: string | null }): RestartAsk {
+  if (start.source !== 'resume') return { kind: 'ask', args: {} }
+  return start.transcriptPath === null ? { kind: 'failed', reason: 'no_transcript_path: SessionStart resume carried no transcript_path' } : { kind: 'ask', args: { transcript_path: start.transcriptPath } }
 }
 
 export const eventPath = (event: DanxEvent) => `/api/reminders/event/${event}`

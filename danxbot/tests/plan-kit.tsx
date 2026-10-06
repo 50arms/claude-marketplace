@@ -293,6 +293,8 @@ export function dashboard(
     bound: true,
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
     fsError: undefined as string | undefined,
+    // DX-4234: other sessions that hold a connection record on disk (a session a /clear ended that was on a plan)
+    records: [] as string[],
     // DX-4234: whether this session has a connection record on disk (a connected session does; a signed-out or unconnected one does not)
     localRecord: options.connected !== false,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
@@ -810,7 +812,11 @@ export function dashboard(
   const toolListAnswer = () => ({ value: notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any
   on('tool.list', () => (toolLists.n++, world.bound ? toolListAnswer() : unboundCall('$.tool.list')))
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
-  on('fs.exists', (_$: any, e: any) => world.fsError !== undefined ? ({ deny: world.fsError } as any) : (({ value: world.localRecord && e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/') === RECORD_PATH(world.sessionId) }) as any))
+  on('fs.exists', (_$: any, e: any) => {
+    if (world.fsError !== undefined) return { deny: world.fsError } as any
+    const path = e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
+    return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) } as any
+  })
   on('session.id', () => ({ value: world.sessionId }) as any)
   on('agent.list', () => {
     agentLists.count++

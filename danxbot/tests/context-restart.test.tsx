@@ -59,6 +59,7 @@ for (const surface of SURFACES) {
 
     test('`{notice: null}` is quiet (a project that never connected a plan hears nothing)', async ($, on) => {
       const d = await started($, on)
+      d.world.restart.json = { notice: null }
       expect((await firstPrompt($, 'startup')).startLines).toBeUndefined()
       expect(d.restartCalls).toEqual([{}])
     })
@@ -154,32 +155,41 @@ for (const surface of SURFACES) {
       expect((await pending).startLines).toEqual([NOTICE])
     })
 
-    // a clear names the session that just ended: the plugin's session.end hook remembers it and the start takes it
-    async function cleared($: any, on: any, options: Parameters<typeof dashboard>[1] = SIGNED_OUT, ended: string | null = PREVIOUS) {
+    // a clear names the session that just ended: the plugin's session.end hook remembers it and the start takes it. Only an ended session that held
+    // a connection record (it was on a plan) is asked about; any other clear is not a restart of anything and stays quiet (DX-3421).
+    async function cleared($: any, on: any, options: Parameters<typeof dashboard>[1] = SIGNED_OUT, ended: string | null = PREVIOUS, hadRecord = true) {
       const d = await started($, on, options)
-      if (ended !== null) await $.session.end({ reason: 'clear', sessionId: ended } as any)
+      if (ended !== null) {
+        await $.session.end({ reason: 'clear', sessionId: ended } as any)
+        if (hadRecord) d.world.records.push(ended)
+      }
       return d
     }
 
-    test('a clear is asked with the id of the session that just ended, and told the notice', async ($, on) => {
+    test('a clear whose ended session was on a plan is asked with its id, and told the notice', async ($, on) => {
       const d = await cleared($, on)
       d.world.restart.json = { notice: NOTICE }
       expect((await firstPrompt($, 'clear')).startLines).toEqual([NOTICE])
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
-    test('the ended session is consumed with the start: a later clear that saw no end is a failure, never the earlier id', async ($, on) => {
+    test('a clear whose ended session held no record asks nothing and is quiet (the common /clear in a session on no plan)', async ($, on) => {
+      const d = await cleared($, on, SIGNED_OUT, PREVIOUS, false)
+      d.world.restart.json = stopped('no_predecessor_record', 'no record')
+      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
+      expect(d.restartCalls).toEqual([])
+    })
+
+    test('the ended session is consumed with the start: a later clear that saw no end asks nothing, never about the earlier id', async ($, on) => {
       const d = await cleared($, on)
       await firstPrompt($, 'clear')
-      const again = await firstPrompt($, 'clear')
-      expect(again.startLines![0]).toContain('Could not load the restart notice (no_predecessor_id')
+      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
-    test('a clear whose session.end was never seen is a failure line naming it, and asks nothing', async ($, on) => {
+    test('a clear whose session.end was never seen asks nothing and is quiet', async ($, on) => {
       const d = await cleared($, on, SIGNED_OUT, null)
-      const r = await firstPrompt($, 'clear')
-      expect(r.startLines).toEqual([restartFailureLine('no_predecessor_id: SessionStart clear came with no session.end to name the session that ended')])
+      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
       expect(d.restartCalls).toEqual([])
     })
 
@@ -192,13 +202,15 @@ for (const surface of SURFACES) {
 
     test('a session end that is not a clear is not remembered as a predecessor', async ($, on) => {
       const d = await started($, on)
+      d.world.records.push(PREVIOUS)
       await $.session.end({ reason: 'resume', sessionId: PREVIOUS } as any)
-      expect((await firstPrompt($, 'clear')).startLines![0]).toContain('no_predecessor_id')
+      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
       expect(d.restartCalls).toEqual([])
     })
 
     test('a clear that is told `{notice: null}` is quiet', async ($, on) => {
       const d = await cleared($, on)
+      d.world.restart.json = { notice: null }
       expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
@@ -216,6 +228,7 @@ for (const surface of SURFACES) {
 
     test('a resume answered `{notice: null}` (a readable, non-fork transcript) is quiet', async ($, on) => {
       const d = await started($, on)
+      d.world.restart.json = { notice: null }
       expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
       expect(d.restartCalls).toEqual([{ transcript_path: TRANSCRIPT }])
     })
