@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, Draft, PanelState, PermissionRequest, PlanRow, ProblemRow, RefreshGate, RelayState, SolutionRow, StepRow, TurnState } from '../types'
+import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate, RelayState, TurnState } from '../types'
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
@@ -51,7 +51,7 @@ import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
 import { isServerNotConnected, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
-import { answerNote, connectNote, disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
+import { connectNote, disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
@@ -77,10 +77,7 @@ const pick = atom({ plugin: 'danxbot', key: 'pick' } as const, '')
 const switching = atom({ plugin: 'danxbot', key: 'switching' } as const, false)
 // the band is hidden for the session: its own atom, since refresh replaces `view` whole
 const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
-const expanded = atom({ plugin: 'danxbot', key: 'expanded' } as const, null as number | null)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
-const draft = atom({ plugin: 'danxbot', key: 'draft' } as const, null as Draft | null)
-const talk = atom({ plugin: 'danxbot', key: 'talk' } as const, null as number | null)
 // DX-4232: the browser tab id lives in $.state, never in a module variable (a module variable is
 // lost on reload and shared by nothing else).
 const tab = atom({ plugin: 'danxbot', key: 'tab' } as const, null as string | null)
@@ -181,7 +178,7 @@ const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
 
 async function loadView($: any) {
   const refreshedAt = new Date(await $.clock.now()).toISOString()
-  const loaded = await loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt, await read($, expanded))
+  const loaded = await loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt)
   // DX-4521: the band's links need the dashboard origin even when this load could not read it (signed out, a failed call, a
   // session just started): the last origin a plan list answered is kept in $.store (across sessions) and stands in for it.
   if (loaded.dashboardUrl !== null) {
@@ -647,91 +644,6 @@ async function signInArgs($: any): Promise<object> {
   return { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
 }
 
-// One write to a problem (answer, comment, step tick), inside its busy claim: call, toast a
-// refusal, re-read the plan. It touches nothing the operator is composing; an answer clears the
-// draft. Resolves true when the write was made and accepted.
-async function write(
-  $: any,
-  p: ProblemRow,
-  path: string,
-  method: string,
-  body: object,
-  done: string,
-  isAnswer = false,
-): Promise<boolean> {
-  const r = await api($, method, `/api/issues/${p.cardId}/${path}`, { body })
-  if (!r.ok) {
-    $.ui.toast(`${p.cardId} PBLM-${p.id}: ${errText(r)}`)
-    return false
-  }
-  if (done) $.ui.toast(done)
-  // PBLM-1913: an answered problem leaves the pane at once. A refresh asked while another runs is
-  // only queued (see refresh), so the view is corrected here, not left stale until it finishes.
-  if (isAnswer) await update($, view, cur => ({ ...cur, problems: cur.problems.filter(x => x.id !== p.id) }))
-  await refresh($, true)
-  return true
-}
-
-function act($: any, p: ProblemRow, path: string, method: string, body: object, done: string): Promise<void> {
-  return withBusy($, busyKey.problem(p.id), async () => void (await write($, p, path, method, body, done)))
-}
-
-// THE answer: the one place a body and its label meet, and the one re-entry guard for every
-// answer path (a busy claim for presses that overlap, the open-in-view check for ones that
-// queue). Answers the problem, clears the note or rejection draft (only an answer does), then
-// tells the model (it did not make the call).
-function answer($: any, p: ProblemRow, body: Record<string, unknown>, label: string): Promise<void> {
-  return withBusy($, busyKey.problem(p.id), async () => {
-    // A press can reach a drawing that is already stale (a second press queued behind the first,
-    // run after it finished): a problem no longer open in the view was answered already.
-    if (!(await read($, view)).problems.some(x => x.id === p.id)) return
-    if (!(await write($, p, `problems/${p.id}/answer`, 'POST', body, `Answered: ${label}`, true))) return
-    await update($, draft, () => null)
-    await tellModel($, answerNote(p, label))
-  })
-}
-
-function useSolution($: any, p: ProblemRow, s: SolutionRow): Promise<void> {
-  return answer($, p, { solution_id: s.id }, s.title)
-}
-
-// A note (or a rejection reason) is required: an empty one is refused here, with no API call.
-async function useSolutionWithNote($: any, p: ProblemRow, s: SolutionRow, text: string): Promise<void> {
-  const note = text.trim()
-  if (!note) {
-    $.ui.toast('A note is required.')
-    return
-  }
-  await answer($, p, { solution_id: s.id, note }, `${s.title} (note: ${note})`)
-}
-
-async function rejectSolution($: any, p: ProblemRow, s: SolutionRow, text: string): Promise<void> {
-  const reason = text.trim()
-  if (!reason) {
-    $.ui.toast('A note is required to reject.')
-    return
-  }
-  await answer($, p, { solution_id: s.id, outcome: 'rejected', note: reason }, `REJECTED "${s.title}" (reason: ${reason})`)
-}
-
-async function answerFreeform($: any, p: ProblemRow, text: string): Promise<void> {
-  const freeform = text.trim()
-  if (freeform) await answer($, p, { freeform }, `"${freeform}"`)
-}
-
-async function postComment($: any, p: ProblemRow, text: string): Promise<void> {
-  const comment = text.trim()
-  if (comment) await act($, p, 'comments', 'POST', { text: comment, problem_id: p.id }, 'Comment posted')
-}
-
-function toggleDraft($: any, p: ProblemRow, solutionId: number, kind: 'note' | 'reject'): Promise<unknown> {
-  return update($, draft, cur =>
-    cur && cur.problemId === p.id && cur.solutionId === solutionId && cur.kind === kind
-      ? null
-      : { problemId: p.id, kind, solutionId },
-  )
-}
-
 // DX-4374: the one way into the plan UI, for the footer button and /danx-plan alike: bring the band
 // back (clear `dismissed`) and open the Plan pane. It never closes anything and tells the model nothing
 // (R-4 covers actions that change plan state; this changes none).
@@ -770,21 +682,6 @@ function handlers($: any): Handlers {
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
     pickPlan: value => update($, pick, () => value),
-    // DX-4458: opening a problem reads its solutions and comments (a refresh reads the open one's)
-    toggleExpanded: async id => {
-      const opened = (await read($, expanded)) !== id
-      await update($, expanded, () => (opened ? id : null))
-      if (opened) await refresh($, true)
-    },
-    toggleTalk: id => update($, talk, cur => (cur === id ? null : id)),
-    toggleDraft: (p, solutionId, kind) => toggleDraft($, p, solutionId, kind),
-    useSolution: (p, s) => useSolution($, p, s),
-    useSolutionWithNote: (p, s, note) => useSolutionWithNote($, p, s, note),
-    rejectSolution: (p, s, reason) => rejectSolution($, p, s, reason),
-    answerFreeform: (p, text) => answerFreeform($, p, text),
-    checkStep: (p: ProblemRow, s: SolutionRow, step: StepRow) =>
-      act($, p, `problems/${p.id}/solutions/${s.id}/steps/${step.id}/check`, 'PATCH', { checked: !step.checked }, ''),
-    comment: (p, text) => postComment($, p, text),
   }
 }
 
@@ -1338,11 +1235,7 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, live, () => NO_LIVE)
     await update($, transcript, () => null)
     // a fresh conversation (or another session taking this one's place) in the same process: what
-    // the person had open or half-typed no longer applies, and what the dashboard shows may have
-    // moved while they were in the old one
-    await update($, expanded, () => null)
-    await update($, draft, () => null)
-    await update($, talk, () => null)
+    // the dashboard shows may have moved while they were in the old one
     void settleDetached(refresh($, true))
   }
   return next(e)
@@ -1525,11 +1418,8 @@ async function drawPane($: any, e: any) {
   const m = {
     v: await read($, view),
     picked: await read($, pick),
-    open: await read($, expanded),
     working: await read($, busy),
     isSwitching: await read($, switching),
-    draft: await read($, draft),
-    talk: await read($, talk),
     now: await $.clock.now(),
     hasBrowser: e.surface === 'desktop',
     hasSvg: e.surface === 'desktop',

@@ -1,32 +1,6 @@
 import type { PlanView, StatusBreakdown } from '../../types'
 import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, RESTART_BAND_LABEL, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, keyRevokedLabel } from './config'
 
-// The browser's wording, per problem type (frontend/src/routes/board/card/problem-vocabulary.ts).
-export const WORDS = {
-  question: {
-    recommended: 'Recommended',
-    body: 'Description',
-    proCon: 'For and against',
-    pro: 'For',
-    con: 'Against',
-    use: 'Use this',
-    useNote: 'This but…',
-    freeform: 'Or answer in your own words…',
-    send: 'Send answer',
-  },
-  action: {
-    recommended: 'Start here',
-    body: 'What taking this route involves',
-    proCon: 'Why this route',
-    pro: 'Pick this when',
-    con: 'Watch out for',
-    use: 'Mark done',
-    useNote: 'Mark done, with a note',
-    freeform: 'Or say how you did it your own way…',
-    send: 'Record it',
-  },
-} as const
-
 export function age(iso: string, now: number): string {
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000))
   if (s < 60) return 'just now'

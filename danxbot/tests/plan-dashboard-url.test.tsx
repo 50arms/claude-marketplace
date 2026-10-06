@@ -41,19 +41,16 @@ for (const surface of SURFACES) {
 }
 
 describe('the browser-tab buttons open the session dashboard (desktop)', () => {
-  test('band, pane and a problem each navigate to the answered origin', async ($, on) => {
+  test('band and pane each navigate to the answered origin', async ($, on) => {
     const d = dashboard(on, { dashboardUrl: OTHER, tabs: ['tab-1'] })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     await band.press({ key: 'open-tab' })
     await pane.press({ key: 'open-plan' })
-    await pane.press({ key: 'open-11' })
-    await pane.press({ key: 'tab-11' })
     expect(browserUrls(d)).toEqual([
       `${OTHER}/plans/23`,
       `${OTHER}/plans/23`,
-      `${OTHER}/plans/23/cards/DX-1/problems/PBLM-11`,
     ])
   })
 })

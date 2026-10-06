@@ -1,7 +1,6 @@
 // DX-4232 E2E: one whole operator session per surface through the real hooks module with a
-// stand-in danx-dashboard MCP server: band at session start -> open pane -> Connect -> answer by
-// option -> by typed text -> approve one action -> reject another with a note. Every step asserts
-// the stand-in danxbot_api call it caused.
+// stand-in danx-dashboard MCP server: band at session start -> open pane -> Connect -> the pane lists the open problems as links
+// and writes nothing to a card.
 import { describe, expect, test } from 'claude-code/testing'
 
 import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, problemBadgeOf, startSession, toldModel, forceRefresh } from './plan-kit'
@@ -16,14 +15,13 @@ const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any
 
 for (const surface of SURFACES) {
   describe(`end to end on ${surface}`, () => {
-    test('band, pane, connect, option answer, typed answer, approve, reject with a note', async ($, on) => {
+    test('band, pane, connect, the open problems as links', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.cards[1]!.problems.push({
         id: 23,
         type: 'action',
         statement: 'Rotate the key',
         open: true,
-        solutions: [{ id: 231, title: 'Rotate it', recommended: true }],
       })
       await startSession($, d, surface)
 
@@ -46,42 +44,13 @@ for (const surface of SURFACES) {
       await expectIndicator(band, surface, 25)
       expect(toldModel(d)).toHaveLength(1)
 
-      // 4. answer by option
-      await pane.press({ key: 'open-11' })
-      await pane.press({ key: 'use-112' })
-      await d.clock.settle()
-      // 5. answer by typed text
-      await pane.press({ key: 'open-21' })
-      await pane.input({ key: 'free-21', text: 'neither' })
-      await d.clock.settle()
-      // 6. approve one action
-      await pane.press({ key: 'open-12' })
-      await pane.press({ key: 'use-121' })
-      await d.clock.settle()
-      // 7. reject another with a note
-      await pane.press({ key: 'open-23' })
-      await pane.press({ key: 'rej-231' })
-      await pane.input({ key: 'rej-in-231', text: 'not this quarter' })
-      await d.clock.settle()
-
-      expect(d.writes().map(w => [w.method, w.path, w.body])).toEqual([
-        ['POST', '/api/issues/DX-1/problems/11/answer', { solution_id: 112 }],
-        ['POST', '/api/issues/DX-2/problems/21/answer', { freeform: 'neither' }],
-        ['POST', '/api/issues/DX-1/problems/12/answer', { solution_id: 121 }],
-        ['POST', '/api/issues/DX-2/problems/23/answer', { solution_id: 231, outcome: 'rejected', note: 'not this quarter' }],
-      ])
-      // all four answered problems left the pane, and the band counts none
-      expect(await text(pane)).toContain('Nothing needs you on this plan.')
-      expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
-      expect(await problemBadgeOf(band)).toBeUndefined()
-      // the connect row plus one per answer, each naming what it is about
-      const rows = toldModel(d)
-      expect(rows).toHaveLength(5)
-      expectRowCarries(rows[0]!, ['PLAN-23', 'plan_id 23'])
-      expectRowCarries(rows[1]!, ['DX-1', 'PBLM-11', 'Best'])
-      expectRowCarries(rows[2]!, ['DX-2', 'PBLM-21', '"neither"'])
-      expectRowCarries(rows[3]!, ['DX-1', 'PBLM-12', 'Allow it'])
-      expectRowCarries(rows[4]!, ['DX-2', 'PBLM-23', 'REJECTED', 'not this quarter'])
+      // 4. the pane lists each open problem as a link into the browser; the band counts them
+      const links = (await pane.findAll({ type: 'Link' })).map((l: any) => l.props.label).filter((l: string) => / · /.test(l))
+      expect(links).toEqual(['DX-1 · Which route?', 'DX-1 · Allow the site', 'DX-2 · Second one?', 'DX-2 · Rotate the key'])
+      // nothing in the pane writes to a card; the model was told only of the connect
+      expect(d.writes()).toEqual([])
+      expect(toldModel(d)).toHaveLength(1)
+      expectRowCarries(toldModel(d)[0]!, ['PLAN-23', 'plan_id 23'])
     })
   })
 }

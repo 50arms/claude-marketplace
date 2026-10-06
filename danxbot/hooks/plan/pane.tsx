@@ -1,11 +1,10 @@
-import type { Draft, LiveSubagents, PlanView, RelayState, StatusBreakdown } from '../../types'
+import type { LiveSubagents, PlanView, RelayState, StatusBreakdown } from '../../types'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import type { PanelModel } from './pacing-panel'
 import { pacingPane } from './pacing-panel-view'
-import { problemCard } from './problems'
+import { problemRow } from './problems'
 import { subagentSection } from './subagent-cards'
-import type { Ui } from './problems'
 import { CARD_TITLE_MAX, DANGER, DONUT_PANE_PX, NO_EVENT_STATUS, PICKER_PLAN_NAME_MAX, RESTART_LINE, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, cardUrl, planUrl } from './config'
 import { age, bandLabel, cappedInProgressNote, cappedNote, cappedPlansNote, doneTotal, planPercent, problemSplit, updatedText } from './words'
 
@@ -13,11 +12,8 @@ import { age, bandLabel, cappedInProgressNote, cappedNote, cappedPlansNote, done
 export type PaneModel = {
   v: PlanView
   picked: string
-  open: number | null
   working: string[]
   isSwitching: boolean
-  draft: Draft | null
-  talk: number | null
   now: number
   // The in-app browser exists on the desktop surface only.
   hasBrowser: boolean
@@ -193,7 +189,6 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
   }
 
   const plan = v.connected
-  const ui: Ui = { draft: m.draft, busy: m.working, talk: m.talk, plan, now: m.now, hasBrowser: m.hasBrowser }
   const { questions, actions } = problemSplit(v)
 
   return (
@@ -239,7 +234,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         )}
       </Box>
       {v.problems.length === 0 && v.cardErrors.length === 0 && <Text dimColor>Nothing needs you on this plan.</Text>}
-      {v.problems.map(p => problemCard(hd, E, ui, p, m.open === p.id))}
+      {v.problems.map(p => problemRow(E, plan, p))}
       {v.cardErrors.map(line => (
         <Text key={`err-${line}`} color={WARNING}>
           {line}
