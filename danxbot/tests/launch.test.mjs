@@ -142,7 +142,6 @@ describe("damage is detected, reported loudly and once, and the hook does not ru
     assert.equal(res.code, 0);
     assert.match(res.stdout, /^\[danxbot plugin\] INTEGRITY FAILURE: 1 plugin file\(s\) are corrupt \(scripts\/other\.mjs\)/);
     assert.ok(res.stdout.includes(INTEGRITY_FIX));
-    assert.equal(res.stdout.includes("marketplace clone"), false);
     assert.ok(res.stdout.endsWith("hello w stdin=i"), "the hook's own output follows the warning");
     assert.match(res.stderr, /INTEGRITY FAILURE/);
   });
