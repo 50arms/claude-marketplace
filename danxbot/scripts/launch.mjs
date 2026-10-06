@@ -3,9 +3,8 @@
 //   node "${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs" [--via stdout|rewake] <script> [args...]
 //
 // WHY. On 2026-10-01 a machine crash left six cached plugin files the same size but all NUL
-// bytes. Every hook then failed with nothing shown anywhere, and the plan event bridge's
-// watchdog sat in a corrupted file, so nothing restarted it; the operator's answer to a card
-// went unseen for hours. This file is the one thing that must not depend on any file it
+// bytes. Every hook then failed with nothing shown anywhere, so the
+// operator's answer to a card went unseen for hours. This file is the one thing that must not depend on any file it
 // checks: it imports only node builtins and stays small.
 //
 // WHAT IT DOES, on every hook run, before the hook's script starts:
@@ -171,7 +170,7 @@ export function claimWarning(signature, { dir = os.tmpdir(), now = Date.now() } 
   return true;
 }
 
-/** The one repair instruction every integrity message carries; hooks.json's fallback line and bridge-watchdog.mjs say the same (launch.test.mjs pins all three). */
+/** The one repair instruction every integrity message carries; hooks.json's fallback lines say the same (launch.test.mjs pins both). */
 export const INTEGRITY_FIX =
   "Fix: run `claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session.";
 
@@ -181,7 +180,7 @@ function warningText(root, result) {
     return `${head} the integrity manifest is unreadable (${result.error}), so no plugin file in ${root} could be verified; danxbot hooks may be silently broken. ${INTEGRITY_FIX}`;
   }
   const names = result.unrestorable.slice(0, 5).join(", ") + (result.unrestorable.length > 5 ? `, and ${result.unrestorable.length - 5} more` : "");
-  return `${head} ${result.unrestorable.length} plugin file(s) are corrupt and could not be restored from the marketplace clone (${names}); danxbot hooks, including the plan event bridge, may not work and plan events may not reach this session. ${INTEGRITY_FIX}`;
+  return `${head} ${result.unrestorable.length} plugin file(s) are corrupt and could not be restored from the marketplace clone (${names}); danxbot hooks may not work and plan events may not reach this session. ${INTEGRITY_FIX}`;
 }
 
 function parseArgs(argv) {

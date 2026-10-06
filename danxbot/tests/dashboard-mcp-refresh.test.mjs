@@ -6,10 +6,9 @@
 //
 //   - AC1: the registry's `latest` moves A to B and the next session start of EACH entry point
 //     (`ensure-dashboard-mcp.sh --prewarm`, `event-hook.sh SessionStart`,
-//     `background-work-report.mjs session-start`, `plan-event-bridge.mjs start`) ends up running
+//     `background-work-report.mjs session-start`) ends up running
 //     B, with no plugin file changed.
-//   - A hook that is not a session start (SubagentStart, PostToolUse, Stop, the watchdog's bridge
-//     restart) makes ZERO registry requests; one that finds no record resolves it itself.
+//   - A hook that is not a session start (SubagentStart, PostToolUse, Stop) makes ZERO registry requests; one that finds no record resolves it itself.
 //   - AC4: a session start that cannot read the registry says so in ONE line naming the reason and
 //     the version still in use and keeps the recorded version; with none, nothing runs.
 import { test, describe, beforeEach, afterEach, after } from "node:test";
@@ -20,7 +19,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import * as bridge from "../scripts/plan-event-bridge.mjs";
 import { runHook as runBackgroundWork } from "../scripts/background-work-report.mjs";
 import { runActivity } from "../scripts/activity-report.mjs";
 import { requireRecordedSpec, recordedVersionOrNull } from "../scripts/lib/dashboard-mcp-package.mjs";
@@ -55,7 +53,7 @@ beforeEach(() => {
     CLAUDE_PLUGIN_DATA: dataDir,
     DANXBOT_PLAN_SESSIONS_HOME: planHome,
     CLAUDE_CODE_MESSAGING_SOCKET: "socket-path",
-    CLAUDE_CODE_MESSAGING_TOKEN: "inbox-secret",
+    CLAUDE_CODE_MESSAGING_TOKEN: "messaging-secret",
     [REGISTRY_BASE_URL_ENV]: registry.url,
     FAKE_NPM_MODE: "ok",
     FAKE_NPM_CALLS_FILE: path.join(fakeBinDir, "npm-calls.txt"),
@@ -95,7 +93,7 @@ function runScript(script, args, { input = "", env = baseEnv } = {}) {
   return spawnSync("bash", [path.join(PLUGIN_ROOT, "scripts", script), ...args], { input, encoding: "utf8", env });
 }
 
-// ------------------------------------------------------------- the four session-start entry points
+// ------------------------------------------------------------- the three session-start entry points
 
 /** Each runs ONE session start against the fake registry; `ranVersion()` is the version it ran or installed. */
 const ENTRY_POINTS = {
@@ -123,18 +121,6 @@ const ENTRY_POINTS = {
     },
     ranVersion() {
       return this.spawned[0][1].slice(this.spawned[0][1].lastIndexOf("@") + 1);
-    },
-  },
-  "plan-event-bridge.mjs start": {
-    async run() {
-      const result = await bridge.start({ env: baseEnv, sessionId: SESSION, sessionStart: true, spawnRun: () => ({ pid: 1 }), waitVerdict: async () => null, stderr: () => {}, post: async () => {} });
-      assert.equal(result.started, true);
-    },
-    // The command the bridge's run process builds: `npx -y <name>@<recorded version> bridge`.
-    ranVersion() {
-      const { args } = bridge.bridgeCommand({ resumeIds: [], spec: requireRecordedSpec(baseEnv), platform: "linux" });
-      assert.equal(args[1].slice(0, args[1].lastIndexOf("@")), PKG_NAME);
-      return args[1].slice(args[1].lastIndexOf("@") + 1);
     },
   },
 };
@@ -204,19 +190,6 @@ describe("a hook that is not a session start reads the record and makes ZERO reg
     });
   }
 
-  test("the bridge's start without a SessionStart (a plan_connect, the watchdog's restart)", async () => {
-    const before = requests();
-    for (const extra of [{ intent: "connect" }, { intent: "resume", restartTrigger: "watchdog" }]) {
-      const dir = mkdtempSync(path.join(tmpdir(), "mcp-refresh-bridge-"));
-      const env = { ...baseEnv, CLAUDE_PLUGIN_DATA: dir };
-      recordVersion(dir, A);
-      const result = await bridge.start({ env, sessionId: SESSION, spawnRun: () => ({ pid: 1 }), waitVerdict: async () => null, stderr: () => {}, post: async () => {}, ...extra });
-      assert.equal(result.started, true);
-      assert.equal(recordedVersionOrNull(env), A);
-      rmSync(dir, { recursive: true, force: true });
-    }
-    assert.equal(requests(), before);
-  });
 });
 
 describe("a hook that finds no record resolves it itself through the same function and records it", () => {
@@ -238,11 +211,6 @@ describe("a hook that finds no record resolves it itself through the same functi
     });
   }
 
-  test("the bridge's start without a SessionStart", async () => {
-    const result = await bridge.start({ env: baseEnv, sessionId: SESSION, intent: "connect", spawnRun: () => ({ pid: 1 }), waitVerdict: async () => null, stderr: () => {}, post: async () => {} });
-    assert.equal(result.started, true);
-    assert.equal(recordedVersion(dataDir), B);
-  });
 });
 
 // ------------------------------------------------------------- AC4: never silent
@@ -284,115 +252,6 @@ describe("AC4 — a session start that cannot read the registry says so, once, a
     const outcome = await runBackgroundWork("session-start", { session_id: "not-connected-session" }, { env: baseEnv, platform: "linux", spawnFn: () => assert.fail("an unconnected session never reports") });
     assert.deepEqual(outcome, { line: null, missingVersion: false });
     assert.equal(registry.requests().length, before);
-  });
-
-  test("the bridge posts ONE notice naming the reason and the version in use, and still starts on that version", async () => {
-    recordVersion(dataDir, A);
-    registry.setMode("status-500");
-    const posted = [];
-    const spawnRun = [];
-    const result = await bridge.start({
-      env: baseEnv,
-      sessionId: SESSION,
-      intent: "connect",
-      sessionStart: true,
-      spawnRun: () => (spawnRun.push(1), { pid: 1 }),
-      waitVerdict: async () => null,
-      stderr: () => {},
-      post: async (notice) => posted.push(notice),
-    });
-    assert.equal(result.started, true, "the recorded version keeps the bridge running");
-    assert.equal(posted.length, 1);
-    assert.ok(posted[0].startsWith("[danxbot plan event]"));
-    assert.match(posted[0], /could not refresh/);
-    assert.match(posted[0], /HTTP 500/);
-    assert.ok(posted[0].includes(A));
-    assert.equal(recordedVersionOrNull(baseEnv), A);
-    assert.equal(spawnRun.length, 1);
-  });
-
-  test("the bridge's notice falls back to stderr and exit 2 (asyncRewake) when the inbox cannot take it", async () => {
-    recordVersion(dataDir, A);
-    registry.setMode("status-500");
-    const stderr = [];
-    const result = await bridge.start({
-      env: baseEnv,
-      sessionId: SESSION,
-      intent: "connect",
-      sessionStart: true,
-      spawnRun: () => ({ pid: 1 }),
-      waitVerdict: async () => null,
-      stderr: (text) => stderr.push(text),
-      post: async () => {
-        throw new Error("inbox closed");
-      },
-    });
-    assert.equal(result.started, true);
-    assert.equal(result.exitCode, 2);
-    assert.equal(stderr.length, 1);
-    assert.match(stderr[0], /could not refresh.*HTTP 500/);
-  });
-
-  test("the bridge with NO recorded version starts nothing and tells the session why through its failure notice", async () => {
-    registry.setMode("status-500");
-    const posted = [];
-    let spawned = 0;
-    const result = await bridge.start({
-      env: baseEnv,
-      sessionId: SESSION,
-      intent: "connect",
-      sessionStart: true,
-      spawnRun: () => (spawned += 1, { pid: 1 }),
-      waitVerdict: async () => null,
-      stderr: () => {},
-      post: async (notice) => posted.push(notice),
-    });
-    assert.equal(result.started, false);
-    assert.equal(spawned, 0);
-    assert.equal(posted.length, 1);
-    assert.match(posted[0], /bridge down: events are NOT reaching this session/);
-    assert.match(posted[0], /HTTP 500/);
-    assert.match(posted[0], /nothing that runs it can start/);
-  });
-
-  test("the bridge's fix is worded from the error: a damaged record names the file, not the registry", async () => {
-    mkdirSync(path.dirname(recordFilePath(dataDir)), { recursive: true });
-    writeFileSync(recordFilePath(dataDir), "garbage");
-    const posted = [];
-    const result = await bridge.start({ env: baseEnv, sessionId: SESSION, intent: "connect", spawnRun: () => ({ pid: 1 }), waitVerdict: async () => null, stderr: () => {}, post: async (notice) => posted.push(notice) });
-    assert.equal(result.started, false);
-    assert.match(posted[0], /damaged/);
-    assert.ok(posted[0].includes(`delete ${recordFilePath(dataDir)}`), posted[0]);
-    assert.doesNotMatch(posted[0], /restore access to the npm registry/);
-  });
-
-  test("the bridge with no recorded version and an unreachable inbox exits 2 with the notice on stderr", async () => {
-    registry.setMode("status-500");
-    const stderr = [];
-    const result = await bridge.start({
-      env: baseEnv,
-      sessionId: SESSION,
-      intent: "connect",
-      sessionStart: true,
-      spawnRun: () => ({ pid: 1 }),
-      waitVerdict: async () => null,
-      stderr: (text) => stderr.push(text),
-      post: async () => {
-        throw new Error("inbox closed");
-      },
-    });
-    assert.equal(result.started, false);
-    assert.equal(result.exitCode, 2);
-    assert.match(stderr.join(""), /nothing that runs it can start/);
-  });
-
-  test("a bridge session start that is not known to want events stays quiet about a kept version (no cursor, not a plan_connect)", async () => {
-    recordVersion(dataDir, A);
-    registry.setMode("status-500");
-    const posted = [];
-    const result = await bridge.start({ env: baseEnv, sessionId: SESSION, intent: "resume", sessionStart: true, spawnRun: () => ({ pid: 1 }), waitVerdict: async () => null, stderr: () => {}, post: async (n) => posted.push(n) });
-    assert.equal(result.started, true);
-    assert.deepEqual(posted, []);
   });
 
   test("the record file is where every reader looks: dashboard-mcp/current under the plugin data dir", () => {

@@ -38,16 +38,15 @@
 //
 // Failure trace: `${CLAUDE_PLUGIN_DATA}/activity/<session>.last-failure.json` holds the most
 // recent failed report ({at, mode, reason}); a success never writes. It is the only way a
-// failure here is ever visible. It is written with the bridge's `writeFileAtomic` and pruned
-// with the bridge's `pruneStale` (7 days; `.last-failure.json` is in its STATE_SUFFIXES).
+// failure here is ever visible. It is written with `writeFileAtomic` and pruned
+// with `pruneStale` from lib/report-support.mjs (7 days; `.last-failure.json` is in its STATE_SUFFIXES).
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPlanConnected, isValidSessionId } from "./lib/plan-connection.mjs";
-import { childEnv, pruneStale } from "./plan-event-bridge.mjs";
-import { writeFileAtomic } from "./lib/bridge-state.mjs";
+import { childEnv, pruneStale, writeFileAtomic } from "./lib/report-support.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -141,7 +140,7 @@ const EXPECTED_REASONS = new Set(["no_connection_record", "credential_unavailabl
 
 function recordFailure(env, sessionId, mode, outcome, now) {
   const file = failureFile(stateDir(env), sessionId);
-  // The bridge's own writer: a unique tmp name, so two hooks failing at once never share one.
+  // `writeFileAtomic`: a unique tmp name, so two hooks failing at once never share one.
   writeFileAtomic(file, JSON.stringify({ at: new Date(now).toISOString(), mode, reason: outcome.reason }));
 }
 
@@ -166,7 +165,7 @@ export function runActivity(mode, rawPayload, { env = process.env, spawnFn = spa
   if (mode === "background-bash" && !isBackgroundBash(input)) return null; // before any file read: this fires for every Bash call
   if (!isConnected(sessionId, env.DANXBOT_PLAN_SESSIONS_HOME || undefined)) return null; // never spawn for an unconnected session
 
-  // The bridge's own pruning (a trace nothing has touched for a week goes), run on every report
+  // `pruneStale` (a trace nothing has touched for a week goes), run on every report
   // rather than only a failing one, so a clean stretch cannot leave old traces behind forever.
   pruneStale(stateDir(env), eventAtMs);
 

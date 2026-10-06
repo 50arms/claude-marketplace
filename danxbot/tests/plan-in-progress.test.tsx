@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { age } from '../hooks/plan/words'
-import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -72,15 +72,15 @@ for (const surface of SURFACES) {
       expect(await text(pane)).toContain('20 not waiting on you')
     })
 
-    test('one refresh loads both buckets, a 60 s tick adds exactly one load of each, through danxbot_api', async ($, on) => {
+    test('one refresh loads both buckets, a reload adds exactly one load of each, through danxbot_api', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       expect(callsTo(d, 'needs-you')).toBe(1)
       expect(callsTo(d, 'in-progress')).toBe(1)
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       expect(callsTo(d, 'needs-you')).toBe(2)
       expect(callsTo(d, 'in-progress')).toBe(2)
-      expect(d.calls.every(c => c.server !== 'plugin:danxbot:danx-dashboard' || c.tool === 'danxbot_api' || c.tool === 'plan_connect')).toBe(true)
+      expect(d.calls.every(c => c.server !== 'plugin:danxbot:danx-dashboard' || c.tool === 'danxbot_api' || c.tool === 'plan_connect' || c.tool === 'plan_events_wait')).toBe(true)
     })
 
     test('a failed in-progress call fails the load as an error shown in footer and pane, never a missing section', async ($, on) => {

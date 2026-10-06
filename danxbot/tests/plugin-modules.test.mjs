@@ -34,22 +34,22 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
   const hooks = readJson("hooks/hooks.json");
   assert.deepEqual(hooks.modules, ["./register.tsx"]);
   assert.ok(fs.existsSync(path.join(PLUGIN, "hooks", "register.tsx")));
-  // A hook is kept when a present hook has the same event, matcher and command. The one intended rewrite: DX-4578 narrowed the
-  // plan_connect matcher from the three server prefixes to the plugin's (the matcher test below pins the new one).
-  const PLAN_CONNECT_NARROWED = [/^\^\(mcp__.*plan_connect\)\$$/, "^mcp__plugin_danxbot_danx-dashboard__plan_connect$"];
-  // The other: DX-4551 replaced the repair instruction in each fallback line (a personal alias and a git repair habit) with the public
-  // Claude Code uninstall/install commands; launch.test.mjs pins the new text against INTEGRITY_FIX.
+  // A hook is kept when a present hook has the same event, matcher and command, bar one intended rewrite: DX-4551 replaced the repair
+  // instruction in each fallback line (a personal alias and a git repair habit) with the public Claude Code uninstall/install commands;
+  // launch.test.mjs pins the new text against INTEGRITY_FIX.
   const REPAIR_REWORDED = [
     "git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`",
     "claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets)",
   ];
   const present = commandHooks(hooks);
   const kept = ([event, matcher, command]) => {
-    const expected = matcher !== null && PLAN_CONNECT_NARROWED[0].test(matcher) ? PLAN_CONNECT_NARROWED[1] : matcher;
     const reworded = command.replace(REPAIR_REWORDED[0], REPAIR_REWORDED[1]);
-    return present.some(([e, m, c]) => e === event && m === expected && c === reworded);
+    return present.some(([e, m, c]) => e === event && m === matcher && c === reworded);
   };
-  const dropped = commandHooks(originMainHooks()).filter((h) => !kept(h));
+  // DX-4233 deleted the plan event bridge and its watchdog (the relay is a module listener in register.tsx now): those are the
+  // only command hooks origin/main had that this branch may drop.
+  const deleted = ([, , command]) => /plan-event-bridge|bridge-watchdog/.test(command);
+  const dropped = commandHooks(originMainHooks()).filter((h) => !deleted(h) && !kept(h));
   assert.deepEqual(dropped, [], "command hooks on origin/main that hooks.json no longer has");
 });
 
@@ -75,10 +75,20 @@ test("DX-4232: claude plugin validate danxbot exits 0", () => {
 ${r.stderr}`);
 });
 
-test("DX-4578: the plan_connect hook's matcher names exactly the one tool config.ts SERVER can answer to", () => {
-  const config = fs.readFileSync(path.join(PLUGIN, "hooks", "plan", "config.ts"), "utf8");
-  const server = /export const SERVER = '([^']+)'/.exec(config)?.[1];
-  assert.ok(server, "config.ts names the one dashboard server");
-  const group = readJson("hooks/hooks.json").hooks.PostToolUse.find((g) => g.hooks.some((h) => h.command.endsWith("plan-event-bridge.mjs start")));
-  assert.equal(group.matcher, `^mcp__${server.replace(/:/g, "_")}__plan_connect$`);
+test("DX-4233: no script or hook module imports a file that does not exist", () => {
+  const walk = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = path.join(dir, e.name);
+      return e.isDirectory() ? walk(full) : [full];
+    });
+  const files = [...walk(path.join(PLUGIN, "scripts")), ...walk(path.join(PLUGIN, "hooks"))].filter((f) => /\.(mjs|js|ts|tsx)$/.test(f));
+  assert.ok(files.length > 0);
+  for (const file of files) {
+    const text = fs.readFileSync(file, "utf8");
+    for (const m of text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+)["']/g)) {
+      const target = path.resolve(path.dirname(file), m[1]);
+      const candidates = [target, ...[".mjs", ".js", ".ts", ".tsx", ".json"].map((x) => target + x), path.join(target, "index.ts"), path.join(target, "index.tsx"), path.join(target, "index.d.ts"), target + ".d.ts"];
+      assert.ok(candidates.some((c) => fs.existsSync(c) && fs.statSync(c).isFile()), `${path.relative(PLUGIN, file)} imports missing ${m[1]}`);
+    }
+  }
 });

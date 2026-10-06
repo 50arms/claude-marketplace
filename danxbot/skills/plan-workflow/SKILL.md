@@ -76,19 +76,38 @@ One writer: the main session. Sub-agent briefs say "no plan writes; return findi
 
 ## Live events
 
-Your plan's events arrive unprompted, tagged `[danxbot plan event]`, from this plugin and
-your own dashboard — never poll, loop or Monitor for them. Each is the user's or the
-dashboard's input for the card it names.
+Your plan's events arrive unprompted, tagged `[danxbot plan event]` — never poll, loop or
+Monitor for them. Every line is one of these kinds.
 
-- `has not made an MCP call …` → every card it names is workable by its recorded state. Work
-  it, or record why you can't: a problem, `depends_on`/`conflict_on`, a block with the real
-  reason, or `rollback_pickup`. Never just ignore it.
-- `answered "…"` → read the card's problems, act on the live decision, record the outcome.
-  Retracted or changed → it overrides; already acted → keep, redo or undo.
+From the dashboard:
+
+- `has not made an MCP call …` → the dashboard's idle nudge: every card it names is workable by
+  its recorded state. Work it, or record why you can't: a problem, `depends_on`/`conflict_on`, a
+  block with the real reason, or `rollback_pickup`. Never just ignore it.
+- `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
+  record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
 - `commented on problem` → a follow-up, not an answer: reply with a comment on that problem.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
   read it for the full text.
-- `bridge down:` → do the fix it names (usually `plan_connect` again).
+- `[plan events] digest — N agent/machine events since the last update:` → one record of agent
+  and machine activity held up to 10 min, its events listed under it: read it, act only where it
+  names a card of yours.
+- a usage-pacing or auto-resume message from danxbot → follow it as written.
+
+From this session's event listener:
+
+- `[plan events] this session's listener stopped reaching the dashboard …` → it is renewing the
+  connection itself; nothing to do.
+- a notice that this session's key was revoked → stop dashboard work as it says and tell the
+  person.
+
+From the plugin's relay (delivery itself):
+
+- `an event arrived as the last turn ended: a` and `N events arrived as the last turn ended: a | b`
+  → events that reached you after your last step: act on each as the kind of event it is.
+- `events stopped:` → events are NOT reaching this session: do the fix it names (usually
+  `plan_connect` again). Read the card by hand until it is done.
+- `events delayed:` → the relay is retrying on its own; act only if it never clears.
 
 ## Records
 

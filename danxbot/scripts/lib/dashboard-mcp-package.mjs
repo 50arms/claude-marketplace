@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The ONE place that says which version of `@thehammer/danx-dashboard-mcp` every run of it
-// this plugin makes uses (DX-4321): the plan event bridge, background-work-report,
+// this plugin makes uses (DX-4321): background-work-report,
 // activity-report and event-hook.sh. This file carries NO version literal.
 //
 // WHERE THE VERSION COMES FROM. The npm registry's `latest` for the package, read at every
@@ -24,8 +24,8 @@
 //
 // ONE ACCEPTED SILENT PATH (DX-3421, by design): an UNCONNECTED session whose refresh fails
 // prints nothing at session start (event-hook.sh stays silent for it unless it has a restart
-// notice, and the bridge and background-work-report only act for a plan-connected session). If
-// that session later runs `plan_connect`, the bridge reads the record with no network and
+// notice, and background-work-report only acts for a plan-connected session). If
+// that session later runs `plan_connect`, the record is read with no network and
 // says nothing about the earlier failed refresh. An unconnected session is told nothing by
 // danxbot at all, and no marker is kept to say otherwise.
 //

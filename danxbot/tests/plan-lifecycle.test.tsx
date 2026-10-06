@@ -2,7 +2,7 @@
 // connects, the plan-list cap, and one write per answer however many presses land together.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LOCK_STALE_MS, SERVER, START_RETRY_MS } from '../hooks/plan/config'
+import { LOCK_STALE_MS, PACING_POLL_MS, SERVER, START_RETRY_MS } from '../hooks/plan/config'
 import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -15,31 +15,31 @@ const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any
 const loadsOf = (d: any) => d.api.filter((a: any) => a.path === '/api/plans').length
 
 describe('session.end by reason', () => {
+  // DX-4233: what the process's end does to the plan event relay is in plan-relay-lifecycle.test.tsx
   for (const reason of ['prompt_input_exit', 'logout', 'other']) {
-    test(`${reason} ends the process: the refresh timer is cancelled`, async ($, on) => {
-      const d = dashboard(on)
-      on('session.end', () => ({ sessionId: 's1' }) as any)
-      await startSession($, d, 'desktop')
-      await $.session.end({ reason } as any)
-      const before = loadsOf(d)
-      await d.clock.advance(180_000)
-      expect(loadsOf(d)).toBe(before)
-    })
-  }
-
-  for (const reason of ['clear', 'resume', 'some_future_reason']) {
-    test(`${reason} leaves the process running: the timer keeps refreshing`, async ($, on) => {
+    test(`${reason} ends the process: the pacing poll stops`, async ($, on) => {
       const d = dashboard(on)
       on('session.end', () => ({ sessionId: 's1' }) as any)
       await startSession($, d, 'desktop')
       await $.session.end({ reason } as any)
       await d.clock.settle()
-      const before = loadsOf(d)
-      d.world.cards[1]!.problems.push({ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] })
-      await d.clock.advance(60_000)
-      expect(loadsOf(d)).toBe(before + 1)
-      const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-      expect(await problemBadgeOf(band)).toBe('⚠ 4')
+      const reads = d.teamPacingReads.length
+      await d.clock.advance(PACING_POLL_MS * 2 + 1)
+      expect(d.teamPacingReads).toHaveLength(reads)
+    })
+  }
+
+  // a reason not listed keeps the timers: stopping one in a live process is the harm, a timer left in a dying one is not
+  for (const reason of ['clear', 'resume', 'some_future_reason']) {
+    test(`${reason} leaves the process running: the pacing poll goes on`, async ($, on) => {
+      const d = dashboard(on)
+      on('session.end', () => ({ sessionId: 's1' }) as any)
+      await startSession($, d, 'desktop')
+      await $.session.end({ reason } as any)
+      await d.clock.settle()
+      const reads = d.teamPacingReads.length
+      await d.clock.advance(PACING_POLL_MS + 1)
+      expect(d.teamPacingReads.length).toBeGreaterThan(reads)
     })
   }
 
@@ -80,7 +80,7 @@ describe('the MCP server connects after session start', () => {
     await startSession($, d, 'desktop')
     const apiCalls = () => d.calls.filter(c => c.tool === 'danxbot_api' && c.server === SERVER).length
     expect(apiCalls()).toBe(1)
-    // each wait is advanced on its own, so no 60 s timer tick can land inside the sequence
+    // each wait is advanced on its own, so no poll tick (the pacing panel's) can land inside the sequence
     for (const wait of START_RETRY_MS) await d.clock.advance(wait)
     expect(apiCalls()).toBe(1 + START_RETRY_MS.length)
     await d.clock.advance(30_000)
@@ -205,7 +205,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(1)
 
-    // the 60 s timer ticks inside the window did not load either; past it, a press does
+    // the pacing poll's ticks inside the window did not load the plan either; past it, a press does
     await d.clock.advance(LOCK_STALE_MS / 2 - 1_000)
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(1)

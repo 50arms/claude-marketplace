@@ -4,7 +4,7 @@
 // the stand-in danxbot_api call it caused.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, problemBadgeOf, startSession, toldModel } from './plan-kit'
+import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, problemBadgeOf, startSession, toldModel, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -89,7 +89,7 @@ for (const surface of SURFACES) {
 // DX-4374: the indicator flow, end to end on both surfaces.
 for (const surface of SURFACES) {
   describe(`the indicator flow on ${surface}`, () => {
-    test('connect, dismiss, one footer press restores the band and opens the pane with donut and event line, the bridge degrades, disconnect', async ($, on) => {
+    test('connect, dismiss, one footer press restores the band and opens the pane with donut and event line, the listener degrades, disconnect', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
@@ -115,7 +115,7 @@ for (const surface of SURFACES) {
       expect(all).toContain('In flight card')
 
       d.setListener('unattached')
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeUndefined()
       expect(await text(pane)).toContain(NEXT_STEP('unattached'))
 

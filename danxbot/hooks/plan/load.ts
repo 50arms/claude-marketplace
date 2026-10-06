@@ -164,7 +164,7 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
   // nextStep: string | null} cannot be read, so the load fails (never nulled to the no-status line).
   const listener = readListener(list.body.sessionListenerAttached)
   if (listener === MALFORMED_LISTENER) {
-    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event bridge' }
+    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
   }
   const noPlan = { dashboardUrl, connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
@@ -344,7 +344,7 @@ function readBreakdown(raw: any): StatusBreakdown | null {
   return { 'In Progress': raw['In Progress'], ToDo: raw.ToDo, Backlog: raw.Backlog, Review: raw.Review, Done: raw.Done, Cancelled: raw.Cancelled }
 }
 
-// DX-4374: the event bridge's state and next step; null when the answer carries none (the server answers null for
+// DX-4374: the event listener's state and next step; null when the answer carries none (the server answers null for
 // a session on no plan); MALFORMED_LISTENER when one is present but not the server's shape.
 const MALFORMED_LISTENER = Symbol('malformed sessionListenerAttached')
 function readListener(raw: any): ListenerStatus | null | typeof MALFORMED_LISTENER {

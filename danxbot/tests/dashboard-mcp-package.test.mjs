@@ -405,7 +405,7 @@ describe("no shipped plugin file carries a package version literal", () => {
     for (const bad of [
       'export const DASHBOARD_MCP_PACKAGE = "@thehammer/danx-dashboard-mcp@0.1.220";',
       "// pinned: danx-dashboard-mcp 0.1.220",
-      "npx -y @thehammer/danx-dashboard-mcp@1 bridge",
+      "npx -y @thehammer/danx-dashboard-mcp@1 event-text",
     ]) {
       assert.equal(versionLiterals(bad).length, 1, bad);
     }

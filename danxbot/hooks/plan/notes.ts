@@ -3,7 +3,7 @@ import type { PermissionRequest, PlanRow, ProblemRow } from '../../types'
 // The rows the operator's pane actions append for the model (R-4): the model did not make
 // these calls, so it is told. The person never reads them.
 export function connectNote(plan: PlanRow): string {
-  return `[danxbot plan] The operator connected this session to ${plan.ref} "${plan.name}" (plan_id ${plan.id}) from the Plan pane. Before doing plan work, call plan_connect with plan_id ${plan.id} yourself to read its briefing and start the event bridge.`
+  return `[danxbot plan] The operator connected this session to ${plan.ref} "${plan.name}" (plan_id ${plan.id}) from the Plan pane. Before doing plan work, call plan_connect with plan_id ${plan.id} yourself to read its briefing and start its events.`
 }
 
 // The plan left is named by ref and name: the session is on no plan now, and must not write to the
@@ -23,7 +23,7 @@ export function signInNote(planId: number | null, connected: boolean): string {
   const head = '[danxbot plan] The operator signed this session in to the danxbot dashboard with the Sign in button. Its dashboard tools work again: retry any call that was refused as signed out.'
   if (planId === null) return `${head} It asked to rejoin no plan: call plan_connect to see which plan, if any, it is on.`
   if (!connected) return `${head} Reconnecting it to plan_id ${planId} was refused: call plan_connect to see which plan it is on.`
-  return `${head} It is back on plan_id ${planId}: call plan_connect with plan_id ${planId} yourself to read its briefing and start the event bridge.`
+  return `${head} It is back on plan_id ${planId}: call plan_connect with plan_id ${planId} yourself to read its briefing and start its events.`
 }
 
 // DX-4530: the decision on one of the model's `request_permission` requests (DX-4435), told once in its chat: the MCP only frees

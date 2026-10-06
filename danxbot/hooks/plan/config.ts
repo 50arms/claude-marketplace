@@ -20,9 +20,10 @@ export const toolName = (tool: string) => `mcp__${SERVER.replace(/:/g, '_')}__${
 export const LEGACY_PROJECT_API_TOOL = 'mcp__danx-dashboard__danxbot_api'
 export const RESTART_LINE = 'Restart this session to reconnect the dashboard. It started before an update changed how the connection works, so it shows no plan and sends no usage until then.'
 export const RESTART_BAND_LABEL = 'Restart to reconnect'
-export const POLL_MS = 60_000
+// DX-4339: how often the usage pacing panel is read (it has no event to ride). The plan view is never polled (DX-4233).
+export const PACING_POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
-// DX-4530: while a permission request is open its claim is polled this often (POLL_MS otherwise), so the model hears the
+// DX-4530: while a permission request is open its claim is polled this often (the pacing panel's poll otherwise), so the model hears the
 // decision within seconds. The server's per-key claim limit (danxbot permission-request-routes.ts: twice one 3 s poll, about
 // 0.67 claims a second) fits the MCP's own 3 s poll plus this one for ONE open request; with more open at once the MCP's poll
 // alone passes it, and this poll's 429 only keeps the request for the next tick.
@@ -210,9 +211,9 @@ export function boardCardUrl(plan: ConnectedPlan, cardId: string): string {
 export const DONUT_BAND_PX = 16
 export const DONUT_PANE_PX = 44
 
-// DX-4374: what the pane's event line says for a connected session the server reports no event bridge for
+// DX-4374: what the pane's event line says for a connected session the server reports no event listener for
 // (`sessionListenerAttached` null): the plugin knows only that no status came, so it says that; never green, never silent.
-export const NO_EVENT_BRIDGE = 'the dashboard sent no event bridge status for this session'
+export const NO_EVENT_STATUS = 'the dashboard sent no event status for this session'
 
 // DX-4423: a session with no dashboard key. The danx-dashboard MCP answers every tool but `plan_connect` with an error
 // result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key lapsed (KEY_LAPSED_HALT

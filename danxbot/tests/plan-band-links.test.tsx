@@ -2,7 +2,7 @@
 // else the dashboard's plans list.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DASHBOARD_URL, NO_DASHBOARD_URL, SURFACES, dashboard, startSession } from './plan-kit'
+import { DASHBOARD_URL, NO_DASHBOARD_URL, SURFACES, dashboard, startSession, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PLANS = `${DASHBOARD_URL}/plans`
@@ -40,7 +40,7 @@ for (const surface of SURFACES) {
       }
     })
 
-    test('bridge down: both links stay', async ($, on) => {
+    test('no event listener: both links stay', async ($, on) => {
       const d = dashboard(on, { listener: 'no_listener' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
@@ -53,7 +53,7 @@ for (const surface of SURFACES) {
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         d.world.signedOut = state
-        await d.clock.advance(60_000)
+        await forceRefresh($, d)
         expect(await links(band, surface)).toEqual({ external: [PLANS], inApp: surface === 'desktop' ? true : null })
       })
     }
@@ -63,7 +63,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.failList()
-      await d.clock.advance(60_000)
+      await forceRefresh($, d)
       expect(await links(band, surface)).toEqual({ external: [PLANS], inApp: surface === 'desktop' ? true : null })
     })
 
