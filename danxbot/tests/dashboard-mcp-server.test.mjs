@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installedBinPath, recordVersion } from "./fixtures/fake-dashboard-mcp.mjs";
-import { dashboardUrl } from "../scripts/dashboard-mcp-server.mjs";
+import { bashFor, dashboardUrl } from "../scripts/dashboard-mcp-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.join(here, "..");
@@ -31,6 +31,33 @@ function run(input = "", extraEnv = {}) {
     env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, ...extraEnv },
   });
 }
+
+describe("bashFor: the bash that runs the install script", () => {
+  const none = () => null;
+  const never = () => false;
+  test("off Windows it is plain `bash` from PATH", () => {
+    assert.equal(bashFor("linux", {}, none, never), "bash");
+    assert.equal(bashFor("darwin", {}, none, never), "bash");
+  });
+  test("on Windows it is never a bare `bash` (the WSL launcher comes first on the Windows PATH)", () => {
+    assert.notEqual(bashFor("win32", {}, () => "C:/Program Files/Git/mingw64/libexec/git-core", () => true), "bash");
+  });
+  test("on Windows CLAUDE_CODE_GIT_BASH_PATH wins, and a missing file is refused by name", () => {
+    const p = "D:\\tools\\Git\\bin\\bash.exe";
+    assert.equal(bashFor("win32", { CLAUDE_CODE_GIT_BASH_PATH: p }, () => "C:/x/mingw64/libexec/git-core", (f) => f === p), p);
+    assert.throws(() => bashFor("win32", { CLAUDE_CODE_GIT_BASH_PATH: p }, none, never), /CLAUDE_CODE_GIT_BASH_PATH names .*does not exist/);
+  });
+  test("on Windows without it, Git for Windows' bin\\bash.exe is found from `git --exec-path`", () => {
+    const seen = [];
+    const got = bashFor("win32", {}, () => "C:/Program Files/Git/mingw64/libexec/git-core", (f) => (seen.push(f), true));
+    assert.equal(got, "C:\\Program Files\\Git\\bin\\bash.exe");
+    assert.deepEqual(seen, ["C:\\Program Files\\Git\\bin\\bash.exe"]);
+  });
+  test("on Windows with no git, or no bash beside it, it fails loudly naming the fix", () => {
+    assert.throws(() => bashFor("win32", {}, none, never), /no Git Bash found: install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH/);
+    assert.throws(() => bashFor("win32", {}, () => "C:/Program Files/Git/mingw64/libexec/git-core", never), /no Git Bash found/);
+  });
+});
 
 describe("dashboardUrl", () => {
   test("an explicit DANXBOT_DASHBOARD_URL beats the plugin's configured value, which beats nothing", () => {

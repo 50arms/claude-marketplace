@@ -18,6 +18,7 @@
 //
 // stdout is the MCP stream, so nothing here may print to it: every notice goes to stderr.
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +29,42 @@ export function dashboardUrl(env) {
   return url;
 }
 
+/**
+ * The bash that runs ensure-dashboard-mcp.sh. Claude Code starts an MCP server WITHOUT a shell, so on Windows a bare
+ * `bash` resolves through the Windows PATH, where `C:\Windows\System32\bash.exe` (the WSL launcher) comes first: it
+ * cannot read a Windows path and the server never starts (the session gets no dashboard tools). Hooks never hit this,
+ * because Claude Code runs hook commands inside Git Bash. So on Windows: Claude Code's own CLAUDE_CODE_GIT_BASH_PATH,
+ * else Git for Windows' bash beside `git --exec-path` (`<git>/mingw64/libexec/git-core` -> `<git>/bin/bash.exe`), else
+ * a loud failure naming the fix. Anywhere else, `bash` from PATH.
+ *
+ * @param {string} platform process.platform
+ * @param {Record<string, string | undefined>} env
+ * @param {() => string | null} gitExecPath `git --exec-path`, or null when git cannot be run
+ * @param {(file: string) => boolean} exists
+ */
+export function bashFor(platform, env, gitExecPath, exists) {
+  if (platform !== "win32") return "bash";
+  // Never the WSL launcher a bare `bash` finds first on the Windows PATH (see the docblock).
+  if (env.CLAUDE_CODE_GIT_BASH_PATH) {
+    if (exists(env.CLAUDE_CODE_GIT_BASH_PATH)) return env.CLAUDE_CODE_GIT_BASH_PATH;
+    throw new Error(`CLAUDE_CODE_GIT_BASH_PATH names ${env.CLAUDE_CODE_GIT_BASH_PATH}, which does not exist`);
+  }
+  const execPath = gitExecPath();
+  if (execPath) {
+    const candidate = path.win32.join(path.win32.normalize(execPath), "..", "..", "..", "bin", "bash.exe");
+    if (exists(candidate)) return candidate;
+  }
+  throw new Error(
+    "no Git Bash found: install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe " +
+      "(the bare `bash` on the Windows PATH is the WSL launcher, which cannot run this plugin's scripts)",
+  );
+}
+
+function gitExecPath() {
+  const r = spawnSync("git", ["--exec-path"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
+}
+
 function fail(reason) {
   console.error(`[danxbot dashboard MCP] ${reason}`);
   process.exit(1);
@@ -36,7 +73,14 @@ function fail(reason) {
 function runServer() {
   const root = process.env.CLAUDE_PLUGIN_ROOT;
   if (!root) fail("CLAUDE_PLUGIN_ROOT is not set: this launcher only runs as the danxbot plugin's MCP server");
-  const ensure = spawnSync("bash", [path.join(root, "scripts", "ensure-dashboard-mcp.sh")], {
+  let bash;
+  try {
+    bash = bashFor(process.platform, process.env, gitExecPath, existsSync);
+  } catch (err) {
+    fail(err.message);
+  }
+  // Forward slashes: Git Bash reads `C:/...` as a path; backslashes would be taken as escapes.
+  const ensure = spawnSync(bash, [path.join(root, "scripts", "ensure-dashboard-mcp.sh").replaceAll("\\", "/")], {
     encoding: "utf8",
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],

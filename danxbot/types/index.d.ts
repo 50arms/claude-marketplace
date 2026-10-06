@@ -6,55 +6,12 @@ export type PlanRow = {
   needsYou: number
 }
 
-export type StepRow = {
-  id: number
-  label: string
-  title: string
-  description: string
-  checked: boolean
-  steps: StepRow[]
-}
-
-export type SolutionRow = {
-  id: number
-  title: string
-  body: string
-  pro: string
-  con: string
-  recommended: boolean
-  steps: StepRow[]
-}
-
-export type CommentRow = {
-  // as the API returns it (a string)
-  id: string
-  author: string
-  at: string
-  text: string
-}
-
 export type ProblemRow = {
   id: number
   cardId: string
   cardTitle: string
-  priority: number
   type: 'question' | 'action'
   statement: string
-  summary: string | null
-  context: string | null
-  updatedAt: string
-  // DX-4458: read when the person opens the problem, never with the row: null until then. `detailError` is the one
-  // person-facing line for a failed read of it.
-  detail: ProblemDetail | null
-  detailError: string | null
-}
-
-export type ProblemDetail = {
-  solutions: SolutionRow[]
-  comments: CommentRow[]
-  // Comments on the card the API did not return (it pages them): the true count is at least
-  // comments.length and at most comments.length + moreComments.
-  moreComments: number
 }
 
 // The plan this session is bound to, read from the same response as the plan list (session.plan_id
@@ -224,13 +181,6 @@ export type PlanView = {
   revokedBy: string | null
 }
 
-// What the operator is composing on one problem: a note on a solution, or a rejection reason.
-export type Draft = {
-  problemId: number
-  kind: 'note' | 'reject'
-  solutionId: number
-}
-
 // Refresh coalescing: one load in flight, a forced refresh asked meanwhile (`again`) runs once more.
 export type RefreshGate = {
   inFlight: boolean
@@ -289,11 +239,8 @@ declare module 'claude-code' {
       // The band is hidden for the session (the footer button or /danx-plan brings it back). Its own atom: refresh
       // replaces `view` whole, so a flag inside it would be reset by every refresh.
       dismissed: boolean
-      expanded: number | null
-      // keys of the writes under way (config busyKey): one per problem or connect
+      // keys of the writes under way (config busyKey): one per connect, disconnect, sign-in or browser open
       busy: string[]
-      draft: Draft | null
-      talk: number | null
       // The in-app browser tab this plugin owns, so a person's own tabs are never navigated.
       tab: string | null
       // The session's title as the app last reported it, passed to `plan_connect`.

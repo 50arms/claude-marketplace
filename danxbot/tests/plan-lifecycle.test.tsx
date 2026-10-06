@@ -1,5 +1,5 @@
 // Session lifecycle and re-entry: what session.end does by reason, the retry while the MCP server
-// connects, the plan-list cap, and one write per answer however many presses land together.
+// connects, and the plan-list cap.
 import { describe, expect, test } from 'claude-code/testing'
 
 import { LOCK_STALE_MS, PACING_POLL_MS, SERVER, START_RETRY_MS } from '../hooks/plan/config'
@@ -44,22 +44,14 @@ describe('session.end by reason', () => {
   }
 
   for (const reason of ['clear', 'resume']) {
-  test(`a ${reason} drops what was open or half-typed and refreshes at once`, async ($, on) => {
+  test(`a ${reason} refreshes at once: what the dashboard shows may have moved`, async ($, on) => {
     const d = dashboard(on)
     on('session.end', () => ({ sessionId: 's1' }) as any)
     await startSession($, d, 'desktop')
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await pane.press({ key: 'open-11' })
-    await pane.press({ key: 'note-112' })
-    await pane.press({ key: 'talk-11' })
-    expect(await pane.find({ key: 'note-in-112' })).toBeDefined()
     const before = loadsOf(d)
     await $.session.end({ reason } as any)
     await d.clock.settle()
     expect(loadsOf(d)).toBe(before + 1)
-    expect(await pane.find({ key: 'use-112' })).toBeUndefined()
-    expect(await pane.find({ key: 'note-in-112' })).toBeUndefined()
-    expect(await pane.find({ key: 'comment-11' })).toBeUndefined()
   })
   }
 })
@@ -122,15 +114,6 @@ describe('what one load says about what it did not read', () => {
     expect(await text(pane)).not.toContain('No plans found.')
   })
 
-  test('a card whose comments answer no total is an error, never a complete discussion', async ($, on) => {
-    const d = dashboard(on, { noCommentsTotal: true })
-    await startSession($, d, 'desktop')
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await pane.press({ key: 'open-11' })
-    expect(await text(pane)).toContain("Couldn't load the comments of PBLM-11: the dashboard did not say how many there are")
-    expect(await pane.find({ key: 'talk-11' })).toBeUndefined()
-  })
-
   for (const surface of ['terminal', 'desktop'] as const) {
     test(`a response with no total is an error, never a complete list (${surface})`, async ($, on) => {
       const d = dashboard(on, { noTotal: true })
@@ -146,43 +129,6 @@ describe('what one load says about what it did not read', () => {
       expect(await text(pane)).toContain('answered no total')
     })
   }
-})
-
-describe('one write per answer, however many presses land together', () => {
-  const PATHS: { name: string; open: string; act: (pane: any) => Promise<unknown>[]; writes: number }[] = [
-    { name: 'option', open: 'open-11', act: pane => [pane.press({ key: 'use-112' }), pane.press({ key: 'use-112' })], writes: 1 },
-    { name: 'approve', open: 'open-12', act: pane => [pane.press({ key: 'use-121' }), pane.press({ key: 'use-121' })], writes: 1 },
-    { name: 'typed', open: 'open-11', act: pane => [pane.input({ key: 'free-11', text: 'x' }), pane.input({ key: 'free-11', text: 'x' })], writes: 1 },
-    { name: 'note', open: 'open-11', act: pane => [pane.input({ key: 'note-in-111', text: 'n' }), pane.input({ key: 'note-in-111', text: 'n' })], writes: 1 },
-    { name: 'reject', open: 'open-12', act: pane => [pane.input({ key: 'rej-in-121', text: 'r' }), pane.input({ key: 'rej-in-121', text: 'r' })], writes: 1 },
-  ]
-  for (const path of PATHS) {
-    test(`${path.name}: a double press makes one API call and one row for the model`, async ($, on) => {
-      const d = dashboard(on)
-      await startSession($, d, 'desktop')
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-      await pane.press({ key: path.open })
-      if (path.name === 'note') await pane.press({ key: 'note-111' })
-      if (path.name === 'reject') await pane.press({ key: 'rej-121' })
-      await Promise.allSettled(path.act(pane))
-      await d.clock.settle()
-      expect(d.writes().filter(w => w.path.endsWith('/answer'))).toHaveLength(path.writes)
-      expect(d.toasts.filter(t => t.startsWith('Could not tell the model'))).toHaveLength(1)
-    })
-  }
-
-  test('two different problems can be answered together', async ($, on) => {
-    const d = dashboard(on)
-    await startSession($, d, 'desktop')
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await pane.press({ key: 'open-11' })
-    await pane.press({ key: 'use-112' })
-    await d.clock.settle()
-    await pane.press({ key: 'open-21' })
-    await pane.press({ key: 'use-211' })
-    await d.clock.settle()
-    expect(d.writes().map(w => w.path)).toEqual(['/api/issues/DX-1/problems/11/answer', '/api/issues/DX-2/problems/21/answer'])
-  })
 })
 
 describe('expectRowCarries', () => {
@@ -216,24 +162,19 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
   })
 
   test('a busy key left by an earlier process is cleared at session.start', async ($, on) => {
-    const d = dashboard(on, { hangFirstAnswer: true })
+    const d = dashboard(on, { browserClosed: true, navigateTakesMs: 5_000 })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await pane.press({ key: 'open-11' })
-    // a write in flight that never settles keeps its key claimed, as one cut off by a dying process would
-    const hung = pane.press({ key: 'use-112' })
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    // an open that never finishes keeps its key claimed, as one cut off by a dying process would
+    const opening = band.press({ key: 'open-tab' })
     await d.clock.settle()
-    expect(d.writes()).toHaveLength(1)
-    await pane.press({ key: 'use-112' })
-    expect(d.writes()).toHaveLength(1)
-    // the new start frees the key: the answer goes through
+    expect((await band.find({ key: 'open-tab' }))?.text).toBe('Opening…')
+    // the new start frees the key
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    await pane.press({ key: 'use-112' })
-    await d.clock.settle()
-    expect(d.writes()).toHaveLength(2)
-    d.release()
-    await hung
+    expect((await band.find({ key: 'open-tab' }))?.text).toBe('Browser tab')
+    await d.clock.advance(5_000)
+    await opening
   })
 })

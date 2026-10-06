@@ -18,7 +18,6 @@ async function mounted($: any, d: any) {
   await startSession($, d, 'desktop')
   const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
   const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-  await pane.press({ key: 'open-11' })
   return { band, pane }
 }
 
@@ -26,7 +25,6 @@ describe('Open in browser tab shows it is working', () => {
   for (const press of [
     { from: 'band', key: 'open-tab' },
     { from: 'pane', key: 'open-plan' },
-    { from: 'pane', key: 'tab-11' },
   ] as const) {
     test(`pressed on the ${press.from} (${press.key}): every browser button reads Opening… while the open is in flight, then flips back`, async ($, on) => {
       const d = dashboard(on, { browserClosed: true, navigateTakesMs: 5_000 })
@@ -39,14 +37,12 @@ describe('Open in browser tab shows it is working', () => {
       await d.clock.settle()
       expect(await label(band, 'open-tab')).toBe('Opening…')
       expect(await label(pane, 'open-plan')).toBe('Opening…')
-      expect(await label(pane, 'tab-11')).toBe('Opening…')
       expect(d.toasts).toEqual(['Opening the plan in the browser…'])
 
       await d.clock.advance(5_000)
       await opening
       expect(await label(band, 'open-tab')).toBe('Browser tab')
       expect(await label(pane, 'open-plan')).toBe('Open in browser tab')
-      expect(await label(pane, 'tab-11')).toBe('Open in browser tab')
       expect(d.toasts).toEqual(['Opening the plan in the browser…', 'Plan opened in the browser tab'])
     })
   }
@@ -57,7 +53,7 @@ describe('Open in browser tab shows it is working', () => {
     const first = band.press({ key: 'open-tab' })
     await d.clock.settle()
     const calls = browserCalls(d).length
-    await Promise.all([band.press({ key: 'open-tab' }), pane.press({ key: 'open-plan' }), pane.press({ key: 'tab-11' })])
+    await Promise.all([band.press({ key: 'open-tab' }), pane.press({ key: 'open-plan' })])
     expect(browserCalls(d)).toHaveLength(calls)
     expect(d.toasts.filter(t => t.startsWith('Opening'))).toHaveLength(1)
     await d.clock.advance(5_000)

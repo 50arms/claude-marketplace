@@ -1,4 +1,4 @@
-import type { CardLinks, CommentRow, ConnectedPlan, ProblemDetail, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, SolutionRow, StatusBreakdown, StepRow, SubagentRow, SubagentsView } from '../../types'
+import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, StatusBreakdown, SubagentRow, SubagentsView } from '../../types'
 import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, MAX_SESSIONS, NEEDS_YOU_BUCKET_ID, PREFIX_PATTERN, STATUS_KEYS } from './config'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
 import { parentLoop, toSubagent } from './subagents'
@@ -26,39 +26,9 @@ export function errText(r: Api): string {
   return `${r.status || 'mcp'}: ${b.message ?? b.error ?? JSON.stringify(b).slice(0, ERROR_BODY_MAX)}`
 }
 
-function toSteps(raw: any[]): StepRow[] {
-  return (raw ?? []).map(s => ({
-    id: s.id,
-    label: s.label,
-    title: s.title,
-    description: s.description ?? '',
-    checked: s.checked_at !== null && s.checked_at !== undefined,
-    steps: toSteps(s.steps ?? []),
-  }))
-}
-
-function toSolutions(raw: any[]): SolutionRow[] {
-  return (raw ?? [])
-    .filter((s: any) => !s.removed)
-    .map(
-      (s: any): SolutionRow => ({
-        id: s.id,
-        title: s.title,
-        body: s.body ?? '',
-        pro: s.pro ?? '',
-        con: s.con ?? '',
-        recommended: !!s.recommended,
-        steps: toSteps(s.steps ?? []),
-      }),
-    )
-    // recommended first, as the browser sorts them
-    .sort((a: SolutionRow, b: SolutionRow) => Number(b.recommended) - Number(a.recommended))
-}
-
-// DX-4458: a card read for its problem rows only. The solutions, steps and comments of a problem are read when the
-// person opens it (`withDetail`): a card with dozens of problems answers over the host's size limit when they all come at once.
-export function toProblems(card: any, priority: number): ProblemRow[] {
-  // DX-4232 PBLM-1913: an answered problem leaves the pane at once; its history lives in the browser.
+// A card read for its problem rows: only the open ones, which is what the pane lists. A problem answered in the browser leaves the list
+// on the next refresh; its history lives there too.
+function toProblems(card: any): ProblemRow[] {
   return (card.problems ?? [])
     .filter((p: any) => p.open)
     .map(
@@ -66,42 +36,10 @@ export function toProblems(card: any, priority: number): ProblemRow[] {
         id: p.id,
         cardId: card.id,
         cardTitle: card.title,
-        priority,
         type: p.type === 'action' ? 'action' : 'question',
         statement: p.statement,
-        summary: p.summary ?? null,
-        context: p.context ?? null,
-        updatedAt: p.updated_at,
-        detail: null,
-        detailError: null,
       }),
     )
-}
-
-// DX-4458: what an opened problem shows beyond its row: its solutions (the problems route answers them with their
-// steps; `q` narrows it to the problem by its statement) and its card's comments. A failure is that problem's own line.
-async function withDetail(call: Call, p: ProblemRow): Promise<ProblemRow> {
-  const [sol, com] = await Promise.all([
-    call('GET', `/api/issues/${p.cardId}/problems`, { query: { q: p.statement, status: 'open' } }),
-    call('GET', `/api/issues/${p.cardId}`, { query: { fields: { comments: true } } }),
-  ])
-  const failed = (what: string, r: Api): ProblemRow => ({ ...p, detailError: `Couldn't load the ${what} of PBLM-${p.id}: ${failureReason(r)}` })
-  if (!sol.ok) return failed('solutions', sol)
-  if (!com.ok) return failed('comments', com)
-  const found = (sol.body.problems ?? []).find((x: any) => x.id === p.id)
-  if (!found) return { ...p, detailError: `PBLM-${p.id} is no longer open on ${p.cardId}: refresh the pane.` }
-  // a card's comments are paged: without comments_page.total they cannot be read as complete
-  if (typeof com.body.comments_page?.total !== 'number') return { ...p, detailError: `Couldn't load the comments of PBLM-${p.id}: the dashboard did not say how many there are` }
-  const comments: any[] = com.body.comments ?? []
-  const detail: ProblemDetail = {
-    solutions: toSolutions(found.solutions),
-    comments: comments
-      .filter(c => c.problem_id === p.id)
-      .map((c): CommentRow => ({ id: String(c.id), author: c.author ?? '', at: c.timestamp, text: c.text ?? '' })),
-    // comments on the card the API did not return
-    moreComments: Math.max(0, com.body.comments_page.total - comments.length),
-  }
-  return { ...p, detail }
 }
 
 // control flow only: thrown by `guarded` below, caught by loadPlan, never seen outside it
@@ -115,7 +53,7 @@ class KeyRevoked extends Error {
 // The whole load. A signed-out answer to ANY of its calls (the key can be dropped between two of them) ends it as the
 // `signed-out` view, and a key a person revoked as the `key-revoked` view (DX-4418), never as a generic error carrying the
 // server's text. `resumePlan` is the caller's to fill.
-export async function loadPlan(call: Call, refreshedAt: string, expandedId: number | null): Promise<PlanView> {
+export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const guarded: Call = async (method, path, extra) => {
     const r = await call(method, path, extra)
     // revoked first: a revoked key's halt is a different text from the signed-out one, but the order says which wins
@@ -125,7 +63,7 @@ export async function loadPlan(call: Call, refreshedAt: string, expandedId: numb
     return r
   }
   try {
-    return await readPlan(guarded, refreshedAt, expandedId)
+    return await readPlan(guarded, refreshedAt)
   } catch (err) {
     if (err instanceof KeyRevoked) return { ...EMPTY, phase: 'key-revoked', revokedBy: err.by, refreshedAt }
     if (err instanceof SignedOut) return { ...EMPTY, phase: 'signed-out', refreshedAt }
@@ -133,7 +71,7 @@ export async function loadPlan(call: Call, refreshedAt: string, expandedId: numb
   }
 }
 
-async function readPlan(call: Call, refreshedAt: string, expandedId: number | null): Promise<PlanView> {
+async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const list = await call('GET', '/api/plans', { query: { limit: MAX_PLANS } })
   if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true, staleServer: list.staleServer === true }
 
@@ -204,10 +142,7 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
   if (typeof cards.body.total !== 'number') {
     return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards answered no total: cannot tell whether the card list is complete` }
   }
-  const rows: { id: string; priority: number }[] = (cards.body.cards ?? []).map((c: any) => ({
-    id: c.id,
-    priority: c.priority ?? 0,
-  }))
+  const rows: { id: string }[] = (cards.body.cards ?? []).map((c: any) => ({ id: c.id }))
   const fetched = await Promise.all(
     rows.map(async row => ({
       row,
@@ -218,11 +153,11 @@ async function readPlan(call: Call, refreshedAt: string, expandedId: number | nu
   const cardErrors: string[] = []
   const cardProblems: ProblemRow[][] = []
   for (const f of fetched) {
-    if (f.r.ok) cardProblems.push(toProblems(f.r.body, f.row.priority))
+    if (f.r.ok) cardProblems.push(toProblems(f.r.body))
     else cardErrors.push(`Couldn't load ${f.row.id}: ${failureReason(f.r)}`)
   }
   // cards arrive priority-sorted; keep that order
-  const problems: ProblemRow[] = await Promise.all(cardProblems.flat().map(p => (p.id === expandedId ? withDetail(call, p) : p)))
+  const problems: ProblemRow[] = cardProblems.flat()
 
   // The in-progress bucket: the same completeness rule, and a readable agent name per row (the cards
   // route carries only the raw session id of a claimed card).
