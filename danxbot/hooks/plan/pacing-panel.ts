@@ -1,18 +1,19 @@
-import type { LimitSettings, PacingLevel, PacingReadout, PacingVerdict, PanelState, SpendSettings } from '../../types'
+import type { LimitSettings, PacingLevel, PacingLimitKey, PacingReadout, PacingVerdict, PanelState, SpendSettings } from '../../types'
 
 // DX-4339 (PLAN-29): the pacing panel's model, pure (no `$`): the session's own usage windows (`$.session.usage().rateLimits`, which move live)
 // set against the team's pacing settings (pacing-settings.ts) and the session's account verdict (the DX-4340 cache, pacing-line.ts). A limit the
 // team switched off is not shown. The text is pacing-format.ts, the drawing pacing-panel-view.tsx.
 
-export type PacingLimitKey = 'five_hour' | 'weekly'
-export const LIMIT_KEYS: readonly PacingLimitKey[] = ['five_hour', 'weekly']
+// the two windows the session itself reports (spend is the server's alone)
+export type WindowKey = Exclude<PacingLimitKey, 'spend'>
+export const LIMIT_KEYS: readonly WindowKey[] = ['five_hour', 'weekly']
 // the harness names the weekly window `seven_day`
-const WINDOW_KIND: Record<PacingLimitKey, string> = { five_hour: 'five_hour', weekly: 'seven_day' }
+const WINDOW_KIND: Record<WindowKey, string> = { five_hour: 'five_hour', weekly: 'seven_day' }
 
 export const EMPTY_PANEL_STATE: PanelState = { settings: null, settingsAt: null, settingsRead: { state: 'pending' }, verdict: null, spend: null, readout: null, limits: [] }
 
 export type PanelEntry = {
-  limit: PacingLimitKey
+  limit: WindowKey
   // percent used of the window, rounded for display; null when the session has no figure for it yet
   used: number | null
   // epoch ms the window resets; null with no figure

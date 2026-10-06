@@ -248,8 +248,8 @@ describe('the worst-limit readout', () => {
   test('each limit is explained in plain words', () => {
     expect(readoutSentence(lim({ state: 'spare', headroomMinutes: 60 }))).toBe('5-hour limit: at the current rate you reach 95% about 1h after the window resets, so you have 1h spare.')
     expect(readoutSentence(lim({ limit: 'weekly', state: 'short', headroomMinutes: -90 }))).toBe('Weekly limit: at the current rate you reach 95% 1h30m before the window resets, so you are 1h30m short.')
-    expect(readoutSentence(lim({ state: 'hold', resetsInMinutes: 100 }))).toBe('5-hour limit: over pace (past 95%), so nothing new starts until the window resets in 1h40m.')
-    expect(readoutSentence(lim({ limit: 'spend', state: 'stop', resetsInMinutes: 45 }))).toBe('Spend limit: critical (past 99%), so everything new stops until the window resets in 45m.')
+    expect(readoutSentence(lim({ state: 'hold', resetsInMinutes: 100 }))).toBe('5-hour limit: over pace, so nothing new starts until it eases or the window resets in 1h40m.')
+    expect(readoutSentence(lim({ limit: 'spend', state: 'stop', resetsInMinutes: 45 }))).toBe('Spend limit: critical (at or past 99%), so everything new stops until the window resets in 45m.')
   })
 })
 
@@ -268,7 +268,7 @@ for (const surface of SURFACES)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       const all = await joined(pane)
       expect(all).toContain('5-hour')
-      expect(all).toContain('5-hour limit: over pace (past 80%), so nothing new starts until the window resets in 1h40m.')
+      expect(all).toContain('5-hour limit: over pace, so nothing new starts until it eases or the window resets in 1h40m.')
       expect(all).toContain('62% used')
       expect(all).toContain('target 80% · critical 95% · spread evenly · resets in 3h 10m (Sat 11:10Z)')
       expect(all).toContain('target 70% · critical 90% · fast then hold · resets in 6d 1h')
@@ -296,6 +296,8 @@ for (const surface of SURFACES)
       const d = await paced($, on, surface, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: verdictBody() } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      // the readout's worst limit is the whole pacing band: spend, unjudged, adds nothing to it
+      expect((await band.find({ type: 'Text', text: /^5h / })).text).toBe('5h 80%: hold 1h40m')
       expect(await joined(band)).not.toContain('spend')
       expect(await joined(pane)).toContain('danxbot has not judged spend for this account yet')
       d.setMcp('down')
@@ -305,20 +307,30 @@ for (const surface of SURFACES)
       expect(await joined(pane)).toContain('needs danxbot')
     })
 
+    test('a short limit reads yellow on the band line', async ($, on) => {
+      await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody({ level: 'on_pace', budget: null, limits: [{ ...SPARE_FIVE, state: 'short', headroom_minutes: -90 }] }) } })
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      const t = await band.find({ type: 'Text', text: /^5h / })
+      expect([t.text, t.props.color]).toEqual(['5h 80%: -1h30m', WARNING])
+    })
+
     test('a team with spend off draws no spend', async ($, on) => {
       await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody() } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await joined(band)).not.toContain('spend')
     })
 
-    test('the figures move with the session: a new reading redraws the band and the pane', async ($, on) => {
+    test('the figures move with the session: a new reading redraws the pane, and the band keeps the server readout', async ($, on) => {
       const d = await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody({ level: 'on_pace', budget: null, limits: [SPARE_FIVE] }) } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await joined(band)).toContain('5h 80%: +1h')
+      expect((await band.find({ type: 'Text', text: /^5h 80%/ })).props.color).toBe(SUCCESS)
+      const bandBefore = await joined(band)
       const moved = [{ kind: 'five_hour', percentUsed: 96, resetsAt: FIVE }, { kind: 'seven_day', percentUsed: 41, resetsAt: WEEK }]
       await $.session.measure({ context: {}, rateLimits: moved, changed: ['rateLimits'] } as any)
       await d.clock.settle()
+      expect(await joined(band)).toBe(bandBefore)
       expect(await joined(pane)).toContain('96% used')
       expect((await pane.find({ type: 'Text', text: '96% used' })).props.color).toBe(DANGER)
     })
