@@ -39,9 +39,6 @@ describe("bashFor: the bash that runs the install script", () => {
     assert.equal(bashFor("linux", {}, none, never), "bash");
     assert.equal(bashFor("darwin", {}, none, never), "bash");
   });
-  test("on Windows it is never a bare `bash` (the WSL launcher comes first on the Windows PATH)", () => {
-    assert.notEqual(bashFor("win32", {}, () => "C:/Program Files/Git/mingw64/libexec/git-core", () => true), "bash");
-  });
   test("on Windows CLAUDE_CODE_GIT_BASH_PATH wins, and a missing file is refused by name", () => {
     const p = "D:\\tools\\Git\\bin\\bash.exe";
     assert.equal(bashFor("win32", { CLAUDE_CODE_GIT_BASH_PATH: p }, () => "C:/x/mingw64/libexec/git-core", (f) => f === p), p);
@@ -53,9 +50,12 @@ describe("bashFor: the bash that runs the install script", () => {
     assert.equal(got, "C:\\Program Files\\Git\\bin\\bash.exe");
     assert.deepEqual(seen, ["C:\\Program Files\\Git\\bin\\bash.exe"]);
   });
-  test("on Windows with no git, or no bash beside it, it fails loudly naming the fix", () => {
-    assert.throws(() => bashFor("win32", {}, none, never), /no Git Bash found: install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH/);
-    assert.throws(() => bashFor("win32", {}, () => "C:/Program Files/Git/mingw64/libexec/git-core", never), /no Git Bash found/);
+  test("on Windows it fails loudly, telling git-not-runnable from no bash beside git, naming the fix", () => {
+    assert.throws(() => bashFor("win32", {}, none, never), /no Git Bash found: `git --exec-path` could not be run.*CLAUDE_CODE_GIT_BASH_PATH/);
+    assert.throws(
+      () => bashFor("win32", {}, () => "C:/Program Files/Git/mingw64/libexec/git-core", never),
+      /git runs \(exec path C:\/Program Files\/Git\/mingw64\/libexec\/git-core\) but C:\\Program Files\\Git\\bin\\bash\.exe does not exist/,
+    );
   });
 });
 

@@ -39,23 +39,30 @@ export function dashboardUrl(env) {
  *
  * @param {string} platform process.platform
  * @param {Record<string, string | undefined>} env
- * @param {() => string | null} gitExecPath `git --exec-path`, or null when git cannot be run
+ * @param {() => string | null} getGitExecPath `git --exec-path`, or null when git cannot be run
  * @param {(file: string) => boolean} exists
  */
-export function bashFor(platform, env, gitExecPath, exists) {
+export function bashFor(platform, env, getGitExecPath, exists) {
   if (platform !== "win32") return "bash";
   // Never the WSL launcher a bare `bash` finds first on the Windows PATH (see the docblock).
   if (env.CLAUDE_CODE_GIT_BASH_PATH) {
     if (exists(env.CLAUDE_CODE_GIT_BASH_PATH)) return env.CLAUDE_CODE_GIT_BASH_PATH;
     throw new Error(`CLAUDE_CODE_GIT_BASH_PATH names ${env.CLAUDE_CODE_GIT_BASH_PATH}, which does not exist`);
   }
-  const execPath = gitExecPath();
-  if (execPath) {
-    const candidate = path.win32.join(path.win32.normalize(execPath), "..", "..", "..", "bin", "bash.exe");
-    if (exists(candidate)) return candidate;
+  // DX-4623: Windows-only branch; a bare `bash` here is the WSL launcher, so it is never an option.
+  const execPath = getGitExecPath();
+  if (!execPath) {
+    throw new Error(
+      "no Git Bash found: `git --exec-path` could not be run (git is not installed or not on PATH); " +
+        "install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe " +
+        "(the bare `bash` on the Windows PATH is the WSL launcher, which cannot run this plugin's scripts)",
+    );
   }
+  const candidate = path.win32.join(path.win32.normalize(execPath), "..", "..", "..", "bin", "bash.exe");
+  if (exists(candidate)) return candidate;
   throw new Error(
-    "no Git Bash found: install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe " +
+    `no Git Bash found: git runs (exec path ${execPath}) but ${candidate} does not exist; ` +
+      "install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe " +
       "(the bare `bash` on the Windows PATH is the WSL launcher, which cannot run this plugin's scripts)",
   );
 }
@@ -79,8 +86,7 @@ function runServer() {
   } catch (err) {
     fail(err.message);
   }
-  // Forward slashes: Git Bash reads `C:/...` as a path; backslashes would be taken as escapes.
-  const ensure = spawnSync(bash, [path.join(root, "scripts", "ensure-dashboard-mcp.sh").replaceAll("\\", "/")], {
+  const ensure = spawnSync(bash, [path.join(root, "scripts", "ensure-dashboard-mcp.sh")], {
     encoding: "utf8",
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],

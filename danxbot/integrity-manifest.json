@@ -47,7 +47,7 @@
     "scripts/activity-report.mjs": "0b5617441cdbca09b94f5e0b84d790e4d508451e83424aad00ae402a9c1dd81f",
     "scripts/background-work-report.mjs": "6162661769720a0879c1571fe2ef646bd874a0483c90935d928fa73f33086f53",
     "scripts/capture-screenshot.mjs": "035814a6eca293ed03cf4eb3bc55c81972eb4dba83ec6b385126b64d7509c2bf",
-    "scripts/dashboard-mcp-server.mjs": "9b6d9d41bb35695e3d7080a5e6967b71343a21b8e1d664d949369323f1522205",
+    "scripts/dashboard-mcp-server.mjs": "c067d0d3bc4af974a8ccac4b42718c1fcb4e412ecb966ac056e08c025d4fa110",
     "scripts/ensure-dashboard-mcp.sh": "d1f838af14a5d72d2f3537d535d382d8ab3ac89a7fc9a58c7c7e8bf048f8988a",
     "scripts/event-hook.sh": "76b0c523d8743ca916735ed232d5beef28d3e6a0e2c48858b03fc5adccdd7e84",
     "scripts/inject-time.sh": "94ffac64d7424ef31181bd86bca6d594ab5f755e26c028545f65cbdf439527ae",
