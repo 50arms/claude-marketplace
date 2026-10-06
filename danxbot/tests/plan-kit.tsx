@@ -23,6 +23,9 @@ export const TABS_CONTEXT_CLOSED_LATER = '{\n  "browserOpen": false,\n  "tabs": 
 // one, so a link built on a constant instead of the answer fails every test that checks a href.
 // DX-4234: the registry's effective text the fixture answers for an event (a distinct text per event, so a wrong event shows)
 export const EVENT_TEXT = (event: string) => `The ${event} text.`
+// DX-4234: where the fixture's machine keeps the MCP server's connection record of a session (what makes a session locally known as plan-connected)
+export const HOME_DIR = '/home/u'
+export const RECORD_PATH = (sessionId: string) => `${HOME_DIR}/.config/danxbot/plan-sessions/${sessionId}.json`
 export const DASHBOARD_URL = 'http://localhost:5555'
 // `dashboardUrl: NO_DASHBOARD_URL` leaves the field out of the answer (a JSON null is sent as one)
 export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
@@ -286,6 +289,8 @@ export function dashboard(
     contextDelayMs: 0,
     // DX-3421: GET /api/plans (the session-plan read) answers this status (a dashboard fault) instead of the session
     plansStatus: undefined as number | undefined,
+    // DX-4234: whether this session has a connection record on disk (a connected session does; a signed-out or unconnected one does not)
+    localRecord: options.connected !== false,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
     eventText: {} as Record<string, string | { status: number }>,
     // DX-4234: what the server's `restart_notice` tool answers (DX-4632): `{notice: null}` unless a test sets a JSON answer (`json`), a raw
@@ -774,7 +779,12 @@ export function dashboard(
   // sub-agents (world.agents).
   const agentLists = { count: 0 }
   // DX-4610: the tools the session lists: the plugin's when its server is connected, the repo's own server's when the plugin's is the old standby
-  on('tool.list', () => options.toolList === 'rejects' ? ({ deny: 'tool list unavailable' } as any) : options.toolList === 'both' ? ({ value: [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }, { name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] } as any) : ({ value: options.mcp === 'stale' ? [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }] : notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any)
+  // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
+  const toolLists = { n: 0 }
+  const toolListAnswer = () => options.toolList === 'rejects' ? ({ deny: 'tool list unavailable' } as any) : options.toolList === 'both' ? ({ value: [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }, { name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] } as any) : ({ value: options.mcp === 'stale' ? [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }] : notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any
+  on('tool.list', () => (toolLists.n++, toolListAnswer()))
+  // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
+  on('fs.exists', (_$: any, e: any) => ({ value: world.localRecord && e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/') === RECORD_PATH(world.sessionId) }) as any)
   on('session.id', () => ({ value: world.sessionId }) as any)
   on('agent.list', () => {
     agentLists.count++
@@ -825,7 +835,7 @@ export function dashboard(
   })
   // DX-4336: what the harness knows of the account's windows
   on('session.usage', () => (options.usageReadFails === undefined ? { value: { startedAt: 0, context: {}, rateLimits: world.rateLimits } } : { deny: options.usageReadFails }) as any)
-  mock.env(on, { ...(options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid }) })
+  mock.env(on, { HOME: HOME_DIR, ...(options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid }) })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)
     if (e.timeoutMs !== undefined) toastTimeouts.push(e.timeoutMs)
@@ -873,7 +883,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

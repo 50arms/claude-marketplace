@@ -58,6 +58,7 @@ function asRestartNoticeAnswer(value: unknown): RestartNoticeAnswer | null {
     return isText(reason) && isText(detail) && isText(fix) ? { stopped: { reason, detail, fix } } : null
   }
   if (!('notice' in value)) return null
+  // keys beyond the contract's are ignored on purpose: a newer server may add fields, and none changes what the model is told
   return value.notice === null || isText(value.notice) ? (value as RestartNoticeAnswer) : null
 }
 
@@ -88,4 +89,6 @@ export const restartFailureLine = (reason: string) =>
 // session start, or the reads of a sub-agent start, together), as the bash hook's `timeout 8s` was: a hung dashboard answers the failure line
 // below instead of holding the start. The restart notice is the server's own lookup and has its own 8 s deadline (`lookup_timeout`).
 export const CONTEXT_DEADLINE_MS = 8_000
+// The plugin's own server was not in the session's tool list by the deadline (said only for a session known to be on a plan).
+export const SERVER_NOT_CONNECTED_REASON = `server_not_connected: the danxbot dashboard server was not connected within ${CONTEXT_DEADLINE_MS / 1000}s`
 export const DEADLINE_REASON = `timeout: no response within ${CONTEXT_DEADLINE_MS / 1000}s`
