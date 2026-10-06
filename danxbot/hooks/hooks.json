@@ -1,7 +1,5 @@
 {
-  "modules": [
-    "./register.tsx"
-  ],
+  "modules": ["./register.tsx"],
   "description": "register.tsx (the \"modules\" entry above): the plan band, the Plan pane, the plan event relay, the time stamp on every prompt and tool call, the registry's event text for a plan-connected session (session start, resume, compaction, every sub-agent) and the restart notice, as native function hooks, tested by `claude plugin test danxbot` and validated by `claude plugin validate danxbot` before every publish (publish.sh needs the claude CLI: CLAUDE_BIN). Command hooks, all through launch.mjs: launch.mjs: every command below runs through it; it verifies the plugin's files against integrity-manifest.json first, restores a damaged one from the marketplace clone, and reports what it cannot restore. ensure-dashboard-mcp.sh: installs the recorded danx-dashboard-mcp version (the registry's latest, recorded at session start) into the plugin data dir once, so the MCP server and the report scripts run it with node, never a cold npx. background-work-report.mjs: reports running background work to quiet the idle nudge. activity-report.mjs: tells the dashboard when a sub-agent starts or finishes and when a background Bash call starts, so the session's running count closes. ready-cards-stop.mjs: blocks a plan-connected session's stop once while its plan has ready, unclaimed cards. Which danx-dashboard-mcp version runs: the two session-start entry points (ensure-dashboard-mcp.sh --prewarm, background-work-report.mjs session-start) refresh the recorded version from the npm registry's latest; every other hook reads the record and makes no registry request.",
   "hooks": {
     "SessionStart": [

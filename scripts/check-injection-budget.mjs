@@ -17,6 +17,9 @@
 //     the one thing DX-3347 explicitly kept (since DX-4234 the danxbot module's
 //     time stamp on prompt.submit, measured by running its pure `stamp`).
 //   - session-start (SessionStart, fires at startup): 26,373B.
+//     Since DX-4234 session-start measures 0B here: the event text and the restart notice are the dashboard's
+//     (registry and server) text, delivered by the danxbot module with no offline bytes to count. The ceiling stays
+//     at DX-3347's, so a standing session-start injection cannot come back unnoticed.
 // This gate also folds in PostToolUse's unconditional per-tool-call total
 // (23B, the same clock's after-each-tool-call stamp, tool.call since DX-4234) into the "per-turn"
 // figure — a turn typically includes at least one tool call, so the
