@@ -1,6 +1,6 @@
 name: claude-plugins
 issue_prefix: CP
-url: git@github-newms87:newms87/claude-plugins.git
+url: git@github-newms87:50arms/claude-marketplace.git
 runtime: local
 language: markdown
 framework: none

@@ -61,7 +61,7 @@
     "scripts/lib/plan-connection.mjs": "afb75ca400c18e9deb936969ad1a89fb2f89555361a26a208717679f96b26a91",
     "scripts/lib/report-support.mjs": "1fb11d2f370fd986d134cb6497fb465d096fd9b2c84de740d28e2bada686b05a",
     "scripts/ready-cards-stop.mjs": "cbb99c2208d3722931c2808e894d6cf3f40e98caa23dd95254fd2c6d6bb7382b",
-    "scripts/subagents-live.mjs": "d74258a649e432a883a7dd025cd4e81c0f48a448c2145896ddc09e02992f28ae",
+    "scripts/subagents-live.mjs": "7535fe5bd1ade6192e143a61089413f922aa3b7adc3d80e0544b4015bc363666",
     "skills/fix-agent-behavior/SKILL.md": "1f5f78b80c0cd5832505093f98c01f8241ef3a0850c5a68796295fc965fbee5c",
     "skills/issue-workflow/SKILL.md": "d1c4bd7ce60948afacb552308a6e8a5a33fdbed34a8fa8c4e9f18811bcbd458c",
     "skills/issue-workflow/references/card-creation-and-reference.md": "5a486a62ceaa4f29b9b6254e7323842ae6ae3564ee49af802d94af0b22445d12",

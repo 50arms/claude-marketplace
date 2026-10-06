@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "verify-delivery.mjs");
 
-const MARKETPLACE = "newms-plugins";
+const MARKETPLACE = "50arms";
 const PLUGIN = "danxbot";
 
 function mkTmpDir(prefix) {

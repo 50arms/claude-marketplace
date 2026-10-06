@@ -1,7 +1,7 @@
 # Claude Plugins Overview
 
-Source-of-truth for the `newms-plugins` Claude Code plugin marketplace
-(`github:newms87/claude-plugins`). Consumers install via the marketplace and
+Source-of-truth for the `50arms` Claude Code plugin marketplace
+(`github:50arms/claude-marketplace`). Consumers install via the marketplace and
 auto-update to whatever VERSION each plugin advertises.
 
 ## Layout

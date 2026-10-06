@@ -1,7 +1,7 @@
 {
-  "name": "newms-plugins",
+  "name": "50arms",
   "private": true,
-  "description": "Personal Claude Code plugin set. Distributed via GitHub marketplace (not npm). The `publish:*` scripts bump per-plugin .claude-plugin/plugin.json versions, commit, and push — version bumps are what trigger marketplace auto-update on every consumer.",
+  "description": "Claude Code plugin set from 50 Arms. Distributed via GitHub marketplace (not npm). The `publish:*` scripts bump per-plugin .claude-plugin/plugin.json versions, commit, and push — version bumps are what trigger marketplace auto-update on every consumer.",
   "scripts": {
     "publish:patch": "./scripts/publish.sh patch",
     "publish:minor": "./scripts/publish.sh minor",

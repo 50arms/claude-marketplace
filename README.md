@@ -1,6 +1,6 @@
-# newms-plugins
+# 50arms marketplace
 
-Personal Claude Code plugin set: one plugin, `danxbot` — the plan and issue workflows,
+Source repo and marketplace (`50arms`) of one Claude Code plugin, `danxbot` — the plan and issue workflows,
 every dev rule used while working a card, and the hooks that serve them.
 
 ## Install
@@ -10,15 +10,15 @@ Needs `node` and `bash` on the PATH Claude Code itself starts with, not just on 
 In a Claude Code session:
 
 ```
-/plugin marketplace add newms87/claude-plugins
-/plugin install danxbot@newms-plugins
+/plugin marketplace add 50arms/claude-marketplace
+/plugin install danxbot@50arms
 ```
 
 Or from a shell:
 
 ```bash
-claude plugin marketplace add newms87/claude-plugins
-claude plugin install danxbot@newms-plugins
+claude plugin marketplace add 50arms/claude-marketplace
+claude plugin install danxbot@50arms
 ```
 
 After installing:
@@ -37,7 +37,7 @@ This is the session's one dashboard server: a connected repo declares no `danx-d
 
 ## Editing a plugin — MANDATORY version bump
 
-**Every edit to `<plugin>/skills/**/SKILL.md`, `<plugin>/skills/**/*` resources, or any plugin asset MUST bump `<plugin>/.claude-plugin/plugin.json` `version` in the SAME commit.** autoUpdate keys its on-disk cache by version directory (`~/.claude/plugins/cache/newms-plugins/<plugin>/<version>/`); if version stays static, every consumer (host sessions, container workers, dispatched agents) keeps reading the stale cached copy forever — the push went through, the live world did not move. Patch-bump (`0.3.0` → `0.3.1`) is the right size for skill text edits; minor for new skills; major for breaking schema changes. No exemption for "small" edits — small edits are exactly when this gets skipped. Commit message names the bump (`<plugin>: <change> (0.3.0 → 0.3.1)`).
+**Every edit to `<plugin>/skills/**/SKILL.md`, `<plugin>/skills/**/*` resources, or any plugin asset MUST bump `<plugin>/.claude-plugin/plugin.json` `version` in the SAME commit.** autoUpdate keys its on-disk cache by version directory (`~/.claude/plugins/cache/50arms/<plugin>/<version>/`); if version stays static, every consumer (host sessions, container workers, dispatched agents) keeps reading the stale cached copy forever — the push went through, the live world did not move. Patch-bump (`0.3.0` → `0.3.1`) is the right size for skill text edits; minor for new skills; major for breaking schema changes. No exemption for "small" edits — small edits are exactly when this gets skipped. Commit message names the bump (`<plugin>: <change> (0.3.0 → 0.3.1)`).
 
 ## Design notes
 

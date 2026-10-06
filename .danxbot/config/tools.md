@@ -1,7 +1,7 @@
 # claude-plugins Agent Tool Recipe
 
-This repo is the `newms-plugins` Claude Code plugin marketplace
-(`github:newms87/claude-plugins`). It ships **markdown only** — skills,
+This repo is the `50arms` Claude Code plugin marketplace
+(`github:50arms/claude-marketplace`). It ships **markdown only** — skills,
 rules, and agent definitions consumed via a marketplace loader. There is no
 application code, no database, and no build/test/lint toolchain.
 

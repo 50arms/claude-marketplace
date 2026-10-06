@@ -1,6 +1,6 @@
 # claude-plugins
 
-Source of truth for the `newms-plugins` marketplace. Its plugins reach every Claude Code session on this machine and danxbot's container workers (through danxbot's catalog).
+Source of truth for the `50arms` marketplace (`50arms/claude-marketplace`, install `danxbot@50arms`). Its plugins reach every Claude Code session on this machine and danxbot's container workers (through danxbot's catalog).
 
 ## The mantra is the one home for every rule it states (PLN-11 R-22)
 

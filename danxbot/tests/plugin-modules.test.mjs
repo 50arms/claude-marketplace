@@ -38,7 +38,7 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
   // instruction in each fallback line (a personal alias and a git repair habit) with the public Claude Code uninstall/install commands;
   // launch.test.mjs pins the new text against INTEGRITY_FIX.
   const REPAIR_REWORDED = [
-    "git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`",
+    "git -C ~/.claude/plugins/marketplaces/50arms checkout -- danxbot`, then `update-claude-plugins`",
     "claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets)",
   ];
   const present = commandHooks(hooks);
