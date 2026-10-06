@@ -25,7 +25,7 @@
     "hooks/plan/load.ts": "d135443213da2c822db12b0bc4102e8df8220e0dff33acb8b7a6b9c9aab5d6ca",
     "hooks/plan/mcp.ts": "6d32ac17fb151033f595939e0ac83aaaf80db742d5636af68a8b03904d17003d",
     "hooks/plan/notes.ts": "0677740a29af543d349c836a52836e31586ebac3bf5cfbbe277fa53ddcd6a1dd",
-    "hooks/plan/pacing-format.ts": "02867e4eca011755721cc24c46d7635b2491886d155bb5430aff0351bca26dd2",
+    "hooks/plan/pacing-format.ts": "fb5fdf1714cbe83cca65ce4981bff6046dd0f2a9a98199bdb9eeba2f75277739",
     "hooks/plan/pacing-guard.ts": "b815336748ffb5734a33d4f466952e64cc0241eb9a0bfd9134ee4e5c035d1b1e",
     "hooks/plan/pacing-line.ts": "a616b37933dc327453e846fe5e5dad8374324be89be4e16ce4b3e861199c680c",
     "hooks/plan/pacing-panel-view.tsx": "ce811aa8cf816b3a0be762059555fa6e31c82fee41df387cf9979ef4ead50b44",

@@ -66,7 +66,7 @@ export function readoutSentence(l: LimitReadout): string {
   const name = `${LIMIT_LABEL[l.limit].pane[0]!.toUpperCase()}${LIMIT_LABEL[l.limit].pane.slice(1)} limit`
   const target = `${Math.round(l.targetPercent)}%`
   const reset = formatMinutes(l.resetsInMinutes)
-  if (l.state === 'spare') return `${name}: at the current rate you reach ${target} about ${formatMinutes(l.headroomMinutes)} after the window resets, so you have ${formatMinutes(l.headroomMinutes)} spare.`
+  if (l.state === 'spare') return `${name}: at the current rate the window resets before you reach ${target}, with ${formatMinutes(l.headroomMinutes)} spare.`
   if (l.state === 'short') return `${name}: at the current rate you reach ${target} ${formatMinutes(-l.headroomMinutes)} before the window resets, so you are ${formatMinutes(-l.headroomMinutes)} short.`
   if (l.state === 'hold') return `${name}: over pace, so nothing new starts until it eases or the window resets in ${reset}.`
   return `${name}: critical (at or past ${Math.round(l.criticalPercent)}%), so everything new stops until the window resets in ${reset}.`

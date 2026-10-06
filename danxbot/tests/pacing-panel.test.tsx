@@ -246,7 +246,7 @@ describe('the worst-limit readout', () => {
   })
 
   test('each limit is explained in plain words', () => {
-    expect(readoutSentence(lim({ state: 'spare', headroomMinutes: 60 }))).toBe('5-hour limit: at the current rate you reach 95% about 1h after the window resets, so you have 1h spare.')
+    expect(readoutSentence(lim({ state: 'spare', headroomMinutes: 60 }))).toBe('5-hour limit: at the current rate the window resets before you reach 95%, with 1h spare.')
     expect(readoutSentence(lim({ limit: 'weekly', state: 'short', headroomMinutes: -90 }))).toBe('Weekly limit: at the current rate you reach 95% 1h30m before the window resets, so you are 1h30m short.')
     expect(readoutSentence(lim({ state: 'hold', resetsInMinutes: 100 }))).toBe('5-hour limit: over pace, so nothing new starts until it eases or the window resets in 1h40m.')
     expect(readoutSentence(lim({ limit: 'spend', state: 'stop', resetsInMinutes: 45 }))).toBe('Spend limit: critical (at or past 99%), so everything new stops until the window resets in 45m.')
