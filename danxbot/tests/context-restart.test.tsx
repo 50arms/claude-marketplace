@@ -9,6 +9,13 @@ import { SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call plan_connect' } })
 
+const TRANSCRIPT = '/work/main.jsonl'
+// DX-4234: what the restart notice is asked with, by the source the session started from (the server's `restart_notice` contract): a resume (a
+// desktop fork reports it too) names its transcript, whose copied prefix leads to the session it came from; a clear names the session that just
+// ended; a startup names neither and the server scans the project.
+const ARGS = { startup: {}, resume: { transcript_path: TRANSCRIPT } } as const
+const PREVIOUS = 'sess-previous'
+
 // A restarted session has a new id and holds NO key: signed out until plan_connect is approved. That is the state the notice is for.
 const SIGNED_OUT = { connected: false, signedOut: 'signed-out' } as const
 
@@ -16,6 +23,7 @@ for (const surface of SURFACES) {
   describe(`the restart notice on ${surface}`, () => {
     async function started($: any, on: any, options: Parameters<typeof dashboard>[1] = SIGNED_OUT) {
       on('classic.SessionStart', () => ({}) as any)
+      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
       const d = dashboard(on, options)
       await startSession($, d, surface)
       d.contextReads.length = 0
@@ -23,19 +31,19 @@ for (const surface of SURFACES) {
     }
 
     for (const source of ['startup', 'resume'] as const) {
-      test(`a not-connected ${source} is told the notice the server answers, asked with no arguments`, async ($, on) => {
+      test(`a not-connected ${source} is told the notice the server answers, asked with its source's arguments`, async ($, on) => {
         const d = await started($, on)
         d.world.restart.json = { notice: NOTICE }
         const r = await firstPrompt($, source)
         expect(r.startLines).toEqual([NOTICE])
-        expect(d.restartCalls).toEqual([{}])
+        expect(d.restartCalls).toEqual([ARGS[source]])
       })
     }
 
-    test('after a compaction, and on clear or fork, the tool is not called and nothing is told', async ($, on) => {
+    test('after a compaction or a fork, the tool is not called and nothing is told', async ($, on) => {
       const d = await started($, on)
       d.world.restart.json = { notice: NOTICE }
-      for (const source of ['compact', 'clear', 'fork'] as const) {
+      for (const source of ['compact', 'fork'] as const) {
         expect((await firstPrompt($, source)).startLines).toBeUndefined()
       }
       expect(d.restartCalls).toEqual([])
@@ -64,10 +72,10 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('a signed-out session is never told the notice after a compaction, a clear or a fork, and the tool is not called', async ($, on) => {
+    test('a signed-out session is never told the notice after a compaction or a fork, and the tool is not called', async ($, on) => {
       const d = await started($, on)
       d.world.restart.json = { notice: NOTICE }
-      for (const source of ['compact', 'clear', 'fork'] as const) {
+      for (const source of ['compact', 'fork'] as const) {
         expect((await firstPrompt($, source)).startLines).toBeUndefined()
       }
       expect(d.restartCalls).toEqual([])
@@ -144,6 +152,72 @@ for (const surface of SURFACES) {
       const pending = firstPrompt($, 'startup')
       await d.clock.advance(6_000)
       expect((await pending).startLines).toEqual([NOTICE])
+    })
+
+    // a clear names the session that just ended: the plugin's session.end hook remembers it and the start takes it
+    async function cleared($: any, on: any, options: Parameters<typeof dashboard>[1] = SIGNED_OUT, ended: string | null = PREVIOUS) {
+      const d = await started($, on, options)
+      if (ended !== null) await $.session.end({ reason: 'clear', sessionId: ended } as any)
+      return d
+    }
+
+    test('a clear is asked with the id of the session that just ended, and told the notice', async ($, on) => {
+      const d = await cleared($, on)
+      d.world.restart.json = { notice: NOTICE }
+      expect((await firstPrompt($, 'clear')).startLines).toEqual([NOTICE])
+      expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
+    })
+
+    test('the ended session is consumed with the start: a later clear that saw no end is a failure, never the earlier id', async ($, on) => {
+      const d = await cleared($, on)
+      await firstPrompt($, 'clear')
+      const again = await firstPrompt($, 'clear')
+      expect(again.startLines![0]).toContain('Could not load the restart notice (no_predecessor_id')
+      expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
+    })
+
+    test('a clear whose session.end was never seen is a failure line naming it, and asks nothing', async ($, on) => {
+      const d = await cleared($, on, SIGNED_OUT, null)
+      const r = await firstPrompt($, 'clear')
+      expect(r.startLines).toEqual([restartFailureLine('no_predecessor_id: SessionStart clear came with no session.end to name the session that ended')])
+      expect(d.restartCalls).toEqual([])
+    })
+
+    test('a resume that carried no transcript path is a failure line naming it, and asks nothing', async ($, on) => {
+      const d = await started($, on)
+      const r = await firstPrompt($, 'resume', { transcript_path: undefined })
+      expect(r.startLines).toEqual([restartFailureLine('no_transcript_path: SessionStart resume carried no transcript_path')])
+      expect(d.restartCalls).toEqual([])
+    })
+
+    test('a session end that is not a clear is not remembered as a predecessor', async ($, on) => {
+      const d = await started($, on)
+      await $.session.end({ reason: 'resume', sessionId: PREVIOUS } as any)
+      expect((await firstPrompt($, 'clear')).startLines![0]).toContain('no_predecessor_id')
+      expect(d.restartCalls).toEqual([])
+    })
+
+    test('a clear that is told `{notice: null}` is quiet', async ($, on) => {
+      const d = await cleared($, on)
+      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
+      expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
+    })
+
+    for (const reason of ['no_predecessor_record', 'transcript_unreadable'] as const) {
+      for (const source of ['resume', 'clear'] as const) {
+        test(`a \`${reason}\` stop on a ${source} is one warning line with the server's detail and fix`, async ($, on) => {
+          const d = await cleared($, on)
+          d.world.restart.json = stopped(reason, 'the detail')
+          const r = await firstPrompt($, source)
+          expect(r.startLines).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call plan_connect`)])
+        })
+      }
+    }
+
+    test('a resume answered `{notice: null}` (a readable, non-fork transcript) is quiet', async ($, on) => {
+      const d = await started($, on)
+      expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
+      expect(d.restartCalls).toEqual([{ transcript_path: TRANSCRIPT }])
     })
 
     test('R-2: the restart notice is the server’s own tool; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {

@@ -950,7 +950,7 @@ export async function startSession($: any, d: Dashboard, surface: string) {
 // DX-4234: a session start reaches the model on the FIRST PROMPT's context, beside its time stamp (SessionStart is recorded only: the engine
 // has not bound the session then). `startLines` is what the start added: the prompt's context after the stamp, or undefined when it added nothing.
 export async function firstPrompt($: any, source: string, input: Record<string, unknown> = {}): Promise<{ startLines: string[] | undefined; context: string[] }> {
-  await $.classic.SessionStart({ source, cwd: '/work', session_id: OWN_SESSION.session_id, ...input })
+  await $.classic.SessionStart({ source, cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl', ...input })
   const r = await $.prompt.submit({ text: 'hello' })
   const context: string[] = r.context ?? []
   return { startLines: context.length > 1 ? context.slice(1) : undefined, context }

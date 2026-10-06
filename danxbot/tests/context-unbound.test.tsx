@@ -55,11 +55,11 @@ for (const surface of SURFACES) {
         const first = await $.prompt.submit({ text: 'hello' })
         expect(first.context!.slice(1)).toEqual([NOTICE])
         expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
-        expect(d.restartCalls).toEqual([{}])
+        expect(d.restartCalls).toEqual([source === 'resume' ? { transcript_path: '/work/main.jsonl' } : {}])
       })
     }
 
-    for (const source of ['clear', 'fork'] as const) {
+    for (const source of ['fork'] as const) {
       test(`${source} has nothing to tell: the first prompt carries only its stamp`, async ($, on) => {
         const { d } = await unboundStart($, on, source, { connected: false, signedOut: 'signed-out' })
         d.world.restart.json = { notice: NOTICE }
@@ -78,7 +78,7 @@ for (const surface of SURFACES) {
       const { d } = await unboundStart($, on, 'resume')
       await $.prompt.submit({ text: 'hello' })
       const writes = d.stateWrites.filter(w => w.key === 'pendingStart').map(w => w.value)
-      expect(writes).toEqual([{ sessionId: expect.any(String), source: 'resume', transcriptPath: '/work/main.jsonl' }, null])
+      expect(writes).toEqual([{ sessionId: expect.any(String), source: 'resume', transcriptPath: '/work/main.jsonl', predecessorId: null }, null])
     })
 
     test('a compaction in the middle of a turn is told on the next tool result, once, and the next prompt does not repeat it', async ($, on) => {

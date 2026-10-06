@@ -250,7 +250,7 @@ export type StampState = { at: number; day: string } | null
 
 // DX-4234: a session start the first prompt has not yet been told about: SessionStart records it (the engine has not bound the session yet, so it
 // cannot call the MCP), and the first prompt.submit consumes it.
-export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null } | null
+export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null } | null
 
 declare module 'claude-code' {
   interface PluginState {
@@ -297,6 +297,8 @@ declare module 'claude-code' {
       lastStamp: StampState
       // DX-4234: the session start waiting for the first prompt (see PendingStart).
       pendingStart: PendingStart
+      // DX-4234: the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
+      endedSession: string | null
     }
   }
 }

@@ -23,12 +23,26 @@ export function sessionEvent(source: unknown): DanxEvent | null {
   }
 }
 
-// The restart notice is for a process that STARTED or RESUMED, never after a compaction.
-export const isRestartSource = (source: unknown): boolean => source === 'startup' || source === 'resume'
+// The restart notice is for a session that STARTED, RESUMED or was CLEARED into (it replaced one), never after a compaction (the same session).
+export const isRestartSource = (source: unknown): boolean => source === 'startup' || source === 'resume' || source === 'clear'
+
+// What `restart_notice` is asked with, by how the session started (the server's contract: a named predecessor asks only that record, a transcript
+// path finds the nearest ancestor in the transcript's copied prefix, neither scans the project). A resume (a desktop fork reports it too) names its
+// transcript; a clear names the session that just ended; a startup names neither. A start that lacks what its source needs is a failure, never a
+// silent fall back to the project scan.
+export function restartAsk(start: { source: string; transcriptPath: string | null; predecessorId: string | null }): { kind: 'ask'; args: Record<string, string> } | { kind: 'failed'; reason: string } {
+  if (start.source === 'resume') {
+    return start.transcriptPath === null ? { kind: 'failed', reason: 'no_transcript_path: SessionStart resume carried no transcript_path' } : { kind: 'ask', args: { transcript_path: start.transcriptPath } }
+  }
+  if (start.source === 'clear') {
+    return start.predecessorId === null ? { kind: 'failed', reason: 'no_predecessor_id: SessionStart clear came with no session.end to name the session that ended' } : { kind: 'ask', args: { predecessor_id: start.predecessorId } }
+  }
+  return { kind: 'ask', args: {} }
+}
 
 export const eventPath = (event: DanxEvent) => `/api/reminders/event/${event}`
 
-// The session's own danx-dashboard server answers the restart notice itself, as a tool (no arguments).
+// The session's own danx-dashboard server answers the restart notice itself, as a tool.
 export const RESTART_NOTICE_TOOL = 'restart_notice'
 
 // What a lookup came to: text to say, nothing to say, or a failure whose reason names why (one line, never silence).
