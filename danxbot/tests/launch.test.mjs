@@ -341,7 +341,7 @@ describe("the real plugin", () => {
   });
 
   test("every integrity message gives the same repair instruction: the launcher and both hooks.json fallback lines", () => {
-    assert.match(INTEGRITY_FIX, /^Fix: run `git -C .*checkout -- danxbot`.*`update-claude-plugins`.*restart the session\.$/);
+    assert.match(INTEGRITY_FIX, /^Fix: run `claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` \(add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets\).*restart the session\.$/);
     const hooks = JSON.parse(fs.readFileSync(path.join(REAL_PLUGIN, "hooks", "hooks.json"), "utf8")).hooks;
     const fallbacks = Object.values(hooks)
       .flat()
