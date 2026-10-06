@@ -59,6 +59,8 @@ export function renderBand(
   const showBadge = plan !== null && badge !== ''
   // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
+  // DX-4630: the sign-in request's Link and code show while signed out, as the pane's do
+  const approve = signedOut ? signIn : null
   // DX-4418: a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
   // DX-4521: both links are in every state: the plan's page when connected, else the dashboard's plans list. Only an origin never
@@ -68,7 +70,7 @@ export function renderBand(
   const controls = [
     ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
-    ...(signIn !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: signInCodeLabel(signIn), isButton: false }] : []),
+    ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: signInCodeLabel(approve), isButton: false }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
     ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
     ...(permissionLabel !== '' ? [{ label: permissionLabel, isButton: true }] : []),
@@ -110,8 +112,8 @@ export function renderBand(
             {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
           </Button>
         )}
-        {signIn !== null && <Link key="approve-sign-in" href={signIn.url} label={APPROVE_SIGN_IN_LABEL} />}
-        {signIn !== null && <Text key="sign-in-code">{signInCodeLabel(signIn)}</Text>}
+        {approve !== null && <Link key="approve-sign-in" href={approve.url} label={APPROVE_SIGN_IN_LABEL} />}
+        {approve !== null && <Text key="sign-in-code">{signInCodeLabel(approve)}</Text>}
         {openPane}
         {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab: a Button into the
             in-app browser where there is one (the Browser tab path), a Link elsewhere. A Button carries no colour, so

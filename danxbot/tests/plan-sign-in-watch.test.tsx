@@ -107,6 +107,14 @@ describe('a sign-in the model started', () => {
     expect(connectCalls(d)).toHaveLength(0)
     expect(d.toasts.some(t => t.includes('had no id'))).toBe(true)
     expect(toldModel(d)).toEqual([])
+    // DX-4630: nothing stays drawn for the refused request, and a later Sign in press starts its own watch
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+    expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).not.toContain('http://localhost:5555/')
+    d.world.signIn.answer = undefined
+    await band.press({ key: 'sign-in' })
+    await d.clock.settle()
+    expect(connectCalls(d).length).toBeGreaterThan(0)
+    expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(APPROVAL_URL)
   })
 
   for (const reason of ['clear', 'resume'] as const) {
