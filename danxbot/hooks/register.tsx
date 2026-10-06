@@ -51,8 +51,7 @@ import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
 import { isServerNotConnected, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
-import type { Naming } from './plan/notes'
-import { connectNote, disconnectNote, parseNaming, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
+import { connectNote, disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { renderPane } from './plan/pane'
 import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
@@ -494,14 +493,7 @@ function connect($: any, plan: PlanRow): Promise<void> {
     }
     $.ui.toast(`Connected to ${plan.ref}`)
     await update($, switching, () => false)
-    // DX-4612: a malformed naming block is shown, never read as "nothing to rename"; the connect itself did happen, so the model is told it
-    let naming: Naming = { status: 'ok' }
-    try {
-      naming = parseNaming(outcome.body?.naming)
-    } catch (err: any) {
-      $.ui.toast(`Connected, but the answer's naming block is malformed (${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}): the model was not told to rename its thread`)
-    }
-    await tellModel($, connectNote(plan, naming))
+    await tellModel($, connectNote(plan))
     // DX-4233: the refresh starts the relay of the plan connected (syncRelay), a halt of another plan being cleared there
     await refresh($, true)
   })

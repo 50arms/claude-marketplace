@@ -16,7 +16,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 | Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
 | Gates | the profile instruction carries them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
-| Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to main (or open a pull request when "Delivery" below says so), `complete` + retro, report |
+| Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to the target branch (or open a pull request when "Delivery" below says so), `complete` + retro, report |
 
 Dispatched-only mechanics (the dispatch-complete call, halt, `agent-finalize.sh`, the pre-synced
 worktree, DB resets) live only in danxbot's `work` profile.
@@ -39,10 +39,10 @@ worktree, DB resets) live only in danxbot's `work` profile.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Pass its POST gates ("Gates" below).
 6. Merge first: a dispatched worker runs its profile's end order, `agent-finalize.sh`
-   first; an operator-session sub-agent, once told to land, commits and pushes to main,
-   or opens a pull request when the card's controls require one ("Delivery" below).
+   first; an operator-session sub-agent, once told to land, commits and pushes to the target
+   branch, or opens a pull request when the card's controls require one ("Delivery" below).
    Only then transition `complete` with a summary and write the retro (last — it 409s
-   until terminal), citing the sha now on `origin/main` (on a pull request: the pull
+   until terminal), citing the sha now on the target branch (on a pull request: the pull
    request link and the branch tip). A phase card leaves `Notes from
    Phase N` on the next phase card.
 
@@ -224,29 +224,35 @@ take the value of each key from the entry with that `key`:
 - `git.pull_request.done_on`: `opened` or `merged`, whether a card on a pull request is done
   when the pull request opens or only once it merges.
 
-A key missing from the reply means the dashboard does not know it: stop and report that. Never
-guess `false`.
+A key missing from the reply means the dashboard does not know it: open an `action` problem on
+the card saying which key is missing, then stop ("Needing a human"). Never guess `false`.
 
 **`required` is `false`:** commit and push to the target branch, as "Git" below says.
 
 **`required` is `true`:** the target branch is never pushed to.
 
 1. Check the GitHub CLI before any commit leaves the machine: `gh --version`, then
-   `gh auth status`. `gh` missing → tell the person to install the GitHub CLI
-   (https://cli.github.com), then run `gh auth login`; not signed in → tell them to run
+   `gh auth token` (it fails only when the active account has no usable login; `gh auth status`
+   also fails on an unrelated broken stored account, so do not use it). `gh` missing → open an
+   `action` problem on the card telling the person to install the GitHub CLI
+   (https://cli.github.com) and run `gh auth login`; not signed in → one telling them to run
    `gh auth login`. Then stop. Never fall back to pushing the target branch, or to any other
    way of getting the work onto it.
 2. Work on a branch cut from `origin/<target branch>` (never the target branch itself), commit,
    and `git push -u origin <branch>`.
-3. `gh pr create --base <target branch> --head <branch> --title "<card id>: <card title>"
-   --body-file <file>`, the file holding a summary of the change, a blank line, then
-   `Card: <link to the card on the dashboard>`. It prints the pull request URL.
+3. Reuse an open pull request for the branch: `gh pr view <branch> --json url,state`. Open →
+   use its `url`. None open → `gh pr create --base <target branch> --head <branch> --title
+   "<card id>: <card title>" --body-file <file>`, the file holding a summary of the change, a
+   blank line, then `Card: <card link>`. It prints the pull request URL. The card link is
+   `<dashboard>/plans/<plan id>/cards/<card id>`, or `<dashboard>/cards/<card id>` when the card
+   is on no plan.
 4. Write that URL on the card: `PATCH /api/issues/<id>/edit` with `{"pull_request_url": "<url>"}`.
 5. By `git.pull_request.done_on`:
    - `opened`: transition `complete` with a summary naming the pull request, and write the retro
      citing the pull request link and the branch tip.
-   - `merged`: leave the card in progress with its pull request link, and say plainly that it
-     completes when the pull request merges. Do not transition `complete`.
+   - `merged`: do not transition `complete`. Release your claim with `rollback_pickup`, then say
+     plainly that the card stays open with its pull request link until the pull request merges,
+     and that the person completes it then.
 
 ## Git
 

@@ -22,11 +22,13 @@ const end = skill.indexOf("\n## ", start + 1);
 assert.ok(start > -1 && end > start, "the skill has a `## Delivery` section followed by another section");
 const delivery = flat(skill.slice(start, end));
 const required = delivery.slice(delivery.indexOf("**`required` is `true`:**"));
+/** The text of numbered step n of the `required` is `true` list. */
 const step = (n) => {
   const from = required.indexOf(` ${n}. `);
   const to = required.indexOf(` ${n + 1}. `);
   return required.slice(from, to === -1 ? undefined : to);
 };
+const COMMANDS_THAT_LEAVE_THE_MACHINE = ["git push", "gh pr create", "gh pr view"];
 
 test("it reads the three resolved controls from the card read", () => {
   assert.match(delivery, /`GET \/api\/issues\/<id>` with `fields \{"controls":true\}`/);
@@ -35,8 +37,8 @@ test("it reads the three resolved controls from the card read", () => {
   }
 });
 
-test("a missing control key stops the session instead of guessing false", () => {
-  assert.match(delivery, /missing from the reply[^.]*stop and report/);
+test("a missing control key opens an action problem and stops, never guessing false", () => {
+  assert.match(delivery, /missing from the reply[^.]*open an `action` problem[^.]*then stop/);
   assert.match(delivery, /Never guess `false`/);
 });
 
@@ -44,40 +46,67 @@ test("required false keeps the push to the target branch", () => {
   assert.match(delivery, /\*\*`required` is `false`:\*\* commit and push to the target branch/);
 });
 
-test("required true: the gh check comes first, names what to run, and stops", () => {
+test("required true: step 1 is the gh check: gh auth token, an action problem, then stop", () => {
   assert.ok(required.includes("never pushed to"));
   const first = step(1);
-  assert.ok(first.includes("`gh --version`") && first.includes("`gh auth status`"), first);
+  assert.ok(first.includes("`gh --version`") && first.includes("`gh auth token`"), first);
   assert.ok(first.includes("`gh auth login`"), first);
+  assert.match(first, /open an `action` problem/);
   assert.match(first, /Then stop\./);
   assert.match(first, /Never fall back to pushing the target branch/);
+  // `gh auth status` may appear only as the command the step tells the session not to use
+  assert.match(first, /`gh auth status`[^.]*do not use it/);
 });
 
-test("required true: branch off the target, push the branch, open the PR, write the link", () => {
+test("required true: no command that leaves the machine appears before the gh check", () => {
+  const check = required.indexOf("`gh auth token`");
+  assert.ok(check > -1);
+  for (const cmd of COMMANDS_THAT_LEAVE_THE_MACHINE) {
+    assert.ok(required.indexOf(cmd) > check, `${cmd} must come after the gh check`);
+    assert.ok(!step(1).includes(cmd), `step 1 must not run ${cmd}`);
+  }
+});
+
+test("required true: branch off the target, push the branch, reuse or open the PR, write the link", () => {
   const expected = [
     [2, "origin/<target branch>"],
     [2, "never the target branch itself"],
     [2, "git push -u origin <branch>"],
+    [3, "gh pr view <branch> --json url,state"],
     [3, "gh pr create --base <target branch> --head <branch>"],
-    [3, "Card: <link to the card"],
+    [3, "--body-file"],
+    [3, "<dashboard>/plans/<plan id>/cards/<card id>"],
+    [3, "<dashboard>/cards/<card id>"],
     [4, "PATCH /api/issues/<id>/edit"],
     [4, '"pull_request_url"'],
   ];
   for (const [n, text] of expected) assert.ok(step(n).includes(text), `step ${n} lacks ${text}`);
+  assert.ok(step(3).indexOf("gh pr view") < step(3).indexOf("gh pr create"), "reuse is checked before creating");
 });
 
-test("done_on opened completes the card; merged leaves it in progress and says so", () => {
-  const last = step(5);
-  assert.match(last, /`opened`: transition `complete`/);
-  assert.match(last, /`merged`: leave the card in progress with its pull request link/);
-  assert.match(last, /completes when the pull request merges\. Do not transition `complete`/);
+test("done_on opened completes the card and writes the retro", () => {
+  const opened = step(5).slice(step(5).indexOf("`opened`"), step(5).indexOf("`merged`"));
+  assert.match(opened, /transition `complete`/);
+  assert.match(opened, /retro/);
 });
 
-test("the flow's landing step, the caller table and the Git section point at Delivery", () => {
-  const all = flat(skill);
-  assert.match(all, /commits and pushes to main, or opens a pull request when the card's controls require one \("Delivery" below\)/);
-  assert.match(all, /push to main \(or open a pull request when "Delivery" below says so\)/);
-  assert.match(all, /push \(to the target branch, or to the card's branch when "Delivery" says a pull request is required\)/);
+test("done_on merged never completes, releases the claim, and says the person completes it", () => {
+  const merged = step(5).slice(step(5).indexOf("`merged`"));
+  assert.match(merged, /^`merged`: do not transition `complete`/);
+  assert.match(merged, /`rollback_pickup`/);
+  assert.match(merged, /until the pull request merges/);
+  assert.match(merged, /the person completes it then/);
+  assert.doesNotMatch(merged, /completes when the pull request merges/);
+});
+
+test("the caller table and flow step 6 name the target branch, never main, and point at Delivery", () => {
+  const row = flat(skill.split("\n").find((line) => line.startsWith("| Merge + end")));
+  assert.match(row, /push to the target branch \(or open a pull request when "Delivery" below says so\)/);
+  assert.doesNotMatch(row, /\bmain\b/);
+  const step6 = flat(skill.slice(skill.indexOf("\n6. "), skill.indexOf("## Gates")));
+  assert.match(step6, /pushes to the target branch, or opens a pull request when the card's controls require one \("Delivery" below\)/);
+  assert.doesNotMatch(step6, /origin\/main|to main/);
+  assert.match(flat(skill), /push \(to the target branch, or to the card's branch when "Delivery" says a pull request is required\)/);
 });
 
 test("the section is general-audience text", () => {

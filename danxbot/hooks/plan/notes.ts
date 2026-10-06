@@ -2,26 +2,8 @@ import type { PermissionRequest, PlanRow } from '../../types'
 
 // The rows the operator's pane actions append for the model (R-4): the model did not make
 // these calls, so it is told. The person never reads them.
-export function connectNote(plan: PlanRow, naming: Naming): string {
-  const base = `[danxbot plan] The operator connected this session to ${plan.ref} "${plan.name}" (plan_id ${plan.id}) from the Plan pane. Before doing plan work, call plan_connect with plan_id ${plan.id} yourself to read its briefing and start its events.`
-  if (naming.status === 'ok') return base
-  // DX-4612: the connect answered `naming: needed` to the pane, which the model never reads: hand it the server's own steps.
-  const title = naming.suggestedTitle === null ? '' : ` Suggested thread title: "${naming.suggestedTitle}".`
-  return `${base} This session's thread title does not match the plan, so rename it first. ${naming.instruction}${title}`
-}
-
-// DX-4612 / DX-4608: the `naming` block of a plan_connect answer (src/issues/plan-session-naming.ts SessionNaming). Only the
-// fields the note reads are checked; THE one parser of the block, and a malformed one throws, never degrades to "ok".
-export type Naming = { status: 'ok' } | { status: 'needed'; instruction: string; suggestedTitle: string | null }
-
-export function parseNaming(raw: unknown): Naming {
-  if (raw === null || typeof raw !== 'object') throw new Error(`naming is ${raw === null ? 'null' : typeof raw}, not an object`)
-  const n = raw as Record<string, unknown>
-  if (n.status === 'ok') return { status: 'ok' }
-  if (n.status !== 'needed') throw new Error(`naming.status is ${JSON.stringify(n.status)}, not "ok" or "needed"`)
-  if (typeof n.instruction !== 'string' || n.instruction.trim() === '') throw new Error('naming.instruction is not a non-empty string')
-  if (n.suggestedTitle !== null && typeof n.suggestedTitle !== 'string') throw new Error('naming.suggestedTitle is neither a string nor null')
-  return { status: 'needed', instruction: n.instruction, suggestedTitle: n.suggestedTitle }
+export function connectNote(plan: PlanRow): string {
+  return `[danxbot plan] The operator connected this session to ${plan.ref} "${plan.name}" (plan_id ${plan.id}) from the Plan pane. Before doing plan work, call plan_connect with plan_id ${plan.id} yourself to read its briefing and start its events.`
 }
 
 // The plan left is named by ref and name: the session is on no plan now, and must not write to the
