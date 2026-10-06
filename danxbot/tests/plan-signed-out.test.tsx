@@ -5,6 +5,8 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { loadPlan } from '../hooks/plan/load'
 import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
+import { signInToast } from '../hooks/plan/approval'
+import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
 import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel, forceRefresh } from './plan-kit'
@@ -19,7 +21,8 @@ const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|laps
 const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('Could not tell the model'))
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:danxbot:danx-dashboard' && c.tool === 'plan_connect')
 // the page loads by preview_start (pane closed) or navigate (pane open)
-const pageOpens = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && (c.tool === 'preview_start' || c.tool === 'navigate'))
+// DX-4630: EVERY Claude_Browser call, so a sign-in that touched the browser in any way (tabs_context, tabs_create, ...) fails
+const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
 // the model's own plan_connect call, answering the same approval request the dashboard's world gives the Sign in press
 const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
@@ -284,17 +287,17 @@ for (const surface of SURFACES) {
       d.calls.length = 0
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
-      expect(pageOpens(d)).toEqual([])
+      expect(browserCalls(d)).toEqual([])
       for (const ui of [band, pane]) {
         expect((await ui.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(APPROVAL_URL)
         expect(await texts(ui)).toContain(`code ${CONFIRM_CODE}`)
       }
-      expect(approvalToasts(d)).toEqual([`Approve this session: open ${APPROVAL_URL} and check that confirm code ${CONFIRM_CODE} matches.`])
-      expect(d.toastTimeouts.at(-1)).toBe(60_000)
+      expect(approvalToasts(d)).toEqual([signInToast({ url: APPROVAL_URL, code: CONFIRM_CODE })])
+      expect(d.toastTimeouts.at(-1)).toBe(APPROVAL_TOAST_MS)
       // the later rounds of the same wait say nothing more
       await d.clock.advance(45_000)
       await d.clock.advance(45_000)
-      expect(pageOpens(d)).toEqual([])
+      expect(browserCalls(d)).toEqual([])
       expect(approvalToasts(d)).toHaveLength(1)
     })
 
@@ -313,7 +316,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(approvalToasts(d)).toHaveLength(2)
       expect(connectCalls(d)).toHaveLength(calls)
-      expect(pageOpens(d)).toEqual([])
+      expect(browserCalls(d)).toEqual([])
     })
 
     for (const outcome of ['approved', 'denied'] as const) {
