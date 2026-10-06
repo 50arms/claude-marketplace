@@ -1,4 +1,6 @@
 import type { PlanView } from '../../types'
+import { APPROVE_SIGN_IN_LABEL, signInCodeLabel } from './approval'
+import type { ApprovalRequest } from './approval'
 import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
@@ -29,6 +31,8 @@ export function renderBand(
   busy: string[],
   // DX-4435: how many of the model's permission requests are still open.
   permissionRequests: number,
+  // DX-4630: the sign-in request waiting for the person: its Link and confirm code are drawn at once.
+  signIn: ApprovalRequest | null,
   // The band's width in columns (`bodyColumns`); absent in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns?: number,
@@ -64,6 +68,7 @@ export function renderBand(
   const controls = [
     ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
+    ...(signIn !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: signInCodeLabel(signIn), isButton: false }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
     ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
     ...(permissionLabel !== '' ? [{ label: permissionLabel, isButton: true }] : []),
@@ -105,6 +110,8 @@ export function renderBand(
             {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
           </Button>
         )}
+        {signIn !== null && <Link key="approve-sign-in" href={signIn.url} label={APPROVE_SIGN_IN_LABEL} />}
+        {signIn !== null && <Text key="sign-in-code">{signInCodeLabel(signIn)}</Text>}
         {openPane}
         {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab: a Button into the
             in-app browser where there is one (the Browser tab path), a Link elsewhere. A Button carries no colour, so

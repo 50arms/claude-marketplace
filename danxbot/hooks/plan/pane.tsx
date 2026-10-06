@@ -1,4 +1,6 @@
 import type { LiveSubagents, PlanView, RelayState, StatusBreakdown } from '../../types'
+import { APPROVE_SIGN_IN_LABEL, signInCodeLabel } from './approval'
+import type { ApprovalRequest } from './approval'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import type { PanelModel } from './pacing-panel'
@@ -25,6 +27,8 @@ export type PaneModel = {
   pacing: PanelModel
   // DX-4233: the plugin's own event relay (see RelayState)
   relay: RelayState
+  // DX-4630: the sign-in request waiting for the person (its link and confirm code), or null
+  signIn: ApprovalRequest | null
 }
 
 // DX-4374: one status dot, in the colour that says what it means (green working, yellow warning).
@@ -163,6 +167,14 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         ● {SIGNED_OUT_LABEL}
       </Text>,
       <Text>{SIGNED_OUT_LINE}</Text>,
+      ...(m.signIn === null
+        ? []
+        : [
+            <Box key="approve-sign-in" flexDirection="row" gap={1}>
+              <Link href={m.signIn.url} label={APPROVE_SIGN_IN_LABEL} />
+              <Text>{signInCodeLabel(m.signIn)}</Text>
+            </Box>,
+          ]),
       <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
         {busyKey.isSigningIn(m.working) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
       </Button>,
