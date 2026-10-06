@@ -18,8 +18,3 @@ export function staleCursorKeys(entries: { key: string; at: number }[]): string[
   const sorted = [...entries].sort((a, b) => b.at - a.at)
   return sorted.slice(CURSOR_KEEP).map(e => e.key)
 }
-
-// The wait before try number `failures` (1 for the first): the schedule's last step repeats.
-export function backoffMs(schedule: readonly number[], failures: number): number {
-  return schedule[Math.min(Math.max(failures, 1), schedule.length) - 1]
-}

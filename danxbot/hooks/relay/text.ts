@@ -11,6 +11,9 @@ export const stoppedLine = (detail: string, fix: string) => `${RELAY_MARKER} eve
 // The relay is trying again on its own: a transient failure, with the cause.
 export const delayedLine = (message: string) => `${RELAY_MARKER} events delayed: ${trim(message)}. The relay keeps retrying on its own.`
 
+// DX-4233: how a delivery the session refused reads (a dropped or throwing prompt, a refused or throwing row)
+export const notTakenLine = (why: string) => `the session did not take the event: ${why}`
+
 // DX-4233: the older-release case: the session's danx-dashboard server has no plan_events_wait tool
 export const OLD_SERVER_DETAIL = "this session's danx-dashboard MCP server has no plan_events_wait tool"
 export const OLD_SERVER_FIX = 'restart the session so its danx-dashboard server starts at its latest release; a repo that pins its own danx-dashboard server must update it to the release that adds plan_events_wait'

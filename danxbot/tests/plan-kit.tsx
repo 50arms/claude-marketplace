@@ -898,7 +898,7 @@ export type FakeReader = {
 }
 
 // session.start as the engine raises it (the plugin loads the plan, registers its command and
-// starts its refresh timer), then lets the load it kicked off finish.
+// starts its pacing poll and the relay), then lets the load it kicked off finish.
 export async function startSession($: any, d: Dashboard, surface: string) {
   await $.session.start({ cwd: '/work', surface, isInteractive: true })
   await d.clock.settle()

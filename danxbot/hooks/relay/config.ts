@@ -19,6 +19,11 @@ export const WAIT_MS = 20_000
 // largest step here plus a turnaround: far inside that window. A dead or unloaded module reads not-healthy once the window passes.
 export const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000] as const
 
+// The wait before try number `failures` (1 for the first): the schedule's last step repeats.
+export function backoffMs(failures: number): number {
+  return BACKOFF_MS[Math.min(Math.max(failures, 1), BACKOFF_MS.length) - 1]
+}
+
 // An answer that comes back sooner than this with no events is not a wait: the loop sleeps the rest, so a server that answers an
 // empty list at once cannot make it spin.
 export const MIN_ROUND_MS = 1_000

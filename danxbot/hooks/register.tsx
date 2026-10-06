@@ -57,10 +57,10 @@ import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
 import { classifyCallError, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
-import { BACKOFF_MS, CURSOR_PREFIX, MIN_ROUND_MS, RELAY_OFF, RELAY_TOOL } from './relay/config'
+import { CURSOR_PREFIX, MIN_ROUND_MS, RELAY_OFF, RELAY_TOOL, backoffMs } from './relay/config'
 import { IDLE, deliveryMode, eventRow, requestSent, rowAppended, turnEnded, turnStarted } from './relay/delivery'
-import { backoffMs, cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
-import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, stoppedLine } from './relay/text'
+import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
+import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
 import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
@@ -1115,7 +1115,7 @@ async function loadCursor($: any, planId: number): Promise<string | null> {
 }
 
 // The cursor is stored AFTER the event was delivered, under the session id as it is now (a /clear or a resume changes it).
-// A run that was ended while it delivered (a move to another plan) must not write over the new run's cursor.
+// DX-4233: a run that was ended while it delivered (a move to another plan) must not write over the new run's cursor.
 async function saveCursor($: any, run: RelayRun, cursor: string): Promise<void> {
   if (run.dead) return
   await $.store.set(cursorKey(await $.session.id()), { planId: run.planId, cursor, at: await $.clock.now() })
@@ -1136,9 +1136,9 @@ async function pruneCursors($: any): Promise<void> {
 async function submitEvent($: any, row: string): Promise<string | null> {
   try {
     const r = await $.prompt.submit({ text: row })
-    return typeof r?.drop === 'string' ? `the session did not take the event: ${r.drop}` : null
+    return typeof r?.drop === 'string' ? notTakenLine(r.drop) : null
   } catch (err: any) {
-    return `the session did not take the event: ${errMessage(err)}`
+    return notTakenLine(errMessage(err))
   }
 }
 
@@ -1147,9 +1147,9 @@ async function submitEvent($: any, row: string): Promise<string | null> {
 async function appendRow($: any, row: string): Promise<string | null> {
   try {
     const r = await $.session.append(modelRow(row))
-    return typeof r?.deny === 'string' ? `the session did not take the event: ${r.deny}` : null
+    return typeof r?.deny === 'string' ? notTakenLine(r.deny) : null
   } catch (err: any) {
-    return `the session did not take the event: ${errMessage(err)}`
+    return notTakenLine(errMessage(err))
   }
 }
 
@@ -1187,6 +1187,7 @@ async function deliverAll($: any, run: RelayRun, events: RelayEvent[], from: str
   let cursor = from
   let delivered = 0
   for (const ev of events) {
+    // DX-4233: an ended run delivers nothing more (its events are the new plan's server's to answer)
     if (run.dead) break
     const failure = await deliverEvent($, ev.text)
     if (failure !== null) return { cursor, delivered, failure }
@@ -1248,6 +1249,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
     let cursor = await loadCursor($, run.planId)
     let keyedBy = await $.session.id()
     await setRelay($, run, 'streaming', null)
+    // DX-4233: the loop ends with its run; what a late answer would say is gated in setRelay, saveCursor and deliverAll
     while (!run.dead) {
       const startedAt = await $.clock.now()
       const got = await waitForEvents($, run.planId, cursor)
@@ -1265,7 +1267,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
         continue
       }
       failures++
-      await $.clock.sleep(backoffMs(BACKOFF_MS, failures))
+      await $.clock.sleep(backoffMs(failures))
     }
   } catch (err: any) {
     // An error nothing above anticipated halts the relay for this plan, shown in the pane and told once, never restarted by a refresh
