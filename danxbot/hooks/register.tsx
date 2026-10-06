@@ -1438,19 +1438,24 @@ async function startLine($: any): Promise<string | null> {
   }
 }
 
+// the stamp and, when there is one, the session start line: the entries a hook adds to the model's context
+async function stampEntries($: any, start: string | null): Promise<string[]> {
+  return [await timeLine($), ...(start === null ? [] : [start])]
+}
+
 // the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
 async function onPromptStamp($: any, e: any, next: any) {
   const start = await startLine($)
-  return next({ ...e, context: [...(e.context ?? []), await timeLine($), ...(start === null ? [] : [start])] })
+  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, start))] })
 }
 
-// each tool call's result reaches the model with the time it finished beside it, and with the session start it carries, if any; a denied call has
-// no result to put either beside and leaves the start for the next one
+// each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
+// result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
   if (r.deny !== undefined) return r
-  const start = await startLine($)
-  return { ...r, context: [...(r.context ?? []), await timeLine($), ...(start === null ? [] : [start])] }
+  const start = e.agentId === undefined ? await startLine($) : null
+  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, start))] }
 }
 
 // DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or

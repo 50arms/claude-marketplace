@@ -95,6 +95,18 @@ for (const surface of SURFACES) {
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
     })
 
+    test("a sub-agent's tool result takes nothing of the main session's start; the next main-loop result carries it once", async ($, on) => {
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      const d = dashboard(on, {})
+      on('classic.SessionStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
+      const sub = await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)
+      expect(sub.context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([EVENT_TEXT('after_compaction')])
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+    })
+
     test('a denied tool call leaves the pending start for the next result', async ($, on) => {
       let answer: any = { deny: 'not allowed' }
       on('tool.call', () => answer)
