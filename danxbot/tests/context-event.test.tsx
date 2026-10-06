@@ -3,7 +3,7 @@
 // a session that is not on a plan, one warning line for a fetch that failed, quiet for a session with no usable key.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { eventFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, deadlineReason, eventFailureLine } from '../hooks/context/events'
 import { EVENT_TEXT, SURFACES, dashboard, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' }
@@ -85,14 +85,13 @@ for (const surface of SURFACES) {
       })
     }
 
-    test("a session whose plugin server is not connected (yet) is read again after each start retry, then stays quiet", async ($, on) => {
+    test("a session whose plugin server never connects waits for its tool, then stays quiet without reading anything", async ($, on) => {
       const d = await started($, on, { mcp: 'down' })
       const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
       await d.clock.advance(30_000)
       const r = await pending
       expect(r.additionalContext).toBeUndefined()
-      // the first read and one after each of the three waits
-      expect(d.contextReads).toEqual(['/api/plans', '/api/plans', '/api/plans', '/api/plans'])
+      expect(d.contextReads).toEqual([])
     })
 
     test('a session whose plugin server comes up during the wait is told its text', async ($, on) => {
@@ -105,11 +104,43 @@ for (const surface of SURFACES) {
       expect(r.additionalContext).toEqual([EVENT_TEXT('session_resume')])
     })
 
-    test('the old standby server never connects, so the wait is skipped: one read, quiet', async ($, on) => {
+    test('the old standby server never connects, so the wait is skipped: nothing read, quiet, with no clock advance', async ($, on) => {
       const d = await started($, on, { mcp: 'stale' })
       const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
       expect(r.additionalContext).toBeUndefined()
-      expect(d.contextReads).toEqual(['/api/plans'])
+      expect(d.contextReads).toEqual([])
+    })
+
+    test('ONE deadline: a dashboard that never answers is one timeout line at the deadline, not a held start', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextHangs = true
+      const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      await d.clock.advance(CONTEXT_DEADLINE_MS - 1)
+      let settled = false
+      void pending.then(() => (settled = true))
+      await d.clock.settle()
+      expect(settled).toBe(false)
+      await d.clock.advance(1)
+      const r = await pending
+      expect(r.additionalContext).toEqual([eventFailureLine('session_start', deadlineReason())])
+      expect(r.additionalContext![0]).toContain('timeout: no response within 8s')
+    })
+
+    test('ONE deadline over the SUM of the reads: each read is quick, the lookup together is not', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextDelayMs = 3_000
+      const pending = $.classic.SessionStart({ source: 'resume', cwd: '/work' })
+      // the plan read answers at 3 s, the event read at 6 s: inside the deadline
+      await d.clock.advance(6_000)
+      expect((await pending).additionalContext).toEqual([EVENT_TEXT('session_resume')])
+    })
+
+    test('a sub-agent start has the same deadline', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextHangs = true
+      const pending = $.classic.SubagentStart(START)
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      expect((await pending).additionalContext).toEqual([eventFailureLine('sub_agent_start', deadlineReason())])
     })
 
     test('a sub-agent start does not wait for a server that is not connected', async ($, on) => {

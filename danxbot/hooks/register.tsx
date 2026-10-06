@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
 import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
-import { eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticePath, restartText, sessionEvent } from './context/events'
+import { CONTEXT_DEADLINE_MS, deadlineReason, eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticePath, restartText, sessionEvent } from './context/events'
 import type { DanxEvent, Told } from './context/events'
 import { asRecord, predecessors } from './context/predecessor'
 import { stamp as nextStamp } from './context/stamp'
@@ -46,6 +46,8 @@ import {
   LEGACY_PROJECT_API_TOOL,
   SERVER,
   START_RETRY_MS,
+  SERVER_POLL_MS,
+  STALE_GRACE_MS,
   toolName,
   NOTE_MARKER,
   TOAST_ERROR_MAX,
@@ -1390,34 +1392,59 @@ async function onToolStamp($: any, e: any, next: any) {
 // holds no key, or a person revoked it: its own tools already tell the model), never an error line. `failed`: the read itself broke.
 type SessionPlan = 'connected' | 'not-connected' | 'silent' | { failed: string }
 
-// `wait`: a session START may reach this before the plugin's own server has connected (DX-4578), so it waits that out on the start
-// retries; a sub-agent's start is mid-session and does not.
-async function sessionPlan($: any, wait: boolean): Promise<SessionPlan> {
-  const waits = wait ? START_RETRY_MS : []
-  for (let at = 0; ; at++) {
-    const r = await api($, 'GET', '/api/plans', { query: { limit: 1 } })
-    if (r.unreachable === true) {
-      if (r.staleServer === true || at >= waits.length) return 'silent'
-      try {
-        await $.clock.sleep(waits[at])
-      } catch {
-        // the wait rejects when the plugin's environment is unloaded (a reload): this start's lookup ends with it
-        return 'silent'
-      }
-      continue
+// The ONE place a key that is gone or revoked is made quiet (its own tools say so, never a failure line): this read is the first of every
+// context lookup, so a later read that finds the key gone in between is an ordinary failure line.
+async function sessionPlan($: any): Promise<SessionPlan> {
+  const r = await api($, 'GET', '/api/plans', { query: { limit: 1 } })
+  if (r.unreachable === true) return 'silent'
+  if (isSignedOut(r) || outcomeRevokedBy(r) !== null) return 'silent'
+  if (!r.ok) return { failed: errText(r) }
+  if (!('session' in (r.body ?? {}))) return { failed: 'bad_response: GET /api/plans answered no session field' }
+  return r.body.session === null ? 'not-connected' : 'connected'
+}
+
+// A session START may reach its hook before the plugin's own server has connected (DX-4578): the server's `danxbot_api` shows in the
+// session's tool list once it has. Polled up to STALE_GRACE_MS, the time a fresh session's server needs; the old standby server (the repo's own
+// `danx-dashboard` tool and none of the plugin's) never connects, so it does not wait. A sub-agent's start is mid-session and does not call this.
+async function serverReady($: any): Promise<boolean> {
+  const own = toolName('danxbot_api')
+  for (let waited = 0; ; waited += SERVER_POLL_MS) {
+    let names: string[]
+    try {
+      names = (await $.tool.list()).map((t: any) => t.name)
+    } catch {
+      // a tool list that cannot be read cannot say: the call itself will
+      return true
     }
-    if (isSignedOut(r) || outcomeRevokedBy(r) !== null) return 'silent'
-    if (!r.ok) return { failed: errText(r) }
-    if (!('session' in (r.body ?? {}))) return { failed: 'bad_response: GET /api/plans answered no session field' }
-    return r.body.session === null ? 'not-connected' : 'connected'
+    if (names.includes(own)) return true
+    if (names.includes(LEGACY_PROJECT_API_TOOL) || waited >= STALE_GRACE_MS) return false
+    try {
+      await $.clock.sleep(SERVER_POLL_MS)
+    } catch {
+      // the wait rejects when the plugin's environment is unloaded (a reload): this start's lookup ends with it
+      return false
+    }
   }
 }
 
-// One GET the model is told the answer of. A key that is gone or revoked is quiet (its own tools say so), never a failure line.
+// ONE deadline over a whole context lookup, as the bash hook's `timeout 8s` was: a hung dashboard answers `late` instead of holding the
+// start, however many reads the lookup makes (the engine's own per-call limit bounds each, not their sum).
+async function withinDeadline($: any, work: Promise<string | null>, late: string): Promise<string | null> {
+  let cancel = () => {}
+  const timedOut = new Promise<string>(resolve => {
+    const timer = $.clock.after(CONTEXT_DEADLINE_MS, () => resolve(late))
+    cancel = () => timer.cancel()
+  })
+  try {
+    return await Promise.race([work, timedOut])
+  } finally {
+    cancel()
+  }
+}
+
+// One GET the model is told the answer of.
 async function readTold($: any, path: string, parse: (r: Api) => Told): Promise<Told> {
-  const r = await api($, 'GET', path)
-  if (isSignedOut(r) || outcomeRevokedBy(r) !== null) return { kind: 'nothing' }
-  return parse(r)
+  return parse(await api($, 'GET', path))
 }
 
 const toldLine = (t: Told, failure: (reason: string) => string): string | null => (t.kind === 'text' ? t.text : t.kind === 'failed' ? failure(t.reason) : null)
@@ -1453,29 +1480,34 @@ async function earlierSessions($: any, e: any): Promise<string[]> {
 }
 
 // DX-3928: a session that is not on a plan but replaced one that was is told which plan and what waits there. The first earlier session
-// whose answer carries a notice speaks; one that answers nothing leaves it to the next; a failure is reported only when none answered.
+// whose answer carries a notice speaks; one that answers nothing leaves it to the next. Any earlier session that failed and left no notice
+// to say is one warning line: the failed one may have been the one with the notice, so it is never quiet.
 async function restartNotice($: any, e: any): Promise<string | null> {
   const candidates = await earlierSessions($, e)
   const failures: string[] = []
-  let answered = 0
   for (const id of candidates) {
     const t = await readTold($, restartNoticePath(id), restartText)
-    if (t.kind === 'failed') {
-      failures.push(`${id}: ${t.reason}`)
-      continue
-    }
-    answered++
     if (t.kind === 'text') return t.text
+    if (t.kind === 'failed') failures.push(`${id}: ${t.reason}`)
   }
-  return answered === 0 && failures.length > 0 ? restartFailureLine(`no earlier session answered (${failures.length} of ${candidates.length} failed): ${failures.join('; ')}`) : null
+  return failures.length > 0 ? restartFailureLine(`${failures.length} of ${candidates.length} earlier sessions did not answer: ${failures.join('; ')}`) : null
+}
+
+async function readSessionContext($: any, e: any, event: DanxEvent): Promise<string | null> {
+  const plan = await sessionPlan($)
+  if (plan === 'not-connected') return isRestartSource(e.source) ? restartNotice($, e) : null
+  return eventContext($, event, plan)
 }
 
 async function sessionContext($: any, e: any): Promise<string | null> {
   const event = sessionEvent(e.source)
   if (event === null) return null
-  const plan = await sessionPlan($, true)
-  if (plan === 'not-connected') return isRestartSource(e.source) ? restartNotice($, e) : null
-  return eventContext($, event, plan)
+  if (!(await serverReady($))) return null
+  return withinDeadline($, readSessionContext($, e, event), eventFailureLine(event, deadlineReason()))
+}
+
+async function readSubagentContext($: any): Promise<string | null> {
+  return eventContext($, 'sub_agent_start', await sessionPlan($))
 }
 
 // SessionStart: the session title is noted, then the registry's text for a connected session or the restart notice for one that replaced a
@@ -1489,7 +1521,8 @@ async function onClassicSessionStart($: any, e: any, next: any) {
 // DX-4234: and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
-  return withLine(withLine(r, await eventContext($, 'sub_agent_start', await sessionPlan($, false))), await pacingLine(pacingEnv($)))
+  const said = await withinDeadline($, readSubagentContext($), eventFailureLine('sub_agent_start', deadlineReason()))
+  return withLine(withLine(r, said), await pacingLine(pacingEnv($)))
 }
 
 function onSubagentStop($: any, e: any, next: any) {
