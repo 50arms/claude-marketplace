@@ -26,8 +26,8 @@ export function errText(r: Api): string {
   return `${r.status || 'mcp'}: ${b.message ?? b.error ?? JSON.stringify(b).slice(0, ERROR_BODY_MAX)}`
 }
 
-// A card read for its problem rows: only the open ones, which is what the pane lists. An answered problem leaves the pane at once;
-// its history lives in the browser.
+// A card read for its problem rows: only the open ones, which is what the pane lists. A problem answered in the browser leaves the list
+// on the next refresh; its history lives there too.
 function toProblems(card: any): ProblemRow[] {
   return (card.problems ?? [])
     .filter((p: any) => p.open)

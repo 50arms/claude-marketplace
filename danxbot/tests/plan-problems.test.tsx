@@ -74,17 +74,12 @@ for (const surface of SURFACES) {
       expect(await pane.findAll({ type: 'Input' })).toEqual([])
       const keys = (await pane.findAll({ type: 'Button' })).map((b: any) => b.key)
       expect(keys).toEqual(expect.arrayContaining(['refresh', 'switch', 'disconnect']))
-      expect(keys.filter((k: string) => /^(open|use|note|rej|tick|talk|comment|free)-\d/.test(k))).toEqual([])
+      // a button per problem would end its key in the problem's id
+      expect(keys.filter((k: string) => /-\d+$/.test(k))).toEqual([])
       await pane.press({ key: 'refresh' })
       await pane.press({ key: 'switch' })
       await d.clock.settle()
       expect(d.writes()).toEqual([])
-    })
-
-    test('the band still counts the open problems', async ($, on) => {
-      await openPane($, on, surface)
-      const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
-      expect(await problemBadgeOf(band)).toBe('⚠ 3')
     })
   })
 

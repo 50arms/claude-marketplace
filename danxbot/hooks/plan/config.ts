@@ -34,7 +34,7 @@ export const PERMISSION_TOLD_MAX = 100
 // The dashboard's six card statuses, in the order a view's breakdown is read.
 export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const
 
-// How much one load reads. Past a cap the view says so (cardsTotal vs cardsRead, moreComments)
+// How much one load reads. Past a cap the view says so (cardsTotal vs cardsRead)
 // rather than presenting a lower bound as the whole.
 export const MAX_PLANS = 30
 export const MAX_CARDS = 15
@@ -196,6 +196,11 @@ export function needsYouUrl(plan: ConnectedPlan): string {
 // The one builder of a card's page: problem links are built on it.
 export function cardUrl(plan: ConnectedPlan, cardId: string): string {
   return `${planUrl(plan)}/cards/${cardId}`
+}
+
+// DX-4609: a problem on its card in the browser, where every interaction with it happens.
+export function problemUrl(plan: ConnectedPlan, cardId: string, problemId: number): string {
+  return `${cardUrl(plan, cardId)}/problems/PBLM-${problemId}`
 }
 
 // DX-4448: a card on a board of its own, outside the connected plan: the plan-free card route (danxbot

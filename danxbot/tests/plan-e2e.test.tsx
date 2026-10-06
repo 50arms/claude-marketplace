@@ -49,6 +49,7 @@ for (const surface of SURFACES) {
       expect(links).toEqual(['DX-1 · Which route?', 'DX-1 · Allow the site', 'DX-2 · Second one?', 'DX-2 · Rotate the key'])
       // nothing in the pane writes to a card; the model was told only of the connect
       expect(d.writes()).toEqual([])
+      expect(toldModel(d)).toHaveLength(1)
       expectRowCarries(toldModel(d)[0]!, ['PLAN-23', 'plan_id 23'])
     })
   })
