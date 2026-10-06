@@ -718,7 +718,7 @@ describe("watchdogTick — throttle, marker liveness, orchestration (DX-2953)", 
 // ============================ DX-3997: the bridge file dying must not take the watchdog with it
 
 describe("interpretStartOutcome — a start that cannot even run is never silent (DX-3997)", () => {
-  const fix = /update-claude-plugins.*restart the session/;
+  const fix = /claude plugin update danxbot.*restart the session/;
 
   test("0 and the subprocess's deliberate 2 pass through untouched", () => {
     assert.deepEqual(watchdog.interpretStartOutcome({ code: 0, stdout: "a", stderr: "b" }), { exitCode: 0, stdout: "a", stderr: "b" });
@@ -862,7 +862,7 @@ describe("the watchdog does not depend on plan-event-bridge.mjs (DX-3997)", () =
     assert.equal(result.stderr.trimEnd().split("\n").length, 1, result.stderr);
     assert.match(result.stderr, /bridge down: events are NOT reaching this session/);
     assert.match(result.stderr, /`plan-event-bridge\.mjs start` exited [1-9]/);
-    assert.match(result.stderr, /update-claude-plugins/);
+    assert.match(result.stderr, /claude plugin update danxbot/);
     // and the real file is untouched
     assert.ok(fs.statSync(path.join(scriptsDir, "plan-event-bridge.mjs")).size > 4096);
   });

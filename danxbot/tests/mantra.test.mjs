@@ -68,7 +68,7 @@ test("the parked-card rule lives once in plan-workflow § Actionable work and no
   const actionable = planWorkflow.slice(start, planWorkflow.indexOf("\n## ", start + 1));
   assert.match(actionable, PARKED_CARD);
   assert.match(actionable, /read why in its comments before reopening it/);
-  assert.match(actionable, /a park the operator made is theirs\s+to lift/);
+  assert.match(actionable, /a park the user made is theirs\s+to lift/);
   assert.equal([...planWorkflow.matchAll(new RegExp(PARKED_CARD.source, "g"))].length, 1);
   assert.doesNotMatch(mantra, PARKED_CARD);
 });

@@ -38,7 +38,7 @@ export const STDERR_QUOTE_CHARS = 300;
 
 // Same instruction as INTEGRITY_FIX in launch.mjs, without its "Fix: " prefix (failureNotice adds it); launch.test.mjs pins them together.
 export const CORRUPT_INSTALL_FIX =
-  "run `git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`, then restart the session";
+  "run `claude plugin marketplace update`, then `claude plugin update danxbot`, then restart the session";
 
 /**
  * Run `plan-event-bridge.mjs start --restart-trigger=watchdog ...` as a subprocess with the

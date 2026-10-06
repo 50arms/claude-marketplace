@@ -178,6 +178,19 @@ if ! node "${REPO_ROOT}/scripts/lint-frontmatter.js" "${REPO_ROOT}"; then
   exit 1
 fi
 
+# --- Pre-flight: general-audience scan (DX-4551) --------------------------
+#
+# Everything a plugin ships is read by every user who installs it. The scan fails the
+# publish when a skill, agent, hook, script output string or the mantra names something
+# only the author's own setup has (a personal account or alias, the author's domain, an
+# internal card or plan id, a path in the author's repo). Whole repo, before any bump.
+
+info "Scanning shipped text for author-specific names..."
+if ! node "${REPO_ROOT}/scripts/check-general-audience.mjs"; then
+  err "General-audience scan failed (above). Reword the lines named, then re-run publish."
+  exit 1
+fi
+
 # --- Pre-flight: plugin hooks modules (DX-4232) ---------------------------
 #
 # A plugin whose hooks.json declares "modules" ships native function hooks. The engine loads a

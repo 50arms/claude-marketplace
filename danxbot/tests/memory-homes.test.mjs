@@ -41,7 +41,7 @@ const GATED_NEVER_HAIKU = /A card that carries gates never goes to a `worker-hai
 test("the description every session sees sends a correction to the skill before it is saved anywhere", () => {
   const frontmatter = fixBehavior.slice(4, fixBehavior.indexOf("\n---", 4));
   const description = flat(parseYaml(frontmatter).description);
-  assert.match(description, /^Load when the operator corrects how you work, before saving the correction anywhere\./);
+  assert.match(description, /^Load when the user corrects how you work, before saving the correction anywhere\./);
   assert.match(description, /never a memory file or a new skill\.$/);
 });
 
