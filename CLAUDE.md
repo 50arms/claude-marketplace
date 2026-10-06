@@ -79,6 +79,8 @@ A plugin edit is not shipped until BOTH happen:
 1. **Bump + push** — `./scripts/publish.sh <patch|minor|major> <plugin>`. The marketplace loader compares `version` fields, not commit shas; a plain `git push` of plugin source ships nothing to any consumer.
 2. **Update this machine's installed records** — `update-claude-plugins` (symlink to `scripts/update-plugins.sh`).
 
+Before any bump, `publish.sh` runs its pre-flights: the frontmatter lint, the hooks-module `claude plugin validate` and `test`, the integrity-manifest rewrite, the injection budget, and the general-audience scan (`scripts/check-general-audience.mjs`), which refuses the publish when a shipped skill, agent, hook, script string or the mantra names the author's own setup (a personal account or alias, the author's domain, a card or plan id, a repo path). It reads the files the manifest hashes, comments in code excluded, and throws on a file type it does not know, so teach it a new type before shipping one.
+
 Step 2 exists because **installed plugin versions are recorded PER PROJECT** in `~/.claude/plugins/installed_plugins.json`. Pushing a new version makes it *available*; nothing moves a project's record onto it. Claude Code's own auto-update cannot do it here: the desktop app launches its CLI with `DISABLE_AUTOUPDATER=1`, which the docs state disables automatic updates "for both Claude Code and all plugins".
 
 The failure is silent and uneven, which is why it went unnoticed for two months: the `danxbot` project sat on `base` v0.3.15 (June 9) and `danxbot` v0.3.65 while the `platform` project on the same machine ran v0.3.27 and v0.3.113. Every session looked healthy while loading two-month-old skills, rules, and hooks.

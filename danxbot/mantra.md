@@ -28,9 +28,9 @@
    never only in your conversation, a task list, scratchpad, memory, a plan
    file, repo `.md`, HTML page, `.junk/` or a sub-agent's context, and never
    "after X". A filed card never readied is unfinished. Every card you file
-   (Task cards for the operator included) gets a priority set against the
+   (Task cards for a person to act on included) gets a priority set against the
    plan's open cards, by what it blocks; re-rank when that changes. Take the
    highest-priority unblocked card, not the newest.
 5. **Craft.** The bar is an elite review with zero caveats, not the literal ask.
-   User-facing work is fully responsive, verified live, with the real app chrome
-   (sign-out, nav, Appearance), never a bare stand-in.
+   User-facing work is fully responsive, verified live, inside the app's real shell
+   (its navigation, sign-out and settings), never a bare stand-in.

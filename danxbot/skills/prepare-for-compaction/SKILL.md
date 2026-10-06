@@ -1,6 +1,6 @@
 ---
 name: prepare-for-compaction
-description: 'The checklist to run right before a compaction or handoff. Load when the operator asks to prepare for compaction, context is low with work unfinished, or you are handing off or stopping with sub-agents running or a dirty tree.'
+description: 'The checklist to run right before a compaction or handoff. Load when the user asks to prepare for compaction, context is low with work unfinished, or you are handing off or stopping with sub-agents running or a dirty tree.'
 ---
 
 # Prepare for Compaction
@@ -14,7 +14,7 @@ compaction, and nothing warns before one, so run this deliberately.
    otherwise "commit everything dirty" merges unrelated, unreviewed work into one commit.
 3. **Another agent's uncommitted work:** commit it as WIP, never discard it, and record
    the SHA on its card.
-4. **Live requirements onto the card.** Anything the operator said only in chat or a
+4. **Live requirements onto the card.** Anything the user said only in chat or a
    screenshot goes on the card, in their priority order, marked done (and how you know),
    partly done (finished / started / untouched) or not started.
 5. **Re-verify before saying ready.** Re-run `git status`, re-read every card you wrote,

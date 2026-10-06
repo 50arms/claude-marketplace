@@ -173,7 +173,7 @@ export function claimWarning(signature, { dir = os.tmpdir(), now = Date.now() } 
 
 /** The one repair instruction every integrity message carries; hooks.json's fallback line and bridge-watchdog.mjs say the same (launch.test.mjs pins all three). */
 export const INTEGRITY_FIX =
-  "Fix: run `git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`, then restart the session.";
+  "Fix: run `claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session.";
 
 function warningText(root, result) {
   const head = "[danxbot plugin] INTEGRITY FAILURE:";

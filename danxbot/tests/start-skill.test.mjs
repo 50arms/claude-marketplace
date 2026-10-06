@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { load as loadYaml } from "js-yaml";
+import { bannedHits } from "../../scripts/check-general-audience.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const raw = readFileSync(path.join(here, "../skills/start/SKILL.md"), "utf8");
@@ -169,20 +170,7 @@ test("running it again in a connected repo reports what is set up and goes to pl
   assert.match(text, /changes nothing/i);
 });
 
-// The scan the dashboard keeps for the text it sends into a session (DX-4550), applied to the
-// text the plugin sends into one. Each token names something only the author's setup has.
-const BANNED = [
-  { name: "a personal GitHub account or marketplace name", pattern: /newms/i },
-  { name: "a personal shell alias", pattern: /update-claude-plugins/i },
-  { name: "the author's own domain", pattern: /sageus/i },
-  { name: "another of the author's products", pattern: /gpt-manager/i },
-  { name: "another of the author's organizations", pattern: /flytedesk/i },
-  { name: "the author's own UI library", pattern: /@danxbot\/ui/i },
-  { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages)\/[\w.-]/ },
-  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|R)-\d+/ },
-];
-const bannedHits = (s) => BANNED.flatMap(({ name, pattern }) => (pattern.test(s) ? [name] : []));
-
+// The publish-time scan (scripts/check-general-audience.mjs, DX-4551) applied to this skill on its own.
 test("the skill's text names nothing specific to the author's own setup", () => {
   assert.deepEqual(bannedHits(raw), []);
 });

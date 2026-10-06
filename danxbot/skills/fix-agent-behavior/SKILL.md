@@ -1,11 +1,11 @@
 ---
 name: fix-agent-behavior
-description: 'Load when the operator corrects how you work, before saving the correction anywhere. Diagnose the wrong action, then fix it by briefly refining an existing rule/skill/hook/MCP description, expanding documentation, or escalating — never a memory file or a new skill.'
+description: 'Load when the user corrects how you work, before saving the correction anywhere. Diagnose the wrong action, then fix it by briefly refining an existing rule/skill/hook/MCP description, expanding documentation, or escalating — never a memory file or a new skill.'
 ---
 
 # Diagnose, Then Fix (Never Add a Skill)
 
-Triggered when the operator flags something done wrong. Pause your own other work; leave
+Triggered when the user flags something done wrong. Pause your own other work; leave
 running agents alone.
 
 ## 1. Explain first (read-only)
@@ -25,13 +25,13 @@ No code edits, no investigation in the project codebase yet.
 3. **The rule exists and was still broken** → sharpen it with one concise, generalised
    example, only if the rule is genuinely ambiguous. Never a bullet list of cases. A
    clear rule that was broken anyway is usually a model limit, not a text gap: tell the
-   operator so (a higher effort or more capable model follows it more reliably) and
+   user so (a higher effort or more capable model follows it more reliably) and
    add nothing.
-4. **Text can't fix it** → say so and escalate to the operator with a proposed system
-   change (a route reminder, the janitor, or code) instead of more prose.
+4. **Text can't fix it** → say so and escalate to the user with a proposed system
+   change (a route reminder, a hook, or code) instead of more prose.
 
 **Never create a new skill.** A persisting bad behaviour is cheaper than another skill
-nobody needed — that habit is what bloated this plugin set before.
+nobody needed — that habit is what bloats a plugin set.
 
 ## 3. Locate the target and edit it
 
@@ -43,10 +43,10 @@ body.
 Pick the home by the KIND of rule, never by where the failure showed up:
 
 - **The plugin** ships to the general public: only behaviour every user of it should have,
-  in any project, on any machine. Never one operator's policy (who may deploy, which
+  in any project, on any machine. Never one user's policy (who may deploy, which
   actions need an ask) and never machine facts (paths, accounts, hosts).
-- **Operator policy and this machine's facts** (what needs no ask, what is operator-only,
-  deploy permission, paths, accounts) → `~/.claude/CLAUDE.md`.
+- **The user's own policy and this machine's facts** (what needs no ask, what only the user
+  may do, deploy permission, paths, accounts) → `~/.claude/CLAUDE.md`.
 - **One repo's policy** (its deploy, test or git rules) → that repo's `.claude/CLAUDE.md`
   or `.claude/rules/`.
 - Never a memory file (it reaches one project on one machine; no dispatched worker, other
@@ -60,8 +60,9 @@ A plugin change depends on whether you are its author. Find the source checkout 
 origin`), never `~/.claude/plugins/cache/` (read-only):
 
 - **Editable checkout found** (you are the author): edit it in a worktree off its main,
-  then publish (bump and push, `scripts/publish.sh` if present). Publishing is standing,
-  pre-authorized, never needs approval. Never clone a second copy.
+  then publish it the way that repo says (its publish script if it has one), and only where
+  the user's own instructions or that repo's rules allow publishing without asking;
+  otherwise stop at the pushed branch and ask. Never clone a second copy.
 - **No editable checkout** (you are not the author; the public cannot push to the
   plugin): never edit the cache or push to its main. Fork or clone its repo, fix it on a
   new branch, and open a pull request that states the wrong behaviour and the fix.
@@ -75,4 +76,4 @@ it is not ours.
 Every run ends in exactly one of two states — say which:
 - **Resolved:** name the file and the brief edit (or doc expansion) made, and where it
   went: published, pushed, or the pull request's link.
-- **Escalated:** name the proposed system change and ask the operator to confirm it.
+- **Escalated:** name the proposed system change and ask the user to confirm it.
