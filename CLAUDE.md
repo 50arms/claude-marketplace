@@ -1,6 +1,6 @@
 # claude-plugins
 
-Source of truth for the `newms-plugins` marketplace. Its plugins reach every Claude Code session on this machine and danxbot's container workers (through danxbot's catalog).
+Source of truth for the `danxbot` plugin. It reaches every Claude Code session and danxbot's container workers (through danxbot's catalog) from the public 50 Arms marketplace, `50arms/claude-marketplace` (marketplace name `50arms`, install `danxbot@50arms`). That repo is a generated copy of `danxbot/` plus `50arms-marketplace/` (its catalog, with the plugin as the relative path `./danxbot` so the marketplace clone holds the plugin files, which danxbot's boot sync, catalog import and the integrity launcher read), made by `scripts/publish-marketplace.sh`; never edit it by hand. The old `newms-plugins` marketplace (this repo's own `.claude-plugin/marketplace.json`) stays only until this machine's sessions and the danxbot removal gate move off it.
 
 ## The mantra is the one home for every rule it states (PLN-11 R-22)
 
@@ -67,7 +67,7 @@ The version is the npm registry's `latest`: the two session-start entry points (
 
 A plugin edit is not shipped until BOTH happen:
 
-1. **Bump + push** — `./scripts/publish.sh <patch|minor|major> <plugin>`. The marketplace loader compares `version` fields, not commit shas; a plain `git push` of plugin source ships nothing to any consumer.
+1. **Bump + push** — `./scripts/publish.sh <patch|minor|major> <plugin>`. The marketplace loader compares `version` fields, not commit shas; a plain `git push` of plugin source ships nothing to any consumer. For `danxbot`, `publish.sh` then runs `scripts/publish-marketplace.sh`, which copies the pushed tree (tests excluded) and the catalog into `50arms/claude-marketplace`, checks the copy against `integrity-manifest.json`, runs `claude plugin validate` on it and pushes `main` there. Run that script by hand when a push reached this repo by another route.
 2. **Update this machine's installed records** — `update-claude-plugins` (symlink to `scripts/update-plugins.sh`).
 
 Before any bump, `publish.sh` runs its pre-flights: the frontmatter lint, the hooks-module `claude plugin validate` and `test`, the integrity-manifest rewrite, the injection budget, and the general-audience scan (`scripts/check-general-audience.mjs`), which refuses the publish when a shipped skill, agent, hook, script string or the mantra names the author's own setup (a personal account or alias, the author's domain, a card or plan id, a repo path). It reads the files the manifest hashes, comments in code excluded, and throws on a file type it does not know, so teach it a new type before shipping one.

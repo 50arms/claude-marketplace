@@ -153,15 +153,20 @@ function pushHarness() {
   git(dir, "checkout", "-q", "--no-track", "-b", "agent-branch", "origin/main");
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "publish.sh"), path.join(dir, "scripts", "publish.sh"));
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-general-audience.mjs"), path.join(dir, "scripts", "check-general-audience.mjs"));
+  // DX-4565: a push of danxbot is followed by the copy into the 50 Arms marketplace repo; here a bare stand-in.
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "publish-marketplace.sh"), path.join(dir, "scripts", "publish-marketplace.sh"));
+  fs.cpSync(path.join(REPO_ROOT, "50arms-marketplace"), path.join(dir, "50arms-marketplace"), { recursive: true });
+  const marketplace = path.join(root, "marketplace.git");
+  git(root, "init", "-q", "--bare", "-b", "main", marketplace);
   // The post-push steps rewrite THIS machine's installed-plugin records; the harness has no use for them.
   fs.rmSync(path.join(dir, "scripts", "update-plugins.sh"));
   git(dir, "add", "-A");
   git(dir, "commit", "-q", "-m", "carry publish.sh");
   fs.appendFileSync(path.join(dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- publish test edit -->\n");
-  return { root, origin, dir, home };
+  return { root, origin, dir, home, marketplace };
 }
 
-function publishPushing({ dir, home }, extraEnv = {}) {
+function publishPushing({ dir, home, marketplace }, extraEnv = {}) {
   const standIn = standInClaude();
   const { CLAUDE_BIN: _callers, ...inherited } = process.env;
   const env = {
@@ -171,6 +176,7 @@ function publishPushing({ dir, home }, extraEnv = {}) {
     USERPROFILE: home,
     NODE_PATH: path.join(REPO_ROOT, "node_modules"),
     PATH: `${standIn.bin}${path.delimiter}${process.env.PATH}`,
+    MARKETPLACE_REMOTE: marketplace,
   };
   delete env.DANX_AGENT_WORKTREE;
   Object.assign(env, extraEnv);
@@ -191,6 +197,11 @@ test("DX-4288: a branch with no upstream publishes the bump to origin/main, and 
     assert.equal(originMain(h), git(h.dir, "rev-parse", "HEAD").trim());
     assert.notEqual(pluginVersion(h.dir), before);
     assert.equal(originBranches(h), "refs/heads/main");
+    // DX-4565: the bumped plugin reaches the marketplace repo in the same publish.
+    assert.equal(
+      JSON.parse(git(h.marketplace, "show", "main:danxbot/.claude-plugin/plugin.json")).version,
+      pluginVersion(h.dir),
+    );
   } finally {
     fs.rmSync(h.root, { recursive: true, force: true });
   }

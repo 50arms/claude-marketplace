@@ -366,6 +366,15 @@ else
   info "Pushing HEAD to origin/main..."
   git push origin HEAD:main
 
+  # DX-4565: testers install danxbot from the public 50 Arms marketplace, a generated copy of this
+  # plugin. The copy is what a release reaches them through, so it is part of publishing.
+  for plugin in "${TARGETS[@]}"; do
+    if [ "$plugin" = "danxbot" ]; then
+      info "Publishing danxbot to the 50 Arms marketplace..."
+      bash "${REPO_ROOT}/scripts/publish-marketplace.sh"
+    fi
+  done
+
   # Refresh THIS machine's local marketplace clone so the just-pushed
   # version is loadable in the current session.
   #
