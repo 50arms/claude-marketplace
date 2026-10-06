@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "a464aeef2eee773ef05bb6e71b53f3930da2db2a8b69b9cf7716a5d8948df6ee",
+    ".claude-plugin/plugin.json": "366cd5b52841a12be706e9490a4f62210e7f3d542abcc2de250351a35d9f6f34",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -47,7 +47,7 @@
     "scripts/activity-report.mjs": "0b5617441cdbca09b94f5e0b84d790e4d508451e83424aad00ae402a9c1dd81f",
     "scripts/background-work-report.mjs": "6162661769720a0879c1571fe2ef646bd874a0483c90935d928fa73f33086f53",
     "scripts/capture-screenshot.mjs": "035814a6eca293ed03cf4eb3bc55c81972eb4dba83ec6b385126b64d7509c2bf",
-    "scripts/dashboard-mcp-server.mjs": "9f2046323b29bb25b0d066295e0f2c2b5bff08ad153a4837d7449619a9673886",
+    "scripts/dashboard-mcp-server.mjs": "9b6d9d41bb35695e3d7080a5e6967b71343a21b8e1d664d949369323f1522205",
     "scripts/ensure-dashboard-mcp.sh": "d1f838af14a5d72d2f3537d535d382d8ab3ac89a7fc9a58c7c7e8bf048f8988a",
     "scripts/event-hook.sh": "76b0c523d8743ca916735ed232d5beef28d3e6a0e2c48858b03fc5adccdd7e84",
     "scripts/inject-time.sh": "94ffac64d7424ef31181bd86bca6d594ab5f755e26c028545f65cbdf439527ae",
