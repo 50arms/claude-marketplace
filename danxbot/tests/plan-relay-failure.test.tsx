@@ -116,6 +116,35 @@ for (const surface of SURFACES) {
       expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, 23])
     })
 
+    test('a halt from a lost key is cleared by the signed-out view: signing in again restarts the relay', async ($, on) => {
+      const d = dashboard(on)
+      d.relay.server.script.push(() => raw(SIGN_IN_HALT, true))
+      await startSession($, d, surface)
+      expect(d.relay.calls).toHaveLength(1)
+      d.world.signedOut = 'signed-out'
+      await forceRefresh($, d)
+      d.world.signedOut = null
+      await forceRefresh($, d)
+      await d.clock.settle()
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, 23])
+    })
+
+    test("a reconnect shows no stale 'stopped' state: the new run's first word comes before its own awaits", async ($, on) => {
+      const d = dashboard(on)
+      d.relay.server.stopped = { reason: 'plan_archived', detail: 'the old stop', fix: 'the old fix' }
+      await startSession($, d, surface)
+      d.relay.server.stopped = undefined
+      d.world.planId = null
+      await forceRefresh($, d)
+      const release = d.relay.holdStoreKeys()
+      d.world.planId = 23
+      await forceRefresh($, d)
+      const relayWrites = d.stateWrites.filter(w => w.key === 'relay').map((w: any) => w.value)
+      expect(relayWrites.at(-1)).toMatchObject({ phase: 'streaming', planId: 23 })
+      release()
+      await d.clock.settle()
+    })
+
     test('a stale halt on one plan is cleared by a move away and back (23 -> 24 -> 23), with no connect and no sign-in', async ($, on) => {
       const d = dashboard(on)
       d.relay.server.stopped = { reason: 'plan_archived', detail: 'archived', fix: 'connect again' }

@@ -193,6 +193,17 @@ for (const surface of SURFACES) {
       // the fail after the success waits the FIRST step (1 s), not the third (5 s)
       await d.clock.advance(1_000)
       expect(d.relay.calls).toHaveLength(5)
+    test('the cursor is re-keyed once per session-id change, not on every wait', async ($, on) => {
+      const d = dashboard(on)
+      d.relay.server.holdMs = 'timeout_ms'
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c5', text: 'before the clear' })
+      await d.clock.settle()
+      d.world.sessionId = 'sess-new'
+      await d.clock.advance(WAIT_MS)
+      await d.clock.advance(WAIT_MS)
+      await d.clock.advance(WAIT_MS)
+      expect(d.relay.storeSets.filter(k => k === `${CURSOR_PREFIX}sess-new`)).toHaveLength(1)
     })
 
     test('an unexpected error in the loop halts the relay for the plan: shown, told once, not restarted by a refresh', async ($, on) => {

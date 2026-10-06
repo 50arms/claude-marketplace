@@ -763,12 +763,19 @@ export function dashboard(
   // DX-4521: the plugin's $.store (what survives the session), one fresh map per fixture
   const stored = new Map<string, unknown>()
   let storeSetFails: string | undefined
+  const storeSets: string[] = []
   on('store.get', (_$: any, e: any) => ({ value: stored.get(e.key) }) as any)
   on('store.set', (_$: any, e: any) => {
     if (storeSetFails !== undefined && String(e.key).startsWith(RELAY_CURSOR_PREFIX)) return { deny: storeSetFails } as any
+    storeSets.push(String(e.key))
     return (stored.set(e.key, e.value), { value: undefined }) as any
   })
-  on('store.keys', () => ({ value: [...stored.keys()] }) as any)
+  // DX-4233: a test can hold `store.keys` (the relay's first await after its first word) until it releases it
+  let storeKeysHold: Promise<void> | undefined
+  on('store.keys', async () => {
+    await storeKeysHold
+    return { value: [...stored.keys()] } as any
+  })
   on('store.delete', (_$: any, e: any) => (stored.delete(e.key), { value: undefined }) as any)
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
@@ -854,6 +861,14 @@ export function dashboard(
     push: (...events: { cursor: string; text: string }[]) => {
       server.buffer.push(...events)
       server.wake?.()
+    },
+    // every key the plugin wrote to $.store, in order
+    storeSets,
+    // holds the plugin's next `store.keys` reads until the returned function is called
+    holdStoreKeys: () => {
+      let release!: () => void
+      storeKeysHold = new Promise<void>(resolve => (release = resolve))
+      return release
     },
     // the relay's cursor writes to $.store are refused with this reason (a failure that is none of the relay's own)
     failCursorWrites: (reason: string) => void (storeSetFails = reason),

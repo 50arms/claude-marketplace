@@ -1245,10 +1245,11 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
 async function relayLoop($: any, run: RelayRun): Promise<void> {
   let failures = 0
   try {
+    // the run's first word comes before any await of its own: until then the pane would still show the state the last run of this plan left
+    await setRelay($, run, 'streaming', null)
     await pruneCursors($)
     let cursor = await loadCursor($, run.planId)
     let keyedBy = await $.session.id()
-    await setRelay($, run, 'streaming', null)
     // DX-4233: the loop ends with its run; what a late answer would say is gated in setRelay, saveCursor and deliverAll
     while (!run.dead) {
       const startedAt = await $.clock.now()
