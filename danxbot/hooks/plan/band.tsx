@@ -87,9 +87,11 @@ export function renderBand(
       donutMark(E, percent, hasSvg, DONUT_BAND_PX)
     )
   return (
-    <Box key="band-line" flexDirection="row" gap={1}>
+    <Box key="band-line" flexDirection="row" gap={1} minWidth={0}>
       <Box flexShrink={0}>{indicator}</Box>
-      <Box flexShrink={1}>
+      {/* DX-4626: a flex item never shrinks below its content's width unless its min width is 0, so without minWidth={0} and the
+          clip the full name pushed the controls off the band's edge instead of being cut by `truncate-end`. */}
+      <Box flexShrink={1} minWidth={0} overflow="hidden">
         {/* DX-4419: a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
         <Text color={failedColor} dimColor={!failed} wrap="truncate-end">
           {bandLabel(v, labelCols)}
