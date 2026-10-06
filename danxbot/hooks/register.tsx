@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
 import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
@@ -46,7 +46,6 @@ import {
   SERVER,
   START_RETRY_MS,
   SERVER_POLL_MS,
-  STALE_GRACE_MS,
   toolName,
   NOTE_MARKER,
   TOAST_ERROR_MAX,
@@ -1389,50 +1388,70 @@ async function onToolStamp($: any, e: any, next: any) {
   return { ...r, context: [...(r.context ?? []), await timeLine($)] }
 }
 
-// DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, the
-// session holds no key or a person revoked it (its own tools already tell the model), or the read itself broke (a dashboard fault). DX-3421:
-// a session not known to be on a plan hears nothing from the event text, so a dashboard fault never speaks for it.
-type SessionPlan = 'connected' | 'not-connected' | 'silent'
+// DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
+// the session holds no key or a person revoked it (its own tools already tell the model). `failed`: the read itself broke (a dashboard fault).
+type SessionPlan = 'connected' | 'not-connected' | 'silent' | { failed: string }
 
 // `GET /api/plans` is asked for one row only because only its `session` field is read (the session's own plan binding).
 const SESSION_PLAN_PROBE = { limit: 1 }
 
+// The ONE place a key that is gone or revoked is made quiet (its own tools say so, never a failure line): this read is the first of every
+// context lookup, so a later read that finds the key gone in between is an ordinary failure line.
 async function sessionPlan($: any): Promise<SessionPlan> {
   const r = await api($, 'GET', '/api/plans', { query: SESSION_PLAN_PROBE })
-  if (!r.ok || !('session' in (r.body ?? {}))) return 'silent'
+  if (r.unreachable === true) return 'silent'
+  if (isSignedOut(r) || outcomeRevokedBy(r) !== null) return 'silent'
+  if (!r.ok) return { failed: errText(r) }
+  if (!('session' in (r.body ?? {}))) return { failed: 'bad_response: GET /api/plans answered no session field' }
   return r.body.session === null ? 'not-connected' : 'connected'
 }
 
+// Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the danx-dashboard MCP server writes
+// at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, session-connection.ts `sessionConnectionPath`; only its existence is
+// read). It decides who a dashboard fault speaks to (DX-3421): a connected session gets one warning line, any other stays silent.
+async function isPlanConnected($: any): Promise<boolean> {
+  const id: string = await $.session.id()
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+  if (typeof home !== 'string' || home === '' || !/^[A-Za-z0-9_-]+$/.test(id)) return false
+  return $.fs.exists(`${home}/.config/danxbot/plan-sessions/${id}.json`)
+}
+
+// What a session start's wait for the plugin's server came to: it is there, it never will be (the old standby), or the deadline came first.
+type ServerState = 'ready' | 'standby' | 'not-yet'
+
 // A session START may reach its hook before the plugin's own server has connected (DX-4578): the server's `danxbot_api` shows in the
-// session's tool list once it has. Polled up to STALE_GRACE_MS, the time a fresh session's server needs; the old standby server (the repo's own
-// `danx-dashboard` tool and none of the plugin's) never connects, so it does not wait. A sub-agent's start is mid-session and does not call this.
-async function serverReady($: any): Promise<boolean> {
+// session's tool list once it has. Polled until `deadlineAt`, the start's one deadline (CONTEXT_DEADLINE_MS from its beginning), and not a tick
+// after; the old standby server (the repo's own `danx-dashboard` tool and none of the plugin's) never connects, so it does not wait. A
+// sub-agent's start is mid-session and does not call this.
+async function serverState($: any, deadlineAt: number): Promise<ServerState> {
   const own = toolName('danxbot_api')
-  for (let waited = 0; ; waited += SERVER_POLL_MS) {
+  for (;;) {
     let names: string[]
     try {
       names = (await $.tool.list()).map((t: any) => t.name)
     } catch {
       // a tool list that cannot be read cannot say: the call itself will
-      return true
+      return 'ready'
     }
-    if (names.includes(own)) return true
-    if (names.includes(LEGACY_PROJECT_API_TOOL) || waited >= STALE_GRACE_MS) return false
+    if (names.includes(own)) return 'ready'
+    if (names.includes(LEGACY_PROJECT_API_TOOL)) return 'standby'
+    const left = deadlineAt - (await $.clock.now())
+    if (left <= 0) return 'not-yet'
     try {
-      await $.clock.sleep(SERVER_POLL_MS)
+      await $.clock.sleep(Math.min(SERVER_POLL_MS, left))
     } catch {
       // the wait rejects when the plugin's environment is unloaded (a reload): this start's lookup ends with it
-      return false
+      return 'standby'
     }
   }
 }
 
 // ONE deadline over the plugin's own work in a context lookup, as the bash hook's `timeout 8s` was: a hung dashboard answers `late()` instead of
 // holding the start, however many reads the work makes (the engine's own per-call limit bounds each, not their sum).
-async function withinDeadline<T>($: any, work: Promise<T>, late: () => T): Promise<T> {
+async function withinDeadline<T>($: any, ms: number, work: Promise<T>, late: () => T): Promise<T> {
   let cancel = () => {}
   const timedOut = new Promise<T>(resolve => {
-    const timer = $.clock.after(CONTEXT_DEADLINE_MS, () => resolve(late()))
+    const timer = $.clock.after(ms, () => resolve(late()))
     cancel = () => timer.cancel()
   })
   try {
@@ -1469,27 +1488,33 @@ async function restartNotice($: any): Promise<string | null> {
 // What the plugin's own reads of a session start came to: the line to tell, or that the restart notice is to be asked next.
 type StartReads = { line: string | null; askRestart: boolean }
 
-// SessionStart: the wait for the plugin's server, the plan read and the event text read share ONE deadline. A deadline that passes while the
-// server is still not there is quiet (it is merely not connected yet, DX-4578), one that passes after is the timeout line.
+// SessionStart: the wait for the plugin's server, the plan read and the event text read share ONE deadline. Whatever fails, a session KNOWN to be
+// on a plan (its record on disk) is told in one warning line; any other stays silent (DX-3421) and, on a start or resume, still asks the
+// restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, e: any): Promise<string | null> {
   const event = sessionEvent(e.source)
   if (event === null) return null
-  let waitingForServer = true
+  const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
+  const connected = await isPlanConnected($)
+  const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && isRestartSource(e.source) })
+  const server = await serverState($, deadlineAt)
+  if (server === 'standby') return null
+  if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
   const reads = async (): Promise<StartReads> => {
-    if (!(await serverReady($))) return { line: null, askRestart: false }
-    waitingForServer = false
     const plan = await sessionPlan($)
     if (plan === 'connected') return { line: await eventContext($, event), askRestart: false }
+    if (typeof plan === 'object') return fault(plan.failed)
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
     return { line: null, askRestart: isRestartSource(e.source) }
   }
-  const late = (): StartReads => ({ line: waitingForServer ? null : eventFailureLine(event, DEADLINE_REASON), askRestart: false })
-  const done = await withinDeadline($, reads(), late)
+  const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
   return done.askRestart ? restartNotice($) : done.line
 }
 
 async function readSubagentContext($: any): Promise<string | null> {
-  return (await sessionPlan($)) === 'connected' ? eventContext($, 'sub_agent_start') : null
+  const plan = await sessionPlan($)
+  if (plan === 'connected') return eventContext($, 'sub_agent_start')
+  return typeof plan === 'object' && (await isPlanConnected($)) ? eventFailureLine('sub_agent_start', plan.failed) : null
 }
 
 // SessionStart: the session title is noted, then the registry's text for a connected session or the restart notice for one that replaced a
@@ -1503,7 +1528,7 @@ async function onClassicSessionStart($: any, e: any, next: any) {
 // DX-4234: and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
-  const eventLine = await withinDeadline($, readSubagentContext($), () => eventFailureLine('sub_agent_start', DEADLINE_REASON))
+  const eventLine = await withinDeadline($, CONTEXT_DEADLINE_MS, readSubagentContext($), () => eventFailureLine('sub_agent_start', DEADLINE_REASON))
   const pacing = await pacingLine(pacingEnv($))
   return withLine(withLine(r, eventLine), pacing)
 }

@@ -3,7 +3,7 @@
 // a session that is not on a plan, one warning line for a fetch that failed, quiet for a session with no usable key.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, eventFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine } from '../hooks/context/events'
 import { EVENT_TEXT, SURFACES, dashboard, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' }
@@ -70,11 +70,27 @@ for (const surface of SURFACES) {
       expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', 'empty_response: the dashboard returned an empty text')])
     })
 
-    test('DX-3421: a session whose plan cannot be read (the dashboard answers an error) is quiet: it cannot be known to be on a plan', async ($, on) => {
-      const d = await started($, on, { mcp: 'flaky' })
-      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toBeUndefined()
+    test('a CONNECTED session (its record is on disk) whose plans read fails is told one warning line, at start and at a sub-agent start', async ($, on) => {
+      const d = await started($, on)
       d.world.plansStatus = 500
+      const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      expect(r.additionalContext).toEqual([eventFailureLine('session_start', '500: plans boom')])
+      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: plans boom')])
+      expect(EVENT_PATHS(d.contextReads)).toEqual([])
+    })
+
+    test('DX-3421: a session with no record on disk whose plans read fails is quiet: it is not known to be on a plan', async ($, on) => {
+      const d = await started($, on, { connected: false })
+      d.world.plansStatus = 500
+      expect((await $.classic.SessionStart({ source: 'resume', cwd: '/work' })).additionalContext).toBeUndefined()
       expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
+      expect(EVENT_PATHS(d.contextReads)).toEqual([])
+    })
+
+    test('a connected session whose call is rejected (the dashboard times out) is told the one warning line too', async ($, on) => {
+      const d = await started($, on, { mcp: 'flaky' })
+      const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      expect(r.additionalContext).toEqual([eventFailureLine('session_start', 'mcp: danxbot: $.mcp.call: request timed out after 60000ms')])
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
@@ -86,13 +102,25 @@ for (const surface of SURFACES) {
       })
     }
 
-    test("a session whose plugin server never connects waits for its tool, then stays quiet without reading anything", async ($, on) => {
+    test('a CONNECTED session whose plugin server is not connected at the deadline is told so in one warning line, and the poll stops there', async ($, on) => {
       const d = await started($, on, { mcp: 'down' })
       const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      // the wait for the server is inside the ONE deadline: the start is released at 8 s, quiet (the server is merely not there yet)
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       const r = await pending
-      expect(r.additionalContext).toBeUndefined()
+      expect(r.additionalContext).toEqual([eventFailureLine('session_start', SERVER_NOT_CONNECTED_REASON)])
+      expect(d.contextReads).toEqual([])
+      // the poll is not left running in the background: a poll left going would read the tool list every 500 ms (about 60 more reads in 30 s);
+      // the few reads the plugin's own load retries make are not it
+      const polled = d.toolLists.n
+      await d.clock.advance(30_000)
+      expect(d.toolLists.n - polled).toBeLessThan(5)
+    })
+
+    test('a session that is not on a plan whose plugin server is not connected at the deadline is quiet', async ($, on) => {
+      const d = await started($, on, { mcp: 'down', connected: false })
+      const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      expect((await pending).additionalContext).toBeUndefined()
       expect(d.contextReads).toEqual([])
     })
 
@@ -126,6 +154,24 @@ for (const surface of SURFACES) {
       const r = await pending
       expect(r.additionalContext).toEqual([eventFailureLine('session_start', DEADLINE_REASON)])
       expect(r.additionalContext![0]).toContain('timeout: no response within 8s')
+    })
+
+    test('a hung dashboard for a session with no record on disk is quiet at the deadline', async ($, on) => {
+      const d = await started($, on, { connected: false })
+      d.world.contextHangs = true
+      const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      expect((await pending).additionalContext).toBeUndefined()
+    })
+
+    test('the wait for the server and the reads share ONE deadline: about 5 s of waiting leaves too little for a read that takes 4', async ($, on) => {
+      const d = await started($, on, { mcp: 'down' })
+      d.world.contextDelayMs = 4_000
+      const pending = $.classic.SessionStart({ source: 'resume', cwd: '/work' })
+      await d.clock.advance(5_000)
+      d.setMcp('up')
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      expect((await pending).additionalContext).toEqual([eventFailureLine('session_resume', DEADLINE_REASON)])
     })
 
     test('ONE deadline over the SUM of the reads: each read is quick, the lookup together is not', async ($, on) => {
