@@ -126,5 +126,15 @@ for (const surface of SURFACES) {
       expect(reads.length).toBeGreaterThan(1)
       expect(d.issueReads.max).toBe(reads.length)
     })
+
+    test('a detached task that throws is toasted under its own name, not a press update', async ($, on) => {
+      const d = dashboard(on)
+      // the host refuses the view write, in the load and again in its error handler: the throw escapes the session-start refresh
+      d.failViewWrite()
+      await startSession($, d, surface)
+      expect(d.refusedViewWrites()).toBeGreaterThan(0)
+      expect(d.toasts.some(t => t.startsWith('Plan refresh failed: '))).toBe(true)
+      expect(d.toasts.some(t => t.startsWith('Plan update failed'))).toBe(false)
+    })
   })
 }

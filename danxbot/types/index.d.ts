@@ -140,6 +140,7 @@ export type LiveSubagents = {
 }
 
 export type PlanView = {
+  // `loading` is both the first load (nothing known yet) and a connect answered with its numbers still pending (DX-4635: `connected` and `refreshedAt` set).
   phase: 'loading' | 'ready' | 'error' | 'signed-out' | 'key-revoked'
   error: string | null
   // DX-4578: the load failed because the plugin's own MCP server is not connected (yet), the one failure the session-start retry waits out

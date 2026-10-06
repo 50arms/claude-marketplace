@@ -39,7 +39,7 @@
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/usage.ts": "d0d3152a3010a6ab87ccb16a6532326ad03b39aa91d2b6284d6d984c7942e08c",
     "hooks/plan/words.ts": "290cd5123b34163845bd9a7138d8271055a08c0ca229e6bd08cede3469b4faa7",
-    "hooks/register.tsx": "d6ec15199f1e002cd0f6375affa7cd3349757369fec030c7ed9b980191e0ca31",
+    "hooks/register.tsx": "a3e54ca7bbeb590327c11cc50bbce0e1022e610957c15dd6919ebfa75e439150",
     "hooks/relay/answer.ts": "b0c32465c7c2b39e252ad94fc9f6cbe0c1b1a12d41016c3cb953d71f06d1f9a8",
     "hooks/relay/config.ts": "895dee1b143ce5d7d892a64e241913cf8d6e1fa2024f3cbd701b773d43087e5d",
     "hooks/relay/cursor.ts": "19bc03ba31318f030f04bcd4c2c8bf2fe025204cf36ce54810bee244b57b0678",
@@ -68,6 +68,6 @@
     "skills/plan-workflow/SKILL.md": "ee247d1d43faec18737a61332ad53bde0df55b5db441b218a35fc75886f5db56",
     "skills/prepare-for-compaction/SKILL.md": "8b33a49c2d709268f11ab1af61e9b7a85712c8adc1fb9981b3e091f4c67596d1",
     "skills/start/SKILL.md": "83d8c8f28c06b730175792aa82b12ecf3614e983ed98d22ce23aaf870e40cc59",
-    "types/index.d.ts": "8ac276c463255a47958fd227c9c704df5129deecee310c10046d3d0076523a78"
+    "types/index.d.ts": "d00b7e439d8c4925e3e6c0a6ab3a5fe18f10062ad514f3c3e3956fe8ea208c1e"
   }
 }
