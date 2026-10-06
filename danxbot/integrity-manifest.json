@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "b4df5fd1b957b014e0034d239debd1ba5a41e8c97a6766fdc09555ac1947ff0c",
+    ".claude-plugin/plugin.json": "07d48907ed6a9e50dfb131c5f6ed6c0b8b7d7990568aef4010e61cb1794192f6",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -37,7 +37,7 @@
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/usage.ts": "d0d3152a3010a6ab87ccb16a6532326ad03b39aa91d2b6284d6d984c7942e08c",
     "hooks/plan/words.ts": "40542d9551118a979bfb4481a11a5b72037d64a2fe1e446176edd9bacb04bc2c",
-    "hooks/register.tsx": "c8bb3fdc08be6397c5d06b8fdd4eaae49910d3e70104371ae090ef3466add1e6",
+    "hooks/register.tsx": "20ad67e56cc030f672ecd30a5adc1758745b57bf05629190845635bd8de45bee",
     "hooks/relay/answer.ts": "b0c32465c7c2b39e252ad94fc9f6cbe0c1b1a12d41016c3cb953d71f06d1f9a8",
     "hooks/relay/config.ts": "895dee1b143ce5d7d892a64e241913cf8d6e1fa2024f3cbd701b773d43087e5d",
     "hooks/relay/cursor.ts": "19bc03ba31318f030f04bcd4c2c8bf2fe025204cf36ce54810bee244b57b0678",
