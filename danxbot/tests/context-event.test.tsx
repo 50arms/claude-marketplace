@@ -3,7 +3,7 @@
 // a session that is not on a plan, one warning line for a fetch that failed, quiet for a session with no usable key.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { CONTEXT_DEADLINE_MS, deadlineReason, eventFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, eventFailureLine } from '../hooks/context/events'
 import { EVENT_TEXT, SURFACES, dashboard, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' }
@@ -70,10 +70,11 @@ for (const surface of SURFACES) {
       expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', 'empty_response: the dashboard returned an empty text')])
     })
 
-    test('a session whose plan cannot be read (the server answers an error) is told the same one line', async ($, on) => {
+    test('DX-3421: a session whose plan cannot be read (the dashboard answers an error) is quiet: it cannot be known to be on a plan', async ($, on) => {
       const d = await started($, on, { mcp: 'flaky' })
-      const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      expect(r.additionalContext).toEqual([eventFailureLine('session_start', 'mcp: danxbot: $.mcp.call: request timed out after 60000ms')])
+      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toBeUndefined()
+      d.world.plansStatus = 500
+      expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
@@ -88,7 +89,8 @@ for (const surface of SURFACES) {
     test("a session whose plugin server never connects waits for its tool, then stays quiet without reading anything", async ($, on) => {
       const d = await started($, on, { mcp: 'down' })
       const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      await d.clock.advance(30_000)
+      // the wait for the server is inside the ONE deadline: the start is released at 8 s, quiet (the server is merely not there yet)
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
       const r = await pending
       expect(r.additionalContext).toBeUndefined()
       expect(d.contextReads).toEqual([])
@@ -122,7 +124,7 @@ for (const surface of SURFACES) {
       expect(settled).toBe(false)
       await d.clock.advance(1)
       const r = await pending
-      expect(r.additionalContext).toEqual([eventFailureLine('session_start', deadlineReason())])
+      expect(r.additionalContext).toEqual([eventFailureLine('session_start', DEADLINE_REASON)])
       expect(r.additionalContext![0]).toContain('timeout: no response within 8s')
     })
 
@@ -140,7 +142,7 @@ for (const surface of SURFACES) {
       d.world.contextHangs = true
       const pending = $.classic.SubagentStart(START)
       await d.clock.advance(CONTEXT_DEADLINE_MS)
-      expect((await pending).additionalContext).toEqual([eventFailureLine('sub_agent_start', deadlineReason())])
+      expect((await pending).additionalContext).toEqual([eventFailureLine('sub_agent_start', DEADLINE_REASON)])
     })
 
     test('a sub-agent start does not wait for a server that is not connected', async ($, on) => {
@@ -152,9 +154,12 @@ for (const surface of SURFACES) {
 
     test('R-2: the reads go through the session’s own server; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {
       const d = await started($, on)
+      // a running sub-agent with a transcript makes the live reader start: the recorder is seen to record a spawn, so "no CLI spawn" cannot pass vacuously
+      d.world.agents = [{ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build a1', status: 'running' }]
       await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      await $.classic.SubagentStart(START)
+      await $.classic.SubagentStart({ ...START, transcript_path: '/work/main.jsonl' })
       expect(d.contextReads).toContain('/api/reminders/event/session_start')
+      expect(d.readers).toHaveLength(1)
       expect(d.readers.filter(r => /event-text|restart-notice/.test(r.argv.join(' ')))).toEqual([])
     })
   })

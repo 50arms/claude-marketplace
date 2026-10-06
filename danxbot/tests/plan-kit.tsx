@@ -284,6 +284,8 @@ export function dashboard(
     // DX-4234: the context reads never answer (a hung dashboard), or answer after this many ms of the fake clock
     contextHangs: false,
     contextDelayMs: 0,
+    // DX-3421: GET /api/plans (the session-plan read) answers this status (a dashboard fault) instead of the session
+    plansStatus: undefined as number | undefined,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
     eventText: {} as Record<string, string | { status: number }>,
     // DX-4234: what the server's `restart_notice` tool answers (DX-4632): `{notice: null}` unless a test sets a JSON answer (`json`), a raw
@@ -510,6 +512,7 @@ export function dashboard(
   const restartCalls: unknown[] = []
   const isContextRead = (a: any) => a.method === 'GET' && (a.path.startsWith('/api/reminders/event/') || (a.path === '/api/plans' && a.query?.limit === 1))
   function contextAnswer(path: string) {
+    if (path === '/api/plans' && world.plansStatus !== undefined) return reply({ error: 'plans boom' }, world.plansStatus)
     if (path === '/api/plans') return reply({ plans: [], total: 0, session: world.planId === null ? null : { plan_id: world.planId, plan_name: 'Danxbot plugin' } })
     const event = /^\/api\/reminders\/event\/(.+)$/.exec(path)
     if (event) {

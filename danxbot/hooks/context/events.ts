@@ -42,23 +42,40 @@ export function eventText(r: Api): Told {
   return { kind: 'text', text }
 }
 
-// The `restart_notice` tool's answer, JSON text: `{notice: text}` (say it), `{notice: null}` (nothing to say) or
-// `{stopped: {reason, detail, fix}}` (the lookup could not answer: reported, never quiet). The server does the earlier-session lookup and
-// the registry wording; anything else here is a fault of the tool's answer and is reported the same way.
-export function restartNoticeText(r: any): Told {
-  const text = mcpText(r)
-  if (r?.isError) return { kind: 'failed', reason: `error: ${text.slice(0, ERROR_BODY_MAX)}` }
-  let body: any
+// The three answers of the server's `restart_notice` tool (JSON text): say the notice, say nothing, or the lookup could not answer. `fix`
+// is the server's own remedy text (it tells the session to continue and to call plan_connect).
+export type RestartNoticeAnswer = { notice: string } | { notice: null } | { stopped: { reason: string; detail: string; fix: string } }
+
+const isText = (v: unknown): v is string => typeof v === 'string' && v !== ''
+
+// The answer as the contract words it, or null for any other shape.
+function asRestartNoticeAnswer(value: unknown): RestartNoticeAnswer | null {
+  if (value === null || typeof value !== 'object') return null
+  if ('stopped' in value) {
+    const s = value.stopped
+    if (s === null || typeof s !== 'object') return null
+    const { reason, detail, fix } = s as Record<string, unknown>
+    return isText(reason) && isText(detail) && isText(fix) ? { stopped: { reason, detail, fix } } : null
+  }
+  if (!('notice' in value)) return null
+  return value.notice === null || isText(value.notice) ? (value as RestartNoticeAnswer) : null
+}
+
+// What the model is told of one `restart_notice` result. A stop is a failure carrying the server's reason, detail and fix; an error result,
+// text that is not JSON and an answer of no known shape are failures too, never quiet.
+export function restartNoticeText(result: { content?: { type: string; text?: string }[]; isError?: boolean } | null | undefined): Told {
+  const text = mcpText(result)
+  if (result?.isError) return { kind: 'failed', reason: `error: ${text.slice(0, ERROR_BODY_MAX)}` }
+  let parsed: unknown
   try {
-    body = JSON.parse(text)
+    parsed = JSON.parse(text)
   } catch {
     return { kind: 'failed', reason: `bad_response: restart_notice answered no JSON: ${text.slice(0, ERROR_BODY_MAX)}` }
   }
-  if (body === null || typeof body !== 'object') return { kind: 'failed', reason: 'bad_response: restart_notice answered no object' }
-  if (body.stopped !== undefined) return { kind: 'failed', reason: `${body.stopped?.reason ?? 'stopped'}: ${body.stopped?.detail ?? 'no detail'}` }
-  if (body.notice === null) return { kind: 'nothing' }
-  if (typeof body.notice !== 'string' || body.notice === '') return { kind: 'failed', reason: 'bad_response: restart_notice answered neither a notice, null nor a stop' }
-  return { kind: 'text', text: body.notice }
+  const answer = asRestartNoticeAnswer(parsed)
+  if (answer === null) return { kind: 'failed', reason: 'bad_response: restart_notice answered neither a notice, null nor a stop' }
+  if ('stopped' in answer) return { kind: 'failed', reason: `${answer.stopped.reason}: ${answer.stopped.detail}. ${answer.stopped.fix}` }
+  return answer.notice === null ? { kind: 'nothing' } : { kind: 'text', text: answer.notice }
 }
 
 export const eventFailureLine = (event: DanxEvent, reason: string) =>
@@ -67,7 +84,8 @@ export const eventFailureLine = (event: DanxEvent, reason: string) =>
 export const restartFailureLine = (reason: string) =>
   `⚠ Could not load the restart notice (${reason}). Tell the operator if this session should be plan-connected.`
 
-// DX-4234: ONE deadline over the whole of a context lookup (every read of a session start or of a sub-agent start together), as the bash hook's
-// `timeout 8s` was: a hung dashboard answers the failure line below instead of holding the start.
+// DX-4234: ONE deadline over the plugin's own work in a context lookup (the wait for the server, the plan read and the event text read of a
+// session start, or the reads of a sub-agent start, together), as the bash hook's `timeout 8s` was: a hung dashboard answers the failure line
+// below instead of holding the start. The restart notice is the server's own lookup and has its own 8 s deadline (`lookup_timeout`).
 export const CONTEXT_DEADLINE_MS = 8_000
-export const deadlineReason = () => `timeout: no response within ${CONTEXT_DEADLINE_MS / 1000}s`
+export const DEADLINE_REASON = `timeout: no response within ${CONTEXT_DEADLINE_MS / 1000}s`
