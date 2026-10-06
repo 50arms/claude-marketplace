@@ -79,6 +79,12 @@ const hold = () => {
 }
 
 describe('the agent.spawn hook', () => {
+  // what the cache holds, as a new sub-agent sees it (the test file's own copy of pacing-line.ts is not the plugin's, so its cache cannot be peeked):
+  // an UNFORCED read, which inside the minute after any read serves the cache as it stands
+  const subagentLine = async ($: any): Promise<string | null> => {
+    const r = await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' } as any)
+    return (r.additionalContext ?? []).find((t: string) => t === 'Pacing line.') ?? null
+  }
   // the engine's own answer beneath the guard: a started sub-agent
   const spawn = ($: any, over: Record<string, unknown> = {}) => $.agent.spawn({ prompt: 'work', subagentType: 'general-purpose', ...over })
 
@@ -92,6 +98,7 @@ describe('the agent.spawn hook', () => {
       return (e.prompt === 'refuse' ? { deny: 'host refused' } : { model: e.model ?? 'parent-model', agentId: 'new' }) as any
     })
     on('tool.call', () => ({ result: {}, text: 'ran', isError: false }) as any)
+    on('classic.SubagentStart', () => ({}) as any)
     const d = dashboard(on, options)
     await startSession($, d, 'desktop')
     return d
@@ -172,8 +179,8 @@ describe('the agent.spawn hook', () => {
     const results = await Promise.all(Array.from({ length: 6 }, () => spawn($, { model: 'haiku' })))
     expect(results.filter(r => r.deny === undefined)).toHaveLength(3)
     expect(results.filter(r => r.deny !== undefined)).toHaveLength(3)
-    // the session start's read, the first spawn's, and one more that the other five share (a forced read waits for the one out, then asks once)
-    expect(d.pacingReads).toHaveLength(3)
+    // the session start's read, and ONE for all six: they arrive together and each is decided on a read begun after it arrived
+    expect(d.pacingReads).toHaveLength(2)
   })
 
   test('a fork is denied like any spawn', async ($, on) => {
@@ -216,18 +223,52 @@ describe('the agent.spawn hook', () => {
   })
 
   test('a read that outlasts its deadline is a failed read: the verdict is dropped, the spawn is allowed, and it is told once', async ($, on) => {
-    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
     const d = await session($, on, options)
-    expect((await spawn($)).deny).toMatch(/critical/)
-    options.pacingHoldMs = PACING_READ_DEADLINE_MS * 10
+    expect((await spawn($)).deny).toBeUndefined()
+    // the slow read will answer critical, long after its deadline
+    options.pacingLine = { body: wire({ level: 'critical', budget: 0 }) }
+    // it answers 1 s after its deadline: well inside the panel poll's minute, so only the late answer can touch the cache in between
+    options.pacingHoldMs = PACING_READ_DEADLINE_MS + 1_000
     const pending = spawn($)
     await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
     expect((await pending).deny).toBeUndefined()
-    expect(d.toasts.filter(t => t.includes(`longer than ${PACING_READ_DEADLINE_MS} ms`))).toHaveLength(1)
-    // the late answer of the timed-out read is not read: it neither restores the verdict nor blocks the next read
-    await d.clock.advance(PACING_READ_DEADLINE_MS * 10)
+    expect(d.toasts.filter(t => t.includes(`${PACING_READ_DEADLINE_MS} ms deadline`))).toHaveLength(1)
+    expect(await subagentLine($)).toBeNull()
+    // the late answer lands now: it must not restore (or set) a verdict, and it must not block the next read
+    await d.clock.advance(1_000)
+    expect(await subagentLine($)).toBeNull()
     options.pacingHoldMs = undefined
+    options.pacingLine = { body: wire({ budget: 12, running_agents: 5 }) }
+    expect((await spawn($)).deny).toBeUndefined()
+    expect(await subagentLine($)).toBe('Pacing line.')
+  })
+
+  test('the wait for a read already out and the spawn read of its own share ONE deadline, not two in sequence', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+    const d = await session($, on, options)
+    options.pacingHoldMs = 4_000
+    const first = spawn($, { model: 'haiku' })
+    await d.clock.advance(1_000)
+    // the second spawn arrives with the first's read 1 s old: it waits 3 s for it, and has 2 s left for its own, which takes 4 s
+    const second = spawn($, { model: 'haiku' })
+    await d.clock.advance(3_000)
+    expect((await first).deny).toBeUndefined()
+    expect(d.toasts.filter(t => t.includes('deadline'))).toEqual([])
+    await d.clock.advance(2_001)
+    expect((await second).deny).toBeUndefined()
+    // 6 s after the first read began, 5 s after the second spawn arrived: its own deadline, not a fresh 5 s after the wait
+    expect(d.toasts.filter(t => t.includes(`${PACING_READ_DEADLINE_MS} ms deadline`))).toHaveLength(1)
+  })
+
+  test('a session on the old standby server drops the verdict like any failed read: the spawn is allowed, not decided on the old answer', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+    const d = await session($, on, options)
     expect((await spawn($)).deny).toMatch(/critical/)
+    options.mcp = 'stale'
+    expect((await spawn($)).deny).toBeUndefined()
+    expect(await subagentLine($)).toBeNull()
+    expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
   })
 
   test('a spawn that arrives while a read is out waits for it, then reads again (it never takes an answer asked before it)', async ($, on) => {
@@ -319,7 +360,7 @@ describe('failures of the guard itself', () => {
   test('a hook error (a rejecting clock) is told once per text, never a toast per spawn, and the spawn goes on', async () => {
     resetPacing()
     const toasts: string[] = []
-    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), sleep: () => Promise.resolve(), call: () => Promise.reject(new Error('never reached')), toast: t => void toasts.push(t) }
+    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), toast: t => void toasts.push(t) }
     const started = { model: 'm', agentId: 'a' }
     const guard = spawnGuard(env)
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any

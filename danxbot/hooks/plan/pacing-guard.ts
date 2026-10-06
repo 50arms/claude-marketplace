@@ -6,8 +6,8 @@ import type { PacingEnv } from './pacing-line'
 
 // DX-4340 (PLAN-29 R-10): the usage-pacing guard on sub-agent spawns. danxbot serves the calling session's own account's verdict at
 // GET /api/pacing/line (it places the session on its account itself: no account matching here), which `pacing-line.ts` caches; this
-// module answers `agent.spawn` from that one cache. A pure decision (`decideSpawn`) plus a thin handler (`spawnGuard`); register.tsx
-// only wires the handler in with its dashboard call.
+// module reads it afresh before every `agent.spawn` (one deadline-bound read, DX-4631) and answers from that cache. A pure decision
+// (`decideSpawn`) plus a thin handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
 //
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits,
 // pushes, card writes) however tight the budget. It also never blocks work it cannot see: no verdict (the line's `reason` set: no usage
@@ -16,9 +16,9 @@ import type { PacingEnv } from './pacing-line'
 // These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.
 //
-// A failed read is never silent: toasted once per distinct text and drops the verdict (no verdict allows), except that an unreachable dashboard
-// is silent until a read has succeeded (see pacing-line.ts). A burst of spawns inside one turn is held to the budget: the spawns this guard
-// allowed since the cached read are added to danxbot's running count until a fresh read lands.
+// A failed or timed-out read is never silent: toasted once per distinct text and drops the verdict (no verdict allows), except that an
+// unreachable dashboard is silent until a read has succeeded (see pacing-line.ts). A burst of spawns inside one turn is held to the budget:
+// the spawns this guard allowed are held as reservations that raise danxbot's running count until they lapse (pacing-line.ts).
 
 export type SpawnDecision = { kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'downgrade'; model: 'haiku' }
 

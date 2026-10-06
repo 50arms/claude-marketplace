@@ -27,14 +27,22 @@ export type Pacing = { verdict: PacingVerdict; line: string; spend: SpendFigure 
 
 export type PacingCall = (method: string, path: string) => Promise<Api>
 // The engine calls pacing makes, as closures built in register.tsx (the engine follows `$` only into a function in that file).
-export type PacingEnv = { now: () => Promise<number>; sleep: (ms: number) => Promise<void>; call: PacingCall; toast: (text: string) => void }
+// `within` is the plugin's one deadline helper (register.tsx `withinDeadline`): `work`'s answer, or `late()` when `ms` pass first.
+export type PacingEnv = {
+  now: () => Promise<number>
+  within: <T>(ms: number, work: Promise<T>, late: () => T) => Promise<T>
+  call: PacingCall
+  toast: (text: string) => void
+}
 
 export const LINE_PATH = '/api/pacing/line'
 // danxbot changes the verdict only at its 10-minute tick; the plugin cannot hear `pacing-verdicts:updated` (a hooks module has no
-// dashboard event source), so the cache is refreshed when it is a minute old, and on session start (`refreshPacing`).
+// dashboard event source), so the cache is read on session start, by the panel's poll every minute, by the sub-agent line when it is a minute
+// old, and by the spawn guard before every decision (`refreshPacing`).
 export const PACING_REFRESH_MS = 60_000
 export const PACING_EXPIRY_MS = 30 * 60_000
-// DX-4631: every read has a deadline. A read that has not answered by then is a failed read (toasted, the cached verdict dropped) and frees
+// DX-4631: every `refreshPacing` has ONE deadline, covering its wait for a read already out AND its own read (two sequential bounds could
+// outrun the engine's hook budget). A read that has not answered by then is a failed read (toasted, the cached verdict dropped) and frees
 // the next read: a hung dashboard call can neither hold `inflight` for ever nor stall the spawn that is waiting on it.
 export const PACING_READ_DEADLINE_MS = 5_000
 const ERROR_MAX = 200
@@ -109,13 +117,8 @@ export function report(env: PacingEnv, failure: string): void {
   env.toast(`Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): ${failure}`)
 }
 
-// The read's outcome when the deadline passes first: told once per text, with how long it was given.
+// The read's outcome when the deadline passes first. The loser is never read: a late answer of a timed-out call is dropped.
 const TIMED_OUT = Symbol('timed out')
-
-// `call` answered or the deadline passed, whichever is first. The loser is never read: a late answer of a timed-out call is dropped.
-async function callWithDeadline(env: PacingEnv): Promise<Api | typeof TIMED_OUT> {
-  return Promise.race([env.call('GET', LINE_PATH), env.sleep(PACING_READ_DEADLINE_MS).then(() => TIMED_OUT)])
-}
 
 // A failed read: told once per text, and the cached verdict dropped (no verdict: the guard allows, the toast says spawns are not paced).
 function failRead(env: PacingEnv, failure: string): void {
@@ -123,16 +126,16 @@ function failRead(env: PacingEnv, failure: string): void {
   report(env, failure)
 }
 
-async function fetchPacing(env: PacingEnv): Promise<void> {
+async function fetchPacing(env: PacingEnv, ms: number): Promise<void> {
   const gen = generation
   try {
     const at = await env.now()
-    const r = await callWithDeadline(env)
+    const r = await env.within<Api | typeof TIMED_OUT>(ms, env.call('GET', LINE_PATH), () => TIMED_OUT)
     // a session start came while this read was out: its answer is the previous session's
     if (gen !== generation) return
     if (r === TIMED_OUT) {
       lastReadAt = at
-      return failRead(env, `the pacing line read took longer than ${PACING_READ_DEADLINE_MS} ms`)
+      return failRead(env, `the pacing line read took longer than its ${PACING_READ_DEADLINE_MS} ms deadline`)
     }
     // DX-4610: a session on the old standby server never gets a read: told to restart once the grace has run out (see the header)
     if (r.staleServer) {
@@ -163,14 +166,19 @@ async function fetchPacing(env: PacingEnv): Promise<void> {
 
 // Read now when `force`, else when the last reachable read attempt is a minute old; concurrent unforced callers share one read. A forced
 // read never shares one that is already out: that read was asked before whatever forces this one, so its answer may predate it; it waits for
-// that read (bounded by the deadline: `fetchPacing` always settles) and then asks again. Never rejects: a clock that fails is a failed read
-// like any other.
+// that read (which settles within its own deadline: `fetchPacing` always does) and then asks again with what is left of THIS call's one
+// deadline. Never rejects: a clock that fails is a failed read like any other.
 export async function refreshPacing(env: PacingEnv, force = false): Promise<void> {
   try {
-    const now = await env.now()
-    if (!force && lastReadAt !== null && now - lastReadAt < PACING_REFRESH_MS) return
+    const startedAt = await env.now()
+    if (!force && lastReadAt !== null && startedAt - lastReadAt < PACING_REFRESH_MS) return
     if (force && inflight !== null) await inflight
-    inflight ??= fetchPacing(env).finally(() => void (inflight = null))
+    const left = PACING_READ_DEADLINE_MS - ((await env.now()) - startedAt)
+    if (left <= 0) {
+      lastReadAt = startedAt
+      return failRead(env, `the pacing line read took longer than its ${PACING_READ_DEADLINE_MS} ms deadline`)
+    }
+    inflight ??= fetchPacing(env, left).finally(() => void (inflight = null))
     await inflight
   } catch (err: any) {
     report(env, String(err?.message ?? err))

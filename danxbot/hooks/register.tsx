@@ -1253,7 +1253,7 @@ async function onSessionStart($: any, e: any, next: any) {
   permissionTicker?.cancel()
   permissionTicker = null
   await syncPermissionPoll($)
-  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer), reads the verdict now, and later reads happen when it is a minute old, at a spawn or sub-agent start
+  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are the panel's poll, a sub-agent start when the cache is a minute old, and every spawn
   resetPacing()
   void settleDetached(refreshPacingPanel($))
   void settleDetached(refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
@@ -1664,7 +1664,7 @@ async function drawPane($: any, e: any) {
 function pacingEnv($: any) {
   return {
     now: () => $.clock.now(),
-    sleep: (ms: number) => $.clock.sleep(ms),
+    within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
     call: (method: string, path: string) => api($, method, path),
     toast: (text: string) => $.ui.toast(text),
   }
