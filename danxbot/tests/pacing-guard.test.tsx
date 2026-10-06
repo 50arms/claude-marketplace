@@ -303,9 +303,12 @@ describe('what register wires', () => {
     const wired: { event: string; matcher: unknown }[] = []
     register(((event: string, ...rest: unknown[]) => void wired.push({ event, matcher: rest.length > 1 ? rest[0] : undefined })) as any, {} as any)
     expect(wired.filter(w => w.event === 'agent.spawn')).toHaveLength(1)
-    // every tool.call hook is matched to one danx-dashboard tool: none is a catch-all, so none can sit on a commit, push or card write
+    // every tool.call hook is matched to one danx-dashboard tool, but the time stamp (DX-4234), which only adds context to a finished call and
+    // answers its result as it came (context-stamp.test.tsx): the guard is no tool.call handler, so none can sit on a commit, push or card write
     const toolCalls = wired.filter(w => w.event === 'tool.call')
-    expect(toolCalls.length).toBeGreaterThan(0)
-    for (const w of toolCalls) expect((w.matcher as { tool?: string })?.tool).toMatch(/^mcp__(plugin_danxbot_)?danx-dashboard__(plan_connect|request_permission)$/)
+    expect(toolCalls.filter(w => w.matcher === undefined)).toHaveLength(1)
+    const matched = toolCalls.filter(w => w.matcher !== undefined)
+    expect(matched.length).toBeGreaterThan(0)
+    for (const w of matched) expect((w.matcher as { tool?: string })?.tool).toMatch(/^mcp__(plugin_danxbot_)?danx-dashboard__(plan_connect|request_permission)$/)
   })
 })

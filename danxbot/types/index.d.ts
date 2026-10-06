@@ -229,6 +229,9 @@ export type TurnState = { isInFlight: boolean; unseen: string[] }
 // `stopped`: the server said the relay cannot go on (`detail` is its fix); `off`: no relay runs (not connected, signed out).
 export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; planId: number | null; detail: string | null }
 
+// DX-4234: the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
+export type StampState = { at: number; day: string } | null
+
 declare module 'claude-code' {
   interface PluginState {
     danxbot: {
@@ -268,6 +271,8 @@ declare module 'claude-code' {
       relay: RelayState
       // DX-4233: the main loop's turn as the delivery of a relayed event needs it (see TurnState).
       turn: TurnState
+      // DX-4234: the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
+      lastStamp: StampState
     }
   }
 }

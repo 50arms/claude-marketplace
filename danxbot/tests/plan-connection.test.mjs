@@ -5,15 +5,11 @@
 // successful plan_connect. Run with `npm test` (node --test, no dependencies).
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { isValidSessionId, sessionConnectionPath, isPlanConnected } from "../scripts/lib/plan-connection.mjs";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.join(here, "..", "scripts", "lib", "plan-connection.mjs");
 
 let home;
 beforeEach(() => {
@@ -64,57 +60,5 @@ describe("isPlanConnected (function)", () => {
     assert.equal(isPlanConnected("../../etc/passwd", home), false);
     assert.equal(isPlanConnected(null, home), false);
     assert.equal(isPlanConnected(undefined, home), false);
-  });
-});
-
-function runCli(sessionId, envHome = home) {
-  return spawnSync(process.execPath, [SCRIPT], {
-    input: JSON.stringify({ session_id: sessionId }),
-    encoding: "utf8",
-    env: { ...process.env, DANXBOT_PLAN_SESSIONS_HOME: envHome },
-  });
-}
-
-describe("CLI mode (stdin JSON in, \"1\"/\"0\" out)", () => {
-  test("prints 0 for an unconnected session", () => {
-    const r = runCli("cli-unconnected");
-    assert.equal(r.status, 0);
-    assert.equal(r.stdout, "0");
-  });
-
-  test("prints 1 once connected", () => {
-    connect("cli-connected");
-    const r = runCli("cli-connected");
-    assert.equal(r.status, 0);
-    assert.equal(r.stdout, "1");
-  });
-
-  test("falls back to CLAUDE_CODE_SESSION_ID when stdin carries no session_id", () => {
-    connect("env-fallback-session");
-    const r = spawnSync(process.execPath, [SCRIPT], {
-      input: JSON.stringify({}),
-      encoding: "utf8",
-      env: { ...process.env, DANXBOT_PLAN_SESSIONS_HOME: home, CLAUDE_CODE_SESSION_ID: "env-fallback-session" },
-    });
-    assert.equal(r.status, 0);
-    assert.equal(r.stdout, "1");
-  });
-
-  test("never crashes on malformed or empty stdin", () => {
-    const r1 = spawnSync(process.execPath, [SCRIPT], {
-      input: "{not valid json",
-      encoding: "utf8",
-      env: { ...process.env, DANXBOT_PLAN_SESSIONS_HOME: home },
-    });
-    assert.equal(r1.status, 0);
-    assert.equal(r1.stdout, "0");
-
-    const r2 = spawnSync(process.execPath, [SCRIPT], {
-      input: "",
-      encoding: "utf8",
-      env: { ...process.env, DANXBOT_PLAN_SESSIONS_HOME: home },
-    });
-    assert.equal(r2.status, 0);
-    assert.equal(r2.stdout, "0");
   });
 });

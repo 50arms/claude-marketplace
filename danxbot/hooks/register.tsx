@@ -1,7 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate, RelayState, TurnState } from '../types'
+import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
+import { eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticePath, restartText, sessionEvent } from './context/events'
+import type { DanxEvent, Told } from './context/events'
+import { asRecord, predecessors } from './context/predecessor'
+import { stamp as nextStamp } from './context/stamp'
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
 import { renderBand } from './plan/band'
@@ -106,6 +110,8 @@ const panel = atom({ plugin: 'danxbot', key: 'panel' } as const, EMPTY_PANEL_STA
 // DX-4233: the plan event relay's state (the pane's event line), and the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
+// DX-4234: the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
+const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -1354,10 +1360,136 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   return r
 }
 
+// DX-4234: the time line. One stamp per prompt and per tool call, counted from the last one (any hook, any agent: one session, one clock).
+async function timeLine($: any): Promise<string> {
+  const now = await $.clock.now()
+  const offsetMinutes = -new Date(now).getTimezoneOffset()
+  // the line is set inside the updater, which sees the last stamp as it is when the write happens
+  let line = ''
+  await update($, lastStamp, last => {
+    const next = nextStamp(now, offsetMinutes, last)
+    line = next.line
+    return next.state
+  })
+  return line
+}
+
+// the prompt as typed (a task notification included) reaches the model with its time beside it
+async function onPromptStamp($: any, e: any, next: any) {
+  return next({ ...e, context: [...(e.context ?? []), await timeLine($)] })
+}
+
+// each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside
+async function onToolStamp($: any, e: any, next: any) {
+  const r = await next(e)
+  if (r.deny !== undefined) return r
+  return { ...r, context: [...(r.context ?? []), await timeLine($)] }
+}
+
+// DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said (the plugin's server is not there, or the session
+// holds no key, or a person revoked it: its own tools already tell the model), never an error line. `failed`: the read itself broke.
+type SessionPlan = 'connected' | 'not-connected' | 'silent' | { failed: string }
+
+// `wait`: a session START may reach this before the plugin's own server has connected (DX-4578), so it waits that out on the start
+// retries; a sub-agent's start is mid-session and does not.
+async function sessionPlan($: any, wait: boolean): Promise<SessionPlan> {
+  const waits = wait ? START_RETRY_MS : []
+  for (let at = 0; ; at++) {
+    const r = await api($, 'GET', '/api/plans', { query: { limit: 1 } })
+    if (r.unreachable === true) {
+      if (r.staleServer === true || at >= waits.length) return 'silent'
+      try {
+        await $.clock.sleep(waits[at])
+      } catch {
+        // the wait rejects when the plugin's environment is unloaded (a reload): this start's lookup ends with it
+        return 'silent'
+      }
+      continue
+    }
+    if (isSignedOut(r) || outcomeRevokedBy(r) !== null) return 'silent'
+    if (!r.ok) return { failed: errText(r) }
+    if (!('session' in (r.body ?? {}))) return { failed: 'bad_response: GET /api/plans answered no session field' }
+    return r.body.session === null ? 'not-connected' : 'connected'
+  }
+}
+
+// One GET the model is told the answer of. A key that is gone or revoked is quiet (its own tools say so), never a failure line.
+async function readTold($: any, path: string, parse: (r: Api) => Told): Promise<Told> {
+  const r = await api($, 'GET', path)
+  if (isSignedOut(r) || outcomeRevokedBy(r) !== null) return { kind: 'nothing' }
+  return parse(r)
+}
+
+const toldLine = (t: Told, failure: (reason: string) => string): string | null => (t.kind === 'text' ? t.text : t.kind === 'failed' ? failure(t.reason) : null)
+
+// The registry's text for `event`, only for a session on a plan (`plan`: what sessionPlan read). Not connected: silent. A read that broke:
+// one line naming the event and why.
+async function eventContext($: any, event: DanxEvent, plan: SessionPlan): Promise<string | null> {
+  if (plan === 'silent' || plan === 'not-connected') return null
+  if (typeof plan === 'object') return eventFailureLine(event, plan.failed)
+  return toldLine(await readTold($, eventPath(event), eventText), reason => eventFailureLine(event, reason))
+}
+
+// The connection records of this machine (`~/.config/danxbot/plan-sessions/*.json`), read as predecessors.ts mirrors the MCP's reader.
+async function earlierSessions($: any, e: any): Promise<string[]> {
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+  if (typeof home !== 'string' || home === '' || typeof e.cwd !== 'string') return []
+  const dir = `${home}/.config/danxbot/plan-sessions`
+  if (!(await $.fs.exists(dir))) return []
+  const records = []
+  for (const entry of await $.fs.list(dir)) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(await $.fs.read(`${dir}/${entry.name}`))
+    } catch {
+      // a record that cannot be read is no candidate (the MCP skips it too)
+      continue
+    }
+    const record = asRecord(parsed)
+    if (record !== null) records.push(record)
+  }
+  return predecessors(records, e.cwd, e.session_id, await $.clock.now())
+}
+
+// DX-3928: a session that is not on a plan but replaced one that was is told which plan and what waits there. The first earlier session
+// whose answer carries a notice speaks; one that answers nothing leaves it to the next; a failure is reported only when none answered.
+async function restartNotice($: any, e: any): Promise<string | null> {
+  const candidates = await earlierSessions($, e)
+  const failures: string[] = []
+  let answered = 0
+  for (const id of candidates) {
+    const t = await readTold($, restartNoticePath(id), restartText)
+    if (t.kind === 'failed') {
+      failures.push(`${id}: ${t.reason}`)
+      continue
+    }
+    answered++
+    if (t.kind === 'text') return t.text
+  }
+  return answered === 0 && failures.length > 0 ? restartFailureLine(`no earlier session answered (${failures.length} of ${candidates.length} failed): ${failures.join('; ')}`) : null
+}
+
+async function sessionContext($: any, e: any): Promise<string | null> {
+  const event = sessionEvent(e.source)
+  if (event === null) return null
+  const plan = await sessionPlan($, true)
+  if (plan === 'not-connected') return isRestartSource(e.source) ? restartNotice($, e) : null
+  return eventContext($, event, plan)
+}
+
+// SessionStart: the session title is noted, then the registry's text for a connected session or the restart notice for one that replaced a
+// connected one is added (additionalContext). One hook: a module may register an event once.
+async function onClassicSessionStart($: any, e: any, next: any) {
+  const below = await onTitle($, e, next)
+  return withLine(below, await sessionContext($, e))
+}
+
 // DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
+// DX-4234: and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
-  return withLine(r, await pacingLine(pacingEnv($)))
+  return withLine(withLine(r, await eventContext($, 'sub_agent_start', await sessionPlan($, false))), await pacingLine(pacingEnv($)))
 }
 
 function onSubagentStop($: any, e: any, next: any) {
@@ -1487,7 +1619,9 @@ export const register: Register = on => {
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
-  on('classic.SessionStart', onTitle)
+  on('classic.SessionStart', onClassicSessionStart)
+  on('prompt.submit', onPromptStamp)
+  on('tool.call', onToolStamp)
   on('classic.UserPromptSubmit', onTitle)
   on('ui.render', { component: 'AbovePrompt' }, drawBand)
   on('ui.render', { component: 'SessionMode' }, drawSessionMode)

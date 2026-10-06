@@ -51,6 +51,15 @@
 //   - per-tool-call  = PostToolUse, hooks with NO matcher or a ".*" matcher
 //                       (fire on literally every tool call)
 //
+// FUNCTION HOOKS (DX-4234)
+// ----------------------
+// A plugin whose hooks.json declares `modules` injects through function hooks as well: the time stamp on each prompt
+// (prompt.submit) and after each tool call (tool.call) is the pure `stamp` of <plugin>/hooks/context/stamp.ts, the very
+// text register.tsx hands the model, so it is run here, at its widest (the first stamp, which carries the date), and
+// counted into the per-turn and per-tool-call totals beside the command hooks. The registry's event text (session start,
+// resume, compaction, sub-agent start) is fetched from the dashboard for a plan-connected session only and has no offline
+// text to measure: its row is the registry's, never a literal here. A plugin with `modules` and no stamp.ts is an error row.
+//
 // USAGE
 //   node scripts/measure-injection.mjs [--json]
 //
@@ -61,7 +70,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const JSON_MODE = process.argv.includes("--json");
@@ -127,14 +136,13 @@ function representativeToolName(matcher) {
 }
 
 function freshSessionId() {
-  // A fresh session_id per invocation — several hooks (inject-time.sh)
-  // keep per-session state on disk (e.g. /tmp/claude-time-hook-<sid>) so a
-  // reused id lets one measurement's state leak into the next one's byte
+  // A fresh session_id per invocation — a hook that keeps per-session state
+  // on disk lets one measurement's state leak into the next one's byte
   // count. Every row gets its own id so every measurement is a fresh
   // first-fire, matching DX-3049's manual baseline.
   // DX-3384 (comment 7550): unique across RUNS too, not just within one. The
   // old `<pid>-<counter>` id collided when a PID recycled (routine under Git
-  // Bash), so a stale state file from an earlier run turned inject-time.sh's
+  // Bash), so a stale state file from an earlier run turned a stamp's
   // "+0" into "+12h 34m 56s" and the baseline read 4448 instead of 4438.
   return `measure-injection-${randomUUID()}`;
 }
@@ -194,6 +202,30 @@ function runCommand(pluginDir, command, stdinPayload) {
   }
 }
 
+// The function hooks of a plugin that declares `modules`: the stamp it hands the model on a prompt and after a tool call,
+// run through node's type stripping (stamp.ts is pure, so nothing else loads). Bytes include the line's newline, as a command hook's did.
+const STAMP_SCRIPT = `const { stamp } = await import(process.env.STAMP_MODULE);
+console.log(stamp(Date.UTC(2026, 8, 28, 7, 12, 3), -360, null).line);`;
+
+function measureFunctionHooks(plugin, hooksJson) {
+  if (!Array.isArray(hooksJson.modules)) return [];
+  const module = path.join(plugin, "hooks", "context", "stamp.ts");
+  const row = (event, kind, extra) => ({ plugin, event, matcher: null, command: module, kind, triggerBytes: null, ...extra });
+  const stampPath = path.join(REPO_ROOT, module);
+  let bytes;
+  try {
+    bytes = execFileSync(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", STAMP_SCRIPT],
+      { env: { ...process.env, STAMP_MODULE: pathToFileURL(stampPath).href }, timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] },
+    ).length;
+  } catch (err) {
+    const error = fs.existsSync(stampPath) ? err.message.split("\n")[0] : `${module} is missing: the time stamp cannot be measured`;
+    return [row("prompt.submit", "unconditional", { bytes: 0, error }), row("tool.call", "every-tool-call", { bytes: 0, error })];
+  }
+  return [row("prompt.submit", "unconditional", { bytes, error: null }), row("tool.call", "every-tool-call", { bytes, error: null })];
+}
+
 function measure() {
   const plugins = loadMarketplacePlugins();
   const rows = []; // { plugin, event, matcher, command, kind, bytes, triggerBytes, error }
@@ -201,6 +233,7 @@ function measure() {
   for (const plugin of plugins) {
     const hooksJson = loadHooksJson(plugin);
     if (!hooksJson) continue;
+    rows.push(...measureFunctionHooks(plugin, hooksJson));
     for (const [event, groups] of Object.entries(hooksJson.hooks || {})) {
       for (const group of groups) {
         const matcher = group.matcher || null;
@@ -248,7 +281,7 @@ function measure() {
 
 function summarize(rows) {
   const perTurnUnconditional = rows
-    .filter((r) => r.event === "UserPromptSubmit" && r.kind === "unconditional")
+    .filter((r) => (r.event === "UserPromptSubmit" || r.event === "prompt.submit") && r.kind === "unconditional")
     .reduce((sum, r) => sum + r.bytes, 0);
 
   const perSession = rows
@@ -256,7 +289,7 @@ function summarize(rows) {
     .reduce((sum, r) => sum + r.bytes, 0);
 
   const perToolCall = rows
-    .filter((r) => r.event === "PostToolUse" && r.kind === "every-tool-call")
+    .filter((r) => (r.event === "PostToolUse" || r.event === "tool.call") && r.kind === "every-tool-call")
     .reduce((sum, r) => sum + r.bytes, 0);
 
   return { perTurnUnconditional, perSession, perToolCall };
@@ -281,9 +314,9 @@ function printHuman(rows, totals) {
     console.log("");
   }
   console.log("=== Totals (never summed together — different cadences) ===");
-  console.log(`  per-turn (UserPromptSubmit, unconditional):      ${totals.perTurnUnconditional} bytes`);
+  console.log(`  per-turn (UserPromptSubmit / prompt.submit):   ${totals.perTurnUnconditional} bytes`);
   console.log(`  per-session (SessionStart, no-matcher group):    ${totals.perSession} bytes`);
-  console.log(`  per-tool-call (PostToolUse, every-call hooks):   ${totals.perToolCall} bytes`);
+  console.log(`  per-tool-call (PostToolUse / tool.call):       ${totals.perToolCall} bytes`);
 }
 
 const rows = measure();

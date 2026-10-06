@@ -5,7 +5,7 @@
 // the network.
 //
 //   - AC1: the registry's `latest` moves A to B and the next session start of EACH entry point
-//     (`ensure-dashboard-mcp.sh --prewarm`, `event-hook.sh SessionStart`,
+//     (`ensure-dashboard-mcp.sh --prewarm`,
 //     `background-work-report.mjs session-start`) ends up running
 //     B, with no plugin file changed.
 //   - A hook that is not a session start (SubagentStart, PostToolUse, Stop) makes ZERO registry requests; one that finds no record resolves it itself.
@@ -58,8 +58,6 @@ beforeEach(() => {
     FAKE_NPM_MODE: "ok",
     FAKE_NPM_CALLS_FILE: path.join(fakeBinDir, "npm-calls.txt"),
     FAKE_BIN_SOURCE_FILE: writeFakeBinSourceFile(),
-    FAKE_MCP_MODE: "success",
-    FAKE_MCP_TEXT: "event text",
   };
 });
 afterEach(() => {
@@ -93,7 +91,7 @@ function runScript(script, args, { input = "", env = baseEnv } = {}) {
   return spawnSync("bash", [path.join(PLUGIN_ROOT, "scripts", script), ...args], { input, encoding: "utf8", env });
 }
 
-// ------------------------------------------------------------- the three session-start entry points
+// ------------------------------------------------------------- the session-start entry points
 
 /** Each runs ONE session start against the fake registry; `ranVersion()` is the version it ran or installed. */
 const ENTRY_POINTS = {
@@ -101,14 +99,6 @@ const ENTRY_POINTS = {
     async run() {
       const result = runScript("ensure-dashboard-mcp.sh", ["--prewarm"]);
       assert.equal(result.status, 0);
-    },
-    ranVersion: () => npmCalls().at(-1).split("@").at(-1),
-  },
-  "event-hook.sh SessionStart": {
-    async run() {
-      const result = runScript("event-hook.sh", ["SessionStart"], { input: JSON.stringify({ session_id: SESSION, source: "startup" }) });
-      assert.equal(result.status, 0, result.stderr);
-      assert.equal(result.stdout, "event text\n", "no extra line when the refresh worked");
     },
     ranVersion: () => npmCalls().at(-1).split("@").at(-1),
   },
@@ -157,15 +147,6 @@ describe("a hook that is not a session start reads the record and makes ZERO reg
     registry.setVersion(B); // the registry has moved on; only a session start may notice
   });
   const requests = () => registry.requests().length;
-
-  test("SubagentStart (event-hook.sh)", () => {
-    const before = requests();
-    const result = runScript("event-hook.sh", ["SubagentStart"], { input: JSON.stringify({ session_id: SESSION }) });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(requests(), before);
-    assert.equal(recordedVersionOrNull(baseEnv), A);
-    assert.match(npmCalls().at(-1), new RegExp(`@${A.replace(/\./g, "\\.")}$`));
-  });
 
   test("PostToolUse and SubagentStart (activity-report.mjs, through the real ensure-dashboard-mcp.sh)", () => {
     const before = requests();

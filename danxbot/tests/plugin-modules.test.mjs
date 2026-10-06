@@ -46,9 +46,10 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
     const reworded = command.replace(REPAIR_REWORDED[0], REPAIR_REWORDED[1]);
     return present.some(([e, m, c]) => e === event && m === matcher && c === reworded);
   };
-  // DX-4233 deleted the plan event bridge and its watchdog (the relay is a module listener in register.tsx now): those are the
-  // only command hooks origin/main had that this branch may drop.
-  const deleted = ([, , command]) => /plan-event-bridge|bridge-watchdog/.test(command);
+  // DX-4233 deleted the plan event bridge and its watchdog (the relay is a module listener in register.tsx now), and DX-4234 the time
+  // stamp and event-hook scripts (function hooks in register.tsx now): those are the only command hooks origin/main had that this
+  // branch may drop.
+  const deleted = ([, , command]) => /plan-event-bridge|bridge-watchdog|inject-time\.sh|event-hook\.sh/.test(command);
   const dropped = commandHooks(originMainHooks()).filter((h) => !deleted(h) && !kept(h));
   assert.deepEqual(dropped, [], "command hooks on origin/main that hooks.json no longer has");
 });

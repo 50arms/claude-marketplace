@@ -4,7 +4,7 @@
 import { expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { NOTE_MARKER, toolName } from '../hooks/plan/config'
+import { NOTE_MARKER, SERVER, toolName } from '../hooks/plan/config'
 import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/relay/config'
 
 export const SURFACES = ['terminal', 'desktop'] as const
@@ -21,6 +21,11 @@ export const TABS_CONTEXT_CLOSED = '{\n  "browserOpen": false,\n  "tabs": []\n}\
 export const TABS_CONTEXT_CLOSED_LATER = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane is not open.'
 // DX-4317: the dashboard origin the fixture answers (`dashboard_url`): deliberately not the production
 // one, so a link built on a constant instead of the answer fails every test that checks a href.
+// DX-4234: the registry's effective text the fixture answers for an event (a distinct text per event, so a wrong event shows)
+export const EVENT_TEXT = (event: string) => `The ${event} text.`
+// DX-4234: where the fixture's machine keeps the MCP server's connection records
+export const HOME_DIR = '/home/u'
+export const RECORD_DIR = `${HOME_DIR}/.config/danxbot/plan-sessions`
 export const DASHBOARD_URL = 'http://localhost:5555'
 // `dashboardUrl: NO_DASHBOARD_URL` leaves the field out of the answer (a JSON null is sent as one)
 export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
@@ -279,6 +284,12 @@ export function dashboard(
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card', updatedAt: '2026-10-03T07:58:30.000Z' }] as { id: string; title: string; updatedAt: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
+    // DX-4234: the connection records on disk (see the fs hooks); undefined: the directory does not exist
+    records: undefined as Record<string, unknown> | undefined,
+    // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
+    eventText: {} as Record<string, string | { status: number }>,
+    // DX-4234: what GET /api/plan-sessions/<id>/restart-notice answers for an earlier session: `{restart: null}` unless a test sets a body or a status
+    restart: {} as Record<string, { body: unknown } | { status: number }>,
     // DX-4499: the plan's live sessions, and each one's sub-agent rows (raw, as the route answers them)
     sessions: [OWN_SESSION] as { session_id: string; title: string }[],
     subagents: {} as Record<string, Record<string, unknown>[]>,
@@ -486,13 +497,30 @@ export function dashboard(
     if (deliveryFlags.submitRejects !== undefined) throw new Error(deliveryFlags.submitRejects)
     if (deliveryFlags.submitDrops !== undefined) return { drop: deliveryFlags.submitDrops } as any
     if (e.text.startsWith(RELAY_MARKER)) delivered.push({ text: e.text })
-    return { text: e.text } as any
+    // core answers the context it was given beside the text
+    return { text: e.text, context: e.context } as any
   })
 
   // DX-4340: the pacing line is read by every session at start and by each spawn: kept out of `calls` and `api` so the suites that count a
   // load's reads stay about their own subject, and answered unknown (pacing off) unless a test gives `pacingLine`
   const notConnected = () => options.mcp === 'down' || options.mcp === 'stale'
   const pacingReads: number[] = []
+  // DX-4234: the paths of the context reads (see isContextRead), in order
+  const contextReads: string[] = []
+  const isContextRead = (a: any) => a.method === 'GET' && (a.path.startsWith('/api/reminders/event/') || /^\/api\/plan-sessions\/[^/]+\/restart-notice$/.test(a.path) || (a.path === '/api/plans' && a.query?.limit === 1))
+  function contextAnswer(path: string) {
+    if (path === '/api/plans') return reply({ plans: [], total: 0, session: world.planId === null ? null : { plan_id: world.planId, plan_name: 'Danxbot plugin' } })
+    const event = /^\/api\/reminders\/event\/(.+)$/.exec(path)
+    if (event) {
+      const given = world.eventText[event[1]]
+      if (given === undefined) return reply({ event: event[1], effective_text: EVENT_TEXT(event[1]) })
+      return typeof given === 'string' ? reply({ event: event[1], effective_text: given }) : reply({ error: 'event boom' }, given.status)
+    }
+    const earlier = /^\/api\/plan-sessions\/([^/]+)\/restart-notice$/.exec(path)!
+    const given = world.restart[decodeURIComponent(earlier[1])]
+    if (given === undefined) return reply({ restart: null })
+    return 'status' in given ? reply({ error: 'restart boom' }, given.status) : reply(given.body)
+  }
   // ... every attempt, including the ones the MCP being down refuses
   const pacingAttempts = { n: 0 }
   const teamPacingReads: number[] = []
@@ -518,6 +546,15 @@ export function dashboard(
       // no `teamPacing` given: a session whose pacing settings cannot be reached at all (the silent state), so no other suite draws a pacing error
       if (given === undefined) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       return { value: 'status' in given ? reply({ error: 'settings boom' }, given.status) : reply(given.body) }
+    }
+    // DX-4234: the reads the context hooks make (is the session on a plan, the registry's event text, an earlier session's restart notice) are
+    // kept out of `calls` and `api` like the pacing reads, so the suites that count a load's reads stay about their own subject
+    if (e.server === SERVER && e.tool === 'danxbot_api' && isContextRead(e.args)) {
+      contextReads.push(e.args.path)
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
+      return { value: contextAnswer(e.args.path) }
     }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.server === 'plugin:danxbot:danx-dashboard') {
@@ -777,7 +814,16 @@ export function dashboard(
   })
   // DX-4336: what the harness knows of the account's windows
   on('session.usage', () => (options.usageReadFails === undefined ? { value: { startedAt: 0, context: {}, rateLimits: world.rateLimits } } : { deny: options.usageReadFails }) as any)
-  mock.env(on, options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid })
+  mock.env(on, { HOME: HOME_DIR, ...(options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid }) })
+  // DX-4234: the connection records the danx-dashboard MCP server writes (file name -> its JSON, or raw text), under HOME_DIR; absent = no such directory
+  // the engine hands a path over as the OS spells it (C:\home\u\... on Windows)
+  const onDisk = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
+  on('fs.exists', (_$: any, e: any) => ({ value: onDisk(e.path) === RECORD_DIR && world.records !== undefined }) as any)
+  on('fs.list', (_$: any, e: any) => (onDisk(e.path) === RECORD_DIR && world.records !== undefined ? { value: Object.keys(world.records).map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false })) } : { deny: 'ENOENT' }) as any)
+  on('fs.read', (_$: any, e: any) => {
+    const content = onDisk(e.path).startsWith(RECORD_DIR + '/') ? world.records?.[onDisk(e.path).slice(RECORD_DIR.length + 1)] : undefined
+    return (content === undefined ? { deny: 'ENOENT' } : { value: typeof content === 'string' ? content : JSON.stringify(content) }) as any
+  })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)
     if (e.timeoutMs !== undefined) toastTimeouts.push(e.timeoutMs)
@@ -825,7 +871,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

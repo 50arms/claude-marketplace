@@ -41,7 +41,8 @@ describe('the SubagentStart pacing line', () => {
   async function started($: any, on: any, options: Parameters<typeof dashboard>[1]) {
     resetPacing()
     on('classic.SubagentStart', () => ({}) as any)
-    const d = dashboard(on, options)
+    // DX-4234: a session on no plan, so the sub-agent gets no registry event text beside the line (context-event.test.tsx has that one)
+    const d = dashboard(on, { connected: false, ...options })
     await startSession($, d, 'desktop')
     return { d, r: await $.classic.SubagentStart(START) }
   }

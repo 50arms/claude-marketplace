@@ -8,55 +8,47 @@ Source of truth for the `newms-plugins` marketplace. Its plugins reach every Cla
 registry row `mantra` from it, and every agent receives that row's effective text (or the
 board's override of it, DX-4144), never a copy:
 
-- the main session: `danxbot/scripts/event-hook.sh` at `SessionStart` (matcher
+- the main session: the module's `classic.SessionStart` hook (`danxbot/hooks/register.tsx`, source
   `startup|resume|compact`), ONLY once a plan is connected — DX-3421 (PLN-11 R-12/R-22): an
   unconnected session gets no danxbot text at all, at session start, resume or compaction,
   not even a one-line nudge; the trigger to connect a plan is `danxbot:plan-workflow`'s own
-  skill description, not a hook line. Connected, the same script asks danxbot for the
+  skill description, not a hook line. Connected, the hook asks danxbot (`danxbot_api` on the session's own server) for the
   EFFECTIVE text of one of four events (`session_start` | `session_resume` |
   `after_compaction` | `sub_agent_start`, `GET /api/reminders/event/:event`) — the mantra
   (plan override, else the session's board override, else the row) followed by that event's
   own short lines, never a hand-typed duplicate of the mantra body;
 - every sub-agent, any type or plugin, of a plan-CONNECTED session (DX-3384 final sweep
   widened this from `danxbot:worker-*` only; DX-3421 added the "connected" gate — a sub-agent
-  of an unconnected session gets nothing either): the same script at `SubagentStart`
-  (additionalContext, matcher `.*`), event `sub_agent_start`;
+  of an unconnected session gets nothing either): the module's `classic.SubagentStart` hook
+  (additionalContext), event `sub_agent_start`;
 - every dispatched worker: its profile's `{{reminder:mantra}}`, resolved by danxbot per
   dispatch against the card's board (DX-4144: one mantra; the dispatch fork is gone).
 
 `mantra.md` is the git source `resolveReminderSeedItems` derives the `mantra`
 registry row's default from at dashboard-seed time — it is NOT a runtime fallback any more
-(DX-3421: a registry fetch failure prints one line naming the failure and telling the agent
+(DX-3421: a registry fetch failure is one line naming the failure and telling the agent
 to tell the operator; the hook never re-reads this file). **Nothing else restates a mantra
 rule** — no `SKILL.md`, agent body, hook text, `CLAUDE.md`, rule file or profile. A skill may
 point at the mantra or add procedure the mantra doesn't state. To change a rule, edit
 `mantra.md` and publish; phrase each rule so it holds for every one of those readers. No
 prose states how many sub-agents to run (R-23).
 
-## Hook scripts must never depend on `jq` — it is not installed
+## The time stamp, the event text and the restart notice are function hooks (DX-4234)
 
-Verified 2026-09-05 with a live probe hook: hooks execute under **Git Bash** (`MINGW64_NT`, bash
-5.3.15) and `jq` is **absent** from the hook runtime PATH and from PowerShell's PATH. Every
-mandate script that piped its text through `jq -n ... additionalContext` therefore emitted
-nothing and injected nothing — installed, silent, useless — for as long as it existed. All of
-them were converted to plain stdout on 2026-09-05.
+`danxbot/hooks/register.tsx` hands the model three things, each a hook of the module and none a script. The pure parts are `danxbot/hooks/context/*`; every `$` call stays in `register.tsx`.
 
-- **To INJECT context:** `printf '%s\n' "$MANDATE"` and `exit 0`. Claude Code adds plain-text
-  stdout to the model's context for `SessionStart`, `UserPromptSubmit`, `UserPromptExpansion`
-  and `PostModelSwitch` — no JSON envelope needed.
-- **To PARSE the stdin payload:** use `node` (it ships with Claude Code), copying the proven
-  idiom already in `danxbot/scripts/inject-time.sh`. Never `jq`.
-
-A hook that fails this way is worse than no hook, because it is trusted: the same absence once
-made a deny guard fail OPEN for its entire life, letting through every command it existed to block.
+- **Time stamp** (`context/stamp.ts`): `prompt.submit` and `tool.call` (every call that is not denied) add `MM/DD/YYYY HH:MM:SS ±HH:MM +Δ` to `context`; the date only on the first stamp or a new local day. The last stamp is `$.state` `lastStamp`. Operator decision PBLM-1915: both on every prompt and after every tool call.
+- **Event text** (`context/events.ts`): `classic.SessionStart` (`startup`, `resume`, `compact`) and `classic.SubagentStart` add the registry's `GET /api/reminders/event/:event` text to `additionalContext`, only when `GET /api/plans` says the session is on a plan. A failed fetch is ONE warning line naming the event and the reason; a signed-out or revoked session and a plugin server that never connects are quiet.
+- **Restart notice**: a session that is not on a plan, on `startup` or `resume`, asks `GET /api/plan-sessions/:id/restart-notice` for each earlier session of its project and says the first notice found. The earlier sessions are the connection records the danx-dashboard MCP writes under `~/.config/danxbot/plan-sessions`; `context/predecessor.ts` MIRRORS that package's reader (`session-connection.ts`: schema 3, project key, seven-day staleness, ten candidates), so a change to the record shape changes both.
+- Every dashboard call goes through the session's own server (`$.mcp.call`), never a spawn of the `danx-dashboard-mcp` CLI. `scripts/measure-injection.mjs` measures the stamp by running its pure `stamp`; the event text is the registry's and has no offline text to count.
 
 ## Every danxbot hook runs through the integrity launcher (DX-3997)
 
 A machine crash once left six cached plugin files the same size but all NUL bytes; every hook then failed silently, including the plan hooks, and the operator's answer to a card went unseen for hours. So every command in `danxbot/hooks/hooks.json` is `node "${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs" [--via stdout|rewake] <script> [args]`:
 
 - `danxbot/integrity-manifest.json` holds the sha256 of every shipped file (tests excluded). `scripts/publish.sh` rewrites it twice, before its injection-budget check and again after the version bump; never hand-edit it, and a new hook script must be added to `hooks.json` through the launcher (a test enforces this).
-- Before the hook's script starts the launcher hashes every manifest file. A damaged one is restored from the marketplace clone (`~/.claude/plugins/marketplaces/<marketplace>/<plugin>`) only if the clone's copy matches the manifest hash. Whatever cannot be restored is reported: on stdout for `--via stdout` hooks (SessionStart / UserPromptSubmit, the only events whose plain stdout reaches the model), as exit 2 plus stderr for `--via rewake` hooks, otherwise on stderr. At most one warning per problem per 10 minutes.
-- The launcher imports only node builtins. A zeroed `launch.mjs` cannot repair itself; the two `--via stdout` hooks print a fallback line when it fails to run.
+- Before the hook's script starts the launcher hashes every manifest file. A damaged one is restored from the marketplace clone (`~/.claude/plugins/marketplaces/<marketplace>/<plugin>`) only if the clone's copy matches the manifest hash. Whatever cannot be restored is reported: on stdout for `--via stdout` hooks, as exit 2 plus stderr for `--via rewake` hooks, otherwise on stderr. At most one warning per problem per 10 minutes.
+- The launcher imports only node builtins. A zeroed `launch.mjs` cannot repair itself.
 - `.gitattributes` marks `danxbot/**` as `-text` so no checkout rewrites line endings under the hashes.
 
 ## danxbot also ships a native hooks module (DX-4232)
@@ -69,7 +61,7 @@ A machine crash once left six cached plugin files the same size but all NUL byte
 
 ## The danxbot plugin carries no `@thehammer/danx-dashboard-mcp` version (DX-4321)
 
-The version is the npm registry's `latest`: the three session-start entry points (`ensure-dashboard-mcp.sh --prewarm`, `event-hook.sh SessionStart`, `background-work-report.mjs session-start`) resolve it through `danxbot/scripts/lib/dashboard-mcp-package.mjs` and record it in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`, every other hook reads that record with no network request, and a refresh that fails keeps the recorded version and says so in one line (with no record nothing runs and the line says so), so a danxbot publish reaches the next session start with no plugin release and never a version literal here (a test scans for one).
+The version is the npm registry's `latest`: the two session-start entry points (`ensure-dashboard-mcp.sh --prewarm`, `background-work-report.mjs session-start`) resolve it through `danxbot/scripts/lib/dashboard-mcp-package.mjs` and record it in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`, every other hook reads that record with no network request, and a refresh that fails keeps the recorded version and says so in one line (with no record nothing runs and the line says so), so a danxbot publish reaches the next session start with no plugin release and never a version literal here (a test scans for one).
 
 ## Publishing is TWO steps, and the second one is not optional
 
