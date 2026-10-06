@@ -1,0 +1,19 @@
+{
+  "name": "@50arms/claude-plugin",
+  "version": "0.12.61",
+  "description": "The danxbot Claude Code plugin from 50 Arms: plan-workflow, issue-workflow, worker tiers, plan event hooks and the mantra.",
+  "license": "UNLICENSED",
+  "files": [
+    ".claude-plugin",
+    "agents",
+    "hooks",
+    "scripts",
+    "skills",
+    "types",
+    "mantra.md",
+    "integrity-manifest.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

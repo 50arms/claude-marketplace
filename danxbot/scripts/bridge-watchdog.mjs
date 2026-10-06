@@ -38,7 +38,7 @@ export const STDERR_QUOTE_CHARS = 300;
 
 // Same instruction as INTEGRITY_FIX in launch.mjs, without its "Fix: " prefix (failureNotice adds it); launch.test.mjs pins them together.
 export const CORRUPT_INSTALL_FIX =
-  "run `claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session";
+  "run `claude plugin uninstall danxbot@50arms --keep-data`, then `claude plugin install danxbot@50arms` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session";
 
 /**
  * Run `plan-event-bridge.mjs start --restart-trigger=watchdog ...` as a subprocess with the

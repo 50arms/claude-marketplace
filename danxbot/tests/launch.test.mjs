@@ -1,8 +1,7 @@
 // DX-3997 — the plugin integrity launcher (scripts/launch.mjs).
 //
-// Every case builds a throwaway `~/.claude/plugins` layout (cache/<mkt>/<plugin>/<version>
-// next to marketplaces/<mkt>/<plugin>) holding a small synthetic plugin plus the REAL
-// launcher, damages the cache copy the way the 2026-10-01 crash did (a file that kept its
+// Every case builds a throwaway plugin dir holding a small synthetic plugin plus the REAL
+// launcher, damages a file the way the 2026-10-01 crash did (a file that kept its
 // size and became NUL bytes), and runs the launcher as a real process. No test sleeps: the
 // warning dedupe window is exercised by backdating the marker's mtime.
 import { test, describe, after } from "node:test";
@@ -22,7 +21,7 @@ const REAL_PLUGIN = path.resolve(HERE, "..");
 const REPO_ROOT = path.resolve(REAL_PLUGIN, "..");
 const REAL_LAUNCHER = path.join(REAL_PLUGIN, "scripts", "launch.mjs");
 const launcher = await import(pathToFileURL(REAL_LAUNCHER).href);
-const { verifyAndRepair, WARN_INTERVAL_MS, claimWarning, INTEGRITY_FIX } = launcher;
+const { verifyManifest, WARN_INTERVAL_MS, claimWarning, INTEGRITY_FIX } = launcher;
 
 const temps = [];
 function tmpDir(prefix) {
@@ -53,27 +52,18 @@ const PLUGIN_FILES = {
   ".claude-plugin/plugin.json": '{"name":"fake","version":"1.0.0"}\n',
 };
 
-/**
- * A fake plugins dir: `cache/mkt/fake/1.0.0` (what hooks run from) and `marketplaces/mkt/fake`
- * (the clone repairs come from), both holding the same synthetic plugin plus the real launcher.
- */
-function makeInstall({ clone = true } = {}) {
+/** A fake installed plugin: `cache/mkt/fake/1.0.0` (what hooks run from) holding the synthetic plugin plus the real launcher. */
+function makeInstall() {
   const plugins = tmpDir("danxbot-launch-");
   const cache = path.join(plugins, "cache", "mkt", "fake", "1.0.0");
-  const cloneDir = path.join(plugins, "marketplaces", "mkt", "fake");
-  const write = (dir) => {
-    for (const [rel, text] of Object.entries(PLUGIN_FILES)) {
-      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
-      fs.writeFileSync(path.join(dir, rel), text);
-    }
-    fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
-    fs.copyFileSync(REAL_LAUNCHER, path.join(dir, "scripts", "launch.mjs"));
-    const files = [...Object.keys(PLUGIN_FILES), "scripts/launch.mjs"];
-    fs.writeFileSync(path.join(dir, MANIFEST_FILE), `${JSON.stringify(buildManifest(dir, files), null, 2)}\n`);
-  };
-  write(cache);
-  if (clone) write(cloneDir);
-  return { plugins, cache, cloneDir, launcher: path.join(cache, "scripts", "launch.mjs"), stateDir: tmpDir("danxbot-launch-state-") };
+  for (const [rel, text] of Object.entries(PLUGIN_FILES)) {
+    fs.mkdirSync(path.dirname(path.join(cache, rel)), { recursive: true });
+    fs.writeFileSync(path.join(cache, rel), text);
+  }
+  fs.copyFileSync(REAL_LAUNCHER, path.join(cache, "scripts", "launch.mjs"));
+  const files = [...Object.keys(PLUGIN_FILES), "scripts/launch.mjs"];
+  fs.writeFileSync(path.join(cache, MANIFEST_FILE), `${JSON.stringify(buildManifest(cache, files), null, 2)}\n`);
+  return { plugins, cache, launcher: path.join(cache, "scripts", "launch.mjs"), stateDir: tmpDir("danxbot-launch-state-") };
 }
 
 function zero(file) {
@@ -122,71 +112,43 @@ describe("a healthy install", () => {
   });
 });
 
-describe("a damaged cache copy with an intact marketplace clone is repaired", () => {
+describe("damage is detected, reported loudly and once, and the hook does not run corrupt code", () => {
   for (const [label, damage] of [
     ["zeroed (the crash shape: same size, all NUL)", (f) => zero(f)],
     ["truncated", (f) => fs.writeFileSync(f, "partial")],
     ["missing", (f) => fs.rmSync(f)],
   ]) {
-    test(`the hook's own script, ${label}`, () => {
+    test(`verifyManifest reports a ${label} file as corrupt and leaves it as it was`, () => {
       const install = makeInstall();
-      damage(path.join(install.cache, "scripts", "echo.mjs"));
-      const res = run(install, ["scripts/echo.mjs", "go"], { stdin: "payload", env: { ECHO_EXIT: "3" } });
-      assert.equal(res.code, 3, "the repaired script ran and its exit code passed through");
-      assert.deepEqual(JSON.parse(res.stdout), { args: ["go"], stdin: "payload" });
-      assert.match(res.stderr, /repaired 1 corrupt plugin file\(s\) from the marketplace clone: scripts\/echo\.mjs/);
-      assert.equal(fs.readFileSync(path.join(install.cache, "scripts", "echo.mjs"), "utf8"), ECHO_MJS);
+      const file = path.join(install.cache, "scripts", "other.mjs");
+      damage(file);
+      const before = fs.existsSync(file) ? fs.readFileSync(file) : null;
+      const res = verifyManifest({ root: install.cache });
+      assert.equal(res.manifestOk, true);
+      assert.deepEqual(res.corrupt, ["scripts/other.mjs"]);
+      assert.deepEqual(fs.existsSync(file) ? fs.readFileSync(file) : null, before, "nothing is rewritten");
     });
   }
 
-  test("a lib file the script imports, in a subdirectory that is gone entirely", () => {
+  test("a healthy tree reports nothing corrupt", () => {
     const install = makeInstall();
-    fs.rmSync(path.join(install.cache, "scripts", "lib"), { recursive: true });
-    const res = run(install, ["scripts/echo.mjs"]);
-    assert.equal(res.code, 0);
-    assert.equal(fs.readFileSync(path.join(install.cache, "scripts", "lib", "dep.mjs"), "utf8"), DEP_MJS);
+    assert.deepEqual(verifyManifest({ root: install.cache }).corrupt, []);
   });
 
-  test("hooks.json and a skill-style data file are covered too, not only scripts", () => {
+  test("a corrupt file is reported, with the reinstall instruction; an unaffected script still runs", () => {
     const install = makeInstall();
-    zero(path.join(install.cache, "hooks", "hooks.json"));
-    const res = verifyAndRepair({ root: install.cache });
-    assert.deepEqual(res.restored, ["hooks/hooks.json"]);
-    assert.deepEqual(res.unrestorable, []);
-  });
-
-  test("repair leaves no temp file behind", () => {
-    const install = makeInstall();
-    zero(path.join(install.cache, "scripts", "echo.mjs"));
-    run(install, ["scripts/echo.mjs"]);
-    assert.deepEqual(fs.readdirSync(path.join(install.cache, "scripts")).filter((n) => n.includes(".tmp")), []);
-  });
-
-  test("a zeroed manifest is restored from a clone at the same version, then the damaged file is repaired", () => {
-    const install = makeInstall();
-    zero(path.join(install.cache, MANIFEST_FILE));
-    zero(path.join(install.cache, "scripts", "echo.mjs"));
-    const res = run(install, ["scripts/echo.mjs"]);
-    assert.equal(res.code, 0);
-    assert.match(res.stderr, /repaired 2 corrupt plugin file\(s\)/);
-    assert.match(res.stderr, /integrity-manifest\.json/);
-  });
-});
-
-describe("damage that cannot be repaired is loud, once, and the hook does not run corrupt code", () => {
-  test("clone behind (its copy of the file does not match the manifest): the carrier prints the warning, an unaffected script still runs", () => {
-    const install = makeInstall();
-    fs.writeFileSync(path.join(install.cloneDir, "scripts", "other.mjs"), "export const other = 2; // a different commit\n");
     zero(path.join(install.cache, "scripts", "other.mjs"));
     const res = run(install, ["--via", "stdout", "scripts/hello.sh", "w"], { stdin: "i" });
     assert.equal(res.code, 0);
-    assert.match(res.stdout, /^\[danxbot plugin\] INTEGRITY FAILURE: .*scripts\/other\.mjs/);
-    assert.match(res.stdout, /Fix: /);
+    assert.match(res.stdout, /^\[danxbot plugin\] INTEGRITY FAILURE: 1 plugin file\(s\) are corrupt \(scripts\/other\.mjs\)/);
+    assert.ok(res.stdout.includes(INTEGRITY_FIX));
+    assert.equal(res.stdout.includes("marketplace clone"), false);
     assert.ok(res.stdout.endsWith("hello w stdin=i"), "the hook's own output follows the warning");
+    assert.match(res.stderr, /INTEGRITY FAILURE/);
   });
 
-  test("the hook's own script is unrestorable: the carrier warns and exits 0 without running anything", () => {
-    const install = makeInstall({ clone: false });
+  test("the hook's own script is corrupt: the carrier warns and exits 0 without running anything", () => {
+    const install = makeInstall();
     zero(path.join(install.cache, "scripts", "echo.mjs"));
     const res = run(install, ["--via", "stdout", "scripts/echo.mjs"]);
     assert.equal(res.code, 0);
@@ -194,8 +156,17 @@ describe("damage that cannot be repaired is loud, once, and the hook does not ru
     assert.equal(res.stdout.includes('"args"'), false, "the corrupt script was not run");
   });
 
-  test("a rewake hook whose script is unrestorable exits 2 with the warning on stderr, which wakes the session", () => {
-    const install = makeInstall({ clone: false });
+  test("a corrupt .sh target is not run either", () => {
+    const install = makeInstall();
+    zero(path.join(install.cache, "scripts", "hello.sh"));
+    const res = run(install, ["scripts/hello.sh", "w"]);
+    assert.equal(res.code, 1);
+    assert.equal(res.stdout, "");
+    assert.match(res.stderr, /INTEGRITY FAILURE: .*scripts\/hello\.sh/);
+  });
+
+  test("a rewake hook whose script is corrupt exits 2 with the warning on stderr, which wakes the session", () => {
+    const install = makeInstall();
     zero(path.join(install.cache, "scripts", "echo.mjs"));
     const res = run(install, ["--via", "rewake", "scripts/echo.mjs"]);
     assert.equal(res.code, 2);
@@ -204,7 +175,7 @@ describe("damage that cannot be repaired is loud, once, and the hook does not ru
   });
 
   test("a hook with no model-visible channel reports on stderr and exits 1", () => {
-    const install = makeInstall({ clone: false });
+    const install = makeInstall();
     zero(path.join(install.cache, "scripts", "echo.mjs"));
     const res = run(install, ["scripts/echo.mjs"]);
     assert.equal(res.code, 1);
@@ -213,7 +184,7 @@ describe("damage that cannot be repaired is loud, once, and the hook does not ru
   });
 
   test("the warning appears once per window: a second run inside it is silent on stdout, and after the window it returns", () => {
-    const install = makeInstall({ clone: false });
+    const install = makeInstall();
     zero(path.join(install.cache, "scripts", "other.mjs"));
     const first = run(install, ["--via", "stdout", "scripts/hello.sh", "a"]);
     assert.match(first.stdout, /INTEGRITY FAILURE/);
@@ -227,35 +198,14 @@ describe("damage that cannot be repaired is loud, once, and the hook does not ru
     assert.match(third.stdout, /INTEGRITY FAILURE/);
   });
 
-  test("a manifest nobody can restore means nothing is verified: say so, and still run the hook", () => {
-    const install = makeInstall({ clone: false });
+  test("an unreadable manifest means nothing is verified: say so, and still run the hook", () => {
+    const install = makeInstall();
     zero(path.join(install.cache, MANIFEST_FILE));
     const res = run(install, ["--via", "stdout", "scripts/hello.sh", "m"]);
     assert.equal(res.code, 0);
     assert.match(res.stdout, /integrity manifest is unreadable/);
     assert.ok(res.stdout.endsWith("hello m stdin="));
-  });
-
-  test("a clone at a DIFFERENT version is never used for repair", () => {
-    const install = makeInstall();
-    fs.writeFileSync(path.join(install.cloneDir, ".claude-plugin", "plugin.json"), '{"name":"fake","version":"2.0.0"}\n');
-    zero(path.join(install.cache, MANIFEST_FILE));
-    const res = verifyAndRepair({ root: install.cache });
-    assert.equal(res.manifestOk, false);
-    assert.deepEqual(res.restored, []);
-  });
-
-  test("a dev checkout (not under plugins/cache) has no clone: damage is reported, nothing is restored", () => {
-    const dev = tmpDir("danxbot-launch-dev-");
-    for (const [rel, text] of Object.entries(PLUGIN_FILES)) {
-      fs.mkdirSync(path.dirname(path.join(dev, rel)), { recursive: true });
-      fs.writeFileSync(path.join(dev, rel), text);
-    }
-    fs.writeFileSync(path.join(dev, MANIFEST_FILE), `${JSON.stringify(buildManifest(dev, Object.keys(PLUGIN_FILES)), null, 2)}\n`);
-    zero(path.join(dev, "scripts", "other.mjs"));
-    const res = verifyAndRepair({ root: dev });
-    assert.deepEqual(res.unrestorable, ["scripts/other.mjs"]);
-    assert.deepEqual(res.restored, []);
+    assert.equal(verifyManifest({ root: install.cache }).manifestOk, false);
   });
 });
 
@@ -277,36 +227,28 @@ describe("claimWarning", () => {
 
 describe("the real plugin", () => {
   function realPluginInstall() {
-    const plugins = tmpDir("danxbot-real-");
-    const cache = path.join(plugins, "cache", "mkt", "danxbot", "9.9.9");
-    const cloneDir = path.join(plugins, "marketplaces", "mkt", "danxbot");
-    for (const dir of [cache, cloneDir]) {
-      for (const rel of listPluginFiles(REPO_ROOT, "danxbot")) {
-        fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
-        fs.copyFileSync(path.join(REAL_PLUGIN, rel), path.join(dir, rel));
-      }
-      fs.writeFileSync(path.join(dir, ".claude-plugin", "plugin.json"), '{"name":"danxbot","version":"9.9.9"}\n');
-      // the manifest the publish step would write for this tree
-      fs.writeFileSync(
-        path.join(dir, MANIFEST_FILE),
-        `${JSON.stringify(buildManifest(dir, listPluginFiles(REPO_ROOT, "danxbot")), null, 2)}\n`,
-      );
+    const cache = path.join(tmpDir("danxbot-real-"), "cache", "mkt", "danxbot", "9.9.9");
+    for (const rel of listPluginFiles(REPO_ROOT, "danxbot")) {
+      fs.mkdirSync(path.dirname(path.join(cache, rel)), { recursive: true });
+      fs.copyFileSync(path.join(REAL_PLUGIN, rel), path.join(cache, rel));
     }
-    return { cache, cloneDir };
+    // the manifest the publish step would write for this tree
+    fs.writeFileSync(path.join(cache, MANIFEST_FILE), `${JSON.stringify(buildManifest(cache, listPluginFiles(REPO_ROOT, "danxbot")), null, 2)}\n`);
+    return { cache };
   }
 
-  test("zeroing ANY shipped file is repaired on the next verification (planted-corruption test over the whole tree)", () => {
+  test("zeroing ANY shipped file is detected on the next verification (planted-corruption test over the whole tree)", () => {
     const { cache } = realPluginInstall();
     const files = Object.keys(JSON.parse(fs.readFileSync(path.join(cache, MANIFEST_FILE), "utf8")).files);
     assert.ok(files.includes("scripts/plan-event-bridge.mjs") && files.includes("scripts/inject-time.sh") && files.includes("scripts/launch.mjs"));
     assert.ok(files.length >= 15, `expected the whole plugin in the manifest, got ${files.length}`);
+    assert.deepEqual(verifyManifest({ root: cache }).corrupt, []);
     for (const rel of files) {
+      const original = fs.readFileSync(path.join(cache, rel));
       zero(path.join(cache, rel));
-      const res = verifyAndRepair({ root: cache });
-      assert.deepEqual(res.restored, [rel], `${rel} should be restored`);
-      assert.deepEqual(res.unrestorable, [], `${rel} should leave nothing unrestorable`);
+      assert.deepEqual(verifyManifest({ root: cache }).corrupt, [rel], `${rel} should be reported corrupt`);
+      fs.writeFileSync(path.join(cache, rel), original);
     }
-    assert.deepEqual(verifyAndRepair({ root: cache }).restored, []);
   });
 
   test("the published manifest never lists the tests or itself", () => {
@@ -343,6 +285,7 @@ describe("the real plugin", () => {
 
   test("every integrity message gives the same repair instruction: launcher, watchdog notice, and both hooks.json fallback lines", () => {
     assert.equal(INTEGRITY_FIX, `Fix: ${CORRUPT_INSTALL_FIX}.`);
+    assert.equal(INTEGRITY_FIX, "Fix: run `claude plugin uninstall danxbot@50arms --keep-data`, then `claude plugin install danxbot@50arms` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session.");
     const hooks = JSON.parse(fs.readFileSync(path.join(REAL_PLUGIN, "hooks", "hooks.json"), "utf8")).hooks;
     const fallbacks = Object.values(hooks)
       .flat()
@@ -353,7 +296,7 @@ describe("the real plugin", () => {
     for (const command of fallbacks) assert.ok(command.includes(INTEGRITY_FIX), `fallback lacks the repair instruction: ${command}`);
   });
 
-  test("a zeroed launch.mjs cannot repair itself, so the model-visible hook prints its own fallback line and exits 0; healthy, it prints none", () => {
+  test("a zeroed launch.mjs cannot report itself, so the model-visible hook prints its own fallback line and exits 0; healthy, it prints none", () => {
     const { cache } = realPluginInstall();
     const hooks = JSON.parse(fs.readFileSync(path.join(REAL_PLUGIN, "hooks", "hooks.json"), "utf8")).hooks;
     const command = hooks.UserPromptSubmit[0].hooks[0].command;

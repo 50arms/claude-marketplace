@@ -29,7 +29,7 @@ export const PARENT_CHECK_MS = 5_000;
 /**
  * The plugin's data directory by Claude Code's own layout: a marketplace install's root is
  * `<plugins>/cache/<marketplace>/<plugin>/<version>` and its data directory `<plugins>/data/<plugin>-<marketplace>` (checked on this
- * machine, 2026-10-04: `...\plugins\cache\newms-plugins\danxbot\0.12.35` -> `...\plugins\data\danxbot-newms-plugins`). A root of any
+ * machine, 2026-10-04: `...\plugins\cache\50arms\danxbot\0.12.35` -> `...\plugins\data\danxbot-50arms`). A root of any
  * other shape (a `--plugin-dir` load) has no data directory this can name: the answer is the reason, never a guess.
  */
 export function pluginDataDir(root) {

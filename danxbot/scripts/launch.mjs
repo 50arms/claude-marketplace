@@ -11,20 +11,17 @@
 // WHAT IT DOES, on every hook run, before the hook's script starts:
 //   1. Hashes every file listed in `integrity-manifest.json` (written by
 //      scripts/write-integrity-manifest.mjs at publish; the plugin's own sha256 per file).
-//   2. A mismatching (zeroed, truncated, missing) file is restored from the marketplace
-//      clone (`~/.claude/plugins/marketplaces/<marketplace>/<plugin>`), but only a clone file
-//      whose own hash equals the manifest entry, so a clone at another commit, or itself
-//      damaged, is never copied in. An unreadable manifest is restored from the clone only
-//      when the clone's plugin.json version equals this cache directory's version.
-//   3. Anything left unrestorable is reported, loudly and without spamming:
+//   2. Reports anything that mismatches (zeroed, truncated, missing) or an unreadable manifest,
+//      loudly and without spamming:
 //        --via stdout   the hook's stdout reaches the model (SessionStart, UserPromptSubmit):
 //                       the warning is printed there, once per WARN_INTERVAL_MS per problem.
-//        --via rewake   an asyncRewake hook: when its own script cannot run, exit 2 with the
+//        --via rewake   an asyncRewake hook: when its own script is corrupt, exit 2 with the
 //                       warning on stderr, which wakes the session.
-//        (no flag)      stderr only; the hook exits 1 when its own script cannot run.
-//   4. Runs the script (`.sh` under bash, `.mjs` under this node) with the hook's stdin and
-//      args, stdio inherited, and exits with its code. A script that is itself unrestorable
-//      is never run.
+//        (no flag)      stderr only; the hook exits 1 when its own script is corrupt.
+//      The plugin is installed from npm, so no second copy exists to restore from: the repair
+//      is a reinstall, which the warning names.
+//   3. Runs the script (`.sh` under bash, `.mjs` under this node) with the hook's stdin and
+//      args, stdio inherited, and exits with its code. A corrupt script is never run.
 //
 // A zeroed launch.mjs cannot repair itself: the two hooks that reach the model print their
 // own fallback line when the launcher fails to run (see hooks.json).
@@ -79,75 +76,16 @@ function loadManifest(file) {
 }
 
 /**
- * `~/.claude/plugins/marketplaces/<marketplace>/<plugin>` for a root of the form
- * `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>`; null for any other layout (a dev checkout).
+ * Verify every manifest file under `root`: `{ manifestOk: true, files, corrupt }` (`corrupt` lists the
+ * mismatching, truncated or missing files), or `{ manifestOk: false, error, corrupt: [] }` when there is no manifest to verify against.
  */
-function cloneDirFor(root) {
-  const pluginDir = path.dirname(root);
-  const marketplaceDir = path.dirname(pluginDir);
-  const cacheDir = path.dirname(marketplaceDir);
-  if (path.basename(cacheDir) !== "cache") return null;
-  return path.join(path.dirname(cacheDir), "marketplaces", path.basename(marketplaceDir), path.basename(pluginDir));
-}
-
-function copyAtomic(from, to, expectedHash) {
-  fs.mkdirSync(path.dirname(to), { recursive: true });
-  const tmp = `${to}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, fs.readFileSync(from));
-  fs.renameSync(tmp, to);
-  return hashFile(to) === expectedHash;
-}
-
-/** Restores `rel` from `clone` when the clone's copy hashes to `expectedHash`. */
-function restoreFromClone(root, clone, rel, expectedHash) {
-  if (clone === null) return false;
-  const source = path.join(clone, rel);
-  if (hashFile(source) !== expectedHash) return false;
-  try {
-    return copyAtomic(source, path.join(root, rel), expectedHash);
-  } catch {
-    return false; // read-only cache, disk full: the file stays damaged and is reported
-  }
-}
-
-/** The manifest, restored from the clone when it is unreadable and the clone is this very version. */
-function manifestWithRepair(root, clone) {
-  const manifestPath = path.join(root, MANIFEST_FILE);
-  const loaded = loadManifest(manifestPath);
-  if (loaded.files) return { files: loaded.files, restoredManifest: false };
-  if (clone === null) return { error: loaded.error };
-  let cloneVersion;
-  try {
-    cloneVersion = JSON.parse(fs.readFileSync(path.join(clone, ".claude-plugin", "plugin.json"), "utf8")).version;
-  } catch {
-    return { error: loaded.error };
-  }
-  const cloneManifest = path.join(clone, MANIFEST_FILE);
-  if (cloneVersion !== path.basename(root) || loadManifest(cloneManifest).files === undefined) return { error: loaded.error };
-  try {
-    copyAtomic(cloneManifest, manifestPath, hashFile(cloneManifest));
-  } catch {
-    return { error: loaded.error };
-  }
-  const restored = loadManifest(manifestPath);
-  return restored.files ? { files: restored.files, restoredManifest: true } : { error: restored.error };
-}
-
-/**
- * Verify every manifest file under `root`, restoring what the marketplace clone can restore.
- * `{ manifestOk: false, error }` when there is no manifest to verify against.
- */
-export function verifyAndRepair({ root }) {
-  const clone = cloneDirFor(root);
-  const manifest = manifestWithRepair(root, clone);
-  if (manifest.error !== undefined) return { manifestOk: false, error: manifest.error, restored: [], unrestorable: [] };
-  const restored = manifest.restoredManifest ? [MANIFEST_FILE] : [];
-  const unrestorable = [];
-  for (const [rel, expected] of Object.entries(manifest.files)) {
-    if (hashFile(path.join(root, rel)) === expected) continue;
-    (restoreFromClone(root, clone, rel, expected) ? restored : unrestorable).push(rel);
-  }
-  return { manifestOk: true, files: manifest.files, restored, unrestorable };
+export function verifyManifest({ root }) {
+  const manifest = loadManifest(path.join(root, MANIFEST_FILE));
+  if (manifest.error !== undefined) return { manifestOk: false, error: manifest.error, corrupt: [] };
+  const corrupt = Object.entries(manifest.files)
+    .filter(([rel, expected]) => hashFile(path.join(root, rel)) !== expected)
+    .map(([rel]) => rel);
+  return { manifestOk: true, files: manifest.files, corrupt };
 }
 
 /**
@@ -173,15 +111,15 @@ export function claimWarning(signature, { dir = os.tmpdir(), now = Date.now() } 
 
 /** The one repair instruction every integrity message carries; hooks.json's fallback line and bridge-watchdog.mjs say the same (launch.test.mjs pins all three). */
 export const INTEGRITY_FIX =
-  "Fix: run `claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session.";
+  "Fix: run `claude plugin uninstall danxbot@50arms --keep-data`, then `claude plugin install danxbot@50arms` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session.";
 
 function warningText(root, result) {
   const head = "[danxbot plugin] INTEGRITY FAILURE:";
   if (!result.manifestOk) {
     return `${head} the integrity manifest is unreadable (${result.error}), so no plugin file in ${root} could be verified; danxbot hooks may be silently broken. ${INTEGRITY_FIX}`;
   }
-  const names = result.unrestorable.slice(0, 5).join(", ") + (result.unrestorable.length > 5 ? `, and ${result.unrestorable.length - 5} more` : "");
-  return `${head} ${result.unrestorable.length} plugin file(s) are corrupt and could not be restored from the marketplace clone (${names}); danxbot hooks, including the plan event bridge, may not work and plan events may not reach this session. ${INTEGRITY_FIX}`;
+  const names = result.corrupt.slice(0, 5).join(", ") + (result.corrupt.length > 5 ? `, and ${result.corrupt.length - 5} more` : "");
+  return `${head} ${result.corrupt.length} plugin file(s) are corrupt (${names}); danxbot hooks, including the plan event bridge, may not work and plan events may not reach this session. ${INTEGRITY_FIX}`;
 }
 
 function parseArgs(argv) {
@@ -213,20 +151,17 @@ export async function main(argv, { root = path.resolve(path.dirname(fileURLToPat
     return 1;
   }
 
-  const result = verifyAndRepair({ root });
-  if (result.restored.length > 0) {
-    process.stderr.write(`[danxbot plugin] repaired ${result.restored.length} corrupt plugin file(s) from the marketplace clone: ${result.restored.join(", ")}\n`);
-  }
+  const result = verifyManifest({ root });
   if (result.manifestOk && result.files[rel] === undefined) {
     process.stderr.write(`launch.mjs: ${rel} is not in the integrity manifest, refusing to run it\n`);
     return 1;
   }
 
-  const problem = !result.manifestOk || result.unrestorable.length > 0;
-  const targetBroken = result.unrestorable.includes(rel);
+  const problem = !result.manifestOk || result.corrupt.length > 0;
+  const targetBroken = result.corrupt.includes(rel);
   if (problem) {
     const text = warningText(root, result);
-    const signature = `${root}|${process.env.CLAUDE_CODE_SESSION_ID ?? ""}|${result.manifestOk ? result.unrestorable.join(",") : "manifest"}`;
+    const signature = `${root}|${process.env.CLAUDE_CODE_SESSION_ID ?? ""}|${result.manifestOk ? result.corrupt.join(",") : "manifest"}`;
     process.stderr.write(`${text}\n`);
     if (via === "stdout" && claimWarning(signature)) process.stdout.write(`${text}\n`);
     if (targetBroken) {

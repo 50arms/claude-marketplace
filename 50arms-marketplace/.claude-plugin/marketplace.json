@@ -1,0 +1,17 @@
+{
+  "name": "50arms",
+  "owner": {
+    "name": "50 Arms"
+  },
+  "description": "Claude Code plugins from 50 Arms.",
+  "plugins": [
+    {
+      "name": "danxbot",
+      "source": {
+        "source": "npm",
+        "package": "@50arms/claude-plugin"
+      },
+      "description": "Work with a danxbot dashboard from Claude Code: plan and issue workflows, worker agents, plan hooks and the mantra."
+    }
+  ]
+}

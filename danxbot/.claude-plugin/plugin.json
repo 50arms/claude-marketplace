@@ -3,8 +3,7 @@
   "description": "Danxbot's way of working: plan-workflow, issue-workflow, worker tiers, plan event hooks and the mantra.",
   "version": "0.12.62",
   "author": {
-    "name": "Dan Newman",
-    "email": "newms87@gmail.com"
+    "name": "50 Arms"
   },
   "types": "./types/index.d.ts",
   "mcpServers": {

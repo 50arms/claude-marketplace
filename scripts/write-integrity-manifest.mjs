@@ -5,8 +5,8 @@
 // Writes `<plugin>/integrity-manifest.json`: the sha256 of every file a plugin
 // ships (except its tests and the manifest itself). The plugin's own launcher
 // (`<plugin>/scripts/launch.mjs`) checks this manifest before running any hook,
-// so a cache copy a machine crash left zeroed or truncated is repaired from the
-// marketplace clone, or reported loudly, instead of silently killing the hook.
+// so a cache copy a machine crash left zeroed or truncated is reported loudly, with
+// the reinstall that repairs it, instead of silently killing the hook.
 //
 // WHEN IT RUNS. `scripts/publish.sh` runs it twice for every plugin that ships a
 // `scripts/launch.mjs`: before its injection-budget check (that check runs every

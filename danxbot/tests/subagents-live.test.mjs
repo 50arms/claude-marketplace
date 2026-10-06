@@ -15,8 +15,8 @@ const SCRIPTS = path.join(here, "..", "scripts");
 
 describe("where the installed reader is", () => {
   test("a marketplace install's data directory, by Claude Code's layout", () => {
-    const root = path.join(tmpdir(), "plugins", "cache", "newms-plugins", "danxbot", "0.12.35");
-    assert.deepEqual(pluginDataDir(root), { dir: path.join(tmpdir(), "plugins", "data", "danxbot-newms-plugins") });
+    const root = path.join(tmpdir(), "plugins", "cache", "50arms", "danxbot", "0.12.35");
+    assert.deepEqual(pluginDataDir(root), { dir: path.join(tmpdir(), "plugins", "data", "danxbot-50arms") });
     // a trailing separator is the same root
     assert.deepEqual(pluginDataDir(`${root}${path.sep}`), pluginDataDir(root));
   });

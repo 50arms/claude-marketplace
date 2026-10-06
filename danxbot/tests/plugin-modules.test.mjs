@@ -37,11 +37,11 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
   // A hook is kept when a present hook has the same event, matcher and command. The one intended rewrite: DX-4578 narrowed the
   // plan_connect matcher from the three server prefixes to the plugin's (the matcher test below pins the new one).
   const PLAN_CONNECT_NARROWED = [/^\^\(mcp__.*plan_connect\)\$$/, "^mcp__plugin_danxbot_danx-dashboard__plan_connect$"];
-  // The other: DX-4551 replaced the repair instruction in each fallback line (a personal alias and a git repair habit) with the public
-  // Claude Code uninstall/install commands; launch.test.mjs pins the new text against INTEGRITY_FIX.
+  // The other: DX-4565 named the 50arms marketplace in the repair instruction of each fallback line (main ships DX-4551's
+  // `danxbot` uninstall/install commands); launch.test.mjs pins the new text against INTEGRITY_FIX.
   const REPAIR_REWORDED = [
-    "git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`",
-    "claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets)",
+    "claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add",
+    "claude plugin uninstall danxbot@50arms --keep-data`, then `claude plugin install danxbot@50arms` (add",
   ];
   const present = commandHooks(hooks);
   const kept = ([event, matcher, command]) => {
