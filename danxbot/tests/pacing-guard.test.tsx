@@ -5,7 +5,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
-import { PACING_EXPIRY_MS, PACING_REFRESH_MS, RESERVATION_TTL_MS, resetPacing } from '../hooks/plan/pacing-line'
+import { PACING_EXPIRY_MS, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, RESERVATION_TTL_MS, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
 import type { PacingVerdict } from '../types'
 import { dashboard, startSession } from './plan-kit'
@@ -131,11 +131,11 @@ describe('the agent.spawn hook', () => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 0 }) } })
     for (let i = 0; i < 3; i++) expect((await spawn($, { model: 'haiku' })).deny).toBeUndefined()
     expect((await spawn($, { model: 'haiku' })).deny).toMatch(/3 agent\(s\) already run/)
-    expect(d.pacingReads).toHaveLength(1)
+    // every spawn reads: the session start's read plus four
+    expect(d.pacingReads).toHaveLength(5)
     // a fresh read cannot tell which spawns its count includes: the reservations stand
     await d.clock.advance(PACING_REFRESH_MS + 1)
     expect((await spawn($, { model: 'haiku' })).deny).toBeDefined()
-    expect(d.pacingReads).toHaveLength(2)
     // after the TTL the live count is the truth
     await d.clock.advance(RESERVATION_TTL_MS)
     expect((await spawn($, { model: 'haiku' })).deny).toBeUndefined()
@@ -147,7 +147,6 @@ describe('the agent.spawn hook', () => {
     const a = spawn($, { model: 'haiku' })
     await d.clock.advance(PACING_REFRESH_MS + 1)
     expect((await spawn($, { model: 'haiku' })).deny).toMatch(/already run/)
-    expect(d.pacingReads).toHaveLength(2)
     gate.release()
     expect((await a).deny).toBeUndefined()
   })
@@ -173,7 +172,8 @@ describe('the agent.spawn hook', () => {
     const results = await Promise.all(Array.from({ length: 6 }, () => spawn($, { model: 'haiku' })))
     expect(results.filter(r => r.deny === undefined)).toHaveLength(3)
     expect(results.filter(r => r.deny !== undefined)).toHaveLength(3)
-    expect(d.pacingReads).toHaveLength(1)
+    // the session start's read, the first spawn's, and one more that the other five share (a forced read waits for the one out, then asks once)
+    expect(d.pacingReads).toHaveLength(3)
   })
 
   test('a fork is denied like any spawn', async ($, on) => {
@@ -186,37 +186,64 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($, { fork: true, model: 'opus' })).model).toBe('opus')
   })
 
-  // DX-4631: a delivered pacing message is the new verdict; the cache is read before the session reads it, inside the one-minute window
-  const MESSAGE = '[danx-dashboard stream] Usage pacing for your Claude account changed: on pace; 12 agents may run on the account.'
-
-  test('a pacing message refreshes the cache at once: over budget before it, the very next spawn is allowed after it', async ($, on) => {
+  // DX-4631: the guard reads the line itself before every decision: a verdict a tick has replaced is never decided on, in either direction
+  test('the guard decides on the verdict as it is now: over budget before, the very next spawn allowed after the dashboard changed', async ($, on) => {
     const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
     const d = await session($, on, options)
     expect((await spawn($)).deny).toMatch(/critical/)
     options.pacingLine = { body: wire({ budget: 12, running_agents: 5 }) }
     await d.clock.advance(1_000)
-    d.relay.push({ cursor: 'c1', text: MESSAGE })
-    await d.clock.settle()
     expect((await spawn($)).deny).toBeUndefined()
   })
 
-  test('a pacing message refreshes the cache at once the other way: allowed before it, the very next spawn is refused after it', async ($, on) => {
+  test('and the other way: allowed before, the very next spawn refused after the dashboard changed', async ($, on) => {
     const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
     const d = await session($, on, options)
     expect((await spawn($)).deny).toBeUndefined()
     options.pacingLine = { body: wire({ budget: 3, running_agents: 11 }) }
     await d.clock.advance(1_000)
-    d.relay.push({ cursor: 'c1', text: MESSAGE })
-    await d.clock.settle()
     expect((await spawn($)).deny).toMatch(/agent\(s\) already run on this account against budget 3/)
   })
 
-  test('an event that is not a pacing message does not read the cache', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 12 }) } })
+  test('a relayed event never reads the line: a slow dashboard cannot stall event delivery', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12 }) } }
+    const d = await session($, on, options)
     const before = d.pacingReads.length
-    d.relay.push({ cursor: 'c1', text: 'operator commented on problem 3' })
+    d.relay.push({ cursor: 'c1', text: '[danx-dashboard stream] Usage pacing for your Claude account changed: on pace.' })
     await d.clock.settle()
     expect(d.pacingReads).toHaveLength(before)
+    expect(d.relay.delivered).toHaveLength(1)
+  })
+
+  test('a read that outlasts its deadline is a failed read: the verdict is dropped, the spawn is allowed, and it is told once', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+    const d = await session($, on, options)
+    expect((await spawn($)).deny).toMatch(/critical/)
+    options.pacingHoldMs = PACING_READ_DEADLINE_MS * 10
+    const pending = spawn($)
+    await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
+    expect((await pending).deny).toBeUndefined()
+    expect(d.toasts.filter(t => t.includes(`longer than ${PACING_READ_DEADLINE_MS} ms`))).toHaveLength(1)
+    // the late answer of the timed-out read is not read: it neither restores the verdict nor blocks the next read
+    await d.clock.advance(PACING_READ_DEADLINE_MS * 10)
+    options.pacingHoldMs = undefined
+    expect((await spawn($)).deny).toMatch(/critical/)
+  })
+
+  test('a spawn that arrives while a read is out waits for it, then reads again (it never takes an answer asked before it)', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+    const d = await session($, on, options)
+    options.pacingHoldMs = 2_000
+    const reads = d.pacingReads.length
+    const first = spawn($, { model: 'haiku' })
+    await d.clock.advance(500)
+    // the dashboard changes while the first spawn's read is out; the second spawn's decision must see the new verdict
+    options.pacingLine = { body: wire({ level: 'critical', budget: 0 }) }
+    const second = spawn($, { model: 'haiku' })
+    await d.clock.advance(5_000)
+    expect((await first).deny).toBeUndefined()
+    expect((await second).deny).toMatch(/critical/)
+    expect(d.pacingReads.length - reads).toBe(2)
   })
 
   test('a cache older than 30 minutes is not trusted: the spawn is allowed', async ($, on) => {
@@ -228,21 +255,17 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($)).deny).toBeUndefined()
   })
 
-  test('a failed read keeps the last good answer serving, backs off for a minute, and toasts once', async ($, on) => {
+  test('a failed read drops the verdict: the spawn is allowed, and the failure is told once however many spawns repeat it', async ($, on) => {
     const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
     const d = await session($, on, options)
-    options.pacingLine = { status: 500 }
-    await d.clock.advance(PACING_REFRESH_MS + 1)
     expect((await spawn($)).deny).toMatch(/critical/)
-    expect(d.pacingReads).toHaveLength(2)
-    // the dead route is not hit again by each spawn inside the back-off
-    await spawn($)
-    await spawn($)
-    expect(d.pacingReads).toHaveLength(2)
-    await d.clock.advance(PACING_REFRESH_MS + 1)
-    await spawn($)
-    expect(d.pacingReads).toHaveLength(3)
+    options.pacingLine = { status: 500 }
+    expect((await spawn($)).deny).toBeUndefined()
+    expect((await spawn($)).deny).toBeUndefined()
     expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))).toHaveLength(1)
+    // the route recovers: the next spawn is decided on its answer again
+    options.pacingLine = { body: wire({ level: 'critical', budget: 0 }) }
+    expect((await spawn($)).deny).toMatch(/critical/)
   })
 
   test('unreachable at session start is silent and not backed off: the next spawn looks again', async ($, on) => {
@@ -258,12 +281,11 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($)).deny).toMatch(/critical/)
   })
 
-  test('unreachable AFTER a successful read is a failure like any other: toasted once, backed off, last good answer kept', async ($, on) => {
+  test('unreachable AFTER a successful read is a failure like any other: toasted once, the verdict dropped', async ($, on) => {
     const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
     const d = await session($, on, options)
     options.mcp = 'down'
-    await d.clock.advance(PACING_REFRESH_MS + 1)
-    expect((await spawn($)).deny).toMatch(/critical/)
+    expect((await spawn($)).deny).toBeUndefined()
     await spawn($)
     expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read') && t.includes('not reachable'))).toHaveLength(1)
   })
@@ -274,15 +296,12 @@ describe('the agent.spawn hook', () => {
     expect(d.toasts.filter(t => t.includes('answered 404'))).toHaveLength(1)
   })
 
-  test('reads the line at session start, then once a minute, and again after it', async ($, on) => {
+  test('reads the line at session start and at every spawn', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire() } })
     expect(d.pacingReads).toHaveLength(1)
     await spawn($)
     await spawn($)
-    expect(d.pacingReads).toHaveLength(1)
-    await d.clock.advance(PACING_REFRESH_MS + 1)
-    await spawn($)
-    expect(d.pacingReads).toHaveLength(2)
+    expect(d.pacingReads).toHaveLength(3)
   })
 
   test('a tool call of any tool is never denied under a critical verdict: saving work stays possible', async ($, on) => {
@@ -300,7 +319,7 @@ describe('failures of the guard itself', () => {
   test('a hook error (a rejecting clock) is told once per text, never a toast per spawn, and the spawn goes on', async () => {
     resetPacing()
     const toasts: string[] = []
-    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), call: () => Promise.reject(new Error('never reached')), toast: t => void toasts.push(t) }
+    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), sleep: () => Promise.resolve(), call: () => Promise.reject(new Error('never reached')), toast: t => void toasts.push(t) }
     const started = { model: 'm', agentId: 'a' }
     const guard = spawnGuard(env)
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any

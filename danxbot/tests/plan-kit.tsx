@@ -260,6 +260,8 @@ export function dashboard(
     usageReadFails?: string
     // DX-4340: what GET /api/pacing/line answers (the session's pacing verdict and line): a body (any shape) or an error status; the dashboard's 404 (unrouted) by default
     pacingLine?: { body: unknown } | { status: number }
+    // DX-4631: each pacing line read answers only after this long on the harness clock (a slow or hung dashboard); the read is counted when it starts
+    pacingHoldMs?: number
     // DX-4339: what GET /api/team/pacing answers (the team's pacing settings): a body (any shape) or an error status; unreachable by default (the panel's silent, local state)
     teamPacing?: { body: unknown } | { status: number }
   } = {},
@@ -537,7 +539,9 @@ export function dashboard(
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       pacingReads.push(pacingReads.length + 1)
+      // the answer is fixed when the read starts: a dashboard change during the hold belongs to the next read
       const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
+      if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
     }
     // DX-4339: the team's pacing settings are read at session start and by the poll: also kept out of `calls` and `api`; `teamPacingReads` counts them

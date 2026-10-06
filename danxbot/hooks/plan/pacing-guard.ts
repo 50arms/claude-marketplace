@@ -16,8 +16,8 @@ import type { PacingEnv } from './pacing-line'
 // These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.
 //
-// A failed read is never silent: toasted once per distinct text and not retried for a minute, except that an unreachable dashboard is
-// silent until a read has succeeded (see pacing-line.ts). A burst of spawns inside one turn is held to the budget: the spawns this guard
+// A failed read is never silent: toasted once per distinct text and drops the verdict (no verdict allows), except that an unreachable dashboard
+// is silent until a read has succeeded (see pacing-line.ts). A burst of spawns inside one turn is held to the budget: the spawns this guard
 // allowed since the cached read are added to danxbot's running count until a fresh read lands.
 
 export type SpawnDecision = { kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'downgrade'; model: 'haiku' }
@@ -74,7 +74,9 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
 // slot reserved with NO await between them, so parallel spawns each see the others' reservations whatever the host's concurrency.
 // `slot` is the reservation to give back if the spawn does not start; null when nothing was reserved.
 async function reserve(env: PacingEnv, e: AgentSpawnInput): Promise<{ decision: SpawnDecision; slot: number | null }> {
-  await refreshPacing(env)
+  // DX-4631: its own read every time (spawns are rare, a read is cheap, and the read has a deadline): the spawn is decided on the verdict as it
+  // is now, never on one a message or a tick has since replaced.
+  await refreshPacing(env, true)
   const now = await env.now()
   const pacing = peekPacing(now)
   // a fork always inherits the parent's model, so the model it would run on is the parent's

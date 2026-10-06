@@ -9,8 +9,9 @@ import type { Api } from './load'
 // Unknown is explicit on the wire (`reason` set, every other field null: no session, no usage report, no verdict, pacing off) and means
 // the guard allows and no line is handed.
 //
-// A failed read is never silent: one toast per distinct text. It keeps the last good answer serving until it expires, and it is not
-// retried for PACING_REFRESH_MS, so each spawn or sub-agent start does not re-hit a dead route. The one exception is an unreachable
+// A failed read is never silent: one toast per distinct text. It DROPS the cached verdict (DX-4631: an answer whose freshness is unknown is
+// no answer, so the guard allows and the toast says spawns are not paced), and the unforced reads (the sub-agent line) do not retry it for
+// PACING_REFRESH_MS, so each sub-agent start does not re-hit a dead route. The spawn guard forces its own read every time. The one exception is an unreachable
 // danx-dashboard MCP server (a session on a repo with no danxbot, as in reportUsage and DX-3421): that is silent and not backed off,
 // the next spawn simply looks again, until a read has succeeded in this session. After a success it is a failure like any other.
 // The second exception (DX-4610): a session on the old standby plugin server (`staleServer`) is told to restart, once, after it has failed that way
@@ -26,18 +27,16 @@ export type Pacing = { verdict: PacingVerdict; line: string; spend: SpendFigure 
 
 export type PacingCall = (method: string, path: string) => Promise<Api>
 // The engine calls pacing makes, as closures built in register.tsx (the engine follows `$` only into a function in that file).
-export type PacingEnv = { now: () => Promise<number>; call: PacingCall; toast: (text: string) => void }
+export type PacingEnv = { now: () => Promise<number>; sleep: (ms: number) => Promise<void>; call: PacingCall; toast: (text: string) => void }
 
 export const LINE_PATH = '/api/pacing/line'
-// DX-4631: the start of danxbot's pacing message (the `pacing.session_message` reminder row's text, which the plan-workflow skill quotes and
-// pacing-prefixes.test.mjs pins). A relayed event that carries it is a new verdict the session is being told, so the cache is read again at
-// once (register.tsx, before the event reaches the model): the next spawn is decided on what the session was just told, in both directions.
-export const PACING_MESSAGE_PREFIX = 'Usage pacing for your Claude account changed:'
-export const isPacingMessage = (text: string): boolean => text.includes(PACING_MESSAGE_PREFIX)
 // danxbot changes the verdict only at its 10-minute tick; the plugin cannot hear `pacing-verdicts:updated` (a hooks module has no
 // dashboard event source), so the cache is refreshed when it is a minute old, and on session start (`refreshPacing`).
 export const PACING_REFRESH_MS = 60_000
 export const PACING_EXPIRY_MS = 30 * 60_000
+// DX-4631: every read has a deadline. A read that has not answered by then is a failed read (toasted, the cached verdict dropped) and frees
+// the next read: a hung dashboard call can neither hold `inflight` for ever nor stall the spawn that is waiting on it.
+export const PACING_READ_DEADLINE_MS = 5_000
 const ERROR_MAX = 200
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0
@@ -110,15 +109,34 @@ export function report(env: PacingEnv, failure: string): void {
   env.toast(`Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): ${failure}`)
 }
 
+// The read's outcome when the deadline passes first: told once per text, with how long it was given.
+const TIMED_OUT = Symbol('timed out')
+
+// `call` answered or the deadline passed, whichever is first. The loser is never read: a late answer of a timed-out call is dropped.
+async function callWithDeadline(env: PacingEnv): Promise<Api | typeof TIMED_OUT> {
+  return Promise.race([env.call('GET', LINE_PATH), env.sleep(PACING_READ_DEADLINE_MS).then(() => TIMED_OUT)])
+}
+
+// A failed read: told once per text, and the cached verdict dropped (no verdict: the guard allows, the toast says spawns are not paced).
+function failRead(env: PacingEnv, failure: string): void {
+  cache = null
+  report(env, failure)
+}
+
 async function fetchPacing(env: PacingEnv): Promise<void> {
   const gen = generation
   try {
     const at = await env.now()
-    const r = await env.call('GET', LINE_PATH)
+    const r = await callWithDeadline(env)
     // a session start came while this read was out: its answer is the previous session's
     if (gen !== generation) return
+    if (r === TIMED_OUT) {
+      lastReadAt = at
+      return failRead(env, `the pacing line read took longer than ${PACING_READ_DEADLINE_MS} ms`)
+    }
     // DX-4610: a session on the old standby server never gets a read: told to restart once the grace has run out (see the header)
     if (r.staleServer) {
+      cache = null
       staleSince ??= at
       if (at - staleSince >= STALE_GRACE_MS) report(env, RESTART_LINE)
       return
@@ -126,26 +144,27 @@ async function fetchPacing(env: PacingEnv): Promise<void> {
     staleSince = null
     if (r.unreachable) {
       // silent and not backed off until a read has succeeded (see the header)
+      cache = null
       if (hasSucceeded) report(env, 'the danx-dashboard MCP server is not reachable from this session')
       return
     }
     lastReadAt = at
-    if (!r.ok) return report(env, `the pacing line read answered ${r.status}`)
+    if (!r.ok) return failRead(env, `the pacing line read answered ${r.status}`)
     const parsed = parsePacing(r.body)
-    if (parsed !== null && 'error' in parsed) return report(env, parsed.error)
+    if (parsed !== null && 'error' in parsed) return failRead(env, parsed.error)
     cache = { pacing: parsed, fetchedAt: at }
     hasSucceeded = true
     // a good read clears the failure, so the same failure is told again if it comes back
     lastError = null
   } catch (err: any) {
-    report(env, String(err?.message ?? err))
+    if (gen === generation) failRead(env, String(err?.message ?? err))
   }
 }
 
 // Read now when `force`, else when the last reachable read attempt is a minute old; concurrent unforced callers share one read. A forced
-// read never shares one that is already out (DX-4631): that read was asked before whatever forces this one (a pacing message), so its
-// answer may be the verdict the session was just told is gone; it waits for that read and then asks again. Never rejects: a clock that
-// fails is a failed read like any other.
+// read never shares one that is already out: that read was asked before whatever forces this one, so its answer may predate it; it waits for
+// that read (bounded by the deadline: `fetchPacing` always settles) and then asks again. Never rejects: a clock that fails is a failed read
+// like any other.
 export async function refreshPacing(env: PacingEnv, force = false): Promise<void> {
   try {
     const now = await env.now()
@@ -164,7 +183,7 @@ function liveReservations(nowMs: number): number {
 }
 
 // SYNCHRONOUS: the session's pacing at `nowMs` (null when unknown or expired), its running count raised by the live reservations. A failed
-// read leaves the last good answer serving until it expires. No await: a caller that reads this and then calls reserveSlot with no await
+// read dropped the answer (no verdict). No await: a caller that reads this and then calls reserveSlot with no await
 // between them reserves atomically, whatever the host's concurrency.
 export function peekPacing(nowMs: number): Pacing | null {
   if (cache === null || cache.pacing === null || nowMs - cache.fetchedAt > PACING_EXPIRY_MS) return null
