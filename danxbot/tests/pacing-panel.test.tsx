@@ -8,12 +8,12 @@
 // session is the card's last acceptance item.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { BAND_GAP_COLS, DANGER, PACING_POLL_MS, SUCCESS, USAGE_TICK_MS, WARNING } from '../hooks/plan/config'
-import { bandText, clockText, untilText, verdictLines } from '../hooks/plan/pacing-format'
+import { BAND_GAP_COLS, DANGER, ORANGE, PACING_POLL_MS, SUCCESS, USAGE_TICK_MS, WARNING } from '../hooks/plan/config'
+import { bandText, clockText, formatMinutes, readoutSentence, untilText, verdictLines } from '../hooks/plan/pacing-format'
 import { EMPTY_PANEL_STATE, buildPanel } from '../hooks/plan/pacing-panel'
 import { parseTeamPacing } from '../hooks/plan/pacing-settings'
-import { LEVEL_COLOR } from '../hooks/plan/pacing-panel-view'
-import type { PanelState } from '../types'
+import { LEVEL_COLOR, TONE_COLOR } from '../hooks/plan/pacing-panel-view'
+import type { LimitReadout, PanelState } from '../types'
 import { SURFACES, dashboard, startSession } from './plan-kit'
 
 const FIVE = '2026-10-03T11:10:00.000Z'
@@ -32,7 +32,9 @@ const NOW = Date.parse('2026-10-03T08:00:00.000Z')
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const LINE = 'Pacing: this account is over pace; 0 agents may run on the account until 2026-10-09 09:00 UTC. Do the work yourself, cheaply.'
-const verdictBody = (over: Record<string, unknown> = {}) => ({ account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: FIVE, running_agents: 3, line: LINE, spend: null, reason: null, ...over })
+const HOLD_FIVE = { limit: 'five_hour', level: 'over_pace', state: 'hold', headroom_minutes: -40, resets_in_minutes: 100, used_percent: 62, target_percent: 80, critical_percent: 95, resets_at: FIVE }
+const SPARE_FIVE = { ...HOLD_FIVE, level: 'on_pace', state: 'spare', headroom_minutes: 60 }
+const verdictBody = (over: Record<string, unknown> = {}) => ({ account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: FIVE, running_agents: 3, line: LINE, spend: null, limits: [HOLD_FIVE], worst_limit: 'five_hour', reason: null, ...over })
 
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text as string)
 const joined = async (ui: any) => (await texts(ui)).join(' ')
@@ -206,20 +208,67 @@ describe('the panel model', () => {
   })
 })
 
+// DX-4656: the server's readout on the band, in its four forms
+describe('the worst-limit readout', () => {
+  const lim = (over: Partial<LimitReadout>): LimitReadout => ({ limit: 'five_hour', level: 'on_pace', state: 'spare', headroomMinutes: 60, resetsInMinutes: 100, usedPercent: 3, targetPercent: 95, criticalPercent: 99, resetsAt: FIVE, ...over })
+  const band = (l: LimitReadout[], worst = l[0]!.limit) => buildPanel(state({ readout: { limits: l, worst } }))
+
+  test('formatMinutes: 45m, 1h, 1h30m, -1h30m, 0m', () => {
+    expect([45, 60, 90, -90, 0, 1440, 0.4, 2879].map(formatMinutes)).toEqual(['45m', '1h', '1h30m', '-1h30m', '0m', '24h', '0m', '47h59m'])
+    // 48 h or more reads in days (DX-4657): the minutes drop, a 0h is left out
+    expect([2880, -2880, 2940, -6691, 10080, 4320].map(formatMinutes)).toEqual(['2d', '-2d', '2d1h', '-4d15h', '7d', '3d'])
+  })
+
+  test('spare is +headroom green, short is -headroom yellow, hold is the time to reset orange, stop is just stop red', () => {
+    const cases: [Partial<LimitReadout>, string, string][] = [
+      [{ state: 'spare', headroomMinutes: 60 }, '5h 95%: +1h', SUCCESS],
+      [{ state: 'short', level: 'on_pace', headroomMinutes: -90 }, '5h 95%: -1h30m', WARNING],
+      [{ state: 'hold', level: 'over_pace', headroomMinutes: -20, resetsInMinutes: 100 }, '5h 95%: hold 1h40m', ORANGE],
+      [{ state: 'stop', level: 'critical' }, '5h 95%: stop', DANGER],
+    ]
+    for (const [over, text, color] of cases) {
+      expect(bandText(band([lim(over)]))).toBe(text)
+      expect(TONE_COLOR[over.state!]).toBe(color)
+    }
+  })
+
+  test('only the worst limit shows, named 7d for weekly and $ for spend', () => {
+    const l = [lim({}), lim({ limit: 'weekly', state: 'short', headroomMinutes: -30, targetPercent: 90 }), lim({ limit: 'spend', state: 'spare', headroomMinutes: 5, targetPercent: 80 })]
+    expect(bandText(band(l, 'weekly'))).toBe('7d 90%: -30m')
+    expect(bandText(band([lim({ limit: 'weekly', state: 'short', headroomMinutes: -6691, targetPercent: 58 })]))).toBe('7d 58%: -4d15h')
+    expect(bandText(band(l, 'spend'))).toBe('$ 80%: +5m')
+  })
+
+  test('with no readout the band is the session figures, and a failing settings read drops a stale one', () => {
+    expect(bandText(buildPanel(state()))).toBe('5h 62%/80% 7d 41%/70%')
+    const stale = state({ readout: { limits: [lim({})], worst: 'five_hour' }, settingsRead: { state: 'error', message: 'boom' } })
+    expect(bandText(buildPanel(stale))).toBe('5h 62%/80% 7d 41%/70% local')
+  })
+
+  test('each limit is explained in plain words', () => {
+    expect(readoutSentence(lim({ state: 'spare', headroomMinutes: 60 }))).toBe('5-hour limit: at the current rate you reach 95% about 1h after the window resets, so you have 1h spare.')
+    expect(readoutSentence(lim({ limit: 'weekly', state: 'short', headroomMinutes: -90 }))).toBe('Weekly limit: at the current rate you reach 95% 1h30m before the window resets, so you are 1h30m short.')
+    expect(readoutSentence(lim({ state: 'hold', resetsInMinutes: 100 }))).toBe('5-hour limit: over pace (past 95%), so nothing new starts until the window resets in 1h40m.')
+    expect(readoutSentence(lim({ limit: 'spend', state: 'stop', resetsInMinutes: 45 }))).toBe('Spend limit: critical (past 99%), so everything new stops until the window resets in 45m.')
+  })
+})
+
 for (const surface of SURFACES)
   describe(`the pacing panel on ${surface}`, () => {
     test('the band shows each enabled limit as used / target, coloured by level, and the pane the target, critical, mode, reset, level and budget', async ($, on) => {
       const d = await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody() } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await joined(band)).toContain('5h 62%/80% ▲ 7d 41%/70%')
+      // DX-4656: with the server's readout the band shows the worst limit alone
+      expect(await joined(band)).toContain('5h 80%: hold 1h40m')
+      expect(await joined(band)).not.toContain('7d')
       expect(await joined(band)).not.toContain('local')
-      expect((await band.find({ type: 'Text', text: /^5h 62%/ })).props.color).toBe(LEVEL_COLOR.over_pace)
-      expect((await band.find({ type: 'Text', text: /^7d 41%/ })).props.color).toBe(LEVEL_COLOR.on_pace)
+      expect((await band.find({ type: 'Text', text: /^5h 80%/ })).props.color).toBe(ORANGE)
       expect(LEVEL_COLOR).toEqual({ on_pace: SUCCESS, over_pace: WARNING, critical: DANGER })
 
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       const all = await joined(pane)
       expect(all).toContain('5-hour')
+      expect(all).toContain('5-hour limit: over pace (past 80%), so nothing new starts until the window resets in 1h40m.')
       expect(all).toContain('62% used')
       expect(all).toContain('target 80% · critical 95% · spread evenly · resets in 3h 10m (Sat 11:10Z)')
       expect(all).toContain('target 70% · critical 90% · fast then hold · resets in 6d 1h')
@@ -231,12 +280,14 @@ for (const surface of SURFACES)
     // DX-4595
     test('the spend limit shows its server figure, the money, target, critical and reset, in the level colour', async ($, on) => {
       const spend = { used_percent: 61.6, level: 'critical', resets_at: WEEK, spent_usd: 12.4, budget_usd: 50 }
-      await paced($, on, surface, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: verdictBody({ spend }) } })
+      await paced($, on, surface, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: verdictBody({ spend, limits: [HOLD_FIVE, { ...HOLD_FIVE, limit: 'spend', level: 'critical', state: 'stop' }], worst_limit: 'spend' }) } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await joined(band)).toContain('spend 62%/80% ‼')
-      expect((await band.find({ type: 'Text', text: /^spend 62%/ })).props.color).toBe(DANGER)
+      expect(await joined(band)).toContain('$ 80%: stop')
+      expect((await band.find({ type: 'Text', text: /^\$ 80%/ })).props.color).toBe(DANGER)
       const all = await joined(pane)
+      expect(all).toContain('Spend limit: critical')
+      expect(all).toContain('5-hour limit: over pace')
       expect(all).toContain('62% used')
       expect(all).toContain('$12.40 of $50.00 · target 80% · critical 95% · spread evenly · resets in 6d 1h')
     })
@@ -245,7 +296,7 @@ for (const surface of SURFACES)
       const d = await paced($, on, surface, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: verdictBody() } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await joined(band)).toContain('spend …')
+      expect(await joined(band)).not.toContain('spend')
       expect(await joined(pane)).toContain('danxbot has not judged spend for this account yet')
       d.setMcp('down')
       await d.clock.advance(PACING_POLL_MS + 1)
@@ -261,16 +312,15 @@ for (const surface of SURFACES)
     })
 
     test('the figures move with the session: a new reading redraws the band and the pane', async ($, on) => {
-      const d = await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody({ level: 'on_pace', budget: null }) } })
+      const d = await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody({ level: 'on_pace', budget: null, limits: [SPARE_FIVE] }) } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70%')
+      expect(await joined(band)).toContain('5h 80%: +1h')
       const moved = [{ kind: 'five_hour', percentUsed: 96, resetsAt: FIVE }, { kind: 'seven_day', percentUsed: 41, resetsAt: WEEK }]
       await $.session.measure({ context: {}, rateLimits: moved, changed: ['rateLimits'] } as any)
       await d.clock.settle()
-      expect(await joined(band)).toContain('5h 96%/80% ‼')
       expect(await joined(pane)).toContain('96% used')
-      expect((await band.find({ type: 'Text', text: /^5h 96%/ })).props.color).toBe(DANGER)
+      expect((await pane.find({ type: 'Text', text: '96% used' })).props.color).toBe(DANGER)
     })
 
     test('a measure that carries no windows says nothing about them: the last values stand; an empty list clears them', async ($, on) => {
@@ -309,17 +359,18 @@ for (const surface of SURFACES)
     })
 
     test('a verdict change appears at the first poll after it, the verdict re-read every poll', async ($, on) => {
-      const d = await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody({ level: 'on_pace', budget: null }) } })
+      const d = await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody({ level: 'on_pace', budget: null, limits: [SPARE_FIVE] }) } })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await joined(pane)).toContain('Account: on pace · budget no cap · 3 running')
       expect(await joined(pane)).not.toContain('Holding')
-      d.setPacingLine({ body: verdictBody({ level: 'critical', budget: 0 }) })
+      d.setPacingLine({ body: verdictBody({ level: 'critical', budget: 0, limits: [{ ...HOLD_FIVE, level: 'critical', state: 'stop' }] }) })
       await d.clock.advance(PACING_POLL_MS + 1)
       await d.clock.settle()
       expect(await joined(pane)).toContain('Account: critical · budget 0 agents may start · 3 running')
       expect(await joined(pane)).toContain('Holding: no new agents start until the window resets')
-      expect(await joined(band)).toContain('5h 62%/80% ‼')
+      expect(await joined(band)).toContain('5h 80%: stop')
+      expect((await band.find({ type: 'Text', text: /^5h 80%/ })).props.color).toBe(DANGER)
     })
 
     test('with no danxbot MCP the own usage shows against the last settings, marked local, with the pane saying nothing about a connection', async ($, on) => {

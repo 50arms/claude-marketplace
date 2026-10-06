@@ -1,13 +1,16 @@
-import { DANGER, SUCCESS, WARNING } from './config'
+import { DANGER, ORANGE, SUCCESS, WARNING } from './config'
 import type { PacingLevel } from '../../types'
-import { LEVEL_LABEL, LIMIT_LABEL, MODE_LABEL, NEEDS_DANXBOT, SPEND_LABEL, SPEND_UNJUDGED, bandSegments, clockText, untilText, usd, verdictLines } from './pacing-format'
+import { LEVEL_LABEL, LIMIT_LABEL, MODE_LABEL, NEEDS_DANXBOT, SPEND_LABEL, SPEND_UNJUDGED, bandSegments, clockText, readoutSentence, untilText, usd, verdictLines } from './pacing-format'
+import type { Tone } from './pacing-format'
 import type { PanelEntry, PanelModel, SpendEntry } from './pacing-panel'
 import { age } from './words'
 
 // DX-4339: the pacing panel's drawing. The colour says the level (green on pace, yellow over pace, red critical); no level (no target known, or
 // no figure) is dim.
 export const LEVEL_COLOR: Record<PacingLevel, string> = { on_pace: SUCCESS, over_pace: WARNING, critical: DANGER }
-const colorOf = (level: PacingLevel | null): string | undefined => (level === null ? undefined : LEVEL_COLOR[level])
+// DX-4656: the server's states: spare green, short yellow, hold orange, stop red.
+export const TONE_COLOR: Record<Tone, string> = { ...LEVEL_COLOR, spare: SUCCESS, short: WARNING, hold: ORANGE, stop: DANGER }
+const colorOf = (level: Tone | null): string | undefined => (level === null ? undefined : TONE_COLOR[level])
 
 // The band's pacing segments, one short Text each. null when there is nothing to show.
 export function pacingBand(E: any, m: PanelModel | undefined): any {
@@ -17,7 +20,7 @@ export function pacingBand(E: any, m: PanelModel | undefined): any {
   return (
     <Box key="band-pacing" flexDirection="row" gap={1} flexShrink={0}>
       {segments.map(s => (
-        <Text key={s.key} color={colorOf(s.level)} dimColor={s.level === null}>
+        <Text key={s.key} color={colorOf(s.tone)} dimColor={s.tone === null}>
           {s.text}
         </Text>
       ))}
@@ -83,7 +86,7 @@ function spendLines(E: any, s: SpendEntry, now: number): any {
 // named error when danxbot answered and the answer was unusable. null when there is nothing to show.
 export function pacingPane(E: any, m: PanelModel, now: number): any {
   // a real settings error shows even with no window figures: it is the one thing the pane can say
-  if (m.entries.length === 0 && m.spend === null && m.error === null) return null
+  if (m.entries.length === 0 && m.spend === null && m.readout === null && m.error === null) return null
   const { Box, Text } = E
   const targets = m.settingsAt === null ? 'no known targets' : `the targets last read ${age(new Date(m.settingsAt).toISOString(), now)}`
   return (
@@ -92,6 +95,15 @@ export function pacingPane(E: any, m: PanelModel, now: number): any {
         <Text bold>Usage pacing</Text>
         {m.local && <Text dimColor>local</Text>}
       </Box>
+      {m.readout !== null && (
+        <Box key="pace-readout" flexDirection="column">
+          {m.readout.limits.map(l => (
+            <Text key={l.limit} color={colorOf(l.state)}>
+              {readoutSentence(l)}
+            </Text>
+          ))}
+        </Box>
+      )}
       {m.entries.map(e => entryLines(E, e, now))}
       {m.spend !== null && spendLines(E, m.spend, now)}
       {m.verdict !== null && verdictLines(m.verdict, now).map(line => <Text key={line}>{line}</Text>)}

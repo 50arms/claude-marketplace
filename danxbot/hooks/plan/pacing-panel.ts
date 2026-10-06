@@ -1,4 +1,4 @@
-import type { LimitSettings, PacingLevel, PacingVerdict, PanelState, SpendSettings } from '../../types'
+import type { LimitSettings, PacingLevel, PacingReadout, PacingVerdict, PanelState, SpendSettings } from '../../types'
 
 // DX-4339 (PLAN-29): the pacing panel's model, pure (no `$`): the session's own usage windows (`$.session.usage().rateLimits`, which move live)
 // set against the team's pacing settings (pacing-settings.ts) and the session's account verdict (the DX-4340 cache, pacing-line.ts). A limit the
@@ -9,7 +9,7 @@ export const LIMIT_KEYS: readonly PacingLimitKey[] = ['five_hour', 'weekly']
 // the harness names the weekly window `seven_day`
 const WINDOW_KIND: Record<PacingLimitKey, string> = { five_hour: 'five_hour', weekly: 'seven_day' }
 
-export const EMPTY_PANEL_STATE: PanelState = { settings: null, settingsAt: null, settingsRead: { state: 'pending' }, verdict: null, spend: null, limits: [] }
+export const EMPTY_PANEL_STATE: PanelState = { settings: null, settingsAt: null, settingsRead: { state: 'pending' }, verdict: null, spend: null, readout: null, limits: [] }
 
 export type PanelEntry = {
   limit: PacingLimitKey
@@ -46,6 +46,8 @@ export type PanelModel = {
   error: string | null
   settingsAt: number | null
   verdict: PacingVerdict | null
+  // DX-4656: the server's per-limit readout, null while there is no server verdict or the settings read is failing
+  readout: PacingReadout | null
 }
 
 const SEVERITY: Record<PacingLevel, number> = { on_pace: 0, over_pace: 1, critical: 2 }
@@ -90,5 +92,5 @@ export function buildPanel(state: PanelState): PanelModel {
     }
     entries.push({ limit, used: win === undefined ? null : Math.round(win.percentUsed), resetsAt, settings, level })
   }
-  return { entries, spend: buildSpend(state, local), local, error: read.state === 'error' ? read.message : null, settingsAt: state.settingsAt, verdict }
+  return { entries, spend: buildSpend(state, local), local, error: read.state === 'error' ? read.message : null, settingsAt: state.settingsAt, verdict, readout: local ? null : state.readout }
 }

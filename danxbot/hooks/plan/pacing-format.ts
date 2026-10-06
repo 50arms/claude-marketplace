@@ -1,4 +1,4 @@
-import type { PacingLevel, PacingMode, PacingVerdict } from '../../types'
+import type { LimitReadout, PacingLevel, PacingLimitKey as ReadoutLimit, PacingMode, PacingReadout, PacingState, PacingVerdict } from '../../types'
 import type { PacingLimitKey, PanelEntry, PanelModel, SpendEntry } from './pacing-panel'
 
 // DX-4339: the pacing panel's wording, pure: the band's entries, times, and the pane's verdict lines.
@@ -28,15 +28,68 @@ function spendText(s: SpendEntry): string {
   return [SPEND_LABEL, `${s.used}%/${s.settings.targetPercent}%`, s.level === null ? '' : LEVEL_MARK[s.level]].filter(Boolean).join(' ')
 }
 
-export type BandSegment = { key: string; text: string; level: PacingLevel | null }
+// What colours a segment: the level (the session's own figures) or the server's state (its readout).
+export type Tone = PacingLevel | PacingState
+export type BandSegment = { key: string; text: string; tone: Tone | null }
 
-// The band's segments, the ONE composition both the drawing and the width budget read: an entry per limit, then `local`. Empty with nothing to show.
+// DX-4656: the server's readout, as the operator reads it. The band shows only the worst limit: `5h 95%: +1h` (spare), `5h 95%: -1h30m` (short),
+// `5h 95%: hold 1h40m` (hold: the time to the reset), `5h 95%: stop` (stop); `7d` weekly, `$` spend. State and minutes are the server's, never recomputed.
+const READOUT_LABEL: Record<ReadoutLimit, { band: string; pane: string }> = { five_hour: { band: '5h', pane: '5-hour' }, weekly: { band: '7d', pane: 'weekly' }, spend: { band: '$', pane: 'spend' } }
+
+// "45m", "1h", "1h30m", "-1h30m", "-4d15h": whole minutes, a negative span keeps its sign (danxbot's formatMinutes, src/team-pacing/headroom.ts).
+export function formatMinutes(minutes: number): string {
+  const total = Math.round(Math.abs(minutes))
+  const sign = minutes < 0 && total > 0 ? '-' : ''
+  // DX-4656 / DX-4657: 48 h or more reads in days and hours (-6691 is -4d15h, 2880 is 2d), the minutes dropped
+  if (total >= 2880) {
+    const d = Math.floor(total / 1440)
+    const dh = Math.floor((total % 1440) / 60)
+    return `${sign}${d}d${dh === 0 ? '' : `${dh}h`}`
+  }
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  if (h === 0) return `${sign}${m}m`
+  return `${sign}${h}h${m === 0 ? '' : `${m}m`}`
+}
+
+function readoutValue(l: LimitReadout): string {
+  if (l.state === 'stop') return 'stop'
+  if (l.state === 'hold') return `hold ${formatMinutes(l.resetsInMinutes)}`
+  return l.state === 'spare' ? `+${formatMinutes(l.headroomMinutes)}` : formatMinutes(l.headroomMinutes)
+}
+
+export function readoutText(l: LimitReadout): string {
+  return `${READOUT_LABEL[l.limit].band} ${Math.round(l.targetPercent)}%: ${readoutValue(l)}`
+}
+
+// One limit in plain words, for the pane (the band surface has no tooltip that can hold it).
+export function readoutSentence(l: LimitReadout): string {
+  const name = `${READOUT_LABEL[l.limit].pane[0]!.toUpperCase()}${READOUT_LABEL[l.limit].pane.slice(1)} limit`
+  const target = `${Math.round(l.targetPercent)}%`
+  const reset = formatMinutes(l.resetsInMinutes)
+  if (l.state === 'spare') return `${name}: at the current rate you reach ${target} about ${formatMinutes(l.headroomMinutes)} after the window resets, so you have ${formatMinutes(l.headroomMinutes)} spare.`
+  if (l.state === 'short') return `${name}: at the current rate you reach ${target} ${formatMinutes(-l.headroomMinutes)} before the window resets, so you are ${formatMinutes(-l.headroomMinutes)} short.`
+  if (l.state === 'hold') return `${name}: over pace (past ${target}), so nothing new starts until the window resets in ${reset}.`
+  return `${name}: critical (past ${Math.round(l.criticalPercent)}%), so everything new stops until the window resets in ${reset}.`
+}
+
+export function readoutWorst(r: PacingReadout): LimitReadout {
+  return r.limits.find(l => l.limit === r.worst)!
+}
+
+// The band's segments, the ONE composition both the drawing and the width budget read. With the server's readout: the worst limit alone.
+// Without one (no server verdict, or the settings read failing): the session's own figures per limit, then `local`, exactly as before.
+// Empty with nothing to show.
 export function bandSegments(m: PanelModel): BandSegment[] {
+  if (m.readout !== null) {
+    const worst = readoutWorst(m.readout)
+    return [{ key: 'worst', text: readoutText(worst), tone: worst.state }]
+  }
   if (m.entries.length === 0 && m.spend === null) return []
   return [
-    ...m.entries.map(e => ({ key: e.limit, text: entryText(e), level: e.level })),
-    ...(m.spend === null ? [] : [{ key: 'spend', text: spendText(m.spend), level: m.spend.level }]),
-    ...(m.local ? [{ key: 'local', text: LOCAL_MARK, level: null }] : []),
+    ...m.entries.map(e => ({ key: e.limit, text: entryText(e), tone: e.level })),
+    ...(m.spend === null ? [] : [{ key: 'spend', text: spendText(m.spend), tone: m.spend.level }]),
+    ...(m.local ? [{ key: 'local', text: LOCAL_MARK, tone: null }] : []),
   ]
 }
 

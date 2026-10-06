@@ -20,10 +20,12 @@ const wire = (over: Record<string, unknown> = {}) => ({
   running_agents: 1,
   line: 'Pacing line.',
   spend: null,
+  limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }],
+  worst_limit: 'five_hour',
   reason: null,
   ...over,
 })
-const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' }
+const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
 
 describe('decideSpawn (the decision table)', () => {
   test('no verdict allows: pacing never blocks work it cannot see', () => {

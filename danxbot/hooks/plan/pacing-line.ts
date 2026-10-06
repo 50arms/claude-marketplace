@@ -14,13 +14,16 @@ import type { Api } from './load'
 // danx-dashboard MCP server (a session on a repo with no danxbot, as in reportUsage and DX-3421): that is silent and not backed off,
 // the next spawn simply looks again, until a read has succeeded in this session. After a success it is a failure like any other.
 
-import type { PacingLevel, PacingVerdict, SpendFigure } from '../../types'
+import type { LimitReadout, PacingLevel, PacingLimitKey, PacingReadout, PacingState, PacingVerdict, SpendFigure } from '../../types'
 
 const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
+const STATES: readonly PacingState[] = ['spare', 'short', 'hold', 'stop']
+const LIMIT_KEYS: readonly PacingLimitKey[] = ['five_hour', 'weekly', 'spend']
 
 // The verdict as the guard reads it (`PacingVerdict`, types/index.d.ts, shared with the plan panel) and danxbot's one-sentence line.
 // `spend` (DX-4595) is the server's own pricing of the account's spend limit, or null when it has none; the plugin never computes one.
-export type Pacing = { verdict: PacingVerdict; line: string; spend: SpendFigure | null }
+// `readout` (DX-4656) is the server's per-limit state and headroom with its worst limit, exactly as answered.
+export type Pacing = { verdict: PacingVerdict; line: string; spend: SpendFigure | null; readout: PacingReadout }
 
 export type PacingCall = (method: string, path: string) => Promise<Api>
 // The engine calls pacing makes, as closures built in register.tsx (the engine follows `$` only into a function in that file).
@@ -54,6 +57,32 @@ function parseSpendFigure(raw: any): SpendFigure | null | { error: string } {
   return { usedPercent: raw.used_percent, level: raw.level, resetsAt: raw.resets_at, spentUsd: raw.spent_usd, budgetUsd: raw.budget_usd }
 }
 
+// DX-4656: `limits` and `worst_limit` of a known answer. Absent or malformed is an error (one canonical shape), never a made-up readout.
+function parseReadout(body: any): PacingReadout | { error: string } {
+  const bad = { error: 'the pacing line answer has no valid limits' }
+  if (!Array.isArray(body.limits) || body.limits.length === 0 || !LIMIT_KEYS.includes(body.worst_limit)) return bad
+  const limits: LimitReadout[] = []
+  for (const raw of body.limits) {
+    if (raw === null || typeof raw !== 'object') return bad
+    if (!LIMIT_KEYS.includes(raw.limit) || !LEVELS.includes(raw.level) || !STATES.includes(raw.state) || typeof raw.resets_at !== 'string') return bad
+    if (!Number.isInteger(raw.headroom_minutes) || !Number.isInteger(raw.resets_in_minutes) || raw.resets_in_minutes < 0) return bad
+    if (!finite(raw.used_percent) || !finite(raw.target_percent) || !finite(raw.critical_percent)) return bad
+    limits.push({
+      limit: raw.limit,
+      level: raw.level,
+      state: raw.state,
+      headroomMinutes: raw.headroom_minutes,
+      resetsInMinutes: raw.resets_in_minutes,
+      usedPercent: raw.used_percent,
+      targetPercent: raw.target_percent,
+      criticalPercent: raw.critical_percent,
+      resetsAt: raw.resets_at,
+    })
+  }
+  if (!limits.some(l => l.limit === body.worst_limit)) return bad
+  return { limits, worst: body.worst_limit }
+}
+
 // `body` of GET /api/pacing/line: a known answer, null for the explicit unknown, an error for anything else.
 export function parsePacing(body: any): Pacing | null | { error: string } {
   if (body === null || typeof body !== 'object') return { error: 'the pacing line answer is not an object' }
@@ -64,8 +93,11 @@ export function parsePacing(body: any): Pacing | null | { error: string } {
   if (typeof body.line !== 'string' || body.line.trim() === '') return { error: 'the pacing line answer has no readable line' }
   const spend = parseSpendFigure(body.spend)
   if (spend !== null && 'error' in spend) return spend
+  const readout = parseReadout(body)
+  if ('error' in readout) return readout
   return {
     spend,
+    readout,
     verdict: { level: body.level, budget: body.budget, resetsAt: typeof body.resets_at === 'string' ? body.resets_at : null, runningAgents: body.running_agents },
     line: body.line,
   }

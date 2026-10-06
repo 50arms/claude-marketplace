@@ -984,10 +984,11 @@ async function refreshPacingPanel($: any): Promise<void> {
     const pacing = peekPacing(now)
     const verdict = pacing?.verdict ?? null
     const spend = pacing?.spend ?? null
+    const readout = pacing?.readout ?? null
     await update($, panel, cur =>
       'settings' in fetched
-        ? { ...cur, settings: fetched.settings, settingsAt: now, settingsRead: { state: 'ok' }, verdict, spend }
-        : { ...cur, settingsRead: fetched.read, verdict: null, spend: null },
+        ? { ...cur, settings: fetched.settings, settingsAt: now, settingsRead: { state: 'ok' }, verdict, spend, readout }
+        : { ...cur, settingsRead: fetched.read, verdict: null, spend: null, readout: null },
     )
   } catch (err: any) {
     $.ui.toast(`Usage pacing panel could not refresh: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)

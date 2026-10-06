@@ -101,6 +101,8 @@ export const ACCENT = 'cyan'
 export const SUCCESS = 'green'
 export const DANGER = 'red'
 export const WARNING = 'yellow'
+// DX-4656: the pacing band's `hold` (over pace, nothing new starts until the reset): no named terminal colour is orange, so a hex that the terminal rounds to its nearest.
+export const ORANGE = '#ff8700'
 
 // DX-4499 / DX-4508: a sub-agent's status dot, one colour per state: green running, cyan done, red failed, yellow stopped (a
 // person or a lapsed session ended it). The dot is the only coloured mark on the card: its border is drawn in the card's own fill.
