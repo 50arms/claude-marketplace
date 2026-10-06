@@ -101,6 +101,7 @@ if git -C "$MARKET" diff --cached --quiet; then
 fi
 
 SOURCE_SHA="$(git rev-parse HEAD)"
-git -C "$MARKET" commit --quiet -m "${PLUGIN} v${VERSION}" -m "Copied from the plugin source repo at ${SOURCE_SHA}."
+# The throwaway clone has no git config of its own; the commit is made as whoever publishes from this repo.
+git -C "$MARKET" -c user.name="$(git config user.name)" -c user.email="$(git config user.email)" commit --quiet -m "${PLUGIN} v${VERSION}" -m "Copied from the plugin source repo at ${SOURCE_SHA}."
 git -C "$MARKET" push --quiet origin HEAD:main
 ok "Published ${PLUGIN} v${VERSION} to ${REMOTE}: $(git -C "$MARKET" rev-parse HEAD)"
