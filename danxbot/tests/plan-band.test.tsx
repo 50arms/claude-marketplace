@@ -16,17 +16,27 @@ describe('plan band', () => {
     expect(bandLabel(connected(long) as any, 3)).toBe('PLAN-17 · xxx…')
   })
 
-  test('the band cuts the name to the columns its controls leave, never a control', async ($, on) => {
+  test('the terminal band cuts the name to the columns its controls leave, never a control', async ($, on) => {
     const d = dashboard(on, { planName: 'A very long plan name that goes on and on and on' })
-    await startSession($, d, 'desktop')
-    const wide = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
-    const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
+    await startSession($, d, 'terminal')
+    const wide = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
+    const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     const labelOf = async (ui: any) => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
     expect(await labelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Panel 10, `⚠ 3` 8, Browser tab 16, Open ↗ 7, × 6
-    expect(await labelOf(narrow)).toBe('PLAN-23 · A very…')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Panel 10, `⚠ 3` 8 (the terminal has no Browser tab), Open ↗ 7, × 6
+    expect(await labelOf(narrow)).toBe('PLAN-23 · A very long plan name that…')
     expect((await narrow.find({ key: 'open-pane' }))?.text).toBe('Panel')
   })
+  test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {
+    const d = dashboard(on, { planName: 'A very long plan name that goes on and on and on' })
+    await startSession($, d, 'desktop')
+    const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
+    const label = await narrow.find({ type: 'Text', text: /PLAN-23/ })
+    expect(label?.text).toBe('PLAN-23 · A very long plan name that goes on and on and on')
+    expect(label?.props.wrap).toBe('truncate-end')
+    expect((await narrow.find({ key: 'open-pane' }))?.text).toBe('Panel')
+  })
+
 
   test('the first load reads Danxbot Plan: loading…', () => {
     expect(bandLabel({ ...EMPTY, phase: 'loading', refreshedAt: null })).toBe('Danxbot Plan: loading…')

@@ -71,7 +71,11 @@ export function renderBand(
     ...(linkUrl !== null ? [{ label: OPEN_LINK_LABEL, isButton: false }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
-  const labelCols = columns === undefined ? undefined : bandLabelCols(columns, controls)
+  // DX-4626: the column model is the terminal's (a cell per character, `[ label ]` button chrome). The desktop draws proportional text
+  // and native buttons, so the model over-counted and cut the name far short of the real space (`PLAN-17 · 50 …` beside a wide empty gap).
+  // The desktop therefore passes the full name and lets the layout cut it: the label box shrinks (the controls never do) and its
+  // `truncate-end` puts the … exactly where the name would run into them.
+  const labelCols = columns === undefined || hasSvg ? undefined : bandLabelCols(columns, controls)
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
   const failed = v.phase === 'error' || signedOut || revoked

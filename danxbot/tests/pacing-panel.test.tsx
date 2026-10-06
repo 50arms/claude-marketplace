@@ -409,18 +409,21 @@ for (const surface of SURFACES)
       expect(await joined(pane)).not.toContain('Usage pacing')
     })
 
-    test('the band cuts the plan name to the columns the pacing entries leave', async ($, on) => {
-      const d = dashboard(on, { planName: 'A very long plan name that goes on and on and on and on and on and on and on and on and on and on and on and on and on' })
-      on('session.measure', () => ({ changed: ['rateLimits'] }) as any)
-      await startSession($, d, surface)
-      const ui = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 130 } } as any)
-      const labelOf = async () => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
-      // no figure yet and no settings (the stand-in answers 404): nothing of pacing is drawn
-      const without = await labelOf()
-      await $.session.measure({ context: {}, rateLimits: WINDOWS, changed: ['rateLimits'] } as any)
-      await d.clock.settle()
-      expect(await joined(ui)).toContain('5h 62% 7d 41% local')
-      // `PLAN-23 · ` stays; the name loses exactly the columns the pacing text and its gap take
-      expect(without.length - (await labelOf()).length).toBe('5h 62% 7d 41% local'.length + BAND_GAP_COLS)
-    })
+    // DX-4626: the column model is the terminal's; the desktop's layout cuts the name instead
+    if (surface === 'terminal') {
+      test('the band cuts the plan name to the columns the pacing entries leave', async ($, on) => {
+        const d = dashboard(on, { planName: 'A very long plan name that goes on and on and on and on and on and on and on and on and on and on and on and on and on' })
+        on('session.measure', () => ({ changed: ['rateLimits'] }) as any)
+        await startSession($, d, surface)
+        const ui = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 130 } } as any)
+        const labelOf = async () => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
+        // no figure yet and no settings (the stand-in answers 404): nothing of pacing is drawn
+        const without = await labelOf()
+        await $.session.measure({ context: {}, rateLimits: WINDOWS, changed: ['rateLimits'] } as any)
+        await d.clock.settle()
+        expect(await joined(ui)).toContain('5h 62% 7d 41% local')
+        // `PLAN-23 · ` stays; the name loses exactly the columns the pacing text and its gap take
+        expect(without.length - (await labelOf()).length).toBe('5h 62% 7d 41% local'.length + BAND_GAP_COLS)
+      })
+    }
   })
