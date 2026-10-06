@@ -27,7 +27,7 @@ for (const surface of SURFACES) {
         const d = await started($, on)
         d.world.restart.json = { notice: NOTICE }
         const r = await firstPrompt($, source)
-        expect(r.told).toEqual([NOTICE])
+        expect(r.startLines).toEqual([NOTICE])
         expect(d.restartCalls).toEqual([{}])
       })
     }
@@ -36,7 +36,7 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       d.world.restart.json = { notice: NOTICE }
       for (const source of ['compact', 'clear', 'fork'] as const) {
-        expect((await firstPrompt($, source)).told).toBeUndefined()
+        expect((await firstPrompt($, source)).startLines).toBeUndefined()
       }
       expect(d.restartCalls).toEqual([])
     })
@@ -45,13 +45,13 @@ for (const surface of SURFACES) {
       const d = await started($, on, {})
       d.world.restart.json = { notice: NOTICE }
       const r = await firstPrompt($, 'resume')
-      expect(r.told).toEqual(['The session_resume text.'])
+      expect(r.startLines).toEqual(['The session_resume text.'])
       expect(d.restartCalls).toEqual([])
     })
 
     test('`{notice: null}` is quiet (a project that never connected a plan hears nothing)', async ($, on) => {
       const d = await started($, on)
-      expect((await firstPrompt($, 'startup')).told).toBeUndefined()
+      expect((await firstPrompt($, 'startup')).startLines).toBeUndefined()
       expect(d.restartCalls).toEqual([{}])
     })
 
@@ -59,7 +59,7 @@ for (const surface of SURFACES) {
       test(`a ${signedOut} session is told the notice: the plans read cannot answer, the tool needs no key`, async ($, on) => {
         const d = await started($, on, { connected: false, signedOut })
         d.world.restart.json = { notice: NOTICE }
-        expect((await firstPrompt($, 'startup')).told).toEqual([NOTICE])
+        expect((await firstPrompt($, 'startup')).startLines).toEqual([NOTICE])
         expect(d.restartCalls).toEqual([{}])
       })
     }
@@ -68,7 +68,7 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       d.world.restart.json = { notice: NOTICE }
       for (const source of ['compact', 'clear', 'fork'] as const) {
-        expect((await firstPrompt($, source)).told).toBeUndefined()
+        expect((await firstPrompt($, source)).startLines).toBeUndefined()
       }
       expect(d.restartCalls).toEqual([])
     })
@@ -76,7 +76,7 @@ for (const surface of SURFACES) {
     test('a session that holds a key but is on no plan (a person who signed in and has not connected) is told the notice too', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'resume')).told).toEqual([NOTICE])
+      expect((await firstPrompt($, 'resume')).startLines).toEqual([NOTICE])
     })
 
     for (const reason of ['no_session_id', 'lookup_failed', 'lookup_timeout'] as const) {
@@ -84,8 +84,8 @@ for (const surface of SURFACES) {
         const d = await started($, on)
         d.world.restart.json = stopped(reason, 'the detail')
         const r = await firstPrompt($, 'startup')
-        expect(r.told).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call plan_connect`)])
-        expect(r.told![0]).toMatch(/^⚠ Could not load the restart notice \(.*\)\. Tell the operator if this session should be plan-connected\.$/)
+        expect(r.startLines).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call plan_connect`)])
+        expect(r.startLines![0]).toMatch(/^⚠ Could not load the restart notice \(.*\)\. Tell the operator if this session should be plan-connected\.$/)
       })
     }
 
@@ -93,14 +93,14 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       d.world.restart.deny = 'boom'
       const r = await firstPrompt($, 'startup')
-      expect(r.told![0]).toContain('Could not load the restart notice (error: ')
-      expect(r.told![0]).toContain('boom')
+      expect(r.startLines![0]).toContain('Could not load the restart notice (error: ')
+      expect(r.startLines![0]).toContain('boom')
     })
 
     test('an error result is the warning line with its text', async ($, on) => {
       const d = await started($, on)
       d.world.restart.raw = { content: [{ type: 'text', text: 'tool blew up' }], isError: true }
-      expect((await firstPrompt($, 'startup')).told).toEqual([restartFailureLine('error: tool blew up')])
+      expect((await firstPrompt($, 'startup')).startLines).toEqual([restartFailureLine('error: tool blew up')])
     })
 
     for (const [name, text] of [['text that is not JSON', 'nope'], ['an answer with neither a notice nor a stop', '{}'], ['an empty notice', '{"notice":""}'], ['a non-string notice', '{"notice":3}']] as const) {
@@ -108,7 +108,7 @@ for (const surface of SURFACES) {
         const d = await started($, on)
         d.world.restart.raw = { content: [{ type: 'text', text }], isError: false }
         const r = await firstPrompt($, 'startup')
-        expect(r.told![0]).toContain('Could not load the restart notice (bad_response')
+        expect(r.startLines![0]).toContain('Could not load the restart notice (bad_response')
       })
     }
 
@@ -118,8 +118,8 @@ for (const surface of SURFACES) {
       const pending = firstPrompt($, 'startup')
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       const r = await pending
-      expect(r.told).toEqual([restartFailureLine('lookup_timeout: the lookup did not finish within 8000 ms. continue without it; call plan_connect')])
-      expect(r.told![0]).toContain('call plan_connect')
+      expect(r.startLines).toEqual([restartFailureLine('lookup_timeout: the lookup did not finish within 8000 ms. continue without it; call plan_connect')])
+      expect(r.startLines![0]).toContain('call plan_connect')
     })
 
     test('DX-3421: a plans read that fails with a dashboard fault is silent for the event text, and the restart notice is still asked', async ($, on) => {
@@ -127,14 +127,14 @@ for (const surface of SURFACES) {
       d.world.plansStatus = 500
       d.world.restart.json = { notice: NOTICE }
       const r = await firstPrompt($, 'startup')
-      expect(r.told).toEqual([NOTICE])
+      expect(r.startLines).toEqual([NOTICE])
       expect(d.restartCalls).toEqual([{}])
     })
 
     test('DX-3421: a plans read that fails with a dashboard fault and no notice is quiet', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.plansStatus = 503
-      expect((await firstPrompt($, 'resume')).told).toBeUndefined()
+      expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
       expect(d.contextReads.filter(p => p.startsWith('/api/reminders/event/'))).toEqual([])
     })
 
@@ -143,7 +143,7 @@ for (const surface of SURFACES) {
       d.world.restart = { json: { notice: NOTICE }, delayMs: 6_000 }
       const pending = firstPrompt($, 'startup')
       await d.clock.advance(6_000)
-      expect((await pending).told).toEqual([NOTICE])
+      expect((await pending).startLines).toEqual([NOTICE])
     })
 
     test('R-2: the restart notice is the server’s own tool; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {

@@ -115,9 +115,9 @@ const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as Re
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // DX-4234: the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
 const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
-// DX-4234: a session start the first prompt has not been told about. On a desktop or headless startup, resume and fork the engine has not bound
-// the session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the first
-// prompt.submit (bound) reads it, clears it and tells the model what the start has to say.
+// DX-4234: a session start the model has not been told about. On a desktop or headless startup, resume and fork the engine has not bound the
+// session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
+// prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
 const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, null as PendingStart)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
@@ -1413,22 +1413,9 @@ async function timeLine($: any): Promise<string> {
   return line
 }
 
-// the prompt as typed (a task notification included) reaches the model with its time beside it
-// DX-4234: and the session start the first prompt carries: the restart notice and the start-up text, told once beside the stamp
-async function onPromptStamp($: any, e: any, next: any) {
-  const start = await takePendingStart($)
-  const told = start === null ? null : await sessionContext($, start)
-  return next({ ...e, context: [...(e.context ?? []), await timeLine($), ...(told === null ? [] : [told])] })
-}
-
-// each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside
-async function onToolStamp($: any, e: any, next: any) {
-  const r = await next(e)
-  if (r.deny !== undefined) return r
-  return { ...r, context: [...(r.context ?? []), await timeLine($)] }
-}
-
-// The pending start, read and cleared in one write: two prompts landing together tell it once.
+// A pending session start, told once: the next prompt or tool result, whichever comes first, carries its line beside the stamp (a start with no
+// prompt coming, such as a compaction in the middle of a turn, reaches the model on the next tool result). It is taken in one write, so two
+// callers landing together tell it once.
 async function takePendingStart($: any): Promise<PendingStart> {
   let taken: PendingStart = null
   await update($, pendingStart, cur => {
@@ -1436,6 +1423,34 @@ async function takePendingStart($: any): Promise<PendingStart> {
     return null
   })
   return taken
+}
+
+// The pending start's line, or null. The start is gone once taken, so work that throws is one warning line here, never a rejected hook that
+// would lose the time stamp beside it.
+async function startLine($: any): Promise<string | null> {
+  const start = await takePendingStart($)
+  if (start === null) return null
+  try {
+    return await sessionContext($, start)
+  } catch (err: any) {
+    const event = sessionEvent(start.source)
+    return event === null ? null : eventFailureLine(event, `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}`)
+  }
+}
+
+// the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
+async function onPromptStamp($: any, e: any, next: any) {
+  const start = await startLine($)
+  return next({ ...e, context: [...(e.context ?? []), await timeLine($), ...(start === null ? [] : [start])] })
+}
+
+// each tool call's result reaches the model with the time it finished beside it, and with the session start it carries, if any; a denied call has
+// no result to put either beside and leaves the start for the next one
+async function onToolStamp($: any, e: any, next: any) {
+  const r = await next(e)
+  if (r.deny !== undefined) return r
+  const start = await startLine($)
+  return { ...r, context: [...(r.context ?? []), await timeLine($), ...(start === null ? [] : [start])] }
 }
 
 // DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -1536,7 +1551,7 @@ async function restartNotice($: any): Promise<string | null> {
 // What the plugin's own reads of a session start came to: the line to tell, or that the restart notice is to be asked next.
 type StartReads = { line: string | null; askRestart: boolean }
 
-// The first prompt after a start: the wait for the plugin's server, the plan read and the event text read share ONE deadline. Whatever fails, a session KNOWN to be
+// The reads a pending start asks of the dashboard: the wait for the plugin's server, the plan read and the event text read share ONE deadline. Whatever fails, a session KNOWN to be
 // on a plan (its record on disk) is told in one warning line; any other stays silent (DX-3421) and, on a start or resume, still asks the
 // restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
@@ -1565,12 +1580,12 @@ async function readSubagentContext($: any): Promise<string | null> {
   return typeof plan === 'object' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine('sub_agent_start', plan.failed) : null
 }
 
-// SessionStart: the session title is noted and the start is recorded for the first prompt. Nothing else: the session is not bound yet on a
-// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the first prompt tells the model, see onPromptStamp).
+// SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. Nothing else: the session is not bound yet on a
+// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see startLine).
 async function onClassicSessionStart($: any, e: any, next: any) {
   const below = await onTitle($, e, next)
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
-  const start: NonNullable<PendingStart> = { sessionId: await $.session.id(), source: e.source, transcriptPath: path }
+  const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path }
   await update($, pendingStart, () => start)
   return below
 }

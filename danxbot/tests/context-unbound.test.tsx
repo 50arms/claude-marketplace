@@ -4,7 +4,8 @@
 // fake `$` of the earlier suites could not.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { EVENT_TEXT, SURFACES, dashboard, startSession } from './plan-kit'
+import { eventFailureLine } from '../hooks/context/events'
+import { EVENT_TEXT, OTHER_SESSION, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const SOURCES = ['startup', 'resume', 'fork', 'clear', 'compact'] as const
@@ -78,6 +79,61 @@ for (const surface of SURFACES) {
       await $.prompt.submit({ text: 'hello' })
       const writes = d.stateWrites.filter(w => w.key === 'pendingStart').map(w => w.value)
       expect(writes).toEqual([{ sessionId: expect.any(String), source: 'resume', transcriptPath: '/work/main.jsonl' }, null])
+    })
+
+    test('a compaction in the middle of a turn is told on the next tool result, once, and the next prompt does not repeat it', async ($, on) => {
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      const d = dashboard(on, {})
+      on('classic.SessionStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await $.prompt.submit({ text: 'go' })
+      // the engine compacts mid-turn (bound): SessionStart records it, no prompt is coming
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
+      const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
+      expect(tool.context!.slice(1)).toEqual([EVENT_TEXT('after_compaction')])
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
+    })
+
+    test('a denied tool call leaves the pending start for the next result', async ($, on) => {
+      let answer: any = { deny: 'not allowed' }
+      on('tool.call', () => answer)
+      const d = dashboard(on, {})
+      on('classic.SessionStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
+      expect((await $.tool.call({ tool: 'Bash', command: 'rm' } as any)).context).toBeUndefined()
+      answer = { result: {}, text: 'done' }
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([EVENT_TEXT('after_compaction')])
+    })
+
+    test('the start records the session id SessionStart was given, not the one $.session.id() answers', async ($, on) => {
+      on('classic.SessionStart', () => ({}) as any)
+      const d = dashboard(on, {})
+      await startSession($, d, surface)
+      d.world.plansStatus = 500
+      // the connection record on disk is for sess-own; the start is for sess-other, which holds none: a dashboard fault is silent for it
+      const other = await firstPrompt($, 'startup', { session_id: OTHER_SESSION.session_id })
+      expect(other.startLines).toBeUndefined()
+      const own = await firstPrompt($, 'startup')
+      expect(own.startLines).toEqual([eventFailureLine('session_start', '500: plans boom')])
+    })
+
+    test('work that throws after the start was taken is one warning line; the stamp stays and the prompt and the tool result go on', async ($, on) => {
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      on('classic.SessionStart', () => ({}) as any)
+      const d = dashboard(on, {})
+      await startSession($, d, surface)
+      d.world.fsError = 'disk gone'
+      const r = await firstPrompt($, 'startup')
+      expect(r.context).toHaveLength(2)
+      expect(r.context[0]).toMatch(/\d\d:\d\d:\d\d/)
+      expect(r.startLines![0]).toMatch(/^⚠ Could not load the "session_start" event text from the danxbot reminder registry \(.*disk gone.*\)/)
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
+      const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
+      expect(tool.text).toBe('done')
+      expect(tool.context).toHaveLength(2)
+      expect(tool.context![1]).toContain('after_compaction')
     })
   })
 }

@@ -291,6 +291,8 @@ export function dashboard(
     // binds (claude.exe: the session holder is empty until the session is built), where `$.mcp.call` and `$.tool.list` throw; `unbind()` /
     // `bind()` model that. Every kit session is bound unless a test unbinds it.
     bound: true,
+    // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
+    fsError: undefined as string | undefined,
     // DX-4234: whether this session has a connection record on disk (a connected session does; a signed-out or unconnected one does not)
     localRecord: options.connected !== false,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
@@ -808,7 +810,7 @@ export function dashboard(
   const toolListAnswer = () => ({ value: notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any
   on('tool.list', () => (toolLists.n++, world.bound ? toolListAnswer() : unboundCall('$.tool.list')))
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
-  on('fs.exists', (_$: any, e: any) => ({ value: world.localRecord && e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/') === RECORD_PATH(world.sessionId) }) as any)
+  on('fs.exists', (_$: any, e: any) => world.fsError !== undefined ? ({ deny: world.fsError } as any) : (({ value: world.localRecord && e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/') === RECORD_PATH(world.sessionId) }) as any))
   on('session.id', () => ({ value: world.sessionId }) as any)
   on('agent.list', () => {
     agentLists.count++
@@ -946,12 +948,12 @@ export async function startSession($: any, d: Dashboard, surface: string) {
 }
 
 // DX-4234: a session start reaches the model on the FIRST PROMPT's context, beside its time stamp (SessionStart is recorded only: the engine
-// has not bound the session then). `told` is what the start added: the prompt's context after the stamp, or undefined when it added nothing.
-export async function firstPrompt($: any, source: string, input: Record<string, unknown> = {}): Promise<{ told: string[] | undefined; context: string[] }> {
-  await $.classic.SessionStart({ source, cwd: '/work', ...input })
+// has not bound the session then). `startLines` is what the start added: the prompt's context after the stamp, or undefined when it added nothing.
+export async function firstPrompt($: any, source: string, input: Record<string, unknown> = {}): Promise<{ startLines: string[] | undefined; context: string[] }> {
+  await $.classic.SessionStart({ source, cwd: '/work', session_id: OWN_SESSION.session_id, ...input })
   const r = await $.prompt.submit({ text: 'hello' })
   const context: string[] = r.context ?? []
-  return { told: context.length > 1 ? context.slice(1) : undefined, context }
+  return { startLines: context.length > 1 ? context.slice(1) : undefined, context }
 }
 
 export function expectText(found: { text: string } | undefined, pattern: string | RegExp) {
