@@ -1,5 +1,7 @@
 import type { Api } from '../plan/load'
 import { errText } from '../plan/load'
+import { ERROR_BODY_MAX } from '../plan/config'
+import { mcpText } from '../plan/mcp'
 
 // DX-4234: the event text a plan-connected session is told, and the restart notice a session that replaced a connected one is told.
 // The wording is a danxbot registry row (`GET /api/reminders/event/:event`, the `plan_restart.waiting_events` reminder); this file
@@ -25,10 +27,9 @@ export function sessionEvent(source: unknown): DanxEvent | null {
 export const isRestartSource = (source: unknown): boolean => source === 'startup' || source === 'resume'
 
 export const eventPath = (event: DanxEvent) => `/api/reminders/event/${event}`
-export const restartNoticePath = (sessionId: string) => `/api/plan-sessions/${encodeURIComponent(sessionId)}/restart-notice`
 
-// The registry row whose text is the restart notice (danxbot src/issues/reminders/seed.yaml).
-export const RESTART_NOTICE_KEY = 'plan_restart.waiting_events'
+// The session's own danx-dashboard server answers the restart notice itself, as a tool (no arguments).
+export const RESTART_NOTICE_TOOL = 'restart_notice'
 
 // What a lookup came to: text to say, nothing to say, or a failure whose reason names why (one line, never silence).
 export type Told = { kind: 'text'; text: string } | { kind: 'nothing' } | { kind: 'failed'; reason: string }
@@ -41,16 +42,23 @@ export function eventText(r: Api): Told {
   return { kind: 'text', text }
 }
 
-// One earlier session's restart notice: `restart: null` is nothing to say (the plan is archived, the session is still live, ...);
-// a notice whose registry row is missing is a server fault, reported, never papered over.
-export function restartText(r: Api): Told {
-  if (!r.ok) return { kind: 'failed', reason: errText(r) }
-  if (r.body === null || typeof r.body !== 'object' || !('restart' in r.body)) return { kind: 'failed', reason: 'bad_response: the dashboard answered no restart field' }
-  if (r.body.restart === null) return { kind: 'nothing' }
-  const rows: any[] = Array.isArray(r.body.reminders) ? r.body.reminders : []
-  const text = rows.find(x => x?.key === RESTART_NOTICE_KEY)?.text
-  if (typeof text !== 'string' || text === '') return { kind: 'failed', reason: 'bad_response: the dashboard answered a notice without its registry text' }
-  return { kind: 'text', text }
+// The `restart_notice` tool's answer, JSON text: `{notice: text}` (say it), `{notice: null}` (nothing to say) or
+// `{stopped: {reason, detail, fix}}` (the lookup could not answer: reported, never quiet). The server does the earlier-session lookup and
+// the registry wording; anything else here is a fault of the tool's answer and is reported the same way.
+export function restartNoticeText(r: any): Told {
+  const text = mcpText(r)
+  if (r?.isError) return { kind: 'failed', reason: `error: ${text.slice(0, ERROR_BODY_MAX)}` }
+  let body: any
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return { kind: 'failed', reason: `bad_response: restart_notice answered no JSON: ${text.slice(0, ERROR_BODY_MAX)}` }
+  }
+  if (body === null || typeof body !== 'object') return { kind: 'failed', reason: 'bad_response: restart_notice answered no object' }
+  if (body.stopped !== undefined) return { kind: 'failed', reason: `${body.stopped?.reason ?? 'stopped'}: ${body.stopped?.detail ?? 'no detail'}` }
+  if (body.notice === null) return { kind: 'nothing' }
+  if (typeof body.notice !== 'string' || body.notice === '') return { kind: 'failed', reason: 'bad_response: restart_notice answered neither a notice, null nor a stop' }
+  return { kind: 'text', text: body.notice }
 }
 
 export const eventFailureLine = (event: DanxEvent, reason: string) =>

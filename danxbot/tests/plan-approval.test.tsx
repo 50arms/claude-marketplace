@@ -81,9 +81,11 @@ describe('plan_connect while signed out', () => {
     const ran = await $.tool.call(CALL)
     await d.clock.settle()
     expect(ran.text).toBe(required(URL_A))
-    expect(ran.context).toHaveLength(1)
-    expect(ran.context[0]).toContain('already opened the approval page')
-    expect(ran.context[0]).toContain('Do not open it yourself')
+    // DX-4234: the time stamp rides on every tool call too; the approval note is the other entry
+    const note = ran.context.filter((c: string) => c.includes('approval page'))
+    expect(note).toHaveLength(1)
+    expect(note[0]).toContain('already opened the approval page')
+    expect(note[0]).toContain('Do not open it yourself')
   })
 
   test('a refused open tells the model to open the page itself', async ($, on) => {
@@ -93,9 +95,10 @@ describe('plan_connect while signed out', () => {
     await startSession($, d, 'desktop')
     const ran = await $.tool.call(CALL)
     await d.clock.settle()
-    expect(ran.context).toHaveLength(1)
-    expect(ran.context[0]).toContain('could not open the approval page')
-    expect(ran.context[0]).toContain(`Open ${URL_A} yourself`)
+    const note = ran.context.filter((c: string) => c.includes('approval page'))
+    expect(note).toHaveLength(1)
+    expect(note[0]).toContain('could not open the approval page')
+    expect(note[0]).toContain(`Open ${URL_A} yourself`)
   })
 
   // DX-4424: the toast is about the tab being in front; a slow page load does not hold it back.
