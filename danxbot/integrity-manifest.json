@@ -63,7 +63,7 @@
     "scripts/ready-cards-stop.mjs": "9c6621bf127122daa8141c55625e9b891e5c94fdd2544643ca4acde5e9fa9c13",
     "scripts/subagents-live.mjs": "d74258a649e432a883a7dd025cd4e81c0f48a448c2145896ddc09e02992f28ae",
     "skills/fix-agent-behavior/SKILL.md": "1f5f78b80c0cd5832505093f98c01f8241ef3a0850c5a68796295fc965fbee5c",
-    "skills/issue-workflow/SKILL.md": "de99a891af35f60a279a86dd6854b927eff6ae6ad7dcf6544b01bd2c06d12add",
+    "skills/issue-workflow/SKILL.md": "65ea2ed7238031c7a27a6ae1493e5edfc039d0970c3f49ed2bf2aaa95e4cd1af",
     "skills/issue-workflow/references/card-creation-and-reference.md": "5a486a62ceaa4f29b9b6254e7323842ae6ae3564ee49af802d94af0b22445d12",
     "skills/plan-workflow/SKILL.md": "f0decb789a5cbbff7f951a798c7c18bd269dfa96bd5716e3be5eada28210970c",
     "skills/prepare-for-compaction/SKILL.md": "8b33a49c2d709268f11ab1af61e9b7a85712c8adc1fb9981b3e091f4c67596d1",
