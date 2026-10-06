@@ -18,7 +18,7 @@
 //      harness itself does not bit-rot as plugin content moves.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { copyFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,8 +26,7 @@ import test from "node:test";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "measure-injection.mjs");
-const EVENT_HOOK_SCRIPT = path.join(REPO_ROOT, "danxbot", "scripts", "event-hook.sh");
-const EVENT_HOOK_PLUGIN_ROOT = path.join(REPO_ROOT, "danxbot");
+const PLUGIN_ROOT = path.join(REPO_ROOT, "danxbot");
 
 function run() {
   const out = execFileSync("node", [SCRIPT, "--json"], {
@@ -51,13 +50,31 @@ test("measure-injection reports the three cadence totals, never summed together"
   }
 });
 
-test("every UserPromptSubmit hook is measured on both prompts and classified", () => {
-  const { rows } = run();
-  const promptRows = rows.filter((r) => r.event === "UserPromptSubmit");
-  assert.ok(promptRows.length > 0, "expected inject-time.sh to be measured");
-  for (const r of promptRows) {
-    assert.ok(["conditional", "unconditional"].includes(r.kind), `${r.command} is unclassified`);
-    assert.equal(typeof r.triggerBytes, "number");
+test("the function hooks' time stamp is measured on prompt.submit and tool.call, and counted into the per-turn and per-tool-call totals (DX-4234)", () => {
+  const { rows, totals } = run();
+  const prompt = rows.filter((r) => r.event === "prompt.submit");
+  const tool = rows.filter((r) => r.event === "tool.call");
+  assert.equal(prompt.length, 1, "expected the danxbot module's prompt.submit stamp to be measured");
+  assert.equal(tool.length, 1, "expected the danxbot module's tool.call stamp to be measured");
+  for (const r of [...prompt, ...tool]) {
+    assert.equal(r.error, null);
+    // the widest stamp, the first (it carries the date): `MM/DD/YYYY HH:MM:SS +HH:MM +0` and a newline
+    assert.equal(r.bytes, "09/28/2026 01:12:03 -06:00 +0\n".length);
+  }
+  assert.equal(totals.perTurnUnconditional, prompt[0].bytes);
+  assert.equal(totals.perToolCall, tool[0].bytes);
+});
+
+test("a plugin with modules and no stamp.ts is an error row, never zero bytes (DX-4234)", () => {
+  const repo = fakeRepo({ modules: ["./register.tsx"] });
+  try {
+    const { rows } = JSON.parse(execFileSync("node", [path.join(repo, "scripts", "measure-injection.mjs"), "--json"], { cwd: repo }).toString("utf8"));
+    assert.fail(`expected a non-zero exit, got rows ${JSON.stringify(rows)}`);
+  } catch (err) {
+    const { rows } = JSON.parse(err.stdout.toString("utf8"));
+    assert.ok(rows.length > 0 && rows.every((r) => r.error && /stamp.ts is missing/.test(r.error)), JSON.stringify(rows));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 
@@ -88,122 +105,45 @@ test("reproduces the DX-3049 baseline (4438 / 46369) at the exact commit those f
   assert.equal(totals.perSession, 46369);
 });
 
-// A fake `npx` on PATH so the CLAUDE_PLUGIN_ROOT-set case below can force a
-// deterministic, offline, nonzero-bytes failure notice out of event-hook.sh
-// without ever touching the network — see danxbot/tests/event-hook.test.mjs
-// for the full fake-npx contract this mirrors.
-function makeFakeNpx() {
-  const binDir = mkdtempSync(path.join(tmpdir(), "measure-injection-fake-npx-"));
-  const scriptPath = path.join(binDir, "npx");
-  writeFileSync(
-    scriptPath,
-    ["#!/usr/bin/env bash", 'echo "fake npx: forced failure" >&2; exit 1', ""].join("\n"),
-  );
-  chmodSync(scriptPath, 0o755);
-  return binDir;
+// A throwaway marketplace of one plugin whose hooks.json is `hooks`, with this checkout's measure-injection.mjs beside it: the
+// harness reads its repo root from its own location.
+function fakeRepo(hooksJson) {
+  const repo = mkdtempSync(path.join(tmpdir(), "measure-injection-repo-"));
+  mkdirSync(path.join(repo, ".claude-plugin"), { recursive: true });
+  writeFileSync(path.join(repo, ".claude-plugin", "marketplace.json"), JSON.stringify({ plugins: [{ name: "p", source: "./p" }] }));
+  mkdirSync(path.join(repo, "p", "hooks"), { recursive: true });
+  writeFileSync(path.join(repo, "p", "hooks", "hooks.json"), JSON.stringify(hooksJson));
+  mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  copyFileSync(SCRIPT, path.join(repo, "scripts", "measure-injection.mjs"));
+  return repo;
 }
 
-test("AC 32508: an unset CLAUDE_PLUGIN_ROOT under-reports a real hook — the harness must always set it", () => {
-  // event-hook.sh (DX-3421, was mantra.sh under DX-3347) references
-  // ${CLAUDE_PLUGIN_ROOT} directly under `set -euo pipefail`. Run it two
-  // ways: with the env var absent (as a naive harness would), and with it
-  // set the way runCommand() in measure-injection.mjs always does. The
-  // unset run must silently emit ZERO stdout bytes — proving that without
-  // this harness discipline, a real hook reads as "emits nothing" rather
-  // than failing loudly.
-  //
-  // DX-3421 changed WHAT "connected" looks like for this proof: an
-  // unconnected session is now silent (0 bytes) by design — the old "short
-  // nudge" fallback this test used to lean on for a guaranteed-nonzero,
-  // no-plan-connection byte count is gone (DX-3421 comment 7748/7752
-  // verdict: nothing at all before a plan is connected). So this test now
-  // uses a CONNECTED session (its own fixed session id, not the harness's
-  // random freshSessionId()) with a fake, always-failing `npx` on PATH — the
-  // failure NOTICE line event-hook.sh prints on a fetch failure is the
-  // guaranteed-nonzero output this proof needs, produced with zero network
-  // access. The "does a successful fetch actually print the event text"
-  // behavior is covered separately by danxbot/tests/event-hook.test.mjs.
-  const home = mkdtempSync(path.join(tmpdir(), "measure-injection-cpb-home-"));
-  const sessionDir = path.join(home, ".config", "danxbot", "plan-sessions");
-  mkdirSync(sessionDir, { recursive: true });
-  writeFileSync(path.join(sessionDir, "cpb-test-unset.json"), JSON.stringify({ schemaVersion: 1 }));
-  const fakeNpxDir = makeFakeNpx();
-  const stdin = JSON.stringify({ session_id: "cpb-test-unset", source: "startup" });
-
-  try {
-    const envWithoutRoot = { ...process.env, DANXBOT_PLAN_SESSIONS_HOME: home, PATH: `${fakeNpxDir}${path.delimiter}${process.env.PATH}` };
-    delete envWithoutRoot.CLAUDE_PLUGIN_ROOT;
-
-    let unsetBytes;
-    try {
-      const out = execFileSync("bash", [EVENT_HOOK_SCRIPT, "SessionStart"], {
-        input: stdin,
-        env: envWithoutRoot,
-        cwd: REPO_ROOT,
-      });
-      unsetBytes = out.length;
-    } catch (err) {
-      // A non-zero exit is also acceptable proof of the failure mode, as
-      // long as stdout itself carried nothing.
-      unsetBytes = err.stdout ? err.stdout.length : 0;
-    }
-    assert.equal(unsetBytes, 0, "expected an unset CLAUDE_PLUGIN_ROOT to under-report to 0 bytes");
-
-    const connectedFailureBytes = execFileSync("bash", [EVENT_HOOK_SCRIPT, "SessionStart"], {
-      input: stdin,
-      env: {
-        ...process.env,
-        CLAUDE_PLUGIN_ROOT: EVENT_HOOK_PLUGIN_ROOT,
-        DANXBOT_PLAN_SESSIONS_HOME: home,
-        PATH: `${fakeNpxDir}${path.delimiter}${process.env.PATH}`,
-      },
-      cwd: REPO_ROOT,
-    }).length;
-    assert.ok(
-      connectedFailureBytes > 0,
-      `expected a nonzero failure-notice byte count with CLAUDE_PLUGIN_ROOT set, got ${connectedFailureBytes}`,
-    );
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(fakeNpxDir, { recursive: true, force: true });
-  }
+test("AC 32508: an unset CLAUDE_PLUGIN_ROOT makes a real hook command fail loudly, which is why the harness always sets it", () => {
+  // Every hook command is `node "${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs" ...`. Without the variable the shell expands it to nothing and
+  // node cannot find the launcher: a non-zero exit the harness reports as an error row, never as a hook that "injects nothing".
+  const hooks = JSON.parse(readFileSync(path.join(PLUGIN_ROOT, "hooks", "hooks.json"), "utf8")).hooks;
+  const command = hooks.SessionStart[0].hooks[0].command;
+  const withoutRoot = { ...process.env };
+  delete withoutRoot.CLAUDE_PLUGIN_ROOT;
+  assert.throws(() => execFileSync("bash", ["-c", command], { input: "{}", env: withoutRoot, cwd: REPO_ROOT, stdio: ["pipe", "pipe", "pipe"] }), /Command failed/);
 });
 
-test("perSession includes a SessionStart hook whose matcher still fires at startup (DX-3421's event-hook.sh)", () => {
-  // Regression test for the bug DX-3347 originally fixed: event-hook.sh (was
-  // mantra.sh) has matcher="startup|resume|compact" — a real matcher, but
-  // one that still fires at ordinary session start. summarize()'s old "no
-  // matcher" test silently excluded a hook like this from perSession.
-  //
-  // DX-3421 changed what this row's own BYTES look like under the harness:
-  // an unconnected session (the harness's freshSessionId() is by
-  // construction never connected) now prints nothing (0 bytes), where the
-  // old mantra.sh printed a nonzero nudge — so proving "included" can no
-  // longer lean on the row's bytes moving the total. Instead this
-  // re-derives summarize()'s own inclusion rule (a matcher that names
-  // "startup" counts, same as no matcher at all) directly against the
-  // measured rows, and checks perSession agrees with that re-derivation —
-  // structurally proving the matched-startup group was folded in, whatever
-  // its byte count happens to be.
-  const { rows, totals } = run();
-  const eventHookRow = rows.find((r) => r.event === "SessionStart" && r.command.includes("event-hook.sh"));
-  assert.ok(eventHookRow, "expected event-hook.sh to be measured under SessionStart");
-  assert.ok(eventHookRow.matcher, "expected event-hook.sh to carry a real matcher (not null)");
-  assert.ok(
-    eventHookRow.matcher.split("|").includes("startup"),
-    "expected event-hook.sh's matcher to include \"startup\"",
-  );
-
-  const expectedPerSession = rows
-    .filter(
-      (r) =>
-        r.event === "SessionStart" && (!r.matcher || r.matcher.split("|").includes("startup")),
-    )
-    .reduce((sum, r) => sum + r.bytes, 0);
-
-  assert.equal(
-    totals.perSession,
-    expectedPerSession,
-    "perSession must include every SessionStart hook whose matcher fires at startup, including event-hook.sh",
-  );
+test("perSession includes a SessionStart hook whose matcher still fires at startup, not only one with no matcher", () => {
+  // Regression test for the bug DX-3347 originally fixed: a hook with a real matcher ("startup|resume|compact") still fires at ordinary
+  // session start, and summarize() once dropped it from perSession because it only counted hooks with no matcher.
+  const repo = fakeRepo({
+    hooks: {
+      SessionStart: [
+        { matcher: "startup|resume|compact", hooks: [{ type: "command", command: "printf hello" }] },
+        { matcher: "compact", hooks: [{ type: "command", command: "printf compaction-only" }] },
+      ],
+    },
+  });
+  try {
+    const { rows, totals } = JSON.parse(execFileSync("node", [path.join(repo, "scripts", "measure-injection.mjs"), "--json"], { cwd: repo }).toString("utf8"));
+    assert.equal(rows.length, 2);
+    assert.equal(totals.perSession, "hello".length, "the startup-matched hook counts, the compact-only one does not");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

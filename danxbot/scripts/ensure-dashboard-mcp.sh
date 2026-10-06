@@ -3,14 +3,11 @@
 # plugin's data dir and print the absolute path of its `dist/index.js`, so a hook
 # runs it with plain `node` — never through a cold `npx -y`.
 #
-# WHY. `event-hook.sh`'s SubagentStart fetch used to run
-# `timeout 8s npx -y <spec> event-text sub_agent_start`. Measured 2026-10-01 on this
-# machine, warm cache: npx alone costs ~1.6 s before the package even starts, a
-# cold npx (no cache) ~4 s, and the same package run by `node` straight from an
-# installed copy 0.6 s end to end (60 ms node start, ~230 ms module load, ~300 ms
-# HTTP). Under concurrent spawns the npx path ran past 8 s on about 1 in 9
-# sub-agents, `timeout` killed it before it wrote a word, and the agent got the
-# "(unknown error)" notice INSTEAD of the mantra.
+# WHY. A hook that ran the package through `npx -y <spec>` paid, measured 2026-10-01 on this
+# machine, ~1.6 s with a warm cache and ~4 s cold before the package even started, where the
+# same package run by `node` straight from an installed copy took 0.6 s end to end (60 ms node
+# start, ~230 ms module load, ~300 ms HTTP). Under concurrent spawns the npx path ran past its
+# timeout on about 1 in 9 sub-agents.
 #
 # WHICH VERSION (DX-4321). The one the plugin recorded at the latest session start
 # (`${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`, written by `lib/dashboard-mcp-package.mjs`
@@ -24,10 +21,9 @@
 # already uses), on a cold install and on `--prewarm`.
 #
 # WHEN. Wired async at SessionStart (hooks.json, `--prewarm`) so the refresh and the install are
-# normally done before the first sub-agent spawns, and called by `event-hook.sh` before every
-# fetch, where it is a single file check once installed. A cold first call installs
-# synchronously (bounded by INSTALL_TIMEOUT_SECS) — the fetch's own 8-second budget
-# starts only after this returns.
+# normally done before the first sub-agent spawns, and called by every script and the plugin's MCP
+# server that runs the package, where it is a single file check once installed. A cold first call
+# installs synchronously (bounded by INSTALL_TIMEOUT_SECS).
 #
 # CONCURRENT CALLERS. Several sub-agents can spawn at once. Each installs into its
 # own staging directory and only a COMPLETE, verified install is renamed to the
@@ -42,8 +38,8 @@
 #
 # `--prewarm` (the SessionStart hook): refreshes the recorded version from the registry, then
 # the same install and prune, but silent and always exit 0. Nothing reads a prewarm's
-# result, and a failure is not lost — event-hook.sh refreshes and runs this script again, and
-# reports a failure to the agent with its reason.
+# result, and a failure is not lost — the next caller refreshes and runs this script again, and
+# reports a failure with its reason.
 # `--prune` (what `--prewarm` runs, no refresh): the normal call, and it also prunes.
 set -euo pipefail
 

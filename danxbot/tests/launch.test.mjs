@@ -297,7 +297,7 @@ describe("the real plugin", () => {
   test("zeroing ANY shipped file is repaired on the next verification (planted-corruption test over the whole tree)", () => {
     const { cache } = realPluginInstall();
     const files = Object.keys(JSON.parse(fs.readFileSync(path.join(cache, MANIFEST_FILE), "utf8")).files);
-    assert.ok(files.includes("scripts/activity-report.mjs") && files.includes("scripts/inject-time.sh") && files.includes("scripts/launch.mjs"));
+    assert.ok(files.includes("scripts/activity-report.mjs") && files.includes("scripts/ready-cards-stop.mjs") && files.includes("scripts/launch.mjs"));
     assert.ok(files.length >= 15, `expected the whole plugin in the manifest, got ${files.length}`);
     for (const rel of files) {
       zero(path.join(cache, rel));
@@ -340,7 +340,7 @@ describe("the real plugin", () => {
     assert.equal(launcher.MANIFEST_SCHEMA_VERSION, generator.MANIFEST_SCHEMA_VERSION);
   });
 
-  test("every integrity message gives the same repair instruction: the launcher and both hooks.json fallback lines", () => {
+  test("the repair instruction every integrity message gives is the one Claude Code uninstall/install, and no hook command carries a fallback line", () => {
     assert.match(INTEGRITY_FIX, /^Fix: run `claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` \(add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets\).*restart the session\.$/);
     const hooks = JSON.parse(fs.readFileSync(path.join(REAL_PLUGIN, "hooks", "hooks.json"), "utf8")).hooks;
     const fallbacks = Object.values(hooks)
@@ -348,28 +348,7 @@ describe("the real plugin", () => {
       .flatMap((group) => group.hooks)
       .map((hook) => hook.command)
       .filter((command) => command.includes(" || echo "));
-    assert.equal(fallbacks.length, 2, "the two model-visible hooks carry a fallback");
-    for (const command of fallbacks) assert.ok(command.includes(INTEGRITY_FIX), `fallback lacks the repair instruction: ${command}`);
-  });
-
-  test("a zeroed launch.mjs cannot repair itself, so the model-visible hook prints its own fallback line and exits 0; healthy, it prints none", () => {
-    const { cache } = realPluginInstall();
-    const hooks = JSON.parse(fs.readFileSync(path.join(REAL_PLUGIN, "hooks", "hooks.json"), "utf8")).hooks;
-    const command = hooks.UserPromptSubmit[0].hooks[0].command;
-    const runHook = () =>
-      spawnSync("bash", ["-c", command], {
-        input: JSON.stringify({ session_id: "launch-test-fallback" }),
-        encoding: "utf8",
-        env: { ...process.env, CLAUDE_PLUGIN_ROOT: cache },
-      });
-    const healthy = runHook();
-    assert.equal(healthy.status, 0);
-    assert.equal(healthy.stdout.includes("[danxbot plugin]"), false, healthy.stdout);
-    zero(path.join(cache, "scripts", "launch.mjs"));
-    const damaged = runHook();
-    assert.equal(damaged.status, 0);
-    assert.ok(damaged.stdout.includes("[danxbot plugin] a danxbot hook failed to run"), damaged.stdout);
-    assert.ok(damaged.stdout.includes(INTEGRITY_FIX));
+    assert.deepEqual(fallbacks, [], "no hook the model reads through stdout is left to carry one (DX-4234 moved them into the module)");
   });
 });
 

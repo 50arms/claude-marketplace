@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The ONE place that says which version of `@thehammer/danx-dashboard-mcp` every run of it
 // this plugin makes uses (DX-4321): background-work-report,
-// activity-report and event-hook.sh. This file carries NO version literal.
+// activity-report and the other report scripts. This file carries NO version literal.
 //
 // WHERE THE VERSION COMES FROM. The npm registry's `latest` for the package, read at every
 // session start (`versionFor({sessionStart: true})`) and recorded in
@@ -23,7 +23,7 @@
 // (the next successful session-start refresh replaces it), never read as "no record".
 //
 // ONE ACCEPTED SILENT PATH (DX-3421, by design): an UNCONNECTED session whose refresh fails
-// prints nothing at session start (event-hook.sh stays silent for it unless it has a restart
+// prints nothing at session start (the plugin's event hooks stay silent for it unless it has a restart
 // notice, and background-work-report only acts for a plan-connected session). If
 // that session later runs `plan_connect`, the record is read with no network and
 // says nothing about the earlier failed refresh. An unconnected session is told nothing by
@@ -50,7 +50,7 @@ export const REGISTRY_BASE_URL_ENV = "DASHBOARD_MCP_REGISTRY_BASE_URL";
 export const REGISTRY_TIMEOUT_ENV = "DASHBOARD_MCP_REGISTRY_TIMEOUT_MS";
 /** A session start must not wait on npm: bounds the one registry request. */
 export const REGISTRY_TIMEOUT_MS = 5_000;
-/** `--refresh` exits with this when the refresh failed but a recorded version carries on (event-hook.sh reads it). */
+/** `--refresh` exits with this when the refresh failed but a recorded version carries on (the exit code is the CLI contract; ensure-dashboard-mcp.sh ignores it). */
 export const EXIT_REFRESH_FAILED_KEPT = 3;
 
 /** Windows refuses to replace a file another process has open for a moment: retry the record's rename. */

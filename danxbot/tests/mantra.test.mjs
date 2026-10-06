@@ -86,12 +86,9 @@ test("plan-workflow points at its own worktree rule, never the mantra's", () => 
 // DX-4144 — the readers that name the registry row point at the renamed `mantra` row, never
 // the retired `mantra.session_start` / `mantra.dispatch` keys.
 const repoClaudeMd = readFileSync(path.join(here, "../../CLAUDE.md"), "utf8");
-const eventHook = readFileSync(path.join(here, "../scripts/event-hook.sh"), "utf8");
 
-test("CLAUDE.md and event-hook.sh name the one `mantra` row and no retired key", () => {
-  for (const [name, text] of [["CLAUDE.md", repoClaudeMd], ["event-hook.sh", eventHook]]) {
-    assert.doesNotMatch(text, /mantra\.(session_start|dispatch)/, name);
-    assert.match(text, /`mantra` registry row|registry row `mantra`/, name);
-  }
+test("CLAUDE.md names the one `mantra` row and no retired key", () => {
+  assert.doesNotMatch(repoClaudeMd, /mantra\.(session_start|dispatch)/);
+  assert.match(repoClaudeMd, /`mantra` registry row|registry row `mantra`/);
   assert.match(repoClaudeMd, /\{\{reminder:mantra\}\}/);
 });

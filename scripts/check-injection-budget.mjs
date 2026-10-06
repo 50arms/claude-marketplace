@@ -13,11 +13,12 @@
 // at SessionStart (startup/resume/compact only), every standing per-turn
 // reminder deleted. Its own measurement (card comment 6999, reproduced here
 // via scripts/measure-injection.mjs at origin/main commit ae177d0) recorded:
-//   - per-turn (UserPromptSubmit, unconditional): 23B — inject-time.sh's
-//     wall-clock line, the one thing DX-3347 explicitly kept.
+//   - per-turn (UserPromptSubmit, unconditional): 23B — the wall-clock line,
+//     the one thing DX-3347 explicitly kept (since DX-4234 the danxbot module's
+//     time stamp on prompt.submit, measured by running its pure `stamp`).
 //   - session-start (SessionStart, fires at startup): 26,373B.
 // This gate also folds in PostToolUse's unconditional per-tool-call total
-// (23B, the same clock hook's PostToolUse branch) into the "per-turn"
+// (23B, the same clock's after-each-tool-call stamp, tool.call since DX-4234) into the "per-turn"
 // figure — a turn typically includes at least one tool call, so the
 // ceiling should police the combined standing weight of a turn, not just
 // its UserPromptSubmit half. measure-injection.mjs's own totals stay

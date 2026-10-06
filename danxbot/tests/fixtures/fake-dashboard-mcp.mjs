@@ -1,4 +1,4 @@
-// Fakes for the two things event-hook.sh / ensure-dashboard-mcp.sh run (DX-3811):
+// Fakes for the two things ensure-dashboard-mcp.sh and the report scripts run (DX-3811):
 // the installed `@thehammer/danx-dashboard-mcp` bin, and the `npm` / `npx` on PATH.
 // No test using these touches the network.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync } from "node:fs";

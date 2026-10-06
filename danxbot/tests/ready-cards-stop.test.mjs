@@ -194,7 +194,7 @@ describe("ready-cards-stop.mjs: a signed-out or keyless session allows the stop 
     });
   }
 
-  test("exactly the two sign-in reasons are expected: event-hook.sh and activity-report.mjs treat the same two as ordinary", () => {
+  test("exactly the two sign-in reasons are expected: activity-report.mjs treats the same two as ordinary", () => {
     assert.deepEqual([...EXPECTED_REASONS].sort(), ["credential_unavailable", "no_connection_record"]);
   });
 });

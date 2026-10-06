@@ -22,7 +22,7 @@
 //   4. Some: block the stop once, with a short reason naming the first few and one instruction
 //      line. The JSON `{"decision":"block","reason":...}` on stdout is the Stop hook contract.
 //   5. The read fails: allow. A signed-out or keyless session (EXPECTED_REASONS: the same two
-//      reasons event-hook.sh and activity-report.mjs treat as ordinary) says nothing; any other
+//      reasons activity-report.mjs treats as ordinary) says nothing; any other
 //      failure prints one `systemMessage` line naming the reason. The hook never blocks on its
 //      own failure.
 //

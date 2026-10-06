@@ -1,14 +1,13 @@
 // DX-3673 / DX-4321 — the registry's CURRENT `@thehammer/danx-dashboard-mcp` version
 // (`latest`, the one the plugin records and runs at every session start,
 // danxbot/scripts/lib/dashboard-mcp-package.mjs) must actually support every
-// subcommand this plugin's scripts invoke on it: `background-work` (background-work-report.mjs), `activity` (activity-report.mjs, DX-3284), `event-text` (event-hook.sh) and
+// subcommand this plugin's scripts invoke on it: `background-work` (background-work-report.mjs), `activity` (activity-report.mjs, DX-3284) and
 // `subagents-live` (subagents-live.mjs, the plan pane's live reader, DX-4508).
 // The plugin has no version to fall behind any more (DX-4321), so the failure this guards is the
 // other direction: a danxbot publish that REMOVES a subcommand the plugin still calls now
 // reaches every session start at once, and this test is where the plugin's own next test run
-// catches it. (The original DX-3673 failure: the plugin shipped pinned to 0.1.146, which predates
-// `event-text` entirely, so every SubagentStart hook failed with "unknown subcommand
-// \"event-text\"".)
+// catches it. (The original DX-3673 failure: the plugin shipped pinned to 0.1.146, which predated
+// a subcommand its hook called, so that hook failed with "unknown subcommand".)
 //
 // This test asks the REAL registry for `latest` and the REAL package (a real `npx`,
 // deliberately) which subcommands it accepts, by invoking an unknown one and parsing the
@@ -17,7 +16,7 @@
 // plugin's own source still invokes is in that list.
 //
 // Unlike every other test in this directory (background-work-report.test.mjs,
-// event-hook.test.mjs, which use a fake registry), this one
+// which uses a fake registry), this one
 // intentionally does NOT mock the registry or spawn: a mock can never catch a real drift
 // between the plugin and what the registry actually publishes, which is the one thing this
 // guard exists to catch. Network + registry-cache dependent by design; slower than this
@@ -35,23 +34,12 @@ import { ACTIVITY_SUBCOMMAND } from "../scripts/activity-report.mjs";
 import { LIVE_SUBCOMMAND } from "../scripts/subagents-live.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const EVENT_HOOK_SH = path.join(here, "..", "scripts", "event-hook.sh");
 const ENSURE_SH = path.join(here, "..", "scripts", "ensure-dashboard-mcp.sh");
 const NPX_TIMEOUT_MS = 30_000;
-// DX-3928: event-hook.sh's not-connected SessionStart branch runs `restart-notice` (0.1.204+).
-const RESTART_NOTICE_SUBCOMMAND = "restart-notice";
 
 /** The registry's current spec, `<name>@<latest>`, read from the public registry (an empty env: no test seam). */
 async function currentSpec() {
   return specOf(await resolveLatestVersion({ env: {} }));
-}
-
-/** The literal subcommand token event-hook.sh passes to the installed package: `node "$MCP_BIN" <token> "$DANX_EVENT"` (DX-3811 — run from the plugin-data install, no longer via npx). */
-function eventTextSubcommandFromSource() {
-  const src = readFileSync(EVENT_HOOK_SH, "utf8");
-  const m = src.match(/node "\$MCP_BIN" (\S+) "\$DANX_EVENT"/);
-  assert.ok(m, "event-hook.sh no longer calls the installed package the expected way — update this test's extraction regex");
-  return m[1];
 }
 
 /** The literal subcommand token background-work-report.mjs's reportCommand places second. */
@@ -66,7 +54,7 @@ test(
   { timeout: NPX_TIMEOUT_MS + 10_000 },
   async () => {
     const spec = await currentSpec();
-    const required = [backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, eventTextSubcommandFromSource(), RESTART_NOTICE_SUBCOMMAND, LIVE_SUBCOMMAND];
+    const required = [backgroundWorkSubcommandFromSource(), ACTIVITY_SUBCOMMAND, LIVE_SUBCOMMAND];
 
     // An unknown subcommand makes the real published `dist/index.js` refuse with its
     // own "the only ones are ..." message, which names every subcommand the current
@@ -98,7 +86,7 @@ test(
   }
 );
 
-// DX-3811 — ensure-dashboard-mcp.sh installs the recorded version and event-hook.sh runs its
+// DX-3811 — ensure-dashboard-mcp.sh installs the recorded version and the plugin runs its
 // `dist/index.js` with `node`. That path is spelled out in the script, so a release that moved the
 // package's `bin` would make every install end in "install_incomplete". Ask the registry what the
 // current version's `bin` really is.

@@ -1,16 +1,14 @@
-#!/usr/bin/env node
 // Is this session connected to a danxbot plan? The ONE answer (PLN-11 R-10: the
-// plugin stays quiet until a plan is connected), shared by event-hook.sh,
-// background-work-report.mjs and the plan hooks' connection checks (DX-4391).
+// plugin stays quiet until a plan is connected), shared by
+// activity-report.mjs, background-work-report.mjs and ready-cards-stop.mjs (DX-4391).
 // A successful `plan_connect` makes the
 // danx-dashboard MCP server write `~/.config/danxbot/plan-sessions/<session>.json`
 // (its `session-connection.ts` owns the schema); this only checks the file
 // exists. A local stat, never a network call.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
@@ -37,29 +35,3 @@ export function isPlanConnected(sessionId, home = homedir()) {
     return false; // never let a stat error read as "connected"
   }
 }
-
-function readStdinJson() {
-  try {
-    return JSON.parse(readFileSync(0, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * CLI mode for bash consumers (`event-hook.sh`):
- * reads the hook's stdin JSON, falls back to `CLAUDE_CODE_SESSION_ID` when
- * stdin carries no `session_id` (the same fallback the hooks use), and prints exactly `1` or `0` — nothing else,
- * so `$(...)` capture in bash needs no parsing.
- */
-function main() {
-  const input = readStdinJson();
-  const sessionId =
-    (typeof input?.session_id === "string" && input.session_id !== "" ? input.session_id : null) ??
-    process.env.CLAUDE_CODE_SESSION_ID ??
-    null;
-  const home = process.env.DANXBOT_PLAN_SESSIONS_HOME || homedir();
-  process.stdout.write(isPlanConnected(sessionId, home) ? "1" : "0");
-}
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
