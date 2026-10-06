@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "files": {
-    ".claude-plugin/plugin.json": "07d48907ed6a9e50dfb131c5f6ed6c0b8b7d7990568aef4010e61cb1794192f6",
+    ".claude-plugin/plugin.json": "093573a33956153d3e3992fe0760a51cb40530681dd04dd51af7278aaa3fe6f9",
     "agents/worker-fable-high.md": "ad97ffe7e2c2ab5b863c0161a77c2b2736a899462b7412ded999e696432c53bb",
     "agents/worker-haiku-high.md": "e9e83bf93ed5f21580e953930333e1b35e9120cb1f63fdd2269e68154b3e9d3f",
     "agents/worker-haiku-low.md": "13380b17c273af348d09f56c677cdce88309977bf939228500bd257b5e671b11",
@@ -11,7 +11,7 @@
     "agents/worker-sonnet-medium.md": "428c04cf88119b6a945eb9d6e6fab2b5a5945e49dcff22ebcfc5860d0ae8b070",
     "hooks/hooks.json": "510186e8e234b67c723a89163ea2ba7ac4740e0b181ec7b31f71b10d69e8412d",
     "hooks/plan/approval.ts": "5c0f2978f75b579c08d66b5b9bf0e0fcea1e86d3e08df2b37ef391275527b50d",
-    "hooks/plan/band.tsx": "0811577a501b2e24d057ba1abfd4138247218932ee2b7eaa7029892604f1dfb7",
+    "hooks/plan/band.tsx": "4d0b045416c6fe613d23643e7a2dd2b57aa1af63467936e105d2ce52708616b5",
     "hooks/plan/browser-output.ts": "79467578a7eb7ec7a51ed2f53eba5b161dd54a97aff49c6862104af8240b9fc2",
     "hooks/plan/card-links.ts": "ff9802f516bd7945d281868fb8d70a563d4d0598a70381fcaae1e2a16dba8954",
     "hooks/plan/config.ts": "79ca13939c7e058631e6c3ad89baa206f6dd9d868d0a045091118b3572701ba5",
