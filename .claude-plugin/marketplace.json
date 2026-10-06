@@ -1,8 +1,7 @@
 {
   "name": "50arms",
   "owner": {
-    "name": "Dan Newman",
-    "email": "newms87@gmail.com"
+    "name": "50 Arms"
   },
   "description": "Claude Code plugins from 50 Arms: danxbot's way of working",
   "plugins": [

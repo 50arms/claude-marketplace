@@ -42,7 +42,6 @@ import {
   USAGE_PATH,
   USAGE_TICK_MS,
   signInFailedToast,
-  LEGACY_PROJECT_API_TOOL,
   SERVER,
   START_RETRY_MS,
   SERVER_POLL_MS,
@@ -164,25 +163,9 @@ async function api($: any, method: string, path: string, extra: { query?: object
     const failed: Api = { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
     if (!notConnected) return failed
     failed.unreachable = true
-    if (await isStandbySession($)) failed.staleServer = true
     return failed
   }
   return toolOutcome(res)
-}
-
-// DX-4610: whether this session runs the plugin's server as the old idle standby (plugin 0.12.57 and older, started in a repo with its own
-// `danx-dashboard` entry): the engine words that server's missing tools like a server not connected yet, so the rejection cannot say. The
-// session's tool list can: it has the repo's own `danx-dashboard` tool and none of the plugin's. A fresh session in a checkout that still has
-// the repo entry matches too until its server connects; its next load (the start retries, then the refresh) reads connected and clears it.
-async function isStandbySession($: any): Promise<boolean> {
-  let names: string[]
-  try {
-    names = (await $.tool.list()).map((t: any) => t.name)
-  } catch {
-    // a tool list that cannot be read cannot say so: the plain not-connected failure stands, and its retries and refreshes go on
-    return false
-  }
-  return names.includes(LEGACY_PROJECT_API_TOOL) && !names.includes(toolName('danxbot_api'))
 }
 
 const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
@@ -1465,12 +1448,12 @@ async function isPlanConnected($: any): Promise<boolean> {
   return $.fs.exists(`${home}/.config/danxbot/plan-sessions/${id}.json`)
 }
 
-// What a session start's wait for the plugin's server came to: it is there, it never will be (the old standby), or the deadline came first.
-type ServerState = 'ready' | 'standby' | 'not-yet'
+// What a session start's wait for the plugin's server came to: it is there, its environment was unloaded, or the deadline came first.
+type ServerState = 'ready' | 'unloaded' | 'not-yet'
 
 // A session START may reach its hook before the plugin's own server has connected (DX-4578): the server's `danxbot_api` shows in the
 // session's tool list once it has. Polled until `deadlineAt`, the start's one deadline (CONTEXT_DEADLINE_MS from its beginning), and not a tick
-// after; the old standby server (the repo's own `danx-dashboard` tool and none of the plugin's) never connects, so it does not wait. A
+// after. A
 // sub-agent's start is mid-session and does not call this.
 async function serverState($: any, deadlineAt: number): Promise<ServerState> {
   const own = toolName('danxbot_api')
@@ -1483,14 +1466,13 @@ async function serverState($: any, deadlineAt: number): Promise<ServerState> {
       return 'ready'
     }
     if (names.includes(own)) return 'ready'
-    if (names.includes(LEGACY_PROJECT_API_TOOL)) return 'standby'
     const left = deadlineAt - (await $.clock.now())
     if (left <= 0) return 'not-yet'
     try {
       await $.clock.sleep(Math.min(SERVER_POLL_MS, left))
     } catch {
       // the wait rejects when the plugin's environment is unloaded (a reload): this start's lookup ends with it
-      return 'standby'
+      return 'unloaded'
     }
   }
 }
@@ -1547,7 +1529,7 @@ async function sessionContext($: any, e: any): Promise<string | null> {
   const connected = await isPlanConnected($)
   const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && isRestartSource(e.source) })
   const server = await serverState($, deadlineAt)
-  if (server === 'standby') return null
+  if (server === 'unloaded') return null
   if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)

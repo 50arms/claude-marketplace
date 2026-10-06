@@ -1,4 +1,3 @@
-import { RESTART_LINE, STALE_GRACE_MS } from './config'
 import type { Api } from './load'
 
 // DX-4340 (PLAN-29 section 3): the ONE pacing cache. danxbot serves the calling session's own account's verdict, and the one-sentence line
@@ -14,8 +13,6 @@ import type { Api } from './load'
 // PACING_REFRESH_MS, so each sub-agent start does not re-hit a dead route. The spawn guard forces its own read every time. The one exception is an unreachable
 // danx-dashboard MCP server (a session on a repo with no danxbot, as in reportUsage and DX-3421): that is silent and not backed off,
 // the next spawn simply looks again, until a read has succeeded in this session. After a success it is a failure like any other.
-// The second exception (DX-4610): a session on the old standby plugin server (`staleServer`) is told to restart, once, after it has failed that way
-// for STALE_GRACE_MS, the time a fresh session's server needs to connect.
 
 import type { PacingLevel, PacingVerdict, SpendFigure } from '../../types'
 
@@ -81,8 +78,6 @@ let cache: Cache | null = null
 let lastReadAt: number | null = null
 // a read has succeeded in this session: from then on an unreachable server is worth a toast
 let hasSucceeded = false
-// DX-4610: when this session's reads first failed as the old standby server
-let staleSince: number | null = null
 let lastError: string | null = null
 let inflight: Promise<void> | null = null
 // bumped by every reset: a read that was in flight across one must not write the new session's state
@@ -103,7 +98,6 @@ export function resetPacing(): void {
   cache = null
   lastReadAt = null
   hasSucceeded = false
-  staleSince = null
   lastError = null
   inflight = null
   reservations.clear()
@@ -137,14 +131,6 @@ async function fetchPacing(env: PacingEnv, ms: number): Promise<void> {
       lastReadAt = at
       return failRead(env, `the pacing line read took longer than its ${PACING_READ_DEADLINE_MS} ms deadline`)
     }
-    // DX-4610: a session on the old standby server never gets a read: told to restart once the grace has run out (see the header)
-    if (r.staleServer) {
-      cache = null
-      staleSince ??= at
-      if (at - staleSince >= STALE_GRACE_MS) report(env, RESTART_LINE)
-      return
-    }
-    staleSince = null
     if (r.unreachable) {
       // silent and not backed off until a read has succeeded (see the header)
       cache = null

@@ -159,12 +159,8 @@ export function dashboard(
     // `dashboard_url` on GET /api/plans: the default DASHBOARD_URL, an override (any value, so a bad one can
     // be tried), or NO_DASHBOARD_URL for an answer without the field
     dashboardUrl?: unknown
-    // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection; 'stale' (DX-4610): the same rejection from a
-    // session that runs plugin 0.12.57's empty standby server (tests/fixtures/old-standby-server.mjs), whose tool list shows only the repo's own
-    // `danx-dashboard` server, never the plugin's
-    mcp?: 'up' | 'down' | 'flaky' | 'stale'
-    // DX-4610: what the session's tool list answers (default: follows `mcp`): both servers' tools, or a rejection
-    toolList?: 'both' | 'rejects'
+    // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
+    mcp?: 'up' | 'down' | 'flaky'
     browser?: 'ok' | 'denied'
     // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
     browserClosed?: boolean
@@ -511,7 +507,7 @@ export function dashboard(
 
   // DX-4340: the pacing line is read by every session at start and by each spawn: kept out of `calls` and `api` so the suites that count a
   // load's reads stay about their own subject, and answered unknown (pacing off) unless a test gives `pacingLine`
-  const notConnected = () => options.mcp === 'down' || options.mcp === 'stale'
+  const notConnected = () => options.mcp === 'down'
   const pacingReads: number[] = []
   // DX-4234: the paths of the context reads (see isContextRead), in order
   const contextReads: string[] = []
@@ -794,10 +790,10 @@ export function dashboard(
   // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
   // sub-agents (world.agents).
   const agentLists = { count: 0 }
-  // DX-4610: the tools the session lists: the plugin's when its server is connected, the repo's own server's when the plugin's is the old standby
+  // the tools the session lists: the plugin's when its server is connected
   // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
   const toolLists = { n: 0 }
-  const toolListAnswer = () => options.toolList === 'rejects' ? ({ deny: 'tool list unavailable' } as any) : options.toolList === 'both' ? ({ value: [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }, { name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] } as any) : ({ value: options.mcp === 'stale' ? [{ name: 'mcp__danx-dashboard__danxbot_api', description: '', mcp: true }] : notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any
+  const toolListAnswer = () => ({ value: notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any
   on('tool.list', () => (toolLists.n++, toolListAnswer()))
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
   on('fs.exists', (_$: any, e: any) => ({ value: world.localRecord && e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/') === RECORD_PATH(world.sessionId) }) as any)

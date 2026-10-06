@@ -134,13 +134,6 @@ for (const surface of SURFACES) {
       expect(r.additionalContext).toEqual([EVENT_TEXT('session_resume')])
     })
 
-    test('the old standby server never connects, so the wait is skipped: nothing read, quiet, with no clock advance', async ($, on) => {
-      const d = await started($, on, { mcp: 'stale' })
-      const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      expect(r.additionalContext).toBeUndefined()
-      expect(d.contextReads).toEqual([])
-    })
-
     test('ONE deadline: a dashboard that never answers is one timeout line at the deadline, not a held start', async ($, on) => {
       const d = await started($, on)
       d.world.contextHangs = true

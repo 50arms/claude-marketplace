@@ -261,16 +261,6 @@ describe('the agent.spawn hook', () => {
     expect(d.toasts.filter(t => t.includes(`${PACING_READ_DEADLINE_MS} ms deadline`))).toHaveLength(1)
   })
 
-  test('a session on the old standby server drops the verdict like any failed read: the spawn is allowed, not decided on the old answer', async ($, on) => {
-    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
-    const d = await session($, on, options)
-    expect((await spawn($)).deny).toMatch(/critical/)
-    options.mcp = 'stale'
-    expect((await spawn($)).deny).toBeUndefined()
-    expect(await subagentLine($)).toBeNull()
-    expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
-  })
-
   test('a spawn that arrives while a read is out waits for it, then reads again (it never takes an answer asked before it)', async ($, on) => {
     const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
     const d = await session($, on, options)

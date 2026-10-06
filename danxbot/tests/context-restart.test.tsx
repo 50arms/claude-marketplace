@@ -79,13 +79,6 @@ for (const surface of SURFACES) {
       expect((await $.classic.SessionStart({ source: 'resume', cwd: '/work' })).additionalContext).toEqual([NOTICE])
     })
 
-    test('a signed-out session whose server is not connected asks nothing and is quiet', async ($, on) => {
-      const d = await started($, on, { ...SIGNED_OUT, mcp: 'stale' })
-      d.world.restart.json = { notice: NOTICE }
-      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toBeUndefined()
-      expect(d.restartCalls).toEqual([])
-    })
-
     for (const reason of ['no_session_id', 'lookup_failed', 'lookup_timeout'] as const) {
       test(`a \`${reason}\` stop is one warning line naming the reason and detail, never quiet`, async ($, on) => {
         const d = await started($, on)
