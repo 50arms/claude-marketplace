@@ -1,4 +1,6 @@
 import type { PlanView } from '../../types'
+import { APPROVE_SIGN_IN_LABEL, signInCodeLabel } from './approval'
+import type { ApprovalRequest } from './approval'
 import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
@@ -29,6 +31,8 @@ export function renderBand(
   busy: string[],
   // DX-4435: how many of the model's permission requests are still open.
   permissionRequests: number,
+  // DX-4630: the sign-in request waiting for the person: its Link and confirm code are drawn at once.
+  signIn: ApprovalRequest | null,
   // The band's width in columns (`bodyColumns`); absent in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns?: number,
@@ -55,6 +59,8 @@ export function renderBand(
   const showBadge = plan !== null && badge !== ''
   // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
+  // DX-4630: the sign-in request's Link and code show while signed out, as the pane's do
+  const approve = signedOut ? signIn : null
   // DX-4418: a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
   // DX-4521: both links are in every state: the plan's page when connected, else the dashboard's plans list. Only an origin never
@@ -64,6 +70,7 @@ export function renderBand(
   const controls = [
     ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
+    ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: signInCodeLabel(approve), isButton: false }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
     ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
     ...(permissionLabel !== '' ? [{ label: permissionLabel, isButton: true }] : []),
@@ -105,6 +112,8 @@ export function renderBand(
             {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
           </Button>
         )}
+        {approve !== null && <Link key="approve-sign-in" href={approve.url} label={APPROVE_SIGN_IN_LABEL} />}
+        {approve !== null && <Text key="sign-in-code">{signInCodeLabel(approve)}</Text>}
         {openPane}
         {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab: a Button into the
             in-app browser where there is one (the Browser tab path), a Link elsewhere. A Button carries no colour, so

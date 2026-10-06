@@ -36,3 +36,15 @@ export function approvalToast(a: ApprovalRequest, failed: OpenFailure | null): s
   if (failed === null) return `Approve ${approvalSubject(a)} in the browser. Confirm code ${a.code} must match the page: ${a.url}`
   return `Could not open the approval page (${failed.step}: ${failed.message}). Open this link and check that confirm code ${a.code} matches: ${a.url}`
 }
+
+// DX-4630: a sign-in request's toast: the link and code together, no browser involved (the person follows the link).
+export const signInToast = (a: ApprovalRequest) => `Approve this session: open ${a.url} and check that confirm code ${a.code} matches.`
+
+// The label of the band's and the pane's sign-in Link, and the words beside the code.
+export const APPROVE_SIGN_IN_LABEL = 'Approve sign-in ↗'
+export const signInCodeLabel = (a: ApprovalRequest) => `code ${a.code}`
+
+// What the model reads after a tool answer that carries a sign-in request: the plugin has put the link and code in front of the
+// person already, so the model only has to say so (and opens nothing).
+export const signInShownNote = (a: ApprovalRequest) =>
+  `The danxbot plugin already shows the person the approval link (${a.url}) and confirm code ${a.code} in the band. Do not open the link yourself; tell the user to approve with confirm code ${a.code}.`
