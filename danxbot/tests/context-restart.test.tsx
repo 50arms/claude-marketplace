@@ -1,133 +1,116 @@
-// DX-4234 (DX-3928): a session that is not on a plan but replaced one that was is told which plan it was on and how many events wait. The
-// earlier session is found from the connection records the danx-dashboard MCP server writes (hooks/context/predecessor.ts mirrors its reader);
-// the notice is the registry's `plan_restart.waiting_events` text, read through the session's own server.
+// DX-4234 (DX-3928, DX-4632): a session that is not on a plan but replaced one that was is told which plan it was on and how many events wait.
+// The session's own danx-dashboard server finds the earlier session and answers through its `restart_notice` tool (no arguments); this hook
+// tells the model that answer and surfaces a stop. Both surfaces: the model's context and the failure line.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { CONTEXT_DEADLINE_MS, RESTART_NOTICE_KEY, deadlineReason, eventFailureLine, restartFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, deadlineReason, eventFailureLine, restartFailureLine } from '../hooks/context/events'
 import { SURFACES, dashboard, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
-const noticeBody = { restart: { planId: 23, planName: 'Danxbot plugin', waiting: 3 }, reminders: [{ key: RESTART_NOTICE_KEY, text: NOTICE }] }
-// the clock starts 2026-10-03T08:00:00Z
-const record = (sessionId: string, over: Record<string, unknown> = {}) => ({ schemaVersion: 3, sessionId, projectKey: '/work', dashboardUrl: 'http://localhost:5555', source: 'session-key', fingerprint: 'f', connectedAt: '2026-10-03T07:00:00.000Z', ...over })
-const RESTART_READS = (reads: string[]) => reads.filter(p => p.endsWith('/restart-notice'))
+const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call plan_connect' } })
 
 for (const surface of SURFACES) {
   describe(`the restart notice on ${surface}`, () => {
-    async function started($: any, on: any, records: Record<string, unknown> | undefined, options: Parameters<typeof dashboard>[1] = { connected: false }) {
+    async function started($: any, on: any, options: Parameters<typeof dashboard>[1] = { connected: false }) {
       on('classic.SessionStart', () => ({}) as any)
       const d = dashboard(on, options)
-      d.world.records = records
       await startSession($, d, surface)
       d.contextReads.length = 0
       return d
     }
 
     for (const source of ['startup', 'resume'] as const) {
-      test(`a not-connected ${source} is told the notice of the earlier session of its project`, async ($, on) => {
-        const d = await started($, on, { 'earlier.json': record('earlier') })
-        d.world.restart.earlier = { body: noticeBody }
+      test(`a not-connected ${source} is told the notice the server answers, asked with no arguments`, async ($, on) => {
+        const d = await started($, on)
+        d.world.restart.json = { notice: NOTICE }
         const r = await $.classic.SessionStart({ source, cwd: '/work' })
         expect(r.additionalContext).toEqual([NOTICE])
-        expect(RESTART_READS(d.contextReads)).toEqual(['/api/plan-sessions/earlier/restart-notice'])
+        expect(d.restartCalls).toEqual([{}])
       })
     }
 
-    test('after a compaction, and on clear or fork, nothing is read or told', async ($, on) => {
-      const d = await started($, on, { 'earlier.json': record('earlier') })
-      d.world.restart.earlier = { body: noticeBody }
+    test('after a compaction, and on clear or fork, the tool is not called and nothing is told', async ($, on) => {
+      const d = await started($, on)
+      d.world.restart.json = { notice: NOTICE }
       for (const source of ['compact', 'clear', 'fork'] as const) {
         expect((await $.classic.SessionStart({ source, cwd: '/work' })).additionalContext).toBeUndefined()
       }
-      expect(RESTART_READS(d.contextReads)).toEqual([])
+      expect(d.restartCalls).toEqual([])
     })
 
     test('a connected session is told its event text, never the restart notice', async ($, on) => {
-      const d = await started($, on, { 'earlier.json': record('earlier') }, {})
-      d.world.restart.earlier = { body: noticeBody }
+      const d = await started($, on, {})
+      d.world.restart.json = { notice: NOTICE }
       const r = await $.classic.SessionStart({ source: 'resume', cwd: '/work' })
       expect(r.additionalContext).toEqual(['The session_resume text.'])
-      expect(RESTART_READS(d.contextReads)).toEqual([])
+      expect(d.restartCalls).toEqual([])
     })
 
-    test('no earlier session of the project: quiet (a project that never connected a plan hears nothing)', async ($, on) => {
-      const d = await started($, on, { 'other.json': record('other', { projectKey: '/elsewhere' }) })
+    test('`{notice: null}` is quiet (a project that never connected a plan hears nothing)', async ($, on) => {
+      const d = await started($, on)
       expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toBeUndefined()
-      expect(RESTART_READS(d.contextReads)).toEqual([])
+      expect(d.restartCalls).toEqual([{}])
     })
 
-    test('no record directory at all: quiet', async ($, on) => {
-      const d = await started($, on, undefined)
-      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toBeUndefined()
-      expect(RESTART_READS(d.contextReads)).toEqual([])
+    test('a signed-out session is told the notice too: the tool works before sign-in', async ($, on) => {
+      const d = await started($, on, { connected: false, signedOut: 'signed-out' })
+      d.world.restart.json = { notice: NOTICE }
+      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toEqual([NOTICE])
     })
 
-    test('an earlier session whose answer is `restart: null` leaves it to the next one', async ($, on) => {
-      const d = await started($, on, { 'a.json': record('a', { connectedAt: '2026-10-03T07:30:00.000Z' }), 'b.json': record('b') })
-      d.world.restart.b = { body: noticeBody }
+    for (const reason of ['no_session_id', 'lookup_failed', 'lookup_timeout'] as const) {
+      test(`a \`${reason}\` stop is one warning line naming the reason and detail, never quiet`, async ($, on) => {
+        const d = await started($, on)
+        d.world.restart.json = stopped(reason, 'the detail')
+        const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+        expect(r.additionalContext).toEqual([restartFailureLine(`${reason}: the detail`)])
+        expect(r.additionalContext![0]).toMatch(/^⚠ Could not load the restart notice \(.*\)\. Tell the operator if this session should be plan-connected\.$/)
+      })
+    }
+
+    test('a call the engine rejects is the warning line with the rejection', async ($, on) => {
+      const d = await started($, on)
+      d.world.restart.deny = 'boom'
       const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      expect(r.additionalContext).toEqual([NOTICE])
-      // newest first: a answered nothing, then b spoke
-      expect(RESTART_READS(d.contextReads)).toEqual(['/api/plan-sessions/a/restart-notice', '/api/plan-sessions/b/restart-notice'])
+      expect(r.additionalContext![0]).toContain('Could not load the restart notice (error: ')
+      expect(r.additionalContext![0]).toContain('boom')
     })
 
-    test('every earlier session answering nothing is quiet', async ($, on) => {
-      await started($, on, { 'a.json': record('a'), 'b.json': record('b') })
-      expect((await $.classic.SessionStart({ source: 'resume', cwd: '/work' })).additionalContext).toBeUndefined()
+    test('an error result is the warning line with its text', async ($, on) => {
+      const d = await started($, on)
+      d.world.restart.raw = { content: [{ type: 'text', text: 'tool blew up' }], isError: true }
+      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toEqual([restartFailureLine('error: tool blew up')])
     })
 
-    test('a failed lookup with no notice to say is one warning line', async ($, on) => {
-      const d = await started($, on, { 'a.json': record('a') })
-      d.world.restart.a = { status: 500 }
-      const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      expect(r.additionalContext).toEqual([restartFailureLine('1 of 1 earlier sessions did not answer: a: 500: restart boom')])
-      expect(r.additionalContext![0]).toMatch(/^⚠ Could not load the restart notice \(.*\)\. Tell the operator if this session should be plan-connected\.$/)
-    })
+    for (const [name, text] of [['text that is not JSON', 'nope'], ['an answer with neither a notice nor a stop', '{}'], ['an empty notice', '{"notice":""}'], ['a non-string notice', '{"notice":3}']] as const) {
+      test(`${name} is a failure, never papered over`, async ($, on) => {
+        const d = await started($, on)
+        d.world.restart.raw = { content: [{ type: 'text', text }], isError: false }
+        const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+        expect(r.additionalContext![0]).toContain('Could not load the restart notice (bad_response')
+      })
+    }
 
-    test('one earlier session failing and another answering "nothing" is the warning line too: the failed one may have held the notice', async ($, on) => {
-      const d = await started($, on, { 'a.json': record('a', { connectedAt: '2026-10-03T07:30:00.000Z' }), 'b.json': record('b') })
-      d.world.restart.a = { status: 500 }
-      const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      expect(r.additionalContext).toEqual([restartFailureLine('1 of 2 earlier sessions did not answer: a: 500: restart boom')])
-      expect(RESTART_READS(d.contextReads)).toEqual(['/api/plan-sessions/a/restart-notice', '/api/plan-sessions/b/restart-notice'])
-    })
-
-    test('ONE deadline over the whole lookup: three earlier sessions that each answer after 3 s are cut at 8 s, with the session_start timeout line', async ($, on) => {
-      const d = await started($, on, { 'a.json': record('a', { connectedAt: '2026-10-03T07:50:00.000Z' }), 'b.json': record('b', { connectedAt: '2026-10-03T07:40:00.000Z' }), 'c.json': record('c') })
-      d.world.contextDelayMs = 3_000
+    test('ONE deadline: a tool that never answers is cut at 8 s with the session_start timeout line', async ($, on) => {
+      const d = await started($, on)
+      d.world.restart.hangs = true
       const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
       await d.clock.advance(CONTEXT_DEADLINE_MS)
-      const r = await pending
-      expect(r.additionalContext).toEqual([eventFailureLine('session_start', deadlineReason())])
-      // the lookup was cut with reads still to make
-      expect(RESTART_READS(d.contextReads).length).toBeLessThan(3)
+      expect((await pending).additionalContext).toEqual([eventFailureLine('session_start', deadlineReason())])
     })
 
-    test('one failing and one answering: the answer speaks, no warning', async ($, on) => {
-      const d = await started($, on, { 'a.json': record('a', { connectedAt: '2026-10-03T07:30:00.000Z' }), 'b.json': record('b') })
-      d.world.restart.a = { status: 500 }
-      d.world.restart.b = { body: noticeBody }
-      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toEqual([NOTICE])
+    test('a slow answer inside the deadline is told', async ($, on) => {
+      const d = await started($, on)
+      d.world.restart = { json: { notice: NOTICE }, delayMs: 6_000 }
+      const pending = $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      await d.clock.advance(6_000)
+      expect((await pending).additionalContext).toEqual([NOTICE])
     })
 
-    test('a notice whose registry row is missing is a failure, never papered over', async ($, on) => {
-      const d = await started($, on, { 'a.json': record('a') })
-      d.world.restart.a = { body: { restart: { planId: 23 }, reminders: [] } }
-      const r = await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
-      expect(r.additionalContext![0]).toContain('without its registry text')
-    })
-
-    test('a signed-out session is quiet', async ($, on) => {
-      const d = await started($, on, { 'a.json': record('a') }, { connected: false, signedOut: 'signed-out' })
-      d.world.restart.a = { body: noticeBody }
-      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toBeUndefined()
-    })
-
-    test('records that are not records (other schema, unreadable text) are skipped', async ($, on) => {
-      const d = await started($, on, { 'old.json': record('old', { schemaVersion: 2 }), 'junk.json': 'not json', 'ok.json': record('ok') })
-      d.world.restart.ok = { body: noticeBody }
-      expect((await $.classic.SessionStart({ source: 'startup', cwd: '/work' })).additionalContext).toEqual([NOTICE])
-      expect(RESTART_READS(d.contextReads)).toEqual(['/api/plan-sessions/ok/restart-notice'])
+    test('R-2: the restart notice is the server’s own tool; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {
+      const d = await started($, on)
+      await $.classic.SessionStart({ source: 'startup', cwd: '/work' })
+      expect(d.readers.filter(r => /restart-notice|restart_notice/.test(r.argv.join(' ')))).toEqual([])
     })
   })
 }

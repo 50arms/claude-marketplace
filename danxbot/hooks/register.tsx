@@ -2,9 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
 import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
-import { CONTEXT_DEADLINE_MS, deadlineReason, eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticePath, restartText, sessionEvent } from './context/events'
+import { CONTEXT_DEADLINE_MS, deadlineReason, eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, Told } from './context/events'
-import { asRecord, predecessors } from './context/predecessor'
 import { stamp as nextStamp } from './context/stamp'
 import { approvalRequestOf, approvalSubject, approvalToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
@@ -1459,45 +1458,23 @@ async function eventContext($: any, event: DanxEvent, plan: SessionPlan): Promis
   return toldLine(await readTold($, eventPath(event), eventText), reason => eventFailureLine(event, reason))
 }
 
-// The connection records of this machine (`~/.config/danxbot/plan-sessions/*.json`), read as predecessors.ts mirrors the MCP's reader.
-async function earlierSessions($: any, e: any): Promise<string[]> {
-  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-  if (typeof home !== 'string' || home === '' || typeof e.cwd !== 'string') return []
-  const dir = `${home}/.config/danxbot/plan-sessions`
-  if (!(await $.fs.exists(dir))) return []
-  const records = []
-  for (const entry of await $.fs.list(dir)) {
-    if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(await $.fs.read(`${dir}/${entry.name}`))
-    } catch {
-      // a record that cannot be read is no candidate (the MCP skips it too)
-      continue
-    }
-    const record = asRecord(parsed)
-    if (record !== null) records.push(record)
+// DX-3928: a session that is not on a plan (or has no key yet) but replaced one that was is told which plan and what waits there. The
+// session's own danx-dashboard server finds the earlier session and answers (its `restart_notice` tool works before sign-in and runs its own
+// 8 s deadline); a stop it answers, or a call that fails, is one warning line, never quiet.
+async function restartNotice($: any): Promise<string | null> {
+  let told: Told
+  try {
+    told = restartNoticeText(await $.mcp.call(SERVER, RESTART_NOTICE_TOOL, {}))
+  } catch (err: any) {
+    told = { kind: 'failed', reason: `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}` }
   }
-  return predecessors(records, e.cwd, e.session_id, await $.clock.now())
-}
-
-// DX-3928: a session that is not on a plan but replaced one that was is told which plan and what waits there. The first earlier session
-// whose answer carries a notice speaks; one that answers nothing leaves it to the next. Any earlier session that failed and left no notice
-// to say is one warning line: the failed one may have been the one with the notice, so it is never quiet.
-async function restartNotice($: any, e: any): Promise<string | null> {
-  const candidates = await earlierSessions($, e)
-  const failures: string[] = []
-  for (const id of candidates) {
-    const t = await readTold($, restartNoticePath(id), restartText)
-    if (t.kind === 'text') return t.text
-    if (t.kind === 'failed') failures.push(`${id}: ${t.reason}`)
-  }
-  return failures.length > 0 ? restartFailureLine(`${failures.length} of ${candidates.length} earlier sessions did not answer: ${failures.join('; ')}`) : null
+  return toldLine(told, restartFailureLine)
 }
 
 async function readSessionContext($: any, e: any, event: DanxEvent): Promise<string | null> {
   const plan = await sessionPlan($)
-  if (plan === 'not-connected') return isRestartSource(e.source) ? restartNotice($, e) : null
+  // a signed-out session is the one a restart leaves without a key: the notice is for it too
+  if (plan === 'not-connected' || plan === 'silent') return isRestartSource(e.source) ? restartNotice($) : null
   return eventContext($, event, plan)
 }
 
