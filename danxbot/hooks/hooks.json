@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/inject-time.sh UserPromptSubmit || echo '[danxbot plugin] a danxbot hook failed to run, so the plugin install may be corrupt. Fix: run `claude plugin marketplace update`, then `claude plugin update danxbot`, then restart the session.'"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/inject-time.sh UserPromptSubmit || echo '[danxbot plugin] a danxbot hook failed to run, so the plugin install may be corrupt. Fix: run `claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session.'"
           }
         ]
       }
@@ -32,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/event-hook.sh SessionStart || echo '[danxbot plugin] a danxbot hook failed to run, so the plugin install may be corrupt. Fix: run `claude plugin marketplace update`, then `claude plugin update danxbot`, then restart the session.'"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs\" --via stdout scripts/event-hook.sh SessionStart || echo '[danxbot plugin] a danxbot hook failed to run, so the plugin install may be corrupt. Fix: run `claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets), then restart the session.'"
           }
         ]
       },

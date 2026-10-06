@@ -38,10 +38,10 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
   // plan_connect matcher from the three server prefixes to the plugin's (the matcher test below pins the new one).
   const PLAN_CONNECT_NARROWED = [/^\^\(mcp__.*plan_connect\)\$$/, "^mcp__plugin_danxbot_danx-dashboard__plan_connect$"];
   // The other: DX-4551 replaced the repair instruction in each fallback line (a personal alias and a git repair habit) with the public
-  // Claude Code plugin commands; launch.test.mjs pins the new text against INTEGRITY_FIX.
+  // Claude Code uninstall/install commands; launch.test.mjs pins the new text against INTEGRITY_FIX.
   const REPAIR_REWORDED = [
     "git -C ~/.claude/plugins/marketplaces/newms-plugins checkout -- danxbot`, then `update-claude-plugins`",
-    "claude plugin marketplace update`, then `claude plugin update danxbot`",
+    "claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets)",
   ];
   const present = commandHooks(hooks);
   const kept = ([event, matcher, command]) => {

@@ -13,7 +13,8 @@
 // exempt by construction), except `.claude-plugin/plugin.json`, the manifest, whose
 // `dashboard_url` default is the product's own public address. Markdown and JSON are scanned
 // whole; code (.mjs .js .ts .tsx .sh) is scanned with its comments stripped, because a comment
-// is read only by a maintainer and never reaches a user.
+// is read only by a maintainer and never reaches a user. A file type the scan does not know throws
+// (binary assets are an explicit list), so a new type can never ship unscanned.
 //
 // COMMENT STRIPPING is a small state machine, not a parser. It follows strings, template
 // literals and regex literals so a `//` inside one is not taken for a comment. Its one blind
@@ -29,7 +30,7 @@ import { listPluginFiles } from "./write-integrity-manifest.mjs";
 
 /** Each token names something only the author's setup has. */
 export const BANNED = [
-  { name: "a personal GitHub account or marketplace name", pattern: /newms/i },
+  { name: "a personal GitHub account or marketplace name", pattern: /(?<![a-z])newms(?![a-z])/i },
   { name: "a personal shell alias", pattern: /update-claude-plugins/i },
   { name: "the author's own domain", pattern: /sageus/i },
   { name: "another of the author's products", pattern: /gpt-manager/i },
@@ -129,14 +130,21 @@ export function stripShellComments(src) {
     .join("\n");
 }
 
-/** The text of `rel` a user can be shown, or null for a file that is not scanned. */
+/**
+ * Extensions of files that carry no text a user reads (images, fonts, archives). Every other extension must be one
+ * the scan understands: a new file type throws, so adding one forces a decision instead of shipping unscanned.
+ */
+const BINARY_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".woff", ".woff2", ".ttf", ".otf", ".zip", ".gz", ".wasm"]);
+
+/** The text of `rel` a user can be shown, or null for a file that is not scanned (the manifest, a binary asset). Throws on an unknown file type. */
 export function userFacingText(rel, raw) {
   if (NOT_SCANNED.has(rel)) return null;
-  const ext = path.extname(rel);
+  const ext = path.extname(rel).toLowerCase();
   if (WHOLE_TEXT.has(ext)) return raw;
   if (JS_LIKE.has(ext)) return stripJsComments(raw);
   if (ext === ".sh") return stripShellComments(raw);
-  return null;
+  if (BINARY_EXTENSIONS.has(ext)) return null;
+  throw new Error(`check-general-audience: ${rel} has file type "${ext}", which the scan neither reads nor lists as binary. Teach scripts/check-general-audience.mjs how to read it (or list it as binary) before shipping it.`);
 }
 
 /** Violations `{file, line, what}` over `relFiles` of `pluginDir`. */

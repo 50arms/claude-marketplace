@@ -366,6 +366,28 @@ test("DX-4232: a missing claude CLI refuses the publish and names CLAUDE_BIN", (
   }
 });
 
+// DX-4551: a shipped line that names the author's own setup refuses the publish before anything is validated, bumped or committed.
+for (const [what, file, line, reported] of [
+  ["a skill line", "skills/issue-workflow/SKILL.md", "\nask newms about this\n", /danxbot\/skills\/issue-workflow\/SKILL\.md:\d+: a personal GitHub account or marketplace name/],
+  ["a string a script prints", "scripts/inject-time.sh", '\necho "run update-claude-plugins"\n', /danxbot\/scripts\/inject-time\.sh:\d+: a personal shell alias/],
+]) {
+  test(`DX-4551: ${what} naming the author's setup refuses the publish: no commit, no bump, no manifest rewrite`, () => {
+    const dir = editedClone();
+    try {
+      fs.appendFileSync(path.join(dir, "danxbot", file), line);
+      const before = snapshot(dir);
+      const r = publish(dir);
+      assert.notEqual(r.status, 0, r.out);
+      assert.match(r.out, reported);
+      assert.match(r.out, /General-audience scan failed/);
+      assertUntouched(dir, before);
+      assert.deepEqual(r.claudeCalls, [], "the scan runs before validate and test");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 test("DX-4232: the manifest a publish commits lists hooks/register.tsx and every hooks/ and types/ file, so launch.mjs reports none of them damaged", () => {
   const dir = editedClone();
   try {

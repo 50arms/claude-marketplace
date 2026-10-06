@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BANNED, bannedHits, stripJsComments, stripShellComments, userFacingText, scanFiles, scanPlugin } from "../check-general-audience.mjs";
+import { bannedHits, stripJsComments, stripShellComments, userFacingText, scanFiles, scanPlugin } from "../check-general-audience.mjs";
 import { listPluginFiles } from "../write-integrity-manifest.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -21,8 +21,9 @@ test("the matcher catches each banned token and passes general text", () => {
   assert.equal(bannedHits("see `src/issues/x.ts`").length, 1);
   assert.equal(bannedHits("see DX-4556").length, 1);
   assert.equal(bannedHits("PLAN-17 Closed beta").length, 1);
-  assert.deepEqual(bannedHits("run `claude plugin update danxbot`; card id `<card id>`; PLAN-NNN"), []);
-  assert.ok(BANNED.length >= 8);
+  assert.deepEqual(bannedHits("run `claude plugin install danxbot`; card id `<card id>`; PLAN-NNN"), []);
+  assert.equal(bannedHits("owner newms87 / NEWMS").length, 1);
+  assert.deepEqual(bannedHits("const newMsgs = []; newMsg(x)"), [], "a code identifier is not the author's account name");
 });
 
 test("JS comments are stripped, strings, templates and regexes holding // or /* are not, line numbers hold", () => {
@@ -49,13 +50,16 @@ test("shell comments are stripped, a # inside quotes or glued to a word is not",
   assert.deepEqual(out.match(/DX-\d/g), ["DX-2", "DX-4"]);
 });
 
-test("each file type is read the way a user meets it; plugin.json and unknown types are not scanned", () => {
+test("each file type is read the way a user meets it; plugin.json and binary assets are skipped, any unknown type throws", () => {
   assert.equal(userFacingText("skills/x/SKILL.md", "DX-1 // not a comment"), "DX-1 // not a comment");
   assert.equal(userFacingText("hooks/hooks.json", '{"a":"DX-1"}'), '{"a":"DX-1"}');
   assert.equal(userFacingText("scripts/a.mjs", "x // DX-1").includes("DX-1"), false);
   assert.equal(userFacingText("scripts/a.sh", "x # DX-1").includes("DX-1"), false);
   assert.equal(userFacingText(".claude-plugin/plugin.json", "sageus"), null);
-  assert.equal(userFacingText("assets/a.png", "DX-1"), null);
+  assert.equal(userFacingText("assets/a.png", "DX-1"), null, "a listed binary asset carries no text");
+  for (const unknown of ["skills/x/notes.txt", "skills/x/t.yaml", "references/page.html", "scripts/a.cjs", "LICENSE"]) {
+    assert.throws(() => userFacingText(unknown, "newms"), /neither reads nor lists as binary/, `${unknown} must not ship unscanned`);
+  }
 });
 
 test("scanFiles reports file, line and what for each hit in a scanned surface, and nothing for a comment", () => {
@@ -83,13 +87,6 @@ test("the scan reads real code: launch.mjs keeps its printed text after strippin
   const raw = fs.readFileSync(path.join(REPO_ROOT, "danxbot", "scripts", "launch.mjs"), "utf8");
   const text = userFacingText("scripts/launch.mjs", raw);
   assert.match(text, /INTEGRITY FAILURE/);
-  assert.match(text, /claude plugin update danxbot/);
+  assert.match(text, /claude plugin install danxbot/);
   assert.ok(text.length === raw.length);
-});
-
-test("publish.sh runs the scan before it bumps anything", () => {
-  const sh = fs.readFileSync(path.join(REPO_ROOT, "scripts", "publish.sh"), "utf8");
-  const scan = sh.indexOf("check-general-audience.mjs");
-  assert.ok(scan > 0, "publish.sh calls the scan");
-  assert.ok(scan < sh.indexOf("# --- Bump + commit each plugin"), "before the bump");
 });

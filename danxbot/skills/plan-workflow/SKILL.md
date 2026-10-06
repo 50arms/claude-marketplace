@@ -12,7 +12,8 @@ throughout; this skill is the plan mechanics.
 
 1. Plan link in the prompt → that plan. Else list plans; your session's plan right → step 3.
    Else find it in the list; none → create one.
-2. Your session title is `{Name}: {plan id} {short title}` (`{Name}` your own short given name). `plan_connect({plan_id})` answers `naming` with the exact title and a free name: rename the
+2. Your session title is `{Name}: {plan id} {short title}` (`{Name}` your own short given name).
+   `plan_connect({plan_id})` answers `naming` with the exact title and a free name: rename the
    thread to it (desktop `set_session_title`; terminal: ask the person to `/rename`), then
    `plan_connect({plan_id, title})` again — the server refuses a wrong format or a name another live session holds.
 3. A session holds no dashboard key until its user approves it. `plan_connect` answering
