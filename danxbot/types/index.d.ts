@@ -262,14 +262,10 @@ declare module 'claude-code' {
       // The band is hidden for the session (the footer button or /danx-plan brings it back). Its own atom: refresh
       // replaces `view` whole, so a flag inside it would be reset by every refresh.
       dismissed: boolean
-      // keys of the writes under way (config busyKey): one per connect, disconnect, sign-in or browser open
+      // keys of the writes under way (config busyKey): one per connect, disconnect or sign-in
       busy: string[]
-      // The in-app browser tab this plugin owns, so a person's own tabs are never navigated.
-      tab: string | null
       // The session's title as the app last reported it, passed to `plan_connect`.
       title: string | null
-      // DX-4391: the approval URL last opened, so one permission request opens its page once.
-      approvalOpened: string | null
       // DX-4630: the sign-in request waiting for the person (its approval link and confirm code), drawn by the band and the pane; null when none.
       signInRequest: { url: string; code: string } | null
       // DX-4435: the model's undecided permission requests, oldest first.

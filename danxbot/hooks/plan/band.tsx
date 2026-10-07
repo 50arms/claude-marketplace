@@ -1,9 +1,10 @@
 import type { PlanView } from '../../types'
-import { APPROVE_SIGN_IN_LABEL, signInCodeLabel } from './approval'
+import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
 import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
+import { mdLink } from './links'
 import { permissionBadge } from './permission'
 import { bandText } from './pacing-format'
 import type { PanelModel } from './pacing-panel'
@@ -12,26 +13,22 @@ import { bandLabel, bandLabelCols, problemBadge, viewPercent } from './words'
 
 // DX-4420: the band button that opens the pane (it read `Plan`), and the other controls' labels the width budget counts.
 const OPEN_PANE_LABEL = 'Panel'
-const OPEN_LINK_LABEL = 'Open ↗'
+const OPEN_PLAN_LABEL = 'Open plan'
 const CLOSE_LABEL = '×'
 
-// The widest the Browser tab button reads (it flips to `Opening…`, shorter), for the label budget.
-const BROWSER_TAB_LABEL = 'Browser tab'
-
-// The band above the prompt: the plan line (indicator, label, then Panel / the open-problem count (DX-4420) / Browser tab / Open and a
-// close control hugging the right edge, the label truncating first).
-// `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text). `hasBrowser`: it has the
-// in-app browser (also the desktop today, but a different fact).
+// The band above the prompt: the plan line (indicator, label, then Panel / the open-problem count (DX-4420) / the permission
+// request / Open plan and a close control hugging the right edge, the label truncating first). DX-4630: every control that
+// opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
+// `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text).
 export function renderBand(
   E: any,
   hd: Handlers,
   v: PlanView,
   hasSvg: boolean,
-  hasBrowser: boolean,
   busy: string[],
-  // DX-4435: how many of the model's permission requests are still open.
-  permissionRequests: number,
-  // DX-4630: the sign-in request waiting for the person: its Link and confirm code are drawn at once.
+  // DX-4435: the model's permission requests still open: how many, and the newest (its approval link and code are drawn, DX-4630); null when none.
+  permission: { count: number; newest: ApprovalRequest } | null,
+  // DX-4630: the sign-in request waiting for the person: its link and confirm code are drawn at once.
   signIn: ApprovalRequest | null,
   // The band's width in columns (`bodyColumns`); absent in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
@@ -39,7 +36,7 @@ export function renderBand(
   // DX-4339: the pacing entries beside the controls: each enabled limit's usage against its target, coloured by level.
   pacing?: PanelModel,
 ): any {
-  const { Box, Text, Button, Link } = E
+  const { Box, Text, Button } = E
   const openPane = (
     <Button key="open-pane" onPress={() => hd.openPane()}>
       {OPEN_PANE_LABEL}
@@ -53,13 +50,13 @@ export function renderBand(
   const plan = v.connected
   // DX-4420: a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
   const badge = v.phase === 'error' ? '' : problemBadge(v)
-  const permissionLabel = permissionBadge(permissionRequests)
+  const permissionLabel = permission === null ? '' : permissionBadge(permission.count)
   // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
   const showBadge = plan !== null && badge !== ''
   // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
-  // DX-4630: the sign-in request's Link and code show while signed out, as the pane's do
+  // DX-4630: the sign-in request's link and code show while signed out, as the pane's do
   const approve = signedOut ? signIn : null
   // DX-4418: a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
@@ -70,12 +67,12 @@ export function renderBand(
   const controls = [
     ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
-    ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: signInCodeLabel(approve), isButton: false }] : []),
+    ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
-    ...(showBadge ? [{ label: badge, isButton: hasBrowser }] : []),
-    ...(permissionLabel !== '' ? [{ label: permissionLabel, isButton: true }] : []),
-    ...(linkUrl !== null && hasBrowser ? [{ label: BROWSER_TAB_LABEL, isButton: true }] : []),
-    ...(linkUrl !== null ? [{ label: OPEN_LINK_LABEL, isButton: false }] : []),
+    ...(showBadge ? [{ label: badge, isButton: false }] : []),
+    ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
+    ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
+    ...(linkUrl !== null ? [{ label: OPEN_PLAN_LABEL, isButton: false }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
   // DX-4626: the column model is the terminal's (a cell per character, `[ label ]` button chrome). The desktop draws proportional text
@@ -112,32 +109,15 @@ export function renderBand(
             {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
           </Button>
         )}
-        {approve !== null && <Link key="approve-sign-in" href={approve.url} label={APPROVE_SIGN_IN_LABEL} />}
-        {approve !== null && <Text key="sign-in-code">{signInCodeLabel(approve)}</Text>}
+        {approve !== null && mdLink(E, 'approve-sign-in', APPROVE_SIGN_IN_LABEL, approve.url)}
+        {approve !== null && <Text key="sign-in-code">{codeLabel(approve)}</Text>}
         {openPane}
-        {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab: a Button into the
-            in-app browser where there is one (the Browser tab path), a Link elsewhere. A Button carries no colour, so
-            the primary variant stands in for the warning tone. */}
-        {showBadge &&
-          plan !== null &&
-          (hasBrowser ? (
-            <Button key="open-problems" variant="primary" onPress={() => hd.openBrowserTab(needsYouUrl(plan))}>
-              {badge}
-            </Button>
-          ) : (
-            <Link href={needsYouUrl(plan)} label={badge} />
-          ))}
-        {permissionLabel !== '' && (
-          <Button key="open-permission" variant="primary" onPress={() => hd.openPermissionRequest()}>
-            {permissionLabel}
-          </Button>
-        )}
-        {linkUrl !== null && hasBrowser && (
-          <Button key="open-tab" onPress={() => hd.openBrowserTab(linkUrl)}>
-            {busyKey.isOpeningBrowser(busy) ? 'Opening…' : BROWSER_TAB_LABEL}
-          </Button>
-        )}
-        {linkUrl !== null && <Link href={linkUrl} label={OPEN_LINK_LABEL} />}
+        {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab. */}
+        {showBadge && plan !== null && mdLink(E, 'open-problems', badge, needsYouUrl(plan))}
+        {/* DX-4435: the newest open permission request: its approval page, with the code to check against the page. */}
+        {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
+        {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
+        {linkUrl !== null && mdLink(E, 'open-tab', OPEN_PLAN_LABEL, linkUrl)}
         {close}
       </Box>
     </Box>

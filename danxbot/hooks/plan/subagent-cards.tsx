@@ -1,6 +1,7 @@
 import type { ConnectedPlan, LiveSubagents, PlanView, SubagentRow } from '../../types'
 import { LIVE_REASON_MAX, SUBAGENTS_UNAVAILABLE_LINE, SUBAGENT_ACTIVITY_MAX, SUBAGENT_CARD_BACKGROUND, SUBAGENT_LABEL_MAX, SUBAGENT_STATE_COLOR, SUBAGENT_UNTITLED, WARNING, boardCardUrl, cardUrl, liveUnavailableLine } from './config'
 import { withLive } from './live'
+import { mdLink } from './links'
 import { compactCount, dollars, nestSubagents, runtime, visibleSubagents } from './subagents'
 import type { SubagentNode } from './subagents'
 import { ellipsize } from './words'
@@ -30,7 +31,7 @@ function titleOf(row: SubagentRow): string {
 }
 
 function card(E: any, v: PlanView, plan: ConnectedPlan, now: number, node: SubagentNode): any {
-  const { Box, Text, Link } = E
+  const { Box, Text } = E
   const { row, children } = node
   const ended = row.state !== 'running'
   const runs = runsAs(row)
@@ -64,11 +65,7 @@ function card(E: any, v: PlanView, plan: ConnectedPlan, now: number, node: Subag
       )}
       <Box flexDirection="row" gap={1}>
         {row.card === null && <Text dimColor>no card</Text>}
-        {row.card !== null && (
-          <Box flexShrink={0}>
-            <Link href={cardHref(v, plan, row.card.id)} label={row.card.id} />
-          </Box>
-        )}
+        {row.card !== null && mdLink(E, `card-link-${row.id}`, row.card.id, cardHref(v, plan, row.card.id))}
         {row.card !== null && row.card.title !== null && (
           <Text dimColor wrap="truncate-end">
             {ellipsize(row.card.title, SUBAGENT_LABEL_MAX)}

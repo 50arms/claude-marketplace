@@ -5,8 +5,8 @@ import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRo
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { approvalRequestOf, approvalSubject, approvalToast, signInShownNote, signInToast } from './plan/approval'
-import type { ApprovalRequest, OpenFailure } from './plan/approval'
+import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
+import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
 import { linkCardIds } from './plan/card-links'
@@ -14,10 +14,8 @@ import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
 import { footerLabel } from './plan/words'
-import { parsePreviewStart, parseTabId, parseTabsContext, parseTabsSelect } from './plan/browser-output'
 import {
   APPROVAL_TOAST_MS,
-  BROWSER_TOAST_MS,
   CALL_ERROR_MAX,
   COMMAND,
   CONNECT_ERROR_MAX,
@@ -54,7 +52,7 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { connectedPlanId, isServerNotConnected, isSignedOut, mcpText, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
+import { connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
 import type { Naming } from './plan/notes'
 import { connectNote, disconnectNote, parseNaming, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
@@ -84,15 +82,10 @@ const switching = atom({ plugin: 'danxbot', key: 'switching' } as const, false)
 // the band is hidden for the session: its own atom, since refresh replaces `view` whole
 const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
-// DX-4232: the browser tab id lives in $.state, never in a module variable (a module variable is
-// lost on reload and shared by nothing else).
-const tab = atom({ plugin: 'danxbot', key: 'tab' } as const, null as string | null)
 const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string | null)
-// DX-4391: the approval URL last opened (a permission request opens its page once).
-const approvalOpened = atom({ plugin: 'danxbot', key: 'approvalOpened' } as const, null as string | null)
 // DX-4630: the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
-// ends (approved, denied, expired and renewed, or the conversation ended). The band and the pane draw it as a Link and the code,
-// so the person never waits on a browser call to see them. Also what tells a watch is running.
+// ends (approved, denied, expired and renewed, or the conversation ended). The band and the pane draw it as a Markdown link and the
+// code the moment it exists. Also what tells a watch is running.
 const signInRequest = atom({ plugin: 'danxbot', key: 'signInRequest' } as const, null as ApprovalRequest | null)
 // DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
@@ -342,155 +335,18 @@ function notToldToast($: any, cause: unknown, text: string): void {
   $.ui.toast(`Could not tell the model: ${String(cause).slice(0, TOAST_ERROR_MAX)}${NOTE_MARKER}${text}`)
 }
 
-// One Claude_Browser call; an error result throws with its text.
-async function browserOk($: any, tool: string, args: object): Promise<string> {
-  const r = await $.mcp.call('Claude_Browser', tool, args)
-  if (r.isError) throw new Error(mcpText(r))
-  return mcpText(r)
-}
+// DX-4630: a permission request's toast: link and code together, for the longest the host allows. The band draws the same link and
+// code from `permissionRequests`; no page is opened by the plugin, the person follows the link.
+const toastPermission = ($: any, approval: ApprovalRequest) => $.ui.toast(permissionToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
 
-// An open's two outcomes: `failed` is null once the tab is in front, else the step and the cause;
-// `loaded` settles (never rejects) when the page has loaded: null, or the navigate failure.
-type Opening = { failed: OpenFailure | null; loaded: Promise<OpenFailure | null> }
-
-// Opens `url` in the ONE in-app browser tab this plugin owns (id kept in $.state), so the
-// person's own tabs are never navigated away. DX-4424: measured live (2026-10-04), every call that
-// acts on a page, a `navigate` included, costs ~2.5-3.5 s whatever the page is (the page itself
-// finished loading in 143 ms), while the tab calls (`tabs_context`, `tabs_select`, `tabs_create`) cost
-// ~0.8-1 s. So the tab is brought forward FIRST and the `navigate` is started, never awaited:
-//   tab already ours     tabs_select {tabId}, then navigate {url, tabId} (no tabs_context first). A
-//                        tabs_select that fails (the tab was closed, the pane is gone) is not an
-//                        error: the slow path below revalidates and replaces it;
-//   pane closed          preview_start {url}: the one call that opens the pane (a navigate with no
-//                        tabId is refused). It names the tab, which we keep (navOk must be true) and
-//                        it loads the page itself, so there is nothing left to wait for;
-//   pane open, tab ours  tabs_context, tabs_select, navigate {url, tabId};
-//   pane open, no tab    tabs_context, tabs_create, tabs_select, navigate {url, tabId}, keep its id.
-// Any step that fails or answers something unreadable is a failure: reading it as "no tabs" would
-// open a new tab on every press. `failed` is null once the tab is in front, else the step and the
-// cause. The caller holds the browser busy key through `failed` only, never through `loaded`.
-async function tryOpen($: any, url: string): Promise<Opening> {
-  let step = 'tabs_select'
-  try {
-    let tabId = await read($, tab)
-    if (tabId && !(await fronted($, tabId))) tabId = null
-    if (!tabId) {
-      step = 'tabs_context'
-      const ctx = parseTabsContext(await browserOk($, 'tabs_context', {}))
-      if (!ctx.browserOpen) {
-        step = 'preview_start'
-        const made = parsePreviewStart(await browserOk($, 'preview_start', { url }))
-        await update($, tab, () => made)
-        return { failed: null, loaded: Promise.resolve(null) }
-      }
-      tabId = await read($, tab)
-      if (!tabId || !ctx.tabs.some(t => t.id === tabId)) {
-        step = 'tabs_create'
-        const made = parseTabId(await browserOk($, 'tabs_create', { foreground: true }))
-        await update($, tab, () => made)
-        tabId = made
-      }
-      step = 'tabs_select'
-      parseTabsSelect(await browserOk($, 'tabs_select', { tabId }), tabId)
-    }
-    const loaded = browserOk($, 'navigate', { url, tabId }).then(
-      () => null,
-      (err: any): OpenFailure => ({ step: 'navigate', message: String(err?.message ?? err).slice(0, TOAST_ERROR_MAX) }),
-    )
-    return { failed: null, loaded }
-  } catch (err: any) {
-    return { failed: { step, message: String(err?.message ?? err).slice(0, TOAST_ERROR_MAX) }, loaded: Promise.resolve(null) }
-  }
-}
-
-// The stored tab brought forward, no tabs_context first. False when the host cannot front it (the
-// answer is an error or not "Fronted tab <id>."): the caller then re-reads the tabs.
-async function fronted($: any, tabId: string): Promise<boolean> {
-  try {
-    parseTabsSelect(await browserOk($, 'tabs_select', { tabId }), tabId)
-    return true
-  } catch {
-    return false
-  }
-}
-
-// The advice first, the (cut) detail last: a cut sentence must not end the toast.
-const openFailedToast = (failed: OpenFailure) => `Browser ${failed.step} failed: use the link instead. (${failed.message})`
-
-// The plan's own open (the band and pane buttons). The open holds the browser busy key until the tab
-// is in front, so the buttons read "Opening…" and a second press while it runs does nothing; the page
-// then loads in the tab on its own, and a failure of that load is toasted when it comes.
-async function openInBrowser($: any, url: string): Promise<void> {
-  let loaded: Promise<OpenFailure | null> = Promise.resolve(null)
-  await withBusy($, busyKey.browser, async () => {
-    $.ui.toast('Opening the plan in the browser…', { timeoutMs: BROWSER_TOAST_MS })
-    const opening = await tryOpen($, url)
-    loaded = opening.loaded
-    if (opening.failed === null) $.ui.toast('Plan opened in the browser tab', { timeoutMs: BROWSER_TOAST_MS })
-    else $.ui.toast(openFailedToast(opening.failed))
-  })
-  void loaded.then(failed => failed && $.ui.toast(openFailedToast(failed)))
-}
-
-// DX-4391: a PERMISSION request's approval page open (a sign-in's link is drawn without a browser, showSignInRequest). ONE toast tells the outcome, with the confirm code and the
-// link in it either way, for 60 s (the host's longest): a toast replaces the one before it, so a
-// failure toast shown first would be gone before anyone read the cause. The plugin's browser call
-// may be refused (PLAN-23 records that the host asks the person to allow a site first, which a plugin
-// cannot raise; not yet seen live for this open), which is what the cause then says. A browser already
-// busy with another open is told too. DX-4424: the toast comes once the tab is in front; a later
-// failure of the page load toasts again with the same code and link. `forget` is showApproval's: any failure clears its
-// once-per-URL record so the next request retries.
-async function openApprovalPage($: any, approval: ApprovalRequest, forget: () => Promise<unknown>): Promise<OpenFailure | null> {
-  let opening: Opening = { failed: { step: 'busy', message: 'another browser open is in progress' }, loaded: Promise.resolve(null) }
-  await withBusy($, busyKey.browser, async () => {
-    opening = await tryOpen($, approval.url)
-  })
-  if (opening.failed !== null) await forget()
-  $.ui.toast(approvalToast(approval, opening.failed), { timeoutMs: APPROVAL_TOAST_MS })
-  void opening.loaded.then(async failed => {
-    if (failed === null) return
-    await forget()
-    $.ui.toast(approvalToast(approval, failed), { timeoutMs: APPROVAL_TOAST_MS })
-  })
-  return opening.failed
-}
-
-// DX-4627: what the model reads after a tool answer that carries an approval request: whether the plugin opened the page, so the
-// model opens it only when the plugin could not (two tabs otherwise). `failed` is showApproval's answer.
-function approvalOpenNote(approval: ApprovalRequest, failed: OpenFailure | null): string {
-  if (failed === null) return `The danxbot plugin already opened the approval page (${approval.url}) in the browser. Do not open it yourself; show the user confirm code ${approval.code}.`
-  return `The danxbot plugin could not open the approval page (${failed.step}: ${failed.message}). Open ${approval.url} yourself in the browser if you have one, and show the user confirm code ${approval.code}.`
-}
-
-// DX-4391 / DX-4423: a permission request's page opens once and its code is shown (the model's `request_permission`, or the
-// band's permission button): the same URL is not reopened while its open stands. Recorded before the open so a
-// repeat during the open does not start a second one, and cleared when the open fails (a refused site permission, a pane
-// not ready), so the next attempt retries; the toast carries the link meanwhile. `force` is an explicit press of the band's
-// permission button: it opens again even for a URL already recorded. The open is not awaited: its browser calls take about 1 to 3.5 s each
-// (DX-4424) and the caller, a model's tool answer or a button, must not wait on them. A failure past tryOpen (the busy
-// key, the toast itself) must still leave the link.
-// DX-4627: it answers how the open ended (null: the page is in front, or this URL's open already stands), so a model's tool
-// answer can tell the model whether to open the page itself; a button caller does not await it.
-async function showApproval($: any, approval: ApprovalRequest, force = false): Promise<OpenFailure | null> {
-  if (!force && (await read($, approvalOpened)) === approval.url) return null
-  await update($, approvalOpened, () => approval.url)
-  const forget = () => update($, approvalOpened, cur => (cur === approval.url ? null : cur))
-  return openApprovalPage($, approval, forget).catch(async (err: any) => {
-    await forget()
-    $.ui.toast(`Approve ${approvalSubject(approval)} in the browser: ${approval.url} (confirm code ${approval.code})`, { timeoutMs: APPROVAL_TOAST_MS })
-    return { step: 'open', message: String(err?.message ?? err).slice(0, TOAST_ERROR_MAX) }
-  })
-}
-
-// DX-4627: the tool answer, with the note on whether the plugin opened the page, as context the model reads after the result.
-const withOpenNote = (ran: any, approval: ApprovalRequest, failed: OpenFailure | null) => ({ ...ran, context: [...(ran.context ?? []), approvalOpenNote(approval, failed)] })
+// DX-4630: the tool answer, with the note that the person already has the link and code, as context the model reads after the result.
+const withPermissionNote = (ran: any, approval: ApprovalRequest) => ({ ...ran, context: [...(ran.context ?? []), permissionShownNote(approval)] })
 
 // DX-4630: the sign-in request's toast: link and code together, for the longest the host allows.
 const toastSignIn = ($: any, approval: ApprovalRequest) => $.ui.toast(signInToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
 
-// DX-4630: a sign-in request, drawn the moment it exists: the band and the pane read it from $.state and draw its Link and confirm
-// code, and the toast carries both. No browser call comes first (each cost 1 to 3.5 s, DX-4424, so the person waited 10 to 30 s
-// for a link they could already follow): the Link opens the page itself.
+// DX-4630: a sign-in request, drawn the moment it exists: the band and the pane read it from $.state and draw its link and confirm
+// code, and the toast carries both. The plugin opens no page: the person follows the link.
 async function showSignInRequest($: any, approval: ApprovalRequest): Promise<void> {
   await update($, signInRequest, () => approval)
   toastSignIn($, approval)
@@ -625,7 +481,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
 }
 
 // DX-4423 / DX-4548: the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
-// `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's and the pane's Link and code, no browser call). Each call waits
+// `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's and the pane's link and code). Each call waits
 // there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
 // request stays open for as long as its session lives (DX-4530). The status of the request cannot be read any other way: its
 // claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
@@ -754,23 +610,15 @@ async function dismissBand($: any): Promise<void> {
   await update($, dismissed, () => true)
 }
 
-// The band's permission button: the newest open request's page again, with its code (a press is an explicit open).
-async function openNewestPermissionRequest($: any): Promise<void> {
-  const newest = (await read($, permissionRequests)).at(-1)
-  if (newest !== undefined) await showApproval($, asApproval(newest), true)
-}
-
 function handlers($: any): Handlers {
   return {
     refresh: () => refresh($, true),
     openPane: () => openPlanPane($),
-    openBrowserTab: url => openInBrowser($, url),
     connect: plan => connect($, plan),
     showPlan: () => showPlan($),
     dismissBand: () => dismissBand($),
     disconnect: plan => disconnect($, plan),
     signIn: () => startSignIn($),
-    openPermissionRequest: () => openNewestPermissionRequest($),
     toggleSwitch: () => update($, switching, cur => !cur),
     cancelSwitch: () => update($, switching, () => false),
     pickPlan: value => update($, pick, () => value),
@@ -1445,7 +1293,7 @@ async function onCommand($: any) {
 }
 
 // The model connected (or moved) this session: show it at once. A signed-out session's `approval_required`
-// answer draws the approval Link and the code in the band and the pane (no browser call); the plan page is not opened (there is
+// answer draws the approval link and the code in the band and the pane; the plan page is not opened (there is
 // no connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
@@ -1475,8 +1323,8 @@ async function onPlanConnect($: any, e: any, next: any) {
   return withSignInNote(ran, approval)
 }
 
-// DX-4435: the model asked for a permission: open the approval page once with its code and the permissions asked for
-// (showApproval), and keep the request for the band until it is decided.
+// DX-4435: the model asked for a permission: keep the request for the band, which draws its approval link and code at once
+// (DX-4630: no page is opened by the plugin), and toast both.
 async function onRequestPermission($: any, e: any, next: any) {
   const ran = await next(e)
   const request = permissionRequestOf(ran.text, e.permissions)
@@ -1484,7 +1332,8 @@ async function onRequestPermission($: any, e: any, next: any) {
   await update($, permissionRequests, cur => [...cur.filter(r => r.publicId !== request.publicId), request])
   await syncPermissionPoll($)
   const approval = asApproval(request)
-  return withOpenNote(ran, approval, await showApproval($, approval))
+  toastPermission($, approval)
+  return withPermissionNote(ran, approval)
 }
 
 // DX-4499: a sub-agent started or stopped: read the dashboard now (not forced: a load within MIN_GAP_MS of the last stands), and once
@@ -1810,14 +1659,15 @@ async function drawBand($: any, e: any, next: any) {
   // a dismissed band draws nothing, whatever the connection (the footer button brings it back)
   if (await read($, dismissed)) return next(e)
   const v = await read($, view)
+  const permissions = await read($, permissionRequests)
+  const newestPermission = permissions.at(-1)
   return renderBand(
     $.ui.resolve(e),
     handlers($),
     v,
     e.surface === 'desktop',
-    e.surface === 'desktop',
     await read($, busy),
-    (await read($, permissionRequests)).length,
+    newestPermission === undefined ? null : { count: permissions.length, newest: asApproval(newestPermission) },
     await read($, signInRequest),
     e.props.bodyColumns,
     buildPanel(await read($, panel)),
@@ -1856,7 +1706,6 @@ async function drawPane($: any, e: any) {
     working: await read($, busy),
     isSwitching: await read($, switching),
     now: await $.clock.now(),
-    hasBrowser: e.surface === 'desktop',
     hasSvg: e.surface === 'desktop',
     live: await read($, live),
     pacing: buildPanel(await read($, panel)),

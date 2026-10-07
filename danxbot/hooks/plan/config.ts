@@ -94,9 +94,6 @@ export const SUBAGENT_UNTITLED = 'Sub-agent'
 // DX-4499: the section's one line when the dashboard has no sub-agents route yet (an older dashboard than DX-4498's).
 export const SUBAGENTS_UNAVAILABLE_LINE = 'This dashboard does not report sub-agents yet.'
 
-// How long the short browser-open toasts stay (the default is 4000).
-export const BROWSER_TOAST_MS = 2_500
-
 // DX-4391: the host caps a toast at 60 s; the approval toast carries the confirm code the person compares with the page.
 export const APPROVAL_TOAST_MS = 60_000
 
@@ -164,11 +161,9 @@ export const EMPTY: PlanView = {
   revokedBy: null,
 }
 
-// What `busy` holds while writes are under way: a list of keys, one per connect, disconnect, sign-in or browser open.
+// What `busy` holds while writes are under way: a list of keys, one per connect, disconnect or sign-in.
 export const busyKey = {
   connect: (planId: number) => `connect:${planId}`,
-  browser: 'browser:open',
-  isOpeningBrowser: (busy: string[]) => busy.includes('browser:open'),
   disconnect: (planId: number) => `disconnect:${planId}`,
   signIn: 'sign-in',
   isSigningIn: (busy: string[]) => busy.includes('sign-in'),

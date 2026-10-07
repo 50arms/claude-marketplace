@@ -1,11 +1,12 @@
 // DX-4435 (parent DX-4432): the model's `request_permission` (danx-dashboard MCP, DX-4434) answers at once with an approval URL and
-// confirm code. The plugin opens that page once and toasts the code and the permissions asked for, the band counts the requests
-// still open and a press opens the newest one's page, and a request leaves the count when it is decided or expires.
+// confirm code. DX-4630: the plugin opens no page; it toasts the link, the code and the permissions asked for, the band counts the requests
+// still open and links the newest one's page with its code, and a request leaves the count when it is decided or expires.
 import { describe, expect, test } from 'claude-code/testing'
 
 import { PERMISSION_POLL_MS } from '../hooks/plan/config'
 import { claimStatus, permissionRequestOf } from '../hooks/plan/permission'
-import { dashboard, startSession, toldModel } from './plan-kit'
+import { permissionToast } from '../hooks/plan/approval'
+import { SURFACES, browserCalls, dashboard, linksOf, startSession, toldModel } from './plan-kit'
 import { RELAY_MARKER } from '../hooks/relay/config'
 
 const URL_A = 'https://danxbot.example/connect/aaaa'
@@ -16,7 +17,8 @@ const answer = (state: string, url: string, code: string) =>
 const TOOL = 'mcp__plugin_danxbot_danx-dashboard__request_permission'
 const CALL = (permissions: string[]) => ({ tool: TOOL, permissions, reason: 'to read members' }) as any
 const BAND = { plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const navigations = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && (c.tool === 'navigate' || c.tool === 'preview_start'))
+// the band's permission link label, or undefined when none is drawn
+const permissionLabel = (links: { key: string | undefined; label: string }[]) => links.find(l => l.key === 'open-permission')?.label
 const claims = (d: any) => d.api.filter((a: any) => /\/claim$/.test(a.path))
 
 // DX-4625: a decision reaches an IDLE session as a submitted prompt (the plan event bridge's own delivery, relay/delivery.ts), which wakes it
@@ -69,57 +71,64 @@ describe('claimStatus', () => {
 })
 
 describe('request_permission', () => {
-  test('opens the approval page once and toasts the code and the permissions asked for', async ($, on) => {
-    const d = dashboard(on, { browserClosed: true })
+  test('toasts the link, the code and the permissions asked for at once, opens no page, and tells the model so', async ($, on) => {
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1'), answer('approval_pending', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     d.calls.length = 0
-    await $.tool.call(CALL(['team.members.view', 'boards.view']))
+    const ran = await $.tool.call(CALL(['team.members.view', 'boards.view']))
     await d.clock.settle()
-    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_A])
-    expect(d.toasts.at(-1)).toBe(`Approve permission team.members.view, boards.view in the browser. Confirm code CODE1 must match the page: ${URL_A}`)
+    expect(browserCalls(d)).toEqual([])
+    expect(d.toasts.at(-1)).toBe(permissionToast({ url: URL_A, code: 'CODE1', permissions: ['team.members.view', 'boards.view'] }))
+    expect(d.toasts.at(-1)).toContain('permission team.members.view, boards.view')
+    expect(d.toasts.at(-1)).toContain(`${URL_A} and check that confirm code CODE1 matches`)
     expect(d.toastTimeouts.at(-1)).toBe(60_000)
-    // the same request asked again (the MCP answers pending) is not opened a second time
+    const note = ran.context.filter((c: string) => c.includes('approval link'))
+    expect(note).toHaveLength(1)
+    expect(note[0]).toContain('Do not open the link yourself')
+    expect(note[0]).toContain('in a notification')
+    expect(note[0]).not.toContain('band')
     await $.tool.call(CALL(['team.members.view', 'boards.view']))
     await d.clock.settle()
-    expect(navigations(d)).toHaveLength(1)
+    expect(browserCalls(d)).toEqual([])
   })
 
   test('a refusal opens nothing and counts nothing', async ($, on) => {
-    const d = dashboard(on, { browserClosed: true })
+    const d = dashboard(on)
     answering(on, [JSON.stringify({ ok: false, status: 400, body: { error: 'already_held' } })])
     await startSession($, d, 'desktop')
     d.calls.length = 0
     await $.tool.call(CALL(['team.members.view']))
     await d.clock.settle()
-    expect(navigations(d)).toHaveLength(0)
+    expect(browserCalls(d)).toEqual([])
     const band = await $.ui.mount(BAND)
     expect(await band.find({ key: 'open-permission' })).toBeUndefined()
   })
 
-  test('the band counts the open requests and a press opens the newest one with its code', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
-    answering(on, [answer('approval_required', URL_A, 'CODE1'), answer('approval_required', URL_B, 'CODE2')])
-    await startSession($, d, 'desktop')
-    const band = await $.ui.mount(BAND)
-    expect(await band.find({ key: 'open-permission' })).toBeUndefined()
-    await $.tool.call(CALL(['team.members.view']))
-    expect((await band.find({ key: 'open-permission' }))?.text).toBe('⚠ 1 permission request')
-    await $.tool.call(CALL(['boards.view']))
-    await d.clock.settle()
-    expect((await band.find({ key: 'open-permission' }))?.text).toBe('⚠ 2 permission requests')
-    d.calls.length = 0
-    d.toasts.length = 0
-    await band.press({ key: 'open-permission' })
-    await d.clock.settle()
-    expect(navigations(d).map((c: any) => c.args.url)).toEqual([URL_B])
-    expect(d.toasts.at(-1)).toContain('CODE2')
-    expect(d.toasts.at(-1)).toContain('boards.view')
-  })
+  for (const surface of SURFACES) {
+    test(`on ${surface} the band counts the open requests and its link goes to the newest one, with its code beside it`, async ($, on) => {
+      const d = dashboard(on)
+      answering(on, [answer('approval_required', URL_A, 'CODE1'), answer('approval_required', URL_B, 'CODE2')])
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ ...BAND, surface })
+      expect(await band.find({ key: 'open-permission' })).toBeUndefined()
+      await $.tool.call(CALL(['team.members.view']))
+      expect(permissionLabel(await linksOf(band))).toBe('⚠ 1 permission request')
+      await $.tool.call(CALL(['boards.view']))
+      await d.clock.settle()
+      expect(permissionLabel(await linksOf(band))).toBe('⚠ 2 permission requests')
+      const link = (await linksOf(band)).find(l => l.key === 'open-permission')
+      expect(link?.href).toBe(URL_B)
+      expect(await band.find({ type: 'Button', key: 'open-permission' })).toBeUndefined()
+      expect(await band.findAll({ type: 'Link' })).toEqual([])
+      expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code CODE2')
+      expect(browserCalls(d)).toEqual([])
+    })
+  }
 
   for (const status of ['approved', 'claimed', 'denied', 'expired', 'notFound'] as const) {
     test(`a request the claim route says is ${status} leaves the band at the next refresh`, async ($, on) => {
-      const d = dashboard(on, { tabs: ['seed'] })
+      const d = dashboard(on)
       answering(on, [answer('approval_required', URL_A, 'CODE1')])
       await startSession($, d, 'desktop')
       const band = await $.ui.mount(BAND)
@@ -137,7 +146,7 @@ describe('request_permission', () => {
 
   // DX-4530: a request has no expiry clock: it waits for the person until the requesting session ends
   test('a request still pending is kept past the old 10-minute window, and the model is told nothing', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     const band = await $.ui.mount(BAND)
@@ -151,17 +160,17 @@ describe('request_permission', () => {
   })
 
   test('asking again for a request already open keeps one request in the band', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1'), answer('approval_pending', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     const band = await $.ui.mount(BAND)
     await $.tool.call(CALL(['team.members.view']))
     await $.tool.call(CALL(['team.members.view']))
-    expect((await band.find({ key: 'open-permission' }))?.text).toBe('⚠ 1 permission request')
+    expect(permissionLabel(await linksOf(band))).toBe('⚠ 1 permission request')
   })
 
   test('a session that lost its key drops its requests at the next refresh', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     const band = await $.ui.mount(BAND)
@@ -174,7 +183,7 @@ describe('request_permission', () => {
   })
 
   test('a claim that fails for another reason keeps the request, to be asked again', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     const band = await $.ui.mount(BAND)
@@ -187,7 +196,7 @@ describe('request_permission', () => {
   })
 
   test('with no request nothing is claimed', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     await startSession($, d, 'desktop')
     await d.clock.advance(120_000)
     await d.clock.settle()
@@ -196,7 +205,7 @@ describe('request_permission', () => {
 
   // DX-4530: the poll runs every PERMISSION_POLL_MS while a request is open, and stops once none is
   test('an open request is claimed on the fast poll, and claiming stops once it is decided', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     await $.tool.call(CALL(['team.members.view']))
@@ -215,7 +224,7 @@ describe('request_permission', () => {
   })
 
   test('a session start (a reload, or a new process) resumes the fast poll for a request still open', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     await $.tool.call(CALL(['team.members.view']))
@@ -235,7 +244,7 @@ describe('request_permission', () => {
 // DX-4530: the requesting session is told the decision once, in its chat (the MCP only frees its slot, DX-4435 comment 10745)
 describe('the model is told the decision', () => {
   async function decide($: any, on: any, set: (d: any) => void, asked = ['team.members.view']) {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1'), answer('approval_pending', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     const band = await $.ui.mount(BAND)
@@ -276,7 +285,7 @@ describe('the model is told the decision', () => {
   })
 
   test('a turn in flight gets a row, never a prompt (the same decision as a relayed event)', async ($, on) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
     await $.tool.call(CALL(['team.members.view']))

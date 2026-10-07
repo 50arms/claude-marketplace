@@ -81,7 +81,7 @@ for (const surface of SURFACES) {
 
     test('a compaction in the middle of a turn is told on the next tool result, once, and the next prompt does not repeat it', async ($, on) => {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
-      const d = dashboard(on, {})
+      const d = dashboard(on)
       on('classic.SessionStart', () => ({}) as any)
       await startSession($, d, surface)
       await $.prompt.submit({ text: 'go' })
@@ -95,7 +95,7 @@ for (const surface of SURFACES) {
 
     test("a sub-agent's tool result takes nothing of the main session's start; the next main-loop result carries it once", async ($, on) => {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
-      const d = dashboard(on, {})
+      const d = dashboard(on)
       on('classic.SessionStart', () => ({}) as any)
       await startSession($, d, surface)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
@@ -108,7 +108,7 @@ for (const surface of SURFACES) {
     test('a denied tool call leaves the pending start for the next result', async ($, on) => {
       let answer: any = { deny: 'not allowed' }
       on('tool.call', () => answer)
-      const d = dashboard(on, {})
+      const d = dashboard(on)
       on('classic.SessionStart', () => ({}) as any)
       await startSession($, d, surface)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
@@ -119,7 +119,7 @@ for (const surface of SURFACES) {
 
     test('the start records the session id SessionStart was given, not the one $.session.id() answers', async ($, on) => {
       on('classic.SessionStart', () => ({}) as any)
-      const d = dashboard(on, {})
+      const d = dashboard(on)
       await startSession($, d, surface)
       d.world.plansStatus = 500
       // the connection record on disk is for sess-own; the start is for sess-other, which holds none: a dashboard fault is silent for it
@@ -132,7 +132,7 @@ for (const surface of SURFACES) {
     test('work that throws after the start was taken is one warning line; the stamp stays and the prompt and the tool result go on', async ($, on) => {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       on('classic.SessionStart', () => ({}) as any)
-      const d = dashboard(on, {})
+      const d = dashboard(on)
       await startSession($, d, surface)
       d.world.fsError = 'disk gone'
       const r = await firstPrompt($, 'startup')

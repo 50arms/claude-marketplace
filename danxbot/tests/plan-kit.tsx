@@ -1,5 +1,5 @@
 // Shared stand-ins for the `claude plugin test danxbot` suites: a fake danx-dashboard MCP server
-// (danxbot_api + plan_connect), a fake Claude_Browser, and recorders for the engine calls the
+// (danxbot_api + plan_connect), and recorders for the engine calls the
 // plugin makes beneath it (toast, status, session.append, ui.open, command.register).
 import { expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
@@ -10,15 +10,6 @@ import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/rel
 export const SURFACES = ['terminal', 'desktop'] as const
 
 const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError: false })
-// tabs_create as the desktop app words it (captured 2026-10-03): with the pane open, a JSON object
-// then prose; with it closed, prose only
-export const TABS_CREATE_OPEN = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "tab-1",\n  "reused": false,\n  "type": "browser"\n}\nOpened tab tab-1 in the background — the user\'s current tab stays in front. Use `navigate` with tabId "tab-1" to load a URL; front it with `tabs_select` when the user should look.'
-export const TABS_CREATE_CLOSED = 'No tab was created. The Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.'
-
-// captured from the desktop app (2026-10-03): the two closed answers of tabs_context, the refusal of
-// a navigate with no tabId on a closed pane, and preview_start, the call that opens the pane
-export const TABS_CONTEXT_CLOSED = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.'
-export const TABS_CONTEXT_CLOSED_LATER = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane is not open.'
 // DX-4317: the dashboard origin the fixture answers (`dashboard_url`): deliberately not the production
 // one, so a link built on a constant instead of the answer fails every test that checks a href.
 // DX-4234: the registry's effective text the fixture answers for an event (a distinct text per event, so a wrong event shows)
@@ -45,8 +36,6 @@ export const NAMING_NEEDED = {
   suggestedName: 'Aarav',
   suggestedTitle: 'Aarav: PLAN-23 Danxbot plugin on native Claude Code',
 }
-export const NAVIGATE_REFUSED = `navigation to ${DASHBOARD_URL} was denied or failed`
-export const PREVIEW_START_OK = '{\n  "serverId": "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0",\n  "tabId": "seed",\n  "reused": true,\n  "type": "browser",\n  "navOk": true\n}\nBrowser pane opened. Use serverId "preview-local_55730ba1-986f-4b18-8e6a-1118327bf3e0" with read_page / computer / navigate.'
 
 // DX-4423 / DX-4418: what the danx-dashboard MCP (0.1.225, session-access.ts and key-revoked-halt.ts) answers every tool but
 // plan_connect while the session holds no key: an error result. SIGN_IN_HALT is a session that never signed in, KEY_LAPSED_HALT
@@ -161,9 +150,6 @@ export function dashboard(
     dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky'
-    browser?: 'ok' | 'denied'
-    // the Browser pane is closed (tabs_context says browserOpen: false) until a navigate opens it
-    browserClosed?: boolean
     // `sessionListenerAttached` on GET /api/plans: a state (any string, so an unknown one can be tried; default
     // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
     // as readCallerSessionOverlay does.
@@ -185,19 +171,6 @@ export function dashboard(
     disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected' | 'noLeftPlan'
     // the disconnect call takes this long on the fake clock
     disconnectTakesMs?: number
-    // which closed text tabs_context carries (the app words it two ways)
-    closedText?: 'not-yet-open' | 'not-open'
-    // preview_start: opens the pane (default), loads nothing (navOk false), or is rejected outright
-    previewStart?: 'ok' | 'navNotOk' | 'rejected'
-    // tabs_context says the pane is open but tabs_create answers the pane-closed text
-    tabsCreate?: 'ok' | 'closed'
-    // navigate takes this long on the fake clock (a slow open)
-    navigateTakesMs?: number
-    // a tab entry without a string tabId in tabs_context
-    badTabEntry?: boolean
-    tabs?: string[]
-    // what tabs_context answers: the list (default), an error result, or text that is no tab list
-    tabsContext?: 'list' | 'error' | 'garbage'
     listFails?: boolean
     // DX-4423: the session holds no dashboard key: every danxbot_api call is the MCP's error result (the first call after a revoke
     // answers KEY_LAPSED_HALT, a session that never signed in SIGN_IN_HALT; 'revoked' answers KEY_REVOKED_HALT to every tool and never asks) and plan_connect runs the request-and-approve dance
@@ -267,7 +240,6 @@ export function dashboard(
   // DX-4586: a call that never settles (hangFirstLoad) waits on this, not on an hour of fake clock: advancing an hour fires every
   // timer in it (a poll a minute, a report a minute), real time that times a test out under machine load. `release()` lets it answer.
   const hung = (() => { let release!: () => void; const promise = new Promise<void>(r => { release = r }); return { promise, release } })()
-  let browserOpen = !options.browserClosed
   const calls: { server: string; tool: string; args: any }[] = []
   const api: { method: string; path: string; body?: any; query?: any }[] = []
   const toasts: string[] = []
@@ -722,49 +694,6 @@ export function dashboard(
       }
       return { value: hostLimited(route(e.args.method, e.args.path, e.args.body, e.args.query)) }
     }
-    if (e.server === 'Claude_Browser') {
-      const out = (text: string, isError = false) => ({ value: { content: [{ type: 'text', text }], isError } })
-      if (e.tool === 'tabs_context' && options.tabsContext === 'error') return out('browser is not available', true)
-      if (e.tool === 'tabs_context' && options.tabsContext === 'garbage') return out('Tabs: one, two')
-      // the real results: a JSON object followed by prose (captured from the desktop app)
-      if (e.tool === 'tabs_context') {
-        if (!browserOpen) {
-          return out(options.closedText === 'not-open' ? TABS_CONTEXT_CLOSED_LATER : TABS_CONTEXT_CLOSED)
-        }
-        if (options.badTabEntry) return out('{"browserOpen": true, "tabs": [{"origin": "x"}]}\nThe Browser pane is currently displayed.')
-        const tabs = (options.tabs ?? []).map(
-          (tabId, i) => `    {\n      "tabId": "${tabId}",\n      "origin": "${DASHBOARD_URL}",\n      "isActive": ${i === 0}\n    }`,
-        )
-        return out(`{\n  "browserOpen": true,\n  "tabs": [\n${tabs.join(',\n')}\n  ]\n}\nThe Browser pane is currently displayed.`)
-      }
-      if (e.tool === 'tabs_create') {
-        if (options.tabsCreate === 'closed') return out(TABS_CREATE_CLOSED)
-        options.tabs = [...(options.tabs ?? []), 'tab-7']
-        return out(TABS_CREATE_OPEN.replace('tab-1', 'tab-7'))
-      }
-      // captured from the desktop app (2026-10-04): "Fronted tab tab-2." and, for an id it does not hold, the error "Tab tab-99 not found."
-      if (e.tool === 'tabs_select') {
-        if (!(options.tabs ?? []).includes(e.args.tabId)) return out(`Tab ${e.args.tabId} not found.`, true)
-        return out(`Fronted tab ${e.args.tabId}.`)
-      }
-      if (e.tool === 'navigate' && options.browser === 'denied') return out('navigation to this site is not allowed', true)
-      if (e.tool === 'navigate') {
-        // a navigate with no tabId on a closed pane is refused (the app, 2026-10-03): only preview_start opens it
-        if (!e.args.tabId && !browserOpen) return out(NAVIGATE_REFUSED, true)
-        if (options.navigateTakesMs) await clock.sleep(options.navigateTakesMs)
-        return out(`navigated to ${e.args.url}`)
-      }
-      if (e.tool === 'preview_start') {
-        if (options.previewStart === 'rejected') return { deny: 'preview_start is not available to plugins' }
-        if (options.browser === 'denied') return out('navigation to this site is not allowed', true)
-        if (options.navigateTakesMs) await clock.sleep(options.navigateTakesMs)
-        if (options.previewStart === 'navNotOk') return out(PREVIEW_START_OK.replace('"navOk": true', '"navOk": false'))
-        browserOpen = true
-        options.tabs = ['seed']
-        return out(PREVIEW_START_OK)
-      }
-      return out('ok')
-    }
     return { deny: `no stand-in for ${e.server}` }
   })
   // what the plugin keeps in $.state (a test has no `$.state` of its own to read back)
@@ -933,7 +862,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, tabs: () => options.tabs ?? [], setBrowser: (mode: 'ok' | 'denied') => void (options.browser = mode), failList: (on = true) => void (options.listFails = on), closeTabs: () => void (options.tabs = []), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
@@ -1007,13 +936,23 @@ export async function expectIndicator(band: any, surface: string, percent: numbe
   }
 }
 
-// DX-4420: the band's open-problem count: a Button on the desktop, a Link on the terminal; its text, or undefined
-// when none is drawn. The one finder, so a test never depends on which of the two it is.
-export async function problemBadgeOf(ui: any): Promise<string | undefined> {
-  const all = [...(await ui.findAll({ type: 'Button' })), ...(await ui.findAll({ type: 'Link' }))]
-  const el = all.find((e: any) => String(e.text ?? e.props?.label ?? '').includes('⚠'))
-  return el && (el.text ?? el.props.label)
+// DX-4630: every link the band and the pane draw is a Markdown link `[label](url)` (no `Link` element). The one finder: each Markdown
+// element's link, as {key, label, href}, the label as written in the markdown (escapes included).
+export async function linksOf(ui: any): Promise<{ key: string | undefined; label: string; href: string }[]> {
+  return (await ui.findAll({ type: 'Markdown' })).map((m: any) => {
+    const match = /^\[(.*)\]\((.*)\)$/s.exec(m.props.text)
+    if (match === null) throw new Error(`a Markdown that is not one link: ${m.props.text}`)
+    return { key: m.key as string | undefined, label: match[1]!, href: match[2]! }
+  })
 }
+
+// the band's open-problem count: its text, or undefined when none is drawn
+export async function problemBadgeOf(ui: any): Promise<string | undefined> {
+  return (await linksOf(ui)).find(l => l.key === 'open-problems')?.label
+}
+
+// DX-4630: the plugin opens no page itself: every call the fake dashboard host saw for the in-app browser's server, which stays empty
+export const browserCalls = (d: { calls: { server: string }[] }) => d.calls.filter(c => c.server === 'Claude_Browser')
 
 // The model's plan_connect as the host runs it (the engine has no implementation of its own): the dashboard connects the plan the call names,
 // and the call answers. Registered before the test first uses `$`, like every hook.
