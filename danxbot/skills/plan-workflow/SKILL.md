@@ -19,8 +19,9 @@ throughout; this skill is the plan mechanics.
 3. A session holds no dashboard key until its user approves it. `plan_connect` answering
    `approval_required` (or `approval_pending`) is not a failure: show the user the confirm code
    and the approval URL, and once they approve call `plan_connect` again. The plugin shows the
-   link and code in its band at once and opens nothing: the person clicks the link, so never open
-   the URL yourself (two tabs). The same holds for `request_permission`. Every other dashboard tool answers "not signed in" until then.
+   link and code at once and opens nothing: the person clicks the link, so never open the URL
+   yourself (two tabs). The same holds for `request_permission`. Every other dashboard tool
+   answers "not signed in" until then.
 4. Orient from the connect briefing, else read the plan's records, architecture and cards,
    plus one batch read of its In-Progress/open-problem cards and the newest handoff comment.
 5. Follow `plan_connect`'s browser instruction as written.

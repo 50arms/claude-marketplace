@@ -41,7 +41,7 @@ for (const surface of SURFACES) {
 
 for (const surface of SURFACES) {
   describe(`the page links of the band and the pane are built on the session dashboard, on ${surface}`, () => {
-    test('the Browser tab and Open in browser tab links go to the answered origin and the plugin calls no browser tool', async ($, on) => {
+    test('the Open plan links go to the answered origin and the plugin calls no browser tool', async ($, on) => {
       const d = dashboard(on, { dashboardUrl: OTHER })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })

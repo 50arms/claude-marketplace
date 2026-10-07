@@ -1,5 +1,5 @@
 import type { LiveSubagents, PlanView, RelayState, StatusBreakdown } from '../../types'
-import { APPROVE_SIGN_IN_LABEL, signInCodeLabel } from './approval'
+import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
@@ -180,7 +180,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         : [
             <Box key="approve-sign-in" flexDirection="row" gap={1}>
               {mdLink(E, 'approve-sign-in-link', APPROVE_SIGN_IN_LABEL, m.signIn.url)}
-              <Text>{signInCodeLabel(m.signIn)}</Text>
+              <Text>{codeLabel(m.signIn)}</Text>
             </Box>,
           ]),
       <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
@@ -224,7 +224,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       {/* a connected view always has its breakdown (loadPlan errors without one); the guard only narrows the type */}
       {v.statusBreakdown && progress(E, v.statusBreakdown, m.hasSvg)}
       <Box flexDirection="row" gap={1}>
-        {mdLink(E, 'open-plan', 'Open in browser tab', planUrl(plan))}
+        {mdLink(E, 'open-plan', 'Open plan', planUrl(plan))}
         <Button key="switch" dimColor onPress={() => hd.toggleSwitch()}>
           Switch plan
         </Button>

@@ -23,8 +23,8 @@ describe('plan band', () => {
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     const labelOf = async (ui: any) => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
     expect(await labelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Panel 10, `⚠ 3` 8, Browser tab 11, × 6
-    expect(await labelOf(narrow)).toBe('PLAN-23 · A very long plan name…')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Panel 10, `⚠ 3` 8, Open plan 9, × 6
+    expect(await labelOf(narrow)).toBe('PLAN-23 · A very long plan name t…')
     expect((await narrow.find({ key: 'open-pane' }))?.text).toBe('Panel')
   })
   test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {
@@ -78,7 +78,7 @@ describe('plan band', () => {
     }
   })
 
-  test('connected: ref, name, the open-problem count and one Browser tab link to the plan, the same on both surfaces', async ($, on) => {
+  test('connected: ref, name, the open-problem count and one Open plan link to the plan, the same on both surfaces', async ($, on) => {
     const d = dashboard(on)
     for (const surface of SURFACES) {
       await startSession($, d, surface)
@@ -88,7 +88,7 @@ describe('plan band', () => {
       expect(await ui.find({ type: 'Button', key: 'open-tab' })).toBeUndefined()
       expect(await linksOf(ui)).toEqual([
         { key: 'open-problems', label: '⚠ 3', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` },
-        { key: 'open-tab', label: 'Browser tab', href: `${DASHBOARD_URL}/plans/23` },
+        { key: 'open-tab', label: 'Open plan', href: `${DASHBOARD_URL}/plans/23` },
       ])
       await ui.unmount()
     }

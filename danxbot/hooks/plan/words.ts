@@ -47,7 +47,7 @@ export function ellipsize(text: string, max: number): string {
 const NAME_SEP = ' · '
 
 // DX-4420: the columns the band's label may take: its width less the indicator and each control. A Button draws `[ label ]`
-// chrome on the terminal; a Link none. The terminal's widths are the model (UNVERIFIED on the desktop's native buttons and 16px donut): the spare columns
+// chrome on the terminal; a Markdown link none. The terminal's widths are the model (UNVERIFIED on the desktop's native buttons and 16px donut): the spare columns
 // are the margin, and the label's own `truncate-end` is the second line of defence.
 export function bandLabelCols(columns: number, controls: readonly { label: string; isButton: boolean }[]): number {
   const controlCols = controls.reduce((n, c) => n + c.label.length + (c.isButton ? BAND_CONTROL_CHROME_COLS : 0) + BAND_GAP_COLS, 0)

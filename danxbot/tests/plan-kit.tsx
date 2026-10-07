@@ -1,5 +1,5 @@
 // Shared stand-ins for the `claude plugin test danxbot` suites: a fake danx-dashboard MCP server
-// (danxbot_api + plan_connect), a fake Claude_Browser, and recorders for the engine calls the
+// (danxbot_api + plan_connect), and recorders for the engine calls the
 // plugin makes beneath it (toast, status, session.append, ui.open, command.register).
 import { expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
@@ -937,12 +937,12 @@ export async function expectIndicator(band: any, surface: string, percent: numbe
 }
 
 // DX-4630: every link the band and the pane draw is a Markdown link `[label](url)` (no `Link` element). The one finder: each Markdown
-// element's link, as {key, label, href}, its markdown escapes undone.
+// element's link, as {key, label, href}, the label as written in the markdown (escapes included).
 export async function linksOf(ui: any): Promise<{ key: string | undefined; label: string; href: string }[]> {
   return (await ui.findAll({ type: 'Markdown' })).map((m: any) => {
     const match = /^\[(.*)\]\((.*)\)$/s.exec(m.props.text)
     if (match === null) throw new Error(`a Markdown that is not one link: ${m.props.text}`)
-    return { key: m.key as string | undefined, label: match[1]!.replace(/\\(.)/g, '$1'), href: match[2]! }
+    return { key: m.key as string | undefined, label: match[1]!, href: match[2]! }
   })
 }
 

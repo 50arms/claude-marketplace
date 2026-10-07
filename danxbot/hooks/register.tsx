@@ -84,8 +84,8 @@ const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string | null)
 // DX-4630: the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
-// ends (approved, denied, expired and renewed, or the conversation ended). The band and the pane draw it as a Link and the code,
-// so the person never waits on a browser call to see them. Also what tells a watch is running.
+// ends (approved, denied, expired and renewed, or the conversation ended). The band and the pane draw it as a Markdown link and the
+// code the moment it exists. Also what tells a watch is running.
 const signInRequest = atom({ plugin: 'danxbot', key: 'signInRequest' } as const, null as ApprovalRequest | null)
 // DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
@@ -345,9 +345,8 @@ const withPermissionNote = (ran: any, approval: ApprovalRequest) => ({ ...ran, c
 // DX-4630: the sign-in request's toast: link and code together, for the longest the host allows.
 const toastSignIn = ($: any, approval: ApprovalRequest) => $.ui.toast(signInToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
 
-// DX-4630: a sign-in request, drawn the moment it exists: the band and the pane read it from $.state and draw its Link and confirm
-// code, and the toast carries both. No browser call comes first (each cost 1 to 3.5 s, DX-4424, so the person waited 10 to 30 s
-// for a link they could already follow): the Link opens the page itself.
+// DX-4630: a sign-in request, drawn the moment it exists: the band and the pane read it from $.state and draw its link and confirm
+// code, and the toast carries both. The plugin opens no page: the person follows the link.
 async function showSignInRequest($: any, approval: ApprovalRequest): Promise<void> {
   await update($, signInRequest, () => approval)
   toastSignIn($, approval)
@@ -482,7 +481,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
 }
 
 // DX-4423 / DX-4548: the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
-// `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's and the pane's Link and code, no browser call). Each call waits
+// `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's and the pane's link and code). Each call waits
 // there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
 // request stays open for as long as its session lives (DX-4530). The status of the request cannot be read any other way: its
 // claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
@@ -1294,7 +1293,7 @@ async function onCommand($: any) {
 }
 
 // The model connected (or moved) this session: show it at once. A signed-out session's `approval_required`
-// answer draws the approval Link and the code in the band and the pane (no browser call); the plan page is not opened (there is
+// answer draws the approval link and the code in the band and the pane; the plan page is not opened (there is
 // no connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
   const ran = await next(e)
@@ -1668,8 +1667,7 @@ async function drawBand($: any, e: any, next: any) {
     v,
     e.surface === 'desktop',
     await read($, busy),
-    permissions.length,
-    newestPermission === undefined ? null : asApproval(newestPermission),
+    newestPermission === undefined ? null : { count: permissions.length, newest: asApproval(newestPermission) },
     await read($, signInRequest),
     e.props.bodyColumns,
     buildPanel(await read($, panel)),

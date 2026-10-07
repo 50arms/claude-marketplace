@@ -94,8 +94,6 @@ export const SUBAGENT_UNTITLED = 'Sub-agent'
 // DX-4499: the section's one line when the dashboard has no sub-agents route yet (an older dashboard than DX-4498's).
 export const SUBAGENTS_UNAVAILABLE_LINE = 'This dashboard does not report sub-agents yet.'
 
-// How long the short browser-open toasts stay (the default is 4000).
-
 // DX-4391: the host caps a toast at 60 s; the approval toast carries the confirm code the person compares with the page.
 export const APPROVAL_TOAST_MS = 60_000
 

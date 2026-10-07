@@ -5,7 +5,7 @@
 
 // Markdown's own characters in a label are escaped so a problem's statement or a plan's name reads as written; the label is one
 // line (a blank line would end the link).
-const escapeLabel = (label: string) => label.replace(/\s+/g, ' ').replace(/[\`*_[\]<>~|!&]/g, c => `\${c}`)
+const escapeLabel = (label: string) => label.replace(/\s+/g, ' ').replace(/[\\`*_[\]<>~|!&]/g, c => '\\' + c)
 
 // A link's destination ends at an unescaped `)` or a space, so those are percent-encoded.
 const encodeUrl = (url: string) => url.replace(/[()<>\s]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)

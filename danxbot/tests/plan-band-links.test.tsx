@@ -1,4 +1,4 @@
-// DX-4521 / DX-4630: the band's page link (Browser tab) goes to the plan's page when connected, else the dashboard's plans list. It is
+// DX-4521 / DX-4630: the band's page link (Open plan) goes to the plan's page when connected, else the dashboard's plans list. It is
 // a Markdown link on every surface, so the app opens it in the in-app browser as it opens a link in the thread; the plugin makes no
 // browser tool call. The open-problem count's link is separate (its own Needs You URL).
 import { describe, expect, test } from 'claude-code/testing'
@@ -18,11 +18,11 @@ async function pageLinks(ui: any) {
 
 for (const surface of SURFACES) {
   describe(`band links on ${surface}`, () => {
-    test('connected: one Browser tab link to the plan', async ($, on) => {
+    test('connected: one Open plan link to the plan', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await pageLinks(band)).toEqual([{ key: 'open-tab', label: 'Browser tab', href: PLAN }])
+      expect(await pageLinks(band)).toEqual([{ key: 'open-tab', label: 'Open plan', href: PLAN }])
       expect(browserCalls(d)).toEqual([])
     })
 
@@ -30,7 +30,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await pageLinks(band)).toEqual([{ key: 'open-tab', label: 'Browser tab', href: PLANS }])
+      expect(await pageLinks(band)).toEqual([{ key: 'open-tab', label: 'Open plan', href: PLANS }])
     })
 
     test('no event listener: the link stays', async ($, on) => {

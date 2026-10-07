@@ -1,5 +1,5 @@
 import type { PlanView } from '../../types'
-import { APPROVE_SIGN_IN_LABEL, signInCodeLabel } from './approval'
+import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
 import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
@@ -13,11 +13,11 @@ import { bandLabel, bandLabelCols, problemBadge, viewPercent } from './words'
 
 // DX-4420: the band button that opens the pane (it read `Plan`), and the other controls' labels the width budget counts.
 const OPEN_PANE_LABEL = 'Panel'
-const BROWSER_TAB_LABEL = 'Browser tab'
+const OPEN_PLAN_LABEL = 'Open plan'
 const CLOSE_LABEL = '×'
 
 // The band above the prompt: the plan line (indicator, label, then Panel / the open-problem count (DX-4420) / the permission
-// request / Browser tab and a close control hugging the right edge, the label truncating first). DX-4630: every control that
+// request / Open plan and a close control hugging the right edge, the label truncating first). DX-4630: every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text).
 export function renderBand(
@@ -26,11 +26,9 @@ export function renderBand(
   v: PlanView,
   hasSvg: boolean,
   busy: string[],
-  // DX-4435: how many of the model's permission requests are still open, and the newest one (its approval link and code are drawn
-  // at once, DX-4630), null when none.
-  permissionRequests: number,
-  newestPermission: ApprovalRequest | null,
-  // DX-4630: the sign-in request waiting for the person: its Link and confirm code are drawn at once.
+  // DX-4435: the model's permission requests still open: how many, and the newest (its approval link and code are drawn, DX-4630); null when none.
+  permission: { count: number; newest: ApprovalRequest } | null,
+  // DX-4630: the sign-in request waiting for the person: its link and confirm code are drawn at once.
   signIn: ApprovalRequest | null,
   // The band's width in columns (`bodyColumns`); absent in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
@@ -52,13 +50,13 @@ export function renderBand(
   const plan = v.connected
   // DX-4420: a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
   const badge = v.phase === 'error' ? '' : problemBadge(v)
-  const permissionLabel = permissionBadge(permissionRequests)
+  const permissionLabel = permission === null ? '' : permissionBadge(permission.count)
   // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
   const showBadge = plan !== null && badge !== ''
   // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
-  // DX-4630: the sign-in request's Link and code show while signed out, as the pane's do
+  // DX-4630: the sign-in request's link and code show while signed out, as the pane's do
   const approve = signedOut ? signIn : null
   // DX-4418: a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
@@ -69,12 +67,12 @@ export function renderBand(
   const controls = [
     ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
-    ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: signInCodeLabel(approve), isButton: false }] : []),
+    ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
     { label: OPEN_PANE_LABEL, isButton: true },
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
-    ...(permissionLabel !== '' ? [{ label: permissionLabel, isButton: false }] : []),
-    ...(permissionLabel !== '' && newestPermission !== null ? [{ label: signInCodeLabel(newestPermission), isButton: false }] : []),
-    ...(linkUrl !== null ? [{ label: BROWSER_TAB_LABEL, isButton: false }] : []),
+    ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
+    ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
+    ...(linkUrl !== null ? [{ label: OPEN_PLAN_LABEL, isButton: false }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
   // DX-4626: the column model is the terminal's (a cell per character, `[ label ]` button chrome). The desktop draws proportional text
@@ -112,14 +110,14 @@ export function renderBand(
           </Button>
         )}
         {approve !== null && mdLink(E, 'approve-sign-in', APPROVE_SIGN_IN_LABEL, approve.url)}
-        {approve !== null && <Text key="sign-in-code">{signInCodeLabel(approve)}</Text>}
+        {approve !== null && <Text key="sign-in-code">{codeLabel(approve)}</Text>}
         {openPane}
         {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab. */}
         {showBadge && plan !== null && mdLink(E, 'open-problems', badge, needsYouUrl(plan))}
         {/* DX-4435: the newest open permission request: its approval page, with the code to check against the page. */}
-        {permissionLabel !== '' && newestPermission !== null && mdLink(E, 'open-permission', permissionLabel, newestPermission.url)}
-        {permissionLabel !== '' && newestPermission !== null && <Text key="permission-code">{signInCodeLabel(newestPermission)}</Text>}
-        {linkUrl !== null && mdLink(E, 'open-tab', BROWSER_TAB_LABEL, linkUrl)}
+        {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
+        {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
+        {linkUrl !== null && mdLink(E, 'open-tab', OPEN_PLAN_LABEL, linkUrl)}
         {close}
       </Box>
     </Box>

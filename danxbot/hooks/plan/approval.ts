@@ -31,17 +31,17 @@ export const approvalSubject = (a: ApprovalRequest) => (a.permissions && a.permi
 // DX-4630: a permission request's toast: the link and code together (the person follows the link; the plugin opens nothing).
 export const permissionToast = (a: ApprovalRequest) => `Approve ${approvalSubject(a)}: open ${a.url} and check that confirm code ${a.code} matches.`
 
-// What the model reads after a tool answer that carries a permission request: the plugin shows the person the link and code in the
-// band, so the model opens nothing and only says so.
+// What the model reads after a tool answer that carries a permission request: the plugin toasts the link and code to the person (the
+// band may be dismissed), so the model opens nothing and only says so.
 export const permissionShownNote = (a: ApprovalRequest) =>
-  `The danxbot plugin already shows the person the approval link (${a.url}) and confirm code ${a.code} in the band. Do not open the link yourself; tell the user to approve with confirm code ${a.code}.`
+  `The danxbot plugin already showed the person the approval link (${a.url}) and confirm code ${a.code} in a notification. Do not open the link yourself; tell the user to approve with confirm code ${a.code}.`
 
 // DX-4630: a sign-in request's toast: the link and code together, no browser involved (the person follows the link).
 export const signInToast = (a: ApprovalRequest) => `Approve this session: open ${a.url} and check that confirm code ${a.code} matches.`
 
-// The label of the band's and the pane's sign-in link, and the words beside the code.
+// The label of the band's and the pane's sign-in link, and the words beside a request's code.
 export const APPROVE_SIGN_IN_LABEL = 'Approve sign-in ↗'
-export const signInCodeLabel = (a: ApprovalRequest) => `code ${a.code}`
+export const codeLabel = (a: ApprovalRequest) => `code ${a.code}`
 
 // What the model reads after a tool answer that carries a sign-in request: the plugin has put the link and code in front of the
 // person already, so the model only has to say so (and opens nothing).
