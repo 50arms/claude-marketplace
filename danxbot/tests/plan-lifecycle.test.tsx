@@ -175,7 +175,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
   // longer than any wait the two tests below make, so the claim is still out when they end, and ending it advances the clock only this far
   const HELD_MS = LOCK_STALE_MS + 5_000
   const withSlowClaim = async ($: any, on: any) => {
-    const d = dashboard(on, { tabs: ['seed'] })
+    const d = dashboard(on)
     on('tool.call', { tool: PERMISSION_CALL.tool }, () => ({ result: {}, text: JSON.stringify({ state: 'approval_required', approvalUrl: 'https://danxbot.example/connect/aaaa', confirmCode: 'CODE1', instruction: 'Show the code.' }), isError: false }) as any)
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
