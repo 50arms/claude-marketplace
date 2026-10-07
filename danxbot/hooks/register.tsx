@@ -63,7 +63,7 @@ import { signInStep } from './plan/sign-in'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
-import { CURSOR_PREFIX, MIN_ROUND_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
+import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
 import { IDLE, deliveryMode, eventRow, requestSent, rowAppended, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
@@ -136,7 +136,8 @@ const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, n
 // call answers late be ignored.
 // `told`: the last failure line told to the session by this run (the same text is told once until a wait succeeds): per run, so an ended run
 // can never clear or set what the new run has told.
-type RelayRun = { planId: number; dead: boolean; told: string | null }
+// `lacking`: the run's failed waits in a row whose evidence is "the plugin server lists tools but not plan_events_wait" (count, and when the first came).
+type RelayRun = { planId: number; dead: boolean; told: string | null; lacking: { count: number; since: number } | null }
 let relayRun: RelayRun | null = null
 // The plan whose relay the server stopped, or that is signed out: it is not started again until something asks (a connect, the
 // model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
@@ -192,6 +193,16 @@ async function loadView($: any) {
   return typeof seen === 'string' ? { ...loaded, dashboardUrl: seen } : loaded
 }
 
+// DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one) for Sign in to ask
+// for again; a loaded view knows its own.
+async function applyLoaded($: any, loaded: any): Promise<void> {
+  await update($, view, cur => (loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }))
+  // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
+  await syncRelay($)
+  await syncRuntimeClock($)
+  await syncLive($, false)
+}
+
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked
 // while one runs makes it run once more, so a write's result is never left unread. The gate is
 // $.state, not module variables (lost on reload).
@@ -217,23 +228,14 @@ async function refresh($: any, force = false): Promise<void> {
       try {
         // DX-4233: EVERY load (not only the first) is an error shown at LOAD_DEADLINE_MS, so a hung call does not hold the pane's state or the relay's
         // start. The call itself is not abandoned to run beside the next load: this refresh keeps the lock for up to LOAD_ORPHAN_WAIT_MS more and
-        // applies its answer if it comes then, so at most one load runs.
+        // applies its answer if it comes then, so at most one load runs (through that wait; past it the call is given up).
         const load = loadView($)
         let v = await withinDeadline($, LOAD_DEADLINE_MS, load, () => null)
         if (v === null) {
           await update($, view, cur => ({ ...cur, phase: 'error', error: `the plan did not load within ${LOAD_DEADLINE_MS / 1000}s` }))
           v = await withinDeadline($, LOAD_ORPHAN_WAIT_MS, load, () => null)
         }
-        if (v !== null) {
-          const loaded = v
-          // DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one)
-          // for Sign in to ask for again; a loaded view knows its own
-          await update($, view, cur => (loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }))
-          // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
-          await syncRelay($)
-          await syncRuntimeClock($)
-          await syncLive($, false)
-        }
+        if (v !== null) await applyLoaded($, v)
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -1072,7 +1074,7 @@ function startRelay($: any, planId: number): void {
   if (relayHalted !== null && relayHalted !== planId) relayHalted = null
   if (relayHalted === planId) return
   stopRelay()
-  const run: RelayRun = { planId, dead: false, told: null }
+  const run: RelayRun = { planId, dead: false, told: null, lacking: null }
   relayRun = run
   detach($, 'Plan event relay', relayLoop($, run))
 }
@@ -1085,11 +1087,16 @@ type RelayWatch = 'done' | 'retry'
 // DX-4233: at most one watch runs; a burst of triggers (sub-agent events while the dashboard is down) shares its answer instead of each issuing a
 // plan read. A handle, so a module variable.
 let relayWatching: Promise<RelayWatch> | null = null
+// A failure of the watch itself is toasted ONCE here (detach), however many callers share it, and answers `retry` to all of them.
 function watchRelay($: any): Promise<RelayWatch> {
   if (relayWatching === null) {
-    relayWatching = watchRelayOnce($).finally(() => {
-      relayWatching = null
-    })
+    const watch = watchRelayOnce($)
+    detach($, 'Plan event relay watch', watch)
+    relayWatching = watch
+      .catch((): RelayWatch => 'retry')
+      .finally(() => {
+        relayWatching = null
+      })
   }
   return relayWatching
 }
@@ -1243,8 +1250,8 @@ async function deliverAll($: any, run: RelayRun, events: RelayEvent[], from: str
 }
 
 // DX-4233: the engine words a tool the server lacks the same as a server that is not connected ("no connected MCP tool"), so that answer is told
-// apart by the session's tool list: the plugin server's tools listed without the relay's is an old pinned server; none listed (the server is not
-// connected yet or has gone), or a list that cannot be read (not bound), is a failure to retry.
+// apart by the session's tool list: the plugin server's tools listed without the relay's is evidence of an old pinned server; none listed (the
+// server is not connected yet or has gone), or a list that cannot be read (not bound), is none.
 async function serverLacksRelayTool($: any): Promise<boolean> {
   let names: string[]
   try {
@@ -1256,13 +1263,26 @@ async function serverLacksRelayTool($: any): Promise<boolean> {
   return ownTools.length > 0 && !ownTools.includes(toolName(RELAY_TOOL))
 }
 
-async function waitForEvents($: any, planId: number, cursor: string | null): Promise<WaitAnswer> {
+// DX-4233: that evidence, over OLD_SERVER_AFTER_FAILURES failed waits in a row spanning OLD_SERVER_AFTER_MS, and the dashboard (asked afresh) saying the
+// session is still signed in and on its plan: a list that has not caught up with a sign-in or a grant, or a key lost mid-session (the list shrinks
+// to the bootstrap tools), is the run's retry, never the end of the plan's relay.
+async function oldServerProven($: any, run: RelayRun): Promise<boolean> {
+  const now = await $.clock.now()
+  run.lacking = run.lacking === null ? { count: 1, since: now } : { count: run.lacking.count + 1, since: run.lacking.since }
+  if (run.lacking.count < OLD_SERVER_AFTER_FAILURES || now - run.lacking.since < OLD_SERVER_AFTER_MS) return false
+  return (await sessionPlan($)).kind === 'connected'
+}
+
+async function waitForEvents($: any, run: RelayRun, cursor: string | null): Promise<WaitAnswer> {
   const path = await read($, transcript)
   try {
-    return readWaitAnswer(await $.mcp.call(SERVER, RELAY_TOOL, waitArgs(planId, cursor, path)))
+    const got = readWaitAnswer(await $.mcp.call(SERVER, RELAY_TOOL, waitArgs(run.planId, cursor, path)))
+    run.lacking = null
+    return got
   } catch (err: any) {
     const message = errMessage(err)
-    if (isServerNotConnected(message) && (await serverLacksRelayTool($))) return { kind: 'old-server' }
+    if (!isServerNotConnected(message) || !(await serverLacksRelayTool($))) run.lacking = null
+    else if (await oldServerProven($, run)) return { kind: 'old-server' }
     return classifyText(message)
   }
 }
@@ -1313,7 +1333,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
     // DX-4233: the loop ends with its run; what a late answer would say is gated in setRelay, saveCursor and deliverAll
     while (!run.dead) {
       const startedAt = await $.clock.now()
-      const got = await waitForEvents($, run.planId, cursor)
+      const got = await waitForEvents($, run, cursor)
       // a /clear or a resume gives the process another session id: keep the cursor under the one in use now
       const sid = await $.session.id()
       if (sid !== keyedBy) {
@@ -1486,7 +1506,7 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   await trackAgent($, e.agent_id, isStart)
   if (!isStart) await markMeasured($)
   detach($, 'Plan refresh', refresh($))
-  detach($, 'Plan event relay watchdog', watchRelay($))
+  void watchRelay($)
   // only a session connected to a plan has a Sub-agents section to settle
   if ((await read($, view)).connected !== null) settleSubagents($)
   // DX-4508: start the live child for a new sub-agent, or stop it with the last one
@@ -1750,7 +1770,7 @@ async function onTurnComplete($: any, e: any, next: any) {
     if (wake !== null) detach($, 'Waking the session', wakeSession($, wake))
   }
   detach($, 'Plan refresh', refresh($))
-  detach($, 'Plan event relay watchdog', watchRelay($))
+  void watchRelay($)
   return r
 }
 

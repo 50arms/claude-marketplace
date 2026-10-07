@@ -189,17 +189,76 @@ for (const surface of SURFACES) {
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] later'])
     })
 
-    test('a not-connected answer from a server that lists its tools without plan_events_wait is an old server: its fix, no retry', async ($, on) => {
+    const notConnected = (d: any, n: number) => {
+      for (let i = 0; i < n; i++) d.relay.server.script.push(() => ({ deny: NOT_CONNECTED }) as any)
+    }
+
+    test('a not-connected answer from a server that lists its tools without plan_events_wait stays a retry for 8 s, then is an old server: its fix', async ($, on) => {
       const d = dashboard(on)
       d.world.tools = 'old'
-      d.relay.server.script.push(() => ({ deny: NOT_CONNECTED }) as any)
+      notConnected(d, 10)
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      // the third failure (at 3 s) is not yet the evidence: the tool list is dynamic, a refetch after sign-in or a grant takes a while
+      await d.clock.advance(BACKOFF_MS[0] + BACKOFF_MS[1])
+      expect(d.relay.calls).toHaveLength(3)
+      expect(await text(pane)).toContain('relay retrying')
+      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+      await d.clock.advance(BACKOFF_MS[2] - 1)
+      expect(await text(pane)).toContain('relay retrying')
+      await d.clock.advance(1)
       expect(await text(pane)).toContain('relay stopped')
-      expect(toldModel(d)).toHaveLength(1)
-      expect(toldModel(d)[0]).toContain(`Fix: ${OLD_SERVER_FIX}`)
+      expect(toldModel(d).join(' ')).toContain(`Fix: ${OLD_SERVER_FIX}`)
+      expect(d.relay.calls).toHaveLength(4)
       await d.clock.advance(60_000)
-      expect(d.relay.calls).toHaveLength(1)
+      expect(d.relay.calls).toHaveLength(4)
+    })
+
+    test('the list gaining plan_events_wait while the waits fail (after a sign-in and connect) streams: no halt, no old-server line', async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      answerPlanConnect(on, d)
+      d.world.tools = 'old'
+      notConnected(d, 3)
+      await startSession($, d, surface)
+      await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any)
+      await d.clock.advance(2_000)
+      d.world.tools = 'full'
+      await d.clock.advance(60_000)
+      expect(d.relay.calls.length).toBeGreaterThanOrEqual(4)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await text(pane)).not.toContain('relay stopped')
+      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+      d.relay.push({ cursor: 'c1', text: 'streams' })
+      await d.clock.settle()
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] streams'])
+    })
+
+    test('the evidence is counted in a row: a list that catches up between failures starts the count again', async ($, on) => {
+      const d = dashboard(on)
+      d.world.tools = 'old'
+      notConnected(d, 8)
+      await startSession($, d, surface)
+      await d.clock.advance(2_000)
+      d.world.tools = 'full'
+      await d.clock.advance(1_500)
+      d.world.tools = 'old'
+      await d.clock.advance(16_500)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await text(pane)).toContain('relay retrying')
+      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+    })
+
+    test('a key lost mid-session (only the bootstrap tools listed) is never read as an old server', async ($, on) => {
+      const d = dashboard(on)
+      d.world.tools = 'old'
+      notConnected(d, 12)
+      await startSession($, d, surface)
+      await d.clock.advance(1_000)
+      d.world.signedOut = 'revoked'
+      await d.clock.advance(60_000)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await text(pane)).not.toContain('relay stopped')
+      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
     })
 
     test('a not-connected answer when the tool list cannot be read (unbound) is retried', async ($, on) => {

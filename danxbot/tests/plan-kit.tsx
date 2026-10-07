@@ -291,6 +291,8 @@ export function dashboard(
     // binds (claude.exe: the session holder is empty until the session is built), where `$.mcp.call` and `$.tool.list` throw; `unbind()` /
     // `bind()` model that. Every kit session is bound unless a test unbinds it.
     bound: true,
+    // DX-4233: `$.agent.list()` never answers until `release()`
+    agentListHangs: false,
     // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
     tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
@@ -596,6 +598,9 @@ export function dashboard(
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       const haltText = () => (world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT)
+      // DX-4233: a scripted wait answer is the engine's own (a refusal it makes before the server sees the call: not connected, not bound), so it
+      // comes first, whatever the key's state
+      if (e.tool === 'plan_events_wait' && server.script.length > 0) return planEventsWait(e.args)
       // a revoked key stops EVERY tool, plan_connect included, and asks for nothing
       if (world.signedOut === 'revoked' || (world.signedOut !== null && e.tool !== 'plan_connect')) {
         return { value: { content: [{ type: 'text', text: haltText() }], isError: true } }
@@ -826,8 +831,10 @@ export function dashboard(
     return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) } as any
   })
   on('session.id', () => ({ value: world.sessionId }) as any)
-  on('agent.list', () => {
+  on('agent.list', async () => {
     agentLists.count++
+    // DX-4233: the engine's list never answers (a step of a refresh AFTER its plan load, which holds the refresh lock)
+    if (world.agentListHangs) await hung.promise
     return { value: world.agents } as any
   })
   // DX-4508: the live reader child (`$.process.spawn`): each start is recorded with its argv; a test queues what it prints

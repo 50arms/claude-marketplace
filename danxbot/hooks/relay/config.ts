@@ -31,6 +31,13 @@ export const RELAY_READ_DEADLINE_MS = 8_000
 // wait in turn, on the clock, then the watchdog (a turn's end, a sub-agent's start or stop) is what is left. About five minutes.
 export const RELAY_START_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 60_000, 60_000, 60_000] as const
 
+// DX-4233: the server's tool list is dynamic (it changes at sign-in, at a permission grant and at a key loss, and the engine refetches it a while
+// after), so "the plugin server lists tools, none is plan_events_wait" on ONE failed wait proves nothing. A wait failing so is an old pinned
+// server only once it has failed so this many times in a row, over at least this long (longer than a refetch), with the session still signed in
+// and on its plan.
+export const OLD_SERVER_AFTER_FAILURES = 3
+export const OLD_SERVER_AFTER_MS = 8_000
+
 // An answer that comes back sooner than this with no events is not a wait: the loop sleeps the rest, so a server that answers an
 // empty list at once cannot make it spin.
 export const MIN_ROUND_MS = 1_000

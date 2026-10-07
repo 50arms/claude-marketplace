@@ -2,7 +2,7 @@
 // connects, and the plan-list cap.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
+import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
 import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -167,6 +167,23 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await d.clock.settle()
     expect(loadsOf(d)).toBe(2)
     expect(await text(pane)).toContain('Connected: PLAN-23')
+  })
+
+  test('a step after the load that never settles holds the lock until it is stale: a Refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agentListHangs = true
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    await d.clock.settle()
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    expect(loadsOf(d)).toBe(1)
+    await d.clock.advance(LOCK_STALE_MS - 1_000)
+    await pane.press({ key: 'refresh' })
+    expect(loadsOf(d)).toBe(1)
+    await d.clock.advance(2_000)
+    // the press that takes the lock over runs the whole refresh, whose live step never settles again: it is not awaited
+    void pane.press({ key: 'refresh' })
+    await d.clock.advance(1)
+    expect(loadsOf(d)).toBe(2)
   })
 
   test('a load past the deadline that answers within the wait is applied: no second load', async ($, on) => {
