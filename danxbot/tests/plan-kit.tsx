@@ -291,6 +291,11 @@ export function dashboard(
     // binds (claude.exe: the session holder is empty until the session is built), where `$.mcp.call` and `$.tool.list` throw; `unbind()` /
     // `bind()` model that. Every kit session is bound unless a test unbinds it.
     bound: true,
+    plansBody: undefined as unknown,
+    // DX-4233: `$.agent.list()` never answers until `release()`
+    agentListHangs: false,
+    // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
+    tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
     fsError: undefined as string | undefined,
     // DX-4234: other sessions that hold a connection record on disk (a session a /clear ended that was on a plan)
@@ -530,6 +535,8 @@ export function dashboard(
   const restartCalls: unknown[] = []
   const isContextRead = (a: any) => a.method === 'GET' && (a.path.startsWith('/api/reminders/event/') || (a.path === '/api/plans' && a.query?.limit === 1))
   function contextAnswer(path: string) {
+    // DX-4233: GET /api/plans answers this as its body, whatever its shape (a string makes the plugin's session read throw)
+    if (path === '/api/plans' && world.plansBody !== undefined) return reply(world.plansBody)
     if (path === '/api/plans' && world.plansStatus !== undefined) return reply({ error: 'plans boom' }, world.plansStatus)
     if (path === '/api/plans') return reply({ plans: [], total: 0, session: world.planId === null ? null : { plan_id: world.planId, plan_name: 'Danxbot plugin' } })
     const event = /^\/api\/reminders\/event\/(.+)$/.exec(path)
@@ -594,6 +601,9 @@ export function dashboard(
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       const haltText = () => (world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT)
+      // DX-4233: a scripted wait answer is the engine's own (a refusal it makes before the server sees the call: not connected, not bound), so it
+      // comes first, whatever the key's state
+      if (e.tool === 'plan_events_wait' && server.script.length > 0) return planEventsWait(e.args)
       // a revoked key stops EVERY tool, plan_connect included, and asks for nothing
       if (world.signedOut === 'revoked' || (world.signedOut !== null && e.tool !== 'plan_connect')) {
         return { value: { content: [{ type: 'text', text: haltText() }], isError: true } }
@@ -809,7 +819,13 @@ export function dashboard(
   // the tools the session lists: the plugin's when its server is connected
   // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
   const toolLists = { n: 0 }
-  const toolListAnswer = () => ({ value: notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any
+  // DX-4233: which of the plugin server's tools the session lists: all of them (default), the ones an old pinned server has (no plan_events_wait),
+  // or none (the server is not connected)
+  const toolListAnswer = () => {
+    const tool = (name: string) => ({ name: `mcp__plugin_danxbot_danx-dashboard__${name}`, description: '', mcp: true })
+    if (notConnected() || world.tools === 'none') return { value: [] } as any
+    return { value: world.tools === 'old' ? [tool('danxbot_api')] : [tool('danxbot_api'), tool('plan_events_wait')] } as any
+  }
   on('tool.list', () => (toolLists.n++, world.bound ? toolListAnswer() : unboundCall('$.tool.list')))
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
   on('fs.exists', (_$: any, e: any) => {
@@ -818,8 +834,10 @@ export function dashboard(
     return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) } as any
   })
   on('session.id', () => ({ value: world.sessionId }) as any)
-  on('agent.list', () => {
+  on('agent.list', async () => {
     agentLists.count++
+    // DX-4233: the engine's list never answers (a step of a refresh AFTER its plan load, which holds the refresh lock)
+    if (world.agentListHangs) await hung.promise
     return { value: world.agents } as any
   })
   // DX-4508: the live reader child (`$.process.spawn`): each start is recorded with its argv; a test queues what it prints
@@ -1002,7 +1020,9 @@ export async function problemBadgeOf(ui: any): Promise<string | undefined> {
 export function answerPlanConnect(on: On, d: { world: { planId: number | null } }) {
   on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => {
     if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
-    return { result: {}, text: 'connected', isError: false } as any
+    // the real answer's envelope (the server's handleConnect): the plan the session is on now
+    const text = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: d.world.planId } } })
+    return { result: {}, text, isError: false } as any
   })
 }
 

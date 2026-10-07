@@ -108,7 +108,8 @@ for (const surface of SURFACES) {
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       const r = await pending
       expect(r.startLines).toEqual([eventFailureLine('session_start', SERVER_NOT_CONNECTED_REASON)])
-      expect(d.contextReads).toEqual([])
+      // no event text is read (the relay's own plan reads, DX-4233, are not this lookup's)
+      expect(EVENT_PATHS(d.contextReads)).toEqual([])
       // the poll is not left running in the background: a poll left going would read the tool list every 500 ms (about 60 more reads in 30 s);
       // the few reads the plugin's own load retries make are not it
       const polled = d.toolLists.n
@@ -121,7 +122,8 @@ for (const surface of SURFACES) {
       const pending = firstPrompt($, 'startup')
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       expect((await pending).startLines).toBeUndefined()
-      expect(d.contextReads).toEqual([])
+      // no event text is read (the relay's own plan reads, DX-4233, are not this lookup's)
+      expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
     test('a session whose plugin server comes up during the wait is told its text', async ($, on) => {
@@ -188,7 +190,7 @@ for (const surface of SURFACES) {
       const d = await started($, on, { mcp: 'down' })
       const r = await $.classic.SubagentStart(START)
       expect(r.additionalContext).toBeUndefined()
-      expect(d.contextReads).toEqual(['/api/plans'])
+      expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
     test('R-2: the reads go through the session’s own server; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {

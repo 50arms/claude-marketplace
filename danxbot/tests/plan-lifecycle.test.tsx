@@ -2,7 +2,7 @@
 // connects, and the plan-list cap.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LOCK_STALE_MS, PACING_POLL_MS, SERVER, START_RETRY_MS } from '../hooks/plan/config'
+import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
 import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -73,10 +73,10 @@ describe('the MCP server connects after session start', () => {
     const apiCalls = () => d.calls.filter(c => c.tool === 'danxbot_api' && c.server === SERVER).length
     expect(apiCalls()).toBe(1)
     // each wait is advanced on its own, so no poll tick (the pacing panel's) can land inside the sequence
-    for (const wait of START_RETRY_MS) await d.clock.advance(wait)
-    expect(apiCalls()).toBe(1 + START_RETRY_MS.length)
+    for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
+    expect(apiCalls()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
     await d.clock.advance(30_000)
-    expect(apiCalls()).toBe(1 + START_RETRY_MS.length)
+    expect(apiCalls()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     expect(await text(band)).toContain('Disconnected')
   })
@@ -85,7 +85,7 @@ describe('the MCP server connects after session start', () => {
     const d = dashboard(on, { listFails: true })
     await startSession($, d, 'desktop')
     expect(loadsOf(d)).toBe(1)
-    for (const wait of START_RETRY_MS) await d.clock.advance(wait)
+    for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
     expect(loadsOf(d)).toBe(1)
   })
 
@@ -140,24 +140,74 @@ describe('expectRowCarries', () => {
 })
 
 describe('the refresh lock and the busy list at a stale or new start', () => {
-  test('a load that never settles: a Refresh inside the stale window does not double-load, past it the lock is taken over', async ($, on) => {
+  test('a load that never settles: an error at the deadline, ONE load at a time until the orphan is given up, then the Refresh asked meanwhile loads', async ($, on) => {
     const d = dashboard(on, { hangFirstLoad: true })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     expect(loadsOf(d)).toBe(1)
 
-    await d.clock.advance(LOCK_STALE_MS / 2)
+    await d.clock.advance(LOAD_DEADLINE_MS / 2)
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(1)
 
-    // the pacing poll's ticks inside the window did not load the plan either; past it, a press does
-    await d.clock.advance(LOCK_STALE_MS / 2 - 1_000)
+    // DX-4233: the deadline ends the load as an error shown now; the call that never settled still holds the lock, so a Refresh in this window
+    // starts no second load beside it
+    await d.clock.advance(LOAD_DEADLINE_MS / 2 + 1_000)
+    expect(await text(pane)).toContain('did not load')
+    await pane.press({ key: 'refresh' })
+    expect(loadsOf(d)).toBe(1)
+
+    // past the wait for it the lock is released and the Refresh asked behind it runs
+    await d.clock.advance(LOAD_ORPHAN_WAIT_MS)
+    expect(loadsOf(d)).toBe(2)
+    expect(await text(pane)).toContain('Connected: PLAN-23')
+    // the call that never settled answering at last changes nothing
+    d.release()
+    await d.clock.settle()
+    expect(loadsOf(d)).toBe(2)
+    expect(await text(pane)).toContain('Connected: PLAN-23')
+  })
+
+  test('a step after the load that never settles holds the lock until it is stale: a Refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agentListHangs = true
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    await d.clock.settle()
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    expect(loadsOf(d)).toBe(1)
+    await d.clock.advance(LOCK_STALE_MS - 1_000)
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(1)
     await d.clock.advance(2_000)
-    await pane.press({ key: 'refresh' })
+    // the press that takes the lock over starts its load at once, but is not awaited: its live step queues behind the one that hung (the live
+    // checks run one after another), so the press itself never returns
+    void pane.press({ key: 'refresh' })
+    await d.clock.advance(1)
     expect(loadsOf(d)).toBe(2)
+  })
+
+  test('a holder past the load deadline and the orphan wait but inside the tail is not taken over', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agentListHangs = true
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    await d.clock.settle()
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    await d.clock.advance(LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + 1_000)
+    await pane.press({ key: 'refresh' })
+    expect(loadsOf(d)).toBe(1)
+  })
+
+  test('a load past the deadline that answers within the wait is applied: no second load', async ($, on) => {
+    const d = dashboard(on, { hangFirstLoad: true })
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    await d.clock.settle()
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    await d.clock.advance(LOAD_DEADLINE_MS + 1_000)
+    expect(await text(pane)).toContain('did not load')
+    d.release()
+    await d.clock.settle()
+    expect(loadsOf(d)).toBe(1)
     expect(await text(pane)).toContain('Connected: PLAN-23')
   })
 

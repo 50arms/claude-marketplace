@@ -1,6 +1,6 @@
 import { SIGNED_OUT_MARK } from '../plan/config'
 import { RELAY_TOOL, FAILURE_MAX, WAIT_MS } from './config'
-import { isServerNotConnected, keyRevokedBy, mcpText } from '../plan/mcp'
+import { keyRevokedBy, mcpText } from '../plan/mcp'
 
 // What one `plan_events_wait` call came to. The tool answers (danxbot packages/danx-dashboard-mcp, plan_events_wait):
 //   {events: [{cursor: string, text: string}]}   (events empty when the wait timed out)
@@ -16,7 +16,7 @@ export type WaitAnswer =
   // the session holds no dashboard key, or a person revoked it (the server's sign-in or revoked-key halt): the band and pane already say
   // so (view phases); nothing more is told
   | { kind: 'signed-out' }
-  // the session's danx-dashboard server has no such tool (an older release, or a repo's own pinned copy)
+  // the session's danx-dashboard server answered that it has no such tool (an older release, or a repo's own pinned copy)
   | { kind: 'old-server' }
   | { kind: 'failed'; message: string }
 
@@ -57,17 +57,12 @@ export function readWaitAnswer(r: any): WaitAnswer {
   return { kind: 'failed', message: `${RELAY_TOOL} answered neither {events} nor {stopped}: ${cut(text, SNIPPET_MAX)}` }
 }
 
-// An error result's text: the server's sign-in halt, its revoked-key halt, an unknown tool, or any other failure.
-function classifyText(text: string): WaitAnswer {
+// An error result's text, or the message a rejected `$.mcp.call` carries: the server's sign-in halt, its revoked-key halt, an unknown tool, or
+// any other failure. DX-4233: the engine's "no connected MCP tool" (the plugin's server has not connected yet, or has gone) and its "no
+// session is bound" are a server that is not there NOW: a failure the loop retries on its backoff, never the end of the plan's relay. Only an
+// answer that names the tool as unknown is an old server.
+export function classifyText(text: string): WaitAnswer {
   if (keyRevokedBy(text) !== null || text.includes(SIGNED_OUT_MARK)) return { kind: 'signed-out' }
   if (/unknown tool|no such tool|not found/i.test(text) && text.includes(RELAY_TOOL)) return { kind: 'old-server' }
   return { kind: 'failed', message: cut(text) }
-}
-
-// What `$.mcp.call` rejects with. The engine's "no connected MCP tool" means this session's server has no such tool (the server
-// was found by name, or none is connected at all: either way there is nothing to wait on).
-export function classifyCallError(message: string): WaitAnswer {
-  // DX-4233: a session whose plugin server has no such tool (not connected yet, or an older release) has nothing to wait on
-  if (isServerNotConnected(message)) return { kind: 'old-server' }
-  return classifyText(message)
 }
