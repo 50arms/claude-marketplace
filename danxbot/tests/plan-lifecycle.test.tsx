@@ -2,7 +2,7 @@
 // connects, and the plan-list cap.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
+import { LIVE_CHECK_DEADLINE_MS, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
 import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -169,33 +169,41 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     expect(await text(pane)).toContain('Connected: PLAN-23')
   })
 
-  test('a step after the load that never settles holds the lock until it is stale: a Refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
-    const d = dashboard(on)
-    d.world.agentListHangs = true
+  // DX-4686: the live sub-agent check is no step of the refresh (a hung one cannot hold the lock), so the step after the load that is held here is
+  // the settling of an open permission request, whose claim call is slow on the harness clock
+  const PERMISSION_CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__request_permission', permissions: ['team.members.view'], reason: 'to read members' } as any
+  const withSlowClaim = async ($: any, on: any) => {
+    const d = dashboard(on, { tabs: ['seed'] })
+    on('tool.call', { tool: PERMISSION_CALL.tool }, () => ({ result: {}, text: JSON.stringify({ state: 'approval_required', approvalUrl: 'https://danxbot.example/connect/aaaa', confirmCode: 'CODE1', instruction: 'Show the code.' }), isError: false }) as any)
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    expect(loadsOf(d)).toBe(1)
-    await d.clock.advance(LOCK_STALE_MS - 1_000)
-    await pane.press({ key: 'refresh' })
-    expect(loadsOf(d)).toBe(1)
-    await d.clock.advance(2_000)
-    // the press that takes the lock over starts its load at once, but is not awaited: its live step queues behind the one that hung (the live
-    // checks run one after another), so the press itself never returns
+    await $.tool.call(PERMISSION_CALL)
+    d.world.permissionClaimDelayMs = 10 * LOCK_STALE_MS
+    const before = loadsOf(d)
+    // the press starts a load and holds the lock in its permission step, so it is not awaited
     void pane.press({ key: 'refresh' })
     await d.clock.advance(1)
-    expect(loadsOf(d)).toBe(2)
+    expect(loadsOf(d)).toBe(before + 1)
+    return { d, pane, before }
+  }
+
+  test('a step after the load that never settles holds the lock until it is stale: a Refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
+    const { d, pane, before } = await withSlowClaim($, on)
+    await d.clock.advance(LOCK_STALE_MS - 1_000)
+    await pane.press({ key: 'refresh' })
+    expect(loadsOf(d)).toBe(before + 1)
+    await d.clock.advance(2_000)
+    d.world.permissionClaimDelayMs = 0
+    await pane.press({ key: 'refresh' })
+    expect(loadsOf(d)).toBe(before + 2)
   })
 
   test('a holder past the load deadline and the orphan wait but inside the tail is not taken over', async ($, on) => {
-    const d = dashboard(on)
-    d.world.agentListHangs = true
-    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
-    await d.clock.settle()
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    const { d, pane, before } = await withSlowClaim($, on)
     await d.clock.advance(LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + 1_000)
     await pane.press({ key: 'refresh' })
-    expect(loadsOf(d)).toBe(1)
+    expect(loadsOf(d)).toBe(before + 1)
   })
 
   test('a load past the deadline that answers within the wait is applied: no second load', async ($, on) => {
@@ -226,5 +234,49 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
     await d.clock.advance(60_000)
     await leaving
+  })
+})
+
+// DX-4686: one `$.agent.list()` that never answers must not hold the live checks (they run one after another) or a pane press.
+describe('a live sub-agent check that never answers', () => {
+  const running = { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build a1', status: 'running' }
+  const SUBAGENT = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: '/work/main.jsonl' }
+
+  test('is abandoned at the deadline: the next check runs and starts the live reader', async ($, on) => {
+    const d = dashboard(on)
+    on('classic.SubagentStart', () => ({}) as any)
+    d.world.agentListHangs = true
+    await startSession($, d, 'desktop')
+    const asked = d.agentLists.count
+    await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+    d.world.agentListHangs = false
+    d.world.agents = [running]
+    await $.classic.SubagentStart(SUBAGENT)
+    await d.clock.settle()
+    expect(d.agentLists.count).toBeGreaterThan(asked)
+    expect(d.readers).toHaveLength(1)
+  })
+
+  test('its late answer is dropped, never applied over a newer one', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agentListHangs = true
+    on('classic.SubagentStart', () => ({}) as any)
+    await startSession($, d, 'desktop')
+    // the event reports the transcript path (a child cannot start without it) and queues its own check behind the hung one
+    void $.classic.SubagentStart(SUBAGENT)
+    await d.clock.advance(2 * LIVE_CHECK_DEADLINE_MS + 2)
+    d.world.agents = [running]
+    d.release()
+    await d.clock.settle()
+    expect(d.readers).toEqual([])
+  })
+
+  test('a pane press returns while a live check is hung', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agentListHangs = true
+    await startSession($, d, 'desktop')
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    await d.clock.advance(LOCK_STALE_MS + 1_000)
+    await pane.press({ key: 'refresh' })
   })
 })

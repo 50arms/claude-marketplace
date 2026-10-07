@@ -21,6 +21,7 @@ import {
   CONNECT_ERROR_MAX,
   EMPTY,
   LIVE_REASON_MAX,
+  LIVE_CHECK_DEADLINE_MS,
   LOAD_DEADLINE_MS,
   LOAD_ORPHAN_WAIT_MS,
   LOCK_STALE_MS,
@@ -193,7 +194,8 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
   await syncRuntimeClock($)
-  await syncLive($, false)
+  // DX-4686: a press's refresh never waits on a live check; its failures are shown in the section, anything past that is a toast
+  detach($, 'Live sub-agent check', syncLive($, false))
 }
 
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked
@@ -682,7 +684,10 @@ function errMessage(err: any): string {
 async function agentStatuses($: any): Promise<Record<string, string> | string> {
   let agents: { id: string; type: string; status: string }[]
   try {
-    agents = await $.agent.list()
+    // DX-4686: a call that never answers is abandoned at the deadline (its late answer falls on the floor, never applied), so the queue moves on
+    const answer = await withinDeadline<typeof agents | null>($, LIVE_CHECK_DEADLINE_MS, $.agent.list(), () => null)
+    if (answer === null) return `the engine did not list this session's sub-agents within ${LIVE_CHECK_DEADLINE_MS / 1000}s`
+    agents = answer
   } catch (err: any) {
     return `the engine did not list this session's sub-agents (${errMessage(err)})`
   }

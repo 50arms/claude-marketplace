@@ -62,6 +62,10 @@ export const LOAD_ORPHAN_WAIT_MS = 30_000
 // what is left to hang is a step after it (the live sync, a permission claim). The tail is what those steps may take after the orphan wait, so
 // a holder that is just finishing is not taken over the moment it lands. A refresh asked past it, forced or not, takes the lock over.
 export const LOCK_TAIL_MS = 10_000
+// DX-4686: ONE live sub-agent check (the engine's `$.agent.list()`) answers within this or is abandoned: its late answer is dropped and the next check
+// runs. The engine answers from its own process in well under a second, so 10 s is a hung call, not a slow one; a longer wait only holds every later
+// check behind it (the checks run one after another).
+export const LIVE_CHECK_DEADLINE_MS = 10_000
 export const LOCK_STALE_MS = LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + LOCK_TAIL_MS
 
 // At session start the MCP server may not be connected yet: a first load that failed on exactly that is retried after
