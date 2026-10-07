@@ -15,6 +15,20 @@ export function mcpText(r: any): string {
   return (r?.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
 }
 
+// DX-4233: the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {plan_id}}}` envelope. Null for anything
+// else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
+export function connectedPlanId(text: unknown): number | null {
+  if (typeof text !== 'string') return null
+  let parsed: any
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const planId = parsed?.ok === true ? parsed.body?.session?.plan_id : undefined
+  return typeof planId === 'number' ? planId : null
+}
+
 // A tool's result as danxbot_api and plan_connect word it: JSON text `{ok, status, body}` (pretty-printed),
 // where a server refusal is `ok: false` and is NEVER an error result. Only a thrown call is an error:
 // argument validation, an outdated MCP, a 5xx. So an `isError` result carries plain text, and anything

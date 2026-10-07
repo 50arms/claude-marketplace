@@ -24,6 +24,13 @@ export function backoffMs(failures: number): number {
   return BACKOFF_MS[Math.min(Math.max(failures, 1), BACKOFF_MS.length) - 1]
 }
 
+// DX-4233: the light read of the session's plan that starts a relay at session start (and by the watchdog) answers within this or is a failure.
+export const RELAY_READ_DEADLINE_MS = 8_000
+
+// DX-4233: the start's own retries while that read fails (the plugin's server not connected yet, a session not bound, a dashboard fault): after each
+// wait in turn, on the clock, then the watchdog (a turn's end, a sub-agent's start or stop) is what is left. About five minutes.
+export const RELAY_START_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 60_000, 60_000, 60_000] as const
+
 // An answer that comes back sooner than this with no events is not a wait: the loop sleeps the rest, so a server that answers an
 // empty list at once cannot make it spin.
 export const MIN_ROUND_MS = 1_000

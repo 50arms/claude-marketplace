@@ -2,7 +2,7 @@
 // connects, and the plan-list cap.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LOCK_STALE_MS, PACING_POLL_MS, SERVER, START_RETRY_MS } from '../hooks/plan/config'
+import { LOAD_DEADLINE_MS, PACING_POLL_MS, SERVER, START_RETRY_MS } from '../hooks/plan/config'
 import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -140,23 +140,27 @@ describe('expectRowCarries', () => {
 })
 
 describe('the refresh lock and the busy list at a stale or new start', () => {
-  test('a load that never settles: a Refresh inside the stale window does not double-load, past it the lock is taken over', async ($, on) => {
+  test('a load that never settles: a Refresh inside the deadline does not double-load, at it the load is an error and the Refresh asked meanwhile loads', async ($, on) => {
     const d = dashboard(on, { hangFirstLoad: true })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     expect(loadsOf(d)).toBe(1)
 
-    await d.clock.advance(LOCK_STALE_MS / 2)
+    await d.clock.advance(LOAD_DEADLINE_MS / 2)
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(1)
 
-    // the pacing poll's ticks inside the window did not load the plan either; past it, a press does
-    await d.clock.advance(LOCK_STALE_MS / 2 - 1_000)
-    await pane.press({ key: 'refresh' })
+    // DX-4233: the pacing poll's ticks inside the deadline did not load the plan either; at it the hung load ends as an error (no 120 s wait) and
+    // the Refresh asked behind it runs
+    await d.clock.advance(LOAD_DEADLINE_MS / 2 - 1_000)
     expect(loadsOf(d)).toBe(1)
     await d.clock.advance(2_000)
-    await pane.press({ key: 'refresh' })
+    expect(loadsOf(d)).toBe(2)
+    expect(await text(pane)).toContain('Connected: PLAN-23')
+    // the call that never settled answering at last changes nothing
+    d.release()
+    await d.clock.settle()
     expect(loadsOf(d)).toBe(2)
     expect(await text(pane)).toContain('Connected: PLAN-23')
   })

@@ -75,6 +75,15 @@ function eventLine(E: any, v: PlanView, relay: RelayState): any {
       </Box>
     )
   }
+  // DX-4233: a session on a plan whose relay is not running says so (never the dashboard's last read of a listener this plugin is not feeding)
+  if (v.connected !== null && (relay.planId !== v.connected.id || relay.phase === 'off')) {
+    return (
+      <Box key="events" flexDirection="row" gap={1}>
+        {dot(E, WARNING)}
+        <Text color={WARNING}>events: relay not running</Text>
+      </Box>
+    )
+  }
   const l = v.listener
   if (l === null) {
     return (

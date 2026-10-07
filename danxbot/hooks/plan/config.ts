@@ -53,8 +53,12 @@ export const USAGE_TICK_MS = 60_000
 // ... and the shortest cadence the plugin accepts from danxbot: a smaller one is a malformed answer, not a request to report in a loop.
 export const MIN_USAGE_TICK_MS = 5_000
 
-// A refresh lock held longer than this is a dead load's, not a running one's.
-export const LOCK_STALE_MS = 120_000
+// DX-4233: one plan load answers within this or is an error (the pane's Refresh and every forced refresh queued behind a hung load wait
+// no longer than this).
+export const LOAD_DEADLINE_MS = 30_000
+// A refresh lock held longer than this is a dead step's, not a running one's: the load itself is bounded by LOAD_DEADLINE_MS, so what is
+// left to hang is a step after it (the live sync, a permission claim). A refresh asked past it, forced or not, takes the lock over.
+export const LOCK_STALE_MS = 45_000
 
 // At session start the MCP server may not be connected yet: a failed first load is retried after
 // each of these waits (clock-driven) before the view settles on the error.

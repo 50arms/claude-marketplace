@@ -1002,7 +1002,9 @@ export async function problemBadgeOf(ui: any): Promise<string | undefined> {
 export function answerPlanConnect(on: On, d: { world: { planId: number | null } }) {
   on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => {
     if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
-    return { result: {}, text: 'connected', isError: false } as any
+    // the real answer's envelope (the server's handleConnect): the plan the session is on now
+    const text = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: d.world.planId } } })
+    return { result: {}, text, isError: false } as any
   })
 }
 
