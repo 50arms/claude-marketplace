@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { LiveSnapshot, LiveSubagents, PlanView, SubagentRow } from '../types'
-import { EMPTY, NO_LIVE, SUBAGENT_ENDED_VISIBLE_MS, liveUnavailableLine } from '../hooks/plan/config'
+import { EMPTY, LIVE_CHECK_DEADLINE_MS, LIVE_CHECK_RETRY_MS, NO_LIVE, SUBAGENT_ENDED_VISIBLE_MS, liveUnavailableLine } from '../hooks/plan/config'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, parseLiveLine, pruneSnapshots, readPiece, splitLines, stateOfStatus, withLive } from '../hooks/plan/live'
 import { CLOCK_START, OTHER_SESSION, OWN_SESSION, READER_PIECE_MS, SURFACES, dashboard, rawSubagent, startSession } from './plan-kit'
 
@@ -257,6 +257,36 @@ for (const surface of SURFACES) {
       expect(line?.props.dimColor).toBe(true)
       expect(d.readers).toEqual([])
       expect((await ui.find({ key: 'sa-agent-a1' }))!.text).toContain('12k tokens · $0.42 · 7 tool calls')
+    })
+
+    // DX-4686: a check abandoned at its deadline answers late; what the pane shows of a sub-agent comes from the answer that stood
+    test('a late answer from an abandoned check changes nothing the pane shows of a sub-agent', async ($, on) => {
+      const d = dashboard(on)
+      d.world.subagents[OWN] = [rawSubagent('a1')]
+      d.world.agents = [running('a1')]
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
+      const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
+      d.readers[0].pieces.push(line([snapshot('a1')]))
+      await d.clock.advance(READER_PIECE_MS)
+      // the elapsed time ticks with the clock; everything else of the row is what the numbers and the state say
+      const shown = async () => (await ui.find({ key: 'sa-agent-a1' }))!.text.replace(/\d+m \d+s/, '')
+      const before = await shown()
+      // the next check's call is never answered; every check that waited on it gives up, and past the retry horizon a later check replaces it
+      d.world.agentListHoldEach = true
+      await $.classic.SubagentStart({ agent_id: 'a2', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.advance(LIVE_CHECK_RETRY_MS + 1)
+      await $.classic.SubagentStart({ agent_id: 'a3', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      expect(d.agentListCalls.length).toBeGreaterThan(1)
+      expect(await shown()).toBe(before)
+      // the replaced call answers at last, saying the sub-agent is finished: no check waits on it any more
+      d.world.agents = [{ ...running('a1'), status: 'completed' }]
+      d.agentListCalls[0].release()
+      await d.clock.settle()
+      expect(await shown()).toBe(before)
     })
 
     test('once no sub-agent runs, the failure line goes: there is nothing live to show', async ($, on) => {

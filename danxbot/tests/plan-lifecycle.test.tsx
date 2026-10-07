@@ -298,6 +298,27 @@ describe('a live sub-agent check that never answers', () => {
       await d.clock.settle()
     })
 
+    test(`on ${surface} a replaced call's late settling leaves its successor outstanding: the next check joins the successor`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHoldEach = true
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await d.clock.advance(LIVE_CHECK_RETRY_MS + 1)
+      // a check past the horizon replaced the first call; the successor is still out (no call is answered yet)
+      await $.classic.SubagentStart(SUBAGENT)
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      expect(d.agentListCalls.length).toBeGreaterThan(1)
+      // the FIRST (replaced) call answers now
+      d.world.agents = []
+      d.agentListCalls[0].release()
+      await d.clock.settle()
+      const asked = d.agentLists.count
+      await $.classic.SubagentStart({ ...SUBAGENT, agent_id: 'a2' })
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      await d.clock.settle()
+      expect(d.agentLists.count).toBe(asked)
+    })
+
     test(`on ${surface} two checks during one hang make one engine call`, async ($, on) => {
       const d = dashboard(on)
       d.world.agentListHangs = true
