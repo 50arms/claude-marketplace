@@ -24,6 +24,7 @@ import {
   EMPTY,
   LIVE_REASON_MAX,
   LOAD_DEADLINE_MS,
+  LOAD_ORPHAN_WAIT_MS,
   LOCK_STALE_MS,
   MIN_GAP_MS,
   NO_LIVE,
@@ -44,7 +45,7 @@ import {
   USAGE_TICK_MS,
   signInFailedToast,
   SERVER,
-  START_RETRY_MS,
+  NOT_CONNECTED_RETRY_MS,
   SERVER_POLL_MS,
   toolName,
   NOTE_MARKER,
@@ -214,17 +215,25 @@ async function refresh($: any, force = false): Promise<void> {
     let again = true
     while (again) {
       try {
-        // DX-4233: a load that does not answer is an error shown (the catch below), so a hung call holds neither the lock nor the relay's start
-        const loaded = await withinDeadline($, LOAD_DEADLINE_MS, loadView($), () => null)
-        if (loaded === null) throw new Error(`the plan did not load within ${LOAD_DEADLINE_MS / 1000}s`)
-        const v = loaded
-        // DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one)
-        // for Sign in to ask for again; a loaded view knows its own
-        await update($, view, cur => (v.phase === 'ready' ? v : { ...v, resumePlan: cur.connected?.id ?? cur.resumePlan }))
-        // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
-        await syncRelay($)
-        await syncRuntimeClock($)
-        await syncLive($, false)
+        // DX-4233: EVERY load (not only the first) is an error shown at LOAD_DEADLINE_MS, so a hung call does not hold the pane's state or the relay's
+        // start. The call itself is not abandoned to run beside the next load: this refresh keeps the lock for up to LOAD_ORPHAN_WAIT_MS more and
+        // applies its answer if it comes then, so at most one load runs.
+        const load = loadView($)
+        let v = await withinDeadline($, LOAD_DEADLINE_MS, load, () => null)
+        if (v === null) {
+          await update($, view, cur => ({ ...cur, phase: 'error', error: `the plan did not load within ${LOAD_DEADLINE_MS / 1000}s` }))
+          v = await withinDeadline($, LOAD_ORPHAN_WAIT_MS, load, () => null)
+        }
+        if (v !== null) {
+          const loaded = v
+          // DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one)
+          // for Sign in to ask for again; a loaded view knows its own
+          await update($, view, cur => (loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }))
+          // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
+          await syncRelay($)
+          await syncRuntimeClock($)
+          await syncLive($, false)
+        }
       } catch (err: any) {
         await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
       }
@@ -769,9 +778,9 @@ function handlers($: any): Handlers {
 // ---- hooks ----------------------------------------------------------------
 
 // The first load can run before the plugin's MCP server connects. A view that failed on exactly that at session start is retried
-// after each wait in START_RETRY_MS (on the clock, so a test moves it) and then left as the error.
+// after each wait in NOT_CONNECTED_RETRY_MS (on the clock, so a test moves it) and then left as the error.
 async function retryWhileNotConnected($: any): Promise<void> {
-  for (const wait of START_RETRY_MS) {
+  for (const wait of NOT_CONNECTED_RETRY_MS) {
     try {
       await $.clock.sleep(wait)
     } catch {
@@ -1071,7 +1080,21 @@ function startRelay($: any, planId: number): void {
 // DX-4233: starts the relay when the session is on a plan and no loop runs, whatever became of the plan load: from the view when it knows the plan,
 // else from a light read of the session's own plan binding (the view is an error or still loading, and its error is not a reason for no relay).
 // `retry`: the read itself failed (the server not connected yet, a session not bound, a dashboard fault), so the plan is not known yet.
-async function watchRelay($: any): Promise<'done' | 'retry'> {
+type RelayWatch = 'done' | 'retry'
+
+// DX-4233: at most one watch runs; a burst of triggers (sub-agent events while the dashboard is down) shares its answer instead of each issuing a
+// plan read. A handle, so a module variable.
+let relayWatching: Promise<RelayWatch> | null = null
+function watchRelay($: any): Promise<RelayWatch> {
+  if (relayWatching === null) {
+    relayWatching = watchRelayOnce($).finally(() => {
+      relayWatching = null
+    })
+  }
+  return relayWatching
+}
+
+async function watchRelayOnce($: any): Promise<RelayWatch> {
   if (relayRun !== null) return 'done'
   const v = await read($, view)
   if (v.connected !== null) {
@@ -1219,12 +1242,28 @@ async function deliverAll($: any, run: RelayRun, events: RelayEvent[], from: str
   return { cursor, delivered, failure: null }
 }
 
+// DX-4233: the engine words a tool the server lacks the same as a server that is not connected ("no connected MCP tool"), so that answer is told
+// apart by the session's tool list: the plugin server's tools listed without the relay's is an old pinned server; none listed (the server is not
+// connected yet or has gone), or a list that cannot be read (not bound), is a failure to retry.
+async function serverLacksRelayTool($: any): Promise<boolean> {
+  let names: string[]
+  try {
+    names = (await $.tool.list()).map((t: any) => t.name)
+  } catch {
+    return false
+  }
+  const ownTools = names.filter(name => name.startsWith(toolName('')))
+  return ownTools.length > 0 && !ownTools.includes(toolName(RELAY_TOOL))
+}
+
 async function waitForEvents($: any, planId: number, cursor: string | null): Promise<WaitAnswer> {
   const path = await read($, transcript)
   try {
     return readWaitAnswer(await $.mcp.call(SERVER, RELAY_TOOL, waitArgs(planId, cursor, path)))
   } catch (err: any) {
-    return classifyText(errMessage(err))
+    const message = errMessage(err)
+    if (isServerNotConnected(message) && (await serverLacksRelayTool($))) return { kind: 'old-server' }
+    return classifyText(message)
   }
 }
 

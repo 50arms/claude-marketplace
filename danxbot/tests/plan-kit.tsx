@@ -291,6 +291,8 @@ export function dashboard(
     // binds (claude.exe: the session holder is empty until the session is built), where `$.mcp.call` and `$.tool.list` throw; `unbind()` /
     // `bind()` model that. Every kit session is bound unless a test unbinds it.
     bound: true,
+    // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
+    tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
     fsError: undefined as string | undefined,
     // DX-4234: other sessions that hold a connection record on disk (a session a /clear ended that was on a plan)
@@ -809,7 +811,13 @@ export function dashboard(
   // the tools the session lists: the plugin's when its server is connected
   // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
   const toolLists = { n: 0 }
-  const toolListAnswer = () => ({ value: notConnected() ? [] : [{ name: 'mcp__plugin_danxbot_danx-dashboard__danxbot_api', description: '', mcp: true }] }) as any
+  // DX-4233: which of the plugin server's tools the session lists: all of them (default), the ones an old pinned server has (no plan_events_wait),
+  // or none (the server is not connected)
+  const toolListAnswer = () => {
+    const tool = (name: string) => ({ name: `mcp__plugin_danxbot_danx-dashboard__${name}`, description: '', mcp: true })
+    if (notConnected() || world.tools === 'none') return { value: [] } as any
+    return { value: world.tools === 'old' ? [tool('danxbot_api')] : [tool('danxbot_api'), tool('plan_events_wait')] } as any
+  }
   on('tool.list', () => (toolLists.n++, world.bound ? toolListAnswer() : unboundCall('$.tool.list')))
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
   on('fs.exists', (_$: any, e: any) => {

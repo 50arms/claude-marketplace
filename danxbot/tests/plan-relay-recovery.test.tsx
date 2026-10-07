@@ -6,6 +6,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { connectedPlanId } from '../hooks/plan/mcp'
 import { BACKOFF_MS } from '../hooks/relay/config'
+import { OLD_SERVER_FIX } from '../hooks/relay/text'
 import { SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession, toldModel } from './plan-kit'
 
 const PANE = {
@@ -150,6 +151,16 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toHaveLength(1)
     })
 
+    test('a burst of sub-agent events while the dashboard is slow issues ONE plan read', async ($, on) => {
+      const d = await unstarted($, on)
+      d.world.contextDelayMs = 1_000
+      d.contextReads.length = 0
+      await Promise.all([1, 2, 3, 4, 5].map(i => $.classic.SubagentStop({ agent_id: `a${i}`, agent_type: 'x', transcript_path: '/work/main.jsonl' })))
+      await d.clock.advance(5_000)
+      expect(d.contextReads).toEqual(['/api/plans'])
+      expect(d.relay.calls).toHaveLength(1)
+    })
+
     test('it does not start a second loop beside one that runs', async ($, on) => {
       const d = dashboard(on)
       on('turn.complete', () => ({ text: 'done' }) as any)
@@ -161,8 +172,9 @@ for (const surface of SURFACES) {
   })
 
   describe(`transient relay errors on ${surface}`, () => {
-    test('a server that is not connected yet is retried, never a stop', async ($, on) => {
+    test('a server that is not connected yet (no tools listed) is retried, never a stop', async ($, on) => {
       const d = dashboard(on)
+      d.world.tools = 'none'
       d.relay.server.script.push(() => ({ deny: NOT_CONNECTED }) as any)
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
@@ -172,6 +184,34 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toHaveLength(2)
       // a refresh does not find it halted either
       await forceRefresh($, d)
+      d.relay.push({ cursor: 'c1', text: 'later' })
+      await d.clock.settle()
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] later'])
+    })
+
+    test('a not-connected answer from a server that lists its tools without plan_events_wait is an old server: its fix, no retry', async ($, on) => {
+      const d = dashboard(on)
+      d.world.tools = 'old'
+      d.relay.server.script.push(() => ({ deny: NOT_CONNECTED }) as any)
+      await startSession($, d, surface)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await text(pane)).toContain('relay stopped')
+      expect(toldModel(d)).toHaveLength(1)
+      expect(toldModel(d)[0]).toContain(`Fix: ${OLD_SERVER_FIX}`)
+      await d.clock.advance(60_000)
+      expect(d.relay.calls).toHaveLength(1)
+    })
+
+    test('a not-connected answer when the tool list cannot be read (unbound) is retried', async ($, on) => {
+      const d = dashboard(on)
+      d.relay.server.script.push(() => ({ deny: NOT_CONNECTED }) as any)
+      d.relay.server.script.push(() => ({ deny: NOT_CONNECTED }) as any)
+      d.relay.server.holdMs = 'timeout_ms'
+      await startSession($, d, surface)
+      d.unbind()
+      await d.clock.advance(BACKOFF_MS[0] + BACKOFF_MS[1])
+      d.bind()
+      await d.clock.advance(60_000)
       d.relay.push({ cursor: 'c1', text: 'later' })
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] later'])
