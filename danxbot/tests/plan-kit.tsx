@@ -942,6 +942,8 @@ export async function linksOf(ui: any): Promise<{ key: string | undefined; label
   return (await ui.findAll({ type: 'Markdown' })).map((m: any) => {
     const match = /^\[(.*)\]\((.*)\)$/s.exec(m.props.text)
     if (match === null) throw new Error(`a Markdown that is not one link: ${m.props.text}`)
+    // a handler on the link would hand a plain click to the plugin and the app would open nothing: the link stays the surface's own
+    if (m.press !== undefined || m.props.pressableLinks !== undefined) throw new Error(`a Markdown link with a press handler: ${m.props.text}`)
     return { key: m.key as string | undefined, label: match[1]!, href: match[2]! }
   })
 }

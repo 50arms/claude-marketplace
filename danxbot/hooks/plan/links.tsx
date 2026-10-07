@@ -1,5 +1,5 @@
 // DX-4630: every link the plugin draws is a link inside a `Markdown` element, never a `Link`. A Markdown link with no
-// `onLinkPress` takes the path a link in the conversation takes, which the app opens in its in-app browser at once; a `Link`
+// press handler (a handler would hand the click to the plugin, and the app would open nothing) takes the path a link in the conversation takes, which the app opens in its in-app browser at once; a `Link`
 // element opens the external browser (proven live on the desktop, CLI 2.1.286). Both surfaces draw a Markdown link (an OSC 8
 // span on the terminal, an anchor on the desktop).
 

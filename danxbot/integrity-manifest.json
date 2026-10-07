@@ -20,7 +20,7 @@
     "hooks/plan/donut.tsx": "30ccb102b2fb7f44908b75446593030c49527e2f70ba8db6f4f441d8bae27a84",
     "hooks/plan/footer.tsx": "774cb9f03234da29ae8d6bd7c173fb2942235614b0ac9e9819ae971dc5ea035f",
     "hooks/plan/handlers.ts": "1216917cc749385f87effba7011b0694cd262ca2d83bde3c47ab17f828981416",
-    "hooks/plan/links.tsx": "80b7159a561f05aff28b5b8772aef8634d36ff5258bd1c1453ad693824974854",
+    "hooks/plan/links.tsx": "b559e7eb21e06973d0a90c9a39f0e5d05282d1f269853842acc69bd0f7ad7087",
     "hooks/plan/live.ts": "5d0aaebea72cf0763e905357fff8eaea267fe08039cd5c1e4881d155c5a60666",
     "hooks/plan/load.ts": "d135443213da2c822db12b0bc4102e8df8220e0dff33acb8b7a6b9c9aab5d6ca",
     "hooks/plan/mcp.ts": "fb90459f9119b2be33b55f3000f13e466acf3855975af907067404ce9a1fa03f",

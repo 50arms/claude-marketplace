@@ -19,6 +19,11 @@ test("no hooks source calls the Claude_Browser tools", () => {
 });
 
 test("no hooks source draws a Link element or reads one from the element table", () => {
-  const found = sources(hooks).filter((p) => /<Link\b|\bLink\s*[,}]|type:\s*['"]Link['"]/.test(readFileSync(p, "utf8")));
+  const found = sources(hooks).filter((p) => /<(\w+\.)?Link\b|\.Link\b|\bLink\s*[,}]|type:\s*['"]Link['"]/.test(readFileSync(p, "utf8")));
+  assert.deepEqual(found, []);
+});
+
+test("no hooks source gives a Markdown a link handler: a plain click would go to the plugin and the app would open nothing", () => {
+  const found = sources(hooks).filter((p) => /onLinkPress|pressableLinks/.test(readFileSync(p, "utf8")));
   assert.deepEqual(found, []);
 });
