@@ -22,6 +22,7 @@ import {
   EMPTY,
   LIVE_REASON_MAX,
   LIVE_CHECK_DEADLINE_MS,
+  LIVE_CHECK_RETRY_MS,
   LOAD_DEADLINE_MS,
   LOAD_ORPHAN_WAIT_MS,
   LOCK_STALE_MS,
@@ -151,9 +152,10 @@ let permissionTickBusy = false
 let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
 // DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
 let liveQueue: Promise<void> = Promise.resolve()
-// DX-4686: the engine's one `$.agent.list()` call still unanswered, if any. A check that finds one racing its own deadline against that same call
-// rather than asking again, so a hung engine is asked once however many checks queue behind it.
-let agentListInFlight: Promise<{ id: string; type: string; status: string }[]> | null = null
+// DX-4686: the engine's one `$.agent.list()` call still unanswered, if any, and when it was asked. A check that finds one younger than
+// LIVE_CHECK_RETRY_MS races its own deadline against that same call instead of asking again, so a hung engine is asked once however many checks
+// queue behind it; an older one is given up (its late answer is dropped) and the check asks afresh.
+let agentListInFlight: { call: Promise<{ id: string; type: string; status: string }[]>; at: number } | null = null
 
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. Any rejection (including the engine's "no such server") is an error shown as one.
@@ -688,10 +690,18 @@ async function agentStatuses($: any): Promise<Record<string, string> | string> {
   let agents: { id: string; type: string; status: string }[]
   try {
     // DX-4686: a call that never answers is abandoned at the deadline (its late answer falls on the floor, never applied), so the queue moves on
-    agentListInFlight ??= Promise.resolve($.agent.list()).finally(() => {
-      agentListInFlight = null
-    })
-    const answer = await withinDeadline<typeof agents | null>($, LIVE_CHECK_DEADLINE_MS, agentListInFlight, () => null)
+    const now = await $.clock.now()
+    if (agentListInFlight === null || now - agentListInFlight.at > LIVE_CHECK_RETRY_MS) {
+      const flight = {
+        at: now,
+        // only the call still current clears the record: a replaced call's late settling must not clear its successor
+        call: Promise.resolve($.agent.list()).finally(() => {
+          if (agentListInFlight === flight) agentListInFlight = null
+        }),
+      }
+      agentListInFlight = flight
+    }
+    const answer = await withinDeadline<typeof agents | null>($, LIVE_CHECK_DEADLINE_MS, agentListInFlight.call, () => null)
     if (answer === null) return `the engine did not list this session's sub-agents within ${LIVE_CHECK_DEADLINE_MS / 1000}s`
     agents = answer
   } catch (err: any) {

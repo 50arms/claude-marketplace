@@ -2,7 +2,7 @@
 // connects, and the plan-list cap.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LIVE_CHECK_DEADLINE_MS, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
+import { LIVE_CHECK_DEADLINE_MS, LIVE_CHECK_RETRY_MS, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
 import { SURFACES, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -255,21 +255,29 @@ describe('a live sub-agent check that never answers', () => {
   const pane = (surface: string) => ({ ...PANE, plugin: 'danxbot', surface })
 
   for (const surface of SURFACES) {
-    test(`on ${surface} is abandoned at the deadline: the next check runs and starts the live reader`, async ($, on) => {
+    test(`on ${surface} a check after the retry horizon asks afresh while the first call is still hung, and the live reader starts`, async ($, on) => {
       const d = dashboard(on)
       on('classic.SubagentStart', () => ({}) as any)
       d.world.agentListHangs = true
       await startSession($, d, surface)
-      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
-      // the engine answers at last (the abandoned call is still the one outstanding), and the next check asks it afresh
+      await d.clock.advance(1)
+      const asked = d.agentLists.count
+      await d.clock.advance(LIVE_CHECK_RETRY_MS + 1)
+      // the engine answers new calls again; the first call is never released
+      d.world.agentListHangs = false
       d.world.agents = [running]
+      await $.classic.SubagentStart(SUBAGENT)
+      // a check a poll started inside the horizon may still be waiting on the first call: the event's check queues behind it for one deadline
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS)
+      await d.clock.settle()
+      // (the pane's own polls past the horizon ask afresh too, so more than one new call)
+      expect(d.agentLists.count).toBeGreaterThan(asked)
+      expect(d.readers).toHaveLength(1)
+      // the replaced call answers at last, with nothing running: its answer is dropped, so the reader it would have stopped keeps running
+      d.world.agents = []
       d.release()
       await d.clock.settle()
-      d.world.agentListHangs = false
-      await $.classic.SubagentStart(SUBAGENT)
-      await d.clock.settle()
-      expect(d.readers).toHaveLength(1)
-      await d.clock.settle()
+      expect(d.readers[0].stopped).toBe(false)
     })
 
     test(`on ${surface} its late answer is dropped, never applied over a newer one`, async ($, on) => {
