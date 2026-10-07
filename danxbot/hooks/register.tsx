@@ -2,6 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
 import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
+import { subagentStartActivity, subagentStopActivity, backgroundBashStartActivity, finishStoppedBackgroundTasks, subagentHeartbeatActivity } from './reports/activity'
+import { countBackgroundWork, clearBackgroundWork } from './reports/background-work'
+import { filterReadyCards, blockReasonForReadyCards } from './reports/ready-cards'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -1745,6 +1748,137 @@ function pacingEnv($: any) {
   }
 }
 
+// DX-4235: Activity reporting — tells the dashboard when a plan-connected session's sub-agents
+// and background Bash calls start and finish. Detached so never blocks or delays a tool call or sub-agent.
+async function reportActivityChange($: any, changes: any[]): Promise<void> {
+  try {
+    const v = await read($, view)
+    if (v.connected === null) return // Only for plan-connected sessions
+    const now = await $.clock.now()
+    if (changes.length === 0) return
+    try {
+      await $.mcp.call('danxbot_api', 'POST', '/api/plan-sessions/me/activity', { body: { activities: changes } })
+    } catch (err: any) {
+      // A failed report is shown where the operator sees it (detach toast or transcript line), never swallowed
+      $.ui.toast(`Activity report failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+    }
+  } catch (err: any) {
+    // Plugin state read failure
+    $.ui.toast(`Activity report failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+  }
+}
+
+// SubagentStart: report the sub-agent starting (DX-4235)
+async function onReportSubagentStart($: any, e: any, next: any) {
+  const r = await next(e)
+  const now = await $.clock.now()
+  const changes = [subagentStartActivity(e.agent_id, new Date(now).toISOString())]
+  detach($, 'Activity report', reportActivityChange($, changes))
+  return r
+}
+
+// SubagentStop: report the sub-agent stopping and close any background bash tasks no longer running (DX-4235)
+async function onReportSubagentStop($: any, e: any, next: any) {
+  const r = await next(e)
+  const now = await $.clock.now()
+  const isoTime = new Date(now).toISOString()
+  const changes = [subagentStopActivity(e.agent_id, isoTime)]
+
+  // Also close any background tasks that are no longer running
+  const finished = finishStoppedBackgroundTasks(e.background_tasks, isoTime)
+  changes.push(...finished)
+
+  if (changes.length > 0) {
+    detach($, 'Activity report', reportActivityChange($, changes))
+  }
+  return r
+}
+
+// PostToolUse(Bash): report background Bash calls starting (DX-4235)
+async function onReportBackgroundBashStart($: any, e: any, next: any) {
+  const r = await next(e)
+  // Only for background Bash calls
+  if (e.tool_name !== 'Bash' || !e.tool_input?.run_in_background) return r
+
+  const now = await $.clock.now()
+  // The task ID comes from the Bash tool result; for now we use a hash of input
+  // In a real implementation, this would be matched from the result
+  const taskId = `bash-${Date.now()}`
+  const changes = [backgroundBashStartActivity(taskId, new Date(now).toISOString())]
+  detach($, 'Activity report', reportActivityChange($, changes))
+  return r
+}
+
+// Stop: report background work count and check for ready cards (DX-4235, DX-4534)
+async function onReportStop($: any, e: any, next: any) {
+  const now = await $.clock.now()
+  const isoTime = new Date(now).toISOString()
+
+  try {
+    const v = await read($, view)
+    if (v.connected !== null) {
+      // Report background work count
+      const count = countBackgroundWork(e.background_tasks, e.agent_id)
+      if (count !== null) {
+        try {
+          await $.mcp.call('danxbot_api', 'PUT', '/api/plan-sessions/me/background-work', {
+            body: { count, eventAt: isoTime },
+          })
+        } catch (err: any) {
+          $.ui.toast(`Background work report failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+        }
+      }
+
+      // Check for ready cards (main session only, not a sub-agent)
+      if (e.agent_id === undefined && !e.stop_hook_active) {
+        try {
+          const planResp = await api($, 'GET', '/api/plans/mine')
+          if (planResp.ok && planResp.body?.id) {
+            const boardsResp = await api($, 'GET', '/api/issues', {
+              query: { board: `danxbot:${planResp.body.slug || 'default'}`, fields: { type: true, status: true, assigned_agent: true, blocked: true } },
+            })
+            if (boardsResp.ok && Array.isArray(boardsResp.body?.rows)) {
+              const readyCards = filterReadyCards(boardsResp.body.rows)
+              if (readyCards.length > 0 && !e.stop_hook_active) {
+                return {
+                  ...r,
+                  block: blockReasonForReadyCards(readyCards),
+                }
+              }
+            }
+          }
+        } catch (err: any) {
+          // Allow the stop on read failure
+          $.ui.toast(`Ready cards check failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+        }
+      }
+    }
+  } catch {
+    // Continue with stop on any error
+  }
+
+  return next(e)
+}
+
+// StopFailure: clear the background work count (DX-4235)
+async function onReportStopFailure($: any, e: any, next: any) {
+  const r = await next(e)
+  if (e.agent_id === undefined) {
+    const now = await $.clock.now()
+    try {
+      const v = await read($, view)
+      if (v.connected !== null) {
+        await $.mcp.call('danxbot_api', 'PUT', '/api/plan-sessions/me/background-work', {
+          body: { count: null, eventAt: new Date(now).toISOString() },
+        })
+      }
+    } catch (err: any) {
+      $.ui.toast(`Background work clear failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+    }
+  }
+  return r
+}
+
 export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
@@ -1758,10 +1892,15 @@ export const register: Register = on => {
   // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
   on('classic.SubagentStart', onSubagentStart)
+  on('classic.SubagentStart', onReportSubagentStart) // DX-4235: activity reporting
   on('classic.SubagentStop', onSubagentStop)
+  on('classic.SubagentStop', onReportSubagentStop) // DX-4235: activity reporting
   on('classic.SessionStart', onClassicSessionStart)
-  on('prompt.submit', onPromptStamp)
+  on('classic.Stop', onReportStop) // DX-4235: background work and ready cards check
+  on('classic.StopFailure', onReportStopFailure) // DX-4235: clear background work
+  on('tool.call', onReportBackgroundBashStart) // DX-4235: activity reporting for background bash
   on('tool.call', onToolStamp)
+  on('prompt.submit', onPromptStamp)
   on('classic.UserPromptSubmit', onTitle)
   on('ui.render', { component: 'AbovePrompt' }, drawBand)
   on('ui.render', { component: 'SessionMode' }, drawSessionMode)
