@@ -187,6 +187,13 @@ for (const surface of SURFACES) {
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
+    test('a clear whose NEW session already holds a connection record asks nothing and is quiet (it is on a plan)', async ($, on) => {
+      const d = await cleared($, on, {})
+      d.world.restart.json = { notice: NOTICE }
+      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
+      expect(d.restartCalls).toEqual([])
+    })
+
     test('a clear whose session.end was never seen asks nothing and is quiet', async ($, on) => {
       const d = await cleared($, on, SIGNED_OUT, null)
       expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()

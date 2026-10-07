@@ -59,14 +59,12 @@ for (const surface of SURFACES) {
       })
     }
 
-    for (const source of ['fork'] as const) {
-      test(`${source} has nothing to tell: the first prompt carries only its stamp`, async ($, on) => {
-        const { d } = await unboundStart($, on, source, { connected: false, signedOut: 'signed-out' })
-        d.world.restart.json = { notice: NOTICE }
-        expect((await $.prompt.submit({ text: 'hello' })).context).toHaveLength(1)
-        expect(d.restartCalls).toEqual([])
-      })
-    }
+    test('fork has nothing to tell: the first prompt carries only its stamp', async ($, on) => {
+      const { d } = await unboundStart($, on, 'fork', { connected: false, signedOut: 'signed-out' })
+      d.world.restart.json = { notice: NOTICE }
+      expect((await $.prompt.submit({ text: 'hello' })).context).toHaveLength(1)
+      expect(d.restartCalls).toEqual([])
+    })
 
     test('two prompts landing together tell the start once', async ($, on) => {
       await unboundStart($, on, 'startup')
