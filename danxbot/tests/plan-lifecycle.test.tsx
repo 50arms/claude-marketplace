@@ -180,10 +180,22 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(1)
     await d.clock.advance(2_000)
-    // the press that takes the lock over runs the whole refresh, whose live step never settles again: it is not awaited
+    // the press that takes the lock over starts its load at once, but is not awaited: its live step queues behind the one that hung (the live
+    // checks run one after another), so the press itself never returns
     void pane.press({ key: 'refresh' })
     await d.clock.advance(1)
     expect(loadsOf(d)).toBe(2)
+  })
+
+  test('a holder past the load deadline and the orphan wait but inside the tail is not taken over', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agentListHangs = true
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    await d.clock.settle()
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    await d.clock.advance(LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + 1_000)
+    await pane.press({ key: 'refresh' })
+    expect(loadsOf(d)).toBe(1)
   })
 
   test('a load past the deadline that answers within the wait is applied: no second load', async ($, on) => {

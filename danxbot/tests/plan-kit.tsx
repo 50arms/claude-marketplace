@@ -291,6 +291,7 @@ export function dashboard(
     // binds (claude.exe: the session holder is empty until the session is built), where `$.mcp.call` and `$.tool.list` throw; `unbind()` /
     // `bind()` model that. Every kit session is bound unless a test unbinds it.
     bound: true,
+    plansBody: undefined as unknown,
     // DX-4233: `$.agent.list()` never answers until `release()`
     agentListHangs: false,
     // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
@@ -534,6 +535,8 @@ export function dashboard(
   const restartCalls: unknown[] = []
   const isContextRead = (a: any) => a.method === 'GET' && (a.path.startsWith('/api/reminders/event/') || (a.path === '/api/plans' && a.query?.limit === 1))
   function contextAnswer(path: string) {
+    // DX-4233: GET /api/plans answers this as its body, whatever its shape (a string makes the plugin's session read throw)
+    if (path === '/api/plans' && world.plansBody !== undefined) return reply(world.plansBody)
     if (path === '/api/plans' && world.plansStatus !== undefined) return reply({ error: 'plans boom' }, world.plansStatus)
     if (path === '/api/plans') return reply({ plans: [], total: 0, session: world.planId === null ? null : { plan_id: world.planId, plan_name: 'Danxbot plugin' } })
     const event = /^\/api\/reminders\/event\/(.+)$/.exec(path)

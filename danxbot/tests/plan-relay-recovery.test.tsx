@@ -161,6 +161,15 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toHaveLength(1)
     })
 
+    test('a watch that throws toasts once, however many callers share it', async ($, on) => {
+      const d = await unstarted($, on)
+      d.world.plansBody = 'not an object'
+      d.world.contextDelayMs = 1_000
+      await Promise.all([1, 2, 3, 4, 5].map(i => $.classic.SubagentStop({ agent_id: `a${i}`, agent_type: 'x', transcript_path: '/work/main.jsonl' })))
+      await d.clock.advance(5_000)
+      expect(d.toasts.filter(t => t.startsWith('Plan event relay watch failed'))).toHaveLength(1)
+    })
+
     test('it does not start a second loop beside one that runs', async ($, on) => {
       const d = dashboard(on)
       on('turn.complete', () => ({ text: 'done' }) as any)
@@ -233,6 +242,20 @@ for (const surface of SURFACES) {
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] streams'])
     })
 
+    test('the evidence is counted in a row: a successful wait between failures starts the count again', async ($, on) => {
+      const d = dashboard(on)
+      d.world.tools = 'old'
+      notConnected(d, 2)
+      // a wait that works, and takes 6 s: the next failure comes after the 8 s that would have proved the first two
+      d.relay.server.script.push(async () => (await d.clock.sleep(6_000), raw(JSON.stringify({ events: [] }))))
+      notConnected(d, 1)
+      await startSession($, d, surface)
+      await d.clock.advance(20_000)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await text(pane)).toContain('relay retrying')
+      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+    })
+
     test('the evidence is counted in a row: a list that catches up between failures starts the count again', async ($, on) => {
       const d = dashboard(on)
       d.world.tools = 'old'
@@ -248,18 +271,27 @@ for (const surface of SURFACES) {
       expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
     })
 
-    test('a key lost mid-session (only the bootstrap tools listed) is never read as an old server', async ($, on) => {
-      const d = dashboard(on)
-      d.world.tools = 'old'
-      notConnected(d, 12)
-      await startSession($, d, surface)
-      await d.clock.advance(1_000)
-      d.world.signedOut = 'revoked'
-      await d.clock.advance(60_000)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await text(pane)).not.toContain('relay stopped')
-      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
-    })
+    for (const [name, change] of [
+      ['a key lost mid-session (only the bootstrap tools listed)', (d: any) => void (d.world.signedOut = 'revoked')],
+      ['a session moved to another plan', (d: any) => void (d.world.planId = 24)],
+      ['a session left its plan', (d: any) => void (d.world.planId = null)],
+    ] as const) {
+      test(`${name} is never read as an old server: the run ends quietly, with no endless retry`, async ($, on) => {
+        const d = dashboard(on)
+        d.world.tools = 'old'
+        notConnected(d, 40)
+        await startSession($, d, surface)
+        await d.clock.advance(1_000)
+        change(d)
+        await d.clock.advance(20_000)
+        const calls = d.relay.calls.length
+        await d.clock.advance(120_000)
+        expect(d.relay.calls).toHaveLength(calls)
+        const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+        expect(await text(pane)).not.toContain('relay stopped')
+        expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+      })
+    }
 
     test('a not-connected answer when the tool list cannot be read (unbound) is retried', async ($, on) => {
       const d = dashboard(on)

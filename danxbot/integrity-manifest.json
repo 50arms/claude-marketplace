@@ -39,7 +39,7 @@
     "hooks/plan/subagents.ts": "a41a5f895249bffdc61f1ae968a4a1a53a67b83af80ea42151850cc6c9a60a38",
     "hooks/plan/usage.ts": "d0d3152a3010a6ab87ccb16a6532326ad03b39aa91d2b6284d6d984c7942e08c",
     "hooks/plan/words.ts": "5da374ec512d1b1eba874b574948907142cd34a8d293c496851237e51a594dd3",
-    "hooks/register.tsx": "06a06355ecf41a04274974a2ae30470a8e549ac1cc5036d63f7c1990de044729",
+    "hooks/register.tsx": "81dc94fe96b154d9d6641b8c423a179b605711477daa8ed62bada7c026f25b9f",
     "hooks/relay/answer.ts": "372d51c13fc6f2d46dda4569cf7a3a789df0105f1ecd80d8de5a7ac34480d34c",
     "hooks/relay/config.ts": "e9c2557f7f5e95ca2f7e835c344bd9c9e9f6df3117a0893ab30cc4cb2e0df538",
     "hooks/relay/cursor.ts": "19bc03ba31318f030f04bcd4c2c8bf2fe025204cf36ce54810bee244b57b0678",

@@ -1263,14 +1263,20 @@ async function serverLacksRelayTool($: any): Promise<boolean> {
   return ownTools.length > 0 && !ownTools.includes(toolName(RELAY_TOOL))
 }
 
-// DX-4233: that evidence, over OLD_SERVER_AFTER_FAILURES failed waits in a row spanning OLD_SERVER_AFTER_MS, and the dashboard (asked afresh) saying the
-// session is still signed in and on its plan: a list that has not caught up with a sign-in or a grant, or a key lost mid-session (the list shrinks
-// to the bootstrap tools), is the run's retry, never the end of the plan's relay.
-async function oldServerProven($: any, run: RelayRun): Promise<boolean> {
+// DX-4233: what the evidence (a failed wait with the plugin server's tools listed but not the relay's) comes to. It is proof only after
+// OLD_SERVER_AFTER_FAILURES of them in a row spanning OLD_SERVER_AFTER_MS: with the backoff that is the 4th failure (3 counted, the 8 s passed). Then the
+// dashboard is asked afresh, because the list is dynamic: it lags a sign-in or a grant, and shrinks to the bootstrap tools at a key loss.
+//   null: no proof yet (too early, or the dashboard could not say): the run retries.
+//   old-server: the session is signed in and still on this run's plan, and the server has no such tool.
+//   signed-out: the session is signed out, or on another plan or none: this run has nothing to serve, so it ends the way the real signed-out
+//   answer ends it (off, halted for this plan, nothing told) instead of retrying for good.
+async function oldServerVerdict($: any, run: RelayRun): Promise<WaitAnswer | null> {
   const now = await $.clock.now()
   run.lacking = run.lacking === null ? { count: 1, since: now } : { count: run.lacking.count + 1, since: run.lacking.since }
-  if (run.lacking.count < OLD_SERVER_AFTER_FAILURES || now - run.lacking.since < OLD_SERVER_AFTER_MS) return false
-  return (await sessionPlan($)).kind === 'connected'
+  if (run.lacking.count < OLD_SERVER_AFTER_FAILURES || now - run.lacking.since < OLD_SERVER_AFTER_MS) return null
+  const plan = await sessionPlan($)
+  if (plan.kind === 'failed' || plan.kind === 'unreachable') return null
+  return plan.kind === 'connected' && plan.planId === run.planId ? { kind: 'old-server' } : { kind: 'signed-out' }
 }
 
 async function waitForEvents($: any, run: RelayRun, cursor: string | null): Promise<WaitAnswer> {
@@ -1281,9 +1287,12 @@ async function waitForEvents($: any, run: RelayRun, cursor: string | null): Prom
     return got
   } catch (err: any) {
     const message = errMessage(err)
-    if (!isServerNotConnected(message) || !(await serverLacksRelayTool($))) run.lacking = null
-    else if (await oldServerProven($, run)) return { kind: 'old-server' }
-    return classifyText(message)
+    const lacksTool = isServerNotConnected(message) && (await serverLacksRelayTool($))
+    if (!lacksTool) {
+      run.lacking = null
+      return classifyText(message)
+    }
+    return (await oldServerVerdict($, run)) ?? classifyText(message)
   }
 }
 
