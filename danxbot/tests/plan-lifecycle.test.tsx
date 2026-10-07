@@ -172,6 +172,8 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
   // DX-4686: the live sub-agent check is no step of the refresh (a hung one cannot hold the lock), so the step after the load that is held here is
   // the settling of an open permission request, whose claim call is slow on the harness clock
   const PERMISSION_CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__request_permission', permissions: ['team.members.view'], reason: 'to read members' } as any
+  // longer than any wait the two tests below make, so the claim is still out when they end, and ending it advances the clock only this far
+  const HELD_MS = LOCK_STALE_MS + 5_000
   const withSlowClaim = async ($: any, on: any) => {
     const d = dashboard(on, { tabs: ['seed'] })
     on('tool.call', { tool: PERMISSION_CALL.tool }, () => ({ result: {}, text: JSON.stringify({ state: 'approval_required', approvalUrl: 'https://danxbot.example/connect/aaaa', confirmCode: 'CODE1', instruction: 'Show the code.' }), isError: false }) as any)
@@ -179,17 +181,24 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await d.clock.settle()
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     await $.tool.call(PERMISSION_CALL)
-    d.world.permissionClaimDelayMs = 10 * LOCK_STALE_MS
+    d.world.permissionClaimDelayMs = HELD_MS
     const before = loadsOf(d)
-    // the press starts a load and holds the lock in its permission step, so it is not awaited
-    void pane.press({ key: 'refresh' })
+    // the press starts a load and holds the lock in its permission step, so it is not awaited here; the test ends it with `endHeld`, so no press
+    // is left running into the next test's environment
+    const held = pane.press({ key: 'refresh' })
     await d.clock.advance(1)
     expect(loadsOf(d)).toBe(before + 1)
-    return { d, pane, before }
+    const endHeld = async () => {
+      d.world.permissionClaimDelayMs = 0
+      await d.clock.advance(HELD_MS)
+      await held
+      await d.clock.settle()
+    }
+    return { d, pane, before, endHeld }
   }
 
   test('a step after the load that never settles holds the lock until it is stale: a Refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
-    const { d, pane, before } = await withSlowClaim($, on)
+    const { d, pane, before, endHeld } = await withSlowClaim($, on)
     await d.clock.advance(LOCK_STALE_MS - 1_000)
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(before + 1)
@@ -197,15 +206,15 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     d.world.permissionClaimDelayMs = 0
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(before + 2)
-    await d.clock.settle()
+    await endHeld()
   })
 
   test('a holder past the load deadline and the orphan wait but inside the tail is not taken over', async ($, on) => {
-    const { d, pane, before } = await withSlowClaim($, on)
+    const { d, pane, before, endHeld } = await withSlowClaim($, on)
     await d.clock.advance(LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + 1_000)
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(before + 1)
-    await d.clock.settle()
+    await endHeld()
   })
 
   test('a load past the deadline that answers within the wait is applied: no second load', async ($, on) => {
@@ -260,6 +269,7 @@ describe('a live sub-agent check that never answers', () => {
       await $.classic.SubagentStart(SUBAGENT)
       await d.clock.settle()
       expect(d.readers).toHaveLength(1)
+      await d.clock.settle()
     })
 
     test(`on ${surface} its late answer is dropped, never applied over a newer one`, async ($, on) => {
@@ -277,6 +287,7 @@ describe('a live sub-agent check that never answers', () => {
       // the abandoned checks' answer changes nothing the pane shows: the line saying the engine did not answer stands, no running count replaces it
       const ui = await $.ui.mount(pane(surface))
       expect(await text(ui)).toContain('Live numbers unavailable')
+      await d.clock.settle()
     })
 
     test(`on ${surface} two checks during one hang make one engine call`, async ($, on) => {
