@@ -293,6 +293,24 @@ for (const surface of SURFACES) {
       })
     }
 
+    test('the proof needs the dashboard to answer: with the evidence in and the plan read failing, the loop keeps calling and tells no old-server line', async ($, on) => {
+      const d = dashboard(on)
+      d.world.tools = 'old'
+      notConnected(d, 40)
+      await startSession($, d, surface)
+      // the 4th failure (8 s) is the one that asks the dashboard: it answers a fault
+      d.world.plansStatus = 500
+      await d.clock.advance(20_000)
+      const calls = d.relay.calls.length
+      expect(calls).toBeGreaterThanOrEqual(5)
+      await d.clock.advance(60_000)
+      expect(d.relay.calls.length).toBeGreaterThan(calls + 3)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await text(pane)).toContain('relay retrying')
+      expect(await text(pane)).not.toContain('relay stopped')
+      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+    })
+
     test('a not-connected answer when the tool list cannot be read (unbound) is retried', async ($, on) => {
       const d = dashboard(on)
       d.relay.server.script.push(() => ({ deny: NOT_CONNECTED }) as any)
