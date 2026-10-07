@@ -92,7 +92,6 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
       id: p.id,
       ref: p.ref,
       name: p.name,
-      status: p.status,
       needsYou: p.bucket_counts?.[NEEDS_YOU_BUCKET_ID] ?? 0,
     }))
   // The session in this same response says WHICH plan; the plan itself is read by id below.
@@ -107,7 +106,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const noPlan = { dashboardUrl, connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
-  // One load of everything about the connected plan: the plan itself (its status counts and status),
+  // One load of everything about the connected plan: the plan itself (its status counts),
   // the needs-you cards and the in-progress cards, together.
   const [planR, cards, inProg, boards, allCards, subagents] = await Promise.all([
     call('GET', `/api/plans/${connectedId}`),
@@ -126,14 +125,13 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
   if (!planR.ok) return fail(errText(planR))
   const breakdown = readBreakdown(planR.body?.status_breakdown)
-  if (breakdown === null || typeof planR.body?.status !== 'string') {
-    return fail(`GET /api/plans/${connectedId} answered no valid status_breakdown (all six statuses as numbers) and status: cannot show progress`)
+  if (breakdown === null) {
+    return fail(`GET /api/plans/${connectedId} answered no valid status_breakdown (all six statuses as numbers): cannot show progress`)
   }
   const connected: ConnectedPlan = {
     id: connectedId,
     ref: `PLAN-${connectedId}`,
     name: session.plan_name ?? '',
-    status: planR.body.status,
     dashboardUrl,
   }
   const base = { dashboardUrl, connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
@@ -149,17 +147,14 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
   const rows: { id: string }[] = (cards.body.cards ?? []).map((c: any) => ({ id: c.id }))
   const ipRows: any[] = inProg.body.cards ?? []
-  // DX-4635: the needs-you card reads and the in-progress card reads (a readable agent name per row: the cards route carries only the
-  // raw session id of a claimed card) are one parallel step, never one hop after the other.
-  const [fetched, named] = await Promise.all([
-    Promise.all(
-      rows.map(async row => ({
-        row,
-        r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { problems: true } } }),
-      })),
-    ),
-    Promise.all(ipRows.map(async row => ({ row, r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { assigned_agent_name: true } } }) }))),
-  ])
+  // DX-4635: the needs-you card reads are one parallel step. DX-4415: the pane lists the in-progress cards by id, so they
+  // need no read of their own.
+  const fetched = await Promise.all(
+    rows.map(async row => ({
+      row,
+      r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { problems: true } } }),
+    })),
+  )
   // DX-4458: a card that cannot be read is one line naming it, never the whole pane; the other cards still show.
   const cardErrors: string[] = []
   const cardProblems: ProblemRow[][] = []
@@ -169,13 +164,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
   // cards arrive priority-sorted; keep that order
   const problems: ProblemRow[] = cardProblems.flat()
-  for (const n of named) if (!n.r.ok) cardErrors.push(`Couldn't load who is working on ${n.row.id}: ${failureReason(n.r)}`)
-  const inProgress: InProgressRow[] = named.map(n => ({
-    id: n.row.id,
-    title: n.row.title,
-    agent: n.r.ok ? (n.r.body.assigned_agent_name ?? null) : null,
-    updatedAt: n.row.updatedAt,
-  }))
+  const inProgress: InProgressRow[] = ipRows.map(row => ({ id: row.id, title: row.title }))
   return {
     ...EMPTY,
     ...base,

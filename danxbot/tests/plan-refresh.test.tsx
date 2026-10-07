@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, footerText, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
+import { SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -41,26 +41,14 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       d.failList()
-      await pane.press({ key: 'refresh' })
+      await forceRefresh($, d)
       expect(await label(band)).toContain('Danxbot Plan: Disconnected')
       expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
       expect(await label(pane)).toContain('500: boom')
       // and it recovers on the next good load
       d.failList(false)
-      await pane.press({ key: 'refresh' })
+      await forceRefresh($, d)
       expect(await problemBadgeOf(band)).toBe('⚠ 3')
-    })
-
-    test('the Refresh button forces a load every press', async ($, on) => {
-      const d = dashboard(on)
-      await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      const loads = () => d.api.filter(a => a.path === '/api/plans').length
-      const start = loads()
-      // the Refresh button forces; two presses are two loads
-      await pane.press({ key: 'refresh' })
-      await pane.press({ key: 'refresh' })
-      expect(loads()).toBe(start + 2)
     })
   })
 }
@@ -69,8 +57,7 @@ describe('state keys', () => {
   test('everything the plugin keeps is under the plugin key danxbot; no plan-link key remains', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await pane.press({ key: 'refresh' })
+    await forceRefresh($, d)
     expect(d.stateWrites.length).toBeGreaterThan(0)
     expect([...new Set(d.stateWrites.map(w => w.plugin))]).toEqual(['danxbot'])
   })
@@ -148,15 +135,16 @@ describe('the refresh lock', () => {
     // the host refuses the view write, in the load and again in its error handler: the throw escapes the refresh
     d.failViewWrite()
     try {
-      await pane.press({ key: 'refresh' })
+      await $.command.run({ command: 'danx-plan' })
     } catch {
-      // the engine reports the press hook as failed: that is the throw being exercised
+      // the command may report its hook as failed: that is the throw being exercised
     }
+    await d.clock.settle()
     // the throwing hook really fired (a renamed atom would make this test vacuous)
     expect(d.refusedViewWrites()).toBeGreaterThan(0)
     d.failViewWrite(false)
     const before = loads()
-    await pane.press({ key: 'refresh' })
+    await forceRefresh($, d)
     expect(loads()).toBe(before + 1)
   })
 })

@@ -165,7 +165,6 @@ export function dashboard(
     inProgressTotal?: number
     inProgressFails?: boolean
     noInProgressTotal?: boolean
-    noAgent?: boolean
     // plan_connect {disconnect: true}: the leave works (default), or the server refuses it a given way
     // ('rejected' is a THROWN call, the only error result; 'noLeftPlan' is a 200 without leftPlan)
     disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected' | 'noLeftPlan'
@@ -252,7 +251,7 @@ export function dashboard(
     // the session id the engine answers: another one after a /clear or a resume
     sessionId: OWN_SESSION.session_id,
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
-    inProgress: [{ id: 'DX-9', title: 'In flight card', updatedAt: '2026-10-03T07:58:30.000Z' }] as { id: string; title: string; updatedAt: string }[],
+    inProgress: [{ id: 'DX-9', title: 'In flight card' }] as { id: string; title: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
     // DX-4234: the context reads never answer (a hung dashboard), or answer after this many ms of the fake clock
     contextHangs: false,
@@ -387,7 +386,7 @@ export function dashboard(
     if (method === 'GET' && cards && query?.bucket === 'in-progress') {
       if (options.inProgressFails) return reply({ error: 'in-progress boom' }, 500)
       return reply({
-        cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4, updatedAt: c.updatedAt, assignedAgent: 'raw-session-uuid' })),
+        cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4 })),
         ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
       })
     }
@@ -410,11 +409,6 @@ export function dashboard(
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
-    if (method === 'GET' && issue && world.inProgress.some(c => c.id === issue[1])) {
-      const c = world.inProgress.find(x => x.id === issue[1])!
-      // DX-4405: the compact row always; the claimant's name only when `fields` names it, as the real route answers
-      return reply({ id: c.id, title: c.title, ...(query?.fields?.assigned_agent_name ? { assigned_agent_name: options.noAgent ? null : 'PLAN-23: danxbot plugin' } : {}) })
-    }
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
       if (!c) return reply({ error: 'nope' }, 404)

@@ -27,11 +27,10 @@ for (const surface of SURFACES) {
   describe(`a card with many problems on ${surface}`, () => {
     test('the load reads each card for its problem rows only: no solutions, no comments, no descriptions', async ($, on) => {
       const { d, pane } = await openPane($, on, surface, { bigCard: true })
-      const reads = issueReads(d).filter((a: any) => a.path !== '/api/issues/DX-9')
+      // DX-4415: an in-progress card is listed by its id from the cards list alone: no read of its own
+      const reads = issueReads(d)
       expect(reads.map((a: any) => a.path).sort()).toEqual(['/api/issues/DX-1', '/api/issues/DX-2', '/api/issues/DX-3'])
       for (const a of reads) expect(a.query).toEqual({ fields: { problems: true } })
-      // the in-progress card is read for its agent name alone (DX-4405: assigned_agent_name, no relation)
-      expect(issueReads(d).find((a: any) => a.path === '/api/issues/DX-9')?.query).toEqual({ fields: { assigned_agent_name: true } })
       const t = await text(pane)
       expect(t).toContain('Question 0?')
       expect(t).toContain('Question 48?')
@@ -45,7 +44,7 @@ for (const surface of SURFACES) {
       expect(t).toContain("Couldn't load DX-2: the dashboard answered 500")
       expect(t).toContain('Which route?')
       expect(t).not.toContain('Second one?')
-      expect(t).toContain('In flight card')
+      expect(t).toContain('DX-9')
       expect(t).not.toContain('boom')
     })
 
@@ -61,14 +60,6 @@ for (const surface of SURFACES) {
       const t = await text(pane)
       expect(t).toContain("Couldn't load DX-1")
       expect(t).not.toContain('Nothing needs you')
-    })
-
-    test('an in-progress card whose read fails is still listed, with one line saying its agent is unknown', async ($, on) => {
-      const { pane } = await openPane($, on, surface, { cardFails: 'DX-9' })
-      const t = await text(pane)
-      expect(t).toContain("Couldn't load who is working on DX-9: the dashboard answered 500")
-      expect(t).toContain('In flight card')
-      expect(t).toContain('Which route?')
     })
 
     test('an oversize answer for one card is a person-facing line, never the host notice', async ($, on) => {

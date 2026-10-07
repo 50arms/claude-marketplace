@@ -71,10 +71,9 @@ for (const surface of SURFACES) {
       const { d, pane } = await openPane($, on, surface)
       expect(await pane.findAll({ type: 'Input' })).toEqual([])
       const keys = (await pane.findAll({ type: 'Button' })).map((b: any) => b.key)
-      expect(keys).toEqual(expect.arrayContaining(['refresh', 'switch', 'disconnect']))
+      expect(keys).toEqual(expect.arrayContaining(['switch', 'disconnect']))
       // a button per problem would end its key in the problem's id
       expect(keys.filter((k: string) => /-\d+$/.test(k))).toEqual([])
-      await pane.press({ key: 'refresh' })
       await pane.press({ key: 'switch' })
       await d.clock.settle()
       expect(d.writes()).toEqual([])

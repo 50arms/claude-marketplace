@@ -102,7 +102,6 @@ for (const surface of SURFACES) {
       expect(!!name?.props.dimColor).toBe(false)
       expect(name?.props.color).toBeUndefined()
       for (const line of ['4m 12s', 'danxbot:worker-sonnet-high · claude-sonnet-5-5 · high', '12k tokens', '▸ Bash', 'In flight card']) {
-        // the last match: the In progress list above also names the card
         const t = (await ui.findAll({ type: 'Text', text: line })).at(-1)
         expect(t?.props.dimColor, line).toBe(true)
         expect(t?.props.color, line).toBeUndefined()

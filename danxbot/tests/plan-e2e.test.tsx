@@ -81,7 +81,7 @@ for (const surface of SURFACES) {
       expect(all).toContain('25%')
       expect(all).toContain('4 / 16 done')
       expect(await pane.find({ type: 'Text', text: /^events$/ })).toBeDefined()
-      expect(all).toContain('In flight card')
+      expect((await linksOf(pane)).map(l => l.label)).toContain('DX-9')
 
       d.setListener('unattached')
       await forceRefresh($, d)

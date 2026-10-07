@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { SERVER } from '../hooks/plan/config'
-import { SURFACES, dashboard, expectRowCarries, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
+import { SURFACES, dashboard, expectRowCarries, footerText, linksOf, mountIndicator, startSession, toldModel } from './plan-kit'
 
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -46,7 +46,7 @@ for (const surface of SURFACES) {
       const footer = await mountIndicator($, surface)
       expect(await text(pane)).toContain('Connected: PLAN-23')
       expect(await text(pane)).toContain('Needs You')
-      expect(await text(pane)).toContain('In flight card')
+      expect((await linksOf(pane)).map(l => l.label)).toContain('DX-9')
       d.holdApi(SLOW_MS)
       await pane.press({ key: 'switch' })
       await pane.select({ key: 'plan-pick', value: '24' })
@@ -56,7 +56,7 @@ for (const surface of SURFACES) {
       const shown = await text(pane)
       expect(shown).toContain('Connected: PLAN-24')
       expect(shown).not.toContain('PLAN-23')
-      expect(shown).not.toContain('In flight card')
+      expect((await linksOf(pane)).map(l => l.label)).not.toContain('DX-9')
       expect(await footerText(footer)).toBe('Danxbot · PLAN-24')
       // the relay of A is stopped and B's starts at the press, not when the refresh lands
       const waits = d.calls.filter(c => c.tool === 'plan_events_wait' && c.server === SERVER)
@@ -114,13 +114,13 @@ for (const surface of SURFACES) {
       expect(await text(pane)).toContain('500: boom')
     })
 
-    test('the needs-you and in-progress card reads of one load are in flight together', async ($, on) => {
+    test('the needs-you card reads of one load are in flight together', async ($, on) => {
       const d = dashboard(on)
       d.holdApi(100)
       await $.session.start({ cwd: '/work', surface, isInteractive: true })
       await d.clock.advance(5_000)
       await d.clock.settle()
-      // every card read of the load (the needs-you cards and the in-progress DX-9) was in flight at once, none waiting for another group
+      // every card read of the load (the needs-you cards) was in flight at once, none waiting for another
       expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(1)
       const reads = d.api.filter(a => a.path.startsWith('/api/issues/'))
       expect(reads.length).toBeGreaterThan(1)

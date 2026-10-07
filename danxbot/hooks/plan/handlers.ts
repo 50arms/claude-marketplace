@@ -4,7 +4,6 @@ import type { ConnectedPlan, PlanRow } from '../../types'
 // register.tsx builds this from `$` and hands it in. Each returns its work's promise, which a
 // press hands back to the engine, so the engine (and `claude plugin test`) can wait for it.
 export type Handlers = {
-  refresh: () => Promise<unknown>
   showPlan: () => Promise<unknown>
   dismissBand: () => Promise<unknown>
   openPane: () => Promise<unknown>

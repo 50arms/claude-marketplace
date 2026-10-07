@@ -2,10 +2,15 @@
 // connects, and the plan-list cap.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LIVE_CHECK_DEADLINE_MS, LIVE_CHECK_RETRY_MS, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
+import { DISCONNECT_GLYPH, LIVE_CHECK_DEADLINE_MS, LIVE_CHECK_RETRY_MS, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
 import { SURFACES, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
+// DX-4415: the pane has no Refresh button; `/danx-plan` forces a load (detached from the command, which returns at once)
+const ask = async ($: any, d: any) => {
+  await $.command.run({ command: 'danx-plan' })
+  await d.clock.advance(1)
+}
 const PANE = {
   component: 'Pane',
   requestId: 'danx-plan',
@@ -140,7 +145,7 @@ describe('expectRowCarries', () => {
 })
 
 describe('the refresh lock and the busy list at a stale or new start', () => {
-  test('a load that never settles: an error at the deadline, ONE load at a time until the orphan is given up, then the Refresh asked meanwhile loads', async ($, on) => {
+  test('a load that never settles: an error at the deadline, ONE load at a time until the orphan is given up, then the refresh asked meanwhile loads', async ($, on) => {
     const d = dashboard(on, { hangFirstLoad: true })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
@@ -148,17 +153,17 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     expect(loadsOf(d)).toBe(1)
 
     await d.clock.advance(LOAD_DEADLINE_MS / 2)
-    await pane.press({ key: 'refresh' })
+    await ask($, d)
     expect(loadsOf(d)).toBe(1)
 
-    // DX-4233: the deadline ends the load as an error shown now; the call that never settled still holds the lock, so a Refresh in this window
+    // DX-4233: the deadline ends the load as an error shown now; the call that never settled still holds the lock, so a refresh in this window
     // starts no second load beside it
     await d.clock.advance(LOAD_DEADLINE_MS / 2 + 1_000)
     expect(await text(pane)).toContain('did not load')
-    await pane.press({ key: 'refresh' })
+    await ask($, d)
     expect(loadsOf(d)).toBe(1)
 
-    // past the wait for it the lock is released and the Refresh asked behind it runs
+    // past the wait for it the lock is released and the refresh asked behind it runs
     await d.clock.advance(LOAD_ORPHAN_WAIT_MS)
     expect(loadsOf(d)).toBe(2)
     expect(await text(pane)).toContain('Connected: PLAN-23')
@@ -183,28 +188,26 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await $.tool.call(PERMISSION_CALL)
     d.world.permissionClaimDelayMs = HELD_MS
     const before = loadsOf(d)
-    // the press starts a load and holds the lock in its permission step, so it is not awaited here; the test ends it with `endHeld`, so no press
-    // is left running into the next test's environment
-    const held = pane.press({ key: 'refresh' })
-    await d.clock.advance(1)
+    // the command starts a load and holds the lock in its permission step; the test ends it with `endHeld`, so no load is left running into the
+    // next test's environment
+    await ask($, d)
     expect(loadsOf(d)).toBe(before + 1)
     const endHeld = async () => {
       d.world.permissionClaimDelayMs = 0
       await d.clock.advance(HELD_MS)
-      await held
       await d.clock.settle()
     }
     return { d, pane, before, endHeld }
   }
 
-  test('a step after the load that never settles holds the lock until it is stale: a Refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
+  test('a step after the load that never settles holds the lock until it is stale: a refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
     const { d, pane, before, endHeld } = await withSlowClaim($, on)
     await d.clock.advance(LOCK_STALE_MS - 1_000)
-    await pane.press({ key: 'refresh' })
+    await ask($, d)
     expect(loadsOf(d)).toBe(before + 1)
     await d.clock.advance(2_000)
     d.world.permissionClaimDelayMs = 0
-    await pane.press({ key: 'refresh' })
+    await ask($, d)
     expect(loadsOf(d)).toBe(before + 2)
     await endHeld()
   })
@@ -212,7 +215,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
   test('a holder past the load deadline and the orphan wait but inside the tail is not taken over', async ($, on) => {
     const { d, pane, before, endHeld } = await withSlowClaim($, on)
     await d.clock.advance(LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + 1_000)
-    await pane.press({ key: 'refresh' })
+    await ask($, d)
     expect(loadsOf(d)).toBe(before + 1)
     await endHeld()
   })
@@ -238,11 +241,13 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // a disconnect that never finishes keeps its key claimed, as one cut off by a dying process would
     const leaving = pane.press({ key: 'disconnect' })
     await d.clock.advance(1_000)
-    expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnecting…')
+    expect((await pane.find({ key: 'disconnect' }))?.props.dimColor).toBe(true)
+      expect(await text(pane)).toContain('Disconnecting…')
     // the new start frees the key
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+    expect((await pane.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
+      expect((await pane.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
     await d.clock.advance(60_000)
     await leaving
   })
@@ -339,7 +344,7 @@ describe('a live sub-agent check that never answers', () => {
       await startSession($, d, surface)
       const ui = await $.ui.mount(pane(surface))
       await d.clock.advance(LOCK_STALE_MS + 1_000)
-      await ui.press({ key: 'refresh' })
+      await ask($, d)
       // the press's own live check (detached) is abandoned at its deadline before the test ends
       await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
       await d.clock.settle()

@@ -2,7 +2,6 @@ export type PlanRow = {
   id: number
   ref: string
   name: string
-  status: string
   needsYou: number
 }
 
@@ -15,14 +14,11 @@ export type ProblemRow = {
 }
 
 // The plan this session is bound to, read from the same response as the plan list (session.plan_id
-// and session.plan_name), so a plan beyond the list's cap still labels correctly. `status` is the
-// list row's, null when the plan is not in the capped list.
+// and session.plan_name), so a plan beyond the list's cap still labels correctly.
 export type ConnectedPlan = {
   id: number
   ref: string
   name: string
-  // read with the plan itself (GET /api/plans/:id), never from the capped list
-  status: string
   // The dashboard's public origin (`dashboard_url` on GET /api/plans, e.g. `https://host` or
   // `http://localhost:5555`), with no path: every link to the plan, a card or a problem starts with it.
   dashboardUrl: string
@@ -38,14 +34,11 @@ export type StatusBreakdown = {
   Cancelled: number
 }
 
-// A card in the plan's in-progress bucket (not waiting on the operator), as the pane lists it.
+// A card in the plan's in-progress bucket (not waiting on the operator): the pane lists its id (DX-4415); the title
+// titles a sub-agent's card link that no other loaded card names.
 export type InProgressRow = {
   id: string
   title: string
-  // the readable agent name from the issue resource; null when nobody holds the card
-  agent: string | null
-  // when the card last changed: NOT when it went In Progress (no field says that)
-  updatedAt: string
 }
 
 // DX-4374: the server's `sessionListenerAttached {attached, state, nextStep}`, less `attached`. Only the exact

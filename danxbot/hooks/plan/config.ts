@@ -88,7 +88,6 @@ export const BAND_GAP_COLS = 1
 export const BAND_NAME_MIN_COLS = 4
 export const BAND_SPARE_COLS = 2
 export const PICKER_PLAN_NAME_MAX = 60
-export const CARD_TITLE_MAX = 80
 export const TOAST_ERROR_MAX = 160
 export const CONNECT_ERROR_MAX = 200
 export const CALL_ERROR_MAX = 200
@@ -212,6 +211,17 @@ export function problemUrl(plan: ConnectedPlan, cardId: string, problemId: numbe
 export function boardCardUrl(plan: ConnectedPlan, cardId: string): string {
   return `${plan.dashboardUrl}/board/${cardId}`
 }
+
+// DX-4415: the pane's top-line icon controls. Each is ONE glyph (a Button in this engine draws no Svg and has no icon,
+// tooltip or colour prop), and each glyph's tooltip is a hover card (see icon-control.tsx).
+export const SWITCH_GLYPH = '⇄'
+export const DISCONNECT_GLYPH = '⏻'
+export const SWITCH_TIP = 'Switch plan'
+export const DISCONNECT_TIP = 'Disconnect'
+export const DISCONNECTING_TIP = 'Disconnecting…'
+
+// DX-4415: what the progress row's right side says when no card is In Progress.
+export const NO_IN_PROGRESS = 'No cards in progress'
 
 // The donut's size in px (Svg takes CSS pixels): the band line's, and the pane header's.
 export const DONUT_BAND_PX = 16

@@ -33,12 +33,6 @@ export function cappedPlansNote(v: PlanView): string | null {
   return v.plansUnread > 0 ? `+${v.plansUnread} more plan${v.plansUnread === 1 ? '' : 's'} in the browser` : null
 }
 
-// "Updated 08:15:42Z": the UTC clock part of an ISO timestamp.
-export function updatedText(iso: string): string {
-  const [, time = ''] = iso.split('T')
-  return `Updated ${time.slice(0, 8)}Z`
-}
-
 // `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.
 export function ellipsize(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
@@ -121,8 +115,8 @@ export function footerLabel(v: PlanView): string | null {
   return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND
 }
 
-// "+N more cards in progress in the browser" when the in-progress bucket was capped.
-export function cappedInProgressNote(v: PlanView): string | null {
+// DX-4415: "+4" at the end of the refs row when the in-progress bucket has more cards than the load read.
+export function inProgressMore(v: PlanView): string | null {
   const unread = v.inProgressTotal - v.inProgress.length
-  return unread > 0 ? `+${unread} more in-progress card${unread === 1 ? '' : 's'} in the browser` : null
+  return unread > 0 ? `+${unread}` : null
 }

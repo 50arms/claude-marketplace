@@ -221,7 +221,7 @@ async function refresh($: any, force = false): Promise<void> {
   })
   if (!go) return
   // The lock is released in `finally`, so a throw out of any step below cannot leave it held and
-  // stop every later refresh (the Refresh button included).
+  // stop every later refresh.
   try {
     let again = true
     while (again) {
@@ -406,7 +406,7 @@ const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).
 // the plan the person pressed on the pane, loading its numbers (the refresh fills them); a leave puts the session on no plan.
 const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl, plans: cur.plans, plansUnread: cur.plansUnread })
 function connectedView(cur: any, plan: PlanRow, refreshedAt: string): any {
-  const connected: ConnectedPlan = { id: plan.id, ref: plan.ref, name: plan.name, status: plan.status, dashboardUrl: cur.dashboardUrl }
+  const connected: ConnectedPlan = { id: plan.id, ref: plan.ref, name: plan.name, dashboardUrl: cur.dashboardUrl }
   return { ...planIndependent(cur), phase: 'loading', connected, refreshedAt: cur.refreshedAt ?? refreshedAt }
 }
 function leftView(cur: any): any {
@@ -619,7 +619,6 @@ async function dismissBand($: any): Promise<void> {
 
 function handlers($: any): Handlers {
   return {
-    refresh: () => refresh($, true),
     openPane: () => openPlanPane($),
     connect: plan => connect($, plan),
     showPlan: () => showPlan($),
