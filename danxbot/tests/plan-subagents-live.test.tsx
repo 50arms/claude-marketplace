@@ -226,6 +226,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const asked = d.agentLists.count
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
       expect(d.agentLists.count).toBeGreaterThan(asked)
       expect(d.readers).toEqual([])
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
@@ -238,6 +239,7 @@ for (const surface of SURFACES) {
       on('classic.SubagentStart', () => ({}) as any)
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
       expect(d.agentLists.count).toBe(0)
       expect(d.readers).toEqual([])
     })
@@ -249,6 +251,7 @@ for (const surface of SURFACES) {
       on('classic.SubagentStart', () => ({}) as any)
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' })
+      await d.clock.settle()
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       const line = (await ui.findAll({ type: 'Text', text: liveUnavailableLine('the session has not reported its transcript path yet') }))[0]
       expect(line?.props.dimColor).toBe(true)
@@ -264,6 +267,7 @@ for (const surface of SURFACES) {
       on('classic.SubagentStop', () => ({}) as any)
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       expect(d.readers).toHaveLength(1)
       d.readers[0].end = { code: 1, signal: null }
@@ -271,6 +275,7 @@ for (const surface of SURFACES) {
       expect(await text(ui)).toContain('Live numbers unavailable: the live reader exited with exit code 1')
       d.world.agents = [{ ...running('a1'), status: 'completed' }]
       await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
+      await d.clock.settle()
       expect(await text(ui)).not.toContain('Live numbers unavailable')
       // the one start is not retried
       expect(d.readers).toHaveLength(1)
@@ -287,6 +292,7 @@ for (const surface of SURFACES) {
       on('classic.SubagentStop', () => ({}) as any)
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
       expect(children).toHaveLength(1)
       const [node, script, path] = children[0].argv
       expect([node, path]).toEqual(['node', MAIN_TRANSCRIPT])
@@ -305,17 +311,20 @@ for (const surface of SURFACES) {
       // a second sub-agent while the reader runs: still one reader
       d.world.agents = [running('a1'), running('a2')]
       await $.classic.SubagentStart({ agent_id: 'a2', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
       expect(children).toHaveLength(1)
 
       // one ends, one still runs: the reader runs on
       d.world.agents = [{ ...running('a1'), status: 'completed' }, running('a2')]
       await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
+      await d.clock.settle()
       await d.clock.advance(READER_PIECE_MS)
       expect(children[0].stopped).toBe(false)
 
       // the last one ends: the reader is stopped, and nothing is said about it
       d.world.agents = [{ ...running('a1'), status: 'completed' }, { ...running('a2'), status: 'completed' }]
       await $.classic.SubagentStop({ agent_id: 'a2', agent_type: 'danxbot:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
+      await d.clock.settle()
       await d.clock.advance(READER_PIECE_MS)
       expect(children[0].stopped).toBe(true)
       expect(children).toHaveLength(1)
@@ -330,6 +339,7 @@ for (const surface of SURFACES) {
       on('classic.SubagentStart', () => ({}) as any)
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
       children[0].pieces.push({ stream: 'stderr', text: 'no recorded dashboard MCP version' })
       children[0].end = { code: 1, signal: null }
       await d.clock.advance(READER_PIECE_MS)
@@ -341,6 +351,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(60_000)
       expect(children).toHaveLength(1)
       await $.classic.SubagentStart({ agent_id: 'a2', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
       expect(children).toHaveLength(2)
     })
 
@@ -352,6 +363,7 @@ for (const surface of SURFACES) {
       on('classic.SubagentStart', () => ({}) as any)
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: MAIN_TRANSCRIPT })
+      await d.clock.settle()
       children[0].pieces.push({ stream: 'stdout', text: 'nope\n' })
       await d.clock.advance(READER_PIECE_MS)
       await d.clock.advance(READER_PIECE_MS)

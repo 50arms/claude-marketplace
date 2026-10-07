@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { LIVE_CHECK_DEADLINE_MS, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
-import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
+import { SURFACES, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -197,6 +197,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     d.world.permissionClaimDelayMs = 0
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(before + 2)
+    await d.clock.settle()
   })
 
   test('a holder past the load deadline and the orphan wait but inside the tail is not taken over', async ($, on) => {
@@ -204,6 +205,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await d.clock.advance(LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + 1_000)
     await pane.press({ key: 'refresh' })
     expect(loadsOf(d)).toBe(before + 1)
+    await d.clock.settle()
   })
 
   test('a load past the deadline that answers within the wait is applied: no second load', async ($, on) => {
@@ -241,42 +243,78 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
 describe('a live sub-agent check that never answers', () => {
   const running = { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build a1', status: 'running' }
   const SUBAGENT = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: '/work/main.jsonl' }
+  const pane = (surface: string) => ({ ...PANE, plugin: 'danxbot', surface })
 
-  test('is abandoned at the deadline: the next check runs and starts the live reader', async ($, on) => {
-    const d = dashboard(on)
-    on('classic.SubagentStart', () => ({}) as any)
-    d.world.agentListHangs = true
-    await startSession($, d, 'desktop')
-    const asked = d.agentLists.count
-    await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
-    d.world.agentListHangs = false
-    d.world.agents = [running]
-    await $.classic.SubagentStart(SUBAGENT)
-    await d.clock.settle()
-    expect(d.agentLists.count).toBeGreaterThan(asked)
-    expect(d.readers).toHaveLength(1)
-  })
+  for (const surface of SURFACES) {
+    test(`on ${surface} is abandoned at the deadline: the next check runs and starts the live reader`, async ($, on) => {
+      const d = dashboard(on)
+      on('classic.SubagentStart', () => ({}) as any)
+      d.world.agentListHangs = true
+      await startSession($, d, surface)
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      // the engine answers at last (the abandoned call is still the one outstanding), and the next check asks it afresh
+      d.world.agents = [running]
+      d.release()
+      await d.clock.settle()
+      d.world.agentListHangs = false
+      await $.classic.SubagentStart(SUBAGENT)
+      await d.clock.settle()
+      expect(d.readers).toHaveLength(1)
+    })
 
-  test('its late answer is dropped, never applied over a newer one', async ($, on) => {
-    const d = dashboard(on)
-    d.world.agentListHangs = true
-    on('classic.SubagentStart', () => ({}) as any)
-    await startSession($, d, 'desktop')
-    // the event reports the transcript path (a child cannot start without it) and queues its own check behind the hung one
-    void $.classic.SubagentStart(SUBAGENT)
-    await d.clock.advance(2 * LIVE_CHECK_DEADLINE_MS + 2)
-    d.world.agents = [running]
-    d.release()
-    await d.clock.settle()
-    expect(d.readers).toEqual([])
-  })
+    test(`on ${surface} its late answer is dropped, never applied over a newer one`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHangs = true
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      // the event reports the transcript path (a child cannot start without it) and queues its own check behind the hung one
+      await $.classic.SubagentStart(SUBAGENT)
+      await d.clock.advance(2 * LIVE_CHECK_DEADLINE_MS + 2)
+      d.world.agents = [running]
+      d.release()
+      await d.clock.settle()
+      expect(d.readers).toEqual([])
+      // the abandoned checks' answer changes nothing the pane shows: the line saying the engine did not answer stands, no running count replaces it
+      const ui = await $.ui.mount(pane(surface))
+      expect(await text(ui)).toContain('Live numbers unavailable')
+    })
 
-  test('a pane press returns while a live check is hung', async ($, on) => {
-    const d = dashboard(on)
-    d.world.agentListHangs = true
-    await startSession($, d, 'desktop')
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await d.clock.advance(LOCK_STALE_MS + 1_000)
-    await pane.press({ key: 'refresh' })
-  })
+    test(`on ${surface} two checks during one hang make one engine call`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHangs = true
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await d.clock.advance(1)
+      const asked = d.agentLists.count
+      expect(asked).toBeGreaterThan(0)
+      await $.classic.SubagentStart(SUBAGENT)
+      await d.clock.advance(2 * LIVE_CHECK_DEADLINE_MS + 2)
+      expect(d.agentLists.count).toBe(asked)
+      await d.clock.settle()
+    })
+
+    test(`on ${surface} a pane press returns while a live check is hung`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHangs = true
+      await startSession($, d, surface)
+      const ui = await $.ui.mount(pane(surface))
+      await d.clock.advance(LOCK_STALE_MS + 1_000)
+      await ui.press({ key: 'refresh' })
+      // the press's own live check (detached) is abandoned at its deadline before the test ends
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      await d.clock.settle()
+    })
+
+    test(`on ${surface} the pane says the check did not answer in time`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHangs = true
+      await startSession($, d, surface)
+      const ui = await $.ui.mount(pane(surface))
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      const shown = await text(ui)
+      expect(shown).toContain('Live numbers unavailable')
+      expect(shown).toContain(`within ${LIVE_CHECK_DEADLINE_MS / 1000}s`)
+      await d.clock.settle()
+    })
+  }
 })

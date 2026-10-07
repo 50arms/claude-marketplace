@@ -768,7 +768,7 @@ export function dashboard(
   on('session.id', () => ({ value: world.sessionId }) as any)
   on('agent.list', async () => {
     agentLists.count++
-    // DX-4233: the engine's list never answers (a step of a refresh AFTER its plan load, which holds the refresh lock)
+    // DX-4233 / DX-4686: the engine's list never answers: only the live-check queue waits on it (each check abandons it at its deadline)
     if (world.agentListHangs) await hung.promise
     return { value: world.agents } as any
   })

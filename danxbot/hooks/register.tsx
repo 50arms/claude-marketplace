@@ -151,6 +151,9 @@ let permissionTickBusy = false
 let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
 // DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
 let liveQueue: Promise<void> = Promise.resolve()
+// DX-4686: the engine's one `$.agent.list()` call still unanswered, if any. A check that finds one racing its own deadline against that same call
+// rather than asking again, so a hung engine is asked once however many checks queue behind it.
+let agentListInFlight: Promise<{ id: string; type: string; status: string }[]> | null = null
 
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. Any rejection (including the engine's "no such server") is an error shown as one.
@@ -685,7 +688,10 @@ async function agentStatuses($: any): Promise<Record<string, string> | string> {
   let agents: { id: string; type: string; status: string }[]
   try {
     // DX-4686: a call that never answers is abandoned at the deadline (its late answer falls on the floor, never applied), so the queue moves on
-    const answer = await withinDeadline<typeof agents | null>($, LIVE_CHECK_DEADLINE_MS, $.agent.list(), () => null)
+    agentListInFlight ??= Promise.resolve($.agent.list()).finally(() => {
+      agentListInFlight = null
+    })
+    const answer = await withinDeadline<typeof agents | null>($, LIVE_CHECK_DEADLINE_MS, agentListInFlight, () => null)
     if (answer === null) return `the engine did not list this session's sub-agents within ${LIVE_CHECK_DEADLINE_MS / 1000}s`
     agents = answer
   } catch (err: any) {
@@ -1372,8 +1378,8 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   void watchRelay($)
   // only a session connected to a plan has a Sub-agents section to settle
   if ((await read($, view)).connected !== null) settleSubagents($)
-  // DX-4508: start the live child for a new sub-agent, or stop it with the last one
-  await syncLive($, isStart)
+  // DX-4508: start the live child for a new sub-agent, or stop it with the last one. DX-4686: detached, so the hook never waits on a queued check
+  detach($, 'Live sub-agent check', syncLive($, isStart))
   return r
 }
 
