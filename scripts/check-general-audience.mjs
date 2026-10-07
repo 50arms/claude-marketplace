@@ -25,8 +25,24 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { listPluginFiles } from "./write-integrity-manifest.mjs";
+
+/** Directories under a plugin that are never part of the runtime install a hook depends on. */
+const EXCLUDED_TOP_DIRS = new Set(["tests", "node_modules"]);
+
+/** The plugin's shipped files, as paths relative to the plugin dir, with `/` separators, sorted. */
+export function listPluginFiles(repoRoot, plugin) {
+  const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", plugin], {
+    cwd: repoRoot,
+    maxBuffer: 16 * 1024 * 1024,
+  }).toString("utf8");
+  return out
+    .split("\0")
+    .filter((p) => p !== "")
+    .map((p) => p.slice(plugin.length + 1))
+    .filter((rel) => rel !== "integrity-manifest.json" && !EXCLUDED_TOP_DIRS.has(rel.split("/")[0]));
+}
 
 /** Each token names something only the author's setup has. */
 export const BANNED = [

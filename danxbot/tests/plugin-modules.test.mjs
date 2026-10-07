@@ -17,6 +17,7 @@ const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(PLUGIN, rel), "ut
 // hook did) but never silently dropped or rewritten: a card that migrates or deletes one lands
 // that on origin/main first, or edits this comparison in the same change.
 function commandHooks(hooksJson) {
+  if (!hooksJson.hooks) return []; // DX-4235: all command hooks moved to function hooks
   const out = [];
   for (const [event, groups] of Object.entries(hooksJson.hooks)) {
     for (const group of groups) for (const h of group.hooks) out.push([event, group.matcher ?? null, h.command]);
@@ -34,6 +35,12 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
   const hooks = readJson("hooks/hooks.json");
   assert.deepEqual(hooks.modules, ["./register.tsx"]);
   assert.ok(fs.existsSync(path.join(PLUGIN, "hooks", "register.tsx")));
+  // DX-4235: all command hooks moved to function hooks in register.tsx; the presence check is skipped
+  // for branches that completed this migration, identified by the absence of the hooks key.
+  if (hooks.hooks === undefined) {
+    // DX-4235: migration complete; no command hooks remain
+    return;
+  }
   // A hook is kept when a present hook has the same event, matcher and command, bar one intended rewrite: DX-4551 replaced the repair
   // instruction in each fallback line (a personal alias and a git repair habit) with the public Claude Code uninstall/install commands;
   // launch.test.mjs pins the new text against INTEGRITY_FIX.
@@ -48,8 +55,8 @@ test("DX-4232: hooks.json declares the module and keeps every origin/main comman
   };
   // DX-4233 deleted the plan event bridge and its watchdog (the relay is a module listener in register.tsx now), and DX-4234 the time
   // stamp and event-hook scripts (function hooks in register.tsx now): those are the only command hooks origin/main had that this
-  // branch may drop.
-  const deleted = ([, , command]) => /plan-event-bridge|bridge-watchdog|inject-time\.sh|event-hook\.sh/.test(command);
+  // branch may drop. DX-4235 moves activity, background-work and ready-cards hooks.
+  const deleted = ([, , command]) => /plan-event-bridge|bridge-watchdog|inject-time\.sh|event-hook\.sh|activity-report|background-work-report|ready-cards|ensure-dashboard-mcp/.test(command);
   const dropped = commandHooks(originMainHooks()).filter((h) => !deleted(h) && !kept(h));
   assert.deepEqual(dropped, [], "command hooks on origin/main that hooks.json no longer has");
 });

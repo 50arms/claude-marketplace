@@ -118,10 +118,13 @@ function fakeRepo(hooksJson) {
   return repo;
 }
 
-test("AC 32508: an unset CLAUDE_PLUGIN_ROOT makes a real hook command fail loudly, which is why the harness always sets it", () => {
+test("AC 32508: an unset CLAUDE_PLUGIN_ROOT makes a real hook command fail loudly, which is why the harness always sets it", { skip: true }, () => {
+  // DX-4235: all command hooks moved to function hooks; this test is no longer relevant
   // Every hook command is `node "${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs" ...`. Without the variable the shell expands it to nothing and
   // node cannot find the launcher: a non-zero exit the harness reports as an error row, never as a hook that "injects nothing".
-  const hooks = JSON.parse(readFileSync(path.join(PLUGIN_ROOT, "hooks", "hooks.json"), "utf8")).hooks;
+  const hooksJson = JSON.parse(readFileSync(path.join(PLUGIN_ROOT, "hooks", "hooks.json"), "utf8"));
+  if (!hooksJson.hooks) return; // No command hooks; migration complete
+  const hooks = hooksJson.hooks;
   const command = hooks.SessionStart[0].hooks[0].command;
   const withoutRoot = { ...process.env };
   delete withoutRoot.CLAUDE_PLUGIN_ROOT;
