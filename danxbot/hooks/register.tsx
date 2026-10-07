@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, PanelState, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, isRestartSource, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
-import type { DanxEvent, Told } from './context/events'
+import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
+import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { approvalRequestOf, approvalSubject, approvalToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest, OpenFailure } from './plan/approval'
@@ -115,6 +115,13 @@ const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as Re
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // DX-4234: the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
 const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
+// DX-4234: a session start the model has not been told about. On a desktop or headless startup, resume and fork the engine has not bound the
+// session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
+// prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
+const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, null as PendingStart)
+// DX-4234: the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
+// asks about exactly that predecessor.
+const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, null as string | null)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -1279,6 +1286,7 @@ async function onSessionStart($: any, e: any, next: any) {
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
 async function onSessionEnd($: any, e: any, next: any) {
+  if (e.reason === 'clear' && typeof e.sessionId === 'string') await update($, endedSession, () => e.sessionId)
   // DX-4548: the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
     signInGeneration++
@@ -1409,16 +1417,58 @@ async function timeLine($: any): Promise<string> {
   return line
 }
 
-// the prompt as typed (a task notification included) reaches the model with its time beside it
-async function onPromptStamp($: any, e: any, next: any) {
-  return next({ ...e, context: [...(e.context ?? []), await timeLine($)] })
+// The one-shot state reads below take a value and clear it in one write, so two callers landing together get it once. The engine's scan wants each
+// `update` to name its atom, so each atom has its own take.
+async function takePendingStart($: any): Promise<PendingStart> {
+  let taken: PendingStart = null
+  await update($, pendingStart, cur => {
+    taken = cur
+    return null
+  })
+  return taken
 }
 
-// each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside
+async function takeEndedSession($: any): Promise<string | null> {
+  let taken: string | null = null
+  await update($, endedSession, cur => {
+    taken = cur
+    return null
+  })
+  return taken
+}
+
+// A pending session start is told once: the next prompt or tool result, whichever comes first, carries its line beside the stamp (a start with no
+// prompt coming, such as a compaction in the middle of a turn, reaches the model on the next tool result). It is gone once taken, so work that throws is one warning line here, never a rejected hook that
+// would lose the time stamp beside it.
+async function startLine($: any): Promise<string | null> {
+  const start = await takePendingStart($)
+  if (start === null) return null
+  try {
+    return await sessionContext($, start)
+  } catch (err: any) {
+    const event = sessionEvent(start.source)
+    return event === null ? null : eventFailureLine(event, `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}`)
+  }
+}
+
+// the stamp and, when there is one, the session start line: the entries a hook adds to the model's context
+async function stampEntries($: any, start: string | null): Promise<string[]> {
+  return [await timeLine($), ...(start === null ? [] : [start])]
+}
+
+// the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
+async function onPromptStamp($: any, e: any, next: any) {
+  const start = await startLine($)
+  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, start))] })
+}
+
+// each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
+// result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
   if (r.deny !== undefined) return r
-  return { ...r, context: [...(r.context ?? []), await timeLine($)] }
+  const start = e.agentId === undefined ? await startLine($) : null
+  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, start))] }
 }
 
 // DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -1442,8 +1492,7 @@ async function sessionPlan($: any): Promise<SessionPlan> {
 // Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the danx-dashboard MCP server writes
 // at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, session-connection.ts `sessionConnectionPath`; only its existence is
 // read). It decides who a dashboard fault speaks to (DX-3421): a connected session gets one warning line, any other stays silent.
-async function isPlanConnected($: any): Promise<boolean> {
-  const id: string = await $.session.id()
+async function isPlanConnected($: any, id: string): Promise<boolean> {
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
   if (typeof home !== 'string' || home === '' || !/^[A-Za-z0-9_-]+$/.test(id)) return false
   return $.fs.exists(`${home}/.config/danxbot/plan-sessions/${id}.json`)
@@ -1506,13 +1555,17 @@ async function eventContext($: any, event: DanxEvent): Promise<string | null> {
 // DX-3928: a session that is not on a plan (or has no key yet) but replaced one that was is told which plan and what waits there. The
 // session's own danx-dashboard server finds the earlier session and answers; its `restart_notice` tool works before sign-in and owns its
 // lookup's 8 s deadline (a `lookup_timeout` stop carries the server's fix text), so the plugin sets no deadline of its own around the call. A stop
-// it answers, or a call that fails, is one warning line, never quiet.
-async function restartNotice($: any): Promise<string | null> {
+// it answers, or a call that fails, is one warning line, never quiet. The arguments depend on how the session started (restartAsk).
+async function restartNotice($: any, asked: RestartAsk): Promise<string | null> {
   let told: Told
-  try {
-    told = restartNoticeText(await $.mcp.call(SERVER, RESTART_NOTICE_TOOL, {}))
-  } catch (err: any) {
-    told = { kind: 'failed', reason: `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}` }
+  if (asked.kind === 'failed') {
+    told = asked
+  } else {
+    try {
+      told = restartNoticeText(await $.mcp.call(SERVER, RESTART_NOTICE_TOOL, asked.args))
+    } catch (err: any) {
+      told = { kind: 'failed', reason: `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}` }
+    }
   }
   return toldLine(told, restartFailureLine)
 }
@@ -1520,15 +1573,27 @@ async function restartNotice($: any): Promise<string | null> {
 // What the plugin's own reads of a session start came to: the line to tell, or that the restart notice is to be asked next.
 type StartReads = { line: string | null; askRestart: boolean }
 
-// SessionStart: the wait for the plugin's server, the plan read and the event text read share ONE deadline. Whatever fails, a session KNOWN to be
+// A /clear: it has no event text, and it is a restart only when the session it ended was on a plan (that session's connection record is on disk),
+// which is also what names the predecessor to the server. Any other clear is quiet (DX-3421), the server is never asked.
+async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<string | null> {
+  const ended = start.predecessorId
+  if (ended === null || !(await isPlanConnected($, ended)) || (await isPlanConnected($, start.sessionId))) return null
+  const server = await serverState($, (await $.clock.now()) + CONTEXT_DEADLINE_MS)
+  if (server === 'unloaded') return null
+  if (server === 'not-yet') return restartFailureLine(SERVER_NOT_CONNECTED_REASON)
+  return restartNotice($, { kind: 'ask', args: { predecessor_id: ended } })
+}
+
+// The reads a pending start asks of the dashboard: the wait for the plugin's server, the plan read and the event text read share ONE deadline. Whatever fails, a session KNOWN to be
 // on a plan (its record on disk) is told in one warning line; any other stays silent (DX-3421) and, on a start or resume, still asks the
 // restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
-async function sessionContext($: any, e: any): Promise<string | null> {
-  const event = sessionEvent(e.source)
-  if (event === null) return null
+async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
+  const event = sessionEvent(start.source)
+  if (event === null) return start.source === 'clear' ? clearNotice($, start) : null
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
-  const connected = await isPlanConnected($)
-  const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && isRestartSource(e.source) })
+  const connected = await isPlanConnected($, start.sessionId)
+  const askRestart = start.source !== 'compact'
+  const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return null
   if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
@@ -1537,23 +1602,28 @@ async function sessionContext($: any, e: any): Promise<string | null> {
     if (plan === 'connected') return { line: await eventContext($, event), askRestart: false }
     if (typeof plan === 'object') return fault(plan.failed)
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
-    return { line: null, askRestart: isRestartSource(e.source) }
+    return { line: null, askRestart }
   }
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
-  return done.askRestart ? restartNotice($) : done.line
+  return done.askRestart ? restartNotice($, restartAsk(start)) : done.line
 }
 
 async function readSubagentContext($: any): Promise<string | null> {
   const plan = await sessionPlan($)
   if (plan === 'connected') return eventContext($, 'sub_agent_start')
-  return typeof plan === 'object' && (await isPlanConnected($)) ? eventFailureLine('sub_agent_start', plan.failed) : null
+  return typeof plan === 'object' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine('sub_agent_start', plan.failed) : null
 }
 
-// SessionStart: the session title is noted, then the registry's text for a connected session or the restart notice for one that replaced a
-// connected one is added (additionalContext). One hook: a module may register an event once.
+// SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. Nothing else: the session is not bound yet on a
+// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see startLine).
 async function onClassicSessionStart($: any, e: any, next: any) {
   const below = await onTitle($, e, next)
-  return withLine(below, await sessionContext($, e))
+  const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
+  // the ended session is consumed by this start only: a later clear that saw no end must not be asked about this one's
+  const ended = await takeEndedSession($)
+  const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended }
+  await update($, pendingStart, () => start)
+  return below
 }
 
 // DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
