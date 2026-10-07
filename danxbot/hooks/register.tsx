@@ -21,6 +21,8 @@ import {
   CONNECT_ERROR_MAX,
   EMPTY,
   LIVE_REASON_MAX,
+  LIVE_CHECK_DEADLINE_MS,
+  LIVE_CHECK_RETRY_MS,
   LOAD_DEADLINE_MS,
   LOAD_ORPHAN_WAIT_MS,
   LOCK_STALE_MS,
@@ -150,6 +152,10 @@ let permissionTickBusy = false
 let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
 // DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
 let liveQueue: Promise<void> = Promise.resolve()
+// DX-4686: the engine's one `$.agent.list()` call still unanswered, if any, and when it was asked. A check that finds one younger than
+// LIVE_CHECK_RETRY_MS races its own deadline against that same call instead of asking again, so a hung engine is asked once however many checks
+// queue behind it; an older one is given up (its late answer is dropped) and the check asks afresh.
+let agentListInFlight: { call: Promise<{ id: string; type: string; status: string }[]>; at: number } | null = null
 
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. Any rejection (including the engine's "no such server") is an error shown as one.
@@ -193,7 +199,8 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
   await syncRuntimeClock($)
-  await syncLive($, false)
+  // DX-4686: a press's refresh never waits on a live check; its failures are shown in the section, anything past that is a toast
+  detach($, 'Live sub-agent check', syncLive($, false))
 }
 
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked
@@ -682,7 +689,21 @@ function errMessage(err: any): string {
 async function agentStatuses($: any): Promise<Record<string, string> | string> {
   let agents: { id: string; type: string; status: string }[]
   try {
-    agents = await $.agent.list()
+    // DX-4686: a call that never answers is abandoned at the deadline (its late answer falls on the floor, never applied), so the queue moves on
+    const now = await $.clock.now()
+    if (agentListInFlight === null || now - agentListInFlight.at > LIVE_CHECK_RETRY_MS) {
+      const flight = {
+        at: now,
+        // only the call still current clears the record: a replaced call's late settling must not clear its successor
+        call: Promise.resolve($.agent.list()).finally(() => {
+          if (agentListInFlight === flight) agentListInFlight = null
+        }),
+      }
+      agentListInFlight = flight
+    }
+    const answer = await withinDeadline<typeof agents | null>($, LIVE_CHECK_DEADLINE_MS, agentListInFlight.call, () => null)
+    if (answer === null) return `the engine did not list this session's sub-agents within ${LIVE_CHECK_DEADLINE_MS / 1000}s`
+    agents = answer
   } catch (err: any) {
     return `the engine did not list this session's sub-agents (${errMessage(err)})`
   }
@@ -1367,8 +1388,8 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   void watchRelay($)
   // only a session connected to a plan has a Sub-agents section to settle
   if ((await read($, view)).connected !== null) settleSubagents($)
-  // DX-4508: start the live child for a new sub-agent, or stop it with the last one
-  await syncLive($, isStart)
+  // DX-4508: start the live child for a new sub-agent, or stop it with the last one. DX-4686: detached, so the hook never waits on a queued check
+  detach($, 'Live sub-agent check', syncLive($, isStart))
   return r
 }
 

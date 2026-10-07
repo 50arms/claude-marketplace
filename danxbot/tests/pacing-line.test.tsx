@@ -56,7 +56,10 @@ describe('the SubagentStart pacing line', () => {
     // DX-4234: a session on no plan, so the sub-agent gets no registry event text beside the line (context-event.test.tsx has that one)
     const d = dashboard(on, { connected: false, ...options })
     await startSession($, d, 'desktop')
-    return { d, r: await $.classic.SubagentStart(START) }
+    const r = await $.classic.SubagentStart(START)
+    // DX-4686: the start's live check is detached from the hook; let it end before the test does
+    await d.clock.settle()
+    return { d, r }
   }
 
   test('hands the line to the new sub-agent as additionalContext', async ($, on) => {

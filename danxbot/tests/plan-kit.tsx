@@ -266,6 +266,9 @@ export function dashboard(
     plansBody: undefined as unknown,
     // DX-4233: `$.agent.list()` never answers until `release()`
     agentListHangs: false,
+    // DX-4686: every `$.agent.list()` call waits on its OWN release (`agentListCalls[i].release()`), answering `world.agents` as they stand then,
+    // so a test can answer one call while another stays out
+    agentListHoldEach: false,
     // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
     tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
@@ -291,6 +294,8 @@ export function dashboard(
     signedOut: (options.signedOut ?? null) as 'signed-out' | 'lapsed' | 'revoked' | null,
     signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean; waits?: boolean } | undefined, calls: [] as any[] },
     // DX-4435: what the key's own claim route (POST /api/permission-requests/:publicId/claim) answers: a status, or 'notFound'
+    // DX-4686: the key's claim route answers only after this long on the harness clock (a step after the plan load that holds the refresh lock)
+    permissionClaimDelayMs: 0,
     permissionClaim: 'pending' as 'pending' | 'approved' | 'claimed' | 'denied' | 'expired' | 'notFound' | 'boom',
     // DX-4530: the subset the owner granted, which the claim answers once approved (and on every later, `claimed`, claim)
     permissionGranted: ['team.members.view'] as string[],
@@ -681,6 +686,7 @@ export function dashboard(
       if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
         return hung.promise.then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
       }
+      if (world.permissionClaimDelayMs > 0 && /\/claim$/.test(String(e.args.path))) await clock.sleep(world.permissionClaimDelayMs)
       // DX-4635: every danxbot_api read answers after `apiHoldMs` on the harness clock (a slow dashboard), and the card reads in flight together are counted
       const isIssueRead = String(e.args.path).startsWith('/api/issues/')
       if (isIssueRead) {
@@ -745,6 +751,7 @@ export function dashboard(
   // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
   // sub-agents (world.agents).
   const agentLists = { count: 0 }
+  const agentListCalls: { release: () => void }[] = []
   // the tools the session lists: the plugin's when its server is connected
   // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
   const toolLists = { n: 0 }
@@ -765,8 +772,9 @@ export function dashboard(
   on('session.id', () => ({ value: world.sessionId }) as any)
   on('agent.list', async () => {
     agentLists.count++
-    // DX-4233: the engine's list never answers (a step of a refresh AFTER its plan load, which holds the refresh lock)
+    // DX-4233 / DX-4686: the engine's list never answers: only the live-check queue waits on it (each check abandons it at its deadline)
     if (world.agentListHangs) await hung.promise
+    if (world.agentListHoldEach) await new Promise<void>(release => agentListCalls.push({ release }))
     return { value: world.agents } as any
   })
   // DX-4508: the live reader child (`$.process.spawn`): each start is recorded with its argv; a test queues what it prints
@@ -862,7 +870,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

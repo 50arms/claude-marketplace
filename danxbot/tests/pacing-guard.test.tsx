@@ -83,8 +83,10 @@ const hold = () => {
 describe('the agent.spawn hook', () => {
   // what the cache holds, as a new sub-agent sees it (the test file's own copy of pacing-line.ts is not the plugin's, so its cache cannot be peeked):
   // an UNFORCED read, which inside the minute after any read serves the cache as it stands
-  const subagentLine = async ($: any): Promise<string | null> => {
+  const subagentLine = async ($: any, d: any): Promise<string | null> => {
     const r = await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' } as any)
+    // DX-4686: the start's live check is detached from the hook; let it end before the test does
+    await d.clock.settle()
     return (r.additionalContext ?? []).find((t: string) => t === 'Pacing line.') ?? null
   }
   // the engine's own answer beneath the guard: a started sub-agent
@@ -236,14 +238,14 @@ describe('the agent.spawn hook', () => {
     await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
     expect((await pending).deny).toBeUndefined()
     expect(d.toasts.filter(t => t.includes(`${PACING_READ_DEADLINE_MS} ms deadline`))).toHaveLength(1)
-    expect(await subagentLine($)).toBeNull()
+    expect(await subagentLine($, d)).toBeNull()
     // the late answer lands now: it must not restore (or set) a verdict, and it must not block the next read
     await d.clock.advance(1_000)
-    expect(await subagentLine($)).toBeNull()
+    expect(await subagentLine($, d)).toBeNull()
     options.pacingHoldMs = undefined
     options.pacingLine = { body: wire({ budget: 12, running_agents: 5 }) }
     expect((await spawn($)).deny).toBeUndefined()
-    expect(await subagentLine($)).toBe('Pacing line.')
+    expect(await subagentLine($, d)).toBe('Pacing line.')
   })
 
   test('the wait for a read already out and the spawn read of its own share ONE deadline, not two in sequence', async ($, on) => {

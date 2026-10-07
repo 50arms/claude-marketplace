@@ -2,8 +2,8 @@
 // connects, and the plan-list cap.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
-import { dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
+import { LIVE_CHECK_DEADLINE_MS, LIVE_CHECK_RETRY_MS, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
+import { SURFACES, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -169,33 +169,52 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     expect(await text(pane)).toContain('Connected: PLAN-23')
   })
 
-  test('a step after the load that never settles holds the lock until it is stale: a Refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
+  // DX-4686: the live sub-agent check is no step of the refresh (a hung one cannot hold the lock), so the step after the load that is held here is
+  // the settling of an open permission request, whose claim call is slow on the harness clock
+  const PERMISSION_CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__request_permission', permissions: ['team.members.view'], reason: 'to read members' } as any
+  // longer than any wait the two tests below make, so the claim is still out when they end, and ending it advances the clock only this far
+  const HELD_MS = LOCK_STALE_MS + 5_000
+  const withSlowClaim = async ($: any, on: any) => {
     const d = dashboard(on)
-    d.world.agentListHangs = true
+    on('tool.call', { tool: PERMISSION_CALL.tool }, () => ({ result: {}, text: JSON.stringify({ state: 'approval_required', approvalUrl: 'https://danxbot.example/connect/aaaa', confirmCode: 'CODE1', instruction: 'Show the code.' }), isError: false }) as any)
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
     const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    expect(loadsOf(d)).toBe(1)
+    await $.tool.call(PERMISSION_CALL)
+    d.world.permissionClaimDelayMs = HELD_MS
+    const before = loadsOf(d)
+    // the press starts a load and holds the lock in its permission step, so it is not awaited here; the test ends it with `endHeld`, so no press
+    // is left running into the next test's environment
+    const held = pane.press({ key: 'refresh' })
+    await d.clock.advance(1)
+    expect(loadsOf(d)).toBe(before + 1)
+    const endHeld = async () => {
+      d.world.permissionClaimDelayMs = 0
+      await d.clock.advance(HELD_MS)
+      await held
+      await d.clock.settle()
+    }
+    return { d, pane, before, endHeld }
+  }
+
+  test('a step after the load that never settles holds the lock until it is stale: a Refresh before that starts no load, past it the lock is taken over and loads', async ($, on) => {
+    const { d, pane, before, endHeld } = await withSlowClaim($, on)
     await d.clock.advance(LOCK_STALE_MS - 1_000)
     await pane.press({ key: 'refresh' })
-    expect(loadsOf(d)).toBe(1)
+    expect(loadsOf(d)).toBe(before + 1)
     await d.clock.advance(2_000)
-    // the press that takes the lock over starts its load at once, but is not awaited: its live step queues behind the one that hung (the live
-    // checks run one after another), so the press itself never returns
-    void pane.press({ key: 'refresh' })
-    await d.clock.advance(1)
-    expect(loadsOf(d)).toBe(2)
+    d.world.permissionClaimDelayMs = 0
+    await pane.press({ key: 'refresh' })
+    expect(loadsOf(d)).toBe(before + 2)
+    await endHeld()
   })
 
   test('a holder past the load deadline and the orphan wait but inside the tail is not taken over', async ($, on) => {
-    const d = dashboard(on)
-    d.world.agentListHangs = true
-    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
-    await d.clock.settle()
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    const { d, pane, before, endHeld } = await withSlowClaim($, on)
     await d.clock.advance(LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + 1_000)
     await pane.press({ key: 'refresh' })
-    expect(loadsOf(d)).toBe(1)
+    expect(loadsOf(d)).toBe(before + 1)
+    await endHeld()
   })
 
   test('a load past the deadline that answers within the wait is applied: no second load', async ($, on) => {
@@ -227,4 +246,115 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await d.clock.advance(60_000)
     await leaving
   })
+})
+
+// DX-4686: one `$.agent.list()` that never answers must not hold the live checks (they run one after another) or a pane press.
+describe('a live sub-agent check that never answers', () => {
+  const running = { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build a1', status: 'running' }
+  const SUBAGENT = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high', transcript_path: '/work/main.jsonl' }
+  const pane = (surface: string) => ({ ...PANE, plugin: 'danxbot', surface })
+
+  for (const surface of SURFACES) {
+    test(`on ${surface} a check after the retry horizon asks afresh while the first call is still hung, and the live reader starts`, async ($, on) => {
+      const d = dashboard(on)
+      on('classic.SubagentStart', () => ({}) as any)
+      d.world.agentListHangs = true
+      await startSession($, d, surface)
+      await d.clock.advance(1)
+      const asked = d.agentLists.count
+      await d.clock.advance(LIVE_CHECK_RETRY_MS + 1)
+      // the engine answers new calls again; the first call is never released
+      d.world.agentListHangs = false
+      d.world.agents = [running]
+      await $.classic.SubagentStart(SUBAGENT)
+      // a check a poll started inside the horizon may still be waiting on the first call: the event's check queues behind it for one deadline
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS)
+      await d.clock.settle()
+      // (the pane's own polls past the horizon ask afresh too, so more than one new call)
+      expect(d.agentLists.count).toBeGreaterThan(asked)
+      expect(d.readers).toHaveLength(1)
+      // the replaced call answers at last, with nothing running: its answer is dropped, so the reader it would have stopped keeps running
+      d.world.agents = []
+      d.release()
+      await d.clock.settle()
+      expect(d.readers[0].stopped).toBe(false)
+    })
+
+    test(`on ${surface} its late answer is dropped, never applied over a newer one`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHangs = true
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      // the event reports the transcript path (a child cannot start without it) and queues its own check behind the hung one
+      await $.classic.SubagentStart(SUBAGENT)
+      await d.clock.advance(2 * LIVE_CHECK_DEADLINE_MS + 2)
+      d.world.agents = [running]
+      d.release()
+      await d.clock.settle()
+      expect(d.readers).toEqual([])
+      // the abandoned checks' answer changes nothing the pane shows: the line saying the engine did not answer stands, no running count replaces it
+      const ui = await $.ui.mount(pane(surface))
+      expect(await text(ui)).toContain('Live numbers unavailable')
+      await d.clock.settle()
+    })
+
+    test(`on ${surface} a replaced call's late settling leaves its successor outstanding: the next check joins the successor`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHoldEach = true
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await d.clock.advance(LIVE_CHECK_RETRY_MS + 1)
+      // a check past the horizon replaced the first call; the successor is still out (no call is answered yet)
+      await $.classic.SubagentStart(SUBAGENT)
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      expect(d.agentListCalls.length).toBeGreaterThan(1)
+      // the FIRST (replaced) call answers now
+      d.world.agents = []
+      d.agentListCalls[0].release()
+      await d.clock.settle()
+      const asked = d.agentLists.count
+      await $.classic.SubagentStart({ ...SUBAGENT, agent_id: 'a2' })
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      await d.clock.settle()
+      expect(d.agentLists.count).toBe(asked)
+    })
+
+    test(`on ${surface} two checks during one hang make one engine call`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHangs = true
+      on('classic.SubagentStart', () => ({}) as any)
+      await startSession($, d, surface)
+      await d.clock.advance(1)
+      const asked = d.agentLists.count
+      expect(asked).toBeGreaterThan(0)
+      await $.classic.SubagentStart(SUBAGENT)
+      await d.clock.advance(2 * LIVE_CHECK_DEADLINE_MS + 2)
+      expect(d.agentLists.count).toBe(asked)
+      await d.clock.settle()
+    })
+
+    test(`on ${surface} a pane press returns while a live check is hung`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHangs = true
+      await startSession($, d, surface)
+      const ui = await $.ui.mount(pane(surface))
+      await d.clock.advance(LOCK_STALE_MS + 1_000)
+      await ui.press({ key: 'refresh' })
+      // the press's own live check (detached) is abandoned at its deadline before the test ends
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      await d.clock.settle()
+    })
+
+    test(`on ${surface} the pane says the check did not answer in time`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.agentListHangs = true
+      await startSession($, d, surface)
+      const ui = await $.ui.mount(pane(surface))
+      await d.clock.advance(LIVE_CHECK_DEADLINE_MS + 1)
+      const shown = await text(ui)
+      expect(shown).toContain('Live numbers unavailable')
+      expect(shown).toContain(`within ${LIVE_CHECK_DEADLINE_MS / 1000}s`)
+      await d.clock.settle()
+    })
+  }
 })

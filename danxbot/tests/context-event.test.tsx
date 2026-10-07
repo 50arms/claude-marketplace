@@ -41,6 +41,7 @@ for (const surface of SURFACES) {
     test("a connected session's sub-agent is told the sub_agent_start text", async ($, on) => {
       const d = await started($, on)
       const r = await $.classic.SubagentStart(START)
+      await d.clock.settle()
       expect(r.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])
       expect(EVENT_PATHS(d.contextReads)).toEqual(['/api/reminders/event/sub_agent_start'])
     })
@@ -52,6 +53,7 @@ for (const surface of SURFACES) {
         expect(r.startLines).toBeUndefined()
       }
       expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
+      await d.clock.settle()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
@@ -67,6 +69,7 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       d.world.eventText.sub_agent_start = ''
       const r = await $.classic.SubagentStart(START)
+      await d.clock.settle()
       expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', 'empty_response: the dashboard returned an empty text')])
     })
 
@@ -76,6 +79,7 @@ for (const surface of SURFACES) {
       const r = await firstPrompt($, 'startup')
       expect(r.startLines).toEqual([eventFailureLine('session_start', '500: plans boom')])
       expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: plans boom')])
+      await d.clock.settle()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
@@ -84,6 +88,7 @@ for (const surface of SURFACES) {
       d.world.plansStatus = 500
       expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
       expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
+      await d.clock.settle()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
@@ -96,9 +101,10 @@ for (const surface of SURFACES) {
 
     for (const signedOut of ['signed-out', 'lapsed', 'revoked'] as const) {
       test(`a ${signedOut} session is quiet: its own tools tell the model`, async ($, on) => {
-        await started($, on, { signedOut })
+        const d = await started($, on, { signedOut })
         expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
         expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
+        await d.clock.settle()
       })
     }
 
@@ -184,11 +190,13 @@ for (const surface of SURFACES) {
       const pending = $.classic.SubagentStart(START)
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       expect((await pending).additionalContext).toEqual([eventFailureLine('sub_agent_start', DEADLINE_REASON)])
+      await d.clock.settle()
     })
 
     test('a sub-agent start does not wait for a server that is not connected', async ($, on) => {
       const d = await started($, on, { mcp: 'down' })
       const r = await $.classic.SubagentStart(START)
+      await d.clock.settle()
       expect(r.additionalContext).toBeUndefined()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
@@ -199,6 +207,7 @@ for (const surface of SURFACES) {
       d.world.agents = [{ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build a1', status: 'running' }]
       await firstPrompt($, 'startup')
       await $.classic.SubagentStart({ ...START, transcript_path: '/work/main.jsonl' })
+      await d.clock.settle()
       expect(d.contextReads).toContain('/api/reminders/event/session_start')
       expect(d.readers).toHaveLength(1)
       expect(d.readers.filter(r => /event-text|restart-notice/.test(r.argv.join(' ')))).toEqual([])

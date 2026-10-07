@@ -59,9 +59,17 @@ export const LOAD_DEADLINE_MS = 30_000
 // answer if it comes in that time, and gives the call up after it.
 export const LOAD_ORPHAN_WAIT_MS = 30_000
 // A refresh lock held longer than this is a dead step's, not a running one's: a load holds it for its deadline and the orphan wait at most, so
-// what is left to hang is a step after it (the live sync, a permission claim). The tail is what those steps may take after the orphan wait, so
-// a holder that is just finishing is not taken over the moment it lands. A refresh asked past it, forced or not, takes the lock over.
+// what is left to hang is a step after it (a permission claim; the live sync is detached from the refresh, so it cannot hold the lock). The tail is
+// what those steps may take after the orphan wait, so a holder that is just finishing is not taken over the moment it lands. A refresh asked past it, forced or not, takes the lock over.
 export const LOCK_TAIL_MS = 10_000
+// DX-4686: ONE live sub-agent check (the engine's `$.agent.list()`) answers within this or is abandoned: its late answer is dropped and the next check
+// runs. The engine answers from its own process in well under a second, so 10 s is a hung call, not a slow one; a longer wait only holds every later
+// check behind it (the checks run one after another).
+export const LIVE_CHECK_DEADLINE_MS = 10_000
+// DX-4686: checks share one outstanding `$.agent.list()` call (a hung engine is asked once, not once per queued check), but a call older than this is
+// given up and the next check asks afresh, so one lost call cannot make every later check time out. Six deadlines: long enough that the checks one
+// burst of events queues (each waits up to a deadline) share a call, short enough that a lost one is replaced within the minute.
+export const LIVE_CHECK_RETRY_MS = 60_000
 export const LOCK_STALE_MS = LOAD_DEADLINE_MS + LOAD_ORPHAN_WAIT_MS + LOCK_TAIL_MS
 
 // At session start the MCP server may not be connected yet: a first load that failed on exactly that is retried after

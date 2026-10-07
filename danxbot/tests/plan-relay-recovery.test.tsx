@@ -157,6 +157,7 @@ for (const surface of SURFACES) {
       d.contextReads.length = 0
       await Promise.all([1, 2, 3, 4, 5].map(i => $.classic.SubagentStop({ agent_id: `a${i}`, agent_type: 'x', transcript_path: '/work/main.jsonl' })))
       await d.clock.advance(5_000)
+      await d.clock.settle()
       expect(d.contextReads).toEqual(['/api/plans'])
       expect(d.relay.calls).toHaveLength(1)
     })
@@ -167,6 +168,7 @@ for (const surface of SURFACES) {
       d.world.contextDelayMs = 1_000
       await Promise.all([1, 2, 3, 4, 5].map(i => $.classic.SubagentStop({ agent_id: `a${i}`, agent_type: 'x', transcript_path: '/work/main.jsonl' })))
       await d.clock.advance(5_000)
+      await d.clock.settle()
       expect(d.toasts.filter(t => t.startsWith('Plan event relay watch failed'))).toHaveLength(1)
     })
 
