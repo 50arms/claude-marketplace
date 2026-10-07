@@ -5,7 +5,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { approvalRequestOf, signInToast } from '../hooks/plan/approval'
 import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
-import { dashboard, startSession } from './plan-kit'
+import { dashboard, startSession, browserCalls, linksOf } from './plan-kit'
 
 const URL_A = 'https://danxbot.example/connect/aaaa'
 const URL_B = 'https://danxbot.example/connect/bbbb'
@@ -16,7 +16,6 @@ const connected = JSON.stringify({ ok: true, status: 200, body: { session: { pla
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any
-const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 
 // DX-4548: the plugin waits on a request the model's plan_connect started, through the MCP: the stand-in MCP answers the same
 // request as still pending, so the wait stays open and tells the model nothing.
@@ -44,7 +43,7 @@ describe('plan_connect while signed out', () => {
   // DX-4630: the link and code are shown the moment the request exists; no browser call is made for them, so a slow or refused
   // browser cannot delay or hide them.
   test('approval_required toasts the link and the confirm code with no browser call, whatever the browser would have done', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true, browser: 'denied', navigateTakesMs: 60_000 })
+    const d = dashboard(on, { signedOut: 'signed-out' })
     stillPending(d)
     answering(on, [required(URL_A)])
     await startSession($, d, 'desktop')
@@ -59,7 +58,7 @@ describe('plan_connect while signed out', () => {
   // The shape core gives a hook for an MCP tool (the engine's own typings, ToolCallResult): `{ ref, result, text }`
   // with `result` the tool's record (an MCP result's content blocks) and `text` the blocks joined as the model reads them.
   test('reads the answer in the shape core gives for an MCP tool: ref, result content blocks, text', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+    const d = dashboard(on, { signedOut: 'signed-out' })
     stillPending(d)
     const text = required(URL_A)
     on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ ref: 7, result: { content: [{ type: 'text', text }] }, text }) as any)
@@ -74,7 +73,7 @@ describe('plan_connect while signed out', () => {
 
   // DX-4630: the model learns the person already has the link and code, so it opens nothing itself.
   test('the model is told the band already shows the link and code, and not to open it', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+    const d = dashboard(on, { signedOut: 'signed-out' })
     stillPending(d)
     answering(on, [required(URL_A)])
     await startSession($, d, 'desktop')
@@ -90,7 +89,7 @@ describe('plan_connect while signed out', () => {
   })
 
   test('the same request repeated shows its toast once; a new request swaps the link and the code', async ($, on) => {
-    const d = dashboard(on, { signedOut: 'signed-out', tabs: ['tab-1'] })
+    const d = dashboard(on, { signedOut: 'signed-out' })
     stillPending(d)
     answering(on, [required(URL_A), required(URL_A), required(URL_B, 'ZZZZ1111')])
     await startSession($, d, 'desktop')
@@ -105,7 +104,7 @@ describe('plan_connect while signed out', () => {
     await d.clock.settle()
     expect(d.toasts.at(-1)).toContain('ZZZZ1111')
     expect(browserCalls(d)).toEqual([])
-    const hrefs = (await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)
+    const hrefs = (await linksOf(band)).map(l => l.href)
     expect(hrefs).toContain(URL_B)
     expect(hrefs).not.toContain(URL_A)
     expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code ZZZZ1111')
@@ -113,7 +112,7 @@ describe('plan_connect while signed out', () => {
 
   // DX-4548: a request is shown by its URL, not by the answer's state: one this session has not shown appears even as approval_pending
   test('approval_pending of a request not yet shown shows its link and code', async ($, on) => {
-    const d = dashboard(on, { tabs: ['tab-1'] })
+    const d = dashboard(on)
     answering(on, [pending])
     await startSession($, d, 'desktop')
     d.calls.length = 0
@@ -128,7 +127,7 @@ describe('plan_connect while signed out', () => {
     ['text that is not JSON', 'plan_connect: bad arguments'],
   ] as const) {
     test(`${name} opens nothing and shows no code`, async ($, on) => {
-      const d = dashboard(on, { tabs: ['tab-1'] })
+      const d = dashboard(on)
       answering(on, [text])
       await startSession($, d, 'desktop')
       d.calls.length = 0
@@ -141,7 +140,7 @@ describe('plan_connect while signed out', () => {
   }
 
   test('a denied call opens nothing', async ($, on) => {
-    const d = dashboard(on, { tabs: ['tab-1'] })
+    const d = dashboard(on)
     on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ deny: 'plan_connect is not available' }) as any)
     await startSession($, d, 'desktop')
     d.calls.length = 0

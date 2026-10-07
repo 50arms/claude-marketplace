@@ -4,7 +4,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { SIGN_IN_MIN_ROUND_MS } from '../hooks/plan/config'
 import { signInApprovedNote, signInDeniedNote, signInExpiredNote } from '../hooks/plan/notes'
-import { APPROVAL_PENDING, APPROVAL_URL, APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, toldModel } from './plan-kit'
+import { APPROVAL_PENDING, APPROVAL_URL, APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, toldModel, linksOf } from './plan-kit'
 
 const CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23, title: 'PLAN-23: danxbot plugin' } as any
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:danxbot:danx-dashboard' && c.tool === 'plan_connect')
@@ -109,12 +109,12 @@ describe('a sign-in the model started', () => {
     expect(toldModel(d)).toEqual([])
     // DX-4630: nothing stays drawn for the refused request, and a later Sign in press starts its own watch
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
-    expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).not.toContain('http://localhost:5555/')
+    expect((await linksOf(band)).map(l => l.href)).not.toContain('http://localhost:5555/')
     d.world.signIn.answer = undefined
     await band.press({ key: 'sign-in' })
     await d.clock.settle()
     expect(connectCalls(d).length).toBeGreaterThan(0)
-    expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(APPROVAL_URL)
+    expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
   })
 
   for (const reason of ['clear', 'resume'] as const) {

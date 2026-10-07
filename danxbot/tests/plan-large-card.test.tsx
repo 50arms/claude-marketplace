@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { errText, failureReason, loadPlan } from '../hooks/plan/load'
-import { HOST_OVERSIZE, SURFACES, dashboard, startSession } from './plan-kit'
+import { HOST_OVERSIZE, SURFACES, dashboard, linksOf, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -12,7 +12,7 @@ const PANE = {
 } as any
 // the pane's text, with its links' titles (a problem is a link, not a Text)
 const text = async (ui: any) =>
-  [...(await ui.findAll({ type: 'Text' })).map((t: any) => t.text), ...(await ui.findAll({ type: 'Link' })).map((l: any) => l.props.label)].join(' | ')
+  [...(await ui.findAll({ type: 'Text' })).map((t: any) => t.text), ...(await linksOf(ui)).map(l => l.label)].join(' | ')
 
 async function openPane($: any, on: any, surface: (typeof SURFACES)[number], options: any = {}) {
   const d = dashboard(on, options)

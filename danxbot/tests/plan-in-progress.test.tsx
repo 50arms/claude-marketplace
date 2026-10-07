@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { age } from '../hooks/plan/words'
-import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, linksOf } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -42,8 +42,8 @@ for (const surface of SURFACES) {
       // the card's `updatedAt` worded as updated, never as time in progress
       expect(all).toContain('updated 1m ago')
       expect(all).not.toContain('raw-session-uuid')
-      const link = (await pane.findAll({ type: 'Link' })).find((l: any) => l.props.label === 'DX-9')
-      expect(link?.props.href).toBe(`${DASHBOARD_URL}/plans/23/cards/DX-9`)
+      const link = (await linksOf(pane)).find(l => l.label === 'DX-9')
+      expect(link?.href).toBe(`${DASHBOARD_URL}/plans/23/cards/DX-9`)
     })
 
     test('a card nobody holds shows no agent, never the word null', async ($, on) => {

@@ -3,7 +3,7 @@
 // and writes nothing to a card.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, problemBadgeOf, startSession, toldModel, forceRefresh } from './plan-kit'
+import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, linksOf, problemBadgeOf, startSession, toldModel, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -45,7 +45,7 @@ for (const surface of SURFACES) {
       expect(toldModel(d)).toHaveLength(1)
 
       // 4. the pane lists each open problem as a link into the browser; the band counts them
-      const links = (await pane.findAll({ type: 'Link' })).map((l: any) => l.props.label).filter((l: string) => / · /.test(l))
+      const links = (await linksOf(pane)).map(l => l.label).filter(l => / · /.test(l))
       expect(links).toEqual(['DX-1 · Which route?', 'DX-1 · Allow the site', 'DX-2 · Second one?', 'DX-2 · Rotate the key'])
       // nothing in the pane writes to a card; the model was told only of the connect
       expect(d.writes()).toEqual([])

@@ -2,7 +2,7 @@
 // answered (`dashboard_url`), never on a constant; an answer without a usable origin is an error state.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NO_DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { NO_DASHBOARD_URL, SURFACES, browserCalls, dashboard, linksOf, footerText, mountIndicator, startSession } from './plan-kit'
 
 const OTHER = 'https://plans.example.test'
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -11,8 +11,7 @@ const PANE = {
   requestId: 'danx-plan',
   props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
 } as any
-const hrefs = async (ui: any) => (await ui.findAll({ type: 'Link' })).map((l: any) => l.props.href as string)
-const browserUrls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser' && c.tool === 'navigate').map((c: any) => c.args.url)
+const hrefs = async (ui: any) => (await linksOf(ui)).map(l => l.href)
 
 for (const surface of SURFACES) {
   // the default origin's hrefs are asserted in the band, pane and browser-tab tests
@@ -22,7 +21,7 @@ for (const surface of SURFACES) {
         const d = dashboard(on, { dashboardUrl: origin })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-        expect(await hrefs(band)).toEqual(surface === 'desktop' ? [`${origin}/plans/23`] : [`${origin}/plans/23?tab=needs-you`, `${origin}/plans/23`])
+        expect(await hrefs(band)).toEqual([`${origin}/plans/23?tab=needs-you`, `${origin}/plans/23`])
       })
 
       test('the pane links the plan, every in-progress card and every problem on that origin', async ($, on) => {
@@ -40,27 +39,26 @@ for (const surface of SURFACES) {
   }
 }
 
-describe('the browser-tab buttons open the session dashboard (desktop)', () => {
-  test('band and pane each navigate to the answered origin', async ($, on) => {
-    const d = dashboard(on, { dashboardUrl: OTHER, tabs: ['tab-1'] })
-    await startSession($, d, 'desktop')
-    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await band.press({ key: 'open-tab' })
-    await pane.press({ key: 'open-plan' })
-    expect(browserUrls(d)).toEqual([
-      `${OTHER}/plans/23`,
-      `${OTHER}/plans/23`,
-    ])
+for (const surface of SURFACES) {
+  describe(`the page links of the band and the pane are built on the session dashboard, on ${surface}`, () => {
+    test('the Browser tab and Open in browser tab links go to the answered origin and the plugin calls no browser tool', async ($, on) => {
+      const d = dashboard(on, { dashboardUrl: OTHER })
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect((await linksOf(band)).find(l => l.key === 'open-tab')?.href).toBe(`${OTHER}/plans/23`)
+      expect((await linksOf(pane)).find(l => l.key === 'open-plan')?.href).toBe(`${OTHER}/plans/23`)
+      expect(browserCalls(d)).toEqual([])
+    })
   })
-})
+}
 
 describe('an origin the plugin can use', () => {
   test('a trailing slash or path on dashboard_url is dropped: links are built on the origin only', async ($, on) => {
     const d = dashboard(on, { dashboardUrl: `${OTHER}/some/path/` })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await hrefs(band)).toEqual([`${OTHER}/plans/23`])
+    expect(await hrefs(band)).toEqual([`${OTHER}/plans/23?tab=needs-you`, `${OTHER}/plans/23`])
   })
 })
 
@@ -80,7 +78,7 @@ for (const surface of SURFACES) {
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         const footer = await mountIndicator($, surface)
         expect(await footerText(footer)).toBe('Danxbot')
-        expect(await band.findAll({ type: 'Link' })).toHaveLength(0)
+        expect(await linksOf(band)).toEqual([])
         expect(await band.find({ key: 'open-tab' })).toBeUndefined()
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
         expect((await pane.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')).toContain('dashboard_url')

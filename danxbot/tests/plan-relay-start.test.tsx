@@ -63,7 +63,7 @@ for (const surface of SURFACES) {
 
     for (const [name, answer] of [['approval_required', required], ['approval_pending', pending]] as const) {
       test(`not for a plan_connect that answered ${name}: nothing is connected yet`, async ($, on) => {
-        const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+        const d = dashboard(on, { signedOut: 'signed-out' })
         d.world.signIn.answer = { text: pending, waits: true }
         on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ result: {}, text: answer, isError: false }) as any)
         await startSession($, d, surface)

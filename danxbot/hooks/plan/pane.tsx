@@ -3,6 +3,7 @@ import { APPROVE_SIGN_IN_LABEL, signInCodeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
+import { mdLink } from './links'
 import type { PanelModel } from './pacing-panel'
 import { pacingPane } from './pacing-panel-view'
 import { problemRow } from './problems'
@@ -17,8 +18,6 @@ export type PaneModel = {
   working: string[]
   isSwitching: boolean
   now: number
-  // The in-app browser exists on the desktop surface only.
-  hasBrowser: boolean
   // DX-4374: the surface draws an Svg (the desktop); the terminal shows the donut as a glyph and text.
   hasSvg: boolean
   // DX-4508: the live child's numbers for this session's sub-agents
@@ -149,7 +148,7 @@ function planPicker(hd: Handlers, E: any, m: PaneModel, isSwitch: boolean): any 
 }
 
 export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
-  const { Box, Text, Button, Link } = E
+  const { Box, Text, Button } = E
   const { v } = m
 
   const header = (
@@ -180,7 +179,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         ? []
         : [
             <Box key="approve-sign-in" flexDirection="row" gap={1}>
-              <Link href={m.signIn.url} label={APPROVE_SIGN_IN_LABEL} />
+              {mdLink(E, 'approve-sign-in-link', APPROVE_SIGN_IN_LABEL, m.signIn.url)}
               <Text>{signInCodeLabel(m.signIn)}</Text>
             </Box>,
           ]),
@@ -225,12 +224,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       {/* a connected view always has its breakdown (loadPlan errors without one); the guard only narrows the type */}
       {v.statusBreakdown && progress(E, v.statusBreakdown, m.hasSvg)}
       <Box flexDirection="row" gap={1}>
-        {m.hasBrowser && (
-          <Button key="open-plan" onPress={() => hd.openBrowserTab(planUrl(plan))}>
-            {busyKey.isOpeningBrowser(m.working) ? 'Opening…' : 'Open in browser tab'}
-          </Button>
-        )}
-        <Link href={planUrl(plan)} label="Open link" />
+        {mdLink(E, 'open-plan', 'Open in browser tab', planUrl(plan))}
         <Button key="switch" dimColor onPress={() => hd.toggleSwitch()}>
           Switch plan
         </Button>
@@ -270,7 +264,7 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
       {v.phase !== 'loading' && v.inProgress.length === 0 && <Text dimColor>No cards in progress that are not waiting on you.</Text>}
       {v.inProgress.map(row => (
         <Box key={`ip-${row.id}`} flexDirection="row" gap={1}>
-          <Link href={cardUrl(plan, row.id)} label={row.id} />
+          {mdLink(E, `in-progress-link-${row.id}`, row.id, cardUrl(plan, row.id))}
           <Text>{row.title.slice(0, CARD_TITLE_MAX)}</Text>
           {row.agent && <Text dimColor>{row.agent}</Text>}
           <Text dimColor>updated {age(row.updatedAt, m.now)}</Text>

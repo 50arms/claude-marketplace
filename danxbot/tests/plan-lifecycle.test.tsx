@@ -212,19 +212,19 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
   })
 
   test('a busy key left by an earlier process is cleared at session.start', async ($, on) => {
-    const d = dashboard(on, { browserClosed: true, navigateTakesMs: 5_000 })
+    const d = dashboard(on, { disconnectTakesMs: 60_000 })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    // an open that never finishes keeps its key claimed, as one cut off by a dying process would
-    const opening = band.press({ key: 'open-tab' })
-    await d.clock.settle()
-    expect((await band.find({ key: 'open-tab' }))?.text).toBe('Opening…')
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    // a disconnect that never finishes keeps its key claimed, as one cut off by a dying process would
+    const leaving = pane.press({ key: 'disconnect' })
+    await d.clock.advance(1_000)
+    expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnecting…')
     // the new start frees the key
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    expect((await band.find({ key: 'open-tab' }))?.text).toBe('Browser tab')
-    await d.clock.advance(5_000)
-    await opening
+    expect((await pane.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+    await d.clock.advance(60_000)
+    await leaving
   })
 })

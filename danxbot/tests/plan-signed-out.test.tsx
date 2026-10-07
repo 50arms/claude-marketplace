@@ -9,7 +9,7 @@ import { signInToast } from '../hooks/plan/approval'
 import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
-import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel, forceRefresh } from './plan-kit'
+import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel, forceRefresh, browserCalls, linksOf } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
@@ -22,7 +22,6 @@ const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('C
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:danxbot:danx-dashboard' && c.tool === 'plan_connect')
 // the page loads by preview_start (pane closed) or navigate (pane open)
 // DX-4630: EVERY Claude_Browser call, so a sign-in that touched the browser in any way (tabs_context, tabs_create, ...) fails
-const browserCalls = (d: any) => d.calls.filter((c: any) => c.server === 'Claude_Browser')
 const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
 // the model's own plan_connect call, answering the same approval request the dashboard's world gives the Sign in press
 const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
@@ -280,7 +279,7 @@ for (const surface of SURFACES) {
     // DX-4630: the link and code are drawn the moment the request exists, whatever the browser does: a refused or slow browser
     // cannot delay or hide them, and no browser call is made for sign-in at all.
     test('the request is drawn in the band and the pane at once, with a toast, and no browser call is made', async ($, on) => {
-      const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true, browser: 'denied', navigateTakesMs: 60_000 })
+      const d = dashboard(on, { signedOut: 'signed-out' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
@@ -289,7 +288,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(browserCalls(d)).toEqual([])
       for (const ui of [band, pane]) {
-        expect((await ui.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(APPROVAL_URL)
+        expect((await linksOf(ui)).map(l => l.href)).toContain(APPROVAL_URL)
         expect(await texts(ui)).toContain(`code ${CONFIRM_CODE}`)
       }
       expect(approvalToasts(d)).toEqual([signInToast({ url: APPROVAL_URL, code: CONFIRM_CODE })])
@@ -302,14 +301,14 @@ for (const surface of SURFACES) {
     })
 
     test('a request the model started is drawn too, and a Sign in press while it waits says the link and code again and starts no second wait', async ($, on) => {
-      const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+      const d = dashboard(on, { signedOut: 'signed-out' })
       modelConnect(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.calls.length = 0
       await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any)
       await d.clock.settle()
-      expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(APPROVAL_URL)
+      expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       expect(approvalToasts(d)).toHaveLength(1)
       const calls = connectCalls(d).length
       await band.press({ key: 'sign-in' })
@@ -326,12 +325,12 @@ for (const surface of SURFACES) {
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         await band.press({ key: 'sign-in' })
         await d.clock.settle()
-        expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(APPROVAL_URL)
+        expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
         if (outcome === 'approved') d.world.signIn.approved = true
         else d.world.signIn.answer = { text: JSON.stringify({ state: 'denied' }) }
         await d.clock.advance(45_000)
         await d.clock.settle()
-        expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).not.toContain(APPROVAL_URL)
+        expect((await linksOf(band)).map(l => l.href)).not.toContain(APPROVAL_URL)
         expect(await texts(band)).not.toContain(`code ${CONFIRM_CODE}`)
       })
     }
@@ -427,7 +426,7 @@ for (const surface of SURFACES) {
 
     // DX-4548: the call that outlives a request answers its renewal: shown to the person and watched in its place
     test('a request that expires is replaced by the renewed one: its page and code are shown and the wait goes on until it is approved', async ($, on) => {
-      const d = dashboard(on, { signedOut: 'signed-out', browserClosed: true })
+      const d = dashboard(on, { signedOut: 'signed-out' })
       d.world.signIn.expireAfterCalls = 3
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
@@ -437,7 +436,7 @@ for (const surface of SURFACES) {
       expect(d.toasts).toContain('Sign in expired. A new request is open.')
       expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
       // DX-4630: the renewal swaps the band's link and code
-      expect((await band.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(`${APPROVAL_URL}-renewed`)
+      expect((await linksOf(band)).map(l => l.href)).toContain(`${APPROVAL_URL}-renewed`)
       expect(await texts(band)).toContain('code NEWCODE9')
       expect(await texts(band)).not.toContain(`code ${CONFIRM_CODE}`)
       expect((await band.find({ key: 'sign-in' })).text).toBe('Signing in…')

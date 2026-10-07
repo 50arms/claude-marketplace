@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
 import { bandLabel } from '../hooks/plan/words'
-import { DASHBOARD_URL, SURFACES, problemBadgeOf, dashboard, expectText, footerText, mountIndicator, startSession } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, browserCalls, linksOf, problemBadgeOf, dashboard, expectText, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
@@ -23,8 +23,8 @@ describe('plan band', () => {
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     const labelOf = async (ui: any) => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
     expect(await labelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Panel 10, `⚠ 3` 8 (the terminal has no Browser tab), Open ↗ 7, × 6
-    expect(await labelOf(narrow)).toBe('PLAN-23 · A very long plan name that…')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Panel 10, `⚠ 3` 8, Browser tab 11, × 6
+    expect(await labelOf(narrow)).toBe('PLAN-23 · A very long plan name…')
     expect((await narrow.find({ key: 'open-pane' }))?.text).toBe('Panel')
   })
   test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {
@@ -53,17 +53,17 @@ describe('plan band', () => {
     }
   })
 
-  test('the open-problem count is a call-to-action button on the desktop and a link on the terminal, both to the Needs You tab', async ($, on) => {
+  test('the open-problem count is a Markdown link to the Needs You tab on every surface, never a Button or a Link element', async ($, on) => {
     const d = dashboard(on)
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await problemBadgeOf(ui)).toBe('⚠ 3')
-      const button = await ui.find({ type: 'Button', key: 'open-problems' })
-      if (surface === 'desktop') expect(button).toBeDefined()
-      else expect(button).toBeUndefined()
-      if (surface === 'terminal') expect((await ui.findAll({ type: 'Link' })).map((l: any) => l.props.href)).toContain(`${DASHBOARD_URL}/plans/23?tab=needs-you`)
+      expect(await ui.find({ type: 'Button', key: 'open-problems' })).toBeUndefined()
+      expect(await ui.findAll({ type: 'Link' })).toEqual([])
+      expect((await linksOf(ui)).find(l => l.key === 'open-problems')?.href).toBe(`${DASHBOARD_URL}/plans/23?tab=needs-you`)
       await ui.unmount()
+      expect(browserCalls(d)).toEqual([])
     }
   })
 
@@ -78,16 +78,18 @@ describe('plan band', () => {
     }
   })
 
-  test('connected: ref, name and the open-problem count; Browser tab only on the desktop, the link on both', async ($, on) => {
+  test('connected: ref, name, the open-problem count and one Browser tab link to the plan, the same on both surfaces', async ($, on) => {
     const d = dashboard(on)
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expectText(await ui.find({ type: 'Text', text: /PLAN-23/ }), /^PLAN-23 · Danxbot plugin$/)
-      expect(await ui.find({ type: 'Link' })).toBeDefined()
-      const tab = await ui.find({ type: 'Button', key: 'open-tab' })
-      if (surface === 'desktop') expect(tab).toBeDefined()
-      else expect(tab).toBeUndefined()
+      expect(await ui.findAll({ type: 'Link' })).toEqual([])
+      expect(await ui.find({ type: 'Button', key: 'open-tab' })).toBeUndefined()
+      expect(await linksOf(ui)).toEqual([
+        { key: 'open-problems', label: '⚠ 3', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` },
+        { key: 'open-tab', label: 'Browser tab', href: `${DASHBOARD_URL}/plans/23` },
+      ])
       await ui.unmount()
     }
   })
@@ -200,8 +202,8 @@ for (const surface of SURFACES) {
       expect((await band.find({ type: 'Text', text: /PLAN-23/ }))?.props.wrap).toBe('truncate-end')
       // order and keys unchanged, the close control last
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
-      expect(keys).toEqual(surface === 'desktop' ? ['open-pane', 'open-problems', 'open-tab', 'band-close'] : ['open-pane', 'band-close'])
-      expect(await band.find({ type: 'Link' })).toBeDefined()
+      expect(keys).toEqual(['open-pane', 'band-close'])
+      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-tab'])
       expect((await band.find({ key: 'band-close' }))?.props.role).toBe('dismiss')
     })
   })

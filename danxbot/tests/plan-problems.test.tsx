@@ -2,7 +2,7 @@
 // order. Every interaction with a problem is in the browser, so nothing in the pane writes to a card.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DASHBOARD_URL, SURFACES, dashboard, forceRefresh, problemBadgeOf, startSession } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, dashboard, forceRefresh, linksOf, problemBadgeOf, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -20,9 +20,7 @@ async function openPane($: any, on: any, surface: (typeof SURFACES)[number], opt
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 // every problem link: the pane's other links go to the plan and to in-progress cards, never to a problem
 const problemLinks = async (ui: any) =>
-  (await ui.findAll({ type: 'Link' }))
-    .map((l: any) => ({ label: l.props.label as string, href: l.props.href as string }))
-    .filter((l: { href: string }) => l.href.includes('/problems/'))
+  (await linksOf(ui)).map(l => ({ label: l.label, href: l.href })).filter(l => l.href.includes('/problems/'))
 
 for (const surface of SURFACES) {
   describe(`open problems on ${surface}`, () => {

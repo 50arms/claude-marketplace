@@ -4,7 +4,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { SUBAGENTS_UNAVAILABLE_LINE, SUBAGENT_ACTIVITY_MAX, SUBAGENT_CARD_BACKGROUND, SUBAGENT_LABEL_MAX, SUBAGENT_STATE_COLOR, SUBAGENT_UNTITLED } from '../hooks/plan/config'
 import { compactCount, dollars, duration, nestSubagents, visibleSubagents } from '../hooks/plan/subagents'
-import { CLOCK_START, DASHBOARD_URL, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, endedSubagent, rawSubagent, startSession, forceRefresh } from './plan-kit'
+import { CLOCK_START, DASHBOARD_URL, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, endedSubagent, rawSubagent, startSession, forceRefresh, linksOf } from './plan-kit'
 
 const pane = (bodyColumns = 100) =>
   ({ component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns, placement: 'dock' } }) as any
@@ -118,8 +118,8 @@ for (const surface of SURFACES) {
       expect(shown).toContain('12k tokens · $0.42 · 7 tool calls')
       expect(shown).toContain('▸ Bash: Run the affected tests')
       expect(shown).toContain('In flight card')
-      const link = (await ui.findAll({ type: 'Link' })).find((l: any) => l.props.label === 'DX-9')
-      expect(link?.props.href).toBe(`${DASHBOARD_URL}/plans/23/cards/DX-9`)
+      const link = (await linksOf(ui)).find(l => l.label === 'DX-9')
+      expect(link?.href).toBe(`${DASHBOARD_URL}/plans/23/cards/DX-9`)
       expect(await text(ui)).toContain('1 running')
     })
 
@@ -145,7 +145,7 @@ for (const surface of SURFACES) {
       for (const t of long60) expect(t.props.wrap).toBe('truncate-end')
       const runtimeBox = (await ui.findAll({ type: 'Box' })).find((b: any) => b.text === 'failed 1m 30s')
       expect(runtimeBox?.props.flexShrink).toBe(0)
-      const link = (await ui.findAll({ type: 'Link' })).find((l: any) => l.props.label === 'DX-9')
+      const link = (await linksOf(ui)).find(l => l.label === 'DX-9')
       expect(link).toBeDefined()
     })
   })
@@ -159,8 +159,8 @@ for (const surface of SURFACES) {
       ]
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
-      const link = (await ui.findAll({ type: 'Link' })).find((l: any) => l.props.label === 'DX-77')
-      expect(link?.props.href).toBe(`${DASHBOARD_URL}/board/DX-77`)
+      const link = (await linksOf(ui)).find(l => l.label === 'DX-77')
+      expect(link?.href).toBe(`${DASHBOARD_URL}/board/DX-77`)
       expect((await ui.find({ key: 'sa-agent-none' }))?.text).toContain('no card')
     })
 
@@ -245,7 +245,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...pane() })
       const parent = (await ui.find({ key: 'sa-agent-p' }))!
-      expect(keysBelow(parent)).toEqual(['sa-agent-c', 'sa-agent-gc'])
+      expect(keysBelow(parent).filter((k: string) => k.startsWith('sa-'))).toEqual(['sa-agent-c', 'sa-agent-gc'])
       expect(await cardKeys(ui)).toEqual(['sa-agent-p', 'sa-agent-c', 'sa-agent-gc', 'sa-agent-orphan'])
     })
 
