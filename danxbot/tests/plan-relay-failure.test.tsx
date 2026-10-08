@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { BACKOFF_MS } from '../hooks/relay/config'
-import { OLD_SERVER_FIX } from '../hooks/relay/text'
+import { NO_URGENT_DETAIL, NO_URGENT_FIX, OLD_SERVER_FIX } from '../hooks/relay/text'
 import { SURFACES, SIGN_IN_HALT, answerPlanConnect, forceRefresh, dashboard, startSession, toldModel } from './plan-kit'
 
 const PANE = {
@@ -78,6 +78,24 @@ for (const surface of SURFACES) {
       expect(toldModel(d)).toEqual([
         '[danxbot plan event] events stopped: events are NOT reaching this session: the relay cannot go on. Fix: Connect this session to a plan with plan_connect.',
       ])
+      await d.clock.advance(120_000)
+      await forceRefresh($, d)
+      expect(d.relay.calls).toHaveLength(1)
+    })
+
+    // DX-4721: records with NO urgent flag come from an MCP server older than the release that adds it: nothing will change by retrying, so the
+    // relay stops with the remedy (restart the session). A flag that is there and not a boolean is a malformed answer, retried (the loop above).
+    test('a record with no urgent flag stops the relay with the restart remedy, told once, never retried', async ($, on) => {
+      const d = dashboard(on)
+      d.relay.server.script.push(() => answer({ events: [{ cursor: 'c3', text: 'x', urgent: false }, { cursor: 'c4', text: 'y' }] }))
+      await startSession($, d, surface)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await text(pane)).toContain('relay stopped')
+      expect(await text(pane)).toContain(NO_URGENT_FIX)
+      expect(toldModel(d)).toEqual([
+        `[danxbot plan event] events stopped: events are NOT reaching this session: ${NO_URGENT_DETAIL}. Fix: ${NO_URGENT_FIX}.`,
+      ])
+      expect(d.relay.delivered).toEqual([])
       await d.clock.advance(120_000)
       await forceRefresh($, d)
       expect(d.relay.calls).toHaveLength(1)
@@ -200,7 +218,12 @@ for (const surface of SURFACES) {
       ['an event with a numeric cursor', JSON.stringify({ events: [{ cursor: 3, text: 'x' }] })],
       ['an event with an empty cursor', JSON.stringify({ events: [{ cursor: '', text: 'x' }] })],
       ['an event with a null cursor', JSON.stringify({ events: [{ cursor: null, text: 'x' }] })],
-      ['an event with no text', JSON.stringify({ events: [{ cursor: 'c3' }] })],
+      ['an event with no text', JSON.stringify({ events: [{ cursor: 'c3', urgent: false }] })],
+      ['an event with an empty text', JSON.stringify({ events: [{ cursor: 'c3', text: '', urgent: false }] })],
+      ['an event whose urgent is a string', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: 'true' }] })],
+      ['an event whose urgent is a number', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: 1 }] })],
+      ['an event whose urgent is null', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: null }] })],
+      ['a good event followed by one whose urgent is a string', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: false }, { cursor: 'c4', text: 'y', urgent: 'no' }] })],
       ['a stopped record without a fix', JSON.stringify({ stopped: { reason: 'r', detail: 'd' } })],
     ] as const) {
       test(`a malformed answer (${name}) is a loud failure, never an empty list`, async ($, on) => {

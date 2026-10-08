@@ -104,10 +104,15 @@ From this session's event listener:
 
 From the plugin's relay (delivery itself):
 
-- `an event arrived as the last turn ended: a` and `N events arrived as the last turn ended: a | b`
-  → events that reached you after your last step: act on each as the kind of event it is.
+- Delivery: an event reaches you as your next prompt, after the turn you are in ends (or at once
+  when you are idle). Only an urgent one, a critical usage-pacing stop or a revoked key, is added
+  to the running turn as a note, which you read with your next tool result.
+- `(repeat of an urgent note already added to this conversation) …` → the turn ended before any
+  tool result carried that note, so it comes once more as a prompt. You have seen it: act once,
+  never twice.
 - `events stopped:` → events are NOT reaching this session: do the fix it names (usually
-  `plan_connect` again). Read the card by hand until it is done.
+  `plan_connect` again; for a server too old to mark events urgent, restart the session). Read
+  the card by hand until it is done.
 - `events delayed:` → the relay is retrying on its own; act only if it never clears.
 
 ## Records

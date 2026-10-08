@@ -1,15 +1,18 @@
 import { SIGNED_OUT_MARK } from '../plan/config'
 import { RELAY_TOOL, FAILURE_MAX, WAIT_MS } from './config'
+import { NO_URGENT_DETAIL, NO_URGENT_FIX } from './text'
 import { keyRevokedBy, mcpText } from '../plan/mcp'
 
 // What one `plan_events_wait` call came to. The tool answers (danxbot packages/danx-dashboard-mcp, plan_events_wait):
-//   {events: [{cursor: string, text: string}]}   (events empty when the wait timed out)
+//   {events: [{cursor: string, text: string, urgent: boolean}]}   (events empty when the wait timed out)
 //   {stopped: {reason, detail, fix}}             (the relay cannot go on: the server's own detail and fix; the reason is for the server's logs)
 // as JSON text. Anything else is a failure shown as one, never an empty list (Core Principle 1).
 // A record's `cursor` is an opaque string the server minted: what to send back, and store, once that record is delivered. The plugin
 // never reads it, compares it or orders by it (ids can become visible out of order, so no rule over them is safe): it delivers the
 // records in the order the server sent them and keeps the cursor of the last one delivered.
-export type RelayEvent = { cursor: string; text: string }
+// DX-4721: `urgent` is the server's decision, by the record's kind, and is required on every record: a record
+// without a boolean one is refused, never read as false.
+export type RelayEvent = { cursor: string; text: string; urgent: boolean }
 export type WaitAnswer =
   | { kind: 'events'; events: RelayEvent[] }
   | { kind: 'stopped'; detail: string; fix: string }
@@ -30,8 +33,9 @@ export function waitArgs(planId: number, cursor: string | null, transcriptPath: 
 const SNIPPET_MAX = 120
 const cut = (text: string, max = FAILURE_MAX) => (text.length > max ? `${text.slice(0, max)}…` : text)
 
-const isEvent = (x: any): x is RelayEvent =>
+const isRecord = (x: any): boolean =>
   x !== null && typeof x === 'object' && typeof x.text === 'string' && x.text !== '' && typeof x.cursor === 'string' && x.cursor !== ''
+const isEvent = (x: any): x is RelayEvent => isRecord(x) && typeof x.urgent === 'boolean'
 
 // DX-4233: a malformed answer is a loud failure, never an empty list (Core Principle 1)
 export function readWaitAnswer(r: any): WaitAnswer {
@@ -51,8 +55,13 @@ export function readWaitAnswer(r: any): WaitAnswer {
     }
     return { kind: 'stopped', detail: s.detail, fix: s.fix }
   }
-  if (parsed !== null && typeof parsed === 'object' && Array.isArray(parsed.events) && parsed.events.every(isEvent)) {
-    return { kind: 'events', events: parsed.events }
+  const list: any[] | null = parsed !== null && typeof parsed === 'object' && Array.isArray(parsed.events) ? parsed.events : null
+  if (list !== null && list.every(isEvent)) return { kind: 'events', events: list }
+  if (list !== null && list.every(isRecord)) {
+    // DX-4721: a record with NO `urgent` is a danx-dashboard server older than the release that adds it: the relay cannot go on until the session is
+    // restarted, so it stops with that remedy instead of retrying forever. A record whose `urgent` is there and not a boolean is a malformed answer.
+    if (list.some(x => x.urgent === undefined)) return { kind: 'stopped', detail: NO_URGENT_DETAIL, fix: NO_URGENT_FIX }
+    return { kind: 'failed', message: `${RELAY_TOOL} answered a record whose urgent is not a boolean: ${cut(text, SNIPPET_MAX)}` }
   }
   return { kind: 'failed', message: `${RELAY_TOOL} answered neither {events} nor {stopped}: ${cut(text, SNIPPET_MAX)}` }
 }

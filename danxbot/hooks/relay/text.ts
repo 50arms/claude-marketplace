@@ -18,5 +18,10 @@ export const notTakenLine = (why: string) => `the session did not take the event
 export const OLD_SERVER_DETAIL = "this session's danx-dashboard MCP server has no plan_events_wait tool"
 export const OLD_SERVER_FIX = 'restart the session so its danx-dashboard server starts at its latest release; a repo that pins its own danx-dashboard server must update it to the release that adds plan_events_wait'
 
+// DX-4721: the same older-release case, seen from the answer: its records carry no `urgent` flag, which a server older than the release that adds it
+// never sends
+export const NO_URGENT_DETAIL = "this session's danx-dashboard MCP server answers events with no urgent flag, so it is older than this plugin needs"
+export const NO_URGENT_FIX = 'restart the session so its danx-dashboard server starts at its latest release'
+
 // The relay's own loop hit an error nothing above anticipated: it stops for that plan until something asks for it again.
 export const RELAY_ERROR_FIX = 'call plan_connect to start the relay again'

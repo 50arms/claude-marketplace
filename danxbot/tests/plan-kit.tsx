@@ -442,7 +442,7 @@ export function dashboard(
   // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
   const server = {
     calls: [] as { plan_id: number; cursor: string | null; timeout_ms: number; transcript_path?: string }[],
-    buffer: [] as { cursor: string; text: string }[],
+    buffer: [] as { cursor: string; text: string; urgent: boolean }[],
     plan: undefined as number | undefined,
     script: [] as (() => any)[],
     stopped: undefined as { reason: string; detail: string; fix: string } | undefined,
@@ -475,9 +475,9 @@ export function dashboard(
     return { value: text({ events: ready() }) }
   }
   // what the plugin handed the session as a prompt (the relayed events only: a test's own prompts are not recorded). `claude plugin test`
-  // has no seam that lets the plugin's own $.session.append succeed, or even see it (see toldModel below): the engine rejects it, so a
-  // turn-in-flight delivery shows as a failed delivery, and what follows a successful append is covered where it is pure (relay/delivery.ts)
-  // and on a live session.
+  // has no seam that lets the plugin's own $.session.append succeed, or even see it (see toldModel below): the engine rejects it, so an
+  // urgent event during a running turn shows as a failed delivery (the attempt is the observable), and what follows a successful append
+  // is proved on a live session.
   const delivered: { text: string }[] = []
   const deliveryFlags = {
     submitDrops: undefined as string | undefined,
@@ -742,7 +742,7 @@ export function dashboard(
   const issueReads = { active: 0, max: 0 }
   // DX-4586: a sub-agent whose stored start time is made older by the given ms as it is written, so a test reaches the 3 h bound with no 3 h of clock
   const aged = new Map<string, number>()
-  let seededUnseen: string[] | undefined
+  let seededPending: string[] | undefined
   let seededRelay: { phase: string; planId: number | null; detail: string | null } | undefined
   on('state.set', async (_$: any, e: any, next: any) => {
     // a write of the plugin's view that the host refuses: the one way a refresh can throw past its own catch
@@ -750,16 +750,16 @@ export function dashboard(
       flags.refusedViewWrites++
       return { deny: 'view write refused' } as any
     }
-    // DX-4233: the next write of a turn in flight carries these rows as the ones its model requests have not read yet (a row the plugin
-    // appends can never succeed under `claude plugin test`, so the state it would leave is seeded)
+    // DX-4721: the next write of a running turn carries these urgent notes as appended and not yet read (a note the plugin appends can never
+    // succeed under `claude plugin test`, so the state it would leave is seeded)
+    if (e.key === 'turn' && e.value?.isRunning === true && seededPending !== undefined) {
+      e = { ...e, value: { ...e.value, pending: seededPending } }
+      seededPending = undefined
+    }
     // DX-4233: the next write of the relay's state is this one instead (a state left behind by a run on another plan)
     if (e.key === 'relay' && seededRelay !== undefined) {
       e = { ...e, value: seededRelay }
       seededRelay = undefined
-    }
-    if (e.key === 'turn' && e.value?.isInFlight === true && seededUnseen !== undefined) {
-      e = { ...e, value: { ...e.value, unseen: seededUnseen } }
-      seededUnseen = undefined
     }
     if (e.key === 'liveAgents' && Array.isArray(e.value)) e = { ...e, value: e.value.map((a: any) => (aged.has(a.id) ? { ...a, since: a.since - aged.get(a.id)! } : a)) }
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
@@ -882,8 +882,9 @@ export function dashboard(
     // the plan_events_wait calls the plugin made
     calls: server.calls,
     // events appear on the dashboard: a held wait answers at once
-    push: (...events: { cursor: string; text: string }[]) => {
-      server.buffer.push(...events)
+    // (DX-4721: every record the server answers carries a boolean `urgent`; a test that does not say is a not-urgent record)
+    push: (...events: { cursor: string; text: string; urgent?: boolean }[]) => {
+      server.buffer.push(...events.map(e => ({ urgent: false, ...e })))
       server.wake?.()
     },
     // every key the plugin wrote to $.store, in order
@@ -905,7 +906,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the

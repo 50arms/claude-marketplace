@@ -229,9 +229,9 @@ export type PanelState = {
 // DX-4435: a `request_permission` request the band counts until it is decided. DX-4530: no expiry clock (the claim decides it).
 export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[] }
 
-// DX-4233: whether the main loop is in a turn (turn.start .. turn.complete), and the texts of the rows appended since its last model
-// request (`turn.step`): the ones a turn that is ending never reads.
-export type TurnState = { isInFlight: boolean; unseen: string[] }
+// DX-4721: the main loop's turn as the delivery of an urgent event needs it: whether a turn is running now, and the texts of the urgent notes
+// appended into it that no main-loop tool result has carried yet (hooks/relay/delivery.ts).
+export type TurnState = { isRunning: boolean; pending: string[] }
 
 // DX-4233: the event relay's state, as the pane's event line shows it. `streaming`: waiting on the server for events (or just
 // delivered some); `retrying`: the last wait or delivery failed and the relay tries again on its own (`detail` is the cause);
@@ -287,7 +287,7 @@ declare module 'claude-code' {
       panel: PanelState
       // DX-4233: the event relay's state (see RelayState): the pane's event line says it when it is not streaming.
       relay: RelayState
-      // DX-4233: the main loop's turn as the delivery of a relayed event needs it (see TurnState).
+      // DX-4721: the main loop's turn as the delivery of an urgent event needs it (see TurnState).
       turn: TurnState
       // DX-4234: the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState

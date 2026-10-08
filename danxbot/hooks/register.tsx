@@ -64,7 +64,7 @@ import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots,
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
-import { IDLE, deliveryMode, eventRow, requestSent, rowAppended, turnEnded, turnStarted } from './relay/delivery'
+import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
 import { shownSubagents } from './plan/subagent-cards'
@@ -113,7 +113,7 @@ const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null 
 const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
 // DX-4339: what the usage pacing panel draws from: the session's own windows, the team's settings and the account verdict as last read.
 const panel = atom({ plugin: 'danxbot', key: 'panel' } as const, EMPTY_PANEL_STATE as PanelState)
-// DX-4233: the plan event relay's state (the pane's event line), and the main loop's turn (TurnState).
+// DX-4233: the plan event relay's state (the pane's event line). DX-4721: and the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // DX-4234: the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
@@ -337,10 +337,10 @@ async function tellModel($: any, text: string): Promise<void> {
 }
 
 // DX-4625: tell the model something it must ACT on while the person types nothing (a permission decision): by the plan event
-// bridge's own delivery (deliverEvent), so an idle session is woken by a prompt and a turn in flight reads a row. `tellModel`'s
-// append is only read on the session's next turn, which an idle agent waiting on the person never starts.
+// bridge's own delivery (deliverEvent), not urgent (DX-4721): a prompt, which wakes an idle session and queues behind a running turn.
+// `tellModel`'s append is only read on the session's next turn, which an idle agent waiting on the person never starts.
 async function tellModelAwake($: any, text: string): Promise<void> {
-  const failure = await deliverEvent($, text)
+  const failure = await deliverEvent($, text, false)
   if (failure !== null) notToldToast($, failure, text)
 }
 
@@ -1070,50 +1070,53 @@ async function pruneCursors($: any): Promise<void> {
 }
 
 // A prompt that wakes an idle session (or queues behind the running turn). Null when it entered, else why it did not.
-async function submitEvent($: any, row: string): Promise<string | null> {
+async function submitEvent($: any, line: string): Promise<string | null> {
   try {
-    const r = await $.prompt.submit({ text: row })
+    const r = await $.prompt.submit({ text: line })
     return typeof r?.drop === 'string' ? notTakenLine(r.drop) : null
   } catch (err: any) {
     return notTakenLine(errMessage(err))
   }
 }
 
-// A row the model reads in the turn that is running. A refused or throwing append is a failure like any other (no silent fallback to
+// A note the model reads in the turn that is running. A refused or throwing append is a failure like any other (no silent fallback to
 // a prompt): the event is not delivered, the cursor does not move, and the loop's backoff asks for it again.
-async function appendRow($: any, row: string): Promise<string | null> {
+async function appendNote($: any, line: string): Promise<string | null> {
   try {
-    const r = await $.session.append(modelRow(row))
+    const r = await $.session.append(modelRow(line))
     return typeof r?.deny === 'string' ? notTakenLine(r.deny) : null
   } catch (err: any) {
     return notTakenLine(errMessage(err))
   }
 }
 
-// The wake prompt for rows the session will not read on its own (relay/delivery.ts): detached from the hook or delivery that found them,
-// its failure told in a toast.
-async function wakeSession($: any, wake: string): Promise<void> {
-  const failure = await submitEvent($, wake)
-  if (failure !== null) $.ui.toast(`Plan events not told to the session: ${failure}`.slice(0, TOAST_ERROR_MAX))
-}
-
-// One event into the session, the same `[danxbot plan event] ...` text as ever, by the one decision in relay/delivery.ts. A row appended
-// is remembered until the turn's next model request (`turn.step`) has carried it: one still unseen when the turn ends is told again
-// (onTurnComplete), and one appended after the turn already ended is told at once (rowAppended). Null when delivered, else the cause.
-async function deliverEvent($: any, text: string): Promise<string | null> {
-  const row = eventRow(text)
-  if (deliveryMode(await read($, turn)) === 'prompt') return submitEvent($, row)
-  const failure = await appendRow($, row)
+// One event into the session, the same `[danxbot plan event] ...` text as ever, by the one decision in relay/delivery.ts (DX-4721): a non-urgent
+// event is a prompt (queued behind a running turn, waking an idle session); an urgent one is a note in a running turn. Null when delivered,
+// else the cause.
+async function deliverEvent($: any, text: string, urgent: boolean): Promise<string | null> {
+  const line = relayLine(text)
+  if (deliveryMode(urgent, (await read($, turn)).isRunning) === 'prompt') return submitEvent($, line)
+  const failure = await appendNote($, line)
   if (failure !== null) return failure
-  // `wake` is set inside the updater, which sees the turn as it is when the write happens
-  let wake = null as string | null
+  // `prompt` is set inside the updater, which sees the turn as it is when the write happens
+  let prompt = null as string | null
   await update($, turn, cur => {
-    const appended = rowAppended(cur, text)
-    wake = appended.wake
+    const appended = noteAppended(cur, text)
+    prompt = appended.prompt
     return appended.turn
   })
-  if (wake !== null) detach($, 'Waking the session', wakeSession($, wake))
+  if (prompt !== null) detach($, 'Telling the session', promptNotes($, [prompt]))
   return null
+}
+
+// DX-4721: notes nothing will read (the turn ended after them, with no tool result between), each told once more as a prompt that says it is a
+// repeat, in order; every note is tried even when an earlier one was refused. Detached from the hook or delivery that found them: a prompt
+// the session did not take is a toast.
+async function promptNotes($: any, texts: string[]): Promise<void> {
+  for (const text of texts) {
+    const failure = await submitEvent($, repeatLine(text))
+    if (failure !== null) $.ui.toast(`Plan events not told to the session: ${failure}`.slice(0, TOAST_ERROR_MAX))
+  }
 }
 
 // The records of one answer, in the order the server sent them, each one's cursor stored as the resume cursor once it is delivered (never
@@ -1126,7 +1129,7 @@ async function deliverAll($: any, run: RelayRun, events: RelayEvent[], from: str
   for (const ev of events) {
     // DX-4233: an ended run delivers nothing more (its events are the new plan's server's to answer)
     if (run.dead) break
-    const failure = await deliverEvent($, ev.text)
+    const failure = await deliverEvent($, ev.text, ev.urgent)
     if (failure !== null) return { cursor, delivered, failure }
     delivered++
     cursor = ev.cursor
@@ -1488,6 +1491,8 @@ async function onPromptStamp($: any, e: any, next: any) {
 // result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
+  // DX-4721: the main loop's result carries the notes appended so far: they are read (a sub-agent's or a fork's result is not the main loop's)
+  if (e.agentId === undefined && (await read($, turn)).pending.length > 0) await update($, turn, cur => toolResultSent(cur))
   // DX-4235: a background shell's start, and a working sub-agent's liveness
   detach($, 'danxbot activity report', reportShellStart($, e, r))
   if (e.agentId !== undefined) detach($, 'danxbot activity report', reportSubagentAlive($, e.agentId))
@@ -1678,20 +1683,19 @@ async function onSubagentStop($: any, e: any, next: any) {
   return r
 }
 
-// DX-4233: the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this). What it did not read is told
-// again in one prompt (relay/delivery.ts says why the rows appended since its last model request are exactly those).
+// DX-4233: the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this).
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
   if (e.agentId === undefined) {
-    // `wake` is set inside the updater, which sees the turn as it is when the write happens
-    let wake = null as string | null
+    // `prompts` is set inside the updater, which sees the turn as it is when the write happens
+    let prompts = [] as string[]
     await update($, turn, cur => {
       const ended = turnEnded(cur, e.isAborted === true)
-      wake = ended.wake
+      prompts = ended.prompts
       return ended.turn
     })
     // detached: the turn.complete hook does not wait on the session taking a prompt
-    if (wake !== null) detach($, 'Waking the session', wakeSession($, wake))
+    if (prompts.length > 0) detach($, 'Telling the session', promptNotes($, prompts))
   } else {
     // DX-4235: a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
@@ -1705,14 +1709,6 @@ async function onTurnComplete($: any, e: any, next: any) {
 async function onTurnStart($: any, e: any, next: any) {
   await update($, turn, () => turnStarted())
   return next(e)
-}
-
-// DX-4233: the main loop is about to send a model request, which carries every row appended so far. `turn.step` streams, so its hook is
-// a generator that forwards the stream untouched.
-async function* onTurnStep($: any, e: any, next: any) {
-  // no state write per request when there is nothing to forget
-  if (e.agentId === undefined && (await read($, turn)).unseen.length > 0) await update($, turn, cur => requestSent(cur))
-  return yield* next(e)
 }
 
 // The app's session title, handed to `plan_connect` from the pane's Connect; and (DX-4508) the main transcript's path.
@@ -2039,7 +2035,6 @@ export const register: Register = on => {
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('turn.start', onTurnStart)
-  on('turn.step', onTurnStep)
   on('turn.complete', onTurnComplete)
   on('session.measure', onMeasure)
   // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)

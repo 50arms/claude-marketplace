@@ -85,7 +85,7 @@ for (const surface of SURFACES) {
     test('what the server answers is delivered as it comes: the plugin does not drop a record for looking old', async ($, on) => {
       const d = dashboard(on)
       d.stored.set(KEY, { planId: 23, cursor: 'c5', at: 1 })
-      d.relay.server.script.push(() => answer({ events: [{ cursor: 'c3', text: 'visible late' }, { cursor: 'c6', text: 'new' }] }))
+      d.relay.server.script.push(() => answer({ events: [{ cursor: 'c3', text: 'visible late', urgent: false }, { cursor: 'c6', text: 'new', urgent: false }] }))
       await startSession($, d, surface)
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] visible late', '[danxbot plan event] new'])
       expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c6' })

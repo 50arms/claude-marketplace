@@ -1,95 +1,63 @@
-// DX-4233: how a relayed event reaches the session. One decision (relay/delivery.ts): a turn is in flight (turn.start .. turn.complete
-// of the main loop) -> a row the model reads in that turn ($.session.append); idle -> a submitted prompt that wakes the session. A
-// refused row is a failed delivery, never a quiet prompt. `claude plugin test` has no seam that lets the plugin's own
-// $.session.append succeed, so what follows a successful append (the rows a turn did not read) is tested on the pure transitions, and
-// the hooks that carry them (turn.step, turn.complete) over a turn state the kit seeds (`seedUnseen`). The one thing no test here can
-// reach is the plugin REMEMBERING a row it appended (deliverEvent's update with rowAppended): that needs an append that succeeds, so it
-// is proved on a live session (the E2E items) and by `rowAppended`'s own tests below.
+// DX-4233 / DX-4721: how a relayed event reaches the session. One decision (relay/delivery.ts), made on the server's `urgent` flag and one turn
+// fact (is a turn running now): a not-urgent event is ALWAYS a submitted prompt (it waits behind a running turn and wakes an idle session); an
+// urgent event is a note ($.session.append) in a running turn and a prompt when none runs. `claude plugin test` has no seam that lets the
+// plugin's own $.session.append succeed, so a note shows as the attempt: a refused note is a failed delivery (told once, the cursor does not
+// move, the next wait asks again), never a quiet prompt. What a successful note does is proved on a live session (the E2E items).
 import { describe, expect, test } from 'claude-code/testing'
 
-import { IDLE, deliveryMode, eventRow, requestSent, rowAppended, turnEnded, turnStarted } from '../hooks/relay/delivery'
+import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from '../hooks/relay/delivery'
 import { SURFACES, dashboard, startSession, toldModel } from './plan-kit'
 
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { turnId: 't1' } as any
 
-// the turn state as the plugin keeps it in $.state, read from its writes
+// whether the plugin holds the main loop's turn as running, read from its writes
 const turnOf = (d: any) => d.stateWrites.filter((w: any) => w.key === 'turn').at(-1)?.value
+const runningOf = (d: any) => turnOf(d)?.isRunning
 
 describe('the delivery decision', () => {
-  test('a turn in flight is a row, an idle session a prompt', () => {
-    expect(deliveryMode(IDLE)).toBe('prompt')
-    expect(deliveryMode(turnStarted())).toBe('row')
-    expect(deliveryMode({ isInFlight: true, unseen: ['x'] })).toBe('row')
-    expect(deliveryMode({ isInFlight: false, unseen: [] })).toBe('prompt')
+  test('only an urgent event in a running turn is a note; everything else is a prompt', () => {
+    expect(deliveryMode(true, true)).toBe('note')
+    expect(deliveryMode(true, false)).toBe('prompt')
+    expect(deliveryMode(false, true)).toBe('prompt')
+    expect(deliveryMode(false, false)).toBe('prompt')
   })
 
-  test('the row text is the marker, a space and the text, unchanged', () => {
-    expect(eventRow('operator commented on problem 3')).toBe('[danxbot plan event] operator commented on problem 3')
+  test('the event text is the marker, a space and the text, unchanged', () => {
+    expect(relayLine('operator commented on problem 3')).toBe('[danxbot plan event] operator commented on problem 3')
+    expect(repeatLine('key revoked')).toBe('[danxbot plan event] (repeat of an urgent note already added to this conversation) key revoked')
   })
 })
 
-describe('the rows a turn did not read', () => {
-  test('a row appended in a turn in flight is remembered, with no wake', () => {
-    expect(rowAppended(turnStarted(), 'a')).toEqual({ turn: { isInFlight: true, unseen: ['a'] }, wake: null })
+describe('the notes a turn did not read', () => {
+  test('a note appended in a running turn is pending, with no prompt', () => {
+    expect(noteAppended(turnStarted(), 'a')).toEqual({ turn: { isRunning: true, pending: ['a'] }, prompt: null })
   })
 
-  test('a row appended after the turn ended (turn.complete landed between the decision and the append) is named in a wake at once, not remembered', () => {
-    expect(rowAppended(IDLE, 'raced')).toEqual({ turn: IDLE, wake: '[danxbot plan event] an event arrived as the last turn ended: raced' })
-    // the turn that began after: its own state, none of the old row
-    expect(turnStarted().unseen).toEqual([])
+  test('a note appended after the turn ended (turn.complete landed between the decision and the append) is a prompt at once, not pending', () => {
+    expect(noteAppended(IDLE, 'raced')).toEqual({ turn: IDLE, prompt: 'raced' })
   })
 
-  test('an ABORTED turn (the person pressed Esc) goes idle and names nothing: the rows stay for their next prompt', () => {
-    const t = rowAppended(turnStarted(), 'unread').turn
-    expect(turnEnded(t, true)).toEqual({ turn: IDLE, wake: null })
-  })
-
-  test('a turn that read every row it was given ends with no wake prompt', () => {
-    let t = rowAppended(turnStarted(), 'a').turn
-    t = requestSent(t)
-    expect(t.unseen).toEqual([])
-    expect(turnEnded(t, false)).toEqual({ turn: IDLE, wake: null })
-  })
-
-  test('a row appended after the last model request is named again when the turn ends', () => {
-    let t = turnStarted()
-    t = requestSent(t)
-    t = rowAppended(t, 'late one').turn
-    const ended = turnEnded(t, false)
-    expect(ended.turn).toEqual(IDLE)
-    expect(ended.wake).toBe('[danxbot plan event] an event arrived as the last turn ended: late one')
-  })
-
-  test('only the rows after the last request are named, in order, counted', () => {
-    let t = turnStarted()
-    t = rowAppended(t, 'early').turn
-    t = requestSent(t)
-    t = rowAppended(t, 'one').turn
-    t = rowAppended(t, 'two').turn
-    expect(turnEnded(t, false).wake).toBe('[danxbot plan event] 2 events arrived as the last turn ended: one | two')
-  })
-
-  test('a turn with no request at all names every row it was given', () => {
-    expect(turnEnded(rowAppended(turnStarted(), 'only').turn, false).wake).toContain('only')
-  })
-
-  test('a new turn forgets the rows of the one before', () => {
-    expect(turnStarted().unseen).toEqual([])
-    expect(turnEnded(IDLE, false)).toEqual({ turn: IDLE, wake: null })
-  })
-
-  test('a request with nothing unseen hands back the very same state (no write per model request)', () => {
+  test('a main-loop tool result reads every pending note; with none pending it hands back the very same state', () => {
+    expect(toolResultSent(noteAppended(turnStarted(), 'a').turn)).toEqual(turnStarted())
     const t = turnStarted()
-    expect(requestSent(t)).toBe(t)
+    expect(toolResultSent(t)).toBe(t)
+  })
+
+  test('the turn ends: pending notes are prompts, in order, once; none after a tool result; none after an abort', () => {
+    let t = noteAppended(turnStarted(), 'one').turn
+    t = noteAppended(t, 'two').turn
+    expect(turnEnded(t, false)).toEqual({ turn: IDLE, prompts: ['one', 'two'] })
+    expect(turnEnded(toolResultSent(t), false)).toEqual({ turn: IDLE, prompts: [] })
+    expect(turnEnded(t, true)).toEqual({ turn: IDLE, prompts: [] })
   })
 
   test('the transitions never change what they are given', () => {
-    const t = { isInFlight: true, unseen: ['a'] }
-    rowAppended(t, 'b')
-    requestSent(t)
+    const t = { isRunning: true, pending: ['a'] }
+    noteAppended(t, 'b')
+    toolResultSent(t)
     turnEnded(t, false)
-    expect(t).toEqual({ isInFlight: true, unseen: ['a'] })
+    expect(t).toEqual({ isRunning: true, pending: ['a'] })
   })
 })
 
@@ -103,15 +71,25 @@ for (const surface of SURFACES) {
       expect(d.relay.delivered).toEqual([{ text: '[danxbot plan event] operator commented on problem 3' }])
     })
 
-    // This test asserts the kit's MISSING append: the engine rejects the plugin's own $.session.append under `claude plugin test`, so what
-    // is observable is that a turn in flight tries a row (never a prompt), and that a refused row is a failed delivery: told once, the cursor
-    // does not move, and the next wait asks again.
-    test('a turn in flight gets a row (turn.start .. turn.complete), never a prompt; a refused row is a failed delivery', async ($, on) => {
+    test('a not-urgent event during a running turn is one prompt (queued behind the turn by the engine), never a note', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       await $.turn.start(START)
-      expect(turnOf(d)).toEqual({ isInFlight: true, unseen: [] })
-      d.relay.push({ cursor: 'c5', text: 'during the turn' })
+      expect(runningOf(d)).toBe(true)
+      d.relay.push({ cursor: 'c5', text: 'a comment during the turn' })
+      await d.clock.settle()
+      expect(d.relay.delivered).toEqual([{ text: '[danxbot plan event] a comment during the turn' }])
+      expect(toldModel(d)).toEqual([])
+      expect(d.stored.get('relayCursor:sess-own')).toMatchObject({ cursor: 'c5' })
+    })
+
+    // The kit's missing append: the engine rejects the plugin's own $.session.append, so what is observable is that a running turn gets a note
+    // attempt (never a prompt), and that a refused note is a failed delivery: told once, the cursor does not move, the next wait asks again.
+    test('an urgent event during a running turn is one note and no prompt; a refused note is a failed delivery', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      d.relay.push({ cursor: 'c5', text: 'critical pacing stop', urgent: true })
       await d.clock.settle()
       expect(toldModel(d)).toHaveLength(1)
       expect(toldModel(d)[0]).toContain('the session did not take the event')
@@ -121,63 +99,133 @@ for (const surface of SURFACES) {
       expect(d.relay.delivered).toEqual([])
     })
 
-    test('turn.complete ends the turn: the next event is a prompt again', async ($, on) => {
+    test('an urgent event while idle is a prompt', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c5', text: 'key revoked', urgent: true })
+      await d.clock.settle()
+      expect(d.relay.delivered).toEqual([{ text: '[danxbot plan event] key revoked' }])
+      expect(toldModel(d)).toEqual([])
+    })
+
+    test('turn.complete ends the turn: an urgent event is a prompt again', async ($, on) => {
       const d = dashboard(on)
       on('turn.complete', () => ({ text: 'done' }) as any)
       await startSession($, d, surface)
       await $.turn.start(START)
       await $.turn.complete(TURN)
       await d.clock.settle()
-      expect(turnOf(d)).toEqual({ isInFlight: false, unseen: [] })
-      d.relay.push({ cursor: 'c5', text: 'after the turn' })
+      expect(runningOf(d)).toBe(false)
+      d.relay.push({ cursor: 'c5', text: 'after the turn', urgent: true })
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] after the turn'])
     })
 
-    test('an aborted main-loop turn.complete sends no wake prompt; the rows stay and the turn is over', async ($, on) => {
+    // The kit cannot take the plugin's own append, so the state a successful note leaves (pending) is seeded on the turn's start.
+    test('an urgent note appended after the last tool result is told once as a prompt when the turn ends', async ($, on) => {
       const d = dashboard(on)
       on('turn.complete', () => ({ text: 'done' }) as any)
-      d.seedUnseen(['unread when the person pressed Esc'])
+      d.seedPending(['critical pacing stop'])
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      expect(turnOf(d)).toEqual({ isRunning: true, pending: ['critical pacing stop'] })
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.relay.delivered).toEqual([{ text: repeatLine('critical pacing stop') }])
+      expect(turnOf(d)).toEqual({ isRunning: false, pending: [] })
+      // not told again by the next turn's end
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.relay.delivered).toHaveLength(1)
+    })
+
+    test('an urgent note followed by a main-loop tool result is read: not told again when the turn ends', async ($, on) => {
+      const d = dashboard(on)
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      on('tool.call', () => ({ result: { ok: true }, text: 'done' }) as any)
+      d.seedPending(['critical pacing stop'])
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      await $.tool.call({ tool: 'Bash', command: 'echo hi' } as any)
+      expect(turnOf(d)).toEqual({ isRunning: true, pending: [] })
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.relay.delivered).toEqual([])
+    })
+
+    test("a sub-agent's tool result does not read the main loop's notes", async ($, on) => {
+      const d = dashboard(on)
+      on('tool.call', () => ({ result: { ok: true }, text: 'done' }) as any)
+      d.seedPending(['critical pacing stop'])
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      await $.tool.call({ tool: 'Bash', command: 'echo hi', agentId: 'agent-1' } as any)
+      expect(turnOf(d)).toEqual({ isRunning: true, pending: ['critical pacing stop'] })
+    })
+
+    test('two pending notes are each told once, in order', async ($, on) => {
+      const d = dashboard(on)
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      d.seedPending(['first stop', 'second stop'])
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.relay.delivered).toEqual([{ text: repeatLine('first stop') }, { text: repeatLine('second stop') }])
+      expect(turnOf(d)).toEqual({ isRunning: false, pending: [] })
+    })
+
+    test('a note the session refuses is a toast, and the next note is still tried', async ($, on) => {
+      const d = dashboard(on)
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      d.seedPending(['first stop', 'second stop'])
+      let attempts = 0
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      d.relay.duringPrompt(async () => void attempts++)
+      d.relay.dropPrompts('busy')
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(attempts).toBe(2)
+      expect(d.toasts.filter(t => t.startsWith('Plan events not told to the session: the session did not take the event: busy'))).toHaveLength(2)
+      expect(turnOf(d)).toEqual({ isRunning: false, pending: [] })
+    })
+
+    test('an aborted turn tells no pending note as a prompt', async ($, on) => {
+      const d = dashboard(on)
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      d.seedPending(['critical pacing stop'])
       await startSession($, d, surface)
       await $.turn.start(START)
       await $.turn.complete({ ...TURN, reason: 'aborted', isAborted: true })
       await d.clock.settle()
       expect(d.relay.delivered).toEqual([])
-      expect(turnOf(d)).toEqual({ isInFlight: false, unseen: [] })
+      expect(turnOf(d)).toEqual({ isRunning: false, pending: [] })
     })
 
-    test("a sub-agent's turn.complete names nothing and leaves the rows for the main loop's own end", async ($, on) => {
+    test("a sub-agent's turn.complete does not end the main loop's turn", async ($, on) => {
       const d = dashboard(on)
       on('turn.complete', () => ({ text: 'done' }) as any)
-      d.seedUnseen(['still unseen'])
       await startSession($, d, surface)
       await $.turn.start(START)
       await $.turn.complete({ ...TURN, agentId: 'agent-1' })
       await d.clock.settle()
-      expect(d.relay.delivered).toEqual([])
-      expect(turnOf(d)).toEqual({ isInFlight: true, unseen: ['still unseen'] })
+      expect(runningOf(d)).toBe(true)
     })
 
-    test('a turn.complete with nothing unseen submits no prompt', async ($, on) => {
+    test('a burst of not-urgent events pushed during a turn and after it arrives in order with none lost', async ($, on) => {
       const d = dashboard(on)
       on('turn.complete', () => ({ text: 'done' }) as any)
       await startSession($, d, surface)
       await $.turn.start(START)
-      await $.turn.complete(TURN)
+      d.relay.push({ cursor: 'c5', text: 'one' })
       await d.clock.settle()
-      expect(d.relay.delivered).toEqual([])
-    })
-
-    test('a wake the session did not take is a toast, not a failed turn.complete', async ($, on) => {
-      const d = dashboard(on)
-      on('turn.complete', () => ({ text: 'done' }) as any)
-      d.seedUnseen(['x'])
-      await startSession($, d, surface)
-      await $.turn.start(START)
-      d.relay.dropPrompts('busy')
       await $.turn.complete(TURN)
+      d.relay.push({ cursor: 'c6', text: 'two' }, { cursor: 'c7', text: 'three' }, { cursor: 'c8', text: 'four' })
       await d.clock.settle()
-      expect(d.toasts.some(t => t.startsWith('Plan events not told to the session: the session did not take the event: busy'))).toBe(true)
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] one', '[danxbot plan event] two', '[danxbot plan event] three', '[danxbot plan event] four'])
+      expect(d.stored.get('relayCursor:sess-own')).toMatchObject({ cursor: 'c8' })
     })
 
     test('a prompt does not mark a turn: a slash command may start none', async ($, on) => {
@@ -185,7 +233,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await $.prompt.submit({ text: '/some-local-command' } as any)
       await d.clock.settle()
-      expect(turnOf(d)).toBeUndefined()
+      expect(runningOf(d)).toBeUndefined()
       d.relay.push({ cursor: 'c5', text: 'still idle' })
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] still idle'])

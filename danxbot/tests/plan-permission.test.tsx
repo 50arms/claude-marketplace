@@ -284,7 +284,7 @@ describe('the model is told the decision', () => {
     expect(toldModel(d)).toEqual([])
   })
 
-  test('a turn in flight gets a row, never a prompt (the same decision as a relayed event)', async ($, on) => {
+  test('a turn in flight gets a prompt, never a note (a decision is not urgent: DX-4721)', async ($, on) => {
     const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
@@ -293,10 +293,9 @@ describe('the model is told the decision', () => {
     d.world.permissionClaim = 'approved'
     await d.clock.advance(PERMISSION_POLL_MS)
     await d.clock.settle()
-    expect(promptsOf(d)).toEqual([])
-    // the kit cannot take a plugin's own append, so the refused row shows as the toast carrying it
-    expect(toldModel(d)).toHaveLength(1)
-    expect(toldModel(d)[0]).toContain('granted team.members.view')
+    expect(promptsOf(d)).toHaveLength(1)
+    expect(promptsOf(d)[0]).toContain('granted team.members.view')
+    expect(toldModel(d)).toEqual([])
   })
 
   test('a grant of part of what was asked names what was not granted', async ($, on) => {
