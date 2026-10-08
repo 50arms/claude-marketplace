@@ -54,7 +54,7 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { answeredOk, connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
+import { connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
 import type { Naming } from './plan/notes'
 import { connectNote, disconnectNote, parseNaming, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
@@ -425,7 +425,6 @@ function connect($: any, plan: PlanRow): Promise<void> {
     // DX-4235: a move to another plan closes what the session opened under the one it leaves; a move that does not happen takes that back
     const why = `moving to ${plan.ref}`
     const closes = (await movesOffReportedPlan($, plan.id)) ? await closeOwedBeforeLeave($, why) : null
-    const stayed = () => (closes === null ? Promise.resolve() : leaveDidNotHappen($, closes, why))
     const sessionTitle = await read($, title)
     let r
     try {
@@ -434,12 +433,12 @@ function connect($: any, plan: PlanRow): Promise<void> {
         ...(sessionTitle ? { title: sessionTitle } : {}),
       })
     } catch (err: any) {
-      await stayed()
+      await settleLeave($, closes, false, why)
       $.ui.toast(`Connect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
     }
     const outcome = toolOutcome(r)
-    if (!outcome.ok) await stayed()
+    await settleLeave($, closes, outcome.ok, why)
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       // a refusal is `ok: false`, not an error result: nothing connected, so the model is told nothing
@@ -479,12 +478,12 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
     try {
       r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
-      await leaveDidNotHappen($, closes, why)
+      await settleLeave($, closes, false, why)
       $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
     }
     const outcome = toolOutcome(r)
-    if (!outcome.ok) await leaveDidNotHappen($, closes, why)
+    await settleLeave($, closes, outcome.ok, why)
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
@@ -1338,9 +1337,18 @@ async function onPlanConnect($: any, e: any, next: any) {
   // its answer says did not happen takes that back
   const leaving = e.disconnect === true
   const why = leaving ? 'leaving the plan' : `moving to plan ${e.plan_id}`
-  const closes = leaving || (typeof e.plan_id === 'number' && (await movesOffReportedPlan($, e.plan_id))) ? await closeOwedBeforeLeave($, why) : null
-  const ran = await next(e)
-  if (closes !== null && !(leaving ? answeredOk(ran.text) : connectedPlanId(ran.text) === e.plan_id)) await leaveDidNotHappen($, closes, why)
+  const moving = !leaving && typeof e.plan_id === 'number' && (await movesOffReportedPlan($, e.plan_id))
+  const closes = leaving || moving ? await closeOwedBeforeLeave($, why) : null
+  let ran
+  try {
+    ran = await next(e)
+  } catch (err) {
+    // the call itself failed: nothing left or moved
+    await settleLeave($, closes, false, why)
+    throw err
+  }
+  const answer = textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
+  await settleLeave($, closes, leaving ? answer.ok : answer.ok && answer.body?.session?.plan_id === e.plan_id, why)
   // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
   relayHalted = null
@@ -1841,6 +1849,12 @@ async function closeOwedBeforeLeave($: any, why: string): Promise<LeaveCloses> {
   )
   if (failure !== null) $.ui.toast(`danxbot could not close ${activities(rows.length)} before ${why} (${failure.slice(0, TOAST_ERROR_MAX)}): the dashboard may show them running`)
   return { owed, rows: rows.length, posted: failure === null }
+}
+
+// DX-4235: hands the closes a leave took back when the leave did not happen (`left` false); nothing to do when the leave took none (`closes`
+// null: a move that left no reported plan) or happened.
+async function settleLeave($: any, closes: LeaveCloses | null, left: boolean, why: string): Promise<void> {
+  if (closes !== null && !left) await leaveDidNotHappen($, closes, why)
 }
 
 // DX-4235: the leave did not happen (refused, or the call failed): the session is still on its plan, so what the closes took comes back.

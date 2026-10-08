@@ -6,26 +6,27 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { toolName } from '../hooks/plan/config'
 import { LEAVE_CLOSE_DEADLINE_MS, agentRow, shellRow } from '../hooks/reports/activity'
-import { SURFACES, activityRows, answerReportEvents, dashboard, startSession } from './plan-kit'
+import { SURFACES, answerReportEvents, countReports, dashboard, finishes, startSession } from './plan-kit'
 
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const BACKGROUNDED = { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' }, text: 'Command running in background with ID: b1' }
 const CLOSE = 'report POST /api/plan-sessions/me/activity'
-const finishes = (d: any) => activityRows(d).filter(r => r.finishedAt !== null)
 
 for (const surface of SURFACES) {
   describe(`the closes owed before a leave on ${surface}`, () => {
     // A connected session with a running sub-agent and an open background shell. `planConnect` answers the model's own plan_connect
     // (the engine has none of its own in a test) and records where it came in the sequence.
-    // `refuse`: the model's plan_connect answers a refusal (`ok: false`) and the session stays where it is.
-    async function working($: any, on: any, options: Parameters<typeof dashboard>[1] = {}, refuse = { model: false }) {
+    // `model`: how the model's own plan_connect answers: as the dashboard would (default), a refusal (`ok: false`, the session stays where
+    // it is), or a thrown call.
+    async function working($: any, on: any, options: Parameters<typeof dashboard>[1] = {}, model: 'answers' | 'refuses' | 'throws' = 'answers') {
       answerReportEvents(on)
       on('tool.call', { tool: 'Bash' }, () => BACKGROUNDED as any)
       const d = dashboard(on, options)
       on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => {
         d.sequence.push('tool plan_connect')
-        if (refuse.model) return { result: {}, text: JSON.stringify({ ok: false, status: 409, body: { error: 'plan_mismatch' } }), isError: false } as any
+        if (model === 'throws') throw new Error('plan_connect broke')
+        if (model === 'refuses') return { result: {}, text: JSON.stringify({ ok: false, status: 409, body: { error: 'plan_mismatch' } }), isError: false } as any
         if (e.disconnect === true) d.world.planId = null
         else if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
         return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: d.world.planId } } }), isError: false } as any
@@ -110,7 +111,7 @@ for (const surface of SURFACES) {
     })
 
     test("the model's plan_connect leave the dashboard refuses: the same toast, and nothing more is posted", async ($, on) => {
-      const d = await working($, on, {}, { model: true })
+      const d = await working($, on, {}, 'refuses')
       await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any)
       await d.clock.settle()
       expect(d.toasts).toContain("danxbot: leaving the plan did not happen, but its 2 running activities were already reported finished: the dashboard keeps them finished while they run")
@@ -132,6 +133,72 @@ for (const surface of SURFACES) {
         expect(finishes(d).filter(r => r.activityId === 'agent-a1')).toHaveLength(1)
       })
     }
+
+    test("the model's refused move to another plan: the same toast, and the closes it took stay taken", async ($, on) => {
+      const d = await working($, on, {}, 'refuses')
+      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 24 } as any)
+      await d.clock.settle()
+      expect(d.toasts).toContain("danxbot: moving to plan 24 did not happen, but its 2 running activities were already reported finished: the dashboard keeps them finished while they run")
+      expect(finishes(d)).toHaveLength(2)
+    })
+
+    test("the model's plan_connect that rejects gives the closes back too (here they failed, so they are owed again), and the rejection still reaches the caller", async ($, on) => {
+      const d = await working($, on, {}, 'throws')
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 500, body: { error: 'activity boom' } }
+      const r: any = await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any).catch((err: any) => ({ thrown: String(err?.message ?? err) }))
+      // the engine skips a hook that throws, so the call rejects with nothing beneath to answer it: either way next(e) rejected
+      expect(r.thrown).toBeDefined()
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
+      const before = finishes(d).length
+      await $.turn.complete({ ...TURN, agentId: 'a1' })
+      await d.clock.settle()
+      expect(finishes(d).slice(before).map(r => r.activityId)).toEqual(['agent-a1'])
+    })
+
+    for (const [name, options] of [['refused', { connectFails: true }], ['thrown', { connectThrows: true }]] as const) {
+      test(`the pane's Switch plan + Connect ${name} after its closes failed: they are owed again, with the plan they belong to and the count`, async ($, on) => {
+        const d = await working($, on, options)
+        await $.classic.Stop({ stop_hook_active: true, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'x' }, { id: 'a1', type: 'subagent', status: 'running', description: 'x' }, { id: 'a9', type: 'subagent', status: 'running', description: 'x' }] } as any)
+        await d.clock.settle()
+        d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 500, body: { error: 'activity boom' } }
+        const p = await pane($)
+        await p.press({ key: 'switch' })
+        await p.select({ key: 'plan-pick', value: '24' })
+        await p.press({ key: 'connect' })
+        await d.clock.settle()
+        d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
+        // the count came back: a liveness re-post of the running sub-agent re-sends 3, not 1
+        await d.clock.advance(61_000)
+        await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)
+        await d.clock.settle()
+        expect(countReports(d).at(-1)?.count).toBe(3)
+        // the plan came back: the model's move to another plan still closes what was owed, before the call
+        const before = finishes(d).length
+        d.sequence.length = 0
+        await $.tool.call({ tool: toolName('plan_connect'), plan_id: 24 } as any)
+        await d.clock.settle()
+        expect(d.sequence.slice(0, 2)).toEqual(['report POST /api/plan-sessions/me/activity', 'tool plan_connect'])
+        expect(finishes(d).slice(before).map(r => r.activityId)).toEqual(['agent-a1', 'b1'])
+      })
+    }
+
+    test('what opened while a failed leave was in flight is kept beside what comes back: each is closed once, later', async ($, on) => {
+      const d = await working($, on, { disconnect: 'rejected' })
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 500, body: { error: 'activity boom' }, delayMs: 1_000 }
+      const leaving = (await pane($)).press({ key: 'disconnect' })
+      await d.clock.settle()
+      await $.classic.SubagentStart({ agent_id: 'a2', agent_type: 'Explore' })
+      await d.clock.advance(1_000)
+      await leaving
+      await d.clock.settle()
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
+      const before = finishes(d).length
+      await $.turn.complete({ ...TURN, agentId: 'a1' })
+      await $.turn.complete({ ...TURN, agentId: 'a2' })
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(finishes(d).slice(before).map(r => r.activityId).sort()).toEqual(['agent-a1', 'agent-a2', 'b1'])
+    })
 
     test('a leave with nothing owed posts nothing', async ($, on) => {
       answerReportEvents(on)

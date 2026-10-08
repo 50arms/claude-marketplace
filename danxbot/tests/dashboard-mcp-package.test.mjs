@@ -486,6 +486,22 @@ describe("pruneInstalls (DX-4321)", () => {
     assert.deepEqual(readdirSync(path.join(dir, ".leases")), ["111"]);
   });
 
+  test("DX-4235: every version directory's dead leases are deleted, the kept (running, recorded) and young ones included", () => {
+    const kept = dirAt("0.1.3", T0);
+    const young = dirAt("0.1.4", T1);
+    for (const v of ["0.1.3", "0.1.4"]) {
+      leaseVersion(v, { env, pid: 111 });
+      leaseVersion(v, { env, pid: 999 });
+    }
+    utimesSync(kept, T0, T0);
+    utimesSync(young, T1, T1);
+    pruneInstalls(["0.1.3"], { env, now, alive: (pid) => pid === 111 });
+    for (const dir of [kept, young]) {
+      assert.ok(existsSync(dir), dir);
+      assert.deepEqual(readdirSync(path.join(dir, ".leases")), ["111"], dir);
+    }
+  });
+
   test("DX-4235: a lease is released by its holder", () => {
     dirAt("0.1.1", T0);
     const release = leaseVersion("0.1.1", { env, pid: 111 });

@@ -1018,6 +1018,8 @@ export async function forceRefresh($: any, d: Dashboard) {
 // DX-4235: what the reports sent, read off the kit's `reports` list: every activity row posted, in order, and every background-work
 // body put, in order.
 export const activityRows = (d: Dashboard): any[] => d.reports.filter(r => r.path === '/api/plan-sessions/me/activity').flatMap(r => r.body.activities)
+// ... and the finished ones among them
+export const finishes = (d: Dashboard): any[] => activityRows(d).filter(r => r.finishedAt !== null)
 export const countReports = (d: Dashboard): { count: number | null; eventAt: string }[] => d.reports.filter(r => r.path === '/api/plan-sessions/me/background-work').map(r => r.body)
 
 // DX-4235: the engine's own answers to the events the reports ride (nothing beneath the plugins answers a classic event or a turn's end

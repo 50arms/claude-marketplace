@@ -17,26 +17,10 @@ export function mcpText(r: any): string {
 
 // DX-4233: the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {plan_id}}}` envelope. Null for anything
 // else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
-// DX-4235: whether the model's plan_connect answered `ok: true` (a leave that happened); anything else, a refusal or text that is not
-// the envelope, is a leave that did not happen.
-export function answeredOk(text: unknown): boolean {
-  if (typeof text !== 'string') return false
-  try {
-    return JSON.parse(text)?.ok === true
-  } catch {
-    return false
-  }
-}
-
 export function connectedPlanId(text: unknown): number | null {
   if (typeof text !== 'string') return null
-  let parsed: any
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return null
-  }
-  const planId = parsed?.ok === true ? parsed.body?.session?.plan_id : undefined
+  const outcome = textOutcome(text, false)
+  const planId = outcome.ok ? outcome.body?.session?.plan_id : undefined
   return typeof planId === 'number' ? planId : null
 }
 
@@ -46,11 +30,16 @@ export function connectedPlanId(text: unknown): number | null {
 // that is not an envelope is a failure here, never a success.
 export type ToolOutcome = { ok: boolean; status: number; body: any }
 
-// THE one parser of that envelope: api() and every plan_connect caller use it.
+// An MCP tool result's envelope: api() and the pane's plan_connect calls use it.
 export function toolOutcome(r: any): ToolOutcome {
   if (r === null || r === undefined) return { ok: false, status: 0, body: { error: 'the tool answered no result' } }
-  const text = mcpText(r)
-  if (r.isError) return { ok: false, status: 0, body: { error: text } }
+  return textOutcome(mcpText(r), r.isError === true)
+}
+
+// THE one parser of that envelope, from a result's text (`isError`: the call threw): toolOutcome, connectedPlanId, and the model's own
+// plan_connect result as its tool.call hook sees it (DX-4235: whether its leave or move happened) all read it here.
+export function textOutcome(text: string, isError: boolean): ToolOutcome {
+  if (isError) return { ok: false, status: 0, body: { error: text } }
   let parsed: any
   try {
     parsed = JSON.parse(text)

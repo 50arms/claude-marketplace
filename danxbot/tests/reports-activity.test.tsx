@@ -4,14 +4,13 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { LIVENESS_MS, agentRow, endedShells, shellRow, subagentActivityId } from '../hooks/reports/activity'
-import { SURFACES, activityRows, answerReportEvents, countReports, dashboard, forceRefresh, startSession } from './plan-kit'
+import { SURFACES, activityRows, answerReportEvents, countReports, dashboard, finishes, forceRefresh, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1b2c3', agent_type: 'danxbot:worker-sonnet-high' }
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 // the engine's result of a Bash call it moved to the background: the id it lists the shell under in `background_tasks`
 const BACKGROUNDED = { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bjlibh54w' }, text: 'Command running in background with ID: bjlibh54w' }
 const shell = (id: string, status = 'running') => ({ id, type: 'shell', status, description: 'sleep' })
-const finishes = (d: any) => activityRows(d).filter(r => r.finishedAt !== null)
 
 describe('the activity rows (pure)', () => {
   test("a sub-agent's key is agent-<id>, whichever way the id arrives", () => {
@@ -68,8 +67,7 @@ for (const surface of SURFACES) {
       await $.turn.complete({ ...TURN, reason: 'error', agentId: 'f00' })
       await $.classic.StopFailure({ agent_id: 'f00', error: 'server_error' } as any)
       await d.clock.settle()
-      const finishes = activityRows(d).filter(r => r.finishedAt !== null)
-      expect(finishes).toEqual([agentRow('agent-a1b2c3', null, now, now), agentRow('agent-f00', null, now, now)])
+      expect(finishes(d)).toEqual([agentRow('agent-a1b2c3', null, now, now), agentRow('agent-f00', null, now, now)])
       expect(countReports(d)).toEqual([])
     })
 
@@ -307,6 +305,23 @@ for (const surface of SURFACES) {
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
       await d.clock.settle()
       expect(finishes(d)).toEqual([])
+    })
+
+    test("a main-session StopFailure seen while off its plan forgets everything owed: back on the plan, the sub-agent's end posts nothing", async ($, on) => {
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await d.clock.settle()
+      d.world.planId = null
+      await forceRefresh($, d)
+      await $.classic.StopFailure({ error: 'server_error' } as any)
+      d.world.planId = 23
+      await forceRefresh($, d)
+      await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
+      await d.clock.settle()
+      expect(finishes(d)).toEqual([])
+      expect(countReports(d)).toEqual([])
     })
 
     test('nothing new opens while the plan state is unknown: no start row, no shell row, no liveness post', async ($, on) => {

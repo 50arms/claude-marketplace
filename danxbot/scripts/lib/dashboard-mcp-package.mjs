@@ -349,8 +349,9 @@ function isLeased(dir, alive) {
 /**
  * Removes, under the plugin data dir, every staging directory and every version directory not named in `keep` that is
  * older than STALE_INSTALL_MS at `now` (DX-4321) and that no live process leases (DX-4235: another session's server or live
- * reader may still run it, and its directory's age says nothing about that). A younger stage is a concurrent install's. An
- * entry another session removed first is skipped (DX-4235: two sessions may prune at once). The record and anything not
+ * reader may still run it, and its directory's age says nothing about that). A younger stage is a concurrent install's. Every
+ * version directory's leases are read, kept and young ones included, so a lease left by a crashed process is deleted wherever it
+ * is. An entry another session removed first is skipped (DX-4235: two sessions may prune at once). The record and anything not
  * shaped like a version or a stage are never touched. Seam: `alive` (pid liveness).
  */
 export function pruneInstalls(keep, { env = process.env, now = Date.now(), alive = isAlive } = {}) {
@@ -358,8 +359,11 @@ export function pruneInstalls(keep, { env = process.env, now = Date.now(), alive
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const isStage = entry.name.startsWith(STAGE_PREFIX);
-    if (!isStage && (!STRICT_VERSION.test(entry.name) || keep.includes(entry.name))) continue;
+    const isVersion = STRICT_VERSION.test(entry.name);
+    if (!isStage && !isVersion) continue;
     const dir = path.join(root, entry.name);
+    // the leases are read (and the dead ones deleted) before anything decides whether the directory stays
+    if (isVersion && (isLeased(dir, alive) || keep.includes(entry.name))) continue;
     let mtimeMs;
     try {
       ({ mtimeMs } = fs.statSync(dir));
@@ -367,8 +371,7 @@ export function pruneInstalls(keep, { env = process.env, now = Date.now(), alive
       if (err.code === "ENOENT") continue;
       throw err;
     }
-    if (now - mtimeMs <= STALE_INSTALL_MS || (!isStage && isLeased(dir, alive))) continue;
-    fs.rmSync(dir, { recursive: true, force: true });
+    if (now - mtimeMs > STALE_INSTALL_MS) fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
