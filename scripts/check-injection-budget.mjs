@@ -16,10 +16,9 @@
 //   - per-turn (UserPromptSubmit, unconditional): 23B — the wall-clock line,
 //     the one thing DX-3347 explicitly kept (since DX-4234 the danxbot module's
 //     time stamp on prompt.submit, measured by running its pure `stamp`).
-//   - session-start (SessionStart, fires at startup): 26,373B.
-//     Since DX-4234 session-start measures 0B here: the event text and the restart notice are the dashboard's
-//     (registry and server) text, delivered by the danxbot module with no offline bytes to count. The ceiling stays
-//     at DX-3347's, so a standing session-start injection cannot come back unnoticed.
+//   - session-start (SessionStart, fires at startup): 26,373B. Not gated any more (DX-4235): a plugin's hooks are one
+//     native module with no command hooks, and what a module says at a session start is the dashboard's (registry and
+//     server) text, delivered for a plan-connected session only, with no offline bytes to count.
 // This gate also folds in PostToolUse's unconditional per-tool-call total
 // (23B, the same clock's after-each-tool-call stamp, tool.call since DX-4234) into the "per-turn"
 // figure — a turn typically includes at least one tool call, so the
@@ -36,10 +35,8 @@
 //                                         (23B UserPromptSubmit + 23B
 //                                         PostToolUse); ~18x under the
 //                                         pre-DX-3347 3,715B/turn total.
-//   SESSION_START_CEILING_BYTES = 32000 — ~21% over the measured 26,373B.
 export const CEILING_DECISION_CARD = "DX-3347";
 export const PER_TURN_CEILING_BYTES = 200;
-export const SESSION_START_CEILING_BYTES = 32000;
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -52,20 +49,12 @@ const MEASURE_SCRIPT = path.join(REPO_ROOT, "scripts", "measure-injection.mjs");
 // Pure evaluator, exported so a test can feed a synthetic (deliberately
 // over-budget) totals fixture and prove the check FAILS (AC 32514) without
 // needing to build a real oversized hook script.
-export function evaluateBudget(
-  totals,
-  ceilings = { perTurn: PER_TURN_CEILING_BYTES, sessionStart: SESSION_START_CEILING_BYTES }
-) {
+export function evaluateBudget(totals, ceilings = { perTurn: PER_TURN_CEILING_BYTES }) {
   const perTurnCombined = totals.perTurnUnconditional + totals.perToolCall;
   const failures = [];
   if (perTurnCombined > ceilings.perTurn) {
     failures.push(
       `per-turn (UserPromptSubmit ${totals.perTurnUnconditional}B + PostToolUse ${totals.perToolCall}B = ${perTurnCombined}B) exceeds the ${ceilings.perTurn}B ceiling set by ${CEILING_DECISION_CARD}`
-    );
-  }
-  if (totals.perSession > ceilings.sessionStart) {
-    failures.push(
-      `session-start (${totals.perSession}B) exceeds the ${ceilings.sessionStart}B ceiling set by ${CEILING_DECISION_CARD}`
     );
   }
   return { ok: failures.length === 0, perTurnCombined, failures };
@@ -94,7 +83,7 @@ function main() {
   const result = evaluateBudget(totals);
   if (result.ok) {
     console.log(
-      `Injection budget OK — per-turn ${result.perTurnCombined}B (ceiling ${PER_TURN_CEILING_BYTES}B), session-start ${totals.perSession}B (ceiling ${SESSION_START_CEILING_BYTES}B).`
+      `Injection budget OK — per-turn ${result.perTurnCombined}B (ceiling ${PER_TURN_CEILING_BYTES}B).`
     );
     process.exit(0);
   }

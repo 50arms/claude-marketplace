@@ -197,8 +197,8 @@ fi
 # module whole or not at all, and in the desktop app a module that fails to load says nothing
 # visible, so a broken one would reach every session silently. `claude plugin validate` (reads
 # the module's source the way the engine will) and `claude plugin test` (runs its *.test.ts[x]
-# against the engine) both run BEFORE anything is rewritten or bumped; either failing refuses the
-# publish with the tree untouched. CLAUDE_BIN names the CLI when `claude` is not on PATH.
+# against the engine) both run BEFORE anything is bumped; either failing refuses the publish with
+# the tree untouched. CLAUDE_BIN names the CLI when `claude` is not on PATH.
 
 plugin_has_modules() {
   node -e '
@@ -231,33 +231,12 @@ for plugin in "${TARGETS[@]}"; do
   fi
 done
 
-# --- Integrity manifests -------------------------------------------------
-#
-# DX-3997 / DX-4244 - a plugin that ships its own integrity launcher
-# (scripts/launch.mjs) has a hash manifest its hooks verify before running. The
-# manifest is rewritten at two points: BEFORE the injection-budget check below
-# (check-injection-budget.mjs runs every marketplace plugin's hooks for real, so a
-# stale manifest made each hook print a false "INTEGRITY FAILURE ... git checkout
-# -- <plugin>", a fix that would destroy the very edit being published), and AFTER
-# the version bump (the bumped plugin.json is itself a hashed file).
-
-write_integrity_manifest_if_shipped() {
-  local plugin="$1"
-  if [ -f "${plugin}/scripts/launch.mjs" ]; then
-    node "${REPO_ROOT}/scripts/write-integrity-manifest.mjs" "$plugin"
-  fi
-}
-
-for plugin in "${ALL_PLUGINS[@]}"; do
-  write_integrity_manifest_if_shipped "$plugin"
-done
-
 # --- Pre-flight: injection budget ---------------------------------------
 #
 # DX-3053 — same shape as the frontmatter lint above: one shared check
-# (scripts/check-injection-budget.mjs, real hook execution via
+# (scripts/check-injection-budget.mjs, on the time stamp each hooks module hands the model, measured by
 # scripts/measure-injection.mjs) run against the WHOLE repo before any
-# bump, so a publish that pushes the per-turn or session-start injection
+# bump, so a publish that pushes the per-turn injection
 # total over the DX-3347-derived ceiling is refused before it ships.
 
 info "Checking injection budget..."
@@ -333,13 +312,8 @@ for plugin in "${TARGETS[@]}"; do
     fs.writeFileSync(path, JSON.stringify(j, null, 2) + '\n');
   " "$manifest" "$next"
 
-  # DX-3997 - rewritten here, after the bump (the bumped plugin.json is one of the hashed
-  # files) and before the commit, so the manifest in every published version matches that
-  # version's tree byte for byte.
-  write_integrity_manifest_if_shipped "$plugin"
-
-  # Stage + commit JUST the plugin's tree + manifest. Other plugins'
-  # untouched manifests stay out of this commit.
+  # Stage + commit JUST this plugin's tree (its plugin.json included); other plugins' changes stay
+  # out of this commit.
   git add "$manifest" "$plugin/"
   git commit -m "${plugin} v${next}"
   BUMPED+=("${plugin} v${next}")

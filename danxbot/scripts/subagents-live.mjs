@@ -2,14 +2,15 @@
 // DX-4508 — the plan pane's live sub-agent reader: `node <plugin root>/scripts/subagents-live.mjs <main transcript .jsonl>`.
 //
 // WHY A SCRIPT. The pane (hooks/register.tsx, a hooks module with no Node) starts this with `$.process.spawn` while its session has a
-// running sub-agent, and reads its stdout. A hooks module is never told the plugin's data directory (CLAUDE_PLUGIN_DATA reaches
-// command hooks only), so this script finds it from its own location, reads the recorded danx-dashboard-mcp version through the one
+// running sub-agent, and reads its stdout. A hooks module is never told the plugin's data directory, so this script finds it
+// from its own location, reads the recorded danx-dashboard-mcp version through the one
 // module that owns that record (lib/dashboard-mcp-package.mjs), and runs that installed version's `subagents-live` subcommand IN
 // THIS PROCESS. One process: the module's kill of this child stops the subcommand with it, never leaving a grandchild running.
 //
 // THE CONTRACT. stdout is the subcommand's own (`{"subagents":[...]}` lines; packages/danx-dashboard-mcp/src/subagents-live.ts in
 // danxbot). A failure to start prints ONE line naming the reason on stderr and exits 1; the pane shows it. Nothing is installed
-// here: ensure-dashboard-mcp.sh --prewarm installs the recorded version at every session start.
+// here: the plugin's MCP server launcher (dashboard-mcp-server.mjs) installs the recorded version at every session start. While it
+// runs, this process leases that version (lib/dashboard-mcp-package.mjs leaseVersion), so no session's prune removes it.
 //
 // THE PARENT. The engine kills this child when the module stops it or unloads. A session process that dies without unloading
 // (a crash, a killed app) kills nothing. On Windows the subcommand sees its stdout close within a moment (measured 2026-10-04: a
@@ -19,7 +20,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { DASHBOARD_MCP_PACKAGE_NAME, requireRecordedVersion } from "./lib/dashboard-mcp-package.mjs";
+import { DASHBOARD_MCP_PACKAGE_NAME, installedBin, isAlive, leaseVersion, requireRecordedVersion } from "./lib/dashboard-mcp-package.mjs";
 
 export const LIVE_SUBCOMMAND = "subagents-live";
 
@@ -42,12 +43,7 @@ export function pluginDataDir(root) {
   return { dir: path.join(path.dirname(cacheDir), "data", `${path.basename(pluginDir)}-${path.basename(marketplaceDir)}`) };
 }
 
-/** A version's installed entry point: the one layout ensure-dashboard-mcp.sh installs (`BIN_REL`). */
-export function installedBin(dataDir, version) {
-  return path.join(dataDir, "dashboard-mcp", version, "node_modules", ...DASHBOARD_MCP_PACKAGE_NAME.split("/"), "dist", "index.js");
-}
-
-/** The installed entry point of the recorded version for the plugin at `root`, or the reason there is none. */
+/** The installed entry point of the recorded version for the plugin at `root` (with that version and the data directory), or the reason there is none. */
 export function resolveLiveBin(root) {
   const data = pluginDataDir(root);
   if ("reason" in data) return { ok: false, reason: data.reason };
@@ -59,17 +55,7 @@ export function resolveLiveBin(root) {
   }
   const bin = installedBin(data.dir, version);
   if (!fs.existsSync(bin)) return { ok: false, reason: `${DASHBOARD_MCP_PACKAGE_NAME} ${version} is not installed at ${bin}` };
-  return { ok: true, bin };
-}
-
-/** Whether a process is still there (signal 0 checks without signalling); one that exists but may not be signalled is there. */
-export function isAlive(pid, kill = process.kill) {
-  try {
-    kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
+  return { ok: true, bin, version, dataDir: data.dir };
 }
 
 /** Calls `onGone` once `pid` is gone, checking every `intervalMs`; the timer never keeps the process alive on its own. */
@@ -88,6 +74,8 @@ async function main() {
     process.stderr.write(`${resolved.reason}\n`);
     process.exit(1);
   }
+  const release = leaseVersion(resolved.version, { env: { CLAUDE_PLUGIN_DATA: resolved.dataDir } });
+  process.on("exit", release);
   watchParent(process.ppid, () => process.exit(0));
   // The package's entry point runs a subcommand only when it is the process's own script (its `isEntrypointModule` reads
   // `process.argv[1]`): it is handed exactly the argv `node <bin> subagents-live <transcript>` would give it.

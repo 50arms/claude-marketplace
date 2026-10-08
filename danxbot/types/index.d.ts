@@ -245,6 +245,13 @@ export type StampState = { at: number; day: string } | null
 // cannot call the MCP), and the next prompt.submit or main-loop tool.call result consumes it.
 export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null } | null
 
+// DX-4235: what the reports remember between events: what this session reported opening and still owes a close. `agents`: by activity id
+// (`agent-<id>`), each running sub-agent whose start was posted, with the time (epoch ms) of its last post (the start or a liveness
+// re-post); its finish removes it. `shells`: the background task ids of the shells whose start was posted and that no Stop has closed yet.
+// `count`: the last background-work count sent, null when it was cleared or none was sent. `planId`: the plan the session was on when the
+// latest of them opened, null when nothing is open: a move to another plan closes what was opened under this one first.
+export type ReportState = { agents: Record<string, number>; shells: string[]; count: number | null; planId: number | null }
+
 declare module 'claude-code' {
   interface PluginState {
     danxbot: {
@@ -288,6 +295,8 @@ declare module 'claude-code' {
       pendingStart: PendingStart
       // DX-4234: the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
       endedSession: string | null
+      // DX-4235: the reports' memory (see ReportState).
+      reports: ReportState
     }
   }
 }

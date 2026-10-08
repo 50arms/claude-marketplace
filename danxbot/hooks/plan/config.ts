@@ -39,9 +39,9 @@ export const MAX_SESSIONS = 20
 export const PREFIX_MAX = 10
 export const PREFIX_PATTERN = new RegExp(`^[A-Z]{1,${PREFIX_MAX}}$`)
 
-// DX-4499: a sub-agent starting or stopping asks for a refresh at once, and for one more this long after: the plugin's own
-// SubagentStart / SubagentStop command hooks report the change to the dashboard at the same moment, so the first read can come
-// before the report does. One wait after one event, never a repeating one.
+// DX-4499: a sub-agent starting or stopping asks for a refresh at once, and for one more this long after: the module's own activity
+// report of that change (DX-4235: posted, detached, as the sub-agent starts, and at the sub-agent's turn.complete as it ends) can reach
+// the dashboard after the first read. One wait after one event, never a repeating one.
 export const SUBAGENT_SETTLE_MS = 5_000
 // DX-4499: how often the pane's clock advances while it shows a sub-agent: the runtime's seconds, drawn only, no call.
 export const TICK_MS = 1_000

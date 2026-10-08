@@ -2,12 +2,12 @@
 // names nothing specific to the author's own setup.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { bannedHits, stripJsComments, stripShellComments, userFacingText, scanFiles, scanPlugin } from "../check-general-audience.mjs";
-import { listPluginFiles } from "../write-integrity-manifest.mjs";
+import { bannedHits, stripJsComments, stripShellComments, userFacingText, scanFiles, scanPlugin, listPluginFiles } from "../check-general-audience.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -80,13 +80,40 @@ test("the shipped danxbot plugin passes, test files that hold the tokens as matc
   const shipped = listPluginFiles(REPO_ROOT, "danxbot");
   assert.ok(!shipped.includes("tests/start-skill.test.mjs"));
   assert.ok(shipped.includes("skills/start/SKILL.md"));
-  assert.ok(shipped.includes("scripts/launch.mjs") && shipped.includes("hooks/hooks.json") && shipped.includes("mantra.md"));
+  assert.ok(shipped.includes("hooks/hooks.json") && shipped.includes("hooks/register.tsx") && shipped.includes("mantra.md"));
+  assert.ok(shipped.includes("scripts/capture-screenshot.mjs"));
 });
 
-test("the scan reads real code: launch.mjs keeps its printed text after stripping, and the text keeps its length", () => {
-  const raw = fs.readFileSync(path.join(REPO_ROOT, "danxbot", "scripts", "launch.mjs"), "utf8");
-  const text = userFacingText("scripts/launch.mjs", raw);
-  assert.match(text, /INTEGRITY FAILURE/);
-  assert.match(text, /claude plugin install danxbot/);
-  assert.ok(text.length === raw.length);
+test("the scan reads real code: capture-screenshot.mjs keeps its printed text after stripping, drops its comments, and keeps its length", () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, "danxbot", "scripts", "capture-screenshot.mjs"), "utf8");
+  const text = userFacingText("scripts/capture-screenshot.mjs", raw);
+  assert.match(text, /console\.log\(`\$\{args\.out\}/);
+  assert.match(raw, /\/\/ usage {2}node/);
+  assert.doesNotMatch(text, /\/\/ usage {2}node/);
+  assert.equal(text.length, raw.length);
+});
+
+test("listPluginFiles lists the plugin's tracked and untracked-not-ignored files only, sorted, minus tests, node_modules and deleted files", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "general-audience-list-"));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    const put = (rel, text) => {
+      fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+      fs.writeFileSync(path.join(repo, rel), text);
+    };
+    put("p/scripts/a.mjs", "a\n");
+    put("p/scripts/lib/b.mjs", "b\n");
+    put("p/hooks/hooks.json", "{}\n");
+    put("p/gone.md", "tracked, then deleted from the working tree\n");
+    put("p/tests/a.test.mjs", "test\n");
+    put("p/node_modules/x/index.js", "x\n");
+    put("p/ignored.log", "ignored\n");
+    put(".gitignore", "*.log\n");
+    put("other/c.mjs", "c\n");
+    execFileSync("git", ["add", "p/scripts/a.mjs", "p/gone.md"], { cwd: repo });
+    fs.rmSync(path.join(repo, "p", "gone.md"));
+    assert.deepEqual(listPluginFiles(repo, "p"), ["hooks/hooks.json", "scripts/a.mjs", "scripts/lib/b.mjs"]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });

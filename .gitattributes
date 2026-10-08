@@ -1,3 +1,4 @@
-# DX-3997: a plugin's files are hashed byte for byte (danxbot/integrity-manifest.json), so git must
-# never rewrite their line endings on any machine's checkout.
+# DX-4235: every consumer installs the danxbot plugin from a git clone of this repo (the marketplace clone), so git must
+# never rewrite its line endings: each machine's installed copy stays byte for byte the committed one, whatever that
+# machine's core.autocrlf. Dropping this would also renormalize files already committed with CRLF.
 danxbot/** -text

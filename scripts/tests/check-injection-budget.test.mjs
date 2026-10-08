@@ -14,7 +14,6 @@ const SCRIPT = path.join(REPO_ROOT, "scripts", "check-injection-budget.mjs");
 const {
   evaluateBudget,
   PER_TURN_CEILING_BYTES,
-  SESSION_START_CEILING_BYTES,
   CEILING_DECISION_CARD,
 } = await import(pathToFileURL(SCRIPT).href);
 
@@ -37,12 +36,11 @@ function runCli(totals) {
 
 test("AC 32513: the ceiling is one named constant carrying the deciding card id", () => {
   assert.equal(typeof PER_TURN_CEILING_BYTES, "number");
-  assert.equal(typeof SESSION_START_CEILING_BYTES, "number");
   assert.equal(CEILING_DECISION_CARD, "DX-3347");
 });
 
-test("evaluateBudget passes on today's real measured shape (23B/turn, ~26KB session-start)", () => {
-  const result = evaluateBudget({ perTurnUnconditional: 23, perSession: 26373, perToolCall: 23 });
+test("evaluateBudget passes on today's real measured shape (23B per prompt, 23B per tool call)", () => {
+  const result = evaluateBudget({ perTurnUnconditional: 23, perToolCall: 23 });
   assert.equal(result.ok, true);
   assert.deepEqual(result.failures, []);
 });
@@ -50,29 +48,22 @@ test("evaluateBudget passes on today's real measured shape (23B/turn, ~26KB sess
 test("AC 32514: evaluateBudget FAILS on a deliberately over-budget per-turn fixture", () => {
   // The pre-DX-3347 per-turn shape (3,715B — DX-3278 comment 6976) is
   // exactly the regression this gate exists to catch.
-  const result = evaluateBudget({ perTurnUnconditional: 3692, perSession: 26373, perToolCall: 23 });
+  const result = evaluateBudget({ perTurnUnconditional: 3692, perToolCall: 23 });
   assert.equal(result.ok, false);
   assert.equal(result.failures.length, 1);
   assert.match(result.failures[0], /per-turn/);
   assert.match(result.failures[0], /DX-3347/);
 });
 
-test("AC 32514: evaluateBudget FAILS on a deliberately over-budget session-start fixture", () => {
-  const result = evaluateBudget({ perTurnUnconditional: 23, perSession: 99000, perToolCall: 23 });
-  assert.equal(result.ok, false);
-  assert.equal(result.failures.length, 1);
-  assert.match(result.failures[0], /session-start/);
-});
-
 test("AC 32514: the CLI itself exits non-zero on the over-budget fixture, not only the pure function", () => {
-  const result = runCli({ perTurnUnconditional: 5000, perSession: 26373, perToolCall: 23 });
+  const result = runCli({ perTurnUnconditional: 5000, perToolCall: 23 });
   assert.equal(result.code, 1);
   assert.match(result.stderr, /Injection budget check FAILED/);
   assert.match(result.stderr, /per-turn/);
 });
 
 test("the CLI exits 0 on an in-budget fixture", () => {
-  const result = runCli({ perTurnUnconditional: 23, perSession: 26373, perToolCall: 23 });
+  const result = runCli({ perTurnUnconditional: 23, perToolCall: 23 });
   assert.equal(result.code, 0);
   assert.match(result.stdout, /Injection budget OK/);
 });

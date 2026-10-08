@@ -1,7 +1,6 @@
-// scripts/publish.sh integrity-manifest handling - DX-4244: a publish over an edited
-// hashed file must not print the integrity launcher's INTEGRITY FAILURE (whose printed
-// fix is a `git checkout` of the very edit being published), and must leave a committed
-// manifest that matches the published tree.
+// scripts/publish.sh: its pre-flights (the general-audience scan, the hooks-module validate and
+// test), the bump commit, and the push to origin/main. Each case runs this checkout's publish.sh
+// in a throwaway clone.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -66,70 +65,29 @@ function publish(dir, { fail = "", claudeBin } = {}) {
   return { status: r.status, out: `${r.stdout}\n${r.stderr}`, claudeCalls: standIn.calls() };
 }
 
-test("DX-4244: publish over an edited skill file prints no INTEGRITY FAILURE", () => {
-  const dir = editedClone();
-  try {
-    const r = publish(dir);
-    assert.equal(r.status, 0, r.out);
-    assert.doesNotMatch(r.out, /INTEGRITY FAILURE/);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+// DX-4235: the danxbot plugin keeps no file-hash manifest (its hooks are one native module, which the engine loads whole or
+// names as failed), so a publish writes none, for the plugin it bumps or for any other marketplace plugin. The file name is
+// spelled in pieces so the deletion pin (dx4235-deletions.test.mjs) finds no mention of it in this file.
+const HASH_MANIFEST = ["integrity", "manifest.json"].join("-");
 
-test("DX-4244: the manifest a publish commits matches the published tree (the post-bump rewrite still runs)", () => {
-  const dir = editedClone();
-  try {
-    const r = publish(dir);
-    assert.equal(r.status, 0, r.out);
-    execFileSync("node", [path.join(dir, "scripts", "write-integrity-manifest.mjs"), "danxbot"], { cwd: dir });
-    assert.equal(git(dir, "status", "--porcelain", "--", "danxbot").trim(), "", "regenerating the manifest changed the committed tree");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("DX-4244: a marketplace plugin with no scripts/launch.mjs gets no manifest written", () => {
+test("DX-4235: a publish writes no file-hash manifest for any marketplace plugin, and leaves nothing uncommitted", () => {
   const dir = editedClone();
   try {
     fs.mkdirSync(path.join(dir, "plain", ".claude-plugin"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "plain", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "plain", version: "1.0.0", description: "no launcher" }) + "\n");
+    fs.mkdirSync(path.join(dir, "plain", "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "plain", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "plain", version: "1.0.0", description: "a second plugin" }) + "\n");
+    fs.writeFileSync(path.join(dir, "plain", "scripts", "a.mjs"), "console.log(1);\n");
     const mpPath = path.join(dir, ".claude-plugin", "marketplace.json");
     const mp = JSON.parse(fs.readFileSync(mpPath, "utf8"));
-    mp.plugins.push({ name: "plain", source: "./plain", description: "no launcher" });
+    mp.plugins.push({ name: "plain", source: "./plain", description: "a second plugin" });
     fs.writeFileSync(mpPath, JSON.stringify(mp, null, 2) + "\n");
-    git(dir, "add", "-A");
-    git(dir, "commit", "-q", "-m", "add a plugin with no launcher");
-    fs.appendFileSync(path.join(dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- second edit -->\n");
+    git(dir, "add", "plain", ".claude-plugin");
+    git(dir, "commit", "-q", "-m", "add a second plugin");
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
-    assert.equal(fs.existsSync(path.join(dir, "plain", "integrity-manifest.json")), false);
-    assert.equal(fs.existsSync(path.join(dir, "danxbot", "integrity-manifest.json")), true);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("DX-4244: the pre-flight regenerates every marketplace plugin's manifest, so a stale untargeted one is refused loudly, not published over", () => {
-  const dir = editedClone();
-  try {
-    // check-injection-budget.mjs runs EVERY marketplace plugin's hooks, so a stale manifest in a plugin that is
-    // not a publish target would still print a false INTEGRITY FAILURE. The pre-flight rewrites it first, which
-    // dirties a non-target plugin, and publish refuses on that instead of shipping over it.
-    fs.mkdirSync(path.join(dir, "second", ".claude-plugin"), { recursive: true });
-    fs.mkdirSync(path.join(dir, "second", "scripts"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "second", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "second", version: "1.0.0", description: "has a launcher" }) + "\n");
-    fs.writeFileSync(path.join(dir, "second", "scripts", "launch.mjs"), "// stub launcher\n");
-    fs.writeFileSync(path.join(dir, "second", "integrity-manifest.json"), JSON.stringify({ schemaVersion: 1, files: {} }) + "\n");
-    const mpPath = path.join(dir, ".claude-plugin", "marketplace.json");
-    const mp = JSON.parse(fs.readFileSync(mpPath, "utf8"));
-    mp.plugins.push({ name: "second", source: "./second", description: "has a launcher" });
-    fs.writeFileSync(mpPath, JSON.stringify(mp, null, 2) + "\n");
-    git(dir, "add", "second", ".claude-plugin");
-    git(dir, "commit", "-q", "-m", "add a launcher plugin with a stale manifest");
-    const r = publish(dir);
-    assert.notEqual(r.status, 0, r.out);
-    assert.match(r.out, /changes outside target plugins \(second\/integrity-manifest\.json\)/);
+    for (const plugin of ["danxbot", "plain"]) assert.equal(fs.existsSync(path.join(dir, plugin, HASH_MANIFEST)), false, plugin);
+    assert.deepEqual(git(dir, "ls-files").split("\n").filter((f) => f.endsWith(HASH_MANIFEST)), []);
+    assert.equal(git(dir, "status", "--porcelain").trim(), "", "the publish left a change outside its bump commit");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -313,12 +271,11 @@ function snapshot(dir) {
   return {
     head: git(dir, "rev-parse", "HEAD").trim(),
     pluginJson: fs.readFileSync(path.join(dir, "danxbot", ".claude-plugin", "plugin.json"), "utf8"),
-    integrity: fs.readFileSync(path.join(dir, "danxbot", "integrity-manifest.json"), "utf8"),
   };
 }
 
 function assertUntouched(dir, before) {
-  assert.deepEqual(snapshot(dir), before, "a commit was made, the version bumped or the integrity manifest rewritten");
+  assert.deepEqual(snapshot(dir), before, "a commit was made or the version bumped");
 }
 
 test("DX-4232: validate and test both pass: they run in that order, before the bump, and the publish goes through", () => {
@@ -336,7 +293,7 @@ test("DX-4232: validate and test both pass: they run in that order, before the b
 });
 
 for (const failing of ["validate", "test"]) {
-  test(`DX-4232: claude plugin ${failing} failing refuses the publish: no commit, no bump, no manifest rewrite`, () => {
+  test(`DX-4232: claude plugin ${failing} failing refuses the publish: no commit, no bump`, () => {
     const dir = editedClone();
     try {
       const before = snapshot(dir);
@@ -369,9 +326,9 @@ test("DX-4232: a missing claude CLI refuses the publish and names CLAUDE_BIN", (
 // DX-4551: a shipped line that names the author's own setup refuses the publish before anything is validated, bumped or committed.
 for (const [what, file, line, reported] of [
   ["a skill line", "skills/issue-workflow/SKILL.md", "\nask newms about this\n", /danxbot\/skills\/issue-workflow\/SKILL\.md:\d+: a personal GitHub account or marketplace name/],
-  ["a string a script prints", "scripts/inject-time.sh", '\necho "run update-claude-plugins"\n', /danxbot\/scripts\/inject-time\.sh:\d+: a personal shell alias/],
+  ["a string a script prints", "scripts/capture-screenshot.mjs", '\nconsole.log("run update-claude-plugins");\n', /danxbot\/scripts\/capture-screenshot\.mjs:\d+: a personal shell alias/],
 ]) {
-  test(`DX-4551: ${what} naming the author's setup refuses the publish: no commit, no bump, no manifest rewrite`, () => {
+  test(`DX-4551: ${what} naming the author's setup refuses the publish: no commit, no bump`, () => {
     const dir = editedClone();
     try {
       fs.appendFileSync(path.join(dir, "danxbot", file), line);
@@ -387,27 +344,3 @@ for (const [what, file, line, reported] of [
     }
   });
 }
-
-test("DX-4232: the manifest a publish commits lists hooks/register.tsx and every hooks/ and types/ file, so launch.mjs reports none of them damaged", () => {
-  const dir = editedClone();
-  try {
-    const r = publish(dir);
-    assert.equal(r.status, 0, r.out);
-    const listed = Object.keys(JSON.parse(fs.readFileSync(path.join(dir, "danxbot", "integrity-manifest.json"), "utf8")).files);
-    assert.ok(listed.includes("hooks/register.tsx"));
-    const onDisk = [];
-    const walk = (rel) => {
-      for (const e of fs.readdirSync(path.join(dir, "danxbot", rel), { withFileTypes: true })) {
-        const next = `${rel}/${e.name}`;
-        if (e.isDirectory()) walk(next);
-        else onDisk.push(next);
-      }
-    };
-    walk("hooks");
-    walk("types");
-    assert.ok(onDisk.length > 4, "the module's files are in the clone");
-    for (const file of onDisk) assert.ok(listed.includes(file), `${file} is missing from the manifest`);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});

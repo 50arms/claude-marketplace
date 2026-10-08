@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
+import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRow, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -54,7 +54,7 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
+import { connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
 import type { Naming } from './plan/notes'
 import { connectNote, disconnectNote, parseNaming, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
@@ -74,6 +74,12 @@ import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, peekPacing, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { EMPTY_PANEL_STATE, buildPanel } from './plan/pacing-panel'
 import { readTeamSettings } from './plan/pacing-settings'
+import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, bareAgentId, endedShells, shellRow, subagentActivityId } from './reports/activity'
+import type { ActivityChange } from './reports/activity'
+import { BACKGROUND_WORK_PATH, countRunning, heartbeatCount } from './reports/background-work'
+import { labelOf } from './reports/label'
+import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
+import type { ReadyCard } from './reports/ready-cards'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -119,6 +125,8 @@ const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, n
 // DX-4234: the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
 const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, null as string | null)
+// DX-4235: the reports' memory between events (see ReportState).
+const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], count: null, planId: null } as ReportState)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -159,7 +167,7 @@ let agentListInFlight: { call: Promise<{ id: string; type: string; status: strin
 
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. Any rejection (including the engine's "no such server") is an error shown as one.
-async function api($: any, method: string, path: string, extra: { query?: object; body?: object } = {}): Promise<Api> {
+async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}): Promise<Api> {
   let res
   try {
     res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra })
@@ -415,6 +423,9 @@ function leftView(cur: any): any {
 
 function connect($: any, plan: PlanRow): Promise<void> {
   return withBusy($, busyKey.connect(plan.id), async () => {
+    // DX-4235: a move to another plan closes what the session opened under the one it leaves; a move that does not happen takes that back
+    const why = `moving to ${plan.ref}`
+    const closes = (await movesOffReportedPlan($, plan.id)) ? await closeOwedBeforeLeave($, why) : null
     const sessionTitle = await read($, title)
     let r
     try {
@@ -423,10 +434,12 @@ function connect($: any, plan: PlanRow): Promise<void> {
         ...(sessionTitle ? { title: sessionTitle } : {}),
       })
     } catch (err: any) {
+      await settleLeave($, closes, false, why)
       $.ui.toast(`Connect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
     }
     const outcome = toolOutcome(r)
+    await settleLeave($, closes, outcome.ok, why)
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       // a refusal is `ok: false`, not an error result: nothing connected, so the model is told nothing
@@ -459,14 +472,19 @@ function connect($: any, plan: PlanRow): Promise<void> {
 // failure carries its status and message. No confirm: one Connect undoes it.
 function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
+    // DX-4235: the leave closes what the session opened under the plan first; a leave that does not happen takes that back
+    const why = `leaving ${plan.ref}`
+    const closes = await closeOwedBeforeLeave($, why)
     let r
     try {
       r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
+      await settleLeave($, closes, false, why)
       $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
     }
     const outcome = toolOutcome(r)
+    await settleLeave($, closes, outcome.ok, why)
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
@@ -1316,7 +1334,22 @@ async function onCommand($: any) {
 // answer draws the approval link and the code in the band and the pane; the plan page is not opened (there is
 // no connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
-  const ran = await next(e)
+  // DX-4235: the model's leave, or its move to another plan, closes what the session opened under the plan it is on first; a leave or move
+  // its answer says did not happen takes that back
+  const leaving = e.disconnect === true
+  const why = leaving ? 'leaving the plan' : `moving to plan ${e.plan_id}`
+  const moving = !leaving && typeof e.plan_id === 'number' && (await movesOffReportedPlan($, e.plan_id))
+  const closes = leaving || moving ? await closeOwedBeforeLeave($, why) : null
+  let ran
+  try {
+    ran = await next(e)
+  } catch (err) {
+    // the call itself failed: nothing left or moved
+    await settleLeave($, closes, false, why)
+    throw err
+  }
+  const answer = textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
+  await settleLeave($, closes, leaving ? answer.ok : answer.ok && answer.body?.session?.plan_id === e.plan_id, why)
   // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
   relayHalted = null
@@ -1357,9 +1390,9 @@ async function onRequestPermission($: any, e: any, next: any) {
 }
 
 // DX-4499: a sub-agent started or stopped: read the dashboard now (not forced: a load within MIN_GAP_MS of the last stands), and once
-// more SUBAGENT_SETTLE_MS later. The plugin's own SubagentStart / SubagentStop command hooks report the change to the dashboard
-// at the same moment this hook runs, so the first read can precede the report; the second is after it. One wait pending at a time,
-// so a burst of sub-agents costs one extra read.
+// more SUBAGENT_SETTLE_MS later. The activity report of the change (DX-4235: posted detached as this start hook runs, and at the
+// sub-agent's own turn.complete for its end, which comes around this stop hook) can reach the dashboard after the first read; the
+// second read is after it. One wait pending at a time, so a burst of sub-agents costs one extra read.
 // A `$.clock.after` timer, not a `$.clock.sleep` inside the hook: the wait outlives the event's dispatch (plugin-authoring,
 // "Work that outlives a dispatch"), and a reload cancels it with the environment.
 let settleTimer: { cancel: () => void } | null = null
@@ -1455,6 +1488,9 @@ async function onPromptStamp($: any, e: any, next: any) {
 // result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
+  // DX-4235: a background shell's start, and a working sub-agent's liveness
+  detach($, 'danxbot activity report', reportShellStart($, e, r))
+  if (e.agentId !== undefined) detach($, 'danxbot activity report', reportSubagentAlive($, e.agentId))
   if (r.deny !== undefined) return r
   const start = e.agentId === undefined ? await startLine($) : null
   return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, start))] }
@@ -1592,7 +1628,12 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)
-    if (plan.kind === 'connected') return { line: await eventContext($, event), askRestart: false }
+    if (plan.kind === 'connected') {
+      // DX-4235: no background-work snapshot survives a start, so the count is cleared; here, because classic.SessionStart cannot call the
+      // dashboard and this is the first bound event after it that knows the session is on a plan
+      await putBackgroundWork($, null, await $.clock.now())
+      return { line: await eventContext($, event), askRestart: false }
+    }
     if (plan.kind === 'failed') return fault(plan.reason)
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
     return { line: null, askRestart }
@@ -1623,13 +1664,18 @@ async function onClassicSessionStart($: any, e: any, next: any) {
 // DX-4234: and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
+  // DX-4235: its activity row opens
+  detach($, 'danxbot activity report', reportSubagentStart($, e))
   const eventLine = await withinDeadline($, CONTEXT_DEADLINE_MS, readSubagentContext($), () => eventFailureLine('sub_agent_start', DEADLINE_REASON))
   const pacing = await pacingLine(pacingEnv($))
   return withLine(withLine(r, eventLine), pacing)
 }
 
-function onSubagentStop($: any, e: any, next: any) {
-  return onSubagentChange($, e, next, false)
+async function onSubagentStop($: any, e: any, next: any) {
+  const r = await onSubagentChange($, e, next, false)
+  // DX-4235: the background-work count without this sub-agent, and the shells' ends (its own row closes at its turn.complete)
+  detach($, 'danxbot background-work report', reportSnapshot($, 'SubagentStop', e, typeof e.agent_id === 'string' ? bareAgentId(e.agent_id) : undefined))
+  return r
 }
 
 // DX-4233: the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this). What it did not read is told
@@ -1646,6 +1692,9 @@ async function onTurnComplete($: any, e: any, next: any) {
     })
     // detached: the turn.complete hook does not wait on the session taking a prompt
     if (wake !== null) detach($, 'Waking the session', wakeSession($, wake))
+  } else {
+    // DX-4235: a sub-agent's turn ended, cleanly or not: its activity row closes
+    detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
   }
   detach($, 'Plan refresh', refresh($))
   void watchRelay($)
@@ -1745,6 +1794,244 @@ function pacingEnv($: any) {
   }
 }
 
+// DX-4235: the reports. A plan session tells the dashboard what it is running (activity rows and the background-work count) and has
+// its stop checked for ready cards (DX-4534). Every call goes through the session's own server (`api`) and runs detached, so no event
+// waits on it; a report the dashboard does not take is one toast, never swallowed (`report`).
+//
+// What each needs of the plan state the module holds (`reportingState`):
+// - OPENING something (a sub-agent's row, a shell's row, a liveness post) needs the session known to be on a plan (`on`): the silence rule.
+// - CLOSING what was opened (a sub-agent's finish, a shell's end) is owed because its start was posted, so it is posted whatever the view
+//   says, while it is `unknown` too (a failed refresh empties the view's plan for a moment; comment 10065's stuck row was exactly a close
+//   that never went out). Only `off` drops it: the dashboard has the session on no plan and refuses every report from it
+//   (danxbot plan-sessions-routes.ts handleActivity: no dispatch to write to, 409).
+// - The COUNT the dashboard holds from this session is kept true the same way: sent when `on`, and when `unknown` while a count is on record.
+// - The ready-cards check runs unless `off`: its own read asks the dashboard which plan the session is on.
+
+// `on`: the view holds the plan the session is on. `off`: the dashboard said the session is on no plan (a loaded view with none), or a
+// person revoked its key. `unknown`: nothing is known (loading, a failed load, a session signed out with its key lapsed).
+type ReportingState = 'on' | 'off' | 'unknown'
+async function reportingState($: any): Promise<ReportingState> {
+  const v = await read($, view)
+  if (v.connected !== null) return 'on'
+  return v.phase === 'ready' || v.phase === 'key-revoked' ? 'off' : 'unknown'
+}
+
+// A plan state that is `off` takes the reports' memory with it: nothing opened under the plan can be closed from here any more.
+async function forgetReports($: any): Promise<void> {
+  await update($, reports, () => ({ agents: {}, shells: [], count: null, planId: null }))
+}
+
+// The plan a new row opens under: the one the view holds, or null when the session is not known to be on one (nothing opens then).
+async function openingPlan($: any): Promise<number | null> {
+  return (await read($, view)).connected?.id ?? null
+}
+
+// What the closes before a leave came to: the memory they took, how many rows they posted, and whether the dashboard took them.
+type LeaveCloses = { owed: ReportState; rows: number; posted: boolean }
+
+const activities = (n: number) => `${n} running activit${n === 1 ? 'y' : 'ies'}`
+
+// DX-4235 (comment 12426): before the session leaves its plan or moves to another, every close it owes (a running sub-agent's finish, an
+// open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running are the
+// stuck-row bug of comment 10065. Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds the leave; a failure is one toast
+// naming what may stay running, and the leave goes on. The memory is cleared first, so a sub-agent's turn.complete racing the leave
+// posts nothing twice. `why` names the leave in the toast. The caller hands the answer to `leaveDidNotHappen` when the leave failed.
+async function closeOwedBeforeLeave($: any, why: string): Promise<LeaveCloses> {
+  const owed = await read($, reports)
+  await forgetReports($)
+  const now = await $.clock.now()
+  const rows = [...Object.keys(owed.agents).map(id => agentRow(id, null, now, now)), ...owed.shells.map(id => shellRow(id, null, now, now))]
+  if (rows.length === 0) return { owed, rows: 0, posted: false }
+  const failure = await withinDeadline(
+    $,
+    LEAVE_CLOSE_DEADLINE_MS,
+    api($, 'POST', ACTIVITY_PATH, { body: { activities: rows } }).then(r => (r.ok ? null : errText(r))),
+    () => `timeout: no answer within ${LEAVE_CLOSE_DEADLINE_MS / 1000} s`,
+  )
+  if (failure !== null) $.ui.toast(`danxbot could not close ${activities(rows.length)} before ${why} (${failure.slice(0, TOAST_ERROR_MAX)}): the dashboard may show them running`)
+  return { owed, rows: rows.length, posted: failure === null }
+}
+
+// DX-4235: hands the closes a leave took back when the leave did not happen (`left` false); nothing to do when the leave took none (`closes`
+// null: a move that left no reported plan) or happened.
+async function settleLeave($: any, closes: LeaveCloses | null, left: boolean, why: string): Promise<void> {
+  if (closes !== null && !left) await leaveDidNotHappen($, closes, why)
+}
+
+// DX-4235: the leave did not happen (refused, or the call failed): the session is still on its plan, so what the closes took comes back.
+// Closes the dashboard did not take are owed again: the memory returns, merged with anything opened since (one finish each, later). Closes
+// it took cannot be undone: the dashboard keeps a row's FIRST finish (danxbot dispatch-activities-db.ts upsert, finished_at =
+// COALESCE(stored, incoming)), so a reopening post would change nothing; they stay forgotten (nothing is posted twice) and one toast says
+// they read as finished while they run. The count and the plan always come back.
+async function leaveDidNotHappen($: any, closes: LeaveCloses, why: string): Promise<void> {
+  const { owed } = closes
+  const rowsBack = !closes.posted
+  await update($, reports, cur => ({
+    agents: rowsBack ? { ...owed.agents, ...cur.agents } : cur.agents,
+    shells: rowsBack ? [...owed.shells.filter(s => !cur.shells.includes(s)), ...cur.shells] : cur.shells,
+    count: cur.count ?? owed.count,
+    planId: cur.planId ?? owed.planId,
+  }))
+  if (closes.posted) $.ui.toast(`danxbot: ${why} did not happen, but its ${activities(closes.rows)} were already reported finished: the dashboard keeps them finished while they run`)
+}
+
+// Whether a move to `planId` leaves the plan the open rows belong to.
+async function movesOffReportedPlan($: any, planId: number): Promise<boolean> {
+  const from = (await read($, reports)).planId
+  return from !== null && from !== planId
+}
+
+async function report($: any, what: string, method: string, path: string, body: object): Promise<void> {
+  const r = await api($, method, path, { body })
+  if (!r.ok) $.ui.toast(`danxbot ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
+}
+
+function postActivity($: any, rows: ActivityChange[]): void {
+  detach($, 'danxbot activity report', report($, 'activity', 'POST', ACTIVITY_PATH, { activities: rows }))
+}
+
+// The count is recorded as sent before the call answers: it is what the next heartbeat re-sends (at least 1).
+async function putBackgroundWork($: any, count: number | null, at: number): Promise<void> {
+  await update($, reports, cur => ({ ...cur, count }))
+  detach($, 'danxbot background-work report', report($, 'background-work', 'PUT', BACKGROUND_WORK_PATH, { count, eventAt: new Date(at).toISOString() }))
+}
+
+// Whether a count (or a clear) is owed in `state` (not `off`, which the caller handles): always on a plan, and while the plan state is
+// unknown only when a count is on record.
+async function owesCount($: any, state: ReportingState): Promise<boolean> {
+  return state === 'on' || (await read($, reports)).count !== null
+}
+
+// DX-4235: a sub-agent started: its row opens and it is remembered as running, its liveness clock starting now.
+async function reportSubagentStart($: any, e: any): Promise<void> {
+  if (typeof e.agent_id !== 'string' || e.agent_id === '') return
+  const planId = await openingPlan($)
+  if (planId === null) return
+  const id = subagentActivityId(e.agent_id)
+  const now = await $.clock.now()
+  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: now }, planId }))
+  postActivity($, [agentRow(id, typeof e.agent_type === 'string' && e.agent_type !== '' ? e.agent_type : null, now, null)])
+}
+
+// DX-4235: a sub-agent's turn ended, cleanly or not (a failed sub-agent raises no SubagentStop, but its turn.complete still comes): the
+// finish its posted start is owed goes out, and it is forgotten. An agent this session never reported (an engine fork, a workflow's
+// agent, one already finished) reports nothing; a resumed sub-agent is reported again from its next start.
+async function reportSubagentEnd($: any, agentId: string): Promise<void> {
+  const id = subagentActivityId(agentId)
+  if ((await read($, reports)).agents[id] === undefined) return
+  const state = await reportingState($)
+  if (state === 'off') return forgetReports($)
+  await update($, reports, cur => {
+    const { [id]: _ended, ...running } = cur.agents
+    return { ...cur, agents: running }
+  })
+  const now = await $.clock.now()
+  postActivity($, [agentRow(id, null, now, now)])
+}
+
+// DX-4235: a tool call whose result names a background task (a `run_in_background` shell, or one the person backgrounded) opens that
+// shell's row, keyed by its task id (the id the engine's `background_tasks` lists it under, comment 12391), labelled by the call's own
+// `description`, redacted (PBLM-2121; never its command).
+async function reportShellStart($: any, e: any, r: any): Promise<void> {
+  const taskId = r.deny === undefined ? r.result?.backgroundTaskId : undefined
+  if (typeof taskId !== 'string' || taskId === '') return
+  const planId = await openingPlan($)
+  if (planId === null) return
+  const now = await $.clock.now()
+  await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId], planId }))
+  postActivity($, [shellRow(taskId, labelOf(e.description), now, null)])
+}
+
+// DX-4235: a running sub-agent's own tool call re-posts its row with a fresh lastActivityAt, at most once a LIVENESS_MS, and re-sends the
+// count on record, so a sub-agent working for minutes never reads as silent (comment 10017).
+async function reportSubagentAlive($: any, agentId: string): Promise<void> {
+  const id = subagentActivityId(agentId)
+  const now = await $.clock.now()
+  const state = await read($, reports)
+  const lastPost = state.agents[id]
+  if (lastPost === undefined || now - lastPost < LIVENESS_MS || (await reportingState($)) !== 'on') return
+  await update($, reports, cur => (cur.agents[id] === undefined ? cur : { ...cur, agents: { ...cur.agents, [id]: now } }))
+  postActivity($, [agentRow(id, null, now, null)])
+  await putBackgroundWork($, heartbeatCount(state.count), now)
+}
+
+// DX-4235: a Stop or SubagentStop carries the engine's list of the background work in flight. It sets the count (a SubagentStop still lists
+// the stopping sub-agent as running, so `excludeId` leaves it out) and finishes the row of every shell this session opened that the list no
+// longer shows running (comment 10065: every start the reports open gets its end). A snapshot that is not a list is one toast.
+async function reportSnapshot($: any, event: 'Stop' | 'SubagentStop', e: any, excludeId?: string): Promise<void> {
+  const state = await reportingState($)
+  if (state === 'off') return forgetReports($)
+  const tasks = e.background_tasks
+  if (!Array.isArray(tasks)) {
+    $.ui.toast(`danxbot background-work report failed: the ${event} event carried no background_tasks list`)
+    return
+  }
+  const now = await $.clock.now()
+  if (await owesCount($, state)) await putBackgroundWork($, countRunning(tasks, excludeId), now)
+  const ended = endedShells((await read($, reports)).shells, tasks)
+  if (ended.length === 0) return
+  await update($, reports, cur => ({ ...cur, shells: cur.shells.filter(s => !ended.includes(s)) }))
+  postActivity($, ended.map(id => shellRow(id, null, now, now)))
+}
+
+// What the ready-cards read came to: the ready cards, nothing to say, or why it failed.
+type ReadyRead = { kind: 'cards'; cards: ReadyCard[] } | { kind: 'quiet' } | { kind: 'failed'; reason: string }
+
+// DX-4534: the answers that end the read quietly, the ordinary ones for a session with nothing to check: it holds no usable key (signed
+// out, or a person revoked it: its own tools say so), or the dashboard has it on no plan (409 `session_not_connected`). Any other
+// refusal is a failure the person sees.
+function isNothingToCheck(r: Api): boolean {
+  return isSignedOut(r) || outcomeRevokedBy(r) !== null || (r.status === 409 && r.body?.error === 'session_not_connected')
+}
+
+// DX-4534: the plan this session is on and its boards, then the plan's ToDo cards on each board (a plan can span boards; an issues read
+// names its board with the danxbot_api tool's own `board` argument).
+async function readReadyCards($: any): Promise<ReadyRead> {
+  const mine = await api($, 'GET', '/api/plans/mine')
+  if (isNothingToCheck(mine)) return { kind: 'quiet' }
+  if (!mine.ok) return { kind: 'failed', reason: errText(mine) }
+  const plan = planOf(mine.body)
+  if (!plan.ok) return { kind: 'failed', reason: plan.reason }
+  const query = issuesQuery(plan.value.planId)
+  const boards = await Promise.all(plan.value.boards.map(board => api($, 'GET', '/api/issues', { board, query })))
+  const cards: ReadyCard[] = []
+  for (const r of boards) {
+    if (!r.ok) return { kind: 'failed', reason: errText(r) }
+    const read = readyCardsOf(r.body)
+    if (!read.ok) return { kind: 'failed', reason: read.reason }
+    cards.push(...read.value)
+  }
+  return { kind: 'cards', cards }
+}
+
+// DX-4235: the main session's stop. Reports the snapshot, then (DX-4534) blocks the stop once while the plan has ready cards nobody holds.
+// Never on a stop the hook already forced (`stop_hook_active`, so it cannot loop), never on its own failure (one toast, the stop goes on),
+// and within one deadline over all its reads.
+async function onReportStop($: any, e: any, next: any) {
+  // the snapshot runs in every plan state: off, it forgets what the reports owe (reportSnapshot)
+  detach($, 'danxbot background-work report', reportSnapshot($, 'Stop', e))
+  if ((await reportingState($)) === 'off') return next(e)
+  const verdict: ReadyRead =
+    e.agent_id === undefined && e.stop_hook_active !== true
+      ? await withinDeadline($, READY_CARDS_DEADLINE_MS, readReadyCards($), () => ({ kind: 'failed', reason: `timeout: no answer within ${READY_CARDS_DEADLINE_MS / 1000} s` }))
+      : { kind: 'quiet' }
+  const r = await next(e)
+  if (verdict.kind === 'failed') $.ui.toast(skippedLine(verdict.reason))
+  if (verdict.kind === 'cards' && verdict.cards.length > 0) return { ...r, block: blockReason(verdict.cards) }
+  return r
+}
+
+// DX-4235: the main session's turn died on an error: there is no snapshot to trust, so the count is cleared. A sub-agent's failure
+// (`agent_id` set) clears nothing: the session goes on.
+async function onReportStopFailure($: any, e: any, next: any) {
+  const r = await next(e)
+  if (e.agent_id !== undefined) return r
+  const state = await reportingState($)
+  if (state === 'off') await forgetReports($)
+  else if (await owesCount($, state)) await putBackgroundWork($, null, await $.clock.now())
+  return r
+}
+
 export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.end', onSessionEnd)
@@ -1760,6 +2047,9 @@ export const register: Register = on => {
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onClassicSessionStart)
+  // DX-4235: the background-work count, the shells' ends and (DX-4534) the ready-cards check; the clear after a main-session failure
+  on('classic.Stop', onReportStop)
+  on('classic.StopFailure', onReportStopFailure)
   on('prompt.submit', onPromptStamp)
   on('tool.call', onToolStamp)
   on('classic.UserPromptSubmit', onTitle)
