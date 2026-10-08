@@ -22,6 +22,10 @@ export type ActivityChange = {
   briefIssueId: string | null
 }
 
+// DX-4235: the closes owed before the session leaves its plan or moves to another are posted within this, so a dead dashboard never holds
+// the leave; past it the leave goes on and the failure is one toast.
+export const LEAVE_CLOSE_DEADLINE_MS = 3_000
+
 // A running sub-agent re-posts its row at most this often from its own tool calls, so one working for minutes never reads as silent
 // (comment 10017 on DX-4235).
 export const LIVENESS_MS = 60_000

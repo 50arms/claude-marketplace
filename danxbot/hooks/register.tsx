@@ -74,7 +74,7 @@ import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, peekPacing, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { EMPTY_PANEL_STATE, buildPanel } from './plan/pacing-panel'
 import { readTeamSettings } from './plan/pacing-settings'
-import { ACTIVITY_PATH, LIVENESS_MS, agentRow, bareAgentId, endedShells, shellRow, subagentActivityId } from './reports/activity'
+import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, bareAgentId, endedShells, shellRow, subagentActivityId } from './reports/activity'
 import type { ActivityChange } from './reports/activity'
 import { BACKGROUND_WORK_PATH, countRunning, heartbeatCount } from './reports/background-work'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
@@ -125,7 +125,7 @@ const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, n
 // asks about exactly that predecessor.
 const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, null as string | null)
 // DX-4235: the reports' memory between events (see ReportState).
-const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], count: null } as ReportState)
+const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], count: null, planId: null } as ReportState)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -422,6 +422,8 @@ function leftView(cur: any): any {
 
 function connect($: any, plan: PlanRow): Promise<void> {
   return withBusy($, busyKey.connect(plan.id), async () => {
+    // DX-4235: a move to another plan closes what the session opened under the one it leaves
+    if (await movesOffReportedPlan($, plan.id)) await closeOwedBeforeLeave($, `moving to ${plan.ref}`)
     const sessionTitle = await read($, title)
     let r
     try {
@@ -466,6 +468,8 @@ function connect($: any, plan: PlanRow): Promise<void> {
 // failure carries its status and message. No confirm: one Connect undoes it.
 function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
+    // DX-4235: the leave closes what the session opened under the plan first
+    await closeOwedBeforeLeave($, `leaving ${plan.ref}`)
     let r
     try {
       r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
@@ -1323,6 +1327,9 @@ async function onCommand($: any) {
 // answer draws the approval link and the code in the band and the pane; the plan page is not opened (there is
 // no connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
+  // DX-4235: the model's leave, or its move to another plan, closes what the session opened under the plan it is on first
+  if (e.disconnect === true) await closeOwedBeforeLeave($, 'leaving the plan')
+  else if (typeof e.plan_id === 'number' && (await movesOffReportedPlan($, e.plan_id))) await closeOwedBeforeLeave($, `moving to plan ${e.plan_id}`)
   const ran = await next(e)
   // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
@@ -1792,7 +1799,38 @@ async function reportingState($: any): Promise<ReportingState> {
 
 // A plan state that is `off` takes the reports' memory with it: nothing opened under the plan can be closed from here any more.
 async function forgetReports($: any): Promise<void> {
-  await update($, reports, () => ({ agents: {}, shells: [], count: null }))
+  await update($, reports, () => ({ agents: {}, shells: [], count: null, planId: null }))
+}
+
+// The plan a new row opens under: the one the view holds, or null when the session is not known to be on one (nothing opens then).
+async function openingPlan($: any): Promise<number | null> {
+  return (await read($, view)).connected?.id ?? null
+}
+
+// DX-4235 (comment 12426): before the session leaves its plan or moves to another, every close it owes (a running sub-agent's finish, an
+// open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running are the
+// stuck-row bug of comment 10065. Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds the leave; a failure is one toast
+// naming what may stay running, and the leave goes on. The memory is cleared first, so a sub-agent's turn.complete racing the leave
+// posts nothing twice. `why` names the leave in the toast.
+async function closeOwedBeforeLeave($: any, why: string): Promise<void> {
+  const owed = await read($, reports)
+  await forgetReports($)
+  const now = await $.clock.now()
+  const rows = [...Object.keys(owed.agents).map(id => agentRow(id, null, now, now)), ...owed.shells.map(id => shellRow(id, now, now))]
+  if (rows.length === 0) return
+  const failure = await withinDeadline(
+    $,
+    LEAVE_CLOSE_DEADLINE_MS,
+    api($, 'POST', ACTIVITY_PATH, { body: { activities: rows } }).then(r => (r.ok ? null : errText(r))),
+    () => `timeout: no answer within ${LEAVE_CLOSE_DEADLINE_MS / 1000} s`,
+  )
+  if (failure !== null) $.ui.toast(`danxbot could not close ${rows.length} running activit${rows.length === 1 ? 'y' : 'ies'} before ${why} (${failure.slice(0, TOAST_ERROR_MAX)}): the dashboard may show them running`)
+}
+
+// Whether a move to `planId` leaves the plan the open rows belong to.
+async function movesOffReportedPlan($: any, planId: number): Promise<boolean> {
+  const from = (await read($, reports)).planId
+  return from !== null && from !== planId
 }
 
 async function report($: any, what: string, method: string, path: string, body: object): Promise<void> {
@@ -1819,10 +1857,12 @@ async function countOwed($: any): Promise<boolean> {
 
 // DX-4235: a sub-agent started: its row opens and it is remembered as running, its liveness clock starting now.
 async function reportSubagentStart($: any, e: any): Promise<void> {
-  if (typeof e.agent_id !== 'string' || e.agent_id === '' || (await reportingState($)) !== 'on') return
+  if (typeof e.agent_id !== 'string' || e.agent_id === '') return
+  const planId = await openingPlan($)
+  if (planId === null) return
   const id = subagentActivityId(e.agent_id)
   const now = await $.clock.now()
-  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: now } }))
+  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: now }, planId }))
   postActivity($, [agentRow(id, typeof e.agent_type === 'string' && e.agent_type !== '' ? e.agent_type : null, now, null)])
 }
 
@@ -1846,9 +1886,11 @@ async function reportSubagentEnd($: any, agentId: string): Promise<void> {
 // shell's row, keyed by its task id (the id the engine's `background_tasks` lists it under, comment 12391).
 async function reportShellStart($: any, r: any): Promise<void> {
   const taskId = r.deny === undefined ? r.result?.backgroundTaskId : undefined
-  if (typeof taskId !== 'string' || taskId === '' || (await reportingState($)) !== 'on') return
+  if (typeof taskId !== 'string' || taskId === '') return
+  const planId = await openingPlan($)
+  if (planId === null) return
   const now = await $.clock.now()
-  await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId] }))
+  await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId], planId }))
   postActivity($, [shellRow(taskId, now, null)])
 }
 
