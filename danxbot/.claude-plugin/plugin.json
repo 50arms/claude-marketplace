@@ -1,7 +1,7 @@
 {
   "name": "danxbot",
   "description": "Danxbot's way of working: plan-workflow, issue-workflow, worker tiers, plan event hooks and the mantra.",
-  "version": "0.13.21",
+  "version": "0.14.0",
   "author": {
     "name": "Dan Newman",
     "email": "newms87@gmail.com"
