@@ -46,9 +46,14 @@ export const STALE_INSTALL_MS = 60 * 60 * 1000;
 const STAGE_PREFIX = ".stage-";
 
 /** Windows refuses a rename for a moment while another process (a reader, a virus scanner) has the file open: retry it. */
-const RENAME_RETRY_ATTEMPTS = 8;
-const RENAME_RETRY_BASE_MS = 25;
-const RENAME_RETRYABLE_CODES = ["EPERM", "EBUSY", "EACCES"];
+export const RENAME_RETRY_ATTEMPTS = 8;
+export const RENAME_RETRY_BASE_MS = 25;
+export const RENAME_RETRYABLE_CODES = ["EPERM", "EBUSY", "EACCES"];
+/**
+ * DX-4235: each process that runs an installed version (the server launcher, the live reader) leaves a lease file named by its
+ * pid in `<version>/.leases/` while it runs, so a refresh in ANOTHER session never prunes a version a live session still runs.
+ */
+const LEASES_DIR = ".leases";
 
 const STRICT_VERSION = /^\d+\.\d+\.\d+$/;
 /** How much of a damaged record's content its error quotes. */
@@ -154,10 +159,12 @@ function sleepSync(ms) {
 }
 
 /**
- * `renameSync`, retried while Windows briefly refuses it. `settled()` is asked after each refusal: true means the rename
- * no longer needs to happen (a concurrent installer's copy is already in place), and the answer is false. True when renamed.
+ * `renameSync`, retried while Windows briefly refuses it (RENAME_RETRYABLE_CODES), waiting RENAME_RETRY_BASE_MS longer after
+ * each refusal, at most RENAME_RETRY_ATTEMPTS tries. `settled()` is asked after each refusal: true means the rename no longer
+ * needs to happen (a concurrent installer's copy is already in place), and the answer is false. True when renamed. Any
+ * other error, or the last refusal, is thrown. `sleep` is the tests' seam.
  */
-function renameRetrying(from, to, fsApi, settled = () => false) {
+export function renameRetrying(from, to, fsApi = fs, settled = () => false, sleep = sleepSync) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       fsApi.renameSync(from, to);
@@ -165,7 +172,7 @@ function renameRetrying(from, to, fsApi, settled = () => false) {
     } catch (err) {
       if (settled()) return false;
       if (attempt >= RENAME_RETRY_ATTEMPTS || !RENAME_RETRYABLE_CODES.includes(err.code)) throw err;
-      sleepSync(RENAME_RETRY_BASE_MS * attempt);
+      sleep(RENAME_RETRY_BASE_MS * attempt);
     }
   }
 }
@@ -222,37 +229,45 @@ export function npmCommand(platform = process.platform, execPath = process.execP
 
 /**
  * `npm <args>`, its output captured (never inherited: the launcher's stdout is the MCP stream). Resolves
- * `{code, signal, output}`; rejects with one line when npm cannot be started or outlives `timeoutMs` (it is killed).
+ * `{code, signal, output}`; rejects with one line when npm cannot be started, outlives `timeoutMs` or is aborted (`abort`:
+ * the server exited mid-refresh). A stopped npm is killed, and the rejection waits for it to close, so the caller's removal of
+ * the stage finds no file npm still holds open.
  */
-function runNpm(npm, args, { env, spawnFn, timeoutMs, label }) {
+function runNpm(npm, args, { env, spawnFn, timeoutMs, label, abort }) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let stoppedBy = null;
     const settle = (fn, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      abort?.removeEventListener("abort", onAbort);
       fn(value);
     };
     const child = spawnFn(npm.command, [...npm.args, ...args], { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
-    const timer = setTimeout(() => {
+    const stop = (reason) => {
+      stoppedBy ??= reason;
       child.kill();
-      settle(reject, new Error(`timeout: ${label} took longer than ${timeoutMs / 1000}s`));
-    }, timeoutMs);
+    };
+    const timer = setTimeout(() => stop(`timeout: ${label} took longer than ${timeoutMs / 1000}s`), timeoutMs);
+    const onAbort = () => stop(`aborted: ${label} was stopped because the server exited`);
+    if (abort?.aborted) onAbort();
+    else abort?.addEventListener("abort", onAbort);
     child.on("error", (err) => settle(reject, new Error(`npm_not_started: could not start npm (${npm.command}) for ${label}: ${err.message}`)));
-    child.on("close", (code, signal) => settle(resolve, { code, signal, output }));
+    child.on("close", (code, signal) => (stoppedBy === null ? settle(resolve, { code, signal, output }) : settle(reject, new Error(stoppedBy))));
   });
 }
 
 /**
  * Installs `version` into its own directory under the plugin data dir (when it is not installed already) and returns its
  * entry point. Throws ONE line naming why on a timeout, an npm failure, an install that left no entry point, or a rename
- * that failed for any reason but a concurrent install having won.
+ * that failed for any reason but a concurrent install having won, or when `abort` fires (npm is killed, the stage removed).
  * Seams: `spawnFn` (npm's process), `npm` (from `npmCommand`), `installTimeoutMs`.
  */
-export async function installVersion(version, { env = process.env, spawnFn = spawn, npm, installTimeoutMs = INSTALL_TIMEOUT_MS } = {}) {
+export async function installVersion(version, { env = process.env, spawnFn = spawn, npm, installTimeoutMs = INSTALL_TIMEOUT_MS, abort } = {}) {
   const dataDir = dataDirOf(env);
   const bin = installedBin(dataDir, version);
   if (fs.existsSync(bin)) return bin;
@@ -264,7 +279,7 @@ export async function installVersion(version, { env = process.env, spawnFn = spa
     const result = await runNpm(
       npm ?? npmCommand(),
       ["install", "--prefix", stage, "--no-audit", "--no-fund", "--no-save", "--loglevel=error", spec],
-      { env, spawnFn, timeoutMs: installTimeoutMs, label: `installing ${spec}` },
+      { env, spawnFn, timeoutMs: installTimeoutMs, label: `installing ${spec}`, abort },
     );
     if (result.code !== 0) {
       const last = result.output.split(/\r?\n/).filter((line) => line.trim()).at(-1) ?? "no output";
@@ -286,19 +301,65 @@ export async function installVersion(version, { env = process.env, spawnFn = spa
   }
 }
 
+/** Whether a process is still there (signal 0 checks without signalling); one that exists but may not be signalled is there. */
+export function isAlive(pid, kill = process.kill) {
+  try {
+    kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+
+/**
+ * DX-4235: marks `version` as run by process `pid` until the returned release is called (its caller calls it at exit). A
+ * process that dies without releasing leaves a lease whose pid is gone, which `pruneInstalls` reads as released.
+ */
+export function leaseVersion(version, { env = process.env, pid = process.pid } = {}) {
+  const dir = path.join(versionDir(dataDirOf(env), version), LEASES_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, String(pid));
+  fs.writeFileSync(file, "");
+  return () => fs.rmSync(file, { force: true });
+}
+
+const PID_NAME = /^\d+$/;
+
+/** Whether a live process holds a lease on the version directory `dir`. */
+function isLeased(dir, alive) {
+  let names;
+  try {
+    names = fs.readdirSync(path.join(dir, LEASES_DIR));
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw err;
+  }
+  return names.some((name) => PID_NAME.test(name) && alive(Number(name)));
+}
+
 /**
  * Removes, under the plugin data dir, every staging directory and every version directory not named in `keep` that is
- * older than STALE_INSTALL_MS at `now` (DX-4321). A younger stage is a concurrent install's; a younger version directory may
- * be another session's server. The record and anything not shaped like a version or a stage are never touched.
+ * older than STALE_INSTALL_MS at `now` (DX-4321) and that no live process leases (DX-4235: another session's server or live
+ * reader may still run it, and its directory's age says nothing about that). A younger stage is a concurrent install's. An
+ * entry another session removed first is skipped (DX-4235: two sessions may prune at once). The record and anything not
+ * shaped like a version or a stage are never touched. Seam: `alive` (pid liveness).
  */
-export function pruneInstalls(keep, { env = process.env, now = Date.now() } = {}) {
+export function pruneInstalls(keep, { env = process.env, now = Date.now(), alive = isAlive } = {}) {
   const root = installRoot(dataDirOf(env));
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const isStage = entry.name.startsWith(STAGE_PREFIX);
     if (!isStage && (!STRICT_VERSION.test(entry.name) || keep.includes(entry.name))) continue;
     const dir = path.join(root, entry.name);
-    if (now - fs.statSync(dir).mtimeMs > STALE_INSTALL_MS) fs.rmSync(dir, { recursive: true, force: true });
+    let mtimeMs;
+    try {
+      ({ mtimeMs } = fs.statSync(dir));
+    } catch (err) {
+      if (err.code === "ENOENT") continue;
+      throw err;
+    }
+    if (now - mtimeMs <= STALE_INSTALL_MS || (!isStage && isLeased(dir, alive))) continue;
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -324,15 +385,15 @@ export async function startVersion(options = {}) {
 
 /**
  * The refresh that runs while the server does: the registry's `latest` is installed, THEN recorded (DX-4235: the record
- * only ever names an installed version, so the next start never pays a cold install), then old installs are pruned
- * (never `running` or the new version). Returns the version recorded. The running server is never touched: a new version
- * is adopted at the next session start. Throws (the caller reports one line and keeps `running`).
+ * only ever names an installed version, so the next start never pays a cold install). Returns the version recorded. The
+ * running server is never touched: a new version is adopted at the next session start. Throws (the caller reports one line
+ * and keeps running what it runs). `options.abort` stops an install in flight (installVersion). Pruning old installs is the
+ * caller's separate step (pruneInstalls), so a prune failure is never reported as a failed refresh.
  */
-export async function refreshInstall(running, options = {}) {
+export async function refreshInstall(options = {}) {
   const env = options.env ?? process.env;
   const latest = await resolveLatestVersion(options);
   await installVersion(latest, options);
   writeRecordedVersion(latest, env);
-  pruneInstalls([running, latest], { env, now: options.now ?? Date.now() });
   return latest;
 }

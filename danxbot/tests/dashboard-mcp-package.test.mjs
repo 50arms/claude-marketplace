@@ -3,7 +3,7 @@
 // recorded under the plugin data dir and read back with no network. A fake registry (fixtures/fake-registry.mjs) stands
 // in for npm's registry and an injected spawn for npm itself; nothing here touches the network except the one describe
 // at the end that checks the REAL published package, deliberately.
-import { test, describe, before, beforeEach, after, afterEach } from "node:test";
+import { test, describe, before, beforeEach, after, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -14,14 +14,19 @@ import { fileURLToPath } from "node:url";
 import {
   DASHBOARD_MCP_PACKAGE_NAME,
   INSTALL_TIMEOUT_MS,
+  RENAME_RETRY_ATTEMPTS,
+  RENAME_RETRY_BASE_MS,
+  RENAME_RETRYABLE_CODES,
   STALE_INSTALL_MS,
   installVersion,
   installedBin,
+  leaseVersion,
   npmCommand,
   pruneInstalls,
   recordedVersionOrNull,
   refreshInstall,
   registryUrl,
+  renameRetrying,
   requireRecordedVersion,
   resolveLatestVersion,
   startVersion,
@@ -77,10 +82,12 @@ function layDown(version, content = `installed ${version}`) {
  */
 function fakeNpm(mode = "ok", onSpawn = () => {}) {
   const calls = [];
+  const children = [];
   const spawnFn = (command, args, options) => {
     calls.push({ command, args, options });
     onSpawn(args);
     const child = new EventEmitter();
+    children.push(child);
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     child.killed = false;
@@ -117,7 +124,7 @@ function fakeNpm(mode = "ok", onSpawn = () => {}) {
     });
     return child;
   };
-  return { spawnFn, calls };
+  return { spawnFn, calls, children };
 }
 
 const NPM = { command: "npm", args: [] };
@@ -378,6 +385,19 @@ describe("installVersion", () => {
       return true;
     });
     assert.equal(npm.calls.length, 1);
+    assert.equal(npm.children[0].killed, true, "npm is killed");
+    assert.deepEqual(readdirSync(installRoot()), [], "no stage and no version directory");
+  });
+
+  test("DX-4235: an abort (the server exited mid-refresh) kills npm, waits for it to close, removes the stage and names why", async () => {
+    const npm = fakeNpm("hang");
+    const stop = new AbortController();
+    const installing = installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM, abort: stop.signal });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(readdirSync(installRoot()).filter((n) => n.startsWith(".stage-")).length, 1, "the stage exists while npm runs");
+    stop.abort();
+    await assert.rejects(installing, /^Error: aborted: installing @thehammer\/danx-dashboard-mcp@0\.1\.50 was stopped because the server exited$/);
+    assert.equal(npm.children[0].killed, true);
     assert.deepEqual(readdirSync(installRoot()), [], "no stage and no version directory");
   });
 
@@ -442,6 +462,90 @@ describe("pruneInstalls (DX-4321)", () => {
     for (const kept of [youngVersion, running, recorded, liveStage, notAVersion]) assert.ok(existsSync(kept), kept);
     assert.equal(recordedVersionOrNull(env), "0.1.4");
   });
+
+  test("DX-4235: an old version a live process leases (another session's server or live reader) is kept; one whose leaseholder is gone is removed", () => {
+    const leased = dirAt("0.1.1", T0);
+    const abandoned = dirAt("0.1.2", T0);
+    leaseVersion("0.1.1", { env, pid: 111 });
+    leaseVersion("0.1.2", { env, pid: 222 });
+    for (const v of ["0.1.1", "0.1.2"]) utimesSync(path.join(installRoot(), v), T0, T0);
+    const asked = [];
+    pruneInstalls([], { env, now, alive: (pid) => (asked.push(pid), pid === 111) });
+    assert.ok(existsSync(leased), "a version a live process runs is never removed");
+    assert.equal(existsSync(abandoned), false, "a lease whose process is gone holds nothing");
+    assert.deepEqual(asked.sort(), [111, 222]);
+  });
+
+  test("DX-4235: a lease is released by its holder", () => {
+    dirAt("0.1.1", T0);
+    const release = leaseVersion("0.1.1", { env, pid: 111 });
+    assert.deepEqual(readdirSync(path.join(installRoot(), "0.1.1", ".leases")), ["111"]);
+    release();
+    assert.deepEqual(readdirSync(path.join(installRoot(), "0.1.1", ".leases")), []);
+  });
+
+  test("DX-4235: an entry another session pruned first (gone between the listing and the stat) is skipped, not an error", () => {
+    const gone = dirAt("0.1.1", T0);
+    const old = dirAt("0.1.2", T0);
+    const realStat = fs.statSync;
+    const stat = mock.method(fs, "statSync", (p, ...rest) => {
+      if (p === gone) {
+        rmSync(gone, { recursive: true, force: true });
+        throw Object.assign(new Error(`ENOENT: no such file or directory, stat '${p}'`), { code: "ENOENT" });
+      }
+      return realStat(p, ...rest);
+    });
+    try {
+      pruneInstalls([], { env, now });
+    } finally {
+      stat.mock.restore();
+    }
+    assert.equal(existsSync(old), false, "the rest is still pruned");
+  });
+});
+
+describe("renameRetrying: a rename Windows briefly refuses (DX-4235)", () => {
+  const refusing = (codes) => {
+    const calls = [];
+    return {
+      calls,
+      renameSync: (from, to) => {
+        calls.push([from, to]);
+        const code = codes.shift();
+        if (code !== undefined) throw Object.assign(new Error(code), { code });
+      },
+    };
+  };
+
+  test("each retryable refusal is retried after a wait that grows by the base each time, until it lands", () => {
+    assert.deepEqual(RENAME_RETRYABLE_CODES, ["EPERM", "EBUSY", "EACCES"]);
+    const fsApi = refusing(["EPERM", "EBUSY", "EACCES"]);
+    const waits = [];
+    assert.equal(renameRetrying("a", "b", fsApi, () => false, (ms) => waits.push(ms)), true);
+    assert.equal(fsApi.calls.length, 4);
+    assert.deepEqual(waits, [RENAME_RETRY_BASE_MS, 2 * RENAME_RETRY_BASE_MS, 3 * RENAME_RETRY_BASE_MS]);
+  });
+
+  test("any other error is thrown at once, with no wait", () => {
+    const fsApi = refusing(["EXDEV"]);
+    const waits = [];
+    assert.throws(() => renameRetrying("a", "b", fsApi, () => false, (ms) => waits.push(ms)), { code: "EXDEV" });
+    assert.deepEqual(waits, []);
+  });
+
+  test("a refusal that never ends is thrown after the last attempt", () => {
+    const fsApi = refusing(Array(RENAME_RETRY_ATTEMPTS).fill("EBUSY"));
+    const waits = [];
+    assert.throws(() => renameRetrying("a", "b", fsApi, () => false, (ms) => waits.push(ms)), { code: "EBUSY" });
+    assert.equal(fsApi.calls.length, RENAME_RETRY_ATTEMPTS);
+    assert.equal(waits.length, RENAME_RETRY_ATTEMPTS - 1);
+  });
+
+  test("a refusal after a concurrent installer put its copy in place answers false and stops", () => {
+    const fsApi = refusing(["EPERM"]);
+    assert.equal(renameRetrying("a", "b", fsApi, () => true, () => assert.fail("no wait once settled")), false);
+    assert.equal(fsApi.calls.length, 1);
+  });
 });
 
 describe("startVersion: what the launcher starts the server from", () => {
@@ -502,7 +606,7 @@ describe("refreshInstall: the background refresh", () => {
     registry.setVersion("0.1.8");
     let recordedAtSpawn;
     const npm = fakeNpm("ok", () => (recordedAtSpawn = recordedVersionOrNull(env)));
-    assert.equal(await refreshInstall("0.1.7", { env, spawnFn: npm.spawnFn, npm: NPM }), "0.1.8");
+    assert.equal(await refreshInstall({ env, spawnFn: npm.spawnFn, npm: NPM }), "0.1.8");
     assert.equal(recordedAtSpawn, "0.1.7", "the record moves only after B installed");
     assert.equal(recordedVersionOrNull(env), "0.1.8");
     assert.ok(existsSync(installedBin(dataDir, "0.1.8")));
@@ -514,7 +618,7 @@ describe("refreshInstall: the background refresh", () => {
     recordAt("0.1.50");
     layDown("0.1.50");
     const npm = fakeNpm();
-    assert.equal(await refreshInstall("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), "0.1.50");
+    assert.equal(await refreshInstall({ env, spawnFn: npm.spawnFn, npm: NPM }), "0.1.50");
     assert.deepEqual(npm.calls, []);
     assert.equal(recordedVersionOrNull(env), "0.1.50");
   });
@@ -523,7 +627,7 @@ describe("refreshInstall: the background refresh", () => {
     recordAt("0.1.7");
     registry.setMode("status-500");
     const npm = fakeNpm();
-    await assert.rejects(refreshInstall("0.1.7", { env, spawnFn: npm.spawnFn, npm: NPM }), /HTTP 500/);
+    await assert.rejects(refreshInstall({ env, spawnFn: npm.spawnFn, npm: NPM }), /HTTP 500/);
     assert.equal(recordedVersionOrNull(env), "0.1.7");
     assert.deepEqual(npm.calls, []);
   });
@@ -532,21 +636,19 @@ describe("refreshInstall: the background refresh", () => {
     recordAt("0.1.7");
     registry.setVersion("0.1.8");
     const npm = fakeNpm("fail");
-    await assert.rejects(refreshInstall("0.1.7", { env, spawnFn: npm.spawnFn, npm: NPM }), /^Error: install_failed: /);
+    await assert.rejects(refreshInstall({ env, spawnFn: npm.spawnFn, npm: NPM }), /^Error: install_failed: /);
     assert.equal(recordedVersionOrNull(env), "0.1.7");
   });
 
-  test("it prunes old installs, never the running version or the one it recorded", async () => {
+  test("it prunes nothing itself: pruning is the launcher's separate step", async () => {
     const old = new Date("2026-01-01T00:00:00Z");
     recordAt("0.1.7");
-    for (const v of ["0.1.6", "0.1.7"]) {
-      layDown(v);
-      utimesSync(path.join(installRoot(), v), old, old);
-    }
+    layDown("0.1.6");
+    utimesSync(path.join(installRoot(), "0.1.6"), old, old);
     registry.setVersion("0.1.8");
     const npm = fakeNpm();
-    await refreshInstall("0.1.7", { env, spawnFn: npm.spawnFn, npm: NPM, now: old.getTime() + 2 * STALE_INSTALL_MS });
-    assert.deepEqual(readdirSync(installRoot()).sort(), ["0.1.7", "0.1.8", "current"]);
+    await refreshInstall({ env, spawnFn: npm.spawnFn, npm: NPM });
+    assert.deepEqual(readdirSync(installRoot()).sort(), ["0.1.6", "0.1.8", "current"]);
   });
 });
 

@@ -245,11 +245,11 @@ export type StampState = { at: number; day: string } | null
 // cannot call the MCP), and the next prompt.submit or main-loop tool.call result consumes it.
 export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null } | null
 
-// DX-4235: what the reports remember between events. `agents`: the activity ids (`agent-<id>`) of the sub-agents this session started
-// (classic.SubagentStart), true while one runs; a turn.complete for an id not here (an engine fork, a workflow's agent) reports nothing.
-// `shells`: the background task ids of the shells this session opened and no Stop has closed yet. `count`: the last background-work
-// count sent, null when it was cleared or none was sent.
-export type ReportState = { agents: Record<string, boolean>; shells: string[]; count: number | null }
+// DX-4235: what the reports remember between events: what this session reported opening and still owes a close. `agents`: by activity id
+// (`agent-<id>`), each running sub-agent whose start was posted, with the time (epoch ms) of its last post (the start or a liveness
+// re-post); its finish removes it. `shells`: the background task ids of the shells whose start was posted and that no Stop has closed yet.
+// `count`: the last background-work count sent, null when it was cleared or none was sent.
+export type ReportState = { agents: Record<string, number>; shells: string[]; count: number | null }
 
 declare module 'claude-code' {
   interface PluginState {

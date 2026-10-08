@@ -4,12 +4,12 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LIVE_SUBCOMMAND, installedBin, isAlive, pluginDataDir, resolveLiveBin, watchParent } from "../scripts/subagents-live.mjs";
-import { installedBin as packageInstalledBin } from "../scripts/lib/dashboard-mcp-package.mjs";
+import { LIVE_SUBCOMMAND, pluginDataDir, resolveLiveBin, watchParent } from "../scripts/subagents-live.mjs";
+import { installedBin, isAlive } from "../scripts/lib/dashboard-mcp-package.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPTS = path.join(here, "..", "scripts");
@@ -25,11 +25,6 @@ describe("where the installed reader is", () => {
   test("a root of any other shape (a --plugin-dir load) is a named reason, never a guess", () => {
     const r = pluginDataDir(path.join(tmpdir(), "work", "claude-plugins", "danxbot"));
     assert.match(r.reason, /not loaded from a marketplace install/);
-  });
-
-  test("the bin is the layout the plugin's install lays down (lib/dashboard-mcp-package.mjs owns it)", () => {
-    assert.equal(installedBin, packageInstalledBin);
-    assert.equal(installedBin("D", "1.2.3"), path.join("D", "dashboard-mcp", "1.2.3", "node_modules", "@thehammer", "danx-dashboard-mcp", "dist", "index.js"));
   });
 });
 
@@ -96,6 +91,8 @@ describe("resolving and running the recorded version", () => {
     const r = spawnSync(process.execPath, [script, transcript], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout), [bin, LIVE_SUBCOMMAND, transcript]);
+    // DX-4235: it leased the version while it ran (so no prune removes it) and released the lease at its exit
+    assert.deepEqual(readdirSync(path.join(data, "dashboard-mcp", "0.1.5", ".leases")), []);
   });
 
   test("a failure to start is one stderr line and exit 1", () => {

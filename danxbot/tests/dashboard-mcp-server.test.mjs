@@ -8,11 +8,11 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DASHBOARD_MCP_PACKAGE_NAME, installedBin, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
+import { DASHBOARD_MCP_PACKAGE_NAME, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
 import { dashboardUrl, launch } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
@@ -49,13 +49,15 @@ function layDown(version) {
 
 /**
  * The launcher's seams: one `spawnFn` for npm (an `install` lays the package down under its --prefix, or fails with
- * `npmMode: "fail"`) and the server (a child that runs until killed), one `fetchFn` passing to the fake registry, and a
+ * `npmMode: "fail"`, or runs until killed with `npmMode: "hang"`) and the server (a child that runs until killed), one
+ * `fetchFn` passing to the fake registry, and a
  * `stderr`. Every spawn and registry request lands in `timeline`, in order.
  */
 function harness({ npmMode = "ok" } = {}) {
   const timeline = [];
   const spawns = [];
   const servers = [];
+  const npms = [];
   const errLines = [];
   const spawnFn = (command, args, options) => {
     spawns.push({ command, args, options });
@@ -68,7 +70,13 @@ function harness({ npmMode = "ok" } = {}) {
       const spec = args.at(-1);
       timeline.push(`npm install ${spec}`);
       const prefix = args[args.indexOf("--prefix") + 1];
+      npms.push(child);
+      child.kill = () => {
+        child.killed = true;
+        setImmediate(() => child.emit("close", null, "SIGTERM"));
+      };
       setImmediate(() => {
+        if (npmMode === "hang") return;
         if (npmMode === "fail") {
           child.stderr.emit("data", "npm error 404 Not Found\n");
           return child.emit("close", 1, null);
@@ -89,7 +97,7 @@ function harness({ npmMode = "ok" } = {}) {
     return fetch(url, init);
   };
   const stderr = { write: (text) => errLines.push(text) };
-  return { timeline, spawns, servers, errLines, options: { env, spawnFn, fetchFn, stderr, npm: NPM } };
+  return { timeline, spawns, servers, npms, errLines, options: { env, spawnFn, fetchFn, stderr, npm: NPM } };
 }
 
 describe("dashboardUrl", () => {
@@ -205,6 +213,76 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     none.options.env = { ...env, DANXBOT_DASHBOARD_URL: "" };
     await assert.rejects(launch(none.options), /no dashboard URL/);
     assert.deepEqual(none.timeline, []);
+  });
+});
+
+describe("launch: what a session holds and leaves behind (DX-4235)", () => {
+  const leases = (version) => readdirSync(path.join(dataDir, "dashboard-mcp", version, ".leases"));
+
+  test("the version it runs is leased by this process until it releases it", async () => {
+    recordAt(A);
+    layDown(A);
+    const run = await launch(harness().options);
+    await run.refresh;
+    assert.deepEqual(leases(A), [String(process.pid)]);
+    run.release();
+    assert.deepEqual(leases(A), []);
+  });
+
+  test("after the refresh, an old install no live process runs is pruned; one another session still runs is kept", async () => {
+    const old = new Date("2026-01-01T00:00:00Z");
+    recordAt(A);
+    layDown(A);
+    for (const v of ["0.1.5", "0.1.6"]) {
+      layDown(v);
+      leaseVersion(v, { env, pid: v === "0.1.5" ? 555 : 666 });
+      utimesSync(path.join(dataDir, "dashboard-mcp", v), old, old);
+    }
+    registry.setVersion(B);
+    const h = harness();
+    const run = await launch({ ...h.options, now: old.getTime() + 2 * STALE_INSTALL_MS, alive: (pid) => pid === 555 || pid === process.pid });
+    assert.equal(await run.refresh, B);
+    assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp")).sort(), ["0.1.5", A, B, "current"]);
+    assert.deepEqual(h.errLines, []);
+    run.release();
+  });
+
+  test("a prune that fails is its own line, never a failed refresh: the new version stays recorded", async () => {
+    const old = new Date("2026-01-01T00:00:00Z");
+    recordAt(A);
+    layDown(A);
+    layDown("0.1.5");
+    leaseVersion("0.1.5", { env, pid: 555 });
+    utimesSync(path.join(dataDir, "dashboard-mcp", "0.1.5"), old, old);
+    registry.setVersion(B);
+    const h = harness();
+    const run = await launch({
+      ...h.options,
+      now: old.getTime() + 2 * STALE_INSTALL_MS,
+      alive: () => {
+        throw new Error("liveness check broke");
+      },
+    });
+    assert.equal(await run.refresh, B);
+    assert.equal(recordedVersionOrNull(env), B);
+    assert.deepEqual(h.errLines, ["[danxbot dashboard MCP] could not prune old installs (liveness check broke); they stay until a later refresh prunes them\n"]);
+    run.release();
+  });
+
+  test("a server that exits mid-refresh stops it: npm is killed, its stage removed, the record kept, and no failure line", async () => {
+    recordAt(A);
+    layDown(A);
+    registry.setVersion(B);
+    const h = harness({ npmMode: "hang" });
+    const run = await launch(h.options);
+    while (h.npms.length === 0) await new Promise((resolve) => setImmediate(resolve));
+    run.stopRefresh();
+    assert.equal(await run.refresh, null);
+    assert.equal(h.npms[0].killed, true);
+    assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp")).filter((n) => n.startsWith(".stage-")), []);
+    assert.equal(recordedVersionOrNull(env), A);
+    assert.deepEqual(h.errLines, []);
+    run.release();
   });
 });
 

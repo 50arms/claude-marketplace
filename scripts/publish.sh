@@ -234,9 +234,9 @@ done
 # --- Pre-flight: injection budget ---------------------------------------
 #
 # DX-3053 — same shape as the frontmatter lint above: one shared check
-# (scripts/check-injection-budget.mjs, real hook execution via
+# (scripts/check-injection-budget.mjs, on the time stamp each hooks module hands the model, measured by
 # scripts/measure-injection.mjs) run against the WHOLE repo before any
-# bump, so a publish that pushes the per-turn or session-start injection
+# bump, so a publish that pushes the per-turn injection
 # total over the DX-3347-derived ceiling is refused before it ships.
 
 info "Checking injection budget..."

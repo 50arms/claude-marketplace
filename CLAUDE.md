@@ -45,7 +45,14 @@ prose states how many sub-agents to run (R-23).
 
 ## The reports are function hooks (DX-4235)
 
-`danxbot/hooks/register.tsx` also keeps the dashboard told what a plan-connected session is doing, so the dashboard can show the session's running work and nudge an idle one. Each report is a hook of the module and none a script. The pure parts are `danxbot/hooks/reports/*`; every `$` call stays in `register.tsx`. Every report goes through the session's own server (`$.mcp.call` of the plugin's `danxbot_api` tool), and only for a session the module holds as plan-connected. A report that fails is a toast, never swallowed.
+`danxbot/hooks/register.tsx` also keeps the dashboard told what a plan-connected session is doing, so the dashboard can show the session's running work and nudge an idle one. Each report is a hook of the module and none a script. The pure parts are `danxbot/hooks/reports/*`; every `$` call stays in `register.tsx`. Every report goes through the session's own server (`$.mcp.call` of the plugin's `danxbot_api` tool). A report the dashboard does not take is a toast, never swallowed. What each report needs of the plan state the module holds (`$.state` `reports` remembers what was opened):
+
+- Opening something (a sub-agent's row, a shell's row, a liveness re-post) needs the session known to be on a plan.
+- Closing what was opened (a sub-agent's finish, a shell's end) is owed because its start was posted, so it goes out even while a plan refresh has failed and the view holds no plan for a moment. It is dropped only once the dashboard says the session is on no plan (or a person revoked its key): the dashboard takes no report from such a session.
+- The count is kept true the same way: sent while the session is on a plan, and while the plan state is unknown if a count is on record.
+- The ready-cards check runs unless the session is known to be on no plan; its own read asks the dashboard which plan the session is on.
+
+The reports themselves:
 
 - **Activity** (`POST /api/plan-sessions/me/activity`): a sub-agent's start at `classic.SubagentStart`; its end at `turn.complete` with an `agentId` (a clean end or a failed one); a background shell's start at `tool.call` when the call's result names a `backgroundTaskId`; that shell's end at the first `classic.Stop` or `classic.SubagentStop` whose `background_tasks` no longer lists it as running. A running sub-agent's own tool calls re-post it as alive, at most once per 60 s.
 - **Background-work count** (`PUT /api/plan-sessions/me/background-work`): the running `shell`, `subagent` and `workflow` entries of `background_tasks`, sent at `classic.Stop` and `classic.SubagentStop` (a sub-agent's stop does not count that sub-agent itself) and again on the sub-agent liveness re-post. The count is cleared at the first bound event after a session start and at a main-session `classic.StopFailure`.

@@ -31,12 +31,12 @@ const SUBAGENT_PREFIX = 'agent-'
 // A sub-agent's row key is its transcript file's basename, `agent-<id>`, the key the dashboard's transcript reader uses too, so the two
 // producers meet on one row. The id may arrive with or without the prefix; one leading prefix is stripped before it is added.
 export function subagentActivityId(agentId: string): string {
-  return `${SUBAGENT_PREFIX}${agentId.startsWith(SUBAGENT_PREFIX) ? agentId.slice(SUBAGENT_PREFIX.length) : agentId}`
+  return `${SUBAGENT_PREFIX}${bareAgentId(agentId)}`
 }
 
 // The id the engine's `background_tasks` lists a sub-agent under: without the prefix.
 export function bareAgentId(agentId: string): string {
-  return subagentActivityId(agentId).slice(SUBAGENT_PREFIX.length)
+  return agentId.startsWith(SUBAGENT_PREFIX) ? agentId.slice(SUBAGENT_PREFIX.length) : agentId
 }
 
 // The facts only a transcript knows (who spawned it, effort, its current tool call, how it ended, its card) are sent unknown; the server

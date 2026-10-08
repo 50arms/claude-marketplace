@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { LIVENESS_MS, agentRow, endedShells, shellRow, subagentActivityId } from '../hooks/reports/activity'
-import { SURFACES, activityRows, answerReportEvents, countReports, dashboard, startSession } from './plan-kit'
+import { SURFACES, activityRows, answerReportEvents, countReports, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1b2c3', agent_type: 'danxbot:worker-sonnet-high' }
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
@@ -72,15 +72,17 @@ for (const surface of SURFACES) {
       expect(countReports(d)).toEqual([])
     })
 
-    test("a resumed sub-agent's second turn finishes it again", async ($, on) => {
+    test("a resumed sub-agent opens again and its next turn finishes it again; a turn with no start since its finish owes nothing", async ($, on) => {
       answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
       await $.classic.SubagentStart(START)
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
+      await $.classic.SubagentStart(START)
+      await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
       await d.clock.settle()
-      expect(activityRows(d).filter(r => r.finishedAt !== null)).toHaveLength(2)
+      expect(activityRows(d).map(r => r.finishedAt === null)).toEqual([true, false, true, false])
     })
 
     test("the main loop's turn and a turn of an agent this session never started (an engine fork) post nothing", async ($, on) => {
@@ -95,7 +97,7 @@ for (const surface of SURFACES) {
   })
 
   describe(`the background shell rows on ${surface}`, () => {
-    test('a call whose result names a background task posts one running bash row keyed by it; a foreground call and a denied one post nothing', async ($, on) => {
+    test('a call whose result names a background task posts one running bash row keyed by it; a foreground call posts nothing', async ($, on) => {
       let answer: any = BACKGROUNDED
       on('tool.call', () => answer)
       answerReportEvents(on)
@@ -106,8 +108,6 @@ for (const surface of SURFACES) {
       expect(r.text).toBe(BACKGROUNDED.text)
       answer = { result: { stdout: 'hi', stderr: '', interrupted: false }, text: 'hi' }
       await $.tool.call({ tool: 'Bash', command: 'echo hi' } as any)
-      answer = { deny: 'not allowed' }
-      await $.tool.call({ tool: 'Bash', command: 'sleep 99', run_in_background: true } as any)
       await d.clock.settle()
       expect(activityRows(d)).toEqual([shellRow('bjlibh54w', now, null)])
     })
@@ -219,18 +219,76 @@ for (const surface of SURFACES) {
       ])
     })
 
-    test('the ordinary refusals stay quiet: the dashboard has the session on no plan, or the session lost its key', async ($, on) => {
+    test('a refusal toasts too: the dashboard has the session on no plan, any other 409, a lapsed key', async ($, on) => {
       answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
       d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 409, body: { error: 'session_not_connected' } }
       await $.classic.SubagentStart(START)
       await d.clock.settle()
-      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
-      d.world.signedOut = 'lapsed'
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 409, body: { error: 'something_else' } }
       await $.classic.SubagentStart({ ...START, agent_id: 'second' })
       await d.clock.settle()
-      expect(d.reports).toHaveLength(2)
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
+      d.world.signedOut = 'lapsed'
+      await $.classic.SubagentStart({ ...START, agent_id: 'third' })
+      await d.clock.settle()
+      const failed = d.toasts.filter(t => t.startsWith('danxbot activity report failed'))
+      expect(failed).toHaveLength(3)
+      expect(failed[0]).toContain('409: session_not_connected')
+      expect(failed[1]).toContain('409: something_else')
+      expect(failed[2]).toContain('no longer accepts this session')
+    })
+  })
+
+  describe(`what the reports need of the plan state on ${surface}`, () => {
+    test("a close owed while a plan refresh has failed (the view holds no plan for a moment) still goes out: a sub-agent's finish and a shell's end", async ($, on) => {
+      on('tool.call', () => BACKGROUNDED as any)
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await $.tool.call({ tool: 'Bash', command: 'sleep 9', run_in_background: true } as any)
+      await d.clock.settle()
+      d.failList()
+      await forceRefresh($, d)
+      await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(activityRows(d).filter(r => r.finishedAt !== null).map(r => r.activityId)).toEqual(['agent-a1b2c3', 'bjlibh54w'])
+    })
+
+    test('nothing new opens while the plan state is unknown: no start row, no shell row, no liveness post', async ($, on) => {
+      on('tool.call', () => BACKGROUNDED as any)
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await d.clock.settle()
+      d.failList()
+      await forceRefresh($, d)
+      await $.classic.SubagentStart({ ...START, agent_id: 'later' })
+      await d.clock.advance(2 * LIVENESS_MS)
+      await $.tool.call({ tool: 'Bash', command: 'sleep 9', run_in_background: true, agentId: 'a1b2c3' } as any)
+      await d.clock.settle()
+      expect(activityRows(d).map(r => r.activityId)).toEqual(['agent-a1b2c3'])
+    })
+
+    test('a session that leaves its plan while a sub-agent runs drops what it owed: the dashboard takes no report from a session on no plan, so nothing is posted and nothing toasts', async ($, on) => {
+      on('tool.call', () => BACKGROUNDED as any)
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await $.tool.call({ tool: 'Bash', command: 'sleep 9', run_in_background: true } as any)
+      await d.clock.settle()
+      d.world.planId = null
+      await forceRefresh($, d)
+      const before = d.reports.length
+      await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(d.reports.slice(before)).toEqual([])
       expect(d.toasts.filter(t => t.includes('report failed'))).toEqual([])
     })
   })

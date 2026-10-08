@@ -5,7 +5,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { countRunning, heartbeatCount } from '../hooks/reports/background-work'
-import { OWN_SESSION, SURFACES, answerReportEvents, countReports, dashboard, startSession } from './plan-kit'
+import { LIVENESS_MS } from '../hooks/reports/activity'
+import { OWN_SESSION, SURFACES, answerReportEvents, countReports, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const task = (id: string, type: string, status = 'running') => ({ id, type, status, description: id })
 // one of each kind the engine lists: three that count, a watcher that does not, and a finished shell
@@ -105,6 +106,64 @@ for (const surface of SURFACES) {
       await $.classic.StopFailure({ error: 'server_error' } as any)
       await d.clock.settle()
       expect(countReports(d)).toEqual([{ count: null, eventAt: new Date(at).toISOString() }])
+    })
+  })
+
+  describe(`the heartbeat and the plan state on ${surface}`, () => {
+    test("a working sub-agent's liveness re-post re-sends the count on record, not just 1", async ($, on) => {
+      answerReportEvents(on)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: TASKS } as any)
+      await d.clock.settle()
+      await d.clock.advance(LIVENESS_MS + 1_000)
+      const at = d.clock.now()
+      await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)
+      await d.clock.settle()
+      expect(countReports(d).at(-1)).toEqual({ count: 3, eventAt: new Date(at).toISOString() })
+    })
+
+    test('while a plan refresh has failed, the count the dashboard holds is still kept true; with none on record nothing is sent', async ($, on) => {
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.failList()
+      await forceRefresh($, d)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: TASKS } as any)
+      await $.classic.StopFailure({ error: 'server_error' } as any)
+      await d.clock.settle()
+      expect(countReports(d)).toEqual([])
+      d.failList(false)
+      await forceRefresh($, d)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: TASKS } as any)
+      await d.clock.settle()
+      d.failList()
+      await forceRefresh($, d)
+      await $.classic.SubagentStop({ ...SUBAGENT_STOP, background_tasks: TASKS } as any)
+      await $.classic.StopFailure({ error: 'server_error' } as any)
+      await d.clock.settle()
+      expect(countReports(d).map(r => r.count)).toEqual([3, 2, null])
+    })
+
+    test('a session that left its plan sends no count and keeps none on record', async ($, on) => {
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: TASKS } as any)
+      await d.clock.settle()
+      d.world.planId = null
+      await forceRefresh($, d)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: TASKS } as any)
+      await $.classic.StopFailure({ error: 'server_error' } as any)
+      await d.clock.settle()
+      // a later failed refresh (plan state unknown) has no count on record to keep true
+      d.failList()
+      await forceRefresh($, d)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: TASKS } as any)
+      await d.clock.settle()
+      expect(countReports(d).map(r => r.count)).toEqual([3])
     })
   })
 

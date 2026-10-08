@@ -510,6 +510,8 @@ export function dashboard(
   const contextReads: string[] = []
   // DX-4632: the arguments of each `restart_notice` call
   const restartCalls: unknown[] = []
+  // DX-4235: the fields every GET /api/issues row carries without being asked for (the issue resource's compact row)
+  const ISSUE_ROW_FIELDS = ['id', 'type', 'title', 'status', 'parent_id', 'priority', 'created_at', 'updated_at', 'assigned_agent', 'content_hash']
   // DX-4235: the reports' calls and the ready-cards reads, in order, kept out of `calls` and `api` like the context reads (every suite that
   // counts a load's reads or a session's writes stays about its own subject)
   const reportCalls: { method: string; path: string; body?: any; query?: any; board?: string }[] = []
@@ -522,7 +524,10 @@ export function dashboard(
     if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })
     if (a.path === '/api/plan-sessions/me/background-work') return reply({ count: a.body.count, applied: true })
     if (a.path === '/api/plans/mine') return world.planId === null ? reply({ error: 'session_not_connected' }, 409) : reply({ id: world.planId, boards: world.planBoards })
-    const rows = world.readyRows[a.board] ?? []
+    // as the issues list answers: the always-returned row, plus only the fields the `fields` tree names
+    const rows = (world.readyRows[a.board] ?? []).map((row: any) =>
+      Object.fromEntries(Object.entries(row).filter(([key]) => ISSUE_ROW_FIELDS.includes(key) || a.query?.fields?.[key] === true)),
+    )
     return reply({ issues: rows, total: rows.length })
   }
   const isContextRead = (a: any) => a.method === 'GET' && (a.path.startsWith('/api/reminders/event/') || (a.path === '/api/plans' && a.query?.limit === 1))

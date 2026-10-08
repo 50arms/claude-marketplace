@@ -4,9 +4,9 @@
 // definition of "ready" (ported from danxbot's packages/danx-dashboard-mcp ready-cards tests).
 import { describe, expect, test } from 'claude-code/testing'
 
-import { READY_CARDS_DEADLINE_MS, blockReason, isReadyCard, parseCardRow, readyCardsOf } from '../hooks/reports/ready-cards'
+import { READY_CARDS_DEADLINE_MS, blockReason, isReadyCard, parseCardRow, planOf, readyCardsOf } from '../hooks/reports/ready-cards'
 import type { CardRow } from '../hooks/reports/ready-cards'
-import { SURFACES, answerReportEvents, dashboard, startSession } from './plan-kit'
+import { SURFACES, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const BOARD = 'danxbot:danxbot-main'
 const GPT_BOARD = 'gpt-manager:gpt-manager-main'
@@ -41,7 +41,18 @@ describe('ready (pure)', () => {
     const { dispatch, ...noDispatch } = card()
     expect(parseCardRow(noDispatch)).toBeNull()
     expect(parseCardRow(card({ open_problem_count: '0' as any }))).toBeNull()
+    expect(parseCardRow(card({ waiting_on: 'false' as any }))).toBeNull()
+    expect(parseCardRow(card({ conflict_on_active_count: '0' as any }))).toBeNull()
+    expect(parseCardRow(card({ assigned_agent: 7 as any }))).toBeNull()
+    expect(parseCardRow(card())).toEqual(card())
     expect(readyCardsOf({ issues: [card(), noDispatch], total: 2 })).toEqual({ ok: false, reason: 'bad_response: a card row lacks a field the check judges' })
+  })
+
+  test("the plan read needs a numeric id and a list of board ids", () => {
+    expect(planOf({ id: 23, boards: ['danxbot:danxbot-main'] })).toEqual({ ok: true, value: { planId: 23, boards: ['danxbot:danxbot-main'] } })
+    expect(planOf({ id: 23, boards: [7] }).ok).toBe(false)
+    expect(planOf({ id: '23', boards: [] }).ok).toBe(false)
+    expect(planOf({ id: 23 }).ok).toBe(false)
   })
 
   test('a truncated page fails loudly instead of missing cards', () => {
@@ -51,6 +62,7 @@ describe('ready (pure)', () => {
   test('the reason names at most five cards, counts the rest and ends with the one instruction', () => {
     const cards = Array.from({ length: 7 }, (_, i) => ({ id: `DX-${i + 1}`, title: `Card ${i + 1}` }))
     expect(blockReason(cards)).toBe(`Your plan has 7 ready, unblocked cards nobody is working: DX-1 Card 1; DX-2 Card 2; DX-3 Card 3; DX-4 Card 4; DX-5 Card 5, and 2 more. ${INSTRUCTION}`)
+    expect(blockReason([{ id: 'DX-9', title: '  Fix\n  the   thing ' }])).toBe(`Your plan has 1 ready, unblocked card nobody is working: DX-9 Fix the thing. ${INSTRUCTION}`)
     expect(blockReason([{ id: 'DX-9', title: `${'x'.repeat(85)}` }])).toBe(`Your plan has 1 ready, unblocked card nobody is working: DX-9 ${'x'.repeat(80)}…. ${INSTRUCTION}`)
   })
 })
@@ -73,8 +85,19 @@ for (const surface of SURFACES) {
       const r = await $.classic.Stop(STOP)
       expect(r.block).toBe(blockReason(Array.from({ length: 6 }, (_, i) => ({ id: `DX-${i + 1}`, title: `Card ${i + 1}` }))))
       expect(r.block).toContain(', and 1 more.')
-      // the issues read asks for the plan's ToDo cards with the judged fields, on its board
-      expect(reads(d)[1]).toMatchObject({ path: '/api/issues', board: BOARD, query: { filter: { plan_id: 23, status_derived: 'ToDo' }, limit: 1000, sort: 'priority' } })
+      // the issues read asks for the plan's ToDo cards with the judged fields, on its board (the stand-in answers only the fields named)
+      expect(reads(d)[1]).toEqual({
+        method: 'GET',
+        path: '/api/issues',
+        body: undefined,
+        board: BOARD,
+        query: {
+          filter: { plan_id: 23, status_derived: 'ToDo' },
+          fields: { dispatch: true, blocked: true, open_problem_count: true, waiting_on: true, conflict_on_active_count: true },
+          limit: 1000,
+          sort: 'priority',
+        },
+      })
     })
 
     test('no ready card: the stop goes on', async ($, on) => {
@@ -146,6 +169,22 @@ for (const surface of SURFACES) {
       await d.clock.advance(READY_CARDS_DEADLINE_MS)
       expect((await stopping).block).toBeUndefined()
       expect(d.toasts.filter(t => t.startsWith('danxbot ready-cards'))).toEqual(['danxbot ready-cards check skipped (the stop is allowed): timeout: no answer within 8 s'])
+    })
+
+    test('while a plan refresh has failed (the plan state unknown) the check still runs: the dashboard says which plan the session is on', async ($, on) => {
+      const d = await started($, on)
+      d.world.readyRows[BOARD] = [card()]
+      d.failList()
+      await forceRefresh($, d)
+      expect((await $.classic.Stop(STOP)).block).toBe(blockReason([{ id: 'DX-1', title: 'A card' }]))
+    })
+
+    test('any other 409 on the plan read is a failure the person sees, not "no plan"', async ($, on) => {
+      const d = await started($, on)
+      d.world.reportReplies['GET /api/plans/mine'] = { status: 409, body: { error: 'session_is_worker' } }
+      expect((await $.classic.Stop(STOP)).block).toBeUndefined()
+      await d.clock.settle()
+      expect(d.toasts.filter(t => t.startsWith('danxbot ready-cards'))).toEqual(['danxbot ready-cards check skipped (the stop is allowed): 409: session_is_worker'])
     })
 
     test('a session the dashboard has on no plan (409 session_not_connected) allows the stop quietly', async ($, on) => {
