@@ -22,8 +22,8 @@ A session key starts with only the permissions needed to work cards and plans. R
 a repo and creating or listing boards need two more. A call answered `403` naming
 `boards.view` or `boards.manage`: call `request_permission` once with both
 `boards.view` and `boards.manage`, with the reason "danxbot start needs to look up this
-repo and create its board". Show the person its confirm code and approval URL, open the
-URL yourself only when the answer says the plugin could not open it, wait until they say they approved it, then repeat
+repo and create its board". The plugin shows the approval link and
+confirm code at once and opens nothing: the person clicks the link, so never open the URL yourself (two tabs). Wait until they say they approved it, then repeat
 the call that was refused. Ask for nothing else.
 
 ## Steps
@@ -31,8 +31,8 @@ the call that was refused. Ask for nothing else.
 ### 1. Sign in
 
 Call `plan_connect` with no plan. If it answers `approval_required` or `approval_pending`,
-show the person the confirm code and the approval URL (the plugin opens it, and the answer says if it could not; then open it in your browser when you
-have one), and call `plan_connect` again once they approve.
+show the person the confirm code and the approval URL (the plugin shows the link and code at once and opens nothing: the person clicks the link, so never open the URL yourself),
+and call `plan_connect` again once they approve.
 
 ### 2. Read the repo's origin
 
