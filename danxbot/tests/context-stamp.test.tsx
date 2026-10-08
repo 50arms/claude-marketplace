@@ -115,3 +115,40 @@ for (const surface of SURFACES) {
     })
   })
 }
+
+// DX-4736: a fresh desktop session's real event order (DX-3900 comment 12522, transcripts of five v0.13.20 sessions): classic.SessionStart, then
+// session.start (surface null on desktop, the app attaches after), then the first prompt, which the app runs the hook for twice at once. The
+// start text is slow (dashboard reads), so the call WITHOUT it used to stamp first and take the date: the one the model read, the one holding
+// the start, read `+0s` with no date.
+const SESSION_START = { cwd: '/work', isInteractive: false } as const
+
+for (const surface of SURFACES) {
+  describe(`the first stamp of a fresh session on ${surface}`, () => {
+    test('is on the prompt the model reads (the one holding the start text), with the full date and +0', async ($, on) => {
+      const d = dashboard(on, { connected: true })
+      on('classic.SessionStart', () => ({}) as any)
+      await $.classic.SessionStart({ source: 'startup', cwd: '/work', session_id: 's1', transcript_path: '/work/main.jsonl' })
+      await $.session.start({ ...SESSION_START, surface: surface === 'desktop' ? null : surface } as any)
+      await d.clock.settle()
+      const [first, second] = await Promise.all([$.prompt.submit({ text: 'hello' }), $.prompt.submit({ text: 'hello' })])
+      expect(first.context).toHaveLength(2)
+      expect(first.context![0]).toMatch(FULL)
+      expect(second.context).toHaveLength(1)
+      expect(second.context![0]).toMatch(TIME_ONLY)
+    })
+
+    test('two tool results landing together stamp in the order the start was taken: the one with the start carries the date', async ($, on) => {
+      const d = dashboard(on, { connected: true })
+      on('classic.SessionStart', () => ({}) as any)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      await $.classic.SessionStart({ source: 'startup', cwd: '/work', session_id: 's1', transcript_path: '/work/main.jsonl' })
+      await $.session.start({ ...SESSION_START, surface: surface === 'desktop' ? null : surface } as any)
+      await d.clock.settle()
+      const [first, second] = await Promise.all([$.tool.call({ tool: 'Bash', command: 'a' } as any), $.tool.call({ tool: 'Bash', command: 'b' } as any)])
+      expect(first.context).toHaveLength(2)
+      expect(first.context![0]).toMatch(FULL)
+      expect(second.context).toHaveLength(1)
+      expect(second.context![0]).toMatch(TIME_ONLY)
+    })
+  })
+}

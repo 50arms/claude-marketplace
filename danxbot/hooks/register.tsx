@@ -1465,9 +1465,7 @@ async function takeEndedSession($: any): Promise<string | null> {
 // A pending session start is told once: the next prompt or tool result, whichever comes first, carries its line beside the stamp (a start with no
 // prompt coming, such as a compaction in the middle of a turn, reaches the model on the next tool result). It is gone once taken, so work that throws is one warning line here, never a rejected hook that
 // would lose the time stamp beside it.
-async function startLine($: any): Promise<string | null> {
-  const start = await takePendingStart($)
-  if (start === null) return null
+async function renderStart($: any, start: NonNullable<PendingStart>): Promise<string | null> {
   try {
     return await sessionContext($, start)
   } catch (err: any) {
@@ -1476,15 +1474,21 @@ async function startLine($: any): Promise<string | null> {
   }
 }
 
-// the stamp and, when there is one, the session start line: the entries a hook adds to the model's context
-async function stampEntries($: any, start: string | null): Promise<string[]> {
-  return [await timeLine($), ...(start === null ? [] : [start])]
+// the stamp and, when there is one, the session start line: the entries a hook adds to the model's context.
+// DX-4736: the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
+// (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
+// the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
+async function stampEntries($: any, takeStart: boolean): Promise<string[]> {
+  const pending = takeStart ? await takePendingStart($) : null
+  const line = await timeLine($)
+  if (pending === null) return [line]
+  const start = await renderStart($, pending)
+  return start === null ? [line] : [line, start]
 }
 
 // the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
 async function onPromptStamp($: any, e: any, next: any) {
-  const start = await startLine($)
-  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, start))] })
+  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true))] })
 }
 
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
@@ -1497,8 +1501,7 @@ async function onToolStamp($: any, e: any, next: any) {
   detach($, 'danxbot activity report', reportShellStart($, e, r))
   if (e.agentId !== undefined) detach($, 'danxbot activity report', reportSubagentAlive($, e.agentId))
   if (r.deny !== undefined) return r
-  const start = e.agentId === undefined ? await startLine($) : null
-  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, start))] }
+  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined))] }
 }
 
 // DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -1654,7 +1657,7 @@ async function readSubagentContext($: any): Promise<string | null> {
 }
 
 // SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. Nothing else: the session is not bound yet on a
-// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see startLine).
+// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see stampEntries).
 async function onClassicSessionStart($: any, e: any, next: any) {
   const below = await onTitle($, e, next)
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
