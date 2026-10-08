@@ -18,12 +18,14 @@ for (const surface of SURFACES) {
   describe(`the closes owed before a leave on ${surface}`, () => {
     // A connected session with a running sub-agent and an open background shell. `planConnect` answers the model's own plan_connect
     // (the engine has none of its own in a test) and records where it came in the sequence.
-    async function working($: any, on: any) {
+    // `refuse`: the model's plan_connect answers a refusal (`ok: false`) and the session stays where it is.
+    async function working($: any, on: any, options: Parameters<typeof dashboard>[1] = {}, refuse = { model: false }) {
       answerReportEvents(on)
       on('tool.call', { tool: 'Bash' }, () => BACKGROUNDED as any)
-      const d = dashboard(on)
+      const d = dashboard(on, options)
       on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => {
         d.sequence.push('tool plan_connect')
+        if (refuse.model) return { result: {}, text: JSON.stringify({ ok: false, status: 409, body: { error: 'plan_mismatch' } }), isError: false } as any
         if (e.disconnect === true) d.world.planId = null
         else if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
         return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: d.world.planId } } }), isError: false } as any
@@ -78,6 +80,58 @@ for (const surface of SURFACES) {
       expect(d.sequence.slice(0, 2)).toEqual([CLOSE, 'tool plan_connect'])
       expect(finishes(d).map(r => r.activityId)).toEqual(['agent-a1', 'b1'])
     })
+
+    test("a leave the dashboard refuses after the closes went out: one toast says they read as finished; nothing is posted twice", async ($, on) => {
+      const d = await working($, on, { disconnect: 'notFound' })
+      await (await pane($)).press({ key: 'disconnect' })
+      await d.clock.settle()
+      expect(d.toasts).toContain("danxbot: leaving PLAN-23 did not happen, but its 2 running activities were already reported finished: the dashboard keeps them finished while they run")
+      await $.turn.complete({ ...TURN, agentId: 'a1' })
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(finishes(d).map(r => r.activityId)).toEqual(['agent-a1', 'b1'])
+    })
+
+    test('a leave that fails after its closes also failed: the closes are owed again, and each goes out once, later', async ($, on) => {
+      const d = await working($, on, { disconnect: 'rejected' })
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 500, body: { error: 'activity boom' } }
+      await (await pane($)).press({ key: 'disconnect' })
+      await d.clock.settle()
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
+      const before = finishes(d).length
+      await $.turn.complete({ ...TURN, agentId: 'a1' })
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(finishes(d).slice(before).map(r => r.activityId)).toEqual(['agent-a1', 'b1'])
+      await $.turn.complete({ ...TURN, agentId: 'a1' })
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(finishes(d).slice(before)).toHaveLength(2)
+    })
+
+    test("the model's plan_connect leave the dashboard refuses: the same toast, and nothing more is posted", async ($, on) => {
+      const d = await working($, on, {}, { model: true })
+      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any)
+      await d.clock.settle()
+      expect(d.toasts).toContain("danxbot: leaving the plan did not happen, but its 2 running activities were already reported finished: the dashboard keeps them finished while they run")
+      await $.turn.complete({ ...TURN, agentId: 'a1' })
+      await d.clock.settle()
+      expect(finishes(d)).toHaveLength(2)
+    })
+
+    for (const args of [{ plan_id: 23, disconnect: true }, { plan_id: 24 }]) {
+      test(`a sub-agent's end racing the model's plan_connect ${JSON.stringify(args)} is not posted twice: the memory is cleared before the closes go out`, async ($, on) => {
+        const d = await working($, on)
+        d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { delayMs: 1_000 }
+        const leaving = $.tool.call({ tool: toolName('plan_connect'), ...args } as any)
+        await d.clock.settle()
+        await $.turn.complete({ ...TURN, agentId: 'a1' })
+        await d.clock.advance(1_000)
+        await leaving
+        await d.clock.settle()
+        expect(finishes(d).filter(r => r.activityId === 'agent-a1')).toHaveLength(1)
+      })
+    }
 
     test('a leave with nothing owed posts nothing', async ($, on) => {
       answerReportEvents(on)

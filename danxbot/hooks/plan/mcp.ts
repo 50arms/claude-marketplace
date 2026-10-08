@@ -17,6 +17,17 @@ export function mcpText(r: any): string {
 
 // DX-4233: the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {plan_id}}}` envelope. Null for anything
 // else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
+// DX-4235: whether the model's plan_connect answered `ok: true` (a leave that happened); anything else, a refusal or text that is not
+// the envelope, is a leave that did not happen.
+export function answeredOk(text: unknown): boolean {
+  if (typeof text !== 'string') return false
+  try {
+    return JSON.parse(text)?.ok === true
+  } catch {
+    return false
+  }
+}
+
 export function connectedPlanId(text: unknown): number | null {
   if (typeof text !== 'string') return null
   let parsed: any

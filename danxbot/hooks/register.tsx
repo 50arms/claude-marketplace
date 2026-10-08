@@ -54,7 +54,7 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
+import { answeredOk, connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
 import type { Naming } from './plan/notes'
 import { connectNote, disconnectNote, parseNaming, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
@@ -422,8 +422,10 @@ function leftView(cur: any): any {
 
 function connect($: any, plan: PlanRow): Promise<void> {
   return withBusy($, busyKey.connect(plan.id), async () => {
-    // DX-4235: a move to another plan closes what the session opened under the one it leaves
-    if (await movesOffReportedPlan($, plan.id)) await closeOwedBeforeLeave($, `moving to ${plan.ref}`)
+    // DX-4235: a move to another plan closes what the session opened under the one it leaves; a move that does not happen takes that back
+    const why = `moving to ${plan.ref}`
+    const closes = (await movesOffReportedPlan($, plan.id)) ? await closeOwedBeforeLeave($, why) : null
+    const stayed = () => (closes === null ? Promise.resolve() : leaveDidNotHappen($, closes, why))
     const sessionTitle = await read($, title)
     let r
     try {
@@ -432,10 +434,12 @@ function connect($: any, plan: PlanRow): Promise<void> {
         ...(sessionTitle ? { title: sessionTitle } : {}),
       })
     } catch (err: any) {
+      await stayed()
       $.ui.toast(`Connect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
     }
     const outcome = toolOutcome(r)
+    if (!outcome.ok) await stayed()
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       // a refusal is `ok: false`, not an error result: nothing connected, so the model is told nothing
@@ -468,16 +472,19 @@ function connect($: any, plan: PlanRow): Promise<void> {
 // failure carries its status and message. No confirm: one Connect undoes it.
 function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
-    // DX-4235: the leave closes what the session opened under the plan first
-    await closeOwedBeforeLeave($, `leaving ${plan.ref}`)
+    // DX-4235: the leave closes what the session opened under the plan first; a leave that does not happen takes that back
+    const why = `leaving ${plan.ref}`
+    const closes = await closeOwedBeforeLeave($, why)
     let r
     try {
       r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
+      await leaveDidNotHappen($, closes, why)
       $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
       return
     }
     const outcome = toolOutcome(r)
+    if (!outcome.ok) await leaveDidNotHappen($, closes, why)
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
       $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
@@ -1327,10 +1334,13 @@ async function onCommand($: any) {
 // answer draws the approval link and the code in the band and the pane; the plan page is not opened (there is
 // no connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
-  // DX-4235: the model's leave, or its move to another plan, closes what the session opened under the plan it is on first
-  if (e.disconnect === true) await closeOwedBeforeLeave($, 'leaving the plan')
-  else if (typeof e.plan_id === 'number' && (await movesOffReportedPlan($, e.plan_id))) await closeOwedBeforeLeave($, `moving to plan ${e.plan_id}`)
+  // DX-4235: the model's leave, or its move to another plan, closes what the session opened under the plan it is on first; a leave or move
+  // its answer says did not happen takes that back
+  const leaving = e.disconnect === true
+  const why = leaving ? 'leaving the plan' : `moving to plan ${e.plan_id}`
+  const closes = leaving || (typeof e.plan_id === 'number' && (await movesOffReportedPlan($, e.plan_id))) ? await closeOwedBeforeLeave($, why) : null
   const ran = await next(e)
+  if (closes !== null && !(leaving ? answeredOk(ran.text) : connectedPlanId(ran.text) === e.plan_id)) await leaveDidNotHappen($, closes, why)
   // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
   relayHalted = null
@@ -1807,24 +1817,47 @@ async function openingPlan($: any): Promise<number | null> {
   return (await read($, view)).connected?.id ?? null
 }
 
+// What the closes before a leave came to: the memory they took, how many rows they posted, and whether the dashboard took them.
+type LeaveCloses = { owed: ReportState; rows: number; posted: boolean }
+
+const activities = (n: number) => `${n} running activit${n === 1 ? 'y' : 'ies'}`
+
 // DX-4235 (comment 12426): before the session leaves its plan or moves to another, every close it owes (a running sub-agent's finish, an
 // open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running are the
 // stuck-row bug of comment 10065. Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds the leave; a failure is one toast
 // naming what may stay running, and the leave goes on. The memory is cleared first, so a sub-agent's turn.complete racing the leave
-// posts nothing twice. `why` names the leave in the toast.
-async function closeOwedBeforeLeave($: any, why: string): Promise<void> {
+// posts nothing twice. `why` names the leave in the toast. The caller hands the answer to `leaveDidNotHappen` when the leave failed.
+async function closeOwedBeforeLeave($: any, why: string): Promise<LeaveCloses> {
   const owed = await read($, reports)
   await forgetReports($)
   const now = await $.clock.now()
   const rows = [...Object.keys(owed.agents).map(id => agentRow(id, null, now, now)), ...owed.shells.map(id => shellRow(id, now, now))]
-  if (rows.length === 0) return
+  if (rows.length === 0) return { owed, rows: 0, posted: false }
   const failure = await withinDeadline(
     $,
     LEAVE_CLOSE_DEADLINE_MS,
     api($, 'POST', ACTIVITY_PATH, { body: { activities: rows } }).then(r => (r.ok ? null : errText(r))),
     () => `timeout: no answer within ${LEAVE_CLOSE_DEADLINE_MS / 1000} s`,
   )
-  if (failure !== null) $.ui.toast(`danxbot could not close ${rows.length} running activit${rows.length === 1 ? 'y' : 'ies'} before ${why} (${failure.slice(0, TOAST_ERROR_MAX)}): the dashboard may show them running`)
+  if (failure !== null) $.ui.toast(`danxbot could not close ${activities(rows.length)} before ${why} (${failure.slice(0, TOAST_ERROR_MAX)}): the dashboard may show them running`)
+  return { owed, rows: rows.length, posted: failure === null }
+}
+
+// DX-4235: the leave did not happen (refused, or the call failed): the session is still on its plan, so what the closes took comes back.
+// Closes the dashboard did not take are owed again: the memory returns, merged with anything opened since (one finish each, later). Closes
+// it took cannot be undone: the dashboard keeps a row's FIRST finish (danxbot dispatch-activities-db.ts upsert, finished_at =
+// COALESCE(stored, incoming)), so a reopening post would change nothing; they stay forgotten (nothing is posted twice) and one toast says
+// they read as finished while they run. The count and the plan always come back.
+async function leaveDidNotHappen($: any, closes: LeaveCloses, why: string): Promise<void> {
+  const { owed } = closes
+  const rowsBack = !closes.posted
+  await update($, reports, cur => ({
+    agents: rowsBack ? { ...owed.agents, ...cur.agents } : cur.agents,
+    shells: rowsBack ? [...owed.shells.filter(s => !cur.shells.includes(s)), ...cur.shells] : cur.shells,
+    count: cur.count ?? owed.count,
+    planId: cur.planId ?? owed.planId,
+  }))
+  if (closes.posted) $.ui.toast(`danxbot: ${why} did not happen, but its ${activities(closes.rows)} were already reported finished: the dashboard keeps them finished while they run`)
 }
 
 // Whether a move to `planId` leaves the plan the open rows belong to.
@@ -1848,11 +1881,10 @@ async function putBackgroundWork($: any, count: number | null, at: number): Prom
   detach($, 'danxbot background-work report', report($, 'background-work', 'PUT', BACKGROUND_WORK_PATH, { count, eventAt: new Date(at).toISOString() }))
 }
 
-// Whether a count (or a clear) is owed in this plan state; `off` forgets the reports' memory instead.
-async function countOwed($: any): Promise<boolean> {
-  const state = await reportingState($)
-  if (state === 'off') await forgetReports($)
-  return state === 'on' || (state === 'unknown' && (await read($, reports)).count !== null)
+// Whether a count (or a clear) is owed in `state` (not `off`, which the caller handles): always on a plan, and while the plan state is
+// unknown only when a count is on record.
+async function owesCount($: any, state: ReportingState): Promise<boolean> {
+  return state === 'on' || (await read($, reports)).count !== null
 }
 
 // DX-4235: a sub-agent started: its row opens and it is remembered as running, its liveness clock starting now.
@@ -1919,7 +1951,7 @@ async function reportSnapshot($: any, event: 'Stop' | 'SubagentStop', e: any, ex
     return
   }
   const now = await $.clock.now()
-  if (state === 'on' || (await read($, reports)).count !== null) await putBackgroundWork($, countRunning(tasks, excludeId), now)
+  if (await owesCount($, state)) await putBackgroundWork($, countRunning(tasks, excludeId), now)
   const ended = endedShells((await read($, reports)).shells, tasks)
   if (ended.length === 0) return
   await update($, reports, cur => ({ ...cur, shells: cur.shells.filter(s => !ended.includes(s)) }))
@@ -1960,8 +1992,9 @@ async function readReadyCards($: any): Promise<ReadyRead> {
 // Never on a stop the hook already forced (`stop_hook_active`, so it cannot loop), never on its own failure (one toast, the stop goes on),
 // and within one deadline over all its reads.
 async function onReportStop($: any, e: any, next: any) {
-  if ((await reportingState($)) === 'off') return next(e)
+  // the snapshot runs in every plan state: off, it forgets what the reports owe (reportSnapshot)
   detach($, 'danxbot background-work report', reportSnapshot($, 'Stop', e))
+  if ((await reportingState($)) === 'off') return next(e)
   const verdict: ReadyRead =
     e.agent_id === undefined && e.stop_hook_active !== true
       ? await withinDeadline($, READY_CARDS_DEADLINE_MS, readReadyCards($), () => ({ kind: 'failed', reason: `timeout: no answer within ${READY_CARDS_DEADLINE_MS / 1000} s` }))
@@ -1976,7 +2009,10 @@ async function onReportStop($: any, e: any, next: any) {
 // (`agent_id` set) clears nothing: the session goes on.
 async function onReportStopFailure($: any, e: any, next: any) {
   const r = await next(e)
-  if (e.agent_id === undefined && (await countOwed($))) await putBackgroundWork($, null, await $.clock.now())
+  if (e.agent_id !== undefined) return r
+  const state = await reportingState($)
+  if (state === 'off') await forgetReports($)
+  else if (await owesCount($, state)) await putBackgroundWork($, null, await $.clock.now())
   return r
 }
 

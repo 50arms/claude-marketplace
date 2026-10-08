@@ -65,7 +65,8 @@ export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fet
   run.refresh = refreshInstall(options).then(
     (latest) => {
       try {
-        pruneInstalls([version, latest], { env, ...(now === undefined ? {} : { now }), ...(alive === undefined ? {} : { alive }) });
+        // an option left undefined takes pruneInstalls' own default
+        pruneInstalls([version, latest], { env, now, alive });
       } catch (err) {
         stderr.write(`${PREFIX} could not prune old installs (${oneLine(err.message)}); they stay until a later refresh prunes them\n`);
       }

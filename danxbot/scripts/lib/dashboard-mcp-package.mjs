@@ -325,16 +325,25 @@ export function leaseVersion(version, { env = process.env, pid = process.pid } =
 
 const PID_NAME = /^\d+$/;
 
-/** Whether a live process holds a lease on the version directory `dir`. */
+/**
+ * Whether a live process holds a lease on the version directory `dir`. DX-4235: a lease whose process is gone (one that crashed before
+ * releasing it) is deleted as it is read, so dead leases never pile up.
+ */
 function isLeased(dir, alive) {
+  const leases = path.join(dir, LEASES_DIR);
   let names;
   try {
-    names = fs.readdirSync(path.join(dir, LEASES_DIR));
+    names = fs.readdirSync(leases);
   } catch (err) {
     if (err.code === "ENOENT") return false;
     throw err;
   }
-  return names.some((name) => PID_NAME.test(name) && alive(Number(name)));
+  let held = false;
+  for (const name of names.filter((n) => PID_NAME.test(n))) {
+    if (alive(Number(name))) held = true;
+    else fs.rmSync(path.join(leases, name), { force: true });
+  }
+  return held;
 }
 
 /**

@@ -322,6 +322,33 @@ describe("the launcher process", () => {
     }
   });
 
+  test("DX-4235: a server that exits while a refresh installs: npm is stopped and its stage removed, the lease released, the record kept, and the launcher exits with the server's code", () => {
+    recordAt(A);
+    const bin = installedBin(dataDir, A);
+    mkdirSync(path.dirname(bin), { recursive: true });
+    // the stand-in server exits once the refresh's npm has made its stage (npm against the registry below never finishes on its own)
+    writeFileSync(
+      bin,
+      `import fs from "node:fs"; import path from "node:path";
+const root = path.join(process.env.CLAUDE_PLUGIN_DATA, "dashboard-mcp");
+const tick = setInterval(() => { if (fs.readdirSync(root).some((n) => n.startsWith(".stage-"))) { clearInterval(tick); process.exit(4); } }, 50);`,
+    );
+    writeFileSync(path.join(path.dirname(bin), "..", "package.json"), JSON.stringify({ type: "module" }));
+    registry.setVersion(B);
+    registry.setMode("latest-only");
+    const result = spawnSync(process.execPath, [LAUNCHER], {
+      input: "",
+      encoding: "utf8",
+      timeout: 60_000,
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_DASHBOARD_URL: "https://dash.example", [REGISTRY_BASE_URL_ENV]: registry.url, npm_config_registry: registry.url },
+    });
+    assert.equal(result.status, 4, result.stderr);
+    assert.equal(result.stderr, "", "a stopped refresh writes no failure line");
+    assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp")).sort(), [A, "current"], "no stage left, and no install of B");
+    assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp", A, ".leases")), [], "the lease is released");
+    assert.equal(recordedVersionOrNull(env), A);
+  });
+
   test("a failure to start exits 1 with ONE stderr line naming the reason and writes nothing to stdout", () => {
     const result = run({ CLAUDE_PLUGIN_DATA: "", DANXBOT_DASHBOARD_URL: "https://danxbot.sageus.ai" });
     assert.equal(result.status, 1);

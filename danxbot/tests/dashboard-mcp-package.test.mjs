@@ -476,6 +476,16 @@ describe("pruneInstalls (DX-4321)", () => {
     assert.deepEqual(asked.sort(), [111, 222]);
   });
 
+  test("DX-4235: a lease left by a process that crashed is deleted as prune reads it; a live one beside it stays and keeps the version", () => {
+    const dir = dirAt("0.1.1", T0);
+    leaseVersion("0.1.1", { env, pid: 111 });
+    leaseVersion("0.1.1", { env, pid: 999 });
+    utimesSync(dir, T0, T0);
+    pruneInstalls([], { env, now, alive: (pid) => pid === 111 });
+    assert.ok(existsSync(dir));
+    assert.deepEqual(readdirSync(path.join(dir, ".leases")), ["111"]);
+  });
+
   test("DX-4235: a lease is released by its holder", () => {
     dirAt("0.1.1", T0);
     const release = leaseVersion("0.1.1", { env, pid: 111 });

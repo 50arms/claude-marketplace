@@ -11,6 +11,7 @@ const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: fals
 // the engine's result of a Bash call it moved to the background: the id it lists the shell under in `background_tasks`
 const BACKGROUNDED = { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bjlibh54w' }, text: 'Command running in background with ID: bjlibh54w' }
 const shell = (id: string, status = 'running') => ({ id, type: 'shell', status, description: 'sleep' })
+const finishes = (d: any) => activityRows(d).filter(r => r.finishedAt !== null)
 
 describe('the activity rows (pure)', () => {
   test("a sub-agent's key is agent-<id>, whichever way the id arrives", () => {
@@ -256,6 +257,56 @@ for (const surface of SURFACES) {
       await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
       await d.clock.settle()
       expect(activityRows(d).filter(r => r.finishedAt !== null).map(r => r.activityId)).toEqual(['agent-a1b2c3', 'bjlibh54w'])
+    })
+
+    test('a revoked key is a session known to be off its plan: what it owed is dropped, nothing is posted, nothing toasts', async ($, on) => {
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await d.clock.settle()
+      d.world.signedOut = 'revoked'
+      await forceRefresh($, d)
+      const before = d.reports.length
+      await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
+      await d.clock.settle()
+      expect(d.reports.slice(before)).toEqual([])
+      expect(d.toasts.filter(t => t.includes('report failed'))).toEqual([])
+    })
+
+    test("a sub-agent's end seen while off its plan forgets everything owed: back on the plan, the shell it had opened is never closed from here", async ($, on) => {
+      on('tool.call', () => BACKGROUNDED as any)
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await $.tool.call({ tool: 'Bash', command: 'sleep 9', run_in_background: true } as any)
+      await d.clock.settle()
+      d.world.planId = null
+      await forceRefresh($, d)
+      await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
+      d.world.planId = 23
+      await forceRefresh($, d)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(finishes(d)).toEqual([])
+    })
+
+    test("a stop seen while off its plan forgets everything owed: back on the plan, the sub-agent's end posts nothing", async ($, on) => {
+      on('tool.call', () => BACKGROUNDED as any)
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await d.clock.settle()
+      d.world.planId = null
+      await forceRefresh($, d)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      d.world.planId = 23
+      await forceRefresh($, d)
+      await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
+      await d.clock.settle()
+      expect(finishes(d)).toEqual([])
     })
 
     test('nothing new opens while the plan state is unknown: no start row, no shell row, no liveness post', async ($, on) => {
