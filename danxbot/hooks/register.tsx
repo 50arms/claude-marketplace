@@ -50,6 +50,7 @@ import {
   toolName,
   NOTE_MARKER,
   TOAST_ERROR_MAX,
+  planUrl,
   busyKey,
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
@@ -64,6 +65,7 @@ import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots,
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
+import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_PATH, KEEPALIVE_RETRY_MS, keepalivePrompt } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
@@ -947,6 +949,7 @@ async function syncRelay($: any): Promise<void> {
   if (planId === null) {
     relayHalted = null
     stopRelay()
+    stopKeepalive()
     return
   }
   startRelay($, planId)
@@ -955,6 +958,8 @@ async function syncRelay($: any): Promise<void> {
 // DX-4233: THE start of the relay, from a plan id however it was learned (the view, a plan_connect answer, the light plan read). Never async:
 // the check that no loop runs for this plan and the registration of the new one are one step, so two starts landing together make one loop.
 function startRelay($: any, planId: number): void {
+  // DX-3900: the keepalive follows the plan connection, not the relay's health: a halted or ended relay does not end it
+  followPlan($, planId)
   if (relayRun !== null && relayRun.planId === planId) return
   // a halt belongs to the plan it happened on: any other plan starts a relay of its own
   if (relayHalted !== null && relayHalted !== planId) relayHalted = null
@@ -1027,6 +1032,83 @@ function stopRelay(): void {
   if (relayRun === null) return
   relayRun.dead = true
   relayRun = null
+}
+
+// DX-3900: the plan-tab keepalive (relay/keepalive.ts says why), for desktop sessions only: the 1800 s timeout is the desktop app's preview pane and
+// a terminal session has no plan tab. "The desktop hosts this session" is sticky (`desktopHosted`): the app starts the session itself (surfaces() has
+// 'desktop' at session.start, whose own `surface` is null), detaches about 5 s later and attaches again only while the person views it, so the
+// surfaces at fire time say nothing. Set at session.start or by any session.attach of the desktop; a session that never sees one never arms. It follows the plan CONNECTION (`keepalivePlan`), set by startRelay and cleared when the plan is
+// disconnected or the process ends, not the relay loop's health.
+// One `$.clock.after` timer (a handle, so module variables). An idle period starts at relay start and at every main-loop turn end
+// (armKeepalive); a turn start, a plan move or the plan's end cancels it (cancelKeepalive). `keepaliveEpoch` makes a cancel reach an attempt
+// already running: whatever it finds afterwards is dropped, nothing is sent or scheduled for a period that is over.
+let keepalivePlan: number | null = null
+let desktopHosted = false
+let keepaliveTimer: { cancel: () => void } | null = null
+let keepaliveEpoch = 0
+
+function cancelKeepalive(): void {
+  keepaliveEpoch++
+  keepaliveTimer?.cancel()
+  keepaliveTimer = null
+}
+
+function stopKeepalive(): void {
+  keepalivePlan = null
+  cancelKeepalive()
+}
+
+function followPlan($: any, planId: number): void {
+  if (keepalivePlan === planId) return
+  keepalivePlan = planId
+  armKeepalive($)
+}
+
+// A new idle period starts now.
+function armKeepalive($: any): void {
+  cancelKeepalive()
+  if (keepalivePlan !== null) scheduleKeepalive($, KEEPALIVE_IDLE_MS, null)
+}
+
+// `giveUpAt`: the time no attempt may start after, fixed by the period's first attempt (null until then).
+function scheduleKeepalive($: any, wait: number, giveUpAt: number | null): void {
+  const epoch = keepaliveEpoch
+  keepaliveTimer = $.clock.after(wait, () => detach($, 'Plan tab keepalive', keepaliveAttempt($, epoch, giveUpAt)))
+}
+
+// What an attempt came to: the prompt went in, the session is not on the desktop (nothing to keep open), or why it did not.
+type Fired = { kind: 'sent' } | { kind: 'not-desktop' } | { kind: 'failed'; why: string }
+
+// One attempt: fire, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until the give-up time, which
+// the period's first attempt fixes as KEEPALIVE_GIVE_UP_MS after the turn ended (its timer was set at that end), then it gives up, loudly.
+// A prompt that went in is followed by its turn, whose end starts the next idle period. A session that is not on the desktop at this moment
+// (it may attach later; the surface is read now, not at session start) is looked at again an idle period on.
+async function keepaliveAttempt($: any, epoch: number, giveUpAt: number | null): Promise<void> {
+  keepaliveTimer = null
+  const startedAt = await $.clock.now()
+  const deadline = giveUpAt ?? startedAt - KEEPALIVE_IDLE_MS + KEEPALIVE_GIVE_UP_MS
+  const fired = await fireKeepalive($, epoch)
+  const endedAt = await $.clock.now()
+  // a cancel (a turn began, the plan ended or moved) while the attempt ran: whatever it found is dropped, nothing is toasted or scheduled
+  if (epoch !== keepaliveEpoch) return
+  if (fired.kind === 'sent') return
+  if (fired.kind === 'not-desktop') return scheduleKeepalive($, KEEPALIVE_IDLE_MS, null)
+  const gaveUp = endedAt + KEEPALIVE_RETRY_MS > deadline
+  $.ui.toast(`Plan tab keepalive ${gaveUp ? 'gave up' : 'failed, trying again'}: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
+  if (!gaveUp) scheduleKeepalive($, KEEPALIVE_RETRY_MS, deadline)
+}
+
+// Ask the session to re-check its plan tab: the registry's wording plus the plan page. The epoch is checked again before the prompt goes in.
+async function fireKeepalive($: any, epoch: number): Promise<Fired> {
+  if (!desktopHosted) return { kind: 'not-desktop' }
+  const plan = (await read($, view)).connected
+  // the page named is the one the view holds: a move is followed by a view refresh at once, and the arm that came with the move restarts the period
+  if (plan === null) return { kind: 'failed', why: 'the connected plan is not loaded' }
+  const told = eventText(await api($, 'GET', KEEPALIVE_PATH))
+  if (told.kind !== 'text') return { kind: 'failed', why: `the wording was not read: ${told.kind === 'failed' ? told.reason : 'no text'}` }
+  if (epoch !== keepaliveEpoch) return { kind: 'sent' }
+  const failure = await submitEvent($, keepalivePrompt(told.text, planUrl(plan)))
+  return failure === null ? { kind: 'sent' } : { kind: 'failed', why: `the prompt was not taken: ${failure}` }
 }
 
 // DX-4233: THE gate for what an ended run (a move to another plan, the process's end) may say: its relay state, the halt that follows from
@@ -1259,7 +1341,15 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
   }
 }
 
+// DX-3900: the desktop attached (it does so again each time the person views the session): it hosts this one from now on
+function onSessionAttach($: any, e: any, next: any) {
+  if (e.surface === 'desktop') desktopHosted = true
+  return next(e)
+}
+
 async function onSessionStart($: any, e: any, next: any) {
+  // DX-3900: a reload or a new session starts knowing only what the surfaces say now
+  desktopHosted = (await $.session.surfaces()).includes('desktop')
   await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
@@ -1303,6 +1393,7 @@ async function onSessionEnd($: any, e: any, next: any) {
     // DX-4233: the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh below
     // restarts it only if the new conversation is on another plan)
     stopRelay()
+    stopKeepalive()
     pacingTicker?.cancel()
     pacingTicker = null
     usageTicker?.cancel()
@@ -1699,6 +1790,8 @@ async function onTurnComplete($: any, e: any, next: any) {
     })
     // detached: the turn.complete hook does not wait on the session taking a prompt
     if (prompts.length > 0) detach($, 'Telling the session', promptNotes($, prompts))
+    // DX-3900: a sub-agent's end is not the session going idle
+    armKeepalive($)
   } else {
     // DX-4235: a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
@@ -1710,6 +1803,7 @@ async function onTurnComplete($: any, e: any, next: any) {
 
 // DX-4233: the main loop's turn began (turn.start never fires for a sub-agent).
 async function onTurnStart($: any, e: any, next: any) {
+  cancelKeepalive()
   await update($, turn, () => turnStarted())
   return next(e)
 }
@@ -2033,6 +2127,7 @@ async function onReportStopFailure($: any, e: any, next: any) {
 
 export const register: Register = on => {
   on('session.start', onSessionStart)
+  on('session.attach', onSessionAttach)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)

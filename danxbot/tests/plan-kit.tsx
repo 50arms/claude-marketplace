@@ -239,6 +239,12 @@ export function dashboard(
   // DX-4586: a call that never settles (hangFirstLoad) waits on this, not on an hour of fake clock: advancing an hour fires every
   // timer in it (a poll a minute, a report a minute), real time that times a test out under machine load. `release()` lets it answer.
   const hung = (() => { let release!: () => void; const promise = new Promise<void>(r => { release = r }); return { promise, release } })()
+  // DX-3900: the surfaces the session draws on, as `$.session.surfaces()` reads them: terminal first under the REPL, then each client in the
+  // order it attached. startSession fills it the way the engine does (the desktop app joins AFTER session.start, by session.attach).
+  const roster: string[] = []
+  on('session.surfaces', () => ({ value: [...roster] }) as any)
+  on('session.attach', (_$: any, e: any) => ({ clientId: e.clientId }) as any)
+  on('session.detach', (_$: any, e: any) => ({ clientId: e.clientId }) as any)
   const calls: { server: string; tool: string; args: any }[] = []
   const api: { method: string; path: string; body?: any; query?: any }[] = []
   const toasts: string[] = []
@@ -906,7 +912,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
@@ -940,8 +946,28 @@ export type FakeReader = {
 // session.start as the engine raises it (the plugin loads the plan, registers its command and
 // starts its pacing poll and the relay), then lets the load it kicked off finish.
 export async function startSession($: any, d: Dashboard, surface: string) {
-  await $.session.start({ cwd: '/work', surface, isInteractive: true })
+  // DX-3900: the engine's order, as a live desktop session logged it. Under the REPL the terminal is the session's first surface. The desktop
+  // app hosts a session headless: session.start has surface null (and isInteractive false) with surfaces() already ['desktop'], and the app
+  // detaches about 5 s later (surfaces() is [] from then); it attaches again only while the person views the session (viewSession / leaveSession).
+  if (surface === 'terminal') {
+    d.roster.push('terminal')
+    await $.session.start({ cwd: '/work', surface, isInteractive: true })
+  } else {
+    d.roster.push(surface)
+    await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
+    await leaveSession($, d, surface)
+  }
   await d.clock.settle()
+}
+
+export async function viewSession($: any, d: Dashboard, surface: string) {
+  d.roster.push(surface)
+  await $.session.attach({ surface, clientId: `${surface}-2`, viewport: { columns: 71, rows: 44, isFullscreen: true } })
+}
+
+export async function leaveSession($: any, d: Dashboard, surface: string) {
+  d.roster.splice(d.roster.indexOf(surface), 1)
+  await $.session.detach({ surface, clientId: `${surface}-2`, reason: 'detach' })
 }
 
 // DX-4234: a session start reaches the model on the FIRST PROMPT's context, beside its time stamp (SessionStart is recorded only: the engine

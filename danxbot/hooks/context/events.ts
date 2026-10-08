@@ -33,7 +33,9 @@ export function restartAsk(start: { source: string; transcriptPath: string | nul
   return start.transcriptPath === null ? { kind: 'failed', reason: 'no_transcript_path: SessionStart resume carried no transcript_path' } : { kind: 'ask', args: { transcript_path: start.transcriptPath } }
 }
 
-export const eventPath = (event: DanxEvent) => `/api/reminders/event/${event}`
+// The registry's event texts: the four told at a start and the keepalive's, which a timer asks for (not a `DanxEvent`: eventContext takes only those)
+export type RegistryEvent = DanxEvent | 'tab_keepalive'
+export const eventPath = (event: RegistryEvent) => `/api/reminders/event/${event}`
 
 // The session's own danx-dashboard server answers the restart notice itself, as a tool.
 export const RESTART_NOTICE_TOOL = 'restart_notice'
