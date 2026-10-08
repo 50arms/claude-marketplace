@@ -46,7 +46,7 @@ for (const surface of SURFACES) {
       await (await pane($)).press({ key: 'disconnect' })
       await d.clock.settle()
       expect(d.sequence).toEqual([CLOSE, 'tool plan_connect'])
-      expect(finishes(d)).toEqual([agentRow('agent-a1', null, at, at), shellRow('b1', at, at)])
+      expect(finishes(d)).toEqual([agentRow('agent-a1', null, at, at), shellRow('b1', null, at, at)])
       await $.turn.complete({ ...TURN, agentId: 'a1' })
       await d.clock.settle()
       expect(finishes(d)).toHaveLength(2)

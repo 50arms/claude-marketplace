@@ -44,23 +44,24 @@ export function bareAgentId(agentId: string): string {
 }
 
 // The facts only a transcript knows (who spawned it, effort, its current tool call, how it ended, its card) are sent unknown; the server
-// never lets an unknown erase a stored value. `description` is null too: the wire carries only redacted labels, and the redactor is the
-// telemetry package's, so the plugin sends none rather than a second copy of it.
-const UNKNOWN_FACTS = { description: null, parentActivityId: null, effort: null, currentActivity: null, endStatus: null, briefIssueId: null } as const
+// never lets an unknown erase a stored value, so a close sent with no label keeps the label its start carried.
+const UNKNOWN_FACTS = { parentActivityId: null, effort: null, currentActivity: null, endStatus: null, briefIssueId: null } as const
 
-function row(kind: ActivityChange['kind'], activityId: string, agentType: string | null, at: number, finishedAt: number | null): ActivityChange {
-  return { kind, activityId, agentType, startedAt: at, lastActivityAt: at, finishedAt, ...UNKNOWN_FACTS }
+function row(kind: ActivityChange['kind'], activityId: string, agentType: string | null, description: string | null, at: number, finishedAt: number | null): ActivityChange {
+  return { kind, activityId, agentType, description, startedAt: at, lastActivityAt: at, finishedAt, ...UNKNOWN_FACTS }
 }
 
-// One sub-agent: running (`finishedAt` null) or finished at `finishedAt`. `activityId` is already `subagentActivityId`'s.
+// One sub-agent: running (`finishedAt` null) or finished at `finishedAt`. `activityId` is already `subagentActivityId`'s. A sub-agent's
+// label is its transcript sidecar's, which the dashboard's own reader reports; the plugin sends none.
 export function agentRow(activityId: string, agentType: string | null, at: number, finishedAt: number | null): ActivityChange {
-  return row('agent', activityId, agentType, at, finishedAt)
+  return row('agent', activityId, agentType, null, at, finishedAt)
 }
 
 // One background shell, keyed by its background task id: the id the Bash result names (`backgroundTaskId`) is the id the engine's
-// `background_tasks` snapshot lists it under (observed live, DX-4235 comment 12391), which is what lets a Stop close it.
-export function shellRow(taskId: string, at: number, finishedAt: number | null): ActivityChange {
-  return row('bash', taskId, null, at, finishedAt)
+// `background_tasks` snapshot lists it under (observed live, DX-4235 comment 12391), which is what lets a Stop close it. `label`: the
+// shell call's redacted description (label.ts `labelOf`, PBLM-2121) on its start; null on its end, which keeps the start's.
+export function shellRow(taskId: string, label: string | null, at: number, finishedAt: number | null): ActivityChange {
+  return row('bash', taskId, null, label, at, finishedAt)
 }
 
 // The shells this session opened that the snapshot no longer lists as running: they ended (the engine's list holds only work in flight).

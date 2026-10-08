@@ -77,6 +77,7 @@ import { readTeamSettings } from './plan/pacing-settings'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, bareAgentId, endedShells, shellRow, subagentActivityId } from './reports/activity'
 import type { ActivityChange } from './reports/activity'
 import { BACKGROUND_WORK_PATH, countRunning, heartbeatCount } from './reports/background-work'
+import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
 import type { ReadyCard } from './reports/ready-cards'
 
@@ -1488,7 +1489,7 @@ async function onPromptStamp($: any, e: any, next: any) {
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
   // DX-4235: a background shell's start, and a working sub-agent's liveness
-  detach($, 'danxbot activity report', reportShellStart($, r))
+  detach($, 'danxbot activity report', reportShellStart($, e, r))
   if (e.agentId !== undefined) detach($, 'danxbot activity report', reportSubagentAlive($, e.agentId))
   if (r.deny !== undefined) return r
   const start = e.agentId === undefined ? await startLine($) : null
@@ -1839,7 +1840,7 @@ async function closeOwedBeforeLeave($: any, why: string): Promise<LeaveCloses> {
   const owed = await read($, reports)
   await forgetReports($)
   const now = await $.clock.now()
-  const rows = [...Object.keys(owed.agents).map(id => agentRow(id, null, now, now)), ...owed.shells.map(id => shellRow(id, now, now))]
+  const rows = [...Object.keys(owed.agents).map(id => agentRow(id, null, now, now)), ...owed.shells.map(id => shellRow(id, null, now, now))]
   if (rows.length === 0) return { owed, rows: 0, posted: false }
   const failure = await withinDeadline(
     $,
@@ -1929,15 +1930,16 @@ async function reportSubagentEnd($: any, agentId: string): Promise<void> {
 }
 
 // DX-4235: a tool call whose result names a background task (a `run_in_background` shell, or one the person backgrounded) opens that
-// shell's row, keyed by its task id (the id the engine's `background_tasks` lists it under, comment 12391).
-async function reportShellStart($: any, r: any): Promise<void> {
+// shell's row, keyed by its task id (the id the engine's `background_tasks` lists it under, comment 12391), labelled by the call's own
+// `description`, redacted (PBLM-2121; never its command).
+async function reportShellStart($: any, e: any, r: any): Promise<void> {
   const taskId = r.deny === undefined ? r.result?.backgroundTaskId : undefined
   if (typeof taskId !== 'string' || taskId === '') return
   const planId = await openingPlan($)
   if (planId === null) return
   const now = await $.clock.now()
   await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId], planId }))
-  postActivity($, [shellRow(taskId, now, null)])
+  postActivity($, [shellRow(taskId, labelOf(e.description), now, null)])
 }
 
 // DX-4235: a running sub-agent's own tool call re-posts its row with a fresh lastActivityAt, at most once a LIVENESS_MS, and re-sends the
@@ -1969,7 +1971,7 @@ async function reportSnapshot($: any, event: 'Stop' | 'SubagentStop', e: any, ex
   const ended = endedShells((await read($, reports)).shells, tasks)
   if (ended.length === 0) return
   await update($, reports, cur => ({ ...cur, shells: cur.shells.filter(s => !ended.includes(s)) }))
-  postActivity($, ended.map(id => shellRow(id, now, now)))
+  postActivity($, ended.map(id => shellRow(id, null, now, now)))
 }
 
 // What the ready-cards read came to: the ready cards, nothing to say, or why it failed.

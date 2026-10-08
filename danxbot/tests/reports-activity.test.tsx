@@ -33,7 +33,8 @@ describe('the activity rows (pure)', () => {
       endStatus: null,
       briefIssueId: null,
     })
-    expect(shellRow('b1', 7, 7)).toMatchObject({ kind: 'bash', activityId: 'b1', agentType: null, startedAt: 7, lastActivityAt: 7, finishedAt: 7 })
+    expect(shellRow('b1', 'Run the tests', 7, null)).toMatchObject({ kind: 'bash', activityId: 'b1', agentType: null, description: 'Run the tests', startedAt: 7, lastActivityAt: 7, finishedAt: null })
+    expect(shellRow('b1', null, 7, 7)).toMatchObject({ description: null, finishedAt: 7 })
   })
 
   test('a shell has ended when the snapshot no longer lists it running', () => {
@@ -103,12 +104,14 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       const now = d.clock.now()
-      const r = await $.tool.call({ tool: 'Bash', command: 'sleep 99', run_in_background: true } as any)
+      const r = await $.tool.call({ tool: 'Bash', command: 'sleep 99 --token sk-ant-api03-AbCdEf1234567890XyZ', description: 'Wait in C:\\work for the build', run_in_background: true } as any)
       expect(r.text).toBe(BACKGROUNDED.text)
       answer = { result: { stdout: 'hi', stderr: '', interrupted: false }, text: 'hi' }
       await $.tool.call({ tool: 'Bash', command: 'echo hi' } as any)
       await d.clock.settle()
-      expect(activityRows(d)).toEqual([shellRow('bjlibh54w', now, null)])
+      // labelled by its description, redacted (PBLM-2121); its command never travels
+      expect(activityRows(d)).toEqual([shellRow('bjlibh54w', 'Wait in [path] for the build', now, null)])
+      expect(JSON.stringify(d.reports)).not.toContain('sk-ant')
     })
 
     test('a Stop or SubagentStop whose snapshot no longer lists a shell running finishes it; one still running stays open until a later Stop', async ($, on) => {
@@ -126,12 +129,12 @@ for (const surface of SURFACES) {
       // b2 is gone, bjlibh54w still runs
       await $.classic.SubagentStop({ agent_id: 'a9', stop_hook_active: false, agent_transcript_path: '/x/agent-a9.jsonl', agent_type: 'Explore', background_tasks: [shell('bjlibh54w'), { id: 'a9', type: 'subagent', status: 'running', description: 'x' }] } as any)
       await d.clock.settle()
-      expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('b2', first, first)])
+      expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('b2', null, first, first)])
       await d.clock.advance(10_000)
       const second = d.clock.now()
       await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
       await d.clock.settle()
-      expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('b2', first, first), shellRow('bjlibh54w', second, second)])
+      expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('b2', null, first, first), shellRow('bjlibh54w', null, second, second)])
       // closed once: a further Stop has nothing left to finish
       await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
       await d.clock.settle()
