@@ -2,9 +2,15 @@
 // DX-4555: the danx-dashboard MCP server this plugin ships (plugin.json `mcpServers`), so a
 // tester who installs the plugin never writes a `.mcp.json`.
 //
-// WHAT IT RUNS. The same installed `@thehammer/danx-dashboard-mcp` the hooks run
-// (ensure-dashboard-mcp.sh installs it once into the plugin data dir; the package's own
-// `dist/index.js` is then run with plain `node`, never a cold `npx -y`).
+// WHAT IT RUNS. The installed `@thehammer/danx-dashboard-mcp` (lib/dashboard-mcp-package.mjs installs it, in this
+// process, into the plugin data dir; the package's own `dist/index.js` is then run with plain `node`, never a cold
+// `npx -y`). Nothing here runs bash or any shell (DX-4235).
+//
+// WHICH VERSION (DX-4235). The server starts at once from the RECORDED version (installed first if it is not; resolved
+// from the registry and recorded only when nothing is recorded). While it runs, the record is refreshed from the
+// registry's `latest` and that version installed in the background, never restarting the running server, so a publish
+// is adopted at the next session start with no added start latency. A refresh that fails writes ONE line to stderr and
+// the record stays as it was.
 //
 // WHICH DASHBOARD. `dashboardUrl(env)`: DANXBOT_DASHBOARD_URL when set (the user's shell, or an `env`
 // block in a repo's committed `.claude/settings.json`, which is the per-repo or per-company override),
@@ -16,11 +22,13 @@
 // The ONE dashboard server: no connected repo declares its own `danx-dashboard` entry any more (DX-4578), so Claude
 // Code lists exactly this one, named `plugin:danxbot:danx-dashboard`, in every folder.
 //
-// stdout is the MCP stream, so nothing here may print to it: every notice goes to stderr.
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+// stdout is the MCP stream, so nothing here may print to it: every notice goes to stderr, and npm's output is captured.
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { keptLine, oneLine, refreshInstall, startVersion } from "./lib/dashboard-mcp-package.mjs";
+
+const PREFIX = "[danxbot dashboard MCP]";
 
 /** The dashboard this session talks to: an explicit DANXBOT_DASHBOARD_URL, else the plugin's configured value. */
 export function dashboardUrl(env) {
@@ -30,81 +38,47 @@ export function dashboardUrl(env) {
 }
 
 /**
- * The bash that runs ensure-dashboard-mcp.sh. Claude Code starts an MCP server WITHOUT a shell, so on Windows a bare
- * `bash` resolves through the Windows PATH, where `C:\Windows\System32\bash.exe` (the WSL launcher) comes first: it
- * cannot read a Windows path and the server never starts (the session gets no dashboard tools). Hooks never hit this,
- * because Claude Code runs hook commands inside Git Bash. So on Windows: Claude Code's own CLAUDE_CODE_GIT_BASH_PATH,
- * else Git for Windows' bash beside `git --exec-path` (`<git>/mingw64/libexec/git-core` -> `<git>/bin/bash.exe`), else
- * a loud failure naming the fix. Anywhere else, `bash` from PATH.
- *
- * @param {string} platform process.platform
- * @param {Record<string, string | undefined>} env
- * @param {() => string | null} getGitExecPath `git --exec-path`, or null when git cannot be run
- * @param {(file: string) => boolean} exists
+ * Starts the server and, once it is running, the background refresh. `onServer(child)` is called as soon as the server
+ * process is spawned, before anything else can happen to it. Returns `{child, version, refresh}`: `refresh` settles with
+ * the version it recorded, or `null` after writing its one failure line to `stderr`. Throws when the server cannot start
+ * (no dashboard URL, no version, a failed install). Seams: `spawnFn` (npm and the server), `fetchFn` (the registry),
+ * and `installVersion`'s `npm` / `installTimeoutMs`.
  */
-export function bashFor(platform, env, getGitExecPath, exists) {
-  if (platform !== "win32") return "bash";
-  // Never the WSL launcher a bare `bash` finds first on the Windows PATH (see the docblock).
-  if (env.CLAUDE_CODE_GIT_BASH_PATH) {
-    if (exists(env.CLAUDE_CODE_GIT_BASH_PATH)) return env.CLAUDE_CODE_GIT_BASH_PATH;
-    throw new Error(`CLAUDE_CODE_GIT_BASH_PATH names ${env.CLAUDE_CODE_GIT_BASH_PATH}, which does not exist`);
-  }
-  // DX-4623: Windows-only branch; a bare `bash` here is the WSL launcher, so it is never an option.
-  const execPath = getGitExecPath();
-  if (!execPath) {
-    throw new Error(
-      "no Git Bash found: `git --exec-path` could not be run (git is not installed or not on PATH); " +
-        "install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe " +
-        "(the bare `bash` on the Windows PATH is the WSL launcher, which cannot run this plugin's scripts)",
-    );
-  }
-  const candidate = path.win32.join(path.win32.normalize(execPath), "..", "..", "..", "bin", "bash.exe");
-  if (exists(candidate)) return candidate;
-  throw new Error(
-    `no Git Bash found: git runs (exec path ${execPath}) but ${candidate} does not exist; ` +
-      "install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe " +
-      "(the bare `bash` on the Windows PATH is the WSL launcher, which cannot run this plugin's scripts)",
-  );
-}
-
-function gitExecPath() {
-  const r = spawnSync("git", ["--exec-path"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
+export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fetch, stderr = process.stderr, onServer = () => {}, ...installOptions } = {}) {
+  const url = dashboardUrl(env);
+  const options = { env, spawnFn, fetchFn, ...installOptions };
+  const { version, bin } = await startVersion(options);
+  const serverEnv = { ...env, DANXBOT_DASHBOARD_URL: url };
+  // A dispatch's credential declaration (it often names the LOCAL dev dashboard) must never reach the hosted one (DX-2483).
+  delete serverEnv.DANX_DASHBOARD_CREDENTIAL;
+  const child = spawnFn(process.execPath, [bin], { env: serverEnv, stdio: "inherit" });
+  onServer(child);
+  // DX-4235: the refresh starts only after the server has, so no registry request delays a session start.
+  const refresh = refreshInstall(version, options).catch((err) => {
+    stderr.write(`${PREFIX} ${keptLine(oneLine(err.message), version)}\n`);
+    return null;
+  });
+  return { child, version, refresh };
 }
 
 function fail(reason) {
-  console.error(`[danxbot dashboard MCP] ${reason}`);
+  console.error(`${PREFIX} ${oneLine(reason)}`);
   process.exit(1);
 }
 
-function runServer() {
-  const root = process.env.CLAUDE_PLUGIN_ROOT;
-  if (!root) fail("CLAUDE_PLUGIN_ROOT is not set: this launcher only runs as the danxbot plugin's MCP server");
-  let bash;
-  try {
-    bash = bashFor(process.platform, process.env, gitExecPath, existsSync);
-  } catch (err) {
-    fail(err.message);
-  }
-  const ensure = spawnSync(bash, [path.join(root, "scripts", "ensure-dashboard-mcp.sh")], {
-    encoding: "utf8",
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (ensure.error) fail(`could not run bash to install the dashboard MCP server: ${ensure.error.message}`);
-  if (ensure.status !== 0) fail(`installing the dashboard MCP server failed: ${ensure.stderr.trim() || `exit ${ensure.status}`}`);
-  const env = { ...process.env };
-  try {
-    env.DANXBOT_DASHBOARD_URL = dashboardUrl(env);
-  } catch (err) {
-    fail(err.message);
-  }
-  // A dispatch's credential declaration (it often names the LOCAL dev dashboard) must never reach the hosted one (DX-2483).
-  delete env.DANX_DASHBOARD_CREDENTIAL;
-  const child = spawn(process.execPath, [ensure.stdout.trim()], { env, stdio: "inherit" });
+/** The server's exit is the launcher's: its code, or 1 when it was killed. */
+function wireServer(child) {
   child.on("error", (err) => fail(`could not start the dashboard MCP server: ${err.message}`));
   child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 1)));
   for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => child.kill(sig));
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) runServer();
+async function runServer() {
+  try {
+    await launch({ onServer: wireServer });
+  } catch (err) {
+    fail(err.message);
+  }
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await runServer();

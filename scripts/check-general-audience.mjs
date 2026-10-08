@@ -8,13 +8,13 @@
 // products, an internal card/plan id, or a path in the author's own repo. This scan fails the
 // publish (scripts/publish.sh runs it before any bump) when any shipped file does.
 //
-// WHAT IS SCANNED. Exactly the files the integrity manifest hashes (`listPluginFiles`: tests and
-// node_modules are not shipped, so test files that hold the banned tokens as matcher proof are
-// exempt by construction), except `.claude-plugin/plugin.json`, the manifest, whose
-// `dashboard_url` default is the product's own public address. Markdown and JSON are scanned
-// whole; code (.mjs .js .ts .tsx .sh) is scanned with its comments stripped, because a comment
-// is read only by a maintainer and never reaches a user. A file type the scan does not know throws
-// (binary assets are an explicit list), so a new type can never ship unscanned.
+// WHAT IS SCANNED. Every file the plugin ships (`listPluginFiles`: tests and node_modules are not
+// shipped, so test files that hold the banned tokens as matcher proof are exempt by construction),
+// except `.claude-plugin/plugin.json`, the plugin manifest, whose `dashboard_url` default is the
+// product's own public address. Markdown and JSON are scanned whole; code (.mjs .js .ts .tsx .sh)
+// is scanned with its comments stripped, because a comment is read only by a maintainer and never
+// reaches a user. A file type the scan does not know throws (binary assets are an explicit list),
+// so a new type can never ship unscanned.
 //
 // COMMENT STRIPPING is a small state machine, not a parser. It follows strings, template
 // literals and regex literals so a `//` inside one is not taken for a comment. Its one blind
@@ -28,10 +28,14 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-/** Directories under a plugin that are never part of the runtime install a hook depends on. */
+/** Top-level directories of a plugin that are never shipped to a user: its tests and installed dependencies. */
 const EXCLUDED_TOP_DIRS = new Set(["tests", "node_modules"]);
 
-/** The plugin's shipped files, as paths relative to the plugin dir, with `/` separators, sorted. */
+/**
+ * The plugin's shipped files, as paths relative to the plugin dir, with `/` separators, sorted: what `git add <plugin>/`
+ * would commit (tracked plus untracked-not-ignored), minus the excluded top-level directories and any tracked file deleted
+ * from the working tree.
+ */
 export function listPluginFiles(repoRoot, plugin) {
   const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", plugin], {
     cwd: repoRoot,
@@ -41,7 +45,9 @@ export function listPluginFiles(repoRoot, plugin) {
     .split("\0")
     .filter((p) => p !== "")
     .map((p) => p.slice(plugin.length + 1))
-    .filter((rel) => rel !== "integrity-manifest.json" && !EXCLUDED_TOP_DIRS.has(rel.split("/")[0]));
+    .filter((rel) => !EXCLUDED_TOP_DIRS.has(rel.split("/")[0]))
+    .filter((rel) => fs.existsSync(path.join(repoRoot, plugin, rel)))
+    .sort();
 }
 
 /** Each token names something only the author's setup has. */

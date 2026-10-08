@@ -287,6 +287,12 @@ export function dashboard(
     // DX-4508: this session's sub-agents as `$.agent.list()` answers them (the engine's own list), none by default
     agents: [] as { id: string; type: string; description: string; status: string }[],
     titleSeen: undefined as string | undefined,
+    // DX-4235: the boards GET /api/plans/mine names for the session's plan, each board's ToDo card rows as GET /api/issues answers them
+    // (the ready-cards check), and a per-route override of a report or ready-cards answer (`<METHOD> <path>`): an error status (with
+    // its body), the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock
+    planBoards: ['danxbot:danxbot-main'] as string[],
+    readyRows: {} as Record<string, unknown[]>,
+    reportReplies: {} as Record<string, { status?: number; body?: unknown; deny?: string; delayMs?: number }>,
     // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
     rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
     // DX-4423: null while the session holds a key
@@ -504,6 +510,21 @@ export function dashboard(
   const contextReads: string[] = []
   // DX-4632: the arguments of each `restart_notice` call
   const restartCalls: unknown[] = []
+  // DX-4235: the reports' calls and the ready-cards reads, in order, kept out of `calls` and `api` like the context reads (every suite that
+  // counts a load's reads or a session's writes stays about its own subject)
+  const reportCalls: { method: string; path: string; body?: any; query?: any; board?: string }[] = []
+  const isReportCall = (a: any) =>
+    (a.method === 'POST' && a.path === '/api/plan-sessions/me/activity') ||
+    (a.method === 'PUT' && a.path === '/api/plan-sessions/me/background-work') ||
+    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues'))
+  // ... answered as the real routes answer them (danxbot plan-sessions-routes, plans/mine, the issues list)
+  function reportAnswer(a: any) {
+    if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })
+    if (a.path === '/api/plan-sessions/me/background-work') return reply({ count: a.body.count, applied: true })
+    if (a.path === '/api/plans/mine') return world.planId === null ? reply({ error: 'session_not_connected' }, 409) : reply({ id: world.planId, boards: world.planBoards })
+    const rows = world.readyRows[a.board] ?? []
+    return reply({ issues: rows, total: rows.length })
+  }
   const isContextRead = (a: any) => a.method === 'GET' && (a.path.startsWith('/api/reminders/event/') || (a.path === '/api/plans' && a.query?.limit === 1))
   function contextAnswer(path: string) {
     // DX-4233: GET /api/plans answers this as its body, whatever its shape (a string makes the plugin's session read throw)
@@ -565,6 +586,17 @@ export function dashboard(
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       return { value: contextAnswer(e.args.path) }
+    }
+    if (e.server === SERVER && e.tool === 'danxbot_api' && isReportCall(e.args)) {
+      reportCalls.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query, board: e.args.board })
+      const over = world.reportReplies[`${e.args.method} ${e.args.path}`]
+      if (over?.delayMs !== undefined) await clock.sleep(over.delayMs)
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
+      if (over?.deny !== undefined) return { deny: over.deny }
+      if (over?.status !== undefined) return { value: reply(over.body ?? { error: 'report boom' }, over.status) }
+      return { value: reportAnswer(e.args) }
     }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.server === 'plugin:danxbot:danx-dashboard') {
@@ -864,7 +896,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { reports: reportCalls, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedUnseen: (rows: string[]) => void (seededUnseen = rows), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
@@ -972,4 +1004,16 @@ export function answerPlanConnect(on: On, d: { world: { planId: number | null } 
 export async function forceRefresh($: any, d: Dashboard) {
   await $.command.run({ command: 'danx-plan' })
   await d.clock.settle()
+}
+
+// DX-4235: what the reports sent, read off the kit's `reports` list: every activity row posted, in order, and every background-work
+// body put, in order.
+export const activityRows = (d: Dashboard): any[] => d.reports.filter(r => r.path === '/api/plan-sessions/me/activity').flatMap(r => r.body.activities)
+export const countReports = (d: Dashboard): { count: number | null; eventAt: string }[] => d.reports.filter(r => r.path === '/api/plan-sessions/me/background-work').map(r => r.body)
+
+// DX-4235: the engine's own answers to the events the reports ride (nothing beneath the plugins answers a classic event or a turn's end
+// in a test): registered before the test first uses `$`, like every hook.
+export function answerReportEvents(on: On) {
+  for (const event of ['classic.SubagentStart', 'classic.SubagentStop', 'classic.Stop', 'classic.StopFailure'] as const) on(event, () => ({}) as any)
+  on('turn.complete', () => ({ text: 'done' }) as any)
 }

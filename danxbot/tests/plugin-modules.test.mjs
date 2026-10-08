@@ -1,7 +1,7 @@
-// DX-4232: the shape of the danxbot plugin once it ships a native hooks module beside its
-// command hooks. The module's own behaviour is tested by `claude plugin test danxbot`
-// (tests/plan-*.test.tsx); this file pins the plugin's manifest shape and that the engine's own
-// validator accepts it.
+// The shape of the danxbot plugin: every hook is a native function hook of one module (hooks/register.tsx), and scripts/ holds
+// only the MCP server launcher, the Plan pane's live sub-agent reader and the screenshot tool. The module's own behaviour is tested
+// by `claude plugin test danxbot` (tests/*.test.tsx); this file pins the manifest shape and that the engine's own validator accepts
+// the plugin.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -12,53 +12,36 @@ import { fileURLToPath } from "node:url";
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(PLUGIN, rel), "utf8"));
 
-// The command hooks as origin/main ships them, [event, matcher, command]: the baseline this file
-// compares against, so no hand-copied copy can drift from it. A hook may be ADDED (DX-4534's Stop
-// hook did) but never silently dropped or rewritten: a card that migrates or deletes one lands
-// that on origin/main first, or edits this comparison in the same change.
-function commandHooks(hooksJson) {
-  if (!hooksJson.hooks) return []; // DX-4235: all command hooks moved to function hooks
-  const out = [];
-  for (const [event, groups] of Object.entries(hooksJson.hooks)) {
-    for (const group of groups) for (const h of group.hooks) out.push([event, group.matcher ?? null, h.command]);
-  }
-  return out;
+/** Every file under `dir`, as `/`-separated paths relative to it, sorted. */
+function filesUnder(dir) {
+  const walk = (rel) =>
+    fs.readdirSync(path.join(dir, rel), { withFileTypes: true }).flatMap((e) => {
+      const next = rel ? `${rel}/${e.name}` : e.name;
+      return e.isDirectory() ? walk(next) : [next];
+    });
+  return walk("").sort();
 }
 
-function originMainHooks() {
-  const r = spawnSync("git", ["show", "origin/main:danxbot/hooks/hooks.json"], { cwd: PLUGIN, encoding: "utf8" });
-  assert.equal(r.status, 0, `cannot read origin/main's hooks.json (git fetch origin first): ${r.stderr}`);
-  return JSON.parse(r.stdout);
-}
-
-test("DX-4232: hooks.json declares the module and keeps every origin/main command hook", () => {
+test("DX-4232 / DX-4235: hooks.json declares the module and no command hooks", () => {
   const hooks = readJson("hooks/hooks.json");
   assert.deepEqual(hooks.modules, ["./register.tsx"]);
   assert.ok(fs.existsSync(path.join(PLUGIN, "hooks", "register.tsx")));
-  // DX-4235: all command hooks moved to function hooks in register.tsx; the presence check is skipped
-  // for branches that completed this migration, identified by the absence of the hooks key.
-  if (hooks.hooks === undefined) {
-    // DX-4235: migration complete; no command hooks remain
-    return;
-  }
-  // A hook is kept when a present hook has the same event, matcher and command, bar one intended rewrite: DX-4551 replaced the repair
-  // instruction in each fallback line (a personal alias and a git repair habit) with the public Claude Code uninstall/install commands;
-  // launch.test.mjs pins the new text against INTEGRITY_FIX.
-  const REPAIR_REWORDED = [
-    "git -C ~/.claude/plugins/marketplaces/50arms checkout -- danxbot`, then `update-claude-plugins`",
-    "claude plugin uninstall danxbot --keep-data`, then `claude plugin install danxbot` (add `--config dashboard_url=<address>` if you had set a custom dashboard address, which a reinstall forgets)",
-  ];
-  const present = commandHooks(hooks);
-  const kept = ([event, matcher, command]) => {
-    const reworded = command.replace(REPAIR_REWORDED[0], REPAIR_REWORDED[1]);
-    return present.some(([e, m, c]) => e === event && m === matcher && c === reworded);
-  };
-  // DX-4233 deleted the plan event bridge and its watchdog (the relay is a module listener in register.tsx now), and DX-4234 the time
-  // stamp and event-hook scripts (function hooks in register.tsx now): those are the only command hooks origin/main had that this
-  // branch may drop. DX-4235 moves activity, background-work and ready-cards hooks.
-  const deleted = ([, , command]) => /plan-event-bridge|bridge-watchdog|inject-time\.sh|event-hook\.sh|activity-report|background-work-report|ready-cards|ensure-dashboard-mcp/.test(command);
-  const dropped = commandHooks(originMainHooks()).filter((h) => !deleted(h) && !kept(h));
-  assert.deepEqual(dropped, [], "command hooks on origin/main that hooks.json no longer has");
+  // DX-4235: a command hook would be a second, unvalidated hook path beside the module; every hook lives in register.tsx.
+  assert.equal(Object.hasOwn(hooks, "hooks"), false, "hooks.json has a hooks key");
+  assert.deepEqual(Object.keys(hooks).sort(), ["description", "modules"]);
+});
+
+test("DX-4235: scripts/ holds only the MCP server launcher, the live sub-agent reader and the screenshot tool", () => {
+  assert.deepEqual(filesUnder(path.join(PLUGIN, "scripts")), [
+    "capture-screenshot.mjs",
+    "dashboard-mcp-server.mjs",
+    "lib/capture-args.mjs",
+    "lib/cdp-browser.mjs",
+    "lib/dashboard-mcp-package.mjs",
+    "lib/page-errors.mjs",
+    "lib/page-programs.mjs",
+    "subagents-live.mjs",
+  ]);
 });
 
 test("DX-4232: plugin.json names the $.state contract, and the file exists", () => {
@@ -79,17 +62,13 @@ test("DX-4232: claude plugin validate danxbot exits 0", () => {
   const found = spawnSync(CLAUDE, ["--version"], { encoding: "utf8" });
   assert.equal(found.status, 0, `no claude CLI found as "${CLAUDE}": set CLAUDE_BIN to the claude executable (${found.error?.message ?? found.stderr})`);
   const r = spawnSync(CLAUDE, ["plugin", "validate", "danxbot"], { cwd: path.dirname(PLUGIN), encoding: "utf8" });
-  assert.equal(r.status, 0, `${r.stdout}
-${r.stderr}`);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
 });
 
 test("DX-4233: no script or hook module imports a file that does not exist", () => {
-  const walk = (dir) =>
-    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-      const full = path.join(dir, e.name);
-      return e.isDirectory() ? walk(full) : [full];
-    });
-  const files = [...walk(path.join(PLUGIN, "scripts")), ...walk(path.join(PLUGIN, "hooks"))].filter((f) => /\.(mjs|js|ts|tsx)$/.test(f));
+  const files = ["scripts", "hooks"]
+    .flatMap((dir) => filesUnder(path.join(PLUGIN, dir)).map((rel) => path.join(PLUGIN, dir, rel)))
+    .filter((f) => /\.(mjs|js|ts|tsx)$/.test(f));
   assert.ok(files.length > 0);
   for (const file of files) {
     const text = fs.readFileSync(file, "utf8");

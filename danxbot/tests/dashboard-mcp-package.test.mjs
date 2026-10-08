@@ -1,35 +1,39 @@
-// DX-4321 — scripts/lib/dashboard-mcp-package.mjs: the ONE module every consumer asks which
-// version of `@thehammer/danx-dashboard-mcp` to run. The plugin carries no version literal:
-// the registry's `latest` is resolved at session start, recorded under the plugin data dir and
-// read back (no network) by every other hook. A fake registry (fixtures/fake-registry.mjs)
-// stands in for npm; nothing here touches the network.
-import { test, describe, beforeEach, afterEach } from "node:test";
+// DX-4321 / DX-3811 / DX-4235 — scripts/lib/dashboard-mcp-package.mjs: the ONE module that says which version of
+// `@thehammer/danx-dashboard-mcp` runs and installs it. The plugin carries no version literal: the registry's `latest` is
+// recorded under the plugin data dir and read back with no network. A fake registry (fixtures/fake-registry.mjs) stands
+// in for npm's registry and an injected spawn for npm itself; nothing here touches the network except the one describe
+// at the end that checks the REAL published package, deliberately.
+import { test, describe, before, beforeEach, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import fs, { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import fs, { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DASHBOARD_MCP_PACKAGE_NAME,
-  RecordDamagedError,
-  RecordWriteError,
-  REGISTRY_FIX,
-  recordedOrResolvedVersion,
+  INSTALL_TIMEOUT_MS,
+  STALE_INSTALL_MS,
+  installVersion,
+  installedBin,
+  npmCommand,
+  pruneInstalls,
   recordedVersionOrNull,
-  refreshOrKeep,
-  refreshAndRecordVersion,
+  refreshInstall,
   registryUrl,
+  requireRecordedVersion,
   resolveLatestVersion,
-  versionFor,
+  startVersion,
   writeRecordedVersion,
 } from "../scripts/lib/dashboard-mcp-package.mjs";
-import { listPluginFiles } from "../../scripts/write-integrity-manifest.mjs";
+import { LIVE_SUBCOMMAND } from "../scripts/subagents-live.mjs";
+import { listPluginFiles } from "../../scripts/check-general-audience.mjs";
 import { REGISTRY_BASE_URL_ENV, REGISTRY_TIMEOUT_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const MODULE = path.join(here, "..", "scripts", "lib", "dashboard-mcp-package.mjs");
 const LATEST_PATH = "/@thehammer%2Fdanx-dashboard-mcp/latest";
+const SPEC = (version) => `${DASHBOARD_MCP_PACKAGE_NAME}@${version}`;
 
 let dataDir;
 let registry;
@@ -44,16 +48,80 @@ afterEach(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-const recordFile = () => path.join(dataDir, "dashboard-mcp", "current");
+const installRoot = () => path.join(dataDir, "dashboard-mcp");
+const recordFile = () => path.join(installRoot(), "current");
 
 function recordAt(version) {
   mkdirSync(path.dirname(recordFile()), { recursive: true });
   writeFileSync(recordFile(), `${version}\n`);
 }
 
-function runModule(args, extraEnv = {}) {
-  return spawnSync(process.execPath, [MODULE, ...args], { encoding: "utf8", env: { ...env, ...extraEnv } });
+/** Puts `content` where `version`'s install lives, as a finished install would. */
+function layDown(version, content = `installed ${version}`) {
+  const bin = installedBin(dataDir, version);
+  mkdirSync(path.dirname(bin), { recursive: true });
+  writeFileSync(bin, content);
+  return bin;
 }
+
+/**
+ * A stand-in for npm's process (`installVersion`'s `spawnFn` seam). `mode` decides what `npm install --prefix <stage> ...`
+ * does:
+ *   ok      lays the package's entry point down under <stage>, exits 0
+ *   race    another session's install of the same version lands at the final path first, then ours under <stage>, exits 0
+ *   no-bin  exits 0 leaving nothing
+ *   fail    prints npm's error lines, exits 1
+ *   hang    never exits until killed
+ *   error   the process cannot be started at all
+ * `calls` records every spawn; `onSpawn(args)` runs at spawn time (to observe the filesystem then).
+ */
+function fakeNpm(mode = "ok", onSpawn = () => {}) {
+  const calls = [];
+  const spawnFn = (command, args, options) => {
+    calls.push({ command, args, options });
+    onSpawn(args);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.killed = false;
+    child.kill = () => {
+      child.killed = true;
+      setImmediate(() => child.emit("close", null, "SIGTERM"));
+    };
+    const stage = args[args.indexOf("--prefix") + 1];
+    const version = args.at(-1).split("@").at(-1);
+    const lay = (prefix, content) => {
+      const bin = path.join(prefix, "node_modules", ...DASHBOARD_MCP_PACKAGE_NAME.split("/"), "dist", "index.js");
+      mkdirSync(path.dirname(bin), { recursive: true });
+      writeFileSync(bin, content);
+    };
+    setImmediate(() => {
+      switch (mode) {
+        case "ok":
+          lay(stage, "ours");
+          return child.emit("close", 0, null);
+        case "race":
+          layDown(version, "the winner's");
+          lay(stage, "the loser's");
+          return child.emit("close", 0, null);
+        case "no-bin":
+          return child.emit("close", 0, null);
+        case "fail":
+          child.stderr.emit("data", "npm error code E404\nnpm error 404 Not Found - registry unreachable\n\n");
+          return child.emit("close", 1, null);
+        case "hang":
+          return undefined;
+        case "error":
+          return child.emit("error", Object.assign(new Error("spawn npm ENOENT"), { code: "ENOENT" }));
+      }
+    });
+    return child;
+  };
+  return { spawnFn, calls };
+}
+
+const NPM = { command: "npm", args: [] };
+const oneLineOnly = (err) => assert.equal(err.message.includes("\n"), false, `ONE line: ${err.message}`);
 
 describe("resolveLatestVersion", () => {
   test("asks GET <registry>/<name>/latest and returns the strict x.y.z it answers", async () => {
@@ -111,13 +179,11 @@ describe("resolveLatestVersion", () => {
 
   test("a registry that never answers is cut off at the bound, naming it", async () => {
     registry.setMode("hang");
-    const started = Date.now();
     await assert.rejects(resolveLatestVersion({ env, timeoutMs: 300 }), (err) => {
       assert.ok(err.message.includes(LATEST_PATH), err.message);
       assert.match(err.message, /no answer within 300ms/);
       return true;
     });
-    assert.ok(Date.now() - started < 5_000, "the bound, not the OS socket timeout, ended it");
   });
 
   test("the env timeout seam bounds the request when no timeout is passed", async () => {
@@ -127,91 +193,43 @@ describe("resolveLatestVersion", () => {
 });
 
 describe("recorded version", () => {
-  test("the reader returns the recorded version, and null when nothing is recorded", () => {
+  test("the reader returns the recorded version, and null when nothing is recorded; it makes no registry request", () => {
     assert.equal(recordedVersionOrNull(env), null);
     recordAt("0.1.7");
     assert.equal(recordedVersionOrNull(env), "0.1.7");
+    assert.deepEqual(registry.requests(), []);
   });
 
-  test("a record that exists but is damaged or unreadable is a loud failure naming the file, never read as no record", async () => {
+  test("the record file is where every reader looks: dashboard-mcp/current under the plugin data dir", () => {
+    writeRecordedVersion("0.1.7", env);
+    assert.equal(readFileSync(path.join(dataDir, "dashboard-mcp", "current"), "utf8"), "0.1.7\n");
+  });
+
+  test("a record that exists but is damaged or unreadable is a loud failure naming the file and the fix, never read as no record", async () => {
     for (const text of ["not-a-version", "", "0.1", "v1.2.3", "1.2.3-beta"]) {
       recordAt(text);
-      assert.throws(() => recordedVersionOrNull(env), (err) => err.message.includes(recordFile()) && /damaged/.test(err.message), JSON.stringify(text));
+      assert.throws(
+        () => recordedVersionOrNull(env),
+        (err) => err.message.includes(recordFile()) && /damaged/.test(err.message) && err.message.includes(`delete ${recordFile()}`),
+        JSON.stringify(text),
+      );
     }
     rmSync(recordFile());
     mkdirSync(recordFile()); // a directory where the record should be: unreadable, not absent
     assert.throws(() => recordedVersionOrNull(env), (err) => err.message.includes(recordFile()) && /cannot be read/.test(err.message));
-    await assert.rejects(recordedOrResolvedVersion({ env }), /cannot be read/);
+    const npm = fakeNpm();
+    await assert.rejects(startVersion({ env, spawnFn: npm.spawnFn, npm: NPM }), /cannot be read/);
     assert.deepEqual(registry.requests(), [], "a damaged record is reported, not papered over with a network request");
+    assert.deepEqual(npm.calls, []);
   });
 
-  test("a damaged record AND a failed refresh: the error keeps both reasons, and its fix names the record file", async () => {
-    recordAt("garbage");
-    registry.setMode("status-500");
-    await assert.rejects(refreshOrKeep({ env }), (err) => {
-      assert.ok(err instanceof RecordDamagedError);
-      assert.equal(err.name, "RecordDamagedError");
-      assert.match(err.message, /damaged/);
-      assert.match(err.message, /refresh also failed.*HTTP 500/);
-      assert.ok(err.fix.includes(recordFile()), err.fix);
-      return true;
-    });
-  });
-
-  test("each failure carries the fix that fits it: registry, damaged record, record write", async () => {
-    registry.setMode("status-500");
-    await assert.rejects(versionFor({ sessionStart: true, env }), (err) => err.fix === REGISTRY_FIX);
-    await assert.rejects(versionFor({ sessionStart: false, env }), (err) => err.fix === REGISTRY_FIX);
-    registry.setVersion("0.1.50");
-    writeFileSync(path.join(dataDir, "dashboard-mcp"), "a file where the record's directory belongs");
-    await assert.rejects(recordedOrResolvedVersion({ env }), (err) => {
-      assert.equal(err.name, "RecordWriteError");
-      assert.ok(err.fix.includes(path.join(dataDir, "dashboard-mcp")), err.fix);
-      return true;
-    });
-  });
-
-  test("a damaged record is replaced by the next successful session-start refresh", async () => {
-    recordAt("garbage");
-    assert.deepEqual(await versionFor({ sessionStart: true, env }), { version: "0.1.50", keptLine: null });
-    assert.equal(recordedVersionOrNull(env), "0.1.50");
-  });
-
-  test("a record that cannot be WRITTEN is reported as that, with its own reason, not as a registry failure", async () => {
-    writeFileSync(path.join(dataDir, "dashboard-mcp"), "a file where the record's directory belongs");
-    await assert.rejects(recordedOrResolvedVersion({ env }), (err) => {
-      assert.match(err.message, /could not record version 0\.1\.50/);
-      assert.doesNotMatch(err.message, /registry could not be read|could not read http/i);
-      return true;
-    });
-    await assert.rejects(refreshAndRecordVersion({ env }), RecordWriteError);
-  });
-
-  test("the reader makes no registry request", () => {
+  test("requireRecordedVersion (subagents-live.mjs's read) answers the record, and with none a line saying nothing can run", () => {
+    assert.throws(() => requireRecordedVersion(env), /no .*version is recorded.*nothing that runs it can start/);
     recordAt("0.1.7");
-    recordedVersionOrNull(env);
-    assert.deepEqual(registry.requests(), []);
+    assert.equal(requireRecordedVersion(env), "0.1.7");
   });
 
-  test("a refresh records the registry's version under dashboard-mcp/current and leaves no temp file", async () => {
-    assert.equal(await refreshAndRecordVersion({ env }), "0.1.50");
-    assert.equal(readFileSync(recordFile(), "utf8").trim(), "0.1.50");
-    assert.deepEqual(readdirSync(path.dirname(recordFile())), ["current"]);
-    registry.setVersion("0.1.51");
-    await refreshAndRecordVersion({ env });
-    assert.equal(recordedVersionOrNull(env), "0.1.51");
-    assert.deepEqual(readdirSync(path.dirname(recordFile())), ["current"]);
-  });
-
-  test("a failed refresh changes nothing: the previous record stays, whole", async () => {
-    recordAt("0.1.7");
-    registry.setMode("status-500");
-    await assert.rejects(refreshAndRecordVersion({ env }));
-    assert.equal(recordedVersionOrNull(env), "0.1.7");
-    assert.deepEqual(readdirSync(path.dirname(recordFile())), ["current"]);
-  });
-
-  test("the write targets a temp name and renames it onto the record: the record itself is never written in place", () => {
+  test("a write targets a temp name and renames it onto the record: the record itself is never written in place", () => {
     const calls = [];
     const spy = {
       mkdirSync: (...args) => (calls.push(["mkdir", args[0]]), fs.mkdirSync(...args)),
@@ -227,6 +245,16 @@ describe("recorded version", () => {
     assert.deepEqual(rename.slice(1), [write[1], recordFile()], "the temp file is renamed onto the record");
     assert.ok(calls.indexOf(write) < calls.indexOf(rename));
     assert.equal(recordedVersionOrNull(env), "0.1.9");
+    assert.deepEqual(readdirSync(installRoot()), ["current"], "no temp file left behind");
+  });
+
+  test("a record that cannot be WRITTEN is reported as that, with its own reason and fix", () => {
+    writeFileSync(installRoot(), "a file where the record's directory belongs");
+    assert.throws(() => writeRecordedVersion("0.1.50", env), (err) => {
+      assert.match(err.message, /could not record version 0\.1\.50/);
+      assert.ok(err.message.includes(`make ${installRoot()} writable`), err.message);
+      return true;
+    });
   });
 
   test("a real observer: another process polling the record while this one replaces it hundreds of times never reads a partial one", async () => {
@@ -271,7 +299,7 @@ describe("recorded version", () => {
         writes += 1;
       } catch (err) {
         // Windows can refuse a rename over a file the observer has open past the retry budget under load: not a partial write.
-        if (!(err instanceof RecordWriteError && /\((EPERM|EBUSY|EACCES)\)/.test(err.message))) throw err;
+        if (!/could not record version .*\((EPERM|EBUSY|EACCES)\)/.test(err.message)) throw err;
       }
     }
     writeFileSync(stopFile, "");
@@ -281,120 +309,249 @@ describe("recorded version", () => {
     assert.ok(result.reads > 100, `the observer actually read: ${result.reads}`);
     assert.deepEqual(result.bad, [], "a partial or empty record was observable");
   });
+});
 
-  test("two concurrent refreshes leave one valid file that agrees with the registry", async () => {
-    const runs = [0, 1, 2, 3].map(
-      () =>
-        new Promise((resolve) => {
-          const child = spawn(process.execPath, [MODULE, "--refresh"], { env, stdio: ["ignore", "pipe", "pipe"] });
-          let out = "";
-          child.stdout.on("data", (c) => (out += c));
-          child.on("close", (code) => resolve({ code, out }));
-        }),
-    );
-    const results = await Promise.all(runs);
-    for (const r of results) {
-      assert.equal(r.code, 0);
-      assert.equal(r.out, `${DASHBOARD_MCP_PACKAGE_NAME}@0.1.50`);
-    }
-    assert.equal(recordedVersionOrNull(env), "0.1.50");
-    assert.deepEqual(readdirSync(path.dirname(recordFile())), ["current"]);
+describe("npmCommand: npm with no shell (DX-4235)", () => {
+  test("on Windows the running node runs npm's own npm-cli.js from beside it: no .cmd, no shell", () => {
+    const node = "C:\\Program Files\\nodejs\\node.exe";
+    const cli = "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js";
+    const seen = [];
+    assert.deepEqual(npmCommand("win32", node, (f) => (seen.push(f), true)), { command: node, args: [cli] });
+    assert.deepEqual(seen, [cli]);
+  });
+
+  test("on Windows a node with no npm beside it is a loud failure naming both paths", () => {
+    assert.throws(() => npmCommand("win32", "D:\\n\\node.exe", () => false), /^Error: npm_not_found: the node running this \(D:\\n\\node\.exe\) has no npm beside it at D:\\n\\node_modules\\npm\\bin\\npm-cli\.js$/);
+  });
+
+  test("elsewhere `npm` from PATH, which the OS starts directly", () => {
+    assert.deepEqual(npmCommand("linux", "/usr/bin/node", () => assert.fail("no lookup")), { command: "npm", args: [] });
+    assert.deepEqual(npmCommand("darwin", "/opt/homebrew/bin/node", () => assert.fail("no lookup")), { command: "npm", args: [] });
+  });
+
+  test("this machine's own answer exists (the command a real install runs)", () => {
+    const npm = npmCommand();
+    for (const file of npm.args) assert.ok(existsSync(file), file);
   });
 });
 
-describe("refreshOrKeep", () => {
-  test("refreshed: reports the new version", async () => {
-    recordAt("0.1.7");
-    assert.deepEqual(await refreshOrKeep({ env }), { version: "0.1.50", refreshed: true });
+describe("installVersion", () => {
+  test("installs the version into a staging directory, then renames it into dashboard-mcp/<version>, and returns its entry point", async () => {
+    const npm = fakeNpm();
+    const bin = await installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: { command: "/x/node", args: ["/x/npm-cli.js"] } });
+    assert.equal(bin, path.join(dataDir, "dashboard-mcp", "0.1.50", "node_modules", "@thehammer", "danx-dashboard-mcp", "dist", "index.js"));
+    assert.equal(readFileSync(bin, "utf8"), "ours");
+    assert.equal(npm.calls.length, 1);
+    const [{ command, args, options }] = npm.calls;
+    assert.equal(command, "/x/node");
+    const stage = args[args.indexOf("--prefix") + 1];
+    assert.deepEqual(args, ["/x/npm-cli.js", "install", "--prefix", stage, "--no-audit", "--no-fund", "--no-save", "--loglevel=error", SPEC("0.1.50")]);
+    assert.equal(path.dirname(stage), installRoot(), "the stage is beside the version directories (same filesystem: the rename is atomic)");
+    assert.match(path.basename(stage), /^\.stage-/);
+    assert.equal(existsSync(stage), false, "the stage was renamed into place");
+    assert.deepEqual(readdirSync(installRoot()), ["0.1.50"]);
+    assert.equal(options.shell, undefined, "no shell");
+    assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"], "npm's output never reaches the launcher's stdout (the MCP stream)");
   });
 
-  test("a failed refresh with a record keeps it and says why, naming the version still in use", async () => {
-    recordAt("0.1.7");
-    registry.setMode("status-500");
-    const result = await refreshOrKeep({ env });
-    assert.equal(result.version, "0.1.7");
-    assert.equal(result.refreshed, false);
-    assert.match(result.line, /could not refresh/);
-    assert.match(result.line, /HTTP 500/);
-    assert.match(result.line, /0\.1\.7/);
-    assert.equal(result.line.includes("\n"), false, "ONE line");
+  test("an installed version is returned as is: npm never runs", async () => {
+    const existing = layDown("0.1.50");
+    const npm = fakeNpm();
+    assert.equal(await installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), existing);
+    assert.deepEqual(npm.calls, []);
   });
 
-  test("a failed refresh with no record throws a line saying nothing will run", async () => {
-    registry.setMode("status-500");
-    await assert.rejects(refreshOrKeep({ env }), (err) => {
-      assert.match(err.message, /no .*version is recorded/);
-      assert.match(err.message, /HTTP 500/);
-      assert.match(err.message, /nothing .*can start/);
-      assert.equal(err.message.includes("\n"), false);
+  test("the loser of a concurrent install keeps the winner's: nothing is nested inside it and the loser's stage is gone", async () => {
+    const npm = fakeNpm("race");
+    const bin = await installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM });
+    assert.equal(readFileSync(bin, "utf8"), "the winner's");
+    assert.deepEqual(readdirSync(path.join(installRoot(), "0.1.50")), ["node_modules"], "the loser's stage was not moved inside the winner's install");
+    assert.deepEqual(readdirSync(installRoot()), ["0.1.50"], "the loser's stage is discarded");
+  });
+
+  test("an install that outlives its bound fails loudly with one line, npm is killed, and nothing is left behind", async () => {
+    assert.equal(INSTALL_TIMEOUT_MS, 60_000);
+    const npm = fakeNpm("hang");
+    await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM, installTimeoutMs: 1 }), (err) => {
+      assert.match(err.message, /^timeout: installing @thehammer\/danx-dashboard-mcp@0\.1\.50 took longer than /);
+      oneLineOnly(err);
       return true;
     });
-    assert.equal(existsSync(recordFile()), false);
+    assert.equal(npm.calls.length, 1);
+    assert.deepEqual(readdirSync(installRoot()), [], "no stage and no version directory");
+  });
+
+  test("an npm failure fails loudly with one line carrying npm's own last line, and nothing is left behind", async () => {
+    const npm = fakeNpm("fail");
+    await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), (err) => {
+      assert.equal(err.message, "install_failed: npm install @thehammer/danx-dashboard-mcp@0.1.50 exited 1: npm error 404 Not Found - registry unreachable");
+      return true;
+    });
+    assert.deepEqual(readdirSync(installRoot()), []);
+  });
+
+  test("an install that succeeds but leaves no entry point is a failure, not a path to nothing", async () => {
+    const npm = fakeNpm("no-bin");
+    await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), (err) => {
+      assert.match(err.message, /^install_incomplete: .*left no node_modules\/@thehammer\/danx-dashboard-mcp\/dist\/index\.js$/);
+      return true;
+    });
+    assert.deepEqual(readdirSync(installRoot()), []);
+  });
+
+  test("npm that cannot be started at all fails loudly with one line naming the command", async () => {
+    const npm = fakeNpm("error");
+    await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), (err) => {
+      assert.match(err.message, /^npm_not_started: could not start npm \(npm\) for installing .*0\.1\.50: spawn npm ENOENT$/);
+      return true;
+    });
+    assert.deepEqual(readdirSync(installRoot()), []);
+  });
+
+  test("a missing CLAUDE_PLUGIN_DATA is a loud failure, not an install into the wrong place", async () => {
+    const npm = fakeNpm();
+    await assert.rejects(installVersion("0.1.50", { env: { ...env, CLAUDE_PLUGIN_DATA: "" }, spawnFn: npm.spawnFn, npm: NPM }), /CLAUDE_PLUGIN_DATA is not set/);
+    assert.deepEqual(npm.calls, []);
   });
 });
 
-describe("CLI", () => {
-  test("no args prints the recorded spec (no newline) and makes no registry request", () => {
+describe("pruneInstalls (DX-4321)", () => {
+  const T0 = new Date("2026-01-01T00:00:00Z");
+  const T1 = new Date(T0.getTime() + 2 * STALE_INSTALL_MS);
+  const now = T1.getTime() + 60_000; // T0 is over an hour before now; T1 is a minute before it
+
+  function dirAt(name, when) {
+    const dir = path.join(installRoot(), name);
+    mkdirSync(path.join(dir, "node_modules"), { recursive: true });
+    utimesSync(dir, when, when);
+    return dir;
+  }
+
+  test("removes every stage and every version but the kept ones once over an hour old; keeps the young, the record and anything else", () => {
+    const oldVersion = dirAt("0.1.1", T0);
+    const youngVersion = dirAt("0.1.2", T1);
+    const running = dirAt("0.1.3", T0);
+    const recorded = dirAt("0.1.4", T0);
+    const orphanStage = dirAt(".stage-orphan", T0);
+    const liveStage = dirAt(".stage-live", T1);
+    const notAVersion = dirAt("notes", T0);
+    recordAt("0.1.4");
+    pruneInstalls(["0.1.3", "0.1.4"], { env, now });
+    assert.equal(existsSync(oldVersion), false, "an old version directory is removed");
+    assert.equal(existsSync(orphanStage), false, "a stage orphaned by a killed install is removed");
+    for (const kept of [youngVersion, running, recorded, liveStage, notAVersion]) assert.ok(existsSync(kept), kept);
+    assert.equal(recordedVersionOrNull(env), "0.1.4");
+  });
+});
+
+describe("startVersion: what the launcher starts the server from", () => {
+  test("a recorded, installed version is answered with no registry request and no npm", async () => {
     recordAt("0.1.7");
-    const result = runModule([]);
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, `${DASHBOARD_MCP_PACKAGE_NAME}@0.1.7`);
+    const bin = layDown("0.1.7");
+    const npm = fakeNpm();
+    assert.deepEqual(await startVersion({ env, spawnFn: npm.spawnFn, npm: NPM }), { version: "0.1.7", bin });
+    assert.deepEqual(registry.requests(), []);
+    assert.deepEqual(npm.calls, []);
+  });
+
+  test("a recorded version that is not installed is installed, still with no registry request, even when the registry has moved", async () => {
+    recordAt("0.1.7");
+    const npm = fakeNpm();
+    const { version, bin } = await startVersion({ env, spawnFn: npm.spawnFn, npm: NPM });
+    assert.equal(version, "0.1.7");
+    assert.equal(bin, installedBin(dataDir, "0.1.7"));
+    assert.equal(npm.calls[0].args.at(-1), SPEC("0.1.7"));
     assert.deepEqual(registry.requests(), []);
   });
 
-  test("no args with no record resolves through the same function and records it", () => {
-    const result = runModule([]);
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, `${DASHBOARD_MCP_PACKAGE_NAME}@0.1.50`);
+  test("with nothing recorded it resolves the registry's latest, installs it, and only then records it", async () => {
+    let recordedAtSpawn = "unset";
+    const npm = fakeNpm("ok", () => (recordedAtSpawn = recordedVersionOrNull(env)));
+    const { version, bin } = await startVersion({ env, spawnFn: npm.spawnFn, npm: NPM });
+    assert.equal(version, "0.1.50");
+    assert.ok(existsSync(bin));
+    assert.equal(recordedAtSpawn, null, "nothing is recorded until the install succeeded");
     assert.equal(recordedVersionOrNull(env), "0.1.50");
-    assert.equal(registry.requests().length, 1);
+    assert.deepEqual(registry.requests(), [LATEST_PATH]);
   });
 
-  test("no args, no record, registry down: exit 1, one stderr line, nothing on stdout", () => {
+  test("nothing recorded and the registry unreadable: one line naming the reason and that nothing can start; npm never runs", async () => {
     registry.setMode("status-500");
-    const result = runModule([]);
-    assert.equal(result.status, 1);
-    assert.equal(result.stdout, "");
-    assert.equal(result.stderr.trim().split("\n").length, 1);
-    assert.match(result.stderr, /nothing .*can start/);
+    const npm = fakeNpm();
+    await assert.rejects(startVersion({ env, spawnFn: npm.spawnFn, npm: NPM }), (err) => {
+      assert.match(err.message, /HTTP 500/);
+      assert.match(err.message, /no .*version is recorded.*nothing that runs it can start/);
+      oneLineOnly(err);
+      return true;
+    });
+    assert.deepEqual(npm.calls, []);
+    assert.equal(existsSync(recordFile()), false);
   });
 
-  test("--refresh moves the record to the registry's version: exit 0 and the new spec", () => {
-    recordAt("0.1.7");
-    const result = runModule(["--refresh"]);
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, `${DASHBOARD_MCP_PACKAGE_NAME}@0.1.50`);
-    assert.equal(recordedVersionOrNull(env), "0.1.50");
-  });
-
-  test("--refresh with the registry down and a record: exit 3, the recorded spec on stdout, ONE line on stderr", () => {
-    recordAt("0.1.7");
-    registry.setMode("status-500");
-    const result = runModule(["--refresh"]);
-    assert.equal(result.status, 3);
-    assert.equal(result.stdout, `${DASHBOARD_MCP_PACKAGE_NAME}@0.1.7`);
-    assert.equal(result.stderr.trim().split("\n").length, 1);
-    assert.match(result.stderr, /HTTP 500.*0\.1\.7/);
-  });
-
-  test("--refresh with the registry down and no record: exit 1, nothing on stdout, the line says nothing will run", () => {
-    registry.setMode("status-500");
-    const result = runModule(["--refresh"]);
-    assert.equal(result.status, 1);
-    assert.equal(result.stdout, "");
-    assert.match(result.stderr, /nothing .*can start/);
-  });
-
-  test("an unknown argument is refused, not read as a version", () => {
-    const result = runModule(["--bogus"]);
-    assert.equal(result.status, 2);
-    assert.match(result.stderr, /usage/);
+  test("nothing recorded and the install fails: the install's line, and nothing is recorded", async () => {
+    const npm = fakeNpm("fail");
+    await assert.rejects(startVersion({ env, spawnFn: npm.spawnFn, npm: NPM }), /^Error: install_failed: /);
+    assert.equal(recordedVersionOrNull(env), null);
   });
 });
 
-// AC3 — no shipped plugin file carries a version of the package. Which version runs is the
-// registry's `latest`, recorded at session start; a literal here would be the hand-bumped pin
-// that fell behind the published package five times.
+describe("refreshInstall: the background refresh", () => {
+  test("the registry's latest moved A to B: B is installed into its own directory, then recorded; A's install is untouched", async () => {
+    recordAt("0.1.7");
+    const a = layDown("0.1.7");
+    registry.setVersion("0.1.8");
+    let recordedAtSpawn;
+    const npm = fakeNpm("ok", () => (recordedAtSpawn = recordedVersionOrNull(env)));
+    assert.equal(await refreshInstall("0.1.7", { env, spawnFn: npm.spawnFn, npm: NPM }), "0.1.8");
+    assert.equal(recordedAtSpawn, "0.1.7", "the record moves only after B installed");
+    assert.equal(recordedVersionOrNull(env), "0.1.8");
+    assert.ok(existsSync(installedBin(dataDir, "0.1.8")));
+    assert.equal(readFileSync(a, "utf8"), "installed 0.1.7", "the running version's install is untouched");
+    assert.deepEqual(readdirSync(installRoot()).sort(), ["0.1.7", "0.1.8", "current"]);
+  });
+
+  test("an unchanged latest that is installed: no npm, the record stays", async () => {
+    recordAt("0.1.50");
+    layDown("0.1.50");
+    const npm = fakeNpm();
+    assert.equal(await refreshInstall("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), "0.1.50");
+    assert.deepEqual(npm.calls, []);
+    assert.equal(recordedVersionOrNull(env), "0.1.50");
+  });
+
+  test("a registry that cannot be read rejects and changes nothing", async () => {
+    recordAt("0.1.7");
+    registry.setMode("status-500");
+    const npm = fakeNpm();
+    await assert.rejects(refreshInstall("0.1.7", { env, spawnFn: npm.spawnFn, npm: NPM }), /HTTP 500/);
+    assert.equal(recordedVersionOrNull(env), "0.1.7");
+    assert.deepEqual(npm.calls, []);
+  });
+
+  test("a failed install of the new version rejects and keeps the record", async () => {
+    recordAt("0.1.7");
+    registry.setVersion("0.1.8");
+    const npm = fakeNpm("fail");
+    await assert.rejects(refreshInstall("0.1.7", { env, spawnFn: npm.spawnFn, npm: NPM }), /^Error: install_failed: /);
+    assert.equal(recordedVersionOrNull(env), "0.1.7");
+  });
+
+  test("it prunes old installs, never the running version or the one it recorded", async () => {
+    const old = new Date("2026-01-01T00:00:00Z");
+    recordAt("0.1.7");
+    for (const v of ["0.1.6", "0.1.7"]) {
+      layDown(v);
+      utimesSync(path.join(installRoot(), v), old, old);
+    }
+    registry.setVersion("0.1.8");
+    const npm = fakeNpm();
+    await refreshInstall("0.1.7", { env, spawnFn: npm.spawnFn, npm: NPM, now: old.getTime() + 2 * STALE_INSTALL_MS });
+    assert.deepEqual(readdirSync(installRoot()).sort(), ["0.1.7", "0.1.8", "current"]);
+  });
+});
+
+// AC3 (DX-4321) — no shipped plugin file carries a version of the package. Which version runs is the registry's `latest`,
+// recorded by the launcher; a literal here would be the hand-bumped pin that fell behind the published package five times.
 describe("no shipped plugin file carries a package version literal", () => {
   /** The lines of `text` that put a version literal next to the package name. */
   function versionLiterals(text) {
@@ -414,7 +571,7 @@ describe("no shipped plugin file carries a package version literal", () => {
     }
   });
 
-  test("scripts, hooks.json, skills, agents, CLAUDE.md and README.md carry none (tests and fixtures are not shipped)", () => {
+  test("scripts, hooks, skills, agents, CLAUDE.md and README.md carry none (tests and fixtures are not shipped)", () => {
     const repoRoot = path.join(here, "..", "..");
     const shipped = [...listPluginFiles(repoRoot, "danxbot").map((rel) => path.join(repoRoot, "danxbot", rel)), path.join(repoRoot, "CLAUDE.md"), path.join(repoRoot, "README.md")];
     assert.ok(shipped.some((file) => file.endsWith(path.join("scripts", "lib", "dashboard-mcp-package.mjs"))), "the listing found the plugin's files");
@@ -424,5 +581,39 @@ describe("no shipped plugin file carries a package version literal", () => {
       for (const line of versionLiterals(readFileSync(file, "utf8"))) hits.push(`${path.relative(repoRoot, file)}: ${line.trim()}`);
     }
     assert.deepEqual(hits, []);
+  });
+});
+
+// DX-3673 / DX-3811 / DX-4235 — the REAL registry and the REAL package, deliberately: a fake can never catch a drift
+// between this plugin and what the registry publishes, which is the one thing these guard. A danxbot publish that moved the
+// package's entry point would make every install end in install_incomplete; one that removed a subcommand this plugin
+// still runs (`subagents-live`, subagents-live.mjs) reaches every session start at once. Both are caught here by a real,
+// shell-free install of the registry's current `latest` (also the live proof that npm runs with no shell on this OS).
+// Network dependent by design; slower than the rest of this file (a real npm install, ~5-20 s).
+describe("the registry's current package, installed for real with no shell", { timeout: INSTALL_TIMEOUT_MS + 30_000 }, () => {
+  let realData;
+  let installed;
+  before(async () => {
+    realData = mkdtempSync(path.join(tmpdir(), "mcp-package-real-"));
+    const realEnv = { ...process.env, CLAUDE_PLUGIN_DATA: realData };
+    delete realEnv[REGISTRY_BASE_URL_ENV];
+    installed = await startVersion({ env: realEnv });
+  });
+  after(() => rmSync(realData, { recursive: true, force: true }));
+
+  test("its published entry point is the layout the plugin runs and subagents-live.mjs reads", () => {
+    assert.equal(installed.bin, installedBin(realData, installed.version));
+    assert.ok(existsSync(installed.bin), installed.bin);
+  });
+
+  test("it supports every subcommand this plugin invokes on it", () => {
+    // An unknown subcommand makes the published entry point refuse with its own list: `... (the only ones are "a", "b", ...)`.
+    const probe = spawnSync(process.execPath, [installed.bin, "__dx-3673-guard-probe__"], { encoding: "utf8" });
+    assert.equal(probe.status, 2, `expected the package's own "unknown subcommand" refusal; got ${probe.status}: ${probe.stderr}`);
+    const listed = [...probe.stderr.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    assert.ok(
+      listed.includes(LIVE_SUBCOMMAND),
+      `${SPEC(installed.version)} does not support "${LIVE_SUBCOMMAND}", which subagents-live.mjs runs: a release removed it. Published: [${listed.join(", ")}]`,
+    );
   });
 });

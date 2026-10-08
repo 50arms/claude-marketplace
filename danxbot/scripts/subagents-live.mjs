@@ -9,7 +9,7 @@
 //
 // THE CONTRACT. stdout is the subcommand's own (`{"subagents":[...]}` lines; packages/danx-dashboard-mcp/src/subagents-live.ts in
 // danxbot). A failure to start prints ONE line naming the reason on stderr and exits 1; the pane shows it. Nothing is installed
-// here: ensure-dashboard-mcp.sh --prewarm installs the recorded version at every session start.
+// here: the plugin's MCP server launcher (dashboard-mcp-server.mjs) installs the recorded version at every session start.
 //
 // THE PARENT. The engine kills this child when the module stops it or unloads. A session process that dies without unloading
 // (a crash, a killed app) kills nothing. On Windows the subcommand sees its stdout close within a moment (measured 2026-10-04: a
@@ -19,7 +19,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { DASHBOARD_MCP_PACKAGE_NAME, requireRecordedVersion } from "./lib/dashboard-mcp-package.mjs";
+import { DASHBOARD_MCP_PACKAGE_NAME, installedBin, requireRecordedVersion } from "./lib/dashboard-mcp-package.mjs";
+
+/** A version's installed entry point: the one layout the plugin's install lays down (its owner is lib/dashboard-mcp-package.mjs). */
+export { installedBin };
 
 export const LIVE_SUBCOMMAND = "subagents-live";
 
@@ -40,11 +43,6 @@ export function pluginDataDir(root) {
     return { reason: `the plugin is not loaded from a marketplace install (${root}), so its data directory is unknown` };
   }
   return { dir: path.join(path.dirname(cacheDir), "data", `${path.basename(pluginDir)}-${path.basename(marketplaceDir)}`) };
-}
-
-/** A version's installed entry point: the one layout ensure-dashboard-mcp.sh installs (`BIN_REL`). */
-export function installedBin(dataDir, version) {
-  return path.join(dataDir, "dashboard-mcp", version, "node_modules", ...DASHBOARD_MCP_PACKAGE_NAME.split("/"), "dist", "index.js");
 }
 
 /** The installed entry point of the recorded version for the plugin at `root`, or the reason there is none. */

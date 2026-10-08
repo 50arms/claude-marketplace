@@ -10,12 +10,13 @@
 //
 // WHY A REAL HARNESS AND NOT A HAND COUNT (DX-3053 AC)
 // ------------------------------------------------------
-// Every hook script here starts with `set -euo pipefail`. Running one with
-// CLAUDE_PLUGIN_ROOT unset makes an unbound-variable expansion abort it
-// before it reaches its event branch — it emits zero bytes and silently
-// LOOKS like a hook that injects nothing. This harness sets CLAUDE_PLUGIN_ROOT
-// to the real plugin directory for every invocation, exactly as Claude Code's
-// own hook runner does, so a hook that would abort here would also abort in
+// A command hook names its own files through ${CLAUDE_PLUGIN_ROOT}. Run with
+// the variable unset it aborts before it emits anything (a `set -u` script on
+// the unbound expansion, a `node "${CLAUDE_PLUGIN_ROOT}/..."` command on a
+// missing file), and silently LOOKS like a hook that injects nothing. This
+// harness sets CLAUDE_PLUGIN_ROOT to the real plugin directory for every
+// invocation, exactly as Claude Code's own hook runner does, so a hook that
+// would abort here would also abort in
 // a real session — never the other way around (AC: "the harness sets
 // CLAUDE_PLUGIN_ROOT per script").
 //

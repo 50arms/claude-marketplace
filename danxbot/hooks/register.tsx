@@ -1,10 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRow, RefreshGate, RelayState, StampState, TurnState } from '../types'
-import { subagentStartActivity, subagentStopActivity, backgroundBashStartActivity, finishStoppedBackgroundTasks, subagentHeartbeatActivity } from './reports/activity'
-import { countBackgroundWork, clearBackgroundWork } from './reports/background-work'
-import { filterReadyCards, blockReasonForReadyCards } from './reports/ready-cards'
+import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRow, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -77,6 +74,11 @@ import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, peekPacing, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { EMPTY_PANEL_STATE, buildPanel } from './plan/pacing-panel'
 import { readTeamSettings } from './plan/pacing-settings'
+import { ACTIVITY_PATH, LIVENESS_MS, agentRow, bareAgentId, endedShells, shellRow, subagentActivityId } from './reports/activity'
+import type { ActivityChange } from './reports/activity'
+import { BACKGROUND_WORK_PATH, countRunning, heartbeatCount } from './reports/background-work'
+import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
+import type { ReadyCard } from './reports/ready-cards'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -122,6 +124,8 @@ const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, n
 // DX-4234: the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
 const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, null as string | null)
+// DX-4235: the reports' memory between events (see ReportState).
+const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], count: null } as ReportState)
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -162,7 +166,7 @@ let agentListInFlight: { call: Promise<{ id: string; type: string; status: strin
 
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. Any rejection (including the engine's "no such server") is an error shown as one.
-async function api($: any, method: string, path: string, extra: { query?: object; body?: object } = {}): Promise<Api> {
+async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}): Promise<Api> {
   let res
   try {
     res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra })
@@ -1458,6 +1462,8 @@ async function onPromptStamp($: any, e: any, next: any) {
 // result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
+  // DX-4235: a sub-agent's liveness and a background shell's start (detached inside)
+  await reportToolCall($, e, r)
   if (r.deny !== undefined) return r
   const start = e.agentId === undefined ? await startLine($) : null
   return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, start))] }
@@ -1595,7 +1601,12 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)
-    if (plan.kind === 'connected') return { line: await eventContext($, event), askRestart: false }
+    if (plan.kind === 'connected') {
+      // DX-4235: no background-work snapshot survives a start, so the count is cleared; here, because classic.SessionStart cannot call the
+      // dashboard and this is the first bound event after it that knows the session is on a plan
+      await putBackgroundWork($, null, await $.clock.now())
+      return { line: await eventContext($, event), askRestart: false }
+    }
     if (plan.kind === 'failed') return fault(plan.reason)
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
     return { line: null, askRestart }
@@ -1626,13 +1637,18 @@ async function onClassicSessionStart($: any, e: any, next: any) {
 // DX-4234: and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
+  // DX-4235: its activity row opens (detached inside)
+  await reportSubagentStart($, e)
   const eventLine = await withinDeadline($, CONTEXT_DEADLINE_MS, readSubagentContext($), () => eventFailureLine('sub_agent_start', DEADLINE_REASON))
   const pacing = await pacingLine(pacingEnv($))
   return withLine(withLine(r, eventLine), pacing)
 }
 
-function onSubagentStop($: any, e: any, next: any) {
-  return onSubagentChange($, e, next, false)
+async function onSubagentStop($: any, e: any, next: any) {
+  const r = await onSubagentChange($, e, next, false)
+  // DX-4235: the background-work count and the shells' ends (its own row closes at its turn.complete)
+  detach($, 'danxbot background-work report', onReportSubagentStop($, e))
+  return r
 }
 
 // DX-4233: the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this). What it did not read is told
@@ -1649,6 +1665,9 @@ async function onTurnComplete($: any, e: any, next: any) {
     })
     // detached: the turn.complete hook does not wait on the session taking a prompt
     if (wake !== null) detach($, 'Waking the session', wakeSession($, wake))
+  } else {
+    // DX-4235: a sub-agent's turn ended, cleanly or not: its activity row closes
+    await reportSubagentEnd($, e.agentId)
   }
   detach($, 'Plan refresh', refresh($))
   void watchRelay($)
@@ -1748,134 +1767,152 @@ function pacingEnv($: any) {
   }
 }
 
-// DX-4235: Activity reporting — tells the dashboard when a plan-connected session's sub-agents
-// and background Bash calls start and finish. Detached so never blocks or delays a tool call or sub-agent.
-async function reportActivityChange($: any, changes: any[]): Promise<void> {
-  try {
-    const v = await read($, view)
-    if (v.connected === null) return // Only for plan-connected sessions
-    const now = await $.clock.now()
-    if (changes.length === 0) return
-    try {
-      await $.mcp.call('danxbot_api', 'POST', '/api/plan-sessions/me/activity', { body: { activities: changes } })
-    } catch (err: any) {
-      // A failed report is shown where the operator sees it (detach toast or transcript line), never swallowed
-      $.ui.toast(`Activity report failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
-    }
-  } catch (err: any) {
-    // Plugin state read failure
-    $.ui.toast(`Activity report failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+// DX-4235: the reports. A plan-connected session tells the dashboard what it is running (activity rows and the background-work
+// count) and has its stop checked for ready cards (DX-4534). Silence rule: none of it runs unless the module holds the session as on a
+// plan (`view.connected`). Every call goes through the session's own server (`api`), detached so no event waits on it; a failed one is
+// one toast, never swallowed (reportFailed).
+
+// The answers that are ordinary, not faults, and stay quiet: the session holds no key or a person revoked it (its own tools say so),
+// or the dashboard has it on no plan, or it is a worker's session (409 `session_not_connected` / `session_is_worker`).
+const QUIET_CONFLICTS = ['session_not_connected', 'session_is_worker']
+function isQuietRefusal(r: Api): boolean {
+  return isSignedOut(r) || outcomeRevokedBy(r) !== null || (r.status === 409 && QUIET_CONFLICTS.includes(r.body?.error))
+}
+
+async function isReporting($: any): Promise<boolean> {
+  return (await read($, view)).connected !== null
+}
+
+// A running sub-agent's last liveness post (epoch ms), by activity id. A module variable: lost on a reload, which costs one extra post.
+const livenessAt = new Map<string, number>()
+
+async function report($: any, what: string, method: string, path: string, body: object): Promise<void> {
+  const r = await api($, method, path, { body })
+  if (!r.ok && !isQuietRefusal(r)) $.ui.toast(`danxbot ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
+}
+
+function postActivity($: any, rows: ActivityChange[]): void {
+  detach($, 'danxbot activity report', report($, 'activity', 'POST', ACTIVITY_PATH, { activities: rows }))
+}
+
+// The count is recorded as sent before the call answers: it is what the next heartbeat re-sends (at least 1).
+async function putBackgroundWork($: any, count: number | null, at: number): Promise<void> {
+  await update($, reports, cur => ({ ...cur, count }))
+  detach($, 'danxbot background-work report', report($, 'background-work', 'PUT', BACKGROUND_WORK_PATH, { count, eventAt: new Date(at).toISOString() }))
+}
+
+// DX-4235: a sub-agent started: its row opens, and it is remembered as running (its liveness clock starts now).
+async function reportSubagentStart($: any, e: any): Promise<void> {
+  if (typeof e.agent_id !== 'string' || e.agent_id === '' || !(await isReporting($))) return
+  const id = subagentActivityId(e.agent_id)
+  const now = await $.clock.now()
+  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: true } }))
+  livenessAt.set(id, now)
+  postActivity($, [agentRow(id, typeof e.agent_type === 'string' && e.agent_type !== '' ? e.agent_type : null, now, null)])
+}
+
+// DX-4235: a sub-agent's turn ended, cleanly or not (a failed sub-agent raises no SubagentStop, but its turn.complete still comes): its
+// row is finished. A resumed sub-agent's next turn ends it again. An agent id this session never started (an engine fork) reports nothing.
+async function reportSubagentEnd($: any, agentId: string): Promise<void> {
+  const id = subagentActivityId(agentId)
+  if ((await read($, reports)).agents[id] === undefined) return
+  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: false } }))
+  livenessAt.delete(id)
+  if (!(await isReporting($))) return
+  const now = await $.clock.now()
+  postActivity($, [agentRow(id, null, now, now)])
+}
+
+// DX-4235: after a tool call. A running sub-agent's own call re-posts its row with a fresh lastActivityAt, at most once a LIVENESS_MS, and
+// re-sends the count, so a sub-agent working for minutes never reads as silent (comment 10017). A call whose result names a background
+// task (a `run_in_background` shell, or one the person backgrounded) opens that shell's row, keyed by its task id.
+async function reportToolCall($: any, e: any, r: any): Promise<void> {
+  const taskId = r.deny === undefined ? r.result?.backgroundTaskId : undefined
+  const isShell = typeof taskId === 'string' && taskId !== ''
+  if (e.agentId === undefined && !isShell) return
+  if (!(await isReporting($))) return
+  const now = await $.clock.now()
+  if (isShell) {
+    await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId] }))
+    postActivity($, [shellRow(taskId, now, null)])
   }
+  if (e.agentId === undefined) return
+  const id = subagentActivityId(e.agentId)
+  const state = await read($, reports)
+  if (state.agents[id] !== true || now - (livenessAt.get(id) ?? -Infinity) < LIVENESS_MS) return
+  livenessAt.set(id, now)
+  postActivity($, [agentRow(id, null, now, null)])
+  await putBackgroundWork($, heartbeatCount(state.count), now)
 }
 
-// SubagentStart: report the sub-agent starting (DX-4235)
-async function onReportSubagentStart($: any, e: any, next: any) {
-  const r = await next(e)
-  const now = await $.clock.now()
-  const changes = [subagentStartActivity(e.agent_id, new Date(now).toISOString())]
-  detach($, 'Activity report', reportActivityChange($, changes))
-  return r
-}
-
-// SubagentStop: report the sub-agent stopping and close any background bash tasks no longer running (DX-4235)
-async function onReportSubagentStop($: any, e: any, next: any) {
-  const r = await next(e)
-  const now = await $.clock.now()
-  const isoTime = new Date(now).toISOString()
-  const changes = [subagentStopActivity(e.agent_id, isoTime)]
-
-  // Also close any background tasks that are no longer running
-  const finished = finishStoppedBackgroundTasks(e.background_tasks, isoTime)
-  changes.push(...finished)
-
-  if (changes.length > 0) {
-    detach($, 'Activity report', reportActivityChange($, changes))
+// DX-4235: a Stop or SubagentStop carries the engine's list of the background work in flight. It sets the count (a SubagentStop still lists
+// the stopping sub-agent as running, so `excludeId` leaves it out) and finishes the row of every shell this session opened that the list no
+// longer shows running (comment 10065: every start the reports open gets its end). A snapshot that is not a list is one toast.
+async function reportSnapshot($: any, e: any, excludeId?: string): Promise<void> {
+  const tasks = e.background_tasks
+  if (!Array.isArray(tasks)) {
+    $.ui.toast(`danxbot background-work report failed: the ${e.hook_event_name ?? 'stop'} event carried no background_tasks list`)
+    return
   }
-  return r
-}
-
-// PostToolUse(Bash): report background Bash calls starting (DX-4235)
-async function onReportBackgroundBashStart($: any, e: any, next: any) {
-  const r = await next(e)
-  // Only for background Bash calls
-  if (e.tool_name !== 'Bash' || !e.tool_input?.run_in_background) return r
-
   const now = await $.clock.now()
-  // The task ID comes from the Bash tool result; for now we use a hash of input
-  // In a real implementation, this would be matched from the result
-  const taskId = `bash-${Date.now()}`
-  const changes = [backgroundBashStartActivity(taskId, new Date(now).toISOString())]
-  detach($, 'Activity report', reportActivityChange($, changes))
-  return r
+  await putBackgroundWork($, countRunning(tasks, excludeId), now)
+  const ended = endedShells((await read($, reports)).shells, tasks)
+  if (ended.length === 0) return
+  await update($, reports, cur => ({ ...cur, shells: cur.shells.filter(s => !ended.includes(s)) }))
+  postActivity($, ended.map(id => shellRow(id, now, now)))
 }
 
-// Stop: report background work count and check for ready cards (DX-4235, DX-4534)
+// What the ready-cards read came to: the ready cards, nothing to say (signed out, no key, on no plan), or why it failed.
+type ReadyRead = { kind: 'cards'; cards: ReadyCard[] } | { kind: 'quiet' } | { kind: 'failed'; reason: string }
+
+// DX-4534: the plan this session is on and its boards, then the plan's ToDo cards on each board (a plan can span boards; an issues read
+// names its board with the danxbot_api tool's own `board` argument).
+async function readReadyCards($: any): Promise<ReadyRead> {
+  const mine = await api($, 'GET', '/api/plans/mine')
+  if (isQuietRefusal(mine)) return { kind: 'quiet' }
+  if (!mine.ok) return { kind: 'failed', reason: errText(mine) }
+  const plan = planOf(mine.body)
+  if (!plan.ok) return { kind: 'failed', reason: plan.reason }
+  const query = issuesQuery(plan.value.planId)
+  const boards = await Promise.all(plan.value.boards.map(board => api($, 'GET', '/api/issues', { board, query })))
+  const cards: ReadyCard[] = []
+  for (const r of boards) {
+    if (!r.ok) return { kind: 'failed', reason: errText(r) }
+    const read = readyCardsOf(r.body)
+    if (!read.ok) return { kind: 'failed', reason: read.reason }
+    cards.push(...read.value)
+  }
+  return { kind: 'cards', cards }
+}
+
+// DX-4235: the main session's stop. Reports the snapshot, then (DX-4534) blocks the stop once while the plan has ready cards nobody holds.
+// Never on a stop the hook already forced (`stop_hook_active`, so it cannot loop), never on its own failure (one toast, the stop goes on),
+// and within one deadline over all its reads.
 async function onReportStop($: any, e: any, next: any) {
-  const now = await $.clock.now()
-  const isoTime = new Date(now).toISOString()
-
-  try {
-    const v = await read($, view)
-    if (v.connected !== null) {
-      // Report background work count
-      const count = countBackgroundWork(e.background_tasks, e.agent_id)
-      if (count !== null) {
-        try {
-          await $.mcp.call('danxbot_api', 'PUT', '/api/plan-sessions/me/background-work', {
-            body: { count, eventAt: isoTime },
-          })
-        } catch (err: any) {
-          $.ui.toast(`Background work report failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
-        }
-      }
-
-      // Check for ready cards (main session only, not a sub-agent)
-      if (e.agent_id === undefined && !e.stop_hook_active) {
-        try {
-          const planResp = await api($, 'GET', '/api/plans/mine')
-          if (planResp.ok && planResp.body?.id) {
-            const boardsResp = await api($, 'GET', '/api/issues', {
-              query: { board: `danxbot:${planResp.body.slug || 'default'}`, fields: { type: true, status: true, assigned_agent: true, blocked: true } },
-            })
-            if (boardsResp.ok && Array.isArray(boardsResp.body?.rows)) {
-              const readyCards = filterReadyCards(boardsResp.body.rows)
-              if (readyCards.length > 0 && !e.stop_hook_active) {
-                return {
-                  ...r,
-                  block: blockReasonForReadyCards(readyCards),
-                }
-              }
-            }
-          }
-        } catch (err: any) {
-          // Allow the stop on read failure
-          $.ui.toast(`Ready cards check failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
-        }
-      }
-    }
-  } catch {
-    // Continue with stop on any error
-  }
-
-  return next(e)
+  if (!(await isReporting($))) return next(e)
+  detach($, 'danxbot background-work report', reportSnapshot($, e))
+  const verdict: ReadyRead =
+    e.agent_id === undefined && e.stop_hook_active !== true
+      ? await withinDeadline($, READY_CARDS_DEADLINE_MS, readReadyCards($), () => ({ kind: 'failed', reason: `timeout: no answer within ${READY_CARDS_DEADLINE_MS / 1000} s` }))
+      : { kind: 'quiet' }
+  const r = await next(e)
+  if (verdict.kind === 'failed') $.ui.toast(skippedLine(verdict.reason))
+  if (verdict.kind === 'cards' && verdict.cards.length > 0) return { ...r, block: blockReason(verdict.cards) }
+  return r
 }
 
-// StopFailure: clear the background work count (DX-4235)
+// DX-4235: a sub-agent stopped: the snapshot's count without the sub-agent itself, and the shells that ended. (Its row is finished by its
+// turn.complete, which a failed sub-agent raises too.)
+async function onReportSubagentStop($: any, e: any): Promise<void> {
+  if (!(await isReporting($))) return
+  await reportSnapshot($, e, typeof e.agent_id === 'string' ? bareAgentId(e.agent_id) : undefined)
+}
+
+// DX-4235: the main session's turn died on an error: there is no snapshot to trust, so the count is cleared. A sub-agent's failure
+// (`agent_id` set) clears nothing: the session goes on.
 async function onReportStopFailure($: any, e: any, next: any) {
   const r = await next(e)
-  if (e.agent_id === undefined) {
-    const now = await $.clock.now()
-    try {
-      const v = await read($, view)
-      if (v.connected !== null) {
-        await $.mcp.call('danxbot_api', 'PUT', '/api/plan-sessions/me/background-work', {
-          body: { count: null, eventAt: new Date(now).toISOString() },
-        })
-      }
-    } catch (err: any) {
-      $.ui.toast(`Background work clear failed: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
-    }
-  }
+  if (e.agent_id === undefined && (await isReporting($))) await putBackgroundWork($, null, await $.clock.now())
   return r
 }
 
@@ -1892,15 +1929,13 @@ export const register: Register = on => {
   // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
   on('classic.SubagentStart', onSubagentStart)
-  on('classic.SubagentStart', onReportSubagentStart) // DX-4235: activity reporting
   on('classic.SubagentStop', onSubagentStop)
-  on('classic.SubagentStop', onReportSubagentStop) // DX-4235: activity reporting
   on('classic.SessionStart', onClassicSessionStart)
-  on('classic.Stop', onReportStop) // DX-4235: background work and ready cards check
-  on('classic.StopFailure', onReportStopFailure) // DX-4235: clear background work
-  on('tool.call', onReportBackgroundBashStart) // DX-4235: activity reporting for background bash
-  on('tool.call', onToolStamp)
+  // DX-4235: the background-work count, the shells' ends and (DX-4534) the ready-cards check; the clear after a main-session failure
+  on('classic.Stop', onReportStop)
+  on('classic.StopFailure', onReportStopFailure)
   on('prompt.submit', onPromptStamp)
+  on('tool.call', onToolStamp)
   on('classic.UserPromptSubmit', onTitle)
   on('ui.render', { component: 'AbovePrompt' }, drawBand)
   on('ui.render', { component: 'SessionMode' }, drawSessionMode)

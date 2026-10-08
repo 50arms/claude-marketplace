@@ -5,7 +5,7 @@ every dev rule used while working a card, and the hooks that serve them.
 
 ## Install
 
-Needs `node` and `bash` on the PATH Claude Code itself starts with, not just on the PATH of a shell you open later (on Windows, Git Bash; on WSL, a login shell that has not loaded nvm has no `node`, and the server then fails to start with `ENOENT`).
+Needs `node` on the PATH Claude Code itself starts with, not just on the PATH of a shell you open later (on WSL, a login shell that has not loaded nvm has no `node`, and the server then fails to start with `ENOENT`).
 
 In a Claude Code session:
 
@@ -30,6 +30,8 @@ After installing:
 ## The dashboard MCP server
 
 The plugin ships the `danx-dashboard` MCP server (`danxbot/scripts/dashboard-mcp-server.mjs`, declared in `plugin.json` `mcpServers`). Claude Code names it `plugin:danxbot:danx-dashboard` and lists its tools as `mcp__plugin_danxbot_danx-dashboard__*`. No board is set: name it per call (the `board` argument) or let `plan_connect` connect the session.
+
+The launcher runs the `@thehammer/danx-dashboard-mcp` version recorded in the plugin's data directory, installing it with node the first time. While the server runs, it checks npm for a newer version and installs it in the background, so a new server release runs from your next session start with no plugin update.
 
 To use another dashboard, set `DANXBOT_DASHBOARD_URL` (your shell, or the `env` block of a repo's committed `.claude/settings.json` for a per-repo or per-company default). It beats the `dashboard_url` option above. Claude Code reads plugin options from user and managed settings only, never from a project's, so the `env` block is the per-repo route.
 

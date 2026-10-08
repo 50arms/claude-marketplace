@@ -18,7 +18,7 @@
 //      harness itself does not bit-rot as plugin content moves.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,7 +26,6 @@ import test from "node:test";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "measure-injection.mjs");
-const PLUGIN_ROOT = path.join(REPO_ROOT, "danxbot");
 
 function run() {
   const out = execFileSync("node", [SCRIPT, "--json"], {
@@ -118,17 +117,22 @@ function fakeRepo(hooksJson) {
   return repo;
 }
 
-test("AC 32508: an unset CLAUDE_PLUGIN_ROOT makes a real hook command fail loudly, which is why the harness always sets it", { skip: true }, () => {
-  // DX-4235: all command hooks moved to function hooks; this test is no longer relevant
-  // Every hook command is `node "${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs" ...`. Without the variable the shell expands it to nothing and
-  // node cannot find the launcher: a non-zero exit the harness reports as an error row, never as a hook that "injects nothing".
-  const hooksJson = JSON.parse(readFileSync(path.join(PLUGIN_ROOT, "hooks", "hooks.json"), "utf8"));
-  if (!hooksJson.hooks) return; // No command hooks; migration complete
-  const hooks = hooksJson.hooks;
-  const command = hooks.SessionStart[0].hooks[0].command;
-  const withoutRoot = { ...process.env };
-  delete withoutRoot.CLAUDE_PLUGIN_ROOT;
-  assert.throws(() => execFileSync("bash", ["-c", command], { input: "{}", env: withoutRoot, cwd: REPO_ROOT, stdio: ["pipe", "pipe", "pipe"] }), /Command failed/);
+test("AC 32508: the harness sets CLAUDE_PLUGIN_ROOT for each command, so a command that needs it is measured, and without it the same command fails loudly", () => {
+  // A plugin's command hook names its own files through `${CLAUDE_PLUGIN_ROOT}`. Without the variable the shell expands it to nothing
+  // and node cannot find the script: a non-zero exit, which a harness that forgot to set it would misread as a hook that injects nothing.
+  const command = 'node "${CLAUDE_PLUGIN_ROOT}/hooks/say.mjs"';
+  const repo = fakeRepo({ hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] } });
+  try {
+    writeFileSync(path.join(repo, "p", "hooks", "say.mjs"), 'process.stdout.write("hello");\n');
+    const { rows, totals } = JSON.parse(execFileSync("node", [path.join(repo, "scripts", "measure-injection.mjs"), "--json"], { cwd: repo }).toString("utf8"));
+    assert.deepEqual(rows.map((r) => [r.bytes, r.error]), [["hello".length, null]]);
+    assert.equal(totals.perSession, "hello".length);
+    const withoutRoot = { ...process.env };
+    delete withoutRoot.CLAUDE_PLUGIN_ROOT;
+    assert.throws(() => execFileSync("bash", ["-c", command], { input: "{}", env: withoutRoot, cwd: repo, stdio: ["pipe", "pipe", "pipe"] }), /Command failed/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test("perSession includes a SessionStart hook whose matcher still fires at startup, not only one with no matcher", () => {
