@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { SERVER } from '../hooks/plan/config'
-import { SURFACES, dashboard, expectRowCarries, footerText, linksOf, mountIndicator, startSession, toldModel } from './plan-kit'
+import { SURFACES, dashboard, expectRowCarries, footerText, linksOf, mountIndicator, startSession } from './plan-kit'
 
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -29,14 +29,14 @@ for (const surface of SURFACES) {
       expect(await pane.find({ key: 'disconnect' })).toBeDefined()
       expect(await text(pane)).not.toContain('Nothing needs you')
       // R-4: the model's note was appended in the same step, once
-      const rows = toldModel(d)
+      const rows = d.relay.told
       expect(rows).toHaveLength(1)
       expectRowCarries(rows[0]!, ['PLAN-23'])
 
       d.holdApi(0)
       await d.clock.settle()
       expect(await text(pane)).toContain('Connected: PLAN-23')
-      expect(toldModel(d)).toHaveLength(1)
+      expect(d.relay.told).toHaveLength(1)
     })
 
     test('Switch A to B: the pane, the footer and the relay are B at once, with nothing of A under it', async ($, on) => {
@@ -95,7 +95,7 @@ for (const surface of SURFACES) {
       await press
       expect(d.toasts).toContain('Disconnected from PLAN-23')
       expect(await text(pane)).toContain('Not connected to a plan')
-      expect(toldModel(d)).toHaveLength(1)
+      expect(d.relay.told).toHaveLength(1)
       d.holdApi(0)
       await d.clock.settle()
       expect(await text(pane)).toContain('Not connected to a plan')

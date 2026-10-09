@@ -5,7 +5,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { NO_URGENT_DETAIL, NO_URGENT_FIX, OLD_SERVER_FIX } from '../hooks/relay/text'
-import { SURFACES, SIGN_IN_HALT, answerPlanConnect, forceRefresh, dashboard, startSession, toldModel } from './plan-kit'
+import { SURFACES, SIGN_IN_HALT, answerPlanConnect, forceRefresh, dashboard, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -25,14 +25,14 @@ for (const surface of SURFACES) {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).toContain('relay retrying')
       expect(await text(pane)).toContain('request timed out after 60000ms')
-      expect(toldModel(d)).toHaveLength(1)
-      expect(toldModel(d)[0]).toMatch(/^\[danxbot plan event\] events delayed: .*request timed out after 60000ms\. The relay keeps retrying on its own\.$/)
+      expect(d.relay.told).toHaveLength(1)
+      expect(d.relay.told[0]).toMatch(/^\[danxbot plan event\] events delayed: .*request timed out after 60000ms\. The relay keeps retrying on its own\.$/)
       await d.clock.advance(BACKOFF_MS[0])
       expect(d.relay.calls).toHaveLength(2)
       await d.clock.advance(BACKOFF_MS[1])
       expect(d.relay.calls).toHaveLength(3)
       // the same failure is not told again
-      expect(toldModel(d)).toHaveLength(1)
+      expect(d.relay.told).toHaveLength(1)
     })
 
     test('the backoff steps 1, 2, 5, 10 s and then stays at 10 s', async ($, on) => {
@@ -65,7 +65,7 @@ for (const surface of SURFACES) {
       d.relay.server.script.push(() => ({ deny: 'boom' }) as any)
       d.relay.push({ cursor: 'c6', text: 'y' })
       await d.clock.settle()
-      expect(toldModel(d)).toHaveLength(2)
+      expect(d.relay.told).toHaveLength(2)
     })
 
     test("a stop answer shows the server's fix once; neither the clock nor a refresh retries it", async ($, on) => {
@@ -75,7 +75,7 @@ for (const surface of SURFACES) {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).toContain('relay stopped')
       expect(await text(pane)).toContain('Connect this session to a plan with plan_connect')
-      expect(toldModel(d)).toEqual([
+      expect(d.relay.told).toEqual([
         '[danxbot plan event] events stopped: events are NOT reaching this session: the relay cannot go on. Fix: Connect this session to a plan with plan_connect.',
       ])
       await d.clock.advance(120_000)
@@ -92,7 +92,7 @@ for (const surface of SURFACES) {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).toContain('relay stopped')
       expect(await text(pane)).toContain(NO_URGENT_FIX)
-      expect(toldModel(d)).toEqual([
+      expect(d.relay.told).toEqual([
         `[danxbot plan event] events stopped: events are NOT reaching this session: ${NO_URGENT_DETAIL}. Fix: ${NO_URGENT_FIX}.`,
       ])
       expect(d.relay.delivered).toEqual([])
@@ -203,8 +203,8 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       d.relay.server.script.push(() => raw('Unknown tool: plan_events_wait', true))
       await startSession($, d, surface)
-      expect(toldModel(d)).toHaveLength(1)
-      expect(toldModel(d)[0]).toContain(`Fix: ${OLD_SERVER_FIX}`)
+      expect(d.relay.told).toHaveLength(1)
+      expect(d.relay.told[0]).toContain(`Fix: ${OLD_SERVER_FIX}`)
       await d.clock.advance(60_000)
       await forceRefresh($, d)
       expect(d.relay.calls).toHaveLength(1)
@@ -232,8 +232,8 @@ for (const surface of SURFACES) {
         await startSession($, d, surface)
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
         expect(await text(pane)).toContain('relay retrying')
-        expect(toldModel(d)).toHaveLength(1)
-        expect(toldModel(d)[0]).toContain('plan_events_wait answered')
+        expect(d.relay.told).toHaveLength(1)
+        expect(d.relay.told[0]).toContain('plan_events_wait answered')
         expect(d.relay.delivered).toEqual([])
       })
     }
@@ -242,7 +242,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       d.relay.server.script.push(() => raw(SIGN_IN_HALT, true))
       await startSession($, d, surface)
-      expect(toldModel(d)).toEqual([])
+      expect(d.relay.told).toEqual([])
       await d.clock.advance(60_000)
       await forceRefresh($, d)
       expect(d.relay.calls).toHaveLength(1)

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { SURFACES, dashboard, expectIndicator, expectRowCarries, expectText, startSession, toldModel } from './plan-kit'
+import { SURFACES, dashboard, expectIndicator, expectRowCarries, expectText, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -41,6 +41,7 @@ describe('plan pane connects', () => {
     for (const surface of SURFACES) {
       d.world.planId = null
       d.toasts.length = 0
+      d.relay.told.length = 0
       d.calls.length = 0
       await $.classic.SessionStart({ source: 'startup', session_title: 'PLAN-23: danxbot plugin' } as any)
       await startSession($, d, surface)
@@ -60,7 +61,7 @@ describe('plan pane connects', () => {
       ])
       await expectIndicator(band, surface, 25)
       expectText(await band.find({ type: 'Text', text: /PLAN-23/ }), /PLAN-23 · Danxbot plugin/)
-      const rows = toldModel(d)
+      const rows = d.relay.told
       expect(rows).toHaveLength(1)
       expectRowCarries(rows[0]!, ['PLAN-23', 'Danxbot plugin', 'plan_id 23', 'plan_connect'])
       await band.unmount()
@@ -73,6 +74,7 @@ describe('plan pane connects', () => {
     for (const surface of SURFACES) {
       d.calls.length = 0
       d.toasts.length = 0
+      d.relay.told.length = 0
       d.world.planId = 23
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
@@ -90,7 +92,7 @@ describe('plan pane connects', () => {
       // switched: the control is gone again and the pane shows the new plan
       expect(await pane.find({ key: 'plan-pick' })).toBeUndefined()
       expectText(await pane.find({ type: 'Text', text: /Connected: PLAN-24/ }), /Connected: PLAN-24/)
-      const rows = toldModel(d)
+      const rows = d.relay.told
       expect(rows).toHaveLength(1)
       expectRowCarries(rows[0]!, ['PLAN-24', 'Agent mode', 'plan_id 24'])
       await pane.unmount()
@@ -106,7 +108,7 @@ describe('plan pane connects', () => {
     await d.clock.settle()
     expect(d.toasts.some(t => t.startsWith('Connected'))).toBe(false)
     expect(d.toasts.at(-1)).toMatch(/^Connect refused: 409 PLAN-24 is archived\. Restore it before doing this/)
-    expect(toldModel(d)).toHaveLength(0)
+    expect(d.relay.told).toHaveLength(0)
     expect(await (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')).toContain('Danxbot: not connected to a plan')
   })
 
@@ -119,7 +121,7 @@ describe('plan pane connects', () => {
     await pane.press({ key: 'connect' })
     await d.clock.settle()
     expect(d.toasts.at(-1)).toMatch(/^Connect refused: 409 PLAN-24 is archived/)
-    expect(toldModel(d)).toHaveLength(0)
+    expect(d.relay.told).toHaveLength(0)
     expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')).toContain('PLAN-23')
   })
 
@@ -130,20 +132,7 @@ describe('plan pane connects', () => {
     await pane.press({ key: 'connect' })
     await d.clock.settle()
     expect(d.toasts.at(-1)).toMatch(/^Connect failed: .*the MCP server is outdated/)
-    expect(toldModel(d)).toHaveLength(0)
-  })
-
-  test('CANARY: the day $.session.append works in claude plugin test, switch the model-row assertions to the appended row', async ($, on) => {
-    const d = dashboard(on, { connected: false })
-    await startSession($, d, 'desktop')
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await pane.press({ key: 'connect' })
-    await d.clock.settle()
-    expect(
-      toldModel(d),
-      'session.append no longer rejects under claude plugin test, so the plugin fallback toast did not appear. ' +
-        'Replace toldModel(d) in every test with the row the kit now records for $.session.append (see the note in plan-kit.tsx), then delete this canary.',
-    ).toHaveLength(1)
+    expect(d.relay.told).toHaveLength(0)
   })
 })
 

@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { DISCONNECT_GLYPH } from '../hooks/plan/config'
-import { SURFACES, dashboard, expectRowCarries, startSession, toldModel } from './plan-kit'
+import { SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -42,7 +42,7 @@ for (const surface of SURFACES) {
       expect(await pane.find({ key: 'disconnect' })).toBeUndefined()
       expect(await pane.find({ key: 'switch' })).toBeUndefined()
 
-      const rows = toldModel(d)
+      const rows = d.relay.told
       expect(rows).toHaveLength(1)
       expectRowCarries(rows[0]!, ['PLAN-23', 'Danxbot plugin', 'disconnected', 'no plan', '/api/plans/mine'])
     })
@@ -59,7 +59,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(5_000)
       await first
       expect(disconnectCalls(d)).toHaveLength(1)
-      expect(toldModel(d)).toHaveLength(1)
+      expect(d.relay.told).toHaveLength(1)
     })
 
     test('plan_mismatch: the refusal names the real plan, nothing is told to the model, and the stale pane refreshes', async ($, on) => {
@@ -71,7 +71,7 @@ for (const surface of SURFACES) {
       expect(d.toasts.at(-1)).toBe(
         'Disconnect refused: 409 Session 41365fb5-6b43-443b-a01b-81245574f648 is on plan 24, not plan 23; nothing was changed. (PLAN-24 "Agent mode")',
       )
-      expect(toldModel(d)).toHaveLength(0)
+      expect(d.relay.told).toHaveLength(0)
       // the refresh read the session's real plan
       expect(await text(band)).toContain('PLAN-24')
     })
@@ -84,7 +84,7 @@ for (const surface of SURFACES) {
       expect(d.toasts.at(-1)).toBe(
         'Disconnect refused: 409 Session 41365fb5-6b43-443b-a01b-81245574f648 is not connected to a plan, so there is nothing to leave.',
       )
-      expect(toldModel(d)).toHaveLength(0)
+      expect(d.relay.told).toHaveLength(0)
       expect(await text(band)).toContain('Danxbot: not connected to a plan')
     })
 
@@ -94,7 +94,7 @@ for (const surface of SURFACES) {
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
       expect(d.toasts.at(-1)).toMatch(/^Disconnect refused: 404 Not found/)
-      expect(toldModel(d)).toHaveLength(0)
+      expect(d.relay.told).toHaveLength(0)
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
       // the key was released: the button is back
       expect((await pane.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
@@ -107,7 +107,7 @@ for (const surface of SURFACES) {
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
       expect(d.toasts.at(-1)).toBe('Disconnect failed: the answer named no plan left')
-      expect(toldModel(d)).toHaveLength(0)
+      expect(d.relay.told).toHaveLength(0)
       expect(await text(band)).toContain('Danxbot: not connected to a plan')
     })
 
@@ -116,7 +116,7 @@ for (const surface of SURFACES) {
       const { pane } = await mounted($, d, surface)
       await pane.press({ key: 'disconnect' })
       expect(d.toasts.at(-1)).toMatch(/^Disconnect failed: .*plan_connect is not available/)
-      expect(toldModel(d)).toHaveLength(0)
+      expect(d.relay.told).toHaveLength(0)
     })
 
     test('the model disconnecting (tool.call plan_connect) ends with the band showing not connected', async ($, on) => {

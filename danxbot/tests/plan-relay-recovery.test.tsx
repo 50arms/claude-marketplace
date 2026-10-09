@@ -7,7 +7,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { connectedPlanId } from '../hooks/plan/mcp'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { OLD_SERVER_FIX } from '../hooks/relay/text'
-import { SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession, toldModel } from './plan-kit'
+import { SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
@@ -214,12 +214,12 @@ for (const surface of SURFACES) {
       await d.clock.advance(BACKOFF_MS[0] + BACKOFF_MS[1])
       expect(d.relay.calls).toHaveLength(3)
       expect(await text(pane)).toContain('relay retrying')
-      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+      expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
       await d.clock.advance(BACKOFF_MS[2] - 1)
       expect(await text(pane)).toContain('relay retrying')
       await d.clock.advance(1)
       expect(await text(pane)).toContain('relay stopped')
-      expect(toldModel(d).join(' ')).toContain(`Fix: ${OLD_SERVER_FIX}`)
+      expect(d.relay.told.join(' ')).toContain(`Fix: ${OLD_SERVER_FIX}`)
       expect(d.relay.calls).toHaveLength(4)
       await d.clock.advance(60_000)
       expect(d.relay.calls).toHaveLength(4)
@@ -238,7 +238,7 @@ for (const surface of SURFACES) {
       expect(d.relay.calls.length).toBeGreaterThanOrEqual(4)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).not.toContain('relay stopped')
-      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+      expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
       d.relay.push({ cursor: 'c1', text: 'streams' })
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] streams'])
@@ -255,7 +255,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(20_000)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).toContain('relay retrying')
-      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+      expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
     })
 
     test('the evidence is counted in a row: a list that catches up between failures starts the count again', async ($, on) => {
@@ -270,7 +270,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(16_500)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).toContain('relay retrying')
-      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+      expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
     })
 
     for (const [name, change] of [
@@ -291,7 +291,7 @@ for (const surface of SURFACES) {
         expect(d.relay.calls).toHaveLength(calls)
         const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
         expect(await text(pane)).not.toContain('relay stopped')
-        expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+        expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
       })
     }
 
@@ -310,7 +310,7 @@ for (const surface of SURFACES) {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await text(pane)).toContain('relay retrying')
       expect(await text(pane)).not.toContain('relay stopped')
-      expect(toldModel(d).join(' ')).not.toContain(OLD_SERVER_FIX)
+      expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
     })
 
     test('a not-connected answer when the tool list cannot be read (unbound) is retried', async ($, on) => {
@@ -336,7 +336,7 @@ for (const surface of SURFACES) {
       expect(await text(pane)).toContain('relay retrying')
       await d.clock.advance(BACKOFF_MS[0])
       expect(d.relay.calls).toHaveLength(2)
-      expect(toldModel(d)).toHaveLength(1)
+      expect(d.relay.told).toHaveLength(1)
     })
 
     test('only an answer that names the tool as unknown ends the loop as an old server', async ($, on) => {

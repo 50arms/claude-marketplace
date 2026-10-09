@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NAMING_NEEDED, NAMING_OK, NO_NAMING, SURFACES, dashboard, expectRowCarries, startSession, toldModel } from './plan-kit'
+import { NAMING_NEEDED, NAMING_OK, NO_NAMING, SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
 
 // DX-4612: a pane Connect or Switch plan whose plan_connect answer says `naming: needed` tells the model the server's rename steps,
 // because the pane made the call and the model never reads its answer.
@@ -17,6 +17,7 @@ async function connectFrom(
   opts: { switchTo?: string } = {},
 ) {
   d.toasts.length = 0
+  d.relay.told.length = 0
   await startSession($, d, surface)
   const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
   if (opts.switchTo) {
@@ -36,7 +37,7 @@ describe('the model note when the plan answers naming', () => {
     for (const surface of SURFACES) {
       d.world.planId = null
       await connectFrom($, d, surface)
-      const rows = toldModel(d)
+      const rows = d.relay.told
       expect(rows).toHaveLength(1)
       expectRowCarries(rows[0]!, ['PLAN-23', 'plan_id 23'])
       expect(rows[0]).toContain(NAMING_NEEDED.instruction)
@@ -50,7 +51,7 @@ describe('the model note when the plan answers naming', () => {
     for (const surface of SURFACES) {
       d.world.planId = 23
       await connectFrom($, d, surface, { switchTo: '24' })
-      const rows = toldModel(d)
+      const rows = d.relay.told
       expect(rows).toHaveLength(1)
       expectRowCarries(rows[0]!, ['PLAN-24', 'plan_id 24'])
       expect(rows[0]).toContain(NAMING_NEEDED.instruction)
@@ -63,7 +64,7 @@ describe('the model note when the plan answers naming', () => {
     for (const surface of SURFACES) {
       d.world.planId = null
       await connectFrom($, d, surface)
-      const rows = toldModel(d)
+      const rows = d.relay.told
       expect(rows).toHaveLength(1)
       expect(rows[0]).toContain(NAMING_NEEDED.instruction)
       expect(rows[0]).not.toContain('Suggested thread title')
@@ -76,7 +77,7 @@ describe('the model note when the plan answers naming', () => {
     for (const surface of SURFACES) {
       d.world.planId = null
       await connectFrom($, d, surface)
-      const rows = toldModel(d)
+      const rows = d.relay.told
       expect(rows).toHaveLength(1)
       expectRowCarries(rows[0]!, ['PLAN-23', 'plan_id 23', 'plan_connect'])
       expect(rows[0]).not.toMatch(/nam|rename|title/i)
@@ -103,7 +104,7 @@ describe('the model note when the plan answers naming', () => {
         const error = d.toasts.find(t => t.startsWith("Connected, but the answer's naming block is malformed"))
         expect(error, `no malformed-naming toast in ${JSON.stringify(d.toasts)}`).toBeDefined()
         expect(error).toContain('the model was not told to rename its thread')
-        const rows = toldModel(d)
+        const rows = d.relay.told
         expect(rows).toHaveLength(1)
         expectRowCarries(rows[0]!, ['PLAN-23', 'plan_id 23'])
         expect(rows[0]).not.toContain('rename')

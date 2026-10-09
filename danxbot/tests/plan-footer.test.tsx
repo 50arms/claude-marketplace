@@ -2,7 +2,7 @@
 // function as /danx-plan) brings the band back and opens the Plan pane.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { FOOTER_PAD, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel } from './plan-kit'
+import { FOOTER_PAD, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const counts = (o: Record<string, number>) => ({ 'In Progress': 0, ToDo: 0, Backlog: 0, Review: 0, Done: 0, Cancelled: 0, ...o })
@@ -75,7 +75,7 @@ for (const surface of SURFACES) {
         expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Danxbot Plan', focus: true }])
         expect(d.stateWrites.filter(w => w.key === 'dismissed').map(w => w.value)).toEqual([false])
         expect(d.toasts).toEqual([])
-        expect(toldModel(d)).toEqual([])
+        expect(d.relay.told).toEqual([])
         expect(d.writes()).toEqual([])
       })
     }

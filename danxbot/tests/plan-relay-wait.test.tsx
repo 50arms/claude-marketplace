@@ -5,7 +5,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { waitArgs } from '../hooks/relay/answer'
 import { CURSOR_KEEP, CURSOR_PREFIX, MIN_ROUND_MS, WAIT_MS } from '../hooks/relay/config'
 import { toolName } from '../hooks/plan/config'
-import { CLOCK_START, SURFACES, answerPlanConnect, dashboard, forceRefresh, startSession, toldModel } from './plan-kit'
+import { CLOCK_START, SURFACES, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const KEY = `${CURSOR_PREFIX}sess-own`
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })
@@ -105,7 +105,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       release()
       await d.clock.settle()
-      expect(toldModel(d)).toEqual([])
+      expect(d.relay.told).toEqual([])
       expect(d.stateWrites.filter(w => w.key === 'relay').map(w => w.value).at(-1)).toMatchObject({ planId: 24, phase: 'streaming' })
       d.world.planId = 23
       await forceRefresh($, d)
@@ -216,9 +216,9 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       d.relay.push({ cursor: 'c2', text: 'one' })
       await d.clock.settle()
-      expect(toldModel(d)).toHaveLength(1)
-      expect(toldModel(d)[0]).toContain('the relay hit an error: ')
-      expect(toldModel(d)[0]).toContain('the store is full')
+      expect(d.relay.told).toHaveLength(1)
+      expect(d.relay.told[0]).toContain('the relay hit an error: ')
+      expect(d.relay.told[0]).toContain('the store is full')
       const calls = d.relay.calls.length
       await d.clock.advance(60_000)
       await forceRefresh($, d)
@@ -266,7 +266,7 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c9', text: 'fails as the plan moves' })
       await hasMoved
       await d.clock.settle()
-      expect(toldModel(d)).toEqual([])
+      expect(d.relay.told).toEqual([])
       expect(d.stateWrites.filter(w => w.key === 'relay').map(w => w.value).at(-1)).toMatchObject({ planId: 24 })
     })
   })

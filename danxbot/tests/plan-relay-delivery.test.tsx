@@ -1,12 +1,13 @@
 // DX-4233 / DX-4721: how a relayed event reaches the session. One decision (relay/delivery.ts), made on the server's `urgent` flag and one turn
 // fact (is a turn running now): a not-urgent event is ALWAYS a submitted prompt (it waits behind a running turn and wakes an idle session); an
-// urgent event is a note ($.session.append) in a running turn and a prompt when none runs. `claude plugin test` has no seam that lets the
-// plugin's own $.session.append succeed, so a note shows as the attempt: a refused note is a failed delivery (told once, the cursor does not
-// move, the next wait asks again), never a quiet prompt. What a successful note does is proved on a live session (the E2E items).
+// urgent event is a note ($.session.append) in a running turn and a prompt when none runs. A refused note is a failed delivery (told once, the
+// cursor does not move, the next wait asks again), never a quiet prompt. DX-4793: the kit records each accepted note (d.relay.told). UNVERIFIED on
+// Claude Code 2.1.293: that the live engine reads an accepted note with the next main-loop tool result; that is for a live session (the E2E items).
 import { describe, expect, test } from 'claude-code/testing'
 
+import { NOTE_MARKER } from '../hooks/plan/config'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from '../hooks/relay/delivery'
-import { SURFACES, dashboard, startSession, toldModel } from './plan-kit'
+import { SURFACES, dashboard, startSession } from './plan-kit'
 
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { turnId: 't1' } as any
@@ -79,20 +80,32 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c5', text: 'a comment during the turn' })
       await d.clock.settle()
       expect(d.relay.delivered).toEqual([{ text: '[danxbot plan event] a comment during the turn' }])
-      expect(toldModel(d)).toEqual([])
+      expect(d.relay.told).toEqual([])
       expect(d.stored.get('relayCursor:sess-own')).toMatchObject({ cursor: 'c5' })
     })
 
-    // The kit's missing append: the engine rejects the plugin's own $.session.append, so what is observable is that a running turn gets a note
-    // attempt (never a prompt), and that a refused note is a failed delivery: told once, the cursor does not move, the next wait asks again.
-    test('an urgent event during a running turn is one note and no prompt; a refused note is a failed delivery', async ($, on) => {
+    test('an urgent event during a running turn is one note and no prompt', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       await $.turn.start(START)
       d.relay.push({ cursor: 'c5', text: 'critical pacing stop', urgent: true })
       await d.clock.settle()
-      expect(toldModel(d)).toHaveLength(1)
-      expect(toldModel(d)[0]).toContain('the session did not take the event')
+      expect(d.relay.told).toEqual([relayLine('critical pacing stop')])
+      expect(d.relay.delivered).toEqual([])
+      expect(d.stored.get('relayCursor:sess-own')?.cursor).toBe('c5')
+    })
+
+    test('a refused note is a failed delivery: told once, the cursor does not move, the next wait asks again', async ($, on) => {
+      const d = dashboard(on)
+      d.relay.rejectAppends('append refused')
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      d.relay.push({ cursor: 'c5', text: 'critical pacing stop', urgent: true })
+      await d.clock.settle()
+      expect(d.relay.told).toEqual([])
+      const toasts = d.toasts.filter(t => t.startsWith('Could not tell the model'))
+      expect(toasts).toHaveLength(1)
+      expect(toasts[0]).toContain(`${NOTE_MARKER}${relayLine('events delayed: the session did not take the event: append refused')}`)
       expect(d.stored.get('relayCursor:sess-own')).toBeUndefined()
       await d.clock.advance(1_000)
       expect(d.relay.calls.at(-1)?.cursor).toBeNull()
@@ -105,7 +118,7 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c5', text: 'key revoked', urgent: true })
       await d.clock.settle()
       expect(d.relay.delivered).toEqual([{ text: '[danxbot plan event] key revoked' }])
-      expect(toldModel(d)).toEqual([])
+      expect(d.relay.told).toEqual([])
     })
 
     test('turn.complete ends the turn: an urgent event is a prompt again', async ($, on) => {

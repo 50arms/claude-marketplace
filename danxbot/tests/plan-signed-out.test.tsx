@@ -9,7 +9,7 @@ import { signInToast } from '../hooks/plan/approval'
 import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
-import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, toldModel, forceRefresh, browserCalls, linksOf } from './plan-kit'
+import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
@@ -17,7 +17,7 @@ const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: an
 const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => b.text)
 // the server's agent-facing wording: none of it may reach the person, in any drawing or toast
 const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|lapsed|no longer accepts|STOP ALL WORK|Commit your work|agent-finalize/i
-// DX-4530: the toasts the person reads; the kit can deliver the model's own rows only as a toast (toldModel)
+// DX-4530: the toasts the person reads; the model's own rows are d.relay.told
 const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('Could not tell the model'))
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:danxbot:danx-dashboard' && c.tool === 'plan_connect')
 // the page loads by preview_start (pane closed) or navigate (pane open)
@@ -213,6 +213,7 @@ for (const surface of SURFACES) {
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       d.world.signedOut = 'revoked'
       d.toasts.length = 0
+      d.relay.told.length = 0
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
       expect(d.toasts).toEqual(['Danxbot: access revoked by dana. This session must stop.'])
@@ -256,7 +257,7 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(45_000)
       await d.clock.settle()
-      const told = toldModel(d)
+      const told = d.relay.told
       expect(told).toHaveLength(1)
       expect(told[0]).toContain('signed this session in')
       expect(told[0]).toContain('call plan_connect with plan_id 23')
@@ -362,7 +363,7 @@ for (const surface of SURFACES) {
       // not one toast of the whole sign-in carried the server's words (the model's own row, which the kit can only toast, aside)
       expect(personToasts(d).join(' ')).not.toMatch(AGENT_TEXT)
       // DX-4530: the model did not press Sign in, so it is told, once
-      const told = toldModel(d)
+      const told = d.relay.told
       expect(told).toHaveLength(1)
       expect(told[0]).toContain('signed this session in')
     })
@@ -379,7 +380,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(await texts(band)).toContain('Danxbot: not connected to a plan')
       // DX-4530: told it is signed in, with no plan named (it asked for none)
-      const told = toldModel(d)
+      const told = d.relay.told
       expect(told).toHaveLength(1)
       expect(told[0]).toContain('signed this session in')
       expect(told[0]).toContain('call plan_connect to see which plan')
@@ -398,7 +399,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(connectCalls(d)[0]!.args.plan_id).toBe(23)
       expect(d.toasts).toContain('Signed in, but the plan connect was refused: 409 PLAN-23 is archived.')
-      const told = toldModel(d)
+      const told = d.relay.told
       expect(told).toHaveLength(1)
       expect(told[0]).toContain('signed this session in')
       expect(told[0]).toContain('plan_id 23 was refused')
@@ -417,7 +418,7 @@ for (const surface of SURFACES) {
         await d.clock.settle()
         expect(d.toasts.at(-1)).toBe(expected)
         // DX-4530: nothing was signed in, so the model is told nothing
-        expect(toldModel(d)).toEqual([])
+        expect(d.relay.told).toEqual([])
         expect(connectCalls(d)).toHaveLength(1)
         expect(await texts(band)).toContain('Danxbot: signed out')
         expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')

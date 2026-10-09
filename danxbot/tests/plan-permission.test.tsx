@@ -6,7 +6,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { PERMISSION_POLL_MS } from '../hooks/plan/config'
 import { claimStatus, permissionRequestOf } from '../hooks/plan/permission'
 import { permissionToast } from '../hooks/plan/approval'
-import { SURFACES, browserCalls, dashboard, linksOf, startSession, toldModel } from './plan-kit'
+import { SURFACES, browserCalls, dashboard, linksOf, startSession } from './plan-kit'
 import { RELAY_MARKER } from '../hooks/relay/config'
 
 const URL_A = 'https://danxbot.example/connect/aaaa'
@@ -281,7 +281,7 @@ describe('the model is told the decision', () => {
     const { d } = await decide($, on, d => void (d.world.permissionClaim = 'approved'))
     expect(promptsOf(d)).toHaveLength(1)
     expect(promptsOf(d)[0].startsWith(RELAY_MARKER)).toBe(true)
-    expect(toldModel(d)).toEqual([])
+    expect(d.relay.told).toEqual([])
   })
 
   test('a turn in flight gets a prompt, never a note (a decision is not urgent: DX-4721)', async ($, on) => {
@@ -295,7 +295,7 @@ describe('the model is told the decision', () => {
     await d.clock.settle()
     expect(promptsOf(d)).toHaveLength(1)
     expect(promptsOf(d)[0]).toContain('granted team.members.view')
-    expect(toldModel(d)).toEqual([])
+    expect(d.relay.told).toEqual([])
   })
 
   test('a grant of part of what was asked names what was not granted', async ($, on) => {

@@ -4,7 +4,7 @@
 import { expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { NOTE_MARKER, SERVER, toolName } from '../hooks/plan/config'
+import { SERVER, toolName } from '../hooks/plan/config'
 import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/relay/config'
 
 export const SURFACES = ['terminal', 'desktop'] as const
@@ -480,16 +480,23 @@ export function dashboard(
     }
     return { value: text({ events: ready() }) }
   }
-  // what the plugin handed the session as a prompt (the relayed events only: a test's own prompts are not recorded). `claude plugin test`
-  // has no seam that lets the plugin's own $.session.append succeed, or even see it (see toldModel below): the engine rejects it, so an
-  // urgent event during a running turn shows as a failed delivery (the attempt is the observable), and what follows a successful append
-  // is proved on a live session.
+  // what the plugin handed the session as a prompt (the relayed events only: a test's own prompts are not recorded), and the rows it
+  // appended to the conversation with $.session.append (DX-4793: since Claude Code 2.1.293 the kit lets the append through and calls the
+  // test's session.append hook with the row; what the live engine then does with the row is proved on a live session)
   const delivered: { text: string }[] = []
+  const told: string[] = []
   const deliveryFlags = {
     submitDrops: undefined as string | undefined,
     submitRejects: undefined as string | undefined,
     duringPrompt: undefined as undefined | (() => Promise<void>),
+    appendRejects: undefined as string | undefined,
   }
+  // DX-4793: the row a plugin appends is one user message of text blocks; a test sets appendRejects to make the engine refuse it
+  on('session.append', (_$: any, e: any, next: any) => {
+    if (deliveryFlags.appendRejects !== undefined) return { deny: deliveryFlags.appendRejects } as any
+    told.push(e.message.content.map((block: any) => block.text).join(''))
+    return next(e)
+  })
   // the engine answers a turn's start with its id
   on('turn.start', () => ({ turnId: 't1' }) as any)
   on('prompt.submit', async (_$: any, e: any) => {
@@ -907,6 +914,10 @@ export function dashboard(
     duringPrompt: (fn: () => Promise<void>) => void (deliveryFlags.duringPrompt = fn),
     dropPrompts: (reason: string) => void (deliveryFlags.submitDrops = reason),
     rejectPrompts: (reason: string) => void (deliveryFlags.submitRejects = reason),
+    // DX-4793: the rows the plugin appended with $.session.append (the kit's session.append hook records them); the engine refuses the next appends
+    // with this reason (the plugin shows its "Could not tell the model" toast)
+    told,
+    rejectAppends: (reason: string) => void (deliveryFlags.appendRejects = reason),
     acceptPrompts: () => {
       deliveryFlags.submitDrops = undefined
       deliveryFlags.submitRejects = undefined
@@ -914,15 +925,6 @@ export function dashboard(
   }
   return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
-
-// `claude plugin test` (Claude Code 2.1.286) has no seam for a plugin's own $.session.append: the
-// call rejects "no implementation for session.append" and no hook of the test or of another
-// plugin sees it (tried: on('session.append') in the test, with and without a door matcher, an
-// inline plugin at the prepend and append tiers, and a stub on the kit's $). The plugin's fallback
-// toast therefore carries the row it could not append, after NOTE_MARKER, and toldModel() reads the
-// rows back from there. plan-pane.test.tsx's canary fails the day the append works in the kit.
-export const toldModel = (d: { toasts: string[] }): string[] =>
-  d.toasts.filter(t => t.startsWith('Could not tell the model')).map(t => t.slice(t.indexOf(NOTE_MARKER) + NOTE_MARKER.length))
 
 // The model must be able to act on a row: it carries every one of these fields, each as a whole
 // token (DX-1 is not found inside DX-12).

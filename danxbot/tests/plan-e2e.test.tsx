@@ -3,7 +3,7 @@
 // and writes nothing to a card.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, linksOf, problemBadgeOf, startSession, toldModel, forceRefresh } from './plan-kit'
+import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, linksOf, problemBadgeOf, startSession, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {
@@ -42,15 +42,15 @@ for (const surface of SURFACES) {
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
       expect(await problemBadgeOf(band)).toBe('⚠ 4')
       await expectIndicator(band, surface, 25)
-      expect(toldModel(d)).toHaveLength(1)
+      expect(d.relay.told).toHaveLength(1)
 
       // 4. the pane lists each open problem as a link into the browser; the band counts them
       const links = (await linksOf(pane)).map(l => l.label).filter(l => / · /.test(l))
       expect(links).toEqual(['DX-1 · Which route?', 'DX-1 · Allow the site', 'DX-2 · Second one?', 'DX-2 · Rotate the key'])
       // nothing in the pane writes to a card; the model was told only of the connect
       expect(d.writes()).toEqual([])
-      expect(toldModel(d)).toHaveLength(1)
-      expectRowCarries(toldModel(d)[0]!, ['PLAN-23', 'plan_id 23'])
+      expect(d.relay.told).toHaveLength(1)
+      expectRowCarries(d.relay.told[0]!, ['PLAN-23', 'plan_id 23'])
     })
   })
 }

@@ -96,6 +96,7 @@ describe('plan_connect while signed out', () => {
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     d.calls.length = 0
     d.toasts.length = 0
+    d.relay.told.length = 0
     await $.tool.call(CALL)
     await $.tool.call(CALL)
     await d.clock.settle()
@@ -132,6 +133,7 @@ describe('plan_connect while signed out', () => {
       await startSession($, d, 'desktop')
       d.calls.length = 0
       d.toasts.length = 0
+      d.relay.told.length = 0
       await $.tool.call(CALL)
       await d.clock.settle()
       expect(browserCalls(d)).toEqual([])
