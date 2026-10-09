@@ -165,8 +165,8 @@ blocker (card id, open problem, user action) to a card comment.
 
 Delegate by card id: `Agent({subagent_type:"danxbot:worker-<tier>", prompt:"<CARD-ID>"})` is
 the whole brief — each tier loads `danxbot:issue-workflow` itself. Add the worktree rule
-below only when the card wouldn't cover it. Set `effort_level` first, by the kind of work
-(issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
+below only when the card wouldn't cover it. Set `effort_level` first, by its hardest single step, never
+its breadth (issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
 never `general-purpose`. A card that carries gates never goes to a `worker-haiku-*` tier.
 A builder runs its PRE gates itself and never spawns gate agents; once it reports its pushed
 tip SHA, you run its POST gates as gate workers and say when to land.

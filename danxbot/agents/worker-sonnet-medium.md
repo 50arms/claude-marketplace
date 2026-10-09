@@ -1,6 +1,6 @@
 ---
 name: worker-sonnet-medium
-description: 'Sonnet medium. Card effort high. The default for code on a planned card: build, fix, test.'
+description: 'Sonnet medium. Card effort high. Code where one step needs judgment the plan could not settle: an algorithm, an invariant, an unknown bug.'
 model: sonnet
 effort: medium
 ---

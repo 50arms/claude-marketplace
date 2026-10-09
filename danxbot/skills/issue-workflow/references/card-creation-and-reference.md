@@ -26,7 +26,7 @@ never worked. Work written into a container's own body or AC is a defect.
 Scope is counted in vertical slices, never time, files or LOC. For each candidate slice write
 "Story N: <verb> X → a human can now see/do Y → one green commit", then check it: if only
 this card lands and no sibling ever does, is the running system observably better? No →
-the pieces interlock and are ONE Story (carry the size in `effort_level`). One slice →
+the pieces interlock and are ONE Story, however large. One slice →
 Story; a few → Feature; many or several Features → Epic. Importance, risk or "feels big" are
 not slices. Never slice by layer (schema, client, routes) or by call site; each slice carries
 its own thin schema and plumbing.
@@ -49,11 +49,22 @@ Feature → Story/Bug/Chore/Task; leaves have none.
 
 ## Effort
 
-`effort_level` is the reasoning depth the work needs, set by the kind of work, never its size
-or importance. Planning, architecture, and skill or prose rewrites are `max` (Opus): small in
-text, but they need the best thinking; reviewing them is `very_high`. Code on a planned card
-is `high` or below, lower for full specs, prior art or mechanical work. A code card that seems
-to need `max` is under-planned: plan more instead of raising the effort.
+`effort_level` picks the model that implements the card. Set it by the hardest SINGLE step's
+reasoning once the card's plan is written, never by file count, breadth, size or importance:
+a step the plan spells out is mechanical however often it repeats, and breadth multiplies the
+cost of a bigger model, so a wide mechanical change goes LOWER, not higher.
+
+- `max` (Opus): the work IS thinking: planning, architecture, skill or prose rewrites.
+  Reviewing them is `very_high`.
+- `high`: one step needs judgment the plan could not settle (an algorithm, a concurrency or
+  state invariant, debugging an unknown cause).
+- `medium`: routine code with clear AC and prior art to copy.
+- `low` and below: every step is spelled out (rename, swap a call, copy a pattern), even
+  across thousands of files.
+
+Example: swapping a formatter call for a new component at 40 call sites in 25 files, where
+the component's behaviour is specified, is `medium`: only the component needs thought. A code
+card that seems to need `max` is under-planned: plan more instead of raising the effort.
 
 ## Ordering
 

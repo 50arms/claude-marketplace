@@ -1,6 +1,6 @@
 ---
 name: worker-haiku-high
-description: 'Haiku high. Card effort low. Careful multi-step mechanical work: scripted edits, single-file fixes with exact steps.'
+description: 'Haiku high. Card effort low. Spelled-out mechanical work at any breadth: scripted edits, call-site swaps, single-file fixes with exact steps.'
 model: haiku
 effort: high
 ---
