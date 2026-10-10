@@ -295,6 +295,11 @@ declare module 'claude-code' {
       pendingStart: PendingStart
       // DX-4234: the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
       endedSession: string | null
+      // DX-3900 / DX-4806: the desktop app hosts this session (the keepalive's gate): raised at a session start that lists the desktop and at any desktop
+      // attach, never cleared, and kept by a reload of the hooks module, whose own variables start over.
+      desktopHosted: boolean
+      // DX-4806: when the keepalive's current idle period began (epoch ms); null while no plan is followed. A reload of the hooks module resumes from it.
+      idleSince: number | null
       // DX-4235: the reports' memory (see ReportState).
       reports: ReportState
     }

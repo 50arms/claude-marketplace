@@ -128,6 +128,11 @@ const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, n
 // DX-4234: the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
 const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, null as string | null)
+// DX-3900 / DX-4806: the desktop app hosts this session (see the keepalive); sticky for the session, set by session.start and session.attach.
+const desktopHosted = atom({ plugin: 'danxbot', key: 'desktopHosted' } as const, false)
+// DX-4806: when the current keepalive idle period began (epoch ms): the last main-loop turn end, or the start of the plan connection. A reload
+// of the module arms from it, so the period is not restarted by the reload; null while no plan is followed.
+const idleSince = atom({ plugin: 'danxbot', key: 'idleSince' } as const, null as number | null)
 // DX-4235: the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], count: null, planId: null } as ReportState)
 
@@ -953,7 +958,7 @@ async function syncRelay($: any): Promise<void> {
   if (planId === null) {
     relayHalted = null
     stopRelay()
-    stopKeepalive()
+    await stopKeepalive($)
     return
   }
   startRelay($, planId)
@@ -1053,13 +1058,14 @@ function stopRelay(): void {
 // DX-3900: the plan-tab keepalive (relay/keepalive.ts says why), for desktop sessions only: the 1800 s timeout is the desktop app's preview pane and
 // a terminal session has no plan tab. "The desktop hosts this session" is sticky (`desktopHosted`): the app starts the session itself (surfaces() has
 // 'desktop' at session.start, whose own `surface` is null), detaches about 5 s later and attaches again only while the person views it, so the
-// surfaces at fire time say nothing. Set at session.start or by any session.attach of the desktop; a session that never sees one never arms. It follows the plan CONNECTION (`keepalivePlan`), set by startRelay and cleared when the plan is
-// disconnected or the process ends, not the relay loop's health.
+// surfaces at fire time say nothing. Set at session.start or by any session.attach of the desktop, and kept by a reload of the module
+// (DX-4806: $.state, not a module variable); a session that never sees one never arms. It follows the plan CONNECTION (`keepalivePlan`),
+// set by startRelay and cleared when the plan is disconnected or the process ends, not the relay loop's health.
 // One `$.clock.after` timer (a handle, so module variables). An idle period starts at relay start and at every main-loop turn end
-// (armKeepalive); a turn start, a plan move or the plan's end cancels it (cancelKeepalive). `keepaliveEpoch` makes a cancel reach an attempt
-// already running: whatever it finds afterwards is dropped, nothing is sent or scheduled for a period that is over.
+// (armKeepalive), and is recorded in `idleSince` ($.state) so a reload resumes it instead of restarting it; a turn start (which also clears
+// `idleSince`), a plan move or the plan's end cancels it (cancelKeepalive). `keepaliveEpoch` makes a cancel reach an attempt already running:
+// whatever it finds afterwards is dropped, nothing is sent or scheduled for a period that is over.
 let keepalivePlan: number | null = null
-let desktopHosted = false
 let keepaliveTimer: { cancel: () => void } | null = null
 let keepaliveEpoch = 0
 
@@ -1069,54 +1075,72 @@ function cancelKeepalive(): void {
   keepaliveTimer = null
 }
 
-function stopKeepalive(): void {
+async function stopKeepalive($: any): Promise<void> {
   keepalivePlan = null
   cancelKeepalive()
+  await update($, idleSince, () => null)
 }
 
+// A fresh module (a load, a reload) that finds the plan arms from the period in `idleSince`; a move from one plan to another starts a period.
 function followPlan($: any, planId: number): void {
   if (keepalivePlan === planId) return
+  const resume = keepalivePlan === null
   keepalivePlan = planId
-  armKeepalive($)
+  detach($, 'Plan tab keepalive arm', armKeepalive($, resume))
 }
 
-// A new idle period starts now.
-function armKeepalive($: any): void {
+// Starts the idle period: now, or (`resume`) the one in `idleSince` when there is one, whose attempt is due at once when its 25 minutes are past.
+async function armKeepalive($: any, resume: boolean): Promise<void> {
   cancelKeepalive()
-  if (keepalivePlan !== null) scheduleKeepalive($, KEEPALIVE_IDLE_MS, null)
+  if (keepalivePlan === null) return
+  const epoch = keepaliveEpoch
+  // DX-4806: a turn running now (a reload found it) arms nothing: its end does
+  if ((await read($, turn)).isRunning) return
+  const now = await $.clock.now()
+  const since = (resume ? await read($, idleSince) : null) ?? now
+  await startPeriod($, epoch, since, Math.max(0, since + KEEPALIVE_IDLE_MS - now))
 }
 
-// `giveUpAt`: the time no attempt may start after, fixed by the period's first attempt (null until then).
-function scheduleKeepalive($: any, wait: number, giveUpAt: number | null): void {
+// `since`: when the period began; no attempt of it starts after since + KEEPALIVE_GIVE_UP_MS. A cancel while the write ran drops the period.
+async function startPeriod($: any, epoch: number, since: number, wait: number): Promise<void> {
+  if (epoch !== keepaliveEpoch) return
+  await update($, idleSince, () => since)
+  if (epoch === keepaliveEpoch) scheduleKeepalive($, wait, since)
+}
+
+function scheduleKeepalive($: any, wait: number, since: number): void {
   const epoch = keepaliveEpoch
-  keepaliveTimer = $.clock.after(wait, () => detach($, 'Plan tab keepalive', keepaliveAttempt($, epoch, giveUpAt)))
+  keepaliveTimer = $.clock.after(wait, () => detach($, 'Plan tab keepalive', keepaliveAttempt($, epoch, since)))
 }
 
 // What an attempt came to: the prompt went in, the session is not on the desktop (nothing to keep open), or why it did not.
 type Fired = { kind: 'sent' } | { kind: 'not-desktop' } | { kind: 'failed'; why: string }
 
-// One attempt: fire, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until the give-up time, which
-// the period's first attempt fixes as KEEPALIVE_GIVE_UP_MS after the turn ended (its timer was set at that end), then it gives up, loudly.
+// One attempt: fire, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until the give-up time
+// (KEEPALIVE_GIVE_UP_MS after the period began), then it gives up, loudly, and starts the next period.
 // A prompt that went in is followed by its turn, whose end starts the next idle period. A session that is not on the desktop at this moment
 // (it may attach later; the surface is read now, not at session start) is looked at again an idle period on.
-async function keepaliveAttempt($: any, epoch: number, giveUpAt: number | null): Promise<void> {
+async function keepaliveAttempt($: any, epoch: number, since: number): Promise<void> {
   keepaliveTimer = null
-  const startedAt = await $.clock.now()
-  const deadline = giveUpAt ?? startedAt - KEEPALIVE_IDLE_MS + KEEPALIVE_GIVE_UP_MS
+  const deadline = since + KEEPALIVE_GIVE_UP_MS
   const fired = await fireKeepalive($, epoch)
   const endedAt = await $.clock.now()
   // a cancel (a turn began, the plan ended or moved) while the attempt ran: whatever it found is dropped, nothing is toasted or scheduled
   if (epoch !== keepaliveEpoch) return
   if (fired.kind === 'sent') return
-  if (fired.kind === 'not-desktop') return scheduleKeepalive($, KEEPALIVE_IDLE_MS, null)
-  const gaveUp = endedAt + KEEPALIVE_RETRY_MS > deadline
-  $.ui.toast(`Plan tab keepalive ${gaveUp ? 'gave up' : 'failed, trying again'}: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
-  if (!gaveUp) scheduleKeepalive($, KEEPALIVE_RETRY_MS, deadline)
+  if (fired.kind === 'not-desktop') return startPeriod($, epoch, endedAt, KEEPALIVE_IDLE_MS)
+  if (endedAt + KEEPALIVE_RETRY_MS > deadline) {
+    $.ui.toast(`Plan tab keepalive gave up: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
+    // DX-4806: a give-up ends this period only; the next is started here, not left to a turn end that an idle session never has
+    return startPeriod($, epoch, endedAt, KEEPALIVE_IDLE_MS)
+  }
+  $.ui.toast(`Plan tab keepalive failed, trying again: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
+  scheduleKeepalive($, KEEPALIVE_RETRY_MS, since)
 }
 
 // Ask the session to re-check its plan tab: the registry's wording plus the plan page. The epoch is checked again before the prompt goes in.
 async function fireKeepalive($: any, epoch: number): Promise<Fired> {
-  if (!desktopHosted) return { kind: 'not-desktop' }
+  if (!(await read($, desktopHosted))) return { kind: 'not-desktop' }
   const plan = (await read($, view)).connected
   // the page named is the one the view holds: a move is followed by a view refresh at once, and the arm that came with the move restarts the period
   if (plan === null) return { kind: 'failed', why: 'the connected plan is not loaded' }
@@ -1358,14 +1382,16 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
 }
 
 // DX-3900: the desktop attached (it does so again each time the person views the session): it hosts this one from now on
-function onSessionAttach($: any, e: any, next: any) {
-  if (e.surface === 'desktop') desktopHosted = true
+async function onSessionAttach($: any, e: any, next: any) {
+  if (e.surface === 'desktop') await update($, desktopHosted, () => true)
   return next(e)
 }
 
 async function onSessionStart($: any, e: any, next: any) {
-  // DX-3900: a reload or a new session starts knowing only what the surfaces say now
-  desktopHosted = (await $.session.surfaces()).includes('desktop')
+  // DX-3900 / DX-4806: only ever raised here, never cleared. A reload of this module (the app's reload_plugins, paced to when the session is hidden) fires
+  // session.start with the desktop detached (surfaces() is []); a flag set from that would forget the desktop hosts the session. `desktopHosted` is
+  // $.state, which a reload keeps and a new process starts without.
+  if ((await $.session.surfaces()).includes('desktop')) await update($, desktopHosted, () => true)
   await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
@@ -1409,7 +1435,7 @@ async function onSessionEnd($: any, e: any, next: any) {
     // DX-4233: the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh below
     // restarts it only if the new conversation is on another plan)
     stopRelay()
-    stopKeepalive()
+    await stopKeepalive($)
     pacingTicker?.cancel()
     pacingTicker = null
     usageTicker?.cancel()
@@ -1807,7 +1833,7 @@ async function onTurnComplete($: any, e: any, next: any) {
     // detached: the turn.complete hook does not wait on the session taking a prompt
     if (prompts.length > 0) detach($, 'Telling the session', promptNotes($, prompts))
     // DX-3900: a sub-agent's end is not the session going idle
-    armKeepalive($)
+    await armKeepalive($, false)
   } else {
     // DX-4235: a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
@@ -1820,6 +1846,8 @@ async function onTurnComplete($: any, e: any, next: any) {
 // DX-4233: the main loop's turn began (turn.start never fires for a sub-agent).
 async function onTurnStart($: any, e: any, next: any) {
   cancelKeepalive()
+  // DX-4806: a running turn is no idle period; a reload that finds one running resumes from nothing (armKeepalive), never from the last turn's end
+  await update($, idleSince, () => null)
   await update($, turn, () => turnStarted())
   return next(e)
 }

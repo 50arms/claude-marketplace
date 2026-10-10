@@ -785,6 +785,18 @@ export function dashboard(
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
     return next(e)
   })
+  // DX-4806: a value the host already holds when the module loads (what a reload of the module finds: $.state outlives it). It is read until the
+  // plugin writes the key. The hook is added by the first seed, so a test that seeds nothing has no extra hook on its reads.
+  const seededState = new Map<string, unknown>()
+  const seedState = (key: string, value: unknown) => {
+    if (seededState.size === 0) {
+      on('state.get', async (_$: any, e: any, next: any) => {
+        const read = await next(e)
+        return seededState.has(e.key) && !stateWrites.some(w => w.key === e.key) ? { ...read, value: { ...read.value, value: seededState.get(e.key) } } : read
+      })
+    }
+    seededState.set(key, value)
+  }
   // DX-4521: the plugin's $.store (what survives the session), one fresh map per fixture
   const stored = new Map<string, unknown>()
   let storeSetFails: string | undefined
@@ -930,7 +942,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // The model must be able to act on a row: it carries every one of these fields, each as a whole
