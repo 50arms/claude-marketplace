@@ -68,6 +68,7 @@ import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTE
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_PATH, KEEPALIVE_RETRY_MS, keepalivePrompt } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
+import { classifierRefusal, ownServerCheck, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
 import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
@@ -179,7 +180,10 @@ async function api($: any, method: string, path: string, extra: { query?: object
     // load carries it on its error view (`serverNotConnected`, which the session-start retry waits out); the pacing and usage readers
     // stay quiet about it until a read has succeeded.
     const notConnected = isServerNotConnected(message)
-    const failed: Api = { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
+    // DX-4805: a classifier refusal shows its fix wherever the error is shown (the view, the toasts), and is kept whole for the relay's start
+    const refusal = classifierRefusal(message)
+    const shown = message.slice(0, CALL_ERROR_MAX)
+    const failed: Api = refusal === null ? { ok: false, status: 0, body: { error: shown } } : { ok: false, status: 0, body: { error: `${shown}. Fix: ${refusal.fix}` }, refusal }
     if (!notConnected) return failed
     failed.unreachable = true
     return failed
@@ -1008,7 +1012,19 @@ async function watchRelayOnce($: any): Promise<RelayWatch> {
     startRelay($, plan.planId)
     return 'done'
   }
+  if (plan.kind === 'failed' && plan.refusal !== undefined) await tellRefusal($, plan.refusal)
   return plan.kind === 'failed' || plan.kind === 'unreachable' ? 'retry' : 'done'
+}
+
+// DX-4805: the relay cannot start because the engine's auto mode classifier refused the plugin's own read: told to the session ONCE (the same
+// words are not told again while the watch keeps retrying, as the refusal may clear), with the engine's words and the fix that works. A module
+// variable: the text is per process, and a reload starts with nothing told.
+let refusalTold: string | null = null
+async function tellRefusal($: any, refusal: Refusal): Promise<void> {
+  const line = stoppedLine(refusal.detail, refusal.fix)
+  if (refusalTold === line) return
+  refusalTold = line
+  await tellModel($, line)
 }
 
 // DX-4233: the session start's watch: the read is retried after each wait of RELAY_START_RETRY_MS while it fails; what is left after that is the
@@ -1599,7 +1615,7 @@ async function onToolStamp($: any, e: any, next: any) {
 // the session holds no key or a person revoked it (its own tools already tell the model). `failed`: the read itself broke (a dashboard fault).
 // DX-4233: `connected` carries the plan the session is on (the relay starts from it); `unreachable` is the plugin's server not connected yet (quiet to
 // the model, retried by the relay's start).
-type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connected' } | { kind: 'silent' } | { kind: 'unreachable' } | { kind: 'failed'; reason: string }
+type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connected' } | { kind: 'silent' } | { kind: 'unreachable' } | { kind: 'failed'; reason: string; refusal?: Refusal }
 
 // `GET /api/plans` is asked for one row only because only its `session` field is read (the session's own plan binding).
 const SESSION_PLAN_PROBE = { limit: 1 }
@@ -1610,7 +1626,7 @@ async function sessionPlan($: any): Promise<SessionPlan> {
   const r = await api($, 'GET', '/api/plans', { query: SESSION_PLAN_PROBE })
   if (r.unreachable === true) return { kind: 'unreachable' }
   if (isSignedOut(r) || outcomeRevokedBy(r) !== null) return { kind: 'silent' }
-  if (!r.ok) return { kind: 'failed', reason: errText(r) }
+  if (!r.ok) return { kind: 'failed', reason: errText(r), refusal: r.refusal }
   if (!('session' in (r.body ?? {}))) return { kind: 'failed', reason: 'bad_response: GET /api/plans answered no session field' }
   if (r.body.session === null) return { kind: 'not-connected' }
   const planId = r.body.session.plan_id
@@ -2130,6 +2146,8 @@ export const register: Register = on => {
   on('session.attach', onSessionAttach)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
+  // DX-4805: the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
+  on('tool.check', (_$, e, next) => ownServerCheck(e, next))
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('turn.start', onTurnStart)

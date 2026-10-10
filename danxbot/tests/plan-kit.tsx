@@ -42,6 +42,8 @@ export const NAMING_NEEDED = {
 // what the first call after a lapsed key's 401 answers (it ends in the sign-in sentence), and KEY_REVOKED_HALT the one stop halt
 // for a key a PERSON revoked, which EVERY tool answers, plan_connect included, with no access request. These are the server's
 // words, for the agent: the plugin must never show them to the person.
+// DX-4805: what the engine says when auto mode's classifier gave no verdict on a hook-initiated `$.mcp.call` (the incident's text)
+export const CLASSIFIER_REFUSAL = 'The server-side auto mode classifier gave no verdict for mcp__plugin_danxbot_danx-dashboard__plan_events_wait'
 export const SIGN_IN_HALT = "Not signed in to the danxbot dashboard. Call `plan_connect` (with `title`: your session's own title) to request access; the user approves it in their browser, then this tool works."
 export const KEY_LAPSED_HALT = `The dashboard no longer accepts this session's key (it lapsed after a day unused), so this session is signed out. ${SIGN_IN_HALT}`
 export const REVOKER = 'dana'
@@ -149,7 +151,7 @@ export function dashboard(
     // be tried), or NO_DASHBOARD_URL for an answer without the field
     dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
-    mcp?: 'up' | 'down' | 'flaky'
+    mcp?: 'up' | 'down' | 'flaky' | 'refused'
     // `sessionListenerAttached` on GET /api/plans: a state (any string, so an unknown one can be tried; default
     // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
     // as readCallerSessionOverlay does.
@@ -569,6 +571,7 @@ export function dashboard(
       pacingAttempts.n++
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       pacingReads.push(pacingReads.length + 1)
       // the answer is fixed when the read starts: a dashboard change during the hold belongs to the next read
       const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
@@ -579,6 +582,7 @@ export function dashboard(
     if (pacingPath(e, '/api/team/pacing')) {
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       // DX-4339: a session with no key (or a revoked one) is halted on EVERY danx-dashboard tool, this read included
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       teamPacingReads.push(teamPacingReads.length + 1)
@@ -604,6 +608,7 @@ export function dashboard(
       if (world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       return { value: contextAnswer(e.args.path) }
     }
@@ -614,6 +619,7 @@ export function dashboard(
       if (over?.delayMs !== undefined) await clock.sleep(over.delayMs)
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       if (over?.deny !== undefined) return { deny: over.deny }
       if (over?.status !== undefined) return { value: reply(over.body ?? { error: 'report boom' }, over.status) }
@@ -625,6 +631,7 @@ export function dashboard(
       // a deny reaches the plugin as a rejection that carries the reason
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       const haltText = () => (world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT)
       // DX-4233: a scripted wait answer is the engine's own (a refusal it makes before the server sees the call: not connected, not bound), so it
       // comes first, whatever the key's state
@@ -923,7 +930,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // The model must be able to act on a row: it carries every one of these fields, each as a whole

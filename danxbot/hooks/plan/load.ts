@@ -1,11 +1,13 @@
 import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, StatusBreakdown, SubagentRow, SubagentsView } from '../../types'
 import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, MAX_SESSIONS, NEEDS_YOU_BUCKET_ID, PREFIX_PATTERN, STATUS_KEYS } from './config'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
+import type { Refusal } from '../relay/refusal'
 import { parentLoop, toSubagent } from './subagents'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
-export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean }
+// DX-4805: `refusal`: the call was refused by auto mode's classifier (its words and the fix); `body.error` carries both.
+export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean; refusal?: Refusal }
 export type Call = (method: string, path: string, extra?: { query?: object; body?: object }) => Promise<Api>
 
 // DX-4458: the host's notice for a result over its size limit (written for the model, never shown to a person).

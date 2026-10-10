@@ -2,6 +2,7 @@ import { SIGNED_OUT_MARK } from '../plan/config'
 import { RELAY_TOOL, FAILURE_MAX, WAIT_MS } from './config'
 import { NO_URGENT_DETAIL, NO_URGENT_FIX } from './text'
 import { keyRevokedBy, mcpText } from '../plan/mcp'
+import { classifierRefusal } from './refusal'
 
 // What one `plan_events_wait` call came to. The tool answers (danxbot packages/danx-dashboard-mcp, plan_events_wait):
 //   {events: [{cursor: string, text: string, urgent: boolean}]}   (events empty when the wait timed out)
@@ -73,5 +74,8 @@ export function readWaitAnswer(r: any): WaitAnswer {
 export function classifyText(text: string): WaitAnswer {
   if (keyRevokedBy(text) !== null || text.includes(SIGNED_OUT_MARK)) return { kind: 'signed-out' }
   if (/unknown tool|no such tool|not found/i.test(text) && text.includes(RELAY_TOOL)) return { kind: 'old-server' }
+  // DX-4805: the auto mode classifier refused the plugin's own call: retrying cannot change that, so it ends the plan's relay saying why
+  const refused = classifierRefusal(text)
+  if (refused !== null) return { kind: 'stopped', ...refused }
   return { kind: 'failed', message: cut(text) }
 }
