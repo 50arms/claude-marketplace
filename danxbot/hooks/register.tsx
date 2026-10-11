@@ -311,7 +311,7 @@ async function permissionTick($: any): Promise<void> {
 
 // DX-4530: the told-once guard, in $.store so it outlives a reload and a restart (the request list itself may come back, or the
 // model may be answered the same request again): true the first time a request's decision is to be told, false ever after.
-// Marked before the telling, so a telling that fails is toasted (tellModel) and never repeated. The read-then-write is not atomic:
+// Marked before the telling, so a telling that fails is toasted (notToldToast) and never repeated. The read-then-write is not atomic:
 // two settles marking different ids at once can lose one id, which only matters if that request comes back into the list later.
 // Each telling is exclusive anyway: a settle tells only the requests its own `update` took out of the list.
 const PERMISSION_TOLD_KEY = 'permissionTold'
@@ -348,7 +348,7 @@ async function tellModel($: any, text: string): Promise<void> {
   }
 }
 
-// DX-4625: tell the model something it must ACT on while the person types nothing (a permission decision): by the plan event
+// DX-4625: tell the model something it must ACT on while the person types nothing (a permission decision, DX-4880 a sign-in's outcome): by the plan event
 // bridge's own delivery (deliverEvent), not urgent (DX-4721): a prompt, which wakes an idle session and queues behind a running turn.
 // `tellModel`'s append is only read on the session's next turn, which an idle agent waiting on the person never starts.
 async function tellModelAwake($: any, text: string): Promise<void> {

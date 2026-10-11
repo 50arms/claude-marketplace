@@ -947,6 +947,10 @@ export function dashboard(
   return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
+// DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an
+// idle session, as opposed to `relay.told`, the rows only a later turn reads
+export const woken = (d: { relay: { delivered: { text: string }[] } }): string[] => d.relay.delivered.map(x => x.text)
+
 // The model must be able to act on a row: it carries every one of these fields, each as a whole
 // token (DX-1 is not found inside DX-12).
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

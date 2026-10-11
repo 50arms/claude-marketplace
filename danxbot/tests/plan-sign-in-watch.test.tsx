@@ -1,3 +1,5 @@
+// DX-4880: the model sits idle while the person decides, so each outcome reaches it as a prompt that wakes it (`woken`), never as an
+// appended row (`relay.told`) only a later turn would read.
 // DX-4548: a sign-in the MODEL started (its plan_connect answered approval_required) is watched by the plugin, which tells the
 // model once how it ended (approved, denied or expired), so the person never has to type "approved" into the chat.
 import { describe, expect, test } from 'claude-code/testing'
@@ -5,13 +7,10 @@ import { describe, expect, test } from 'claude-code/testing'
 import { SIGN_IN_MIN_ROUND_MS } from '../hooks/plan/config'
 import { signInApprovedNote, signInDeniedNote, signInExpiredNote } from '../hooks/plan/notes'
 import { relayLine } from '../hooks/relay/delivery'
-import { APPROVAL_PENDING, APPROVAL_URL, APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, linksOf } from './plan-kit'
+import { APPROVAL_PENDING, APPROVAL_URL, APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, linksOf, woken } from './plan-kit'
 
 const CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23, title: 'PLAN-23: danxbot plugin' } as any
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:danxbot:danx-dashboard' && c.tool === 'plan_connect')
-// DX-4880: the model sits idle while the person decides, so each outcome reaches it as a prompt that wakes it (the plan event
-// bridge's delivery), never as an appended row only a later turn would read
-const woken = (d: any): string[] => d.relay.delivered.map((x: { text: string }) => x.text)
 // the model's own call answers the new request, as the MCP does
 const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 
@@ -71,6 +70,7 @@ describe('a sign-in the model started', () => {
     await d.clock.advance(45_000)
     await d.clock.settle()
     expect(woken(d)).toEqual([relayLine(signInDeniedNote(CONFIRM_CODE))])
+    expect(d.relay.told).toEqual([])
     expect(d.toasts).toContain('Sign in was denied.')
   })
 
@@ -83,6 +83,7 @@ describe('a sign-in the model started', () => {
     for (let i = 0; i < 5; i++) await d.clock.advance(45_000)
     await d.clock.settle()
     expect(woken(d)).toEqual([relayLine(signInExpiredNote(CONFIRM_CODE))])
+    expect(d.relay.told).toEqual([])
     expect(woken(d)[0]).toContain('a renewed request is already open')
     expect(d.toasts).toContain('Sign in expired. A new request is open.')
     // the renewed request reached the person
@@ -92,6 +93,7 @@ describe('a sign-in the model started', () => {
     await d.clock.advance(45_000)
     await d.clock.settle()
     expect(woken(d)).toEqual([relayLine(signInExpiredNote(CONFIRM_CODE)), relayLine(signInApprovedNote('NEWCODE9', 23))])
+    expect(d.relay.told).toEqual([])
   })
 
   test('a renewed request the model receives as approval_pending is still shown to the person', async ($, on) => {
