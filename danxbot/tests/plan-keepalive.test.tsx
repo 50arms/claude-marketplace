@@ -400,3 +400,32 @@ describe('the keepalive on the terminal', () => {
     expect(sent(d)).toEqual([PROMPT])
   })
 })
+
+// DX-4806: a resumed session the desktop spawned and nobody has viewed: no attach, a detached roster at session.start. The environment names its host.
+describe('a session whose process the desktop spawned (CLAUDE_CODE_ENTRYPOINT, DX-4806)', () => {
+  const resumed = async ($: any, d: any) => {
+    await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
+    await d.clock.settle()
+  }
+
+  test('a resumed, never-attached session with entrypoint claude-desktop is sent the keepalive at 25 minutes', async ($, on) => {
+    const d = dashboard(on, { entrypoint: 'claude-desktop' })
+    await resumed($, d)
+    expect(d.roster).toEqual([])
+    await d.clock.advance(KEEPALIVE_IDLE_MS - 1)
+    expect(sent(d)).toEqual([])
+    await d.clock.advance(1)
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  // DX-4806: only claude-desktop arms; any other entrypoint (a terminal, the SDK, an IDE) must not
+  for (const entrypoint of ['cli', 'claude-vscode', 'sdk-ts']) {
+    test(`entrypoint ${entrypoint} never arms`, async ($, on) => {
+      const d = dashboard(on, { entrypoint })
+      await resumed($, d)
+      await d.clock.advance(2 * KEEPALIVE_IDLE_MS)
+      expect(sent(d)).toEqual([])
+      expect(written(d, 'desktopHosted')).not.toContain(true)
+    })
+  }
+})

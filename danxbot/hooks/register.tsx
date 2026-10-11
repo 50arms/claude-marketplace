@@ -128,7 +128,8 @@ const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, n
 // DX-4234: the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
 const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, null as string | null)
-// DX-3900 / DX-4806: the desktop app hosts this session (see the keepalive); sticky for the session, set by session.start and session.attach.
+// DX-3900 / DX-4806: the desktop app hosts this session (see the keepalive); sticky for the session, raised by CLAUDE_CODE_ENTRYPOINT=claude-desktop or
+// surfaces() at session.start, or by session.attach.
 const desktopHosted = atom({ plugin: 'danxbot', key: 'desktopHosted' } as const, false)
 // DX-4806: when the current keepalive idle period began (epoch ms): the last main-loop turn end, or the start of the plan connection. A reload
 // of the module arms from it, so the period is not restarted by the reload; null while no plan is followed.
@@ -1063,8 +1064,9 @@ function stopRelay(): void {
 // DX-3900: the plan-tab keepalive (relay/keepalive.ts says why), for desktop sessions only: the 1800 s timeout is the desktop app's preview pane and
 // a terminal session has no plan tab. "The desktop hosts this session" is sticky (`desktopHosted`): the app starts the session itself (surfaces() has
 // 'desktop' at session.start, whose own `surface` is null), detaches about 5 s later and attaches again only while the person views it, so the
-// surfaces at fire time say nothing. Set at session.start or by any session.attach of the desktop, and kept by a reload of the module
-// (DX-4806: $.state, not a module variable); a session that never sees one never arms. It follows the plan CONNECTION (`keepalivePlan`),
+// surfaces at fire time say nothing. Raised at session.start by CLAUDE_CODE_ENTRYPOINT=claude-desktop (covers a resumed session nobody has
+// viewed, whose surfaces() is []) or by surfaces() having 'desktop', and by any session.attach of the desktop; kept by a reload of the module
+// (DX-4806: $.state, not a module variable). It follows the plan CONNECTION (`keepalivePlan`),
 // set by startRelay and cleared when the plan is disconnected or the process ends, not the relay loop's health.
 // One `$.clock.after` timer (a handle, so module variables). An idle period starts at relay start and at every main-loop turn end
 // (armKeepalive), and is recorded in `idleSince` ($.state) so a reload resumes it instead of restarting it; a turn start (which also clears
@@ -1396,7 +1398,11 @@ async function onSessionStart($: any, e: any, next: any) {
   // DX-3900 / DX-4806: only ever raised here, never cleared. A reload of this module (the app's reload_plugins, paced to when the session is hidden) fires
   // session.start with the desktop detached (surfaces() is []); a flag set from that would forget the desktop hosts the session. `desktopHosted` is
   // $.state, which a reload keeps and a new process starts without.
-  if ((await $.session.surfaces()).includes('desktop')) await update($, desktopHosted, () => true)
+  // DX-4806: the desktop app sets CLAUDE_CODE_ENTRYPOINT=claude-desktop on every process it spawns (fresh or resumed; a reload keeps the process and the atom); a terminal reads `cli`. A resumed
+  // session nobody has viewed yet has no attach and a detached roster, so the environment is the source that names its host.
+  if ((await $.session.surfaces()).includes('desktop') || (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) === 'claude-desktop') {
+    await update($, desktopHosted, () => true)
+  }
   await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
