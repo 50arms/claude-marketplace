@@ -842,7 +842,7 @@ const isSignedIn = (v: any): boolean => v.phase === 'ready' || (v.phase === 'loa
 // once per distinct text (`usageError`), cleared when a report is accepted again or there is nothing to report.
 async function reportUsage($: any, reading: UsageReading): Promise<void> {
   try {
-    // DX-4884: only a signed-in session (a ready view) reports; signed-out, revoked, lapsed and loading views send and say nothing
+    // DX-4884: only a signed-in session (isSignedIn) reports; a signed-out, revoked, lapsed or unloaded view sends and says nothing
     if (!isSignedIn(await read($, view))) return
     let failure: string | null = null
     try {
