@@ -127,7 +127,7 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toHaveLength(1)
     })
 
-    test('it starts no plan relay for a session on no plan (DX-4884: only its own plan_id null one)', async ($, on) => {
+    test('it starts no plan relay for a session on no plan', async ($, on) => {
       const d = dashboard(on, { connected: false })
       on('turn.complete', () => ({ text: 'done' }) as any)
       d.unbind()

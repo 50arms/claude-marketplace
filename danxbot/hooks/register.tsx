@@ -830,14 +830,16 @@ async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpaw
 // What the session's usage reading came to: its windows, or why they could not be read (DX-4339: the tick reads them itself).
 type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
 
-// DX-4336 (PLAN-29 R-1, CAV-4, CAV-6): send this session's rate-limit windows to danxbot. DX-4884: every signed-in session reports, on a plan or
-// not (danxbot places the session on an account from this report, and paces and resumes it from there; a signed-out one is refused by danxbot). The whole agent tree's burn is in the session's
-// own figure (R-9), so there is one report per session and none per sub-agent. The report says when the figure was MEASURED (the last
+// DX-4336 (PLAN-29 R-1, CAV-6): send this session's rate-limit windows to danxbot. DX-4884: every signed-in session reports, on a plan or not
+// (danxbot places the session on an account from this report, then paces and resumes it); a session that is not signed in reports nothing and
+// toasts nothing. The whole agent tree's burn is in the session's own figure (R-9), so there is one report per session and none per sub-agent. The report says when the figure was MEASURED (the last
 // API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and danxbot must tell it from one that is working.
 // A failed reading, a failed report or a failure of the plugin's own state is a toast, never a hook that threw and was skipped silently: toasted
 // once per distinct text (`usageError`), cleared when a report is accepted again or there is nothing to report.
 async function reportUsage($: any, reading: UsageReading): Promise<void> {
   try {
+    // DX-4884: only a signed-in session (a ready view) reports; signed-out, revoked, lapsed and loading views send and say nothing
+    if ((await read($, view)).phase !== 'ready') return
     let failure: string | null = null
     try {
       // DX-4339: `{error}` is the session's own usage reading failing (the tick read it): the failure is toasted like any other
@@ -875,13 +877,13 @@ async function reportUsage($: any, reading: UsageReading): Promise<void> {
 }
 
 // DX-4339: the panel draws the session's own windows whether or not the session is connected to a plan, so they are kept here, apart from
-// the report (which only a connected session makes). An unreadable usage clears them: a frozen figure must not stand as current.
+// the report (which only a signed-in session makes). An unreadable usage clears them: a frozen figure must not stand as current.
 async function noteLimits($: any, limits: readonly SessionRateLimit[]): Promise<void> {
   await update($, panel, cur => ({ ...cur, limits: limits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })) }))
 }
 
 // The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure. A reading that fails clears the
-// panel's windows (a frozen figure must not stand as current) and, for a connected session, is toasted by the report.
+// panel's windows (a frozen figure must not stand as current) and, for a signed-in session, is toasted by the report.
 async function reportUsageNow($: any): Promise<void> {
   let reading: UsageReading
   try {
@@ -958,7 +960,8 @@ async function onMeasure($: any, e: any, next: any) {
 // loop is this module's code, so it lives as long as the process, through /clear and compaction, and ends with it. The server
 // heartbeats the dashboard only while calls keep coming, so a dead or unloaded module reads as not healthy there.
 
-// Which plan the relay should serve, from the view the last refresh read: null when none (not connected, signed out, no server).
+// Which relay to run, from the view the last refresh read: the connected plan's, or the session's own (plan_id null) when signed in on no plan; none
+// when signed out or revoked.
 // A view that failed to load (`error`, `loading`) changes nothing: a read blip must not stop a working relay.
 async function syncRelay($: any): Promise<void> {
   const v = await read($, view)
@@ -990,7 +993,7 @@ function startRelay($: any, planId: number | null): void {
   detach($, 'Plan event relay', relayLoop($, run))
 }
 
-// DX-4233: starts the relay when the session is on a plan and no loop runs, whatever became of the plan load: from the view when it knows the plan,
+// DX-4233 / DX-4884: starts the relay (the plan's, or the session's own on no plan) when no loop runs, whatever became of the plan load: from the view when it knows the plan,
 // else from a light read of the session's own plan binding (the view is an error or still loading, and its error is not a reason for no relay).
 // `retry`: the read itself failed (the server not connected yet, a session not bound, a dashboard fault), so the plan is not known yet.
 type RelayWatch = 'done' | 'retry'

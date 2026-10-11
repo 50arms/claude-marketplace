@@ -133,6 +133,15 @@ describe('the report', () => {
     expect(usageToasts(d)).toEqual([])
   })
 
+  for (const signedOut of ['signed-out', 'lapsed', 'revoked'] as const) {
+    test(`is not sent, and nothing is toasted, for a ${signedOut} session (DX-4884)`, async ($, on) => {
+      const d = await measuredSession($, on, { signedOut })
+      await d.clock.advance(USAGE_TICK_MS * 2)
+      expect(reports(d)).toEqual([])
+      expect(usageToasts(d)).toEqual([])
+    })
+  }
+
   test('is re-sent on every tick with a new reportedAt, and the tick never advances measuredAt (an idle session freezes, CAV-6)', async ($, on) => {
     const d = await measuredSession($, on)
     await d.clock.advance(USAGE_TICK_MS)

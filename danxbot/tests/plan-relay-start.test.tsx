@@ -51,7 +51,7 @@ for (const surface of SURFACES) {
     test('for a signed-in session on no plan: one wait with plan_id null, and a pacing record wakes it', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
-      await d.clock.advance(3_600_000)
+      await d.clock.advance(60_000)
       expect(d.relay.calls).toEqual([{ plan_id: null, cursor: null, timeout_ms: WAIT_MS }])
       d.relay.push({ cursor: 'p1', text: 'critical pacing stop', urgent: true })
       await d.clock.advance(60_000)
