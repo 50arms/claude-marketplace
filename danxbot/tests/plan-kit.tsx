@@ -2,7 +2,6 @@
 // (danxbot_api + plan_connect), and recorders for the engine calls the
 // plugin makes beneath it (toast, status, session.append, ui.open, command.register).
 import { expect, mock, test as baseTest } from 'claude-code/testing'
-
 import type { On } from 'claude-code'
 
 import { SERVER, toolName } from '../hooks/plan/config'
