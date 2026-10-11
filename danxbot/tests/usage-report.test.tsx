@@ -133,6 +133,22 @@ describe('the report', () => {
     expect(usageToasts(d)).toEqual([])
   })
 
+  test('a report landing during a refresh of a connected session is sent', async ($, on) => {
+    const d = await measuredSession($, on, { connected: false })
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any)
+    await pane.select({ key: 'plan-pick', value: '23' })
+    // the connect leaves the view loading, on plan 23, while its refresh is slow
+    d.holdApi(30_000)
+    const press = pane.press({ key: 'connect' })
+    await d.clock.advance(1_000)
+    await press
+    d.holdApi(0)
+    const before = reports(d).length
+    await $.session.measure(MEASURE)
+    await d.clock.advance(1_000)
+    expect(reports(d).length).toBeGreaterThan(before)
+  })
+
   for (const signedOut of ['signed-out', 'lapsed', 'revoked'] as const) {
     test(`is not sent, and nothing is toasted, for a ${signedOut} session (DX-4884)`, async ($, on) => {
       const d = await measuredSession($, on, { signedOut })
@@ -290,7 +306,7 @@ describe('a report that fails', () => {
     expect(usageToasts(d)[0]).toContain('usage boom')
   })
 
-  test("names the dashboard's refusal of a session with no plan", async ($, on) => {
+  test("toasts the dashboard's 409 refusal of a report once, with its words", async ($, on) => {
     const d = await measuredSession($, on, { usageReply: 'notConnected' })
     expect(usageToasts(d)).toHaveLength(1)
     expect(usageToasts(d)[0]).toContain('409')

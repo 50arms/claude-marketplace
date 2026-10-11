@@ -830,16 +830,20 @@ async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpaw
 // What the session's usage reading came to: its windows, or why they could not be read (DX-4339: the tick reads them itself).
 type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
 
+// DX-4884: THE signed-in test for the relay and the usage report: a loaded view (ready), or a refresh of a connected session (loading with the
+// plan still set: a refresh runs at every turn end, as session.measure fires). Signed-out and revoked views, an unloaded one and an error say no.
+const isSignedIn = (v: any): boolean => v.phase === 'ready' || (v.phase === 'loading' && v.connected !== null)
+
 // DX-4336 (PLAN-29 R-1, CAV-6): send this session's rate-limit windows to danxbot. DX-4884: every signed-in session reports, on a plan or not
 // (danxbot places the session on an account from this report, then paces and resumes it); a session that is not signed in reports nothing and
-// toasts nothing. The whole agent tree's burn is in the session's own figure (R-9), so there is one report per session and none per sub-agent. The report says when the figure was MEASURED (the last
-// API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and danxbot must tell it from one that is working.
+// toasts nothing. The whole agent tree's burn is in the session's own figure (R-9), so there is one report per session and none per sub-agent. The
+// report says when the figure was MEASURED (the last API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and danxbot must tell it from one that is working.
 // A failed reading, a failed report or a failure of the plugin's own state is a toast, never a hook that threw and was skipped silently: toasted
 // once per distinct text (`usageError`), cleared when a report is accepted again or there is nothing to report.
 async function reportUsage($: any, reading: UsageReading): Promise<void> {
   try {
     // DX-4884: only a signed-in session (a ready view) reports; signed-out, revoked, lapsed and loading views send and say nothing
-    if ((await read($, view)).phase !== 'ready') return
+    if (!isSignedIn(await read($, view))) return
     let failure: string | null = null
     try {
       // DX-4339: `{error}` is the session's own usage reading failing (the tick read it): the failure is toasted like any other
@@ -967,7 +971,7 @@ async function syncRelay($: any): Promise<void> {
   const v = await read($, view)
   if (v.phase === 'error' || (v.phase === 'loading' && v.connected === null)) return
   // DX-4884: a ready view on no plan runs the relay for the session's own records (plan_id null); any other view (signed out, revoked) runs none
-  if (v.connected === null && v.phase !== 'ready') {
+  if (!isSignedIn(v)) {
     relayHalted = null
     stopRelay()
     await stopKeepalive($)
