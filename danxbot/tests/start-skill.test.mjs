@@ -77,7 +77,9 @@ test("step 3 reads the origin URL and refuses, creating nothing, when there is n
   assert.match(s, /no `origin` remote|no origin remote/i);
   assert.match(s, /connects `github.com` repos only/);
   assert.match(s, /stop/i);
-  assert.match(s, /nothing (has been )?(created|registered)/i);
+  assert.match(s, /Nothing has been registered or created in danxbot/);
+  assert.equal(s.match(/Nothing has been registered or created in danxbot/g).length, 2, "both refusal branches say what is true");
+  assert.doesNotMatch(s, /Nothing has been created\./);
 });
 
 test("step 4 matches an already-registered repo by GitHub owner and repo before registering", () => {
@@ -172,12 +174,12 @@ const RULE = "`mcp__plugin_danxbot_danx-dashboard__*`";
 test("step 2 comes before the plan hand-over and can be the whole run", () => {
   const s = step(2);
   assert.match(s, /before the plan hand-over \(step 6\), which a session may never return from/);
-  assert.match(s, /only for this rule, stop after this step/);
+  assert.match(s, /When `GET \/api\/plans\/mine` already answers a\s+plan for this session, the connect flow is done and the remaining steps would change nothing:\s+stop after this step/);
 });
 
 test("step 2 checks permissions.allow, explains why in one sentence and asks before adding the rule", () => {
   const s = step(2);
-  assert.match(s, /Read `~\/\.claude\/settings\.json`/);
+  assert.match(s, /Read `~\/\.claude\/settings\.json`; a missing file counts as no settings/);
   assert.ok(s.includes(`list already holds ${RULE}`));
   assert.match(s, /refuses the plugin's own background calls, so plan events stop reaching the session/);
   assert.ok(s.includes(`Ask for their OK to add the rule ${RULE}`));
@@ -187,12 +189,15 @@ test("step 2 leaves a settings file that is not valid JSON, or whose allow is no
   const s = step(2);
   assert.match(s, /is not valid JSON, or its `permissions\.allow` is present and not a list, leave the file untouched, tell the person, and give the manual instruction/);
   assert.match(s, /Never treat such a file as empty/);
+  const invalid = s.slice(s.indexOf("is not valid JSON"), s.indexOf("already allowed"));
+  assert.ok(invalid.includes(`manual instruction: add ${RULE} to \`permissions.allow\` in \`~/.claude/settings.json\` yourself`), "the invalid-file paragraph restates the rule");
 });
 
 test("step 2 adds only that one entry on a clear yes, keeps every other setting, never without the yes", () => {
   const s = step(2);
   assert.match(s, /Only on a clear yes, add that one entry/);
   assert.match(s, /Keep every other setting exactly as it was, add no other rule/);
+  assert.match(s, /create the `permissions\.allow` list only when it is missing/);
   assert.match(s, /Never add it without the yes/);
   assert.match(s, /on a no or no reply, change nothing/);
   assert.ok(s.includes(`manual instruction: add ${RULE} to \`permissions.allow\``));

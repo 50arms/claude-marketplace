@@ -39,15 +39,17 @@ and call `plan_connect` again once they approve.
 
 In auto permission mode Claude Code refuses the plugin's own background calls, so plan events
 stop reaching the session. One allow rule fixes it. This step comes before the plan hand-over
-(step 6), which a session may never return from. When the person ran `/danxbot:start` only for
-this rule, stop after this step.
+(step 6), which a session may never return from. When `GET /api/plans/mine` already answers a
+plan for this session, the connect flow is done and the remaining steps would change nothing:
+stop after this step.
 
 1. Read `~/.claude/settings.json`; a missing file counts as no settings. When the file exists
    but is not valid JSON, or its `permissions.allow` is present and not a list, leave the file
-   untouched, tell the person, and give the manual instruction: add `mcp__plugin_danxbot_danx-dashboard__*` to
-   `permissions.allow` in `~/.claude/settings.json` yourself. Never treat such a file as empty.
-   When the `permissions.allow` list already holds `mcp__plugin_danxbot_danx-dashboard__*`, say it is already allowed and
-   change nothing.
+   untouched, tell the person, and give the manual instruction: add
+   `mcp__plugin_danxbot_danx-dashboard__*` to `permissions.allow` in
+   `~/.claude/settings.json` yourself. Never treat such a file as empty. When the
+   `permissions.allow` list already holds `mcp__plugin_danxbot_danx-dashboard__*`, say it is
+   already allowed and change nothing.
 2. Otherwise tell the person in one plain sentence why: in auto permission mode Claude Code
    refuses the plugin's own background calls, so plan events stop reaching the session. Ask for
    their OK to add the rule `mcp__plugin_danxbot_danx-dashboard__*` to `permissions.allow` in `~/.claude/settings.json`.
@@ -64,10 +66,10 @@ Run `git remote get-url origin` in the repo.
 - No output, or an error that there is no such remote: tell the person this folder has no
   `origin` remote, so danxbot cannot tell which repo it is, and that they can add one
   (`git remote add origin <url>`) or run `/danxbot:start` again inside a clone of their
-  GitHub repo. Stop. Nothing has been created.
+  GitHub repo. Stop. Nothing has been registered or created in danxbot.
 - A URL whose host is neither `github.com` nor an SSH config alias for it
   (`github.com-<alias>`, which people with several GitHub accounts use): tell the person
-  danxbot connects `github.com` repos only. Stop. Nothing has been created.
+  danxbot connects `github.com` repos only. Stop. Nothing has been registered or created in danxbot.
 
 Otherwise take its owner and repo name (`https://github.com/<owner>/<repo>.git`,
 `git@github.com:<owner>/<repo>.git`, `git@github.com-<alias>:<owner>/<repo>.git` and

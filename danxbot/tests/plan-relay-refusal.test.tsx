@@ -16,7 +16,7 @@ const PANE = {
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const ENGINE_WORDS = `danxbot: $.mcp.call(plugin:danxbot:danx-dashboard, plan_events_wait) refused: ${CLASSIFIER_REFUSAL}`
 const LOUD = /^\[danxbot plan event\] events stopped: events are NOT reaching this session: .*auto mode classifier gave no verdict.*Fix: .*mcp__plugin_danxbot_danx-dashboard__\*.*restart the session\.$/
-const NAMES_START = /run \/danxbot:start/
+const NAMES_START = /run \/danxbot:start, which adds the allow rule \S+ to permissions\.allow in ~\/\.claude\/settings\.json once the person says yes/
 const NOT_THE_FIX = /(update[ds]?|updating|reinstall(ing)?)(?! does not)/i
 
 for (const surface of SURFACES) {
