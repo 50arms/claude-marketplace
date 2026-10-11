@@ -10,6 +10,8 @@ export const NEEDS_DANXBOT = 'needs danxbot'
 export const SPEND_UNJUDGED = 'danxbot has not judged spend for this account yet'
 // DX-4854: the same on the one visible line; the full sentence is the row's hover card
 export const SPEND_UNJUDGED_SHORT = 'not judged yet'
+// DX-4854: the hover card of a window the session has no figure for yet
+export const NO_READING_TIP = 'This session has no usage reading from Claude yet; one appears after its next reply.'
 export const usd = (n: number): string => `$${n.toFixed(2)}`
 export const MODE_LABEL: Record<PacingMode, string> = { fast_then_hold: 'fast then hold', spread_evenly: 'spread evenly' }
 export const LEVEL_LABEL: Record<PacingLevel, string> = { on_pace: 'on pace', over_pace: 'over pace', critical: 'critical' }
@@ -132,7 +134,6 @@ export function verdictLines(v: PacingVerdict, now: number): string[] {
 
 // DX-4854: a limit's hover card, the detail its one visible line leaves out: the server's plain-words sentence when it has judged the
 // limit (the readout), then the targets and the reset as a clock time. `settings` null: the team's settings were never read.
-export const NO_READING_TIP = 'This session has no usage reading from Claude yet; one appears after its next reply.'
 
 function targetsText(s: { targetPercent: number; criticalPercent: number; mode: PacingMode }): string {
   return `target ${s.targetPercent}% · critical ${s.criticalPercent}% · ${MODE_LABEL[s.mode]}`

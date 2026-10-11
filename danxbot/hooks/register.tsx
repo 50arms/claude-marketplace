@@ -851,7 +851,8 @@ async function reportUsage($: any, reading: UsageReading): Promise<void> {
             else if (every !== usageEveryMs) startUsageTicker($, every)
             // DX-4854: danxbot places a session on its account from this very report, so until the first one is taken the pacing line answers
             // unknown (`no_usage_account`) and the pane has no verdict. Ask again now instead of leaving the account's readings to the next poll.
-            // A session that still has none keeps asking once per report, the poll's own cadence.
+            // This runs after every accepted report (each session.measure, whenever a window moves, and the usage tick), so a session whose account
+            // still has no verdict re-reads the line each time, until the panel holds a readout; once it does the poll alone keeps it fresh.
             if ((await read($, panel)).readout === null) detach($, 'Pacing panel', refreshPacingPanel($))
           }
         }

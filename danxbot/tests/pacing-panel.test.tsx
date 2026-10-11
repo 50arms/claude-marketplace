@@ -14,7 +14,8 @@ import { EMPTY_PANEL_STATE, buildPanel } from '../hooks/plan/pacing-panel'
 import { parseTeamPacing } from '../hooks/plan/pacing-settings'
 import { LEVEL_COLOR, TONE_COLOR } from '../hooks/plan/pacing-panel-view'
 import type { LimitReadout, PanelState } from '../types'
-import { SURFACES, dashboard, startSession } from './plan-kit'
+import { SURFACES, dashboard, elementChildren, flat, startSession, texts as treeTexts, treeOf } from './plan-kit'
+import type { Node } from './plan-kit'
 
 const FIVE = '2026-10-03T11:10:00.000Z'
 const WEEK = '2026-10-09T09:00:00.000Z'
@@ -35,18 +36,6 @@ const LINE = 'Pacing: this account is over pace; 0 agents may run on the account
 const HOLD_FIVE = { limit: 'five_hour', level: 'over_pace', state: 'hold', headroom_minutes: -40, resets_in_minutes: 100, used_percent: 62, target_percent: 80, critical_percent: 95, resets_at: FIVE }
 const SPARE_FIVE = { ...HOLD_FIVE, level: 'on_pace', state: 'spare', headroom_minutes: 60 }
 const verdictBody = (over: Record<string, unknown> = {}) => ({ account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: FIVE, running_agents: 3, line: LINE, spend: null, limits: [HOLD_FIVE], worst_limit: 'five_hour', reason: null, ...over })
-
-// a drawn tree: every element in document order, an element's direct element children, the text each Text shows
-type Node = { type: string; props: Record<string, any>; children: any[] }
-const isNode = (x: any): x is Node => x !== null && typeof x === 'object' && typeof x.type === 'string'
-const flatNodes = (node: any, out: Node[] = []): Node[] => {
-  if (!isNode(node)) return out
-  out.push(node)
-  for (const child of node.children ?? []) flatNodes(child, out)
-  return out
-}
-const elementKids = (n: Node): Node[] => (n.children ?? []).filter(isNode)
-const textsOf = (n: Node): string[] => flatNodes(n).filter(x => x.type === 'Text').map(x => (x.children ?? []).filter((c: any) => typeof c === 'string').join(''))
 
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text as string)
 const joined = async (ui: any) => (await texts(ui)).join(' ')
@@ -311,24 +300,52 @@ for (const surface of SURFACES)
     // DX-4854 #3: one compact line per limit; the detail is the hover card, which is drawn but hidden until the pointer is on the row
     test('each limit is ONE visible line: figure, level, reset; the target, critical and the sentence are its hover card', async ($, on) => {
       await paced($, on, surface, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: verdictBody({ spend: { used_percent: 61.6, level: 'critical', resets_at: WEEK, spent_usd: 12.4, budget_usd: 50 } }) } })
-      const tree = (await (await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })).drawn()) as Node
-      const rows = flatNodes(tree).filter(n => n.type === 'Box' && typeof n.props.key === 'string' && n.props.key.startsWith('pace-'))
+      const tree = await treeOf(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))
+      const rows = flat(tree).filter(n => n.type === 'Box' && typeof n.props.key === 'string' && n.props.key.startsWith('pace-'))
       expect(rows.map(r => r.props.key)).toEqual(['pace-five_hour', 'pace-weekly', 'pace-spend'])
-      const visible = (row: Node) => elementKids(row).filter(k => k.props.display !== 'none')
+      const visible = (row: Node) => elementChildren(row).filter(k => k.props.display !== 'none')
       for (const row of rows) {
-        const [line, card, ...more] = elementKids(row)
+        const [line, card, ...more] = elementChildren(row)
         expect(more).toEqual([])
         // the one visible child is one row of short Texts: no second line of fragments
         expect(visible(row)).toEqual([line])
         expect(line!.props.flexDirection).toBe('row')
-        expect(flatNodes(line!).some(n => /target|critical \d|spread evenly|fast then hold/.test(textsOf(n).join(' ')))).toBe(false)
+        expect(flat(line!).some(n => /target|critical \d|spread evenly|fast then hold/.test(treeTexts(n).join(' ')))).toBe(false)
         expect(card!.props).toMatchObject({ position: 'absolute', display: 'none', backgroundColor: TOOLTIP_BACKGROUND, left: 0 })
         expect((card as any).hover).toEqual({ display: 'flex' })
         expect(card!.props.width).toBeLessThanOrEqual(TOOLTIP_MAX_COLS + 2)
       }
-      expect(textsOf(elementKids(rows[0]!)[0]!)).toEqual(['●', '5-hour', '62% used', 'over pace', 'resets in 3h 10m'])
-      expect(textsOf(elementKids(rows[1]!)[0]!)).toEqual(['●', 'weekly', '41% used', 'on pace', 'resets in 6d 1h'])
-      expect(textsOf(elementKids(rows[2]!)[0]!)).toEqual(['●', 'spend', '62% used', 'critical', 'resets in 6d 1h'])
+      expect(treeTexts(elementChildren(rows[0]!)[0]!)).toEqual(['●', '5-hour', '62% used', 'over pace', 'resets in 3h 10m'])
+      expect(treeTexts(elementChildren(rows[1]!)[0]!)).toEqual(['●', 'weekly', '41% used', 'on pace', 'resets in 6d 1h'])
+      expect(treeTexts(elementChildren(rows[2]!)[0]!)).toEqual(['●', 'spend', '62% used', 'critical', 'resets in 6d 1h'])
+    })
+
+    // DX-4854: what the one visible line says before there is a figure; the long sentences are in the hover card, so the line is asserted
+    const rowTexts = (tree: Node, key: string) => treeTexts(elementChildren(flat(tree).find(n => n.type === 'Box' && n.props.key === key)!)[0]!)
+
+    test('with no reading and no spend verdict the lines say so briefly', async ($, on) => {
+      const unknown = { account: null, label: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
+      const d = dashboard(on, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: unknown } })
+      await startSession($, d, surface)
+      const tree = await treeOf(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))
+      expect(rowTexts(tree, 'pace-five_hour')).toEqual(['●', '5-hour', 'no reading yet'])
+      expect(rowTexts(tree, 'pace-weekly')).toEqual(['●', 'weekly', 'no reading yet'])
+      expect(rowTexts(tree, 'pace-spend')).toEqual(['●', 'spend', 'not judged yet'])
+    })
+
+    // DX-4854: a window with no reset time while the team settings are unread leaves a row with nothing to put in its hover card; a card with no
+    // lines has no finite width and the engine refuses the whole Pane for it, so the row must draw with no card at all
+    test('a window with no reset time and no settings read mounts the pane, its row with no hover card', async ($, on) => {
+      const d = dashboard(on, { teamPacing: { status: 404 } })
+      d.world.rateLimits = [{ kind: 'five_hour', percentUsed: 30 }] as any
+      on('session.measure', () => ({ changed: ['rateLimits'] }) as any)
+      await startSession($, d, surface)
+      await $.session.measure({ context: {}, rateLimits: d.world.rateLimits, changed: ['rateLimits'] } as any)
+      await d.clock.settle()
+      const tree = await treeOf(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))
+      expect(rowTexts(tree, 'pace-five_hour')).toEqual(['●', '5-hour', '30% used'])
+      const row = flat(tree).find(n => n.type === 'Box' && n.props.key === 'pace-five_hour')!
+      expect(elementChildren(row)).toHaveLength(1)
     })
 
     // DX-4854 #2: the account is placed from the session's own usage report, so before the first reading the line answers unknown and the

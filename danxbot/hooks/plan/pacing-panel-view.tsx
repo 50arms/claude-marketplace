@@ -1,6 +1,6 @@
 import { DANGER, ORANGE, SUCCESS, WARNING } from './config'
 import type { PacingLevel } from '../../types'
-import { tooltipCard } from './icon-control'
+import { tooltipCard } from './tooltip-card'
 import { LEVEL_LABEL, LIMIT_LABEL, NEEDS_DANXBOT, SPEND_LABEL, SPEND_UNJUDGED_SHORT, bandSegments, entryTip, spendTip, untilText, verdictLines } from './pacing-format'
 import type { Tone } from './pacing-format'
 import type { PanelEntry, PanelModel, SpendEntry } from './pacing-panel'
@@ -31,16 +31,16 @@ export function pacingBand(E: any, m: PanelModel | undefined): any {
 
 // DX-4854: ONE compact line per limit: the dot, the name, the used figure, the level, and when it resets. The detail the line leaves out
 // (the server's sentence, target, critical, mode, the reset clock) is the row's hover card, drawn hidden until the pointer is on the row.
-function limitRow(E: any, o: { key: string; name: string; color: string | undefined; figure: string; figureDim: boolean; level: PacingLevel | null; resetsAt: number | null; tip: string[]; now: number }): any {
+function limitRow(E: any, o: { key: string; name: string; color: string | undefined; figure: string; level: PacingLevel | null; resetsAt: number | null; tip: string[]; now: number }): any {
   const { Box, Text } = E
   return (
     <Box key={o.key}>
       <Box flexDirection="row" gap={1}>
-        <Text color={o.color} dimColor={o.figureDim}>
+        <Text color={o.color} dimColor={o.level === null}>
           ●
         </Text>
         <Text bold>{o.name}</Text>
-        <Text color={o.color} dimColor={o.figureDim}>
+        <Text color={o.color} dimColor={o.level === null}>
           {o.figure}
         </Text>
         {o.level !== null && <Text color={o.color}>{LEVEL_LABEL[o.level]}</Text>}
@@ -57,7 +57,6 @@ function entryRow(E: any, e: PanelEntry, m: PanelModel, now: number): any {
     name: LIMIT_LABEL[e.limit].pane,
     color: colorOf(e.level),
     figure: e.used === null ? 'no reading yet' : `${e.used}% used`,
-    figureDim: e.level === null,
     level: e.level,
     resetsAt: e.resetsAt,
     tip: entryTip(e, m.readout),
@@ -72,7 +71,6 @@ function spendRow(E: any, s: SpendEntry, m: PanelModel, now: number): any {
     name: SPEND_LABEL,
     color: colorOf(s.level),
     figure: s.state === 'needs_danxbot' ? NEEDS_DANXBOT : s.state === 'unjudged' ? SPEND_UNJUDGED_SHORT : `${s.used}% used`,
-    figureDim: s.level === null,
     level: s.level,
     resetsAt: s.resetsAt,
     tip: spendTip(s, m.readout),

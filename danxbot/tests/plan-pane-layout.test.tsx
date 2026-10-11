@@ -5,7 +5,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { DANGER, DISCONNECT_GLYPH, DISCONNECT_TIP, NO_IN_PROGRESS, SWITCH_GLYPH, SWITCH_TIP, TOOLTIP_BACKGROUND, cardUrl } from '../hooks/plan/config'
-import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { DASHBOARD_URL, SURFACES, dashboard, elementChildren, flat, footerText, mountIndicator, shown, startSession, texts, treeOf } from './plan-kit'
+import type { Node } from './plan-kit'
 
 const OTHER = 'https://other.example.org'
 const PANE = {
@@ -14,20 +15,6 @@ const PANE = {
   props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
 } as any
 
-type Node = { type: string; props: Record<string, any>; children: any[] }
-const isNode = (x: any): x is Node => x !== null && typeof x === 'object' && typeof x.type === 'string'
-// every element of a drawn tree, document order
-function flat(node: any, out: Node[] = []): Node[] {
-  if (!isNode(node)) return out
-  out.push(node)
-  for (const child of node.children ?? []) flat(child, out)
-  return out
-}
-// the text a node shows: its string children in document order
-const shown = (n: Node) => (n.children ?? []).filter((c: any) => typeof c === 'string').join('')
-const texts = (node: any) => flat(node).filter(n => n.type === 'Text').map(shown)
-const elementChildren = (n: Node) => (n.children ?? []).filter(isNode)
-const treeOf = async (pane: any): Promise<Node> => (await pane.drawn()) as Node
 const mountPane = ($: any, surface: string) => $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
 // a Markdown link node's label and href
 const linkOf = (n: Node) => {
