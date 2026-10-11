@@ -8,6 +8,8 @@ export const LIMIT_LABEL: Record<PacingLimitKey, { band: string; pane: string }>
 export const SPEND_LABEL = 'spend'
 export const NEEDS_DANXBOT = 'needs danxbot'
 export const SPEND_UNJUDGED = 'danxbot has not judged spend for this account yet'
+// DX-4854: the same on the one visible line; the full sentence is the row's hover card
+export const SPEND_UNJUDGED_SHORT = 'not judged yet'
 export const usd = (n: number): string => `$${n.toFixed(2)}`
 export const MODE_LABEL: Record<PacingMode, string> = { fast_then_hold: 'fast then hold', spread_evenly: 'spread evenly' }
 export const LEVEL_LABEL: Record<PacingLevel, string> = { on_pace: 'on pace', over_pace: 'over pace', critical: 'critical' }
@@ -126,4 +128,28 @@ export function verdictLines(v: PacingVerdict, now: number): string[] {
     )
   }
   return lines
+}
+
+// DX-4854: a limit's hover card, the detail its one visible line leaves out: the server's plain-words sentence when it has judged the
+// limit (the readout), then the targets and the reset as a clock time. `settings` null: the team's settings were never read.
+export const NO_READING_TIP = 'This session has no usage reading from Claude yet; one appears after its next reply.'
+
+function targetsText(s: { targetPercent: number; criticalPercent: number; mode: PacingMode }): string {
+  return `target ${s.targetPercent}% · critical ${s.criticalPercent}% · ${MODE_LABEL[s.mode]}`
+}
+
+const sentenceOf = (readout: PacingReadout | null, limit: PacingLimitKey): string[] => {
+  const found = readout?.limits.find(l => l.limit === limit)
+  return found === undefined ? [] : [readoutSentence(found)]
+}
+
+export function entryTip(e: PanelEntry, readout: PacingReadout | null): string[] {
+  const detail = [e.settings === null ? null : targetsText(e.settings), e.resetsAt === null ? null : `resets ${clockText(e.resetsAt)}`].filter(Boolean)
+  return [...(e.used === null ? [NO_READING_TIP] : sentenceOf(readout, e.limit)), ...(detail.length === 0 ? [] : [detail.join(' · ')])]
+}
+
+export function spendTip(s: SpendEntry, readout: PacingReadout | null): string[] {
+  const unjudged = s.state === 'unjudged' ? [SPEND_UNJUDGED] : []
+  const detail = [s.state === 'figure' ? `${usd(s.spentUsd!)} of ${usd(s.budgetUsd!)}` : null, targetsText(s.settings), s.resetsAt === null ? null : `resets ${clockText(s.resetsAt)}`].filter(Boolean)
+  return [...unjudged, ...sentenceOf(readout, 'spend'), detail.join(' · ')]
 }

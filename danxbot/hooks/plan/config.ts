@@ -131,6 +131,11 @@ export const SUBAGENT_STATE_COLOR: Record<SubagentState, string> = {
 // DX-4508: rounded corners with no visible line: a Box rounds only by drawing a `round` border, so the card draws one in this same
 // colour (decision on DX-4508, 2026-10-04).
 export const SUBAGENT_CARD_BACKGROUND = 'userMessageBackground'
+// DX-4854: a hover card (icon tooltip, pacing detail) is drawn on the same raised theme fill, so it reads on a dark theme and a light one
+// (the earlier inverse-video card was a light block on the dark pane).
+export const TOOLTIP_BACKGROUND = SUBAGENT_CARD_BACKGROUND
+// DX-4854: the widest a multi-line hover card grows, in columns; a longer text wraps inside it rather than outrunning the pane.
+export const TOOLTIP_MAX_COLS = 56
 
 // DX-4508: the host child that streams this session's sub-agent numbers: `node <plugin root>/<this> <main transcript>`. The script finds
 // the installed danx-dashboard-mcp and runs its `subagents-live` (a hooks module is never told the plugin's data directory).

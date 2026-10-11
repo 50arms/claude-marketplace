@@ -4,7 +4,7 @@
 // finding on each surface IS the check (R-3).
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DANGER, DISCONNECT_GLYPH, DISCONNECT_TIP, NO_IN_PROGRESS, SWITCH_GLYPH, SWITCH_TIP, cardUrl } from '../hooks/plan/config'
+import { DANGER, DISCONNECT_GLYPH, DISCONNECT_TIP, NO_IN_PROGRESS, SWITCH_GLYPH, SWITCH_TIP, TOOLTIP_BACKGROUND, cardUrl } from '../hooks/plan/config'
 import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const OTHER = 'https://other.example.org'
@@ -165,7 +165,14 @@ for (const surface of SURFACES) {
         expect(card!.props.position).toBe('absolute')
         expect(card!.props.display).toBe('none')
         expect((card as any).hover).toEqual({ display: 'flex' })
-        expect(texts(card)).toEqual([` ${tip} `])
+        expect(texts(card)).toEqual([tip])
+        // DX-4854: the card is as wide as its one line plus a column of padding each side (an absolute Box takes its parent's width, which
+        // wrapped "Switch plan" over two rows) and sits on the theme's raised fill with the normal text colour, not an inverse light block
+        expect(card!.props.width).toBe(tip.length + 2)
+        expect(card!.props.paddingX).toBe(1)
+        expect(card!.props.flexShrink).toBe(0)
+        expect(card!.props.backgroundColor).toBe(TOOLTIP_BACKGROUND)
+        expect(flat(card!).some(n => n.type === 'Text' && n.props?.inverse)).toBe(false)
       }
       for (const key of ['switch', 'disconnect']) expect(tree.find(n => n.type === 'Button' && n.props.key === key)!.props.plain).toBe(true)
       // the engine drops unknown props silently, so only a test guards these
