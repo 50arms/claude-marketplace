@@ -543,9 +543,11 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
     await update($, signInRequest, () => shown)
     // DX-4530: each outcome is told once (the told-once guard, keyed by the request). The model's request always has an id
     // (onPlanConnect and the renewal below refuse one without); only the press may see one with none, and it tells once per watch.
+    // DX-4880: told as a waking prompt (tellModelAwake), on both paths: the session sits idle while the person approves, and an
+    // appended row is read only on a turn nobody starts, so the person had to type "approved" for the model to go on.
     const tell = async (request: ApprovalRequest | null, text: string) => {
       const key = request === null ? undefined : publicIdOf(request.url)
-      if (key === undefined ? watch.byPress : await markToldOnce($, key)) await tellModel($, text)
+      if (key === undefined ? watch.byPress : await markToldOnce($, key)) await tellModelAwake($, text)
     }
     const shownRequest = (): ApprovalRequest => {
       if (shown === null) throw new Error('sign-in watch: the model path has no shown request')
