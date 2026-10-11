@@ -6,6 +6,7 @@ import { expect, mock, test as baseTest } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { SERVER, toolName } from '../hooks/plan/config'
+import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/relay/config'
 
 // DX-4883: the runner's default is 5000 ms of REAL time per test, and a case that drives the mocked clock pays real time to settle every timer
 // it fires (about 1 s to start a session plus about 55 ms per mocked minute: the plugin's pacing and usage tickers run each minute). A
@@ -13,7 +14,6 @@ import { SERVER, toolName } from '../hooks/plan/config'
 // this bounded ceiling instead; it is a ceiling on machine load, not an assertion about speed (R-48), and a real hang still fails.
 export const KIT_TEST_TIMEOUT_MS = 60_000
 export const test = (name: string, body: (...args: any[]) => unknown): void => baseTest(name, { timeoutMs: KIT_TEST_TIMEOUT_MS } as any, body as any)
-import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/relay/config'
 
 export const SURFACES = ['terminal', 'desktop'] as const
 
