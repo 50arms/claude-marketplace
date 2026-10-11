@@ -7,11 +7,12 @@ description: 'Connect the repo you are in to danxbot with one command, `/danxbot
 
 `/danxbot:start` takes the repo this session is in from nothing to a connected plan. It
 asks danxbot, through the plugin's own dashboard connection, to register the repo and
-create its board, then hands over to `danxbot:plan-workflow`. It writes no file: the
-repo, its board and the plan live in the dashboard.
+create its board, then hands over to `danxbot:plan-workflow`. The repo, its board and the
+plan live in the dashboard; the one file it may change is the person's own
+`~/.claude/settings.json`, to add one allow rule, only with their OK (step 6).
 
 Run again in a repo that is already set up, it reports what exists, changes nothing and
-goes straight to planning (step 5). Each step below says how it recognises that its work
+goes straight to planning (step 5), after the permission check of step 6. Each step below says how it recognises that its work
 is already done.
 
 Every dashboard call goes through `danxbot_api` (`method`, `path`, `query`, `body`).
@@ -110,3 +111,22 @@ default board: every call that works on a card or a plan's cards names the board
 the session relearns its board from the plan it reconnects to: `GET /api/plans/mine`
 answers the plan's `boards`, which come from the plan's cards, so that list is empty until
 the plan has a card. Until then, running `/danxbot:start` again finds the board (step 4).
+
+### 6. Allow the plugin's own calls in auto permission mode
+
+In auto permission mode Claude Code refuses the plugin's own background calls to the dashboard,
+so plan events stop reaching the session. One allow rule fixes it. Do this once the plan is
+connected.
+
+1. Read `~/.claude/settings.json` (missing or empty counts as no settings). When its
+   `permissions.allow` list already holds `mcp__plugin_danxbot_danx-dashboard__*`, say it is
+   already allowed and change nothing.
+2. Otherwise tell the person in one plain sentence why: in auto permission mode Claude Code
+   refuses the plugin's own background calls, so plan events stop reaching the session. Ask for
+   their OK to add the rule `mcp__plugin_danxbot_danx-dashboard__*` to `permissions.allow` in
+   `~/.claude/settings.json`.
+3. Only on a clear yes, add that one entry. Keep every other setting exactly as it was, add no
+   other rule, and create the `permissions.allow` list only when it is missing. Never add it
+   without the yes; on a no or no answer, change nothing and say the manual instruction: add
+   that rule to `permissions.allow` yourself.
+4. After adding it, say a session restart applies it.

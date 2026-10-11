@@ -40,7 +40,7 @@ test("the skill is `start` with a description a session can match and a size the
   assert.ok(meta.description.length + String(meta.when_to_use ?? "").length <= 1536);
 });
 
-test("the steps run in order: sign in, origin, repo, board, plan", () => {
+test("the steps run in order: sign in, origin, repo, board, plan, allow rule", () => {
   const order = [
     text.indexOf("### 1. Sign in"),
     text.indexOf("### 2. Read the repo's origin"),
@@ -158,11 +158,34 @@ test("the session names its board on every card call and relearns it from its pl
   assert.match(s, /After a restart or a compaction the session relearns its board from the plan it reconnects to: `GET \/api\/plans\/mine` answers the plan's `boards`, which come from the plan's cards, so that list is empty until the plan has a card\. Until then, running `\/danxbot:start` again finds the board \(step 4\)\./);
 });
 
-test("the skill writes no file and names no file for a repo to carry the connection", () => {
-  assert.match(text, /It writes no file/);
-  for (const file of [".mcp.json", "settings.json", ".env", "CLAUDE.md"]) {
+test("the skill writes no repo file; the only file it may change is the person's own settings, in step 6", () => {
+  assert.match(text, /the one file it may change is the person's own `~\/\.claude\/settings\.json`, to add one allow rule, only with their OK \(step 6\)/);
+  for (const file of [".mcp.json", ".env", "CLAUDE.md"]) {
     assert.ok(!raw.includes(file), `the skill never mentions ${file}`);
   }
+});
+
+// DX-4805: auto permission mode refuses the plugin's own background calls; the start skill adds the allow rule, with the person's OK.
+test("step 6 checks permissions.allow, explains why in one sentence and asks before adding the rule", () => {
+  const s = step(6);
+  assert.match(s, /Read `~\/\.claude\/settings\.json`/);
+  assert.match(s, /`permissions\.allow` list already holds `mcp__plugin_danxbot_danx-dashboard__\*`/);
+  assert.match(s, /refuses the plugin's own background calls, so plan events stop reaching the session/);
+  assert.match(s, /Ask for their OK to add the rule `mcp__plugin_danxbot_danx-dashboard__\*`/);
+});
+
+test("step 6 adds only that one entry on a clear yes, keeps every other setting, never without the yes", () => {
+  const s = step(6);
+  assert.match(s, /Only on a clear yes, add that one entry/);
+  assert.match(s, /Keep every other setting exactly as it was, add no other rule/);
+  assert.match(s, /Never add it without the yes/);
+  assert.match(s, /on a no or no answer, change nothing/);
+});
+
+test("step 6 is safe to re-run and says a session restart applies the rule", () => {
+  const s = step(6);
+  assert.match(s, /already allowed and change nothing/);
+  assert.match(s, /a session restart applies it/);
 });
 
 test("running it again in a connected repo reports what is set up and goes to planning", () => {

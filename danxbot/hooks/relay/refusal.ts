@@ -18,7 +18,7 @@ export const raisedByPlugin = (origin: { plugin: string }): boolean => origin.pl
 // The permission rule that allows every tool of the plugin's own server.
 export const CLASSIFIER_RULE = `${toolName('')}*`
 
-export const CLASSIFIER_FIX = `the auto mode classifier refused the plugin's own call, and updating the plugin does not change that: add the allow rule ${CLASSIFIER_RULE} to permissions.allow in ~/.claude/settings.json (or allow it in /permissions) and restart the session`
+export const CLASSIFIER_FIX = `the auto mode classifier refused the plugin's own call, and updating the plugin does not change that: run /danxbot:start, which adds the allow rule ${CLASSIFIER_RULE} to permissions.allow in ~/.claude/settings.json once you say yes (or add it yourself, or allow it in /permissions), then restart the session`
 
 // What the engine says of a call the auto mode classifier refused (any verdict of it: no verdict, or judged unsafe).
 const CLASSIFIER_MARK = /auto mode classifier/i
