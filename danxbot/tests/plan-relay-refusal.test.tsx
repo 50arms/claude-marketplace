@@ -4,7 +4,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { toolName } from '../hooks/plan/config'
-import { ownServerCheck } from '../hooks/relay/refusal'
+import { ownServerCheck, raisedByPlugin } from '../hooks/relay/refusal'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { test, CLASSIFIER_REFUSAL, SURFACES, dashboard, startSession } from './plan-kit'
 
@@ -71,5 +71,13 @@ describe('the plugin ships the permission its own calls need', () => {
     expect((await ownServerCheck({ tool: own }, nextOf('someone-else', 'ask'))).reason).toBe('engine')
     expect((await ownServerCheck({ tool: 'Bash' }, nextOf('danxbot', 'ask'))).reason).toBe('engine')
     expect((await ownServerCheck({ tool: 'mcp__plugin_other_server__plan_events_wait' }, nextOf('danxbot', 'ask'))).reason).toBe('engine')
+  })
+})
+
+describe('raisedByPlugin (DX-4857)', () => {
+  test('the engine is not a plugin; danxbot and any other plugin are', () => {
+    expect(raisedByPlugin({ plugin: 'engine' })).toBe(false)
+    expect(raisedByPlugin({ plugin: 'danxbot' })).toBe(true)
+    expect(raisedByPlugin({ plugin: 'someone-else' })).toBe(true)
   })
 })

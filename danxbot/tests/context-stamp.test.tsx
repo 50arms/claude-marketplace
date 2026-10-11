@@ -3,7 +3,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { stamp } from '../hooks/context/stamp'
-import { test, SURFACES, dashboard, startSession } from './plan-kit'
+import { EVENT_TEXT, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 // 2026-09-28 07:12:03 UTC is 01:12:03 at -06:00
 const T0 = Date.UTC(2026, 8, 28, 7, 12, 3)

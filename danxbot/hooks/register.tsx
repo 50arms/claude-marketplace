@@ -68,7 +68,7 @@ import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTE
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_PATH, KEEPALIVE_RETRY_MS, keepalivePrompt } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
-import { classifierRefusal, ownServerCheck, type Refusal } from './relay/refusal'
+import { classifierRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
 import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
@@ -1657,6 +1657,12 @@ async function onPromptStamp($: any, e: any, next: any) {
 // result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
+  // DX-4857: a plugin's own `$.mcp.call` (this one's dashboard reads) is raised as a `tool.call` too, with no agentId. Its result goes to the plugin,
+  // never the model, so a stamp or the start text put beside it is lost, and the stamp would move the clock the model reads. The signal is the
+  // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (DX-4857
+  // comment 13414 and the code-quality gate's real-engine probe). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
+  // Returning here also skips the lastStamp bookkeeping. Seated by tests/on-tool-stamp-origin-scan.test.mjs.
+  if (raisedByPlugin(next.origin)) return r
   // DX-4721: the main loop's result carries the notes appended so far: they are read (a sub-agent's or a fork's result is not the main loop's)
   if (e.agentId === undefined && (await read($, turn)).pending.length > 0) await update($, turn, cur => toolResultSent(cur))
   // DX-4235: a background shell's start, and a working sub-agent's liveness
