@@ -22,7 +22,7 @@ const body = raw.replace(/\r\n/g, "\n").slice(frontmatter[0].length);
 const flat = (text) => text.replace(/\s+/g, " ");
 const text = flat(body);
 
-/** The text of one numbered step heading (`### 3. ...`) up to the next heading. */
+/** The text of one numbered step heading (`### 4. ...`) up to the next heading. */
 function step(n) {
   const re = new RegExp(`^### ${n}\\. .*$`, "m");
   const m = re.exec(body);
@@ -40,13 +40,14 @@ test("the skill is `start` with a description a session can match and a size the
   assert.ok(meta.description.length + String(meta.when_to_use ?? "").length <= 1536);
 });
 
-test("the steps run in order: sign in, origin, repo, board, plan, allow rule", () => {
+test("the steps run in order: sign in, allow rule, origin, repo, board, plan", () => {
   const order = [
     text.indexOf("### 1. Sign in"),
-    text.indexOf("### 2. Read the repo's origin"),
-    text.indexOf("### 3. Register the repo"),
-    text.indexOf("### 4. Create the board"),
-    text.indexOf("### 5. Start the first plan"),
+    text.indexOf("### 2. Allow the plugin's own calls in auto permission mode"),
+    text.indexOf("### 3. Read the repo's origin"),
+    text.indexOf("### 4. Register the repo"),
+    text.indexOf("### 5. Create the board"),
+    text.indexOf("### 6. Start the first plan"),
   ];
   assert.ok(order.every((i) => i > -1), `every step heading is present: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order, "the headings appear in step order");
@@ -61,8 +62,8 @@ test("step 1 signs in with plan_connect and no plan, showing the approval link a
   assert.match(s, /approval URL|approval link/i);
 });
 
-test("step 2 normalizes ssh:// and github.com-<alias> origins and refuses every other host", () => {
-  const s = step(2);
+test("step 3 normalizes ssh:// and github.com-<alias> origins and refuses every other host", () => {
+  const s = step(3);
   assert.match(s, /ssh:\/\/git@github\.com\/<owner>\/<repo>\.git/);
   assert.match(s, /git@github\.com-<alias>:<owner>\/<repo>\.git/);
   assert.match(s, /rewrite an `ssh:\/\/` or\s+alias origin to `git@github\.com:<owner>\/<repo>\.git`/);
@@ -70,8 +71,8 @@ test("step 2 normalizes ssh:// and github.com-<alias> origins and refuses every 
   assert.match(s, /connects `github\.com` repos only/);
 });
 
-test("step 2 reads the origin URL and refuses, creating nothing, when there is none or it is not GitHub", () => {
-  const s = step(2);
+test("step 3 reads the origin URL and refuses, creating nothing, when there is none or it is not GitHub", () => {
+  const s = step(3);
   assert.match(s, /git remote get-url origin/);
   assert.match(s, /no `origin` remote|no origin remote/i);
   assert.match(s, /connects `github.com` repos only/);
@@ -79,16 +80,16 @@ test("step 2 reads the origin URL and refuses, creating nothing, when there is n
   assert.match(s, /nothing (has been )?(created|registered)/i);
 });
 
-test("step 3 matches an already-registered repo by GitHub owner and repo before registering", () => {
-  const s = step(3);
+test("step 4 matches an already-registered repo by GitHub owner and repo before registering", () => {
+  const s = step(4);
   assert.match(s, /GET \/api\/repos/);
   assert.match(s, /github_remote/);
   assert.match(s, /owner\/repo|owner and repo/i);
   assert.match(s, /already registered/i);
 });
 
-test("step 3 registers with {name, url}, derives a valid name and offers the suggested name on 409", () => {
-  const s = step(3);
+test("step 4 registers with {name, url}, derives a valid name and offers the suggested name on 409", () => {
+  const s = step(4);
   assert.match(s, /POST \/api\/repos/);
   assert.match(s, /\{name, url\}/);
   assert.match(s, /lowercase/i);
@@ -97,30 +98,30 @@ test("step 3 registers with {name, url}, derives a valid name and offers the sug
   assert.match(s, /<owner>-<repo>/);
 });
 
-test("step 3 says a 409 name is unique across every team, not that another team holds it", () => {
-  const s = step(3);
+test("step 4 says a 409 name is unique across every team, not that another team holds it", () => {
+  const s = step(4);
   assert.match(s, /unique across every team on danxbot, so it may be a repo of someone else's/);
   assert.doesNotMatch(s, /another team already holds/);
 });
 
-test("step 3 repairs a repo name the server would refuse, and falls back to <owner>-<repo>, then to asking", () => {
-  const s = step(3);
+test("step 4 repairs a repo name the server would refuse, and falls back to <owner>-<repo>, then to asking", () => {
+  const s = step(4);
   assert.match(s, /\^\[a-z0-9\]\[a-z0-9_-\]\{0,63\}\$/);
   assert.match(s, /leading `-` or `_` removed/);
   assert.match(s, /`\.github`/);
   assert.match(s, /still not valid, ask the person for a name/);
 });
 
-test("step 4 gives a repo name with fewer than two letters a prefix from the owner, then asks", () => {
-  const s = step(4);
+test("step 5 gives a repo name with fewer than two letters a prefix from the owner, then asks", () => {
+  const s = step(5);
   assert.match(s, /letters only/);
   assert.match(s, /fewer than two letters/);
   assert.match(s, /owner's first letters/);
   assert.match(s, /ask the\s+person for a prefix/);
 });
 
-test("step 4 reuses a board the repo already has, else creates one with {repo, name, issue_prefix}", () => {
-  const s = step(4);
+test("step 5 reuses a board the repo already has, else creates one with {repo, name, issue_prefix}", () => {
+  const s = step(5);
   assert.match(s, /GET \/api\/boards` with `query: \{"repo"/);
   assert.match(s, /already has a board/i);
   assert.match(s, /POST \/api\/boards/);
@@ -136,15 +137,15 @@ test("a refusal naming boards.view or boards.manage goes through ONE request_per
   assert.equal((section.match(/request_permission/g) ?? []).length, 1);
 });
 
-test("step 5 starts at the plan list: it never claims the connect answer names the session's plan", () => {
-  const s = step(5);
-  assert.match(s, /^### 5\. Start the first plan A plan is where .*? 1\. `GET \/api\/plans`/);
+test("step 6 starts at the plan list: it never claims the connect answer names the session's plan", () => {
+  const s = step(6);
+  assert.match(s, /^### 6\. Start the first plan A plan is where .*? 1\. `GET \/api\/plans`/);
   assert.doesNotMatch(s, /already on a plan/i);
-  assert.doesNotMatch(flat(body.slice(body.indexOf("### 1."), body.indexOf("### 2."))), /keep that/i);
+  assert.doesNotMatch(flat(body.slice(body.indexOf("### 1."), body.indexOf("### 3."))), /keep that/i);
 });
 
-test("step 5 asks what to build first, creates the plan, and hands over to plan-workflow", () => {
-  const s = step(5);
+test("step 6 asks what to build first, creates the plan, and hands over to plan-workflow", () => {
+  const s = step(6);
   assert.match(s, /what (they|you) want to build first/i);
   assert.match(s, /POST \/api\/plans/);
   assert.match(s, /`danxbot:plan-workflow`/);
@@ -152,40 +153,60 @@ test("step 5 asks what to build first, creates the plan, and hands over to plan-
 });
 
 test("the session names its board on every card call and relearns it from its plan after a restart", () => {
-  const s = step(5);
-  assert.match(s, /every call that works on a card or a plan's cards names the board, the\s+`board` argument of `danxbot_api` set to the board id from step 4 \(`<repo>:<slug>`\)/);
+  const s = step(6);
+  assert.match(s, /every call that works on a card or a plan's cards names the board, the\s+`board` argument of `danxbot_api` set to the board id from step 5 \(`<repo>:<slug>`\)/);
   assert.match(s, /`POST \/api\/issues` carries it as `board` in its body/);
-  assert.match(s, /After a restart or a compaction the session relearns its board from the plan it reconnects to: `GET \/api\/plans\/mine` answers the plan's `boards`, which come from the plan's cards, so that list is empty until the plan has a card\. Until then, running `\/danxbot:start` again finds the board \(step 4\)\./);
+  assert.match(s, /After a restart or a compaction the session relearns its board from the plan it reconnects to: `GET \/api\/plans\/mine` answers the plan's `boards`, which come from the plan's cards, so that list is empty until the plan has a card\. Until then, running `\/danxbot:start` again finds the board \(step 5\)\./);
 });
 
-test("the skill writes no repo file; the only file it may change is the person's own settings, in step 6", () => {
-  assert.match(text, /the one file it may change is the person's own `~\/\.claude\/settings\.json`, to add one allow rule, only with their OK \(step 6\)/);
+test("the skill writes no repo file; the only file it may change is the person's own settings, in step 2", () => {
+  assert.match(text, /the one file it may change is the person's own `~\/\.claude\/settings\.json`, to add one allow rule, only with their OK \(step 2\)/);
   for (const file of [".mcp.json", ".env", "CLAUDE.md"]) {
     assert.ok(!raw.includes(file), `the skill never mentions ${file}`);
   }
 });
 
 // DX-4805: auto permission mode refuses the plugin's own background calls; the start skill adds the allow rule, with the person's OK.
-test("step 6 checks permissions.allow, explains why in one sentence and asks before adding the rule", () => {
-  const s = step(6);
-  assert.match(s, /Read `~\/\.claude\/settings\.json`/);
-  assert.match(s, /`permissions\.allow` list already holds `mcp__plugin_danxbot_danx-dashboard__\*`/);
-  assert.match(s, /refuses the plugin's own background calls, so plan events stop reaching the session/);
-  assert.match(s, /Ask for their OK to add the rule `mcp__plugin_danxbot_danx-dashboard__\*`/);
+const RULE = "`mcp__plugin_danxbot_danx-dashboard__*`";
+
+test("step 2 comes before the plan hand-over and can be the whole run", () => {
+  const s = step(2);
+  assert.match(s, /before the plan hand-over \(step 6\), which a session may never return from/);
+  assert.match(s, /only for this rule, stop after this step/);
 });
 
-test("step 6 adds only that one entry on a clear yes, keeps every other setting, never without the yes", () => {
-  const s = step(6);
+test("step 2 checks permissions.allow, explains why in one sentence and asks before adding the rule", () => {
+  const s = step(2);
+  assert.match(s, /Read `~\/\.claude\/settings\.json`/);
+  assert.ok(s.includes(`list already holds ${RULE}`));
+  assert.match(s, /refuses the plugin's own background calls, so plan events stop reaching the session/);
+  assert.ok(s.includes(`Ask for their OK to add the rule ${RULE}`));
+});
+
+test("step 2 leaves a settings file that is not valid JSON, or whose allow is not a list, untouched", () => {
+  const s = step(2);
+  assert.match(s, /is not valid JSON, or its `permissions\.allow` is present and not a list, leave the file untouched, tell the person, and give the manual instruction/);
+  assert.match(s, /Never treat such a file as empty/);
+});
+
+test("step 2 adds only that one entry on a clear yes, keeps every other setting, never without the yes", () => {
+  const s = step(2);
   assert.match(s, /Only on a clear yes, add that one entry/);
   assert.match(s, /Keep every other setting exactly as it was, add no other rule/);
   assert.match(s, /Never add it without the yes/);
-  assert.match(s, /on a no or no answer, change nothing/);
+  assert.match(s, /on a no or no reply, change nothing/);
+  assert.ok(s.includes(`manual instruction: add ${RULE} to \`permissions.allow\``));
 });
 
-test("step 6 is safe to re-run and says a session restart applies the rule", () => {
-  const s = step(6);
+test("step 2 is safe to re-run and says a session restart applies the rule", () => {
+  const s = step(2);
   assert.match(s, /already allowed and change nothing/);
   assert.match(s, /a session restart applies it/);
+});
+
+test("plan-workflow's Live events bullet names /danxbot:start as the one-step way to add the rule", () => {
+  const pw = flat(readFileSync(path.join(here, "../skills/plan-workflow/SKILL.md"), "utf8"));
+  assert.match(pw, /Run `\/danxbot:start`: with the person's OK it adds the allow rule `mcp__plugin_danxbot_danx-dashboard__\*` in one step\. Or add that rule to `permissions\.allow` in `~\/\.claude\/settings\.json` yourself/);
 });
 
 test("running it again in a connected repo reports what is set up and goes to planning", () => {
