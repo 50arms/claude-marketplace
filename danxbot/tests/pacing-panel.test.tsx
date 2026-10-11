@@ -8,13 +8,14 @@
 // session is the card's last acceptance item.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { BAND_GAP_COLS, DANGER, ORANGE, PACING_POLL_MS, SUCCESS, USAGE_TICK_MS, WARNING } from '../hooks/plan/config'
+import { BAND_GAP_COLS, DANGER, ORANGE, PACING_POLL_MS, SUCCESS, TOOLTIP_BACKGROUND, TOOLTIP_MAX_COLS, USAGE_TICK_MS, WARNING } from '../hooks/plan/config'
 import { bandText, clockText, formatMinutes, readoutSentence, untilText, verdictLines } from '../hooks/plan/pacing-format'
 import { EMPTY_PANEL_STATE, buildPanel } from '../hooks/plan/pacing-panel'
 import { parseTeamPacing } from '../hooks/plan/pacing-settings'
 import { LEVEL_COLOR, TONE_COLOR } from '../hooks/plan/pacing-panel-view'
 import type { LimitReadout, PanelState } from '../types'
-import { SURFACES, dashboard, startSession } from './plan-kit'
+import { SURFACES, dashboard, elementChildren, flat, startSession, texts as treeTexts, treeOf } from './plan-kit'
+import type { Node } from './plan-kit'
 
 const FIVE = '2026-10-03T11:10:00.000Z'
 const WEEK = '2026-10-09T09:00:00.000Z'
@@ -270,8 +271,11 @@ for (const surface of SURFACES)
       expect(all).toContain('5-hour')
       expect(all).toContain('5-hour limit: over pace, so nothing new starts until it eases or the window resets in 1h40m.')
       expect(all).toContain('62% used')
-      expect(all).toContain('target 80% · critical 95% · spread evenly · resets in 3h 10m (Sat 11:10Z)')
-      expect(all).toContain('target 70% · critical 90% · fast then hold · resets in 6d 1h')
+      // DX-4854: the target, critical and mode are the limit's hover card; the line itself carries the figure, the level and the reset time
+      expect(all).toContain('target 80% · critical 95% · spread evenly · resets Sat 11:10Z')
+      expect(all).toContain('target 70% · critical 90% · fast then hold · resets Fri 09:00Z')
+      expect(all).toContain('resets in 3h 10m')
+      expect(all).toContain('resets in 6d 1h')
       expect(all).toContain('Account: over pace · budget 0 agents may start · 3 running')
       expect(all).toContain('Holding: no new agents start until the window resets, Sat 11:10Z (in 3h 10m).')
       expect(d.toasts.filter(t => /pacing/i.test(t))).toEqual([])
@@ -289,7 +293,75 @@ for (const surface of SURFACES)
       expect(all).toContain('Spend limit: critical')
       expect(all).toContain('5-hour limit: over pace')
       expect(all).toContain('62% used')
-      expect(all).toContain('$12.40 of $50.00 · target 80% · critical 95% · spread evenly · resets in 6d 1h')
+      expect(all).toContain('$12.40 of $50.00 · target 80% · critical 95% · spread evenly · resets Fri 09:00Z')
+      expect(all).toContain('resets in 6d 1h')
+    })
+
+    // DX-4854 #3: one compact line per limit; the detail is the hover card, which is drawn but hidden until the pointer is on the row
+    test('each limit is ONE visible line: figure, level, reset; the target, critical and the sentence are its hover card', async ($, on) => {
+      await paced($, on, surface, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: verdictBody({ spend: { used_percent: 61.6, level: 'critical', resets_at: WEEK, spent_usd: 12.4, budget_usd: 50 } }) } })
+      const tree = await treeOf(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))
+      const rows = flat(tree).filter(n => n.type === 'Box' && typeof n.props.key === 'string' && n.props.key.startsWith('pace-'))
+      expect(rows.map(r => r.props.key)).toEqual(['pace-five_hour', 'pace-weekly', 'pace-spend'])
+      const visible = (row: Node) => elementChildren(row).filter(k => k.props.display !== 'none')
+      for (const row of rows) {
+        const [line, card, ...more] = elementChildren(row)
+        expect(more).toEqual([])
+        // the one visible child is one row of short Texts: no second line of fragments
+        expect(visible(row)).toEqual([line])
+        expect(line!.props.flexDirection).toBe('row')
+        expect(flat(line!).some(n => /target|critical \d|spread evenly|fast then hold/.test(treeTexts(n).join(' ')))).toBe(false)
+        expect(card!.props).toMatchObject({ position: 'absolute', display: 'none', backgroundColor: TOOLTIP_BACKGROUND, left: 0 })
+        expect((card as any).hover).toEqual({ display: 'flex' })
+        expect(card!.props.width).toBeLessThanOrEqual(TOOLTIP_MAX_COLS + 2)
+      }
+      expect(treeTexts(elementChildren(rows[0]!)[0]!)).toEqual(['●', '5-hour', '62% used', 'over pace', 'resets in 3h 10m'])
+      expect(treeTexts(elementChildren(rows[1]!)[0]!)).toEqual(['●', 'weekly', '41% used', 'on pace', 'resets in 6d 1h'])
+      expect(treeTexts(elementChildren(rows[2]!)[0]!)).toEqual(['●', 'spend', '62% used', 'critical', 'resets in 6d 1h'])
+    })
+
+    // DX-4854: what the one visible line says before there is a figure; the long sentences are in the hover card, so the line is asserted
+    const rowTexts = (tree: Node, key: string) => treeTexts(elementChildren(flat(tree).find(n => n.type === 'Box' && n.props.key === key)!)[0]!)
+
+    test('with no reading and no spend verdict the lines say so briefly', async ($, on) => {
+      const unknown = { account: null, label: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
+      const d = dashboard(on, { teamPacing: { body: { ...SETTINGS, spend: spendOn } }, pacingLine: { body: unknown } })
+      await startSession($, d, surface)
+      const tree = await treeOf(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))
+      expect(rowTexts(tree, 'pace-five_hour')).toEqual(['●', '5-hour', 'no reading yet'])
+      expect(rowTexts(tree, 'pace-weekly')).toEqual(['●', 'weekly', 'no reading yet'])
+      expect(rowTexts(tree, 'pace-spend')).toEqual(['●', 'spend', 'not judged yet'])
+    })
+
+    // DX-4854: a window with no reset time while the team settings are unread leaves a row with nothing to put in its hover card; a card with no
+    // lines has no finite width and the engine refuses the whole Pane for it, so the row must draw with no card at all
+    test('a window with no reset time and no settings read mounts the pane, its row with no hover card', async ($, on) => {
+      const d = dashboard(on, { teamPacing: { status: 404 } })
+      d.world.rateLimits = [{ kind: 'five_hour', percentUsed: 30 }] as any
+      on('session.measure', () => ({ changed: ['rateLimits'] }) as any)
+      await startSession($, d, surface)
+      await $.session.measure({ context: {}, rateLimits: d.world.rateLimits, changed: ['rateLimits'] } as any)
+      await d.clock.settle()
+      const tree = await treeOf(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))
+      expect(rowTexts(tree, 'pace-five_hour')).toEqual(['●', '5-hour', '30% used'])
+      const row = flat(tree).find(n => n.type === 'Box' && n.props.key === 'pace-five_hour')!
+      expect(elementChildren(row)).toHaveLength(1)
+    })
+
+    // DX-4854 #2: the account is placed from the session's own usage report, so before the first reading the line answers unknown and the
+    // pane has no verdict; the first accepted report asks again at once instead of leaving the readings to the next poll
+    test('the first usage report that places the session shows the account readings at once, with no wait for the poll', async ($, on) => {
+      const unknown = { account: null, label: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
+      const d = dashboard(on, { teamPacing: { body: SETTINGS }, pacingLine: { body: unknown } })
+      on('session.measure', () => ({ changed: ['rateLimits'] }) as any)
+      await startSession($, d, surface)
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      expect(await joined(pane)).not.toContain('Account:')
+      d.setPacingLine({ body: verdictBody() })
+      await $.session.measure({ context: {}, rateLimits: WINDOWS, changed: ['rateLimits'] } as any)
+      await d.clock.settle()
+      expect(await joined(pane)).toContain('Account: over pace')
+      expect(await joined(pane)).toContain('5-hour limit: over pace')
     })
 
     test('spend with no spend on the line says danxbot has not judged it; with the MCP down it needs danxbot', async ($, on) => {

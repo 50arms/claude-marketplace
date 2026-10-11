@@ -4,8 +4,9 @@
 // finding on each surface IS the check (R-3).
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DANGER, DISCONNECT_GLYPH, DISCONNECT_TIP, NO_IN_PROGRESS, SWITCH_GLYPH, SWITCH_TIP, cardUrl } from '../hooks/plan/config'
-import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { DANGER, DISCONNECT_GLYPH, DISCONNECT_TIP, NO_IN_PROGRESS, SWITCH_GLYPH, SWITCH_TIP, TOOLTIP_BACKGROUND, cardUrl } from '../hooks/plan/config'
+import { DASHBOARD_URL, SURFACES, dashboard, elementChildren, flat, footerText, mountIndicator, shown, startSession, texts, treeOf } from './plan-kit'
+import type { Node } from './plan-kit'
 
 const OTHER = 'https://other.example.org'
 const PANE = {
@@ -14,20 +15,6 @@ const PANE = {
   props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
 } as any
 
-type Node = { type: string; props: Record<string, any>; children: any[] }
-const isNode = (x: any): x is Node => x !== null && typeof x === 'object' && typeof x.type === 'string'
-// every element of a drawn tree, document order
-function flat(node: any, out: Node[] = []): Node[] {
-  if (!isNode(node)) return out
-  out.push(node)
-  for (const child of node.children ?? []) flat(child, out)
-  return out
-}
-// the text a node shows: its string children in document order
-const shown = (n: Node) => (n.children ?? []).filter((c: any) => typeof c === 'string').join('')
-const texts = (node: any) => flat(node).filter(n => n.type === 'Text').map(shown)
-const elementChildren = (n: Node) => (n.children ?? []).filter(isNode)
-const treeOf = async (pane: any): Promise<Node> => (await pane.drawn()) as Node
 const mountPane = ($: any, surface: string) => $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
 // a Markdown link node's label and href
 const linkOf = (n: Node) => {
@@ -165,7 +152,14 @@ for (const surface of SURFACES) {
         expect(card!.props.position).toBe('absolute')
         expect(card!.props.display).toBe('none')
         expect((card as any).hover).toEqual({ display: 'flex' })
-        expect(texts(card)).toEqual([` ${tip} `])
+        expect(texts(card)).toEqual([tip])
+        // DX-4854: the card is as wide as its one line plus a column of padding each side (an absolute Box takes its parent's width, which
+        // wrapped "Switch plan" over two rows) and sits on the theme's raised fill with the normal text colour, not an inverse light block
+        expect(card!.props.width).toBe(tip.length + 2)
+        expect(card!.props.paddingX).toBe(1)
+        expect(card!.props.flexShrink).toBe(0)
+        expect(card!.props.backgroundColor).toBe(TOOLTIP_BACKGROUND)
+        expect(flat(card!).some(n => n.type === 'Text' && n.props?.inverse)).toBe(false)
       }
       for (const key of ['switch', 'disconnect']) expect(tree.find(n => n.type === 'Button' && n.props.key === key)!.props.plain).toBe(true)
       // the engine drops unknown props silently, so only a test guards these

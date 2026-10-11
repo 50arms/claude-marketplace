@@ -1,6 +1,7 @@
 import { DANGER, ORANGE, SUCCESS, WARNING } from './config'
 import type { PacingLevel } from '../../types'
-import { LEVEL_LABEL, LIMIT_LABEL, MODE_LABEL, NEEDS_DANXBOT, SPEND_LABEL, SPEND_UNJUDGED, bandSegments, clockText, readoutSentence, untilText, usd, verdictLines } from './pacing-format'
+import { tooltipCard } from './tooltip-card'
+import { LEVEL_LABEL, LIMIT_LABEL, NEEDS_DANXBOT, SPEND_LABEL, SPEND_UNJUDGED_SHORT, bandSegments, entryTip, spendTip, untilText, verdictLines } from './pacing-format'
 import type { Tone } from './pacing-format'
 import type { PanelEntry, PanelModel, SpendEntry } from './pacing-panel'
 import { age } from './words'
@@ -28,60 +29,56 @@ export function pacingBand(E: any, m: PanelModel | undefined): any {
   )
 }
 
-function entryLines(E: any, e: PanelEntry, now: number): any {
+// DX-4854: ONE compact line per limit: the dot, the name, the used figure, the level, and when it resets. The detail the line leaves out
+// (the server's sentence, target, critical, mode, the reset clock) is the row's hover card, drawn hidden until the pointer is on the row.
+function limitRow(E: any, o: { key: string; name: string; color: string | undefined; figure: string; level: PacingLevel | null; resetsAt: number | null; tip: string[]; now: number }): any {
   const { Box, Text } = E
-  const color = colorOf(e.level)
-  const detail = [
-    e.settings === null ? null : `target ${e.settings.targetPercent}%`,
-    e.settings === null ? null : `critical ${e.settings.criticalPercent}%`,
-    e.settings === null ? null : MODE_LABEL[e.settings.mode],
-    e.resetsAt === null ? null : `resets in ${untilText(e.resetsAt, now)} (${clockText(e.resetsAt)})`,
-  ].filter(Boolean)
   return (
-    <Box key={`pace-${e.limit}`} flexDirection="column">
+    <Box key={o.key}>
       <Box flexDirection="row" gap={1}>
-        <Text color={color} dimColor={e.level === null}>
+        <Text color={o.color} dimColor={o.level === null}>
           ●
         </Text>
-        <Text bold>{LIMIT_LABEL[e.limit].pane}</Text>
-        <Text color={color}>{e.used === null ? 'no reading yet' : `${e.used}% used`}</Text>
-        {e.level !== null && <Text color={color}>{LEVEL_LABEL[e.level]}</Text>}
+        <Text bold>{o.name}</Text>
+        <Text color={o.color} dimColor={o.level === null}>
+          {o.figure}
+        </Text>
+        {o.level !== null && <Text color={o.color}>{LEVEL_LABEL[o.level]}</Text>}
+        {o.resetsAt !== null && <Text dimColor>{`resets in ${untilText(o.resetsAt, o.now)}`}</Text>}
       </Box>
-      {detail.length > 0 && <Text dimColor>{detail.join(' · ')}</Text>}
+      {tooltipCard(E, o.tip, { left: 0 })}
     </Box>
   )
 }
 
-// DX-4595: the spend limit in full: the server's figure with the money, or why there is none.
-function spendLines(E: any, s: SpendEntry, now: number): any {
-  const { Box, Text } = E
-  const color = colorOf(s.level)
-  const headline = s.state === 'needs_danxbot' ? NEEDS_DANXBOT : s.state === 'unjudged' ? SPEND_UNJUDGED : `${s.used}% used`
-  const detail = [
-    s.state === 'figure' ? `${usd(s.spentUsd!)} of ${usd(s.budgetUsd!)}` : null,
-    `target ${s.settings.targetPercent}%`,
-    `critical ${s.settings.criticalPercent}%`,
-    MODE_LABEL[s.settings.mode],
-    s.resetsAt === null ? null : `resets in ${untilText(s.resetsAt, now)} (${clockText(s.resetsAt)})`,
-  ].filter(Boolean)
-  return (
-    <Box key="pace-spend" flexDirection="column">
-      <Box flexDirection="row" gap={1}>
-        <Text color={color} dimColor={s.level === null}>
-          ●
-        </Text>
-        <Text bold>{SPEND_LABEL}</Text>
-        <Text color={color} dimColor={s.level === null}>
-          {headline}
-        </Text>
-        {s.level !== null && <Text color={color}>{LEVEL_LABEL[s.level]}</Text>}
-      </Box>
-      <Text dimColor>{detail.join(' · ')}</Text>
-    </Box>
-  )
+function entryRow(E: any, e: PanelEntry, m: PanelModel, now: number): any {
+  return limitRow(E, {
+    key: `pace-${e.limit}`,
+    name: LIMIT_LABEL[e.limit].pane,
+    color: colorOf(e.level),
+    figure: e.used === null ? 'no reading yet' : `${e.used}% used`,
+    level: e.level,
+    resetsAt: e.resetsAt,
+    tip: entryTip(e, m.readout),
+    now,
+  })
 }
 
-// The pane's pacing section: each enabled limit in full, then the account's verdict (level, budget, running agents, and the hold until the
+// DX-4595: the spend limit: the server's figure, or why there is none.
+function spendRow(E: any, s: SpendEntry, m: PanelModel, now: number): any {
+  return limitRow(E, {
+    key: 'pace-spend',
+    name: SPEND_LABEL,
+    color: colorOf(s.level),
+    figure: s.state === 'needs_danxbot' ? NEEDS_DANXBOT : s.state === 'unjudged' ? SPEND_UNJUDGED_SHORT : `${s.used}% used`,
+    level: s.level,
+    resetsAt: s.resetsAt,
+    tip: spendTip(s, m.readout),
+    now,
+  })
+}
+
+// The pane's pacing section: each enabled limit on one line, then the account's verdict (level, budget, running agents, and the hold until the
 // reset). While the settings read is not working the section is marked local: quietly when there is no danxbot to read (silent), and with the
 // named error when danxbot answered and the answer was unusable. null when there is nothing to show.
 export function pacingPane(E: any, m: PanelModel, now: number): any {
@@ -95,17 +92,8 @@ export function pacingPane(E: any, m: PanelModel, now: number): any {
         <Text bold>Usage pacing</Text>
         {m.local && <Text dimColor>local</Text>}
       </Box>
-      {m.readout !== null && (
-        <Box key="pace-readout" flexDirection="column">
-          {m.readout.limits.map(l => (
-            <Text key={l.limit} color={colorOf(l.state)}>
-              {readoutSentence(l)}
-            </Text>
-          ))}
-        </Box>
-      )}
-      {m.entries.map(e => entryLines(E, e, now))}
-      {m.spend !== null && spendLines(E, m.spend, now)}
+      {m.entries.map(e => entryRow(E, e, m, now))}
+      {m.spend !== null && spendRow(E, m.spend, m, now)}
       {m.verdict !== null && verdictLines(m.verdict, now).map(line => <Text key={line}>{line}</Text>)}
       {m.error !== null && (
         <Text color={WARNING}>

@@ -1076,3 +1076,18 @@ export function answerReportEvents(on: On) {
   for (const event of ['classic.SubagentStart', 'classic.SubagentStop', 'classic.Stop', 'classic.StopFailure'] as const) on(event, () => ({}) as any)
   on('turn.complete', () => ({ text: 'done' }) as any)
 }
+
+// A drawn tree (`ui.drawn()`): every element in document order, an element's direct element children, the text one element shows (its
+// string children) and the texts of every Text beneath a node.
+export type Node = { type: string; props: Record<string, any>; children: any[] }
+export const isNode = (x: any): x is Node => x !== null && typeof x === 'object' && typeof x.type === 'string'
+export function flat(node: any, out: Node[] = []): Node[] {
+  if (!isNode(node)) return out
+  out.push(node)
+  for (const child of node.children ?? []) flat(child, out)
+  return out
+}
+export const shown = (n: Node) => (n.children ?? []).filter((c: any) => typeof c === 'string').join('')
+export const texts = (node: any) => flat(node).filter(n => n.type === 'Text').map(shown)
+export const elementChildren = (n: Node) => (n.children ?? []).filter(isNode)
+export const treeOf = async (pane: any): Promise<Node> => (await pane.drawn()) as Node
