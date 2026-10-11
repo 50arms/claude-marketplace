@@ -149,11 +149,13 @@ const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {
 // `told`: the last failure line told to the session by this run (the same text is told once until a wait succeeds): per run, so an ended run
 // can never clear or set what the new run has told.
 // `lacking`: the run's failed waits in a row whose evidence is "the plugin server lists tools but not plan_events_wait" (count, and when the first came).
-type RelayRun = { planId: number; dead: boolean; told: string | null; lacking: { count: number; since: number } | null }
+// DX-4884: `planId: null` is the relay of a signed-in session on no plan (session records only: pacing, auto-resume).
+type RelayRun = { planId: number | null; dead: boolean; told: string | null; lacking: { count: number; since: number } | null }
 let relayRun: RelayRun | null = null
 // The plan whose relay the server stopped, or that is signed out: it is not started again until something asks (a connect, the
 // model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
-let relayHalted: number | null = null
+// DX-4884: boxed, because a halt on no plan (`planId: null`) is a halt too.
+let relayHalted: { planId: number | null } | null = null
 // DX-4339: the pacing panel's poll, one per session.
 let pacingTicker: { cancel: () => void } | null = null
 // DX-4336: the usage report's timer, one per session.
@@ -828,15 +830,14 @@ async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpaw
 // What the session's usage reading came to: its windows, or why they could not be read (DX-4339: the tick reads them itself).
 type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
 
-// DX-4336 (PLAN-29 R-1, CAV-4, CAV-6): send this session's rate-limit windows to danxbot. Only a plan-connected session reports (a session
-// with no plan connection is neither paced nor resumed, and danxbot refuses its report). The whole agent tree's burn is in the session's
+// DX-4336 (PLAN-29 R-1, CAV-4, CAV-6): send this session's rate-limit windows to danxbot. DX-4884: every signed-in session reports, on a plan or
+// not (danxbot places the session on an account from this report, and paces and resumes it from there; a signed-out one is refused by danxbot). The whole agent tree's burn is in the session's
 // own figure (R-9), so there is one report per session and none per sub-agent. The report says when the figure was MEASURED (the last
 // API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and danxbot must tell it from one that is working.
 // A failed reading, a failed report or a failure of the plugin's own state is a toast, never a hook that threw and was skipped silently: toasted
 // once per distinct text (`usageError`), cleared when a report is accepted again or there is nothing to report.
 async function reportUsage($: any, reading: UsageReading): Promise<void> {
   try {
-    if ((await read($, view)).connected === null) return
     let failure: string | null = null
     try {
       // DX-4339: `{error}` is the session's own usage reading failing (the tick read it): the failure is toasted like any other
@@ -962,25 +963,27 @@ async function onMeasure($: any, e: any, next: any) {
 async function syncRelay($: any): Promise<void> {
   const v = await read($, view)
   if (v.phase === 'error' || (v.phase === 'loading' && v.connected === null)) return
-  const planId = v.connected?.id ?? null
-  if (planId === null) {
+  // DX-4884: a ready view on no plan runs the relay for the session's own records (plan_id null); any other view (signed out, revoked) runs none
+  if (v.connected === null && v.phase !== 'ready') {
     relayHalted = null
     stopRelay()
     await stopKeepalive($)
     return
   }
-  startRelay($, planId)
+  startRelay($, v.connected?.id ?? null)
 }
 
 // DX-4233: THE start of the relay, from a plan id however it was learned (the view, a plan_connect answer, the light plan read). Never async:
 // the check that no loop runs for this plan and the registration of the new one are one step, so two starts landing together make one loop.
-function startRelay($: any, planId: number): void {
-  // DX-3900: the keepalive follows the plan connection, not the relay's health: a halted or ended relay does not end it
-  followPlan($, planId)
+function startRelay($: any, planId: number | null): void {
+  // DX-3900: the keepalive follows the plan connection, not the relay's health: a halted or ended relay does not end it.
+  // DX-4884: it stays plan-only; a move to no plan ends it.
+  if (planId === null) detach($, 'Plan tab keepalive stop', stopKeepalive($))
+  else followPlan($, planId)
   if (relayRun !== null && relayRun.planId === planId) return
   // a halt belongs to the plan it happened on: any other plan starts a relay of its own
-  if (relayHalted !== null && relayHalted !== planId) relayHalted = null
-  if (relayHalted === planId) return
+  if (relayHalted !== null && relayHalted.planId !== planId) relayHalted = null
+  if (relayHalted !== null) return
   stopRelay()
   const run: RelayRun = { planId, dead: false, told: null, lacking: null }
   relayRun = run
@@ -1016,7 +1019,11 @@ async function watchRelayOnce($: any): Promise<RelayWatch> {
     startRelay($, v.connected.id)
     return 'done'
   }
-  // a loaded view that is on no plan, or the signed-out ones, say what the read would
+  // DX-4884: a loaded view on no plan runs the session's own relay; the signed-out ones say what the read would
+  if (v.phase === 'ready') {
+    startRelay($, null)
+    return 'done'
+  }
   if (v.phase !== 'error' && v.phase !== 'loading') return 'done'
   const plan = await withinDeadline($, RELAY_READ_DEADLINE_MS, sessionPlan($), (): SessionPlan => ({ kind: 'failed', reason: DEADLINE_REASON }))
   // a run that started while the read was out is the newer word (a connect, a load)
@@ -1172,13 +1179,13 @@ async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detai
 // `stopped` also halts the relay for this plan until something asks for it again (syncRelay).
 async function relayFailed($: any, run: RelayRun, phase: 'retrying' | 'stopped', detail: string, line: string): Promise<void> {
   if (!(await setRelay($, run, phase, detail))) return
-  if (phase === 'stopped') relayHalted = run.planId
+  if (phase === 'stopped') relayHalted = { planId: run.planId }
   if (run.told === line) return
   run.told = line
   await tellModel($, line)
 }
 
-async function loadCursor($: any, planId: number): Promise<string | null> {
+async function loadCursor($: any, planId: number | null): Promise<string | null> {
   return cursorFor(await $.store.get(cursorKey(await $.session.id())), planId)
 }
 
@@ -1296,7 +1303,9 @@ async function oldServerVerdict($: any, run: RelayRun): Promise<WaitAnswer | nul
   if (run.lacking.count < OLD_SERVER_AFTER_FAILURES || now - run.lacking.since < OLD_SERVER_AFTER_MS) return null
   const plan = await sessionPlan($)
   if (plan.kind === 'failed' || plan.kind === 'unreachable') return null
-  return plan.kind === 'connected' && plan.planId === run.planId ? { kind: 'old-server' } : { kind: 'signed-out' }
+  // DX-4884: a run on no plan is still this run's while the session is on no plan
+  const same = run.planId === null ? plan.kind === 'not-connected' : plan.kind === 'connected' && plan.planId === run.planId
+  return same ? { kind: 'old-server' } : { kind: 'signed-out' }
 }
 
 async function waitForEvents($: any, run: RelayRun, cursor: string | null): Promise<WaitAnswer> {
@@ -1338,7 +1347,7 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
   }
   if (got.kind === 'signed-out') {
     // the band and the pane already say it (and offer Sign in unless a person revoked the key): nothing more is told
-    if (await setRelay($, run, 'off', null)) relayHalted = run.planId
+    if (await setRelay($, run, 'off', null)) relayHalted = { planId: run.planId }
     return { next: 'end', cursor }
   }
   if (got.kind === 'stopped' || got.kind === 'old-server') {

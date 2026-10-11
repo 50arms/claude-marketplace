@@ -2,12 +2,13 @@ import { CURSOR_KEEP, CURSOR_PREFIX } from './config'
 
 // DX-4233: the resume cursor ($.store, per session): the plan it is for and the cursor of the last record DELIVERED (an opaque string the server minted). It is stored only after a
 // delivery succeeded, so a failed one is asked for again and a restart never skips an event.
-export type CursorRecord = { planId: number; cursor: string; at: number }
+// DX-4884: planId null is the session's own (no plan) relay, keyed `none`.
+export type CursorRecord = { planId: number | null; cursor: string; at: number }
 
 export const cursorKey = (sessionId: string) => `${CURSOR_PREFIX}${sessionId}`
 
 // The stored cursor for this plan, null when none (a different plan's record, a damaged one: a null cursor starts clean).
-export function cursorFor(record: unknown, planId: number): string | null {
+export function cursorFor(record: unknown, planId: number | null): string | null {
   const r = record as Partial<CursorRecord> | null | undefined
   if (r === null || r === undefined || typeof r !== 'object') return null
   return r.planId === planId && typeof r.cursor === 'string' && r.cursor !== '' ? r.cursor : null

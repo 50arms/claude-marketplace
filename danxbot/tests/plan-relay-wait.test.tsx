@@ -142,7 +142,7 @@ for (const surface of SURFACES) {
       await forceRefresh($, d)
       d.world.planId = 23
       await forceRefresh($, d)
-      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, 23])
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, null, 23])
     })
 
     test("pruning the cursors never touches the plugin's other $.store keys, even past CURSOR_KEEP", async ($, on) => {

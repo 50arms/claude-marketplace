@@ -128,10 +128,11 @@ for (const surface of SURFACES) {
       d.relay.server.stopped = undefined
       d.world.planId = null
       await forceRefresh($, d)
-      expect(d.relay.calls).toHaveLength(1)
+      // DX-4884: on no plan the session runs its own relay (plan_id null)
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, null])
       d.world.planId = 23
       await forceRefresh($, d)
-      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, 23])
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, null, 23])
     })
 
     test('a halt from a lost key is cleared by the signed-out view: signing in again restarts the relay', async ($, on) => {

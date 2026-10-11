@@ -26,7 +26,7 @@ export type WaitAnswer =
 
 // The arguments of one `plan_events_wait` call, built here and nowhere else: the plan the relay serves (the server starts clean
 // whenever it changes), the cursor, how long the server may hold the call, and the transcript path when one is known.
-export function waitArgs(planId: number, cursor: string | null, transcriptPath: string | null) {
+export function waitArgs(planId: number | null, cursor: string | null, transcriptPath: string | null) {
   return { plan_id: planId, cursor, timeout_ms: WAIT_MS, ...(transcriptPath !== null ? { transcript_path: transcriptPath } : {}) }
 }
 

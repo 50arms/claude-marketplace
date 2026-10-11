@@ -1,6 +1,6 @@
 // DX-4336 (PLAN-29 R-1, CAV-4, CAV-6, R-9): the session reports its account's 5-hour and weekly windows to danxbot: on session.measure, on a
 // clock tick (an idle session's figure freezes, so a tick re-sends it), and with the time the figure was MEASURED (the last API response:
-// session.measure, a main-thread turn, a sub-agent finishing), which the tick never advances. Only a plan-connected session reports; a
+// session.measure, a main-thread turn, a sub-agent finishing), which the tick never advances. Every signed-in session reports, on a plan or not (DX-4884); a
 // failure is toasted once per distinct text; the cadence is danxbot's.
 import { describe, expect } from 'claude-code/testing'
 
@@ -125,10 +125,11 @@ describe('the report', () => {
     expect(reports(d)).toEqual([])
   })
 
-  test('is not sent for a session on no plan, at a measure or on a tick (CAV-4)', async ($, on) => {
+  test('is sent for a signed-in session on no plan, at a measure and on a tick (DX-4884)', async ($, on) => {
     const d = await measuredSession($, on, { connected: false })
+    expect(reports(d)).toHaveLength(1)
     await d.clock.advance(USAGE_TICK_MS * 2)
-    expect(reports(d)).toEqual([])
+    expect(reports(d)).toHaveLength(3)
     expect(usageToasts(d)).toEqual([])
   })
 

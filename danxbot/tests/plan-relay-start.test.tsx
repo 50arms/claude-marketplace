@@ -29,29 +29,33 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { connected: false })
       answerPlanConnect(on, d)
       await startSession($, d, surface)
-      expect(d.relay.calls).toHaveLength(0)
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([null])
       await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23 } as any)
       await d.clock.settle()
-      expect(d.relay.calls).toEqual([{ plan_id: 23, cursor: null, timeout_ms: WAIT_MS }])
-      // the one call reached the plugin's own server
-      expect(d.calls.filter(c => c.tool === 'plan_events_wait' && c.server === SERVER)).toHaveLength(1)
+      expect(d.relay.calls).toEqual([{ plan_id: null, cursor: null, timeout_ms: WAIT_MS }, { plan_id: 23, cursor: null, timeout_ms: WAIT_MS }])
+      // the calls (the no-plan one, then the plan's) reached the plugin's own server
+      expect(d.calls.filter(c => c.tool === 'plan_events_wait' && c.server === SERVER)).toHaveLength(2)
     })
 
     test("on the pane's Connect", async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(d.relay.calls).toHaveLength(0)
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([null])
       await pane.press({ key: 'connect' })
       await d.clock.settle()
-      expect(d.relay.calls).toHaveLength(1)
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([null, 23])
     })
 
-    test('not for a session on no plan, however long the clock runs', async ($, on) => {
+    // DX-4884: a signed-in session on no plan still runs the relay, for its session records (pacing, auto-resume)
+    test('for a signed-in session on no plan: one wait with plan_id null, and a pacing record wakes it', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       await d.clock.advance(3_600_000)
-      expect(d.relay.calls).toHaveLength(0)
+      expect(d.relay.calls).toEqual([{ plan_id: null, cursor: null, timeout_ms: WAIT_MS }])
+      d.relay.push({ cursor: 'p1', text: 'critical pacing stop', urgent: true })
+      await d.clock.advance(60_000)
+      expect(d.relay.delivered).toHaveLength(1)
     })
 
     test('not for a signed-out session', async ($, on) => {
@@ -73,17 +77,18 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('not after a leave: the pending wait is dropped and nothing it answers is delivered', async ($, on) => {
+    test('after a leave: the plan wait is dropped, the session runs its own (plan_id null) and a record is delivered once', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(d.relay.calls).toHaveLength(1)
       await pane.press({ key: 'disconnect' })
       await d.clock.settle()
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, null])
       d.relay.push({ cursor: 'c5', text: 'after the leave' })
       await d.clock.advance(60_000)
-      expect(d.relay.calls).toHaveLength(1)
-      expect(d.relay.delivered).toEqual([])
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, null, null])
+      expect(d.relay.delivered).toHaveLength(1)
     })
   })
 }

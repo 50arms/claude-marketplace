@@ -79,7 +79,7 @@ for (const surface of SURFACES) {
       d.holdApi(3_600_000)
       await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 24 } as any)
       await d.clock.advance(1_000)
-      expect(d.relay.calls).toEqual([{ plan_id: 24, cursor: null, timeout_ms: 20_000 }])
+      expect(d.relay.calls.filter(c => c.plan_id !== null)).toEqual([{ plan_id: 24, cursor: null, timeout_ms: 20_000 }])
     })
 
     test('a view that cannot load does not keep the relay from starting at session start', async ($, on) => {
@@ -127,7 +127,7 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toHaveLength(1)
     })
 
-    test('it starts nothing for a session on no plan', async ($, on) => {
+    test('it starts no plan relay for a session on no plan (DX-4884: only its own plan_id null one)', async ($, on) => {
       const d = dashboard(on, { connected: false })
       on('turn.complete', () => ({ text: 'done' }) as any)
       d.unbind()
@@ -136,7 +136,7 @@ for (const surface of SURFACES) {
       d.bind()
       await $.turn.complete(TURN)
       await d.clock.settle()
-      expect(d.relay.calls).toHaveLength(0)
+      expect(d.relay.calls.filter(c => c.plan_id !== null)).toHaveLength(0)
     })
 
     test('it does not start a relay the server stopped', async ($, on) => {
