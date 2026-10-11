@@ -1,11 +1,11 @@
 // DX-4340 (PLAN-29 section 3): a new sub-agent is handed danxbot's pacing line (GET /api/pacing/line) as SubagentStart additionalContext,
 // from the same cache the spawn guard reads. Unknown is explicit on the wire (reason set, line null): then it is told nothing. A failed
 // read starts the sub-agent without a line and toasts once.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { parsePacing, pacingLine, refreshPacing, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
-import { dashboard, startSession } from './plan-kit'
+import { test, dashboard, startSession } from './plan-kit'
 
 const LINE = 'Pacing: this account is over pace; 0 agents may run on the account until 2026-10-08 12:00 UTC. Do the work yourself, cheaply.'
 const known = { account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 2, line: LINE, spend: null, limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroom_minutes: -30, resets_in_minutes: 100, used_percent: 96, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null }

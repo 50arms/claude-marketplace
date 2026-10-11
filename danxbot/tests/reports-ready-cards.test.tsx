@@ -2,11 +2,11 @@
 // ready cards nobody holds (GET /api/plans/mine, then GET /api/issues on each board the plan spans); with none, on a stop the hook already
 // forced, for a sub-agent, or when the read fails, the stop goes on. Checked as the engine runs the hook, on both surfaces, plus the
 // definition of "ready" (ported from danxbot's packages/danx-dashboard-mcp ready-cards tests).
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { READY_CARDS_DEADLINE_MS, blockReason, isReadyCard, parseCardRow, planOf, readyCardsOf } from '../hooks/reports/ready-cards'
 import type { CardRow } from '../hooks/reports/ready-cards'
-import { SURFACES, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
+import { test, SURFACES, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const BOARD = 'danxbot:danxbot-main'
 const GPT_BOARD = 'gpt-manager:gpt-manager-main'

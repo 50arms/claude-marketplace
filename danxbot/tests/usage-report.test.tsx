@@ -2,11 +2,11 @@
 // clock tick (an idle session's figure freezes, so a tick re-sends it), and with the time the figure was MEASURED (the last API response:
 // session.measure, a main-thread turn, a sub-agent finishing), which the tick never advances. Only a plan-connected session reports; a
 // failure is toasted once per distinct text; the cadence is danxbot's.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { USAGE_PATH, USAGE_TICK_MS } from '../hooks/plan/config'
 import { SUBAGENT_LIVE_MAX_MS, liveAgentsAt, usageBody } from '../hooks/plan/usage'
-import { CLOCK_START, dashboard, startSession } from './plan-kit'
+import { test, CLOCK_START, dashboard, startSession } from './plan-kit'
 
 const FIVE = '2026-10-03T11:10:00.000Z'
 const WEEK = '2026-10-09T09:00:00.000Z'

@@ -1,8 +1,8 @@
 // DX-4609 (PLAN-23 G-1): the pane's Needs You is a read-only list, one titled link per open problem, in the dashboard's card-priority
 // order. Every interaction with a problem is in the browser, so nothing in the pane writes to a card.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { DASHBOARD_URL, SURFACES, dashboard, forceRefresh, linksOf, problemBadgeOf, startSession } from './plan-kit'
+import { test, DASHBOARD_URL, SURFACES, dashboard, forceRefresh, linksOf, problemBadgeOf, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',

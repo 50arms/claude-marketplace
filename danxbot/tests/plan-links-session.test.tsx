@@ -1,8 +1,8 @@
 // DX-4630: across a whole session (connect, sign-in, a permission request, a refresh) the band and the pane draw their page controls as
 // Markdown links and the plugin makes no Claude_Browser call and draws no Link element, on both surfaces.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { APPROVAL_URL, SURFACES, browserCalls, dashboard, linksOf, startSession } from './plan-kit'
+import { test, APPROVAL_URL, SURFACES, browserCalls, dashboard, linksOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any

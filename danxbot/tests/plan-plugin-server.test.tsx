@@ -1,10 +1,10 @@
 // DX-4578: the danxbot plugin's own server (`plugin:danxbot:danx-dashboard`, the name `claude mcp list` shows) is the one dashboard
 // server of every session: the plan loads through it, its plan_connect / request_permission calls reach the listeners, and a
 // session where it is not connected shows the load's error (tests/plan-lifecycle.test.tsx), never a "not available" state.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { SERVER, toolName } from '../hooks/plan/config'
-import { dashboard, startSession } from './plan-kit'
+import { test, dashboard, startSession } from './plan-kit'
 
 describe('the plugin-provided dashboard server', () => {
   test('SERVER is the name Claude Code gives a plugin server, and toolName spells its tools as the session does', () => {

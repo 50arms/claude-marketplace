@@ -1,9 +1,9 @@
 // DX-2985: the Plan pane's Disconnect button. plan_connect {plan_id, disconnect: true} takes the
 // session off its plan; the model is told in the same step; every refusal is shown, never swallowed.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { DISCONNECT_GLYPH } from '../hooks/plan/config'
-import { SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {

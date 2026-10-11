@@ -1,8 +1,8 @@
 // DX-4374: v0.10.0 pinned a status line (`$.ui.status`); a session hot-reloaded from it keeps the pin unless the
 // plugin clears it. The plugin never pins a status line and clears one at session start.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { SURFACES, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 for (const surface of SURFACES) {
   describe(`the status line on ${surface}`, () => {

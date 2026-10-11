@@ -1,9 +1,9 @@
 // DX-4374: the Plan pane's event line, beside the plan connection line: a green dot and `events` while the listener
 // is `healthy`, the server's state and next step in the warning colour otherwise, never green without a listener.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { NO_EVENT_STATUS } from '../hooks/plan/config'
-import { LISTENER_STATES, NEXT_STEP, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh } from './plan-kit'
+import { test, LISTENER_STATES, NEXT_STEP, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh } from './plan-kit'
 
 const PANE = {
   component: 'Pane',

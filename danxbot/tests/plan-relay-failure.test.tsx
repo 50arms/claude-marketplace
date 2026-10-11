@@ -1,11 +1,11 @@
 // DX-4233: a relay that cannot deliver says so: the pane's event line and ONE transcript line (the server's own words), never silence;
 // it retries on one bounded backoff, and stops only when the server says it cannot go on. A malformed answer is a failure, not an
 // empty list.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { NO_URGENT_DETAIL, NO_URGENT_FIX, OLD_SERVER_FIX } from '../hooks/relay/text'
-import { SURFACES, SIGN_IN_HALT, answerPlanConnect, forceRefresh, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, SIGN_IN_HALT, answerPlanConnect, forceRefresh, dashboard, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',

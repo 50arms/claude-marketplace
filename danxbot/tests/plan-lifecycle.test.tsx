@@ -1,9 +1,9 @@
 // Session lifecycle and re-entry: what session.end does by reason, the retry while the MCP server
 // connects, and the plan-list cap.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { DISCONNECT_GLYPH, LIVE_CHECK_DEADLINE_MS, LIVE_CHECK_RETRY_MS, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
-import { SURFACES, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 // DX-4415: the pane has no Refresh button; `/danx-plan` forces a load (detached from the command, which returns at once)

@@ -2,12 +2,12 @@
 // plan id, a light plan read at session.start that is retried while the read fails), never only from a successful full view load; the
 // "not connected yet" and unbound errors are transient; a watchdog on a turn's end and a sub-agent's start or stop starts a relay that is
 // not running; the pane says when it is not.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { connectedPlanId } from '../hooks/plan/mcp'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { OLD_SERVER_FIX } from '../hooks/relay/text'
-import { SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
+import { test, SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',

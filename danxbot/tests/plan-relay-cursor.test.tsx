@@ -1,10 +1,10 @@
 // DX-4233: the resume cursor. One rule: after a record is delivered, its cursor (an opaque string the server minted) is stored in $.store
 // verbatim, and the next wait carries it, so a restart or a reload asks for what follows the last record delivered. The plugin never
 // compares or orders cursors: the server decides what comes after one (ids can become visible out of order).
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { CURSOR_KEEP, CURSOR_PREFIX } from '../hooks/relay/config'
-import { SURFACES, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 const KEY = `${CURSOR_PREFIX}sess-own`
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })

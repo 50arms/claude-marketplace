@@ -2,10 +2,10 @@
 // `$.tool.list` throw there ("no session is bound in this process"). SessionStart therefore only records the start; the first prompt (bound)
 // tells the model the restart notice and the start-up text, once. The kit models the unbound session (`d.unbind()`), which the always-bound
 // fake `$` of the earlier suites could not.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { eventFailureLine } from '../hooks/context/events'
-import { EVENT_TEXT, OTHER_SESSION, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, EVENT_TEXT, OTHER_SESSION, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const SOURCES = ['startup', 'resume', 'fork', 'clear', 'compact'] as const

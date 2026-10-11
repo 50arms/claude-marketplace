@@ -3,11 +3,11 @@
 // urgent event is a note ($.session.append) in a running turn and a prompt when none runs. A refused note is a failed delivery (told once, the
 // cursor does not move, the next wait asks again), never a quiet prompt. DX-4793: the kit records each accepted note (d.relay.told). UNVERIFIED on
 // Claude Code 2.1.293: that the live engine reads an accepted note with the next main-loop tool result; that is for a live session (the E2E items).
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { NOTE_MARKER } from '../hooks/plan/config'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from '../hooks/relay/delivery'
-import { SURFACES, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { turnId: 't1' } as any

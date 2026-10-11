@@ -1,9 +1,9 @@
 // DX-4233: when the plan event relay (the module's loop on the danx-dashboard server's plan_events_wait tool) starts, and when it does not.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { SERVER, toolName } from '../hooks/plan/config'
 import { WAIT_MS } from '../hooks/relay/config'
-import { SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',

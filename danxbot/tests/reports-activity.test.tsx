@@ -1,10 +1,10 @@
 // DX-4235: the activity report, as function hooks. A plan-connected session tells the dashboard (POST /api/plan-sessions/me/activity)
 // when a sub-agent starts and ends and when a background shell starts and ends, so its running count opens and closes with them; a
 // working sub-agent re-posts its row so it never reads as silent (comment 10017). Checked as the engine runs the hooks, on both surfaces.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { LIVENESS_MS, agentRow, endedShells, shellRow, subagentActivityId } from '../hooks/reports/activity'
-import { SURFACES, activityRows, answerReportEvents, countReports, dashboard, finishes, forceRefresh, startSession } from './plan-kit'
+import { test, SURFACES, activityRows, answerReportEvents, countReports, dashboard, finishes, forceRefresh, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1b2c3', agent_type: 'danxbot:worker-sonnet-high' }
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any

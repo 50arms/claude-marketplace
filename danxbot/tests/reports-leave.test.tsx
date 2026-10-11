@@ -2,11 +2,11 @@
 // finish, an open background shell's end) is posted first: after the leave the dashboard takes no report from the session, and a row left
 // running is the stuck-row bug of comment 10065. Every leave the module takes part in: the pane's Disconnect, its Switch plan + Connect,
 // and the model's plan_connect leave or move. Bounded so a dead dashboard never holds the leave; a failure is one toast.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { toolName } from '../hooks/plan/config'
 import { LEAVE_CLOSE_DEADLINE_MS, agentRow, shellRow } from '../hooks/reports/activity'
-import { SURFACES, answerReportEvents, countReports, dashboard, finishes, startSession } from './plan-kit'
+import { test, SURFACES, answerReportEvents, countReports, dashboard, finishes, startSession } from './plan-kit'
 
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any

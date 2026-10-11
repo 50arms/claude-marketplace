@@ -1,9 +1,9 @@
 // DX-4233: the relay's life: one loop at a time, a move to another plan restarts it, the end of the process stops it, /clear and
 // resume do not.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { WAIT_MS } from '../hooks/relay/config'
-import { SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
 
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })
 

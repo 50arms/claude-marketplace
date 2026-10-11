@@ -1,11 +1,11 @@
 // DX-4508: the live sub-agent numbers. A host child (`node <installed danx-dashboard-mcp>/dist/index.js subagents-live <main
 // transcript>`) streams this session's sub-agents while one runs; its lines are checked, merged and laid over the dashboard rows.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import type { LiveSnapshot, LiveSubagents, PlanView, SubagentRow } from '../types'
 import { EMPTY, LIVE_CHECK_DEADLINE_MS, LIVE_CHECK_RETRY_MS, NO_LIVE, SUBAGENT_ENDED_VISIBLE_MS, liveUnavailableLine } from '../hooks/plan/config'
 import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, parseLiveLine, pruneSnapshots, readPiece, splitLines, stateOfStatus, withLive } from '../hooks/plan/live'
-import { CLOCK_START, OTHER_SESSION, OWN_SESSION, READER_PIECE_MS, SURFACES, dashboard, rawSubagent, startSession } from './plan-kit'
+import { test, CLOCK_START, OTHER_SESSION, OWN_SESSION, READER_PIECE_MS, SURFACES, dashboard, rawSubagent, startSession } from './plan-kit'
 
 const OWN = OWN_SESSION.session_id
 const MAIN_TRANSCRIPT = 'C:\\Users\\me\\.claude\\projects\\p\\sess-own.jsonl'

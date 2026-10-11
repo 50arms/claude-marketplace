@@ -6,7 +6,7 @@
 //
 // UNVERIFIED live (DX-4340 is not deployed): these suites run on the stand-in dashboard (plan-kit); the desktop and terminal check in a real
 // session is the card's last acceptance item.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { BAND_GAP_COLS, DANGER, ORANGE, PACING_POLL_MS, SUCCESS, TOOLTIP_BACKGROUND, TOOLTIP_MAX_COLS, USAGE_TICK_MS, WARNING } from '../hooks/plan/config'
 import { bandText, clockText, formatMinutes, readoutSentence, untilText, verdictLines } from '../hooks/plan/pacing-format'
@@ -14,7 +14,7 @@ import { EMPTY_PANEL_STATE, buildPanel } from '../hooks/plan/pacing-panel'
 import { parseTeamPacing } from '../hooks/plan/pacing-settings'
 import { LEVEL_COLOR, TONE_COLOR } from '../hooks/plan/pacing-panel-view'
 import type { LimitReadout, PanelState } from '../types'
-import { SURFACES, dashboard, elementChildren, flat, startSession, texts as treeTexts, treeOf } from './plan-kit'
+import { test, SURFACES, dashboard, elementChildren, flat, startSession, texts as treeTexts, treeOf } from './plan-kit'
 import type { Node } from './plan-kit'
 
 const FIVE = '2026-10-03T11:10:00.000Z'

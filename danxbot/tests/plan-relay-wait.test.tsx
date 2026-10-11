@@ -1,11 +1,11 @@
 // DX-4233: the wait loop itself: the arguments of a call, the empty answer of a wait that timed out, the guard against a server that
 // answers an empty list at once, the cursor's key following the session id, and a run that ends while it is delivering.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { waitArgs } from '../hooks/relay/answer'
 import { CURSOR_KEEP, CURSOR_PREFIX, MIN_ROUND_MS, WAIT_MS } from '../hooks/relay/config'
 import { toolName } from '../hooks/plan/config'
-import { CLOCK_START, SURFACES, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
+import { test, CLOCK_START, SURFACES, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const KEY = `${CURSOR_PREFIX}sess-own`
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })

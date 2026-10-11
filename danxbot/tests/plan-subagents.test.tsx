@@ -1,10 +1,10 @@
 // DX-4499: the Plan pane's Sub-agents section: each running sub-agent of the plan's live sessions as its own card, read in the
 // same refresh as the rest of the pane (DX-4498's two routes), its runtime counted on a local clock, ended ones dimmed until they drop.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { SUBAGENTS_UNAVAILABLE_LINE, SUBAGENT_ACTIVITY_MAX, SUBAGENT_CARD_BACKGROUND, SUBAGENT_LABEL_MAX, SUBAGENT_STATE_COLOR, SUBAGENT_UNTITLED } from '../hooks/plan/config'
 import { compactCount, dollars, duration, nestSubagents, visibleSubagents } from '../hooks/plan/subagents'
-import { CLOCK_START, DASHBOARD_URL, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, endedSubagent, rawSubagent, startSession, forceRefresh, linksOf } from './plan-kit'
+import { test, CLOCK_START, DASHBOARD_URL, OTHER_SESSION, OWN_SESSION, SURFACES, dashboard, endedSubagent, rawSubagent, startSession, forceRefresh, linksOf } from './plan-kit'
 
 const pane = (bodyColumns = 100) =>
   ({ component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns, placement: 'dock' } }) as any

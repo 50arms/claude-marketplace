@@ -1,8 +1,8 @@
 // DX-4374: the footer is ONE button: `PLAN-NN` when a plan is known, `Plan` otherwise, and one press (the same
 // function as /danx-plan) brings the band back and opens the Plan pane.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { FOOTER_PAD, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { test, FOOTER_PAD, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const counts = (o: Record<string, number>) => ({ 'In Progress': 0, ToDo: 0, Backlog: 0, Review: 0, Done: 0, Cancelled: 0, ...o })

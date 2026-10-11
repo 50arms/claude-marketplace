@@ -1,9 +1,9 @@
 // DX-4232 E2E: one whole operator session per surface through the real hooks module with a
 // stand-in danx-dashboard MCP server: band at session start -> open pane -> Connect -> the pane lists the open problems as links
 // and writes nothing to a card.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, linksOf, problemBadgeOf, startSession, forceRefresh } from './plan-kit'
+import { test, NEXT_STEP, SURFACES, dashboard, expectIndicator, expectRowCarries, footerText, mountIndicator, linksOf, problemBadgeOf, startSession, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {

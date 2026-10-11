@@ -2,11 +2,11 @@
 // (PUT /api/plan-sessions/me/background-work) at every Stop and SubagentStop, from the engine's own `background_tasks` list, so the
 // dashboard's idle nudge stays quiet while that work runs; it clears the count when no list can be trusted (a session start, a main-session
 // failure). Checked as the engine runs the hooks, on both surfaces.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { countRunning, heartbeatCount } from '../hooks/reports/background-work'
 import { LIVENESS_MS } from '../hooks/reports/activity'
-import { OWN_SESSION, SURFACES, answerReportEvents, countReports, dashboard, forceRefresh, startSession } from './plan-kit'
+import { test, OWN_SESSION, SURFACES, answerReportEvents, countReports, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const task = (id: string, type: string, status = 'running') => ({ id, type, status, description: id })
 // one of each kind the engine lists: three that count, a watcher that does not, and a finished shell

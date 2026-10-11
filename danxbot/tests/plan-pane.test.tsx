@@ -1,6 +1,6 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { SURFACES, dashboard, expectIndicator, expectRowCarries, expectText, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, expectIndicator, expectRowCarries, expectText, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {

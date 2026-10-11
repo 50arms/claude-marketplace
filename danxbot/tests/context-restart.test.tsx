@@ -1,10 +1,10 @@
 // DX-4234 (DX-3928, DX-4632): a session that is not on a plan but replaced one that was is told which plan it was on and how many events wait.
 // The session's own danx-dashboard server finds the earlier session and answers through its `restart_notice` tool (no arguments); this hook
 // tells the model that answer and surfaces a stop. Both surfaces: the model's context and the failure line.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { CONTEXT_DEADLINE_MS, restartFailureLine } from '../hooks/context/events'
-import { SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call plan_connect' } })

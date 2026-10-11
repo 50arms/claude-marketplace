@@ -1,12 +1,12 @@
 // DX-4435 (parent DX-4432): the model's `request_permission` (danx-dashboard MCP, DX-4434) answers at once with an approval URL and
 // confirm code. DX-4630: the plugin opens no page; it toasts the link, the code and the permissions asked for, the band counts the requests
 // still open and links the newest one's page with its code, and a request leaves the count when it is decided or expires.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { PERMISSION_POLL_MS } from '../hooks/plan/config'
 import { claimStatus, permissionRequestOf } from '../hooks/plan/permission'
 import { permissionToast } from '../hooks/plan/approval'
-import { SURFACES, browserCalls, dashboard, linksOf, startSession } from './plan-kit'
+import { test, SURFACES, browserCalls, dashboard, linksOf, startSession } from './plan-kit'
 import { RELAY_MARKER } from '../hooks/relay/config'
 
 const URL_A = 'https://danxbot.example/connect/aaaa'

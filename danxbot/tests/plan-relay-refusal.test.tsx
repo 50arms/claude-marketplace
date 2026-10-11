@@ -1,12 +1,12 @@
 // DX-4805: in auto mode the engine's classifier can refuse the plugin's own hook-initiated `$.mcp.call` ("gave no verdict"), which leaves the
 // relay dead. The plugin ships the permission its own calls need (a `tool.check` allow for calls IT raised) and, when a refusal still happens,
 // says so loudly with the engine's real words and the real fix, never "update the plugin".
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { toolName } from '../hooks/plan/config'
 import { ownServerCheck } from '../hooks/relay/refusal'
 import { BACKOFF_MS } from '../hooks/relay/config'
-import { CLASSIFIER_REFUSAL, SURFACES, dashboard, startSession } from './plan-kit'
+import { test, CLASSIFIER_REFUSAL, SURFACES, dashboard, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',

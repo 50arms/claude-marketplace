@@ -1,9 +1,9 @@
 // DX-4346: the plan-progress figure. DX-4374: the footer is one `PLAN-NN` button with no figure (plan-footer.test.tsx);
 // the Svg donut lives in the band line and the pane header (plan-pane-progress.test.tsx).
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { donutGlyph, planPercent } from '../hooks/plan/words'
-import { SURFACES, dashboard, expectIndicator, footerText, mountIndicator, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, expectIndicator, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = {

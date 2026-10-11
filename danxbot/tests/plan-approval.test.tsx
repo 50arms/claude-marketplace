@@ -1,11 +1,11 @@
 // DX-4391: a signed-out session's plan_connect answers `approval_required` (the MCP server,
 // DX-4390). The plugin draws the approval link and confirm code at once (DX-4630, no browser call); every other
 // answer (a normal connect, a refusal, a denied call) shows nothing.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { approvalRequestOf, signInToast } from '../hooks/plan/approval'
 import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
-import { dashboard, startSession, browserCalls, linksOf } from './plan-kit'
+import { test, dashboard, startSession, browserCalls, linksOf } from './plan-kit'
 
 const URL_A = 'https://danxbot.example/connect/aaaa'
 const URL_B = 'https://danxbot.example/connect/bbbb'

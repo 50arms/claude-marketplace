@@ -1,7 +1,7 @@
 // DX-4423: a session with no dashboard key (lapsed, never approved; a key a person revoked is its own view, DX-4418). The danx-dashboard MCP answers every tool but
 // plan_connect with an error result written for the agent; the band, pane and footer must say "Danxbot: signed out" in the
 // person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { loadPlan } from '../hooks/plan/load'
 import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
@@ -9,7 +9,7 @@ import { signInToast } from '../hooks/plan/approval'
 import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
-import { APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
+import { test, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any

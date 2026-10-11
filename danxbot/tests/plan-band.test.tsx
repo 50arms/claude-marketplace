@@ -1,8 +1,8 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
 import { bandLabel } from '../hooks/plan/words'
-import { DASHBOARD_URL, SURFACES, browserCalls, linksOf, problemBadgeOf, dashboard, expectText, footerText, mountIndicator, startSession } from './plan-kit'
+import { test, DASHBOARD_URL, SURFACES, browserCalls, linksOf, problemBadgeOf, dashboard, expectText, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 

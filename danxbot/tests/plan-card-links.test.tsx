@@ -1,9 +1,9 @@
 // DX-4448: card ids in an assistant reply are drawn as links to the card. The stored message is never touched (a rewrite
 // changes the drawing), and the draw reads only the `view` atom, so it makes no call.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { linkCardIds } from '../hooks/plan/card-links'
-import { DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { test, DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
 
 const plan = { id: 23, ref: 'PLAN-23', name: 'p', status: 'building', dashboardUrl: DASHBOARD_URL } as any
 const PREFIXES = ['DX', 'SG']

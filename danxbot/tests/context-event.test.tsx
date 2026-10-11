@@ -1,10 +1,10 @@
 // DX-4234: the registry's event text for a plan-connected session (SessionStart startup / resume / compact, and every sub-agent's start),
 // fetched through the session's own danx-dashboard server (R-2: `danxbot_api`, never the package's CLI), and the silence rules: nothing for
 // a session that is not on a plan, one warning line for a fetch that failed, quiet for a session with no usable key.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine } from '../hooks/context/events'
-import { EVENT_TEXT, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, EVENT_TEXT, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' }
 const EVENT_PATHS = (reads: string[]) => reads.filter(p => p.startsWith('/api/reminders/event/'))

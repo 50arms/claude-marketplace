@@ -1,9 +1,9 @@
 // DX-4458: a card with dozens of problems (DX-4443: 49 questions) is read for its problem rows only; one card that cannot be
 // read is one line and the rest of the pane still draws.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { errText, failureReason, loadPlan } from '../hooks/plan/load'
-import { HOST_OVERSIZE, SURFACES, dashboard, linksOf, startSession } from './plan-kit'
+import { test, HOST_OVERSIZE, SURFACES, dashboard, linksOf, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',

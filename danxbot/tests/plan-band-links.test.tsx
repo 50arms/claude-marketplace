@@ -1,9 +1,9 @@
 // DX-4521 / DX-4630: the band's page link (Open plan) goes to the plan's page when connected, else the dashboard's plans list. It is
 // a Markdown link on every surface, so the app opens it in the in-app browser as it opens a link in the thread; the plugin makes no
 // browser tool call. The open-problem count's link is separate (its own Needs You URL).
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { DASHBOARD_URL, NO_DASHBOARD_URL, SURFACES, browserCalls, dashboard, forceRefresh, linksOf, startSession } from './plan-kit'
+import { test, DASHBOARD_URL, NO_DASHBOARD_URL, SURFACES, browserCalls, dashboard, forceRefresh, linksOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PLANS = `${DASHBOARD_URL}/plans`

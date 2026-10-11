@@ -2,12 +2,12 @@
 // appended row (`relay.told`) only a later turn would read.
 // DX-4548: a sign-in the MODEL started (its plan_connect answered approval_required) is watched by the plugin, which tells the
 // model once how it ended (approved, denied or expired), so the person never has to type "approved" into the chat.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { SIGN_IN_MIN_ROUND_MS } from '../hooks/plan/config'
 import { signInApprovedNote, signInDeniedNote, signInExpiredNote } from '../hooks/plan/notes'
 import { relayLine } from '../hooks/relay/delivery'
-import { APPROVAL_PENDING, APPROVAL_URL, APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, linksOf, woken } from './plan-kit'
+import { test, APPROVAL_PENDING, APPROVAL_URL, APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, linksOf, woken } from './plan-kit'
 
 const CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23, title: 'PLAN-23: danxbot plugin' } as any
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:danxbot:danx-dashboard' && c.tool === 'plan_connect')

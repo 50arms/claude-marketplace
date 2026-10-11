@@ -1,6 +1,6 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { NAMING_NEEDED, NAMING_OK, NO_NAMING, SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
+import { test, NAMING_NEEDED, NAMING_OK, NO_NAMING, SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
 
 // DX-4612: a pane Connect or Switch plan whose plan_connect answer says `naming: needed` tells the model the server's rename steps,
 // because the pane made the call and the model never reads its answer.

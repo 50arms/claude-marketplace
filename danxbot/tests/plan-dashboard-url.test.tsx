@@ -1,8 +1,8 @@
 // DX-4317: every link the band and the pane draw is built on the origin the plan list
 // answered (`dashboard_url`), never on a constant; an answer without a usable origin is an error state.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
-import { NO_DASHBOARD_URL, SURFACES, browserCalls, dashboard, linksOf, footerText, mountIndicator, startSession } from './plan-kit'
+import { test, NO_DASHBOARD_URL, SURFACES, browserCalls, dashboard, linksOf, footerText, mountIndicator, startSession } from './plan-kit'
 
 const OTHER = 'https://plans.example.test'
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any

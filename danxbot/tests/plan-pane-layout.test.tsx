@@ -2,10 +2,10 @@
 // line, the plan title, the progress row (donut left, in-progress refs right), the Needs You block, and then the sub-agent section.
 // Every test runs on both surfaces: a tree the engine refuses draws nothing and says nothing in the desktop app, so mounting and
 // finding on each surface IS the check (R-3).
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { DANGER, DISCONNECT_GLYPH, DISCONNECT_TIP, NO_IN_PROGRESS, SWITCH_GLYPH, SWITCH_TIP, TOOLTIP_BACKGROUND, cardUrl } from '../hooks/plan/config'
-import { DASHBOARD_URL, SURFACES, dashboard, elementChildren, flat, footerText, mountIndicator, shown, startSession, texts, treeOf } from './plan-kit'
+import { test, DASHBOARD_URL, SURFACES, dashboard, elementChildren, flat, footerText, mountIndicator, shown, startSession, texts, treeOf } from './plan-kit'
 import type { Node } from './plan-kit'
 
 const OTHER = 'https://other.example.org'

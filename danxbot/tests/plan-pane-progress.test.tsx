@@ -1,10 +1,10 @@
 // DX-4374: the Plan pane header carries the progress donut with its percent and done / total: a real Svg on the
 // desktop, the glyph and the same figures as text on the terminal.
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
 
 import { donutSvg } from '../hooks/plan/donut'
 import { donutGlyph, doneTotal } from '../hooks/plan/words'
-import { SURFACES, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 const PANE = {
   component: 'Pane',
