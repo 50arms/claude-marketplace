@@ -3,6 +3,12 @@ import { toolName } from '../plan/config'
 // The plugin's name as the host stamps it on a call the plugin raised (`next.origin.plugin`).
 export const PLUGIN_NAME = 'danxbot'
 
+// The origin the host stamps on a call the model (or the engine itself) made; every call a plugin raises carries that plugin's name instead.
+export const ENGINE_ORIGIN = 'engine'
+
+// DX-4857: a call a plugin raised itself (`$.mcp.call`, `$.tool.call`), any plugin's, not the model's. Its result goes to the plugin, never the model.
+export const raisedByPlugin = (origin: { plugin: string }): boolean => origin.plugin !== ENGINE_ORIGIN
+
 // DX-4805: in auto permission mode the engine puts a hook-initiated `$.mcp.call` to its classifier like any tool call, and a call the
 // classifier "gave no verdict" on is refused: `$.mcp.call(<server>, <tool>) refused: The server-side auto mode classifier gave no verdict for
 // <tool>`. The plugin's own tool.check hook allows the calls it raises on its own server (`ownServerCheck` below, seated by the `on('tool.check', ...)` in register.tsx); when one is
