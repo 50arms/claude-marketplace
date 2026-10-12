@@ -243,10 +243,24 @@ export function dashboard(
     pacingHoldMs?: number
     // DX-4339: what GET /api/team/pacing answers (the team's pacing settings): a body (any shape) or an error status; unreachable by default (the panel's silent, local state)
     teamPacing?: { body: unknown } | { status: number }
+    // DX-4952: the test puts steps before reads of $.state (`beforeNextRead`), which needs the `state.get` hook from the start
+    stateSteps?: boolean
   } = {},
 ) {
+  // DX-4952: the machine asleep. A suspend moves the wall clock (`clock.now`, Date.now) on while no timer runs, which is what a relative
+  // setTimeout does across a sleep (the engine's `clock.after` is one): `d.suspend(ms)` moves only what `$.clock.now()` reads, no wait resolves.
+  // A hook name registers once, so the kit's own `clock.now` answer is wrapped as mock.clock registers it.
+  let asleepMs = 0
+  const clockOn = ((event: string, ...rest: any[]) => {
+    if (event !== 'clock.now') return (on as any)(event, ...rest)
+    const answer = rest.pop()
+    return (on as any)(event, ...rest, async (...args: any[]) => {
+      const r = await answer(...args)
+      return typeof r === 'number' ? r + asleepMs : { ...r, value: r.value + asleepMs }
+    })
+  }) as typeof on
   // the fake clock starts at 2026-10-03T08:00:00Z, so an `updatedAt` reads as a real age
-  const clock = mock.clock(on, { now: Date.parse('2026-10-03T08:00:00.000Z') })
+  const clock = mock.clock(clockOn, { now: Date.parse('2026-10-03T08:00:00.000Z') })
   // DX-4586: a call that never settles (hangFirstLoad) waits on this, not on an hour of fake clock: advancing an hour fires every
   // timer in it (a poll a minute, a report a minute), real time that times a test out under machine load. `release()` lets it answer.
   const hung = (() => { let release!: () => void; const promise = new Promise<void>(r => { release = r }); return { promise, release } })()
@@ -773,7 +787,18 @@ export function dashboard(
   const aged = new Map<string, number>()
   let seededPending: string[] | undefined
   let seededRelay: { phase: string; planId: number | null; detail: string | null } | undefined
+  // DX-4952: a step of the test that runs exactly between two steps of the plugin, once, before the next host read / write of a $.state key
+  // reaches the host: the way a test makes a turn start, a plan disconnect or a long wait land at one precise point of an async function
+  const beforeStateRead = new Map<string, () => Promise<void>>()
+  const beforeStateWrite = new Map<string, () => Promise<void>>()
+  const takeStep = async (steps: Map<string, () => Promise<void>>, key: string) => {
+    const step = steps.get(key)
+    if (step === undefined) return
+    steps.delete(key)
+    await step()
+  }
   on('state.set', async (_$: any, e: any, next: any) => {
+    if (beforeStateWrite.size > 0) await takeStep(beforeStateWrite, e.key)
     // a write of the plugin's view that the host refuses: the one way a refresh can throw past its own catch
     if (flags.viewWriteFails && e.key === 'view') {
       flags.refusedViewWrites++
@@ -795,15 +820,24 @@ export function dashboard(
     return next(e)
   })
   // DX-4806: a value the host already holds when the module loads (what a reload of the module finds: $.state outlives it). It is read until the
-  // plugin writes the key. The hook is added by the first seed, so a test that seeds nothing has no extra hook on its reads.
+  // plugin writes the key.
   const seededState = new Map<string, unknown>()
+  // the one `state.get` hook: the seeds, and the steps a test puts before a read. It is added by the first seed or by the option `stateSteps`
+  // (before the test's first call), so a test that needs neither has no extra hook on its reads: an extra hook is an extra turn of the event
+  // loop on every read, enough to reorder the unawaited report writes of the reports suites.
+  let stateGetHooked = false
+  const hookStateGet = () => {
+    if (stateGetHooked) return
+    stateGetHooked = true
+    on('state.get', async (_$: any, e: any, next: any) => {
+      if (beforeStateRead.size > 0) await takeStep(beforeStateRead, e.key)
+      const read = await next(e)
+      return seededState.has(e.key) && !stateWrites.some(w => w.key === e.key) ? { ...read, value: { ...read.value, value: seededState.get(e.key) } } : read
+    })
+  }
+  if (options.stateSteps === true) hookStateGet()
   const seedState = (key: string, value: unknown) => {
-    if (seededState.size === 0) {
-      on('state.get', async (_$: any, e: any, next: any) => {
-        const read = await next(e)
-        return seededState.has(e.key) && !stateWrites.some(w => w.key === e.key) ? { ...read, value: { ...read.value, value: seededState.get(e.key) } } : read
-      })
-    }
+    hookStateGet()
     seededState.set(key, value)
   }
   // DX-4521: the plugin's $.store (what survives the session), one fresh map per fixture
@@ -951,7 +985,10 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+  return { suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
+      if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
+      beforeStateRead.set(key, step)
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an

@@ -1,9 +1,10 @@
 // DX-3900: the plan-tab keepalive. The desktop app disconnects a session's preview 1800 s after its last turn ended; a plan-connected DESKTOP
 // session idle for KEEPALIVE_IDLE_MS is sent one prompt (the registry's `tab_keepalive` wording plus the plan page) whose turn restarts that
-// timer. A failed attempt is retried every KEEPALIVE_RETRY_MS inside the margin that is left, until KEEPALIVE_GIVE_UP_MS after the turn ended.
+// timer. A failed attempt is retried every KEEPALIVE_RETRY_MS inside the margin that is left, until KEEPALIVE_GIVE_UP_MS after the turn ended (an
+// attempt that starts late, after the computer slept through its time, has the same margin from when it starts: KEEPALIVE_RETRY_WINDOW_MS).
 import { describe, expect } from 'claude-code/testing'
 
-import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, keepalivePrompt } from '../hooks/relay/keepalive'
+import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS, keepalivePrompt } from '../hooks/relay/keepalive'
 import { test, CLOCK_START, DASHBOARD_URL, EVENT_TEXT, answerPlanConnect, dashboard, forceRefresh, leaveSession, startSession, viewSession } from './plan-kit'
 
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
@@ -428,4 +429,296 @@ describe('a session whose process the desktop spawned (CLAUDE_CODE_ENTRYPOINT, D
       expect(written(d, 'desktopHosted')).not.toContain(true)
     })
   }
+})
+
+// DX-4952: the engine's `$.clock.after` is a relative setTimeout, so the time the machine sleeps does not count toward it, while `$.clock.now()` is the
+// wall clock (Date.now) and does. `d.suspend(ms)` is that sleep: the wall clock moves, no timer does. The keepalive reads the wall clock every
+// KEEPALIVE_WAKE_CHECK_MS, so a wake is noticed within that, not after the rest of the 25 minutes.
+describe('a computer that sleeps during the idle period (DX-4952)', () => {
+  const HOURS = 60 * MINUTE
+
+  test('a sleep past the idle time: the prompt is sent within one wake check of the machine waking, not 25 minutes on', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    await d.clock.advance(5 * MINUTE)
+    d.suspend(3 * HOURS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test('is sent once: no wake check and no period after the send sends it again, a whole idle time on', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    d.suspend(3 * HOURS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  // the wall clock reads exactly the due time when a wake check runs: due, not one slice later
+  test('a wake check that finds the wall clock exactly at the due time sends the prompt then', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    d.suspend(KEEPALIVE_IDLE_MS - 2 * KEEPALIVE_WAKE_CHECK_MS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS - 1)
+    expect(sent(d)).toEqual([])
+    await d.clock.advance(1)
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test('a sleep that leaves part of the idle time: the prompt waits for exactly the rest on the wall clock', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    await d.clock.advance(5 * MINUTE)
+    d.suspend(10 * MINUTE)
+    await d.clock.advance(10 * MINUTE - 1)
+    expect(sent(d)).toEqual([])
+    await d.clock.advance(1)
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test('a turn that starts after a wake, before the wake check, has the session re-check the tab (the turn start would cancel the check)', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    d.suspend(3 * HOURS)
+    await $.turn.start(START)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test("a turn that starts while the app's 30 minutes are not yet over sends nothing: its own start restarts the app's timer", async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    d.suspend(KEEPALIVE_GIVE_UP_MS - 1)
+    await $.turn.start(START)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([])
+  })
+
+  test('a turn that starts at the give-up time re-checks the tab', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    d.suspend(KEEPALIVE_GIVE_UP_MS)
+    await $.turn.start(START)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test('a re-check whose wording cannot be read is toasted once and sends nothing', async ($, on) => {
+    const d = dashboard(on)
+    d.world.eventText.tab_keepalive = { status: 500 }
+    await startSession($, d, 'desktop')
+    d.suspend(3 * HOURS)
+    await $.turn.start(START)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([])
+    expect(d.toasts.filter(t => t.startsWith('Plan tab re-check failed'))).toHaveLength(1)
+  })
+
+  test("the keepalive's own turn does not send another: its start finds the period already answered", async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    d.suspend(3 * HOURS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    expect(sent(d)).toEqual([PROMPT])
+    await $.turn.start(START)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test('a terminal session never arms, asleep or not, and a turn start after a wake sends nothing', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'terminal')
+    d.suspend(3 * HOURS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    await $.turn.start(START)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([])
+  })
+
+  // DX-4952: the network is often down just after a wake. The retries run from when the overdue attempt starts, not from the period's start.
+  test('an attempt that fails right after a wake is tried again every minute: two failures, then it goes through', async ($, on) => {
+    const d = dashboard(on)
+    d.world.eventText.tab_keepalive = { status: 500 }
+    await startSession($, d, 'desktop')
+    d.suspend(3 * HOURS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    expect(reads(d)).toBe(1)
+    expect(failures(d).at(-1)).toContain('trying again')
+    await d.clock.advance(KEEPALIVE_RETRY_MS)
+    expect(reads(d)).toBe(2)
+    expect(sent(d)).toEqual([])
+    d.world.eventText.tab_keepalive = EVENT_TEXT('tab_keepalive')
+    await d.clock.advance(KEEPALIVE_RETRY_MS)
+    expect(sent(d)).toEqual([PROMPT])
+    expect(failures(d).some(t => t.includes('gave up'))).toBe(false)
+  })
+
+  test('a wake that never reads the wording gives up, loudly, once its own window (to the give-up time past the due time) is over', async ($, on) => {
+    const d = dashboard(on)
+    d.world.eventText.tab_keepalive = { status: 500 }
+    await startSession($, d, 'desktop')
+    d.suspend(3 * HOURS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    await d.clock.advance(KEEPALIVE_GIVE_UP_MS - KEEPALIVE_IDLE_MS)
+    // attempts at the wake and each minute of the window after it, the one at its end the last
+    expect(reads(d)).toBe(5)
+    expect(failures(d).at(-1)).toContain('gave up')
+    await d.clock.advance(KEEPALIVE_RETRY_MS)
+    expect(reads(d)).toBe(5)
+  })
+
+  // DX-4952: the engine may raise the prompt's turn.start before the submit resolves
+  test("the keepalive's own turn, started before its submit settles, does not queue a second prompt", async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    d.relay.duringPrompt(async () => {
+      await $.turn.start(START)
+    })
+    d.suspend(3 * HOURS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test('a prompt the session did not take leaves the period in place: a turn that starts then is still told to re-check', async ($, on) => {
+    const d = dashboard(on)
+    d.relay.dropPrompts('busy')
+    await startSession($, d, 'desktop')
+    d.suspend(3 * HOURS)
+    await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+    expect(failures(d).some(t => t.includes('the prompt was not taken'))).toBe(true)
+    d.relay.acceptPrompts()
+    await $.turn.start(START)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  // DX-4952: the turn's own end restarts the period, which must not drop a re-check that is still reading its wording
+  test('a turn that ends while the re-check reads its wording still delivers the re-check', async ($, on) => {
+    const d = dashboard(on)
+    on('turn.complete', () => ({ text: 'done' }) as any)
+    await startSession($, d, 'desktop')
+    d.suspend(3 * HOURS)
+    d.world.contextDelayMs = MINUTE
+    await $.turn.start(START)
+    await $.turn.complete(TURN)
+    await d.clock.advance(MINUTE)
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test('a re-check that is reading its wording when the plan is left sends nothing', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    d.suspend(3 * HOURS)
+    d.world.contextDelayMs = MINUTE
+    await $.turn.start(START)
+    await pane.press({ key: 'disconnect' })
+    await d.clock.advance(2 * MINUTE)
+    expect(sent(d)).toEqual([])
+  })
+
+  // DX-4952: an attempt is late when the wake check finds the wall clock MORE than one wake check past its due time. A check slice that ends on
+  // time is never more than a few ms late, so the bound is one slice.
+  describe('the on-time / late boundary of an attempt', () => {
+    const attemptsWhenWakeCheckIs = async ($: any, on: any, pastDueMs: number): Promise<number> => {
+      const d = dashboard(on)
+      d.world.eventText.tab_keepalive = { status: 500 }
+      await startSession($, d, 'desktop')
+      // the first wake check runs KEEPALIVE_WAKE_CHECK_MS in; the wall clock then reads the due time plus `pastDueMs`
+      d.suspend(KEEPALIVE_IDLE_MS + pastDueMs - KEEPALIVE_WAKE_CHECK_MS)
+      await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+      await d.clock.advance(KEEPALIVE_RETRY_WINDOW_MS + MINUTE)
+      return reads(d)
+    }
+
+    test('exactly one wake check past the due time is on time: the retries end at the give-up time (4 attempts)', async ($, on) => {
+      expect(await attemptsWhenWakeCheckIs($, on, KEEPALIVE_WAKE_CHECK_MS)).toBe(4)
+    })
+
+    test('one millisecond more is late: the retry window runs from when the attempt starts (5 attempts)', async ($, on) => {
+      expect(await attemptsWhenWakeCheckIs($, on, KEEPALIVE_WAKE_CHECK_MS + 1)).toBe(5)
+    })
+  })
+
+  // DX-4952: the points of fireKeepalive a cancel can land on
+  describe('a cancel that lands inside an attempt', () => {
+    const disconnect = async ($: any) => {
+      const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+      return () => pane.press({ key: 'disconnect' })
+    }
+
+    test('after the attempt read the period but before it cleared it: a newer period that began meanwhile is not cleared, and nothing is sent', async ($, on) => {
+      const d = dashboard(on, { stateSteps: true })
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      await startSession($, d, 'desktop')
+      d.suspend(3 * HOURS)
+      // the attempt's read of the period start is the next read of it; a turn ends there, which starts a newer period
+      d.beforeNextRead('idleSince', () => $.turn.complete(TURN))
+      await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+      await d.clock.settle()
+      expect(sent(d)).toEqual([])
+      const writes = written(d, 'idleSince') as (number | null)[]
+      expect(writes.at(-1)).not.toBe(null)
+      expect(writes.at(-1)).toBeGreaterThan(CLOCK_START)
+    })
+
+    test('after the period was cleared but before the prompt: the prompt is not sent', async ($, on) => {
+      const d = dashboard(on)
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      await startSession($, d, 'desktop')
+      d.suspend(3 * HOURS)
+      // the attempt's clear is the next write of the period; a turn ends just before it lands
+      d.beforeNextWrite('idleSince', () => $.turn.complete(TURN))
+      await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+      await d.clock.settle()
+      expect(sent(d)).toEqual([])
+    })
+
+    test('a prompt rejected after the plan was left puts nothing back into the period', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, 'desktop')
+      const leave = await disconnect($)
+      d.relay.dropPrompts('busy')
+      d.relay.duringPrompt(leave)
+      d.suspend(3 * HOURS)
+      await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
+      await d.clock.settle()
+      expect(written(d, 'idleSince').at(-1)).toBe(null)
+    })
+
+    test("a prompt rejected after a newer period was started keeps the newer period: only an empty one gets the old start back", async ($, on) => {
+      const d = dashboard(on)
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      await startSession($, d, 'desktop')
+      d.suspend(3 * HOURS)
+      d.relay.dropPrompts('busy')
+      // the re-check's submit: the turn that started it ends meanwhile, which starts a new period
+      d.relay.duringPrompt(() => $.turn.complete(TURN))
+      await $.turn.start(START)
+      await d.clock.settle()
+      const writes = written(d, 'idleSince') as (number | null)[]
+      expect(writes.at(-1)).not.toBe(null)
+      expect(writes.at(-1)).toBeGreaterThan(CLOCK_START)
+      expect(writes.at(-1)).not.toBe(writes[0])
+    })
+
+    // the turn start cancels first: an attempt that is about to send, while the turn start still waits on its reads, sends nothing
+    test('a turn start cancels the attempt before its own reads: the attempt in flight does not send while they wait', async ($, on) => {
+      const d = dashboard(on, { stateSteps: true })
+      await startSession($, d, 'desktop')
+      d.world.contextDelayMs = MINUTE
+      await d.clock.advance(KEEPALIVE_IDLE_MS)
+      // the attempt is now reading its wording (one minute); the turn start's first read of the period waits two
+      d.beforeNextRead('idleSince', () => d.clock.sleep(2 * MINUTE))
+      const started = $.turn.start(START)
+      await d.clock.advance(MINUTE + 1)
+      expect(sent(d)).toEqual([])
+      await d.clock.advance(2 * MINUTE)
+      await started
+      expect(sent(d)).toEqual([])
+    })
+  })
 })

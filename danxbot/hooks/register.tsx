@@ -65,7 +65,7 @@ import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots,
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
-import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_PATH, KEEPALIVE_RETRY_MS, keepalivePrompt } from './relay/keepalive'
+import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_PATH, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS, keepalivePrompt } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { classifierRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
@@ -1084,10 +1084,14 @@ function stopRelay(): void {
 // viewed, whose surfaces() is []) or by surfaces() having 'desktop', and by any session.attach of the desktop; kept by a reload of the module
 // (DX-4806: $.state, not a module variable). It follows the plan CONNECTION (`keepalivePlan`),
 // set by startRelay and cleared when the plan is disconnected or the process ends, not the relay loop's health.
-// One `$.clock.after` timer (a handle, so module variables). An idle period starts at relay start and at every main-loop turn end
+// One pending `$.clock.after` timer at a time, a slice of the wait (a handle, so module variables). An idle period starts at relay start and at every main-loop turn end
 // (armKeepalive), and is recorded in `idleSince` ($.state) so a reload resumes it instead of restarting it; a turn start (which also clears
 // `idleSince`), a plan move or the plan's end cancels it (cancelKeepalive). `keepaliveEpoch` makes a cancel reach an attempt already running:
 // whatever it finds afterwards is dropped, nothing is sent or scheduled for a period that is over.
+// DX-4952: the timer is never the whole wait. `$.clock.after` is a relative setTimeout, which does not count the time the computer sleeps, while
+// `$.clock.now()` is the wall clock, which does (relay/keepalive.ts). Every wait is a slice of at most KEEPALIVE_WAKE_CHECK_MS, and the wall
+// clock decides whether the attempt is due (`dueAt`, epoch ms), so a wake is noticed within a slice. A turn that starts after the wake finds
+// the period stale (`idleSince` is a wall-clock time too) and has the session re-check the tab (recheckTab).
 let keepalivePlan: number | null = null
 let keepaliveTimer: { cancel: () => void } | null = null
 let keepaliveEpoch = 0
@@ -1121,57 +1125,101 @@ async function armKeepalive($: any, resume: boolean): Promise<void> {
   if ((await read($, turn)).isRunning) return
   const now = await $.clock.now()
   const since = (resume ? await read($, idleSince) : null) ?? now
-  await startPeriod($, epoch, since, Math.max(0, since + KEEPALIVE_IDLE_MS - now))
+  await startPeriod($, epoch, since, now)
 }
 
-// `since`: when the period began; no attempt of it starts after since + KEEPALIVE_GIVE_UP_MS. A cancel while the write ran drops the period.
-async function startPeriod($: any, epoch: number, since: number, wait: number): Promise<void> {
+// `since`: when the period began (its attempt is due KEEPALIVE_IDLE_MS on); `now`: the wall clock as the caller read it.
+// A cancel while the write ran drops the period.
+async function startPeriod($: any, epoch: number, since: number, now: number): Promise<void> {
   if (epoch !== keepaliveEpoch) return
   await update($, idleSince, () => since)
-  if (epoch === keepaliveEpoch) scheduleKeepalive($, wait, since)
+  if (epoch === keepaliveEpoch) waitSlice($, { epoch, dueAt: since + KEEPALIVE_IDLE_MS, deadline: null }, now)
 }
 
-function scheduleKeepalive($: any, wait: number, since: number): void {
-  const epoch = keepaliveEpoch
-  keepaliveTimer = $.clock.after(wait, () => detach($, 'Plan tab keepalive', keepaliveAttempt($, epoch, since)))
+// What the wait for one attempt holds: the epoch it belongs to, the wall-clock time the attempt is due (epoch ms), and the last time an attempt
+// of this period may start (null until the first attempt starts, which sets it).
+type KeepaliveWait = { epoch: number; dueAt: number; deadline: number | null }
+
+// One slice of the wait: at most KEEPALIVE_WAKE_CHECK_MS, after which the wall clock is read again.
+function waitSlice($: any, wait: KeepaliveWait, now: number): void {
+  const slice = Math.min(KEEPALIVE_WAKE_CHECK_MS, Math.max(0, wait.dueAt - now))
+  keepaliveTimer = $.clock.after(slice, () => detach($, 'Plan tab keepalive', keepaliveWake($, wait)))
+}
+
+async function keepaliveWake($: any, wait: KeepaliveWait): Promise<void> {
+  keepaliveTimer = null
+  const now = await $.clock.now()
+  if (wait.epoch !== keepaliveEpoch) return
+  if (now < wait.dueAt) return waitSlice($, wait, now)
+  // an attempt that is long overdue (the computer slept through its time) has the retry window of its own, from when it starts: the network is
+  // often still down just after a wake, and a window measured from the period's start would have closed hours ago (DX-4952)
+  const deadline = wait.deadline ?? (now - wait.dueAt > KEEPALIVE_WAKE_CHECK_MS ? now : wait.dueAt) + KEEPALIVE_RETRY_WINDOW_MS
+  await keepaliveAttempt($, wait.epoch, deadline)
 }
 
 // What an attempt came to: the prompt went in, the session is not on the desktop (nothing to keep open), or why it did not.
 type Fired = { kind: 'sent' } | { kind: 'not-desktop' } | { kind: 'failed'; why: string }
 
-// One attempt: fire, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until the give-up time
-// (KEEPALIVE_GIVE_UP_MS after the period began), then it gives up, loudly, and starts the next period.
+// One attempt: fire, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until `deadline`
+// (KEEPALIVE_GIVE_UP_MS after the period began, or the end of the retry window of an attempt that woke late), then it gives up, loudly,
+// and starts the next period.
 // A prompt that went in is followed by its turn, whose end starts the next idle period. A session that is not on the desktop at this moment
 // (it may attach later; the surface is read now, not at session start) is looked at again an idle period on.
-async function keepaliveAttempt($: any, epoch: number, since: number): Promise<void> {
-  keepaliveTimer = null
-  const deadline = since + KEEPALIVE_GIVE_UP_MS
-  const fired = await fireKeepalive($, epoch)
+async function keepaliveAttempt($: any, epoch: number, deadline: number): Promise<void> {
+  const fired = await fireKeepalive($, () => epoch === keepaliveEpoch)
   const endedAt = await $.clock.now()
   // a cancel (a turn began, the plan ended or moved) while the attempt ran: whatever it found is dropped, nothing is toasted or scheduled
   if (epoch !== keepaliveEpoch) return
   if (fired.kind === 'sent') return
-  if (fired.kind === 'not-desktop') return startPeriod($, epoch, endedAt, KEEPALIVE_IDLE_MS)
+  if (fired.kind === 'not-desktop') return startPeriod($, epoch, endedAt, endedAt)
   if (endedAt + KEEPALIVE_RETRY_MS > deadline) {
     $.ui.toast(`Plan tab keepalive gave up: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
     // DX-4806: a give-up ends this period only; the next is started here, not left to a turn end that an idle session never has
-    return startPeriod($, epoch, endedAt, KEEPALIVE_IDLE_MS)
+    return startPeriod($, epoch, endedAt, endedAt)
   }
   $.ui.toast(`Plan tab keepalive failed, trying again: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
-  scheduleKeepalive($, KEEPALIVE_RETRY_MS, since)
+  waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_RETRY_MS, deadline }, endedAt)
 }
 
-// Ask the session to re-check its plan tab: the registry's wording plus the plan page. The epoch is checked again before the prompt goes in.
-async function fireKeepalive($: any, epoch: number): Promise<Fired> {
+// Ask the session to re-check its plan tab: the registry's wording plus the plan page. `isLive` is checked again before the prompt goes in.
+// The period is answered before the prompt is submitted (`idleSince` cleared, put back if the prompt is not taken): the engine may raise the
+// prompt's turn.start before the submit resolves, and that turn must not take the period for a stale one (onTurnStart).
+async function fireKeepalive($: any, isLive: () => boolean): Promise<Fired> {
   if (!(await read($, desktopHosted))) return { kind: 'not-desktop' }
   const plan = (await read($, view)).connected
   // the page named is the one the view holds: a move is followed by a view refresh at once, and the arm that came with the move restarts the period
   if (plan === null) return { kind: 'failed', why: 'the connected plan is not loaded' }
   const told = eventText(await api($, 'GET', KEEPALIVE_PATH))
   if (told.kind !== 'text') return { kind: 'failed', why: `the wording was not read: ${told.kind === 'failed' ? told.reason : 'no text'}` }
-  if (epoch !== keepaliveEpoch) return { kind: 'sent' }
+  if (!isLive()) return { kind: 'sent' }
+  const was = await read($, idleSince)
+  // DX-4952: the clear is decided where the write is made. A turn start that cancelled this attempt reads `idleSince` to see whether the app
+  // already closed the tab, and finds the stale value only if the attempt has not cleared it: a clear made after that cancel would leave the
+  // turn start nothing to re-check and the attempt, cancelled, would send nothing. A cancel that lands between the updater and the write (a write
+  // of the same key by the turn start) makes this write conflict, and the updater runs again and sees the cancel.
+  let answered = false
+  await update($, idleSince, cur => {
+    answered = isLive()
+    return answered ? null : cur
+  })
+  if (!answered) return { kind: 'sent' }
   const failure = await submitEvent($, keepalivePrompt(told.text, planUrl(plan)))
-  return failure === null ? { kind: 'sent' } : { kind: 'failed', why: `the prompt was not taken: ${failure}` }
+  if (failure === null) return { kind: 'sent' }
+  // DX-4952: put back only while this attempt is still the one answering. After a sign-out, a plan move or a plan disconnect the old value is
+  // another plan's, and a newer period (`cur`) is never replaced by it
+  if (isLive()) await update($, idleSince, cur => cur ?? was)
+  return { kind: 'failed', why: `the prompt was not taken: ${failure}` }
+}
+
+// DX-4952: a turn began after the app has closed the tab (an idle period older than the app's timeout that no attempt answered: the computer
+// slept through it and the wake check did not run first). The turn's own end starts the next period, 25 minutes on, so the session is told now,
+// in a prompt that queues behind this turn, to re-check its tab. It follows the plan connection, not the keepalive epoch: the turn's own end
+// restarts the period (bumping the epoch) and must not drop it.
+async function recheckTab($: any): Promise<void> {
+  const plan = keepalivePlan
+  const fired = await fireKeepalive($, () => keepalivePlan === plan)
+  if (keepalivePlan !== plan || fired.kind !== 'failed') return
+  $.ui.toast(`Plan tab re-check failed: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
 }
 
 // DX-4233: THE gate for what an ended run (a move to another plan, the process's end) may say: its relay state, the halt that follows from
@@ -1881,8 +1929,11 @@ async function onTurnComplete($: any, e: any, next: any) {
 // DX-4233: the main loop's turn began (turn.start never fires for a sub-agent).
 async function onTurnStart($: any, e: any, next: any) {
   cancelKeepalive()
+  const since = await read($, idleSince)
+  const now = await $.clock.now()
   // DX-4806: a running turn is no idle period; a reload that finds one running resumes from nothing (armKeepalive), never from the last turn's end
   await update($, idleSince, () => null)
+  if (keepalivePlan !== null && since !== null && now >= since + KEEPALIVE_GIVE_UP_MS) detach($, 'Plan tab re-check', recheckTab($))
   await update($, turn, () => turnStarted())
   return next(e)
 }
