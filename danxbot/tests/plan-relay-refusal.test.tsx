@@ -16,7 +16,8 @@ const PANE = {
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const ENGINE_WORDS = `danxbot: $.mcp.call(plugin:danxbot:danx-dashboard, plan_events_wait) refused: ${CLASSIFIER_REFUSAL}`
 const LOUD = /^\[danxbot plan event\] events stopped: events are NOT reaching this session: .*auto mode classifier gave no verdict.*Fix: .*mcp__plugin_danxbot_danx-dashboard__\*.*restart the session\.$/
-const NOT_THE_FIX = /(update[ds]?|updating|reinstall(ing)?)(?! does not)/i
+const NAMES_START = /the person runs \/danxbot:start \(or you load its skill\), which adds the allow rule \S+ once the person says yes, or the person adds it to permissions\.allow in ~\/\.claude\/settings\.json/
+const NOT_THE_FIX = /\b(update[ds]?|updating|reinstall(ing)?)\b(?!( the plugin)? does not)/i
 
 for (const surface of SURFACES) {
   describe(`a classifier refusal on ${surface}`, () => {
@@ -29,6 +30,7 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toHaveLength(1)
       expect(d.relay.told[0]).toMatch(LOUD)
       expect(d.relay.told[0]).not.toMatch(NOT_THE_FIX)
+      expect(d.relay.told[0]).toMatch(NAMES_START)
       await d.clock.advance(BACKOFF_MS[BACKOFF_MS.length - 1]! * 3)
       expect(d.relay.calls).toHaveLength(1)
       expect(d.relay.told).toHaveLength(1)
