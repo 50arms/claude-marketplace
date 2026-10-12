@@ -171,18 +171,18 @@ test("the skill writes no repo file; the only file it may change is the person's
 // DX-4805: auto permission mode refuses the plugin's own background calls; the start skill adds the allow rule, with the person's OK.
 const RULE = "`mcp__plugin_danxbot_danx-dashboard__*`";
 
-test("step 2 comes before the plan hand-over and can be the whole run", () => {
+test("step 2 comes before the plan hand-over", () => {
   const s = step(2);
   assert.match(s, /before the plan hand-over \(step 6\), which a session may never return from/);
-  assert.match(s, /When `GET \/api\/plans\/mine` already answers a\s+plan for this session, the connect flow is done and the remaining steps would change nothing:\s+stop after this step/);
 });
 
 test("step 2 checks permissions.allow, explains why in one sentence and asks before adding the rule", () => {
   const s = step(2);
   assert.match(s, /Read `~\/\.claude\/settings\.json`; a missing file counts as no settings/);
-  assert.ok(s.includes(`list already holds ${RULE}`));
+  assert.match(s, /list already holds the rule/);
   assert.match(s, /refuses the plugin's own background calls, so plan events stop reaching the session/);
-  assert.ok(s.includes(`Ask for their OK to add the rule ${RULE}`));
+  assert.ok(s.includes(`Ask for their OK to add the rule`));
+  assert.equal(s.split(RULE).length - 1, 1, "the rule literal is written once");
 });
 
 test("step 2 leaves a settings file that is not valid JSON, or whose allow is not a list, untouched", () => {
@@ -190,7 +190,9 @@ test("step 2 leaves a settings file that is not valid JSON, or whose allow is no
   assert.match(s, /is not valid JSON, or its `permissions\.allow` is present and not a list, leave the file untouched, tell the person, and give the manual instruction/);
   assert.match(s, /Never treat such a file as empty/);
   const invalid = s.slice(s.indexOf("is not valid JSON"), s.indexOf("already allowed"));
-  assert.ok(invalid.includes(`manual instruction: add ${RULE} to \`permissions.allow\` in \`~/.claude/settings.json\` yourself`), "the invalid-file paragraph restates the rule");
+  assert.match(invalid, /tell the person, and give the manual instruction/);
+  assert.match(s, /The manual instruction, which this step gives wherever it says so, is: add that rule to `permissions\.allow` in `~\/\.claude\/settings\.json` yourself/);
+  assert.equal(s.split("manual instruction").length - 1, 3, "defined once, given twice");
 });
 
 test("step 2 adds only that one entry on a clear yes, keeps every other setting, never without the yes", () => {
@@ -200,7 +202,7 @@ test("step 2 adds only that one entry on a clear yes, keeps every other setting,
   assert.match(s, /create the `permissions\.allow` list only when it is missing/);
   assert.match(s, /Never add it without the yes/);
   assert.match(s, /on a no or no reply, change nothing/);
-  assert.ok(s.includes(`manual instruction: add ${RULE} to \`permissions.allow\``));
+  assert.match(s, /on a no or no reply, change nothing and give the manual instruction/);
 });
 
 test("step 2 is safe to re-run and says a session restart applies the rule", () => {

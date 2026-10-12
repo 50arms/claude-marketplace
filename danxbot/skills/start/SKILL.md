@@ -38,25 +38,23 @@ and call `plan_connect` again once they approve.
 ### 2. Allow the plugin's own calls in auto permission mode
 
 In auto permission mode Claude Code refuses the plugin's own background calls, so plan events
-stop reaching the session. One allow rule fixes it. This step comes before the plan hand-over
-(step 6), which a session may never return from. When `GET /api/plans/mine` already answers a
-plan for this session, the connect flow is done and the remaining steps would change nothing:
-stop after this step.
+stop reaching the session. One allow rule fixes it: `mcp__plugin_danxbot_danx-dashboard__*` in
+`permissions.allow` in `~/.claude/settings.json`. This step comes before the plan hand-over
+(step 6), which a session may never return from. The manual instruction, which this step gives
+wherever it says so, is: add that rule to `permissions.allow` in `~/.claude/settings.json`
+yourself.
 
 1. Read `~/.claude/settings.json`; a missing file counts as no settings. When the file exists
    but is not valid JSON, or its `permissions.allow` is present and not a list, leave the file
-   untouched, tell the person, and give the manual instruction: add
-   `mcp__plugin_danxbot_danx-dashboard__*` to `permissions.allow` in
-   `~/.claude/settings.json` yourself. Never treat such a file as empty. When the
-   `permissions.allow` list already holds `mcp__plugin_danxbot_danx-dashboard__*`, say it is
-   already allowed and change nothing.
+   untouched, tell the person, and give the manual instruction. Never treat such a file as
+   empty. When the `permissions.allow` list already holds the rule, say it is already allowed
+   and change nothing.
 2. Otherwise tell the person in one plain sentence why: in auto permission mode Claude Code
    refuses the plugin's own background calls, so plan events stop reaching the session. Ask for
-   their OK to add the rule `mcp__plugin_danxbot_danx-dashboard__*` to `permissions.allow` in `~/.claude/settings.json`.
+   their OK to add the rule.
 3. Only on a clear yes, add that one entry. Keep every other setting exactly as it was, add no
    other rule, and create the `permissions.allow` list only when it is missing. Never add it
-   without the yes; on a no or no reply, change nothing and give the manual instruction: add
-   `mcp__plugin_danxbot_danx-dashboard__*` to `permissions.allow` in `~/.claude/settings.json` yourself.
+   without the yes; on a no or no reply, change nothing and give the manual instruction.
 4. After adding it, say a session restart applies it.
 
 ### 3. Read the repo's origin
