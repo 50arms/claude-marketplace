@@ -28,7 +28,7 @@ for (const surface of SURFACES) {
         if (model === 'refuses') return { result: {}, text: JSON.stringify({ ok: false, status: 409, body: { error: 'plan_mismatch' } }), isError: false } as any
         if (e.disconnect === true) d.world.planId = null
         else if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
-        return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: d.world.planId } } }), isError: false } as any
+        return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { planId: d.world.planId } } }), isError: false } as any
       })
       await startSession($, d, surface)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })

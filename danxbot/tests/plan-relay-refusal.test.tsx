@@ -15,7 +15,7 @@ const LOUD = /^\[danxbot plan event\] events delayed: events are NOT reaching th
 const NAMES_START = /the person runs \/danxbot:start \(or you load its skill\), which adds the allow rule \S+ once the person says yes, or the person adds it to permissions\.allow in ~\/\.claude\/settings\.json/
 const NOT_THE_FIX = /\b(update[ds]?|updating|reinstall(ing)?)\b(?!( the plugin)? does not)/i
 
-const MODEL_CONNECTED = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 23, plan_name: 'Plan twenty-three' } } })
+const MODEL_CONNECTED = JSON.stringify({ ok: true, status: 200, body: { session: { planId: 23, planName: 'Plan twenty-three' } } })
 const bandText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 // DX-4982: the words the person reads, whole, and nothing of the engine's raw refusal in them
 const SAID = "Auto mode is blocking Danxbot's own calls to its dashboard. Run /danxbot:start to allow them; this clears by itself, or restart the session if it does not."

@@ -1671,7 +1671,7 @@ async function onPlanConnect($: any, e: any, next: any) {
     throw err
   }
   const answer = textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
-  await settleLeave($, closes, leaving ? answer.ok : answer.ok && answer.body?.session?.plan_id === e.plan_id, why)
+  await settleLeave($, closes, leaving ? answer.ok : answer.ok && answer.body?.session?.planId === e.plan_id, why)
   // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
   relayHalted = null

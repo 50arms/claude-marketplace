@@ -4,7 +4,7 @@
 // not running; the band says when it is not.
 import { describe, expect } from 'claude-code/testing'
 
-import { connectedPlanId } from '../hooks/plan/mcp'
+import { connectedPlanId, connectedPlanOf } from '../hooks/plan/mcp'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { OLD_SERVER_FIX } from '../hooks/relay/text'
 import { test, SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
@@ -378,11 +378,15 @@ for (const surface of SURFACES) {
 describe('the plan a plan_connect answer connected', () => {
   const answer = (value: unknown) => JSON.stringify(value)
   test('is the plan id of an ok envelope', () => {
-    expect(connectedPlanId(answer({ ok: true, status: 200, body: { session: { plan_id: 24 }, naming: { status: 'ok' } } }))).toBe(24)
+    expect(connectedPlanId(answer({ ok: true, status: 200, body: { session: { planId: 24 }, naming: { status: 'ok' } } }))).toBe(24)
+  })
+  test("is the plan and name of the real answer's session (danxbot's camelCase PlanSession), as production sent it", () => {
+    const real = { ok: true, status: 200, body: { session: { sessionId: 'abc', title: 'T', planId: 23, planName: 'Danxbot plugin', firstSeenAt: 'x', lastActiveAt: 'y' }, movedFrom: null } }
+    expect(connectedPlanOf(answer(real))).toEqual({ id: 23, name: 'Danxbot plugin' })
   })
   test('is none for a leave, a refusal, an approval request, text that is no envelope, or no text', () => {
-    expect(connectedPlanId(answer({ ok: true, status: 200, body: { session: { plan_id: null } } }))).toBeNull()
-    expect(connectedPlanId(answer({ ok: false, status: 409, body: { session: { plan_id: 24 } } }))).toBeNull()
+    expect(connectedPlanId(answer({ ok: true, status: 200, body: { session: { planId: null } } }))).toBeNull()
+    expect(connectedPlanId(answer({ ok: false, status: 409, body: { session: { planId: 24 } } }))).toBeNull()
     expect(connectedPlanId(answer({ state: 'approval_required', approvalUrl: 'u' }))).toBeNull()
     expect(connectedPlanId('connected')).toBeNull()
     expect(connectedPlanId(undefined)).toBeNull()

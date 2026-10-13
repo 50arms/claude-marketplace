@@ -114,7 +114,7 @@ describe('what one plan_connect answer means to Sign in', () => {
     expect(signInStep(answer(APPROVAL_PENDING))).toEqual({ kind: 'waiting', request: { url: APPROVAL_URL, code: CONFIRM_CODE } })
     expect(signInStep(answer({ state: 'approval_pending' }))).toEqual({ kind: 'stop', message: 'Sign in failed: the approval request had no usable link.' })
     expect(signInStep(answer({ state: 'signed_in' }))).toEqual({ kind: 'done' })
-    expect(signInStep(answer({ ok: true, status: 200, body: { session: { plan_id: 23 } } }))).toEqual({ kind: 'done' })
+    expect(signInStep(answer({ ok: true, status: 200, body: { session: { planId: 23 } } }))).toEqual({ kind: 'done' })
     expect(signInStep(answer({ state: 'denied', instruction: 'The user denied the request. Do not retry unless they ask.' }))).toEqual({ kind: 'denied' })
     expect(signInStep(answer({ state: 'rate_limited', retryAfterSeconds: 60, error: 'x' }, true)).kind).toBe('stop')
     expect(signInStep(answer({ state: 'something_new' }, true))).toEqual({ kind: 'stop', message: 'Sign in stopped (something_new).' })
