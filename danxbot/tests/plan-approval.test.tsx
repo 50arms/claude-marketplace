@@ -12,7 +12,7 @@ const URL_B = 'https://danxbot.example/connect/bbbb'
 const required = (url: string, code = 'NXGUF88G') =>
   JSON.stringify({ state: 'approval_required', approvalUrl: url, confirmCode: code, expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the code.' })
 const pending = JSON.stringify({ state: 'approval_pending', approvalUrl: URL_A, confirmCode: 'NXGUF88G', expiresAt: 'x', instruction: 'Wait.' })
-const connected = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 23 } } })
+const connected = JSON.stringify({ ok: true, status: 200, body: { session: { planId: 23 } } })
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const CALL = { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23 } as any

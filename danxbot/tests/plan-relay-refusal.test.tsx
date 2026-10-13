@@ -20,7 +20,7 @@ const NAMES_START = /the person runs \/danxbot:start \(or you load its skill\), 
 const NOT_THE_FIX = /\b(update[ds]?|updating|reinstall(ing)?)\b(?!( the plugin)? does not)/i
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } } as any
-const MODEL_CONNECTED = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 23, plan_name: 'Plan twenty-three' } } })
+const MODEL_CONNECTED = JSON.stringify({ ok: true, status: 200, body: { session: { planId: 23, planName: 'Plan twenty-three' } } })
 const bandText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 // DX-4982: the words the person reads, whole, and nothing of the engine's raw refusal in them
 const SAID = "Auto mode is blocking Danxbot's own calls to its dashboard. Run /danxbot:start to allow them; this clears by itself, or restart the session if it does not."

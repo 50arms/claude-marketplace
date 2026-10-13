@@ -675,7 +675,7 @@ export function dashboard(
           if (e.args.plan_id === undefined) return { value: text({ state: 'signed_in', instruction: 'This session is signed in. Call `plan_connect` with `plan_id` to connect it to a plan.' }) }
           world.planId = e.args.plan_id
           world.titleSeen = e.args.title
-          return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id } } }) }
+          return { value: text({ ok: true, status: 200, body: { session: { planId: e.args.plan_id } } }) }
         }
         if (dance.approved) return approvedAnswer()
         if (!dance.requested) {
@@ -721,9 +721,9 @@ export function dashboard(
         if (options.disconnect === 'notFound') return envelope(false, 404, { error: 'Not found' })
         const left = plans.find(p => p.id === world.planId)
         world.planId = null
-        if (options.disconnect === 'noLeftPlan') return envelope(true, 200, { session: { session_id: SESSION_ID, plan_id: null } })
+        if (options.disconnect === 'noLeftPlan') return envelope(true, 200, { session: { sessionId: SESSION_ID, planId: null } })
         return envelope(true, 200, {
-          session: { session_id: SESSION_ID, plan_id: null },
+          session: { sessionId: SESSION_ID, planId: null },
           leftPlan: { id: left?.id, name: left?.name },
         })
       }
@@ -758,7 +758,7 @@ export function dashboard(
         world.planId = e.args.plan_id
         world.titleSeen = e.args.title
         const naming = options.naming === undefined ? NAMING_OK : options.naming
-        return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id }, ...(naming === NO_NAMING ? {} : { naming }) } }) }
+        return { value: text({ ok: true, status: 200, body: { session: { planId: e.args.plan_id }, ...(naming === NO_NAMING ? {} : { naming }) } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
       if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
@@ -1101,7 +1101,7 @@ export function answerPlanConnect(on: On, d: { world: { planId: number | null } 
   on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => {
     if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
     // the real answer's envelope (the server's handleConnect): the plan the session is on now
-    const text = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: d.world.planId } } })
+    const text = JSON.stringify({ ok: true, status: 200, body: { session: { planId: d.world.planId } } })
     return { result: {}, text, isError: false } as any
   })
 }
