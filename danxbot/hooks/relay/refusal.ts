@@ -14,12 +14,14 @@ export const raisedByPlugin = (origin: { plugin: string }): boolean => origin.pl
 // classifier "gave no verdict" on is refused: `$.mcp.call(<server>, <tool>) refused: The server-side auto mode classifier gave no verdict for
 // <tool>`. The plugin's own tool.check hook allows the calls it raises on its own server (`ownServerCheck` below, seated by the `on('tool.check', ...)` in register.tsx); when one is
 // refused anyway (an engine that gates it differently), nothing in the plugin can fix it, so the failure is told with the real words and the fix
-// that works: an allow rule for the server's tools, then a restart (the session's rules are read at start).
+// that works: an allow rule for the server's tools. DX-4982: a restart is not needed (observed: the relay attached and the band showed the plan
+// minutes after the rule was added, in the same session), so the relay retries a refused call on its own and the plan load is retried by the
+// session-start watch; a restart is the fallback when it does not clear.
 
 // The permission rule that allows every tool of the plugin's own server.
 export const CLASSIFIER_RULE = `${toolName('')}*`
 
-export const CLASSIFIER_FIX = `the auto mode classifier refused the plugin's own call; updating the plugin does not change that: the person runs /danxbot:start (or you load its skill), which adds the allow rule ${CLASSIFIER_RULE} once the person says yes, or the person adds it to permissions.allow in ~/.claude/settings.json; then restart the session`
+export const CLASSIFIER_FIX = `the auto mode classifier refused the plugin's own call; updating the plugin does not change that: the person runs /danxbot:start (or you load its skill), which adds the allow rule ${CLASSIFIER_RULE} once the person says yes, or the person adds it to permissions.allow in ~/.claude/settings.json; it then resumes on its own (restart if not)`
 
 // What the engine says of a call the auto mode classifier refused (any verdict of it: no verdict, or judged unsafe).
 const CLASSIFIER_MARK = /auto mode classifier/i

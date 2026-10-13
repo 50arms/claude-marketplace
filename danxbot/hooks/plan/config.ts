@@ -168,6 +168,12 @@ export const SIGN_IN_MIN_ROUND_MS = 5_000
 export const SIGN_IN_DENIED_TOAST = 'Sign in was denied.'
 export const signInFailedToast = (message: string) => `Sign in failed: ${message.slice(0, FAILURE_TOAST_MAX)}`
 
+// DX-4982: in auto permission mode the engine's classifier refuses the plugin's own calls to its own dashboard server until the allow rule
+// is added. The refusal is neither signed out nor a failed load: ONE state (the `blocked` phase, and every toast of a refused call) says so, in
+// the person's words: the cause, then the fix. It is no sticky state: the next load that succeeds replaces it, and the relay retries on its own.
+export const BLOCKED_LABEL = `${BRAND}: blocked by auto mode`
+export const BLOCKED_LINE = "Auto mode is blocking Danxbot's own calls to its dashboard. Run /danxbot:start to allow them; this clears by itself, or restart the session if it does not."
+
 // DX-4418: a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
 // makes no access request: `keyRevokedHalt` in packages/danx-dashboard-mcp key-revoked-halt.ts, which begins
 // `STOP ALL WORK NOW. <revokedBy> revoked your access to the danxbot dashboard at <revokedAt>.` followed by a blank line. The

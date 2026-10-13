@@ -40,6 +40,7 @@ import {
   USAGE_PATH,
   USAGE_TICK_MS,
   signInFailedToast,
+  BLOCKED_LINE,
   SERVER,
   NOT_CONNECTED_RETRY_MS,
   SERVER_POLL_MS,
@@ -52,7 +53,7 @@ import {
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
-import { connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
+import { connectedPlanId, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
 import { disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { signInStep } from './plan/sign-in'
@@ -66,7 +67,7 @@ import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
 import { classifierRefusal, isBackgroundRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
-import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
+import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
@@ -93,6 +94,9 @@ const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string 
 // DX-4630: the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
 // ends (approved, denied, expired and renewed, or the conversation ended). The band draws it as a Markdown link and the
 // code the moment it exists. Also what tells a watch is running.
+// DX-4982: the plan the model's own successful plan_connect named, kept for the `blocked` view (the plugin's own reads are refused by auto mode's
+// classifier, so nothing else names the plan); null after a leave.
+const modelPlan = atom({ plugin: 'danxbot', key: 'modelPlan' } as const, null as { id: number; name: string } | null)
 const signInRequest = atom({ plugin: 'danxbot', key: 'signInRequest' } as const, null as ApprovalRequest | null)
 // DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
@@ -234,10 +238,10 @@ async function api($: any, method: string, path: string, extra: { query?: object
     // load carries it on its error view (`serverNotConnected`, which the session-start retry waits out); the pacing and usage readers
     // stay quiet about it until a read has succeeded.
     const notConnected = isServerNotConnected(message)
-    // DX-4805: a classifier refusal shows its fix wherever the error is shown (the view, the toasts), and is kept whole for the relay's start
+    // DX-4805 / DX-4982: a classifier refusal shows the person's sentence and fix wherever the error is shown (toasts, lines), never the engine's raw words; those are kept whole on `refusal` for the relay's start and the load's blocked view
     const refusal = classifierRefusal(message)
     const shown = message.slice(0, CALL_ERROR_MAX)
-    const failed: Api = refusal === null ? { ok: false, status: 0, body: { error: shown } } : { ok: false, status: 0, body: { error: `${shown}. Fix: ${refusal.fix}` }, refusal }
+    const failed: Api = refusal === null ? { ok: false, status: 0, body: { error: shown } } : { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal }
     if (!notConnected) return failed
     failed.unreachable = true
     return failed
@@ -265,6 +269,8 @@ async function loadView($: any) {
 async function applyLoaded($: any, loaded: any): Promise<void> {
   // DX-5232: each failure is told once, on the load that makes it appear; the change is decided inside the update, so overlapping loads toast once
   let told: string[] = []
+  // DX-4982: the plan the model's own plan_connect named stands in for what the refused reads could not say
+  const named = loaded.phase === 'blocked' ? await read($, modelPlan) : null
   await update($, view, cur => {
     told = []
     if (loaded.phase === 'error' && cur.phase !== 'error' && !loaded.serverNotConnected) told.push(`Plan load failed: ${loaded.error}`)
@@ -272,7 +278,9 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
     if (loaded.openProblemsError && cur.openProblemsError !== loaded.openProblemsError) told.push(`Plan cards unavailable: ${loaded.openProblemsError}`)
     // the card links' error: the replies are drawn as written
     if (loaded.links?.state === 'error' && cur.links?.state !== 'error' && !loaded.openProblemsError) told.push(`Card links unavailable: ${loaded.links.message}`)
-    return loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }
+    if (loaded.phase === 'ready') return loaded
+    const base = { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }
+    return named === null ? base : { ...base, connected: { id: named.id, ref: `PLAN-${named.id}`, name: named.name, dashboardUrl: loaded.dashboardUrl ?? cur.dashboardUrl } }
   })
   for (const t of told) $.ui.toast(t.slice(0, TOAST_ERROR_MAX))
   // DX-5232: a write path, never the draw: the events warning's reason is told on the change into it
@@ -487,6 +495,18 @@ function detach($: any, what: string, task: Promise<unknown>): void {
   void settleDetached(task).catch(err => $.ui.toast(`${what} failed: ${String(err?.message ?? err).slice(0, FAILURE_TOAST_MAX)}`))
 }
 
+// DX-4982: a call the plugin raised itself failed: a classifier refusal is told in the person's words (cause and fix) and the view reloads to
+// show the same state; any other failure keeps its own words.
+function toastCallFailed($: any, what: string, err: any): void {
+  const message = String(err?.message ?? err)
+  if (classifierRefusal(message) === null) {
+    $.ui.toast(`${what}: ${message.slice(0, FAILURE_TOAST_MAX)}`)
+    return
+  }
+  $.ui.toast(BLOCKED_LINE)
+  detach($, 'Plan refresh', refresh($, true))
+}
+
 const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
 
 // DX-4635: what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards,
@@ -510,7 +530,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
       r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
       await settleLeave($, closes, false, why)
-      $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, FAILURE_TOAST_MAX)}`)
+      toastCallFailed($, 'Disconnect failed', err)
       return
     }
     const outcome = toolOutcome(r)
@@ -577,7 +597,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         try {
           r = await $.mcp.call(SERVER, 'plan_connect', watch.args)
         } catch (err: any) {
-          if (!ended()) $.ui.toast(signInFailedToast(String(err?.message ?? err)))
+          if (!ended()) toastCallFailed($, 'Sign in failed', err)
           return
         }
         if (ended()) return
@@ -638,7 +658,7 @@ async function startSignIn($: any): Promise<void> {
     return
   }
   const args = await signInArgs($)
-  void watchSignIn($, { args, byPress: true }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
+  void watchSignIn($, { args, byPress: true }).catch(err => toastCallFailed($, 'Sign in failed', err))
 }
 
 // The sign-in's own `plan_connect` arguments: the session's title, and the plan it was on.
@@ -845,7 +865,8 @@ async function onMeasure($: any, e: any, next: any) {
 // A view that failed to load (`error`, `loading`) changes nothing: a read blip must not stop a working relay.
 async function syncRelay($: any): Promise<void> {
   const v = await read($, view)
-  if (v.phase === 'error' || (v.phase === 'loading' && v.connected === null)) return
+  // DX-4982: a blocked load says nothing of the key: the relay runs on, or is started by the watch, never stopped by it
+  if (v.phase === 'error' || v.phase === 'blocked' || (v.phase === 'loading' && v.connected === null)) return
   // DX-4884: a ready view on no plan runs the relay for the session's own records (plan_id null); any other view (signed out, revoked) runs none
   if (!isSignedIn(v)) {
     relayHalted = null
@@ -913,24 +934,26 @@ async function watchRelayOnce($: any): Promise<RelayWatch> {
     startRelay($, null)
     return 'done'
   }
-  if (v.phase !== 'error' && v.phase !== 'loading') return 'done'
+  if (v.phase !== 'error' && v.phase !== 'blocked' && v.phase !== 'loading') return 'done'
   const plan = await withinDeadline($, RELAY_READ_DEADLINE_MS, sessionPlan($), (): SessionPlan => ({ kind: 'failed', reason: DEADLINE_REASON }))
   // a run that started while the read was out is the newer word (a connect, a load)
   if (relayRun !== null) return 'done'
   if (plan.kind === 'connected') {
     startRelay($, plan.planId)
+    // DX-4982: the read that was refused now succeeds: the blocked view is replaced by a real load, never left standing
+    if (v.phase === 'blocked') detach($, 'Plan refresh', refresh($, true))
     return 'done'
   }
   if (plan.kind === 'failed' && plan.refusal !== undefined) await tellRefusal($, plan.refusal)
   return plan.kind === 'failed' || plan.kind === 'unreachable' ? 'retry' : 'done'
 }
 
-// DX-4805: the relay cannot start because the engine's auto mode classifier refused the plugin's own read: told to the session ONCE (the same
+// DX-4805 / DX-4982: the relay cannot start yet because the engine's auto mode classifier refused the plugin's own read: told to the session ONCE (the same
 // words are not told again while the watch keeps retrying, as the refusal may clear), with the engine's words and the fix that works. A module
 // variable: the text is per process, and a reload starts with nothing told.
 let refusalTold: string | null = null
 async function tellRefusal($: any, refusal: Refusal): Promise<void> {
-  const line = stoppedLine(refusal.detail, refusal.fix)
+  const line = refusedLine(refusal.detail, refusal.fix)
   if (refusalTold === line) return
   refusalTold = line
   await tellModel($, line)
@@ -1457,6 +1480,8 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
     // DX-4233: an ended run takes nothing (its events are the new run's to ask for)
     if (run.dead) return { next: 'end', cursor }
     // DX-5398: the events are queued, never delivered here; the poll goes on at once from the newest cursor taken
+    // DX-4982: a wait answered, so the calls are allowed again: a blocked view is replaced by a real load
+    if ((await read($, view)).phase === 'blocked') detach($, 'Plan refresh', refresh($, true))
     await queueEvents($, run, got.events)
     const last = got.events[got.events.length - 1]
     // the refresh is detached (DX-4586): the environment going away under it is not a failure
@@ -1475,6 +1500,11 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
     // the band already says it (and offer Sign in unless a person revoked the key): nothing more is told
     if (await setRelay($, run, 'off', null)) relayHalted = { planId: run.planId }
     return { next: 'end', cursor }
+  }
+  if (got.kind === 'refused') {
+    // DX-4982: the person sees the sentence and fix; the session is told once with the engine's words. Retried on the backoff: it resumes once the calls are allowed.
+    await relayFailed($, run, 'retrying', BLOCKED_LINE, refusedLine(got.detail, got.fix))
+    return { next: 'retry', cursor }
   }
   if (got.kind === 'stopped' || got.kind === 'old-server') {
     const detail = got.kind === 'stopped' ? got.detail : OLD_SERVER_DETAIL
@@ -1647,6 +1677,10 @@ async function onPlanConnect($: any, e: any, next: any) {
   relayHalted = null
   const connectedTo = connectedPlanId(ran.text)
   if (connectedTo !== null) startRelay($, connectedTo)
+  // DX-4982: what the blocked view names when the plugin's own reads are refused
+  const modelConnected = connectedPlanOf(ran.text)
+  if (modelConnected !== null) await update($, modelPlan, () => modelConnected)
+  else if (leaving && answer.ok) await update($, modelPlan, () => null)
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)))
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
   if (approval === null) return ran
@@ -1663,7 +1697,7 @@ async function onPlanConnect($: any, e: any, next: any) {
   // the model started this sign-in, so the plugin waits on it and tells the model how it ended
   if (waiting === null) {
     const args = { ...(typeof e.plan_id === 'number' ? { plan_id: e.plan_id } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
-    void watchSignIn($, { args, byPress: false, known: approval }).catch(err => $.ui.toast(signInFailedToast(String(err?.message ?? err))))
+    void watchSignIn($, { args, byPress: false, known: approval }).catch(err => toastCallFailed($, 'Sign in failed', err))
   }
   return withSignInNote(ran, approval)
 }
@@ -1878,7 +1912,10 @@ async function restartNotice($: any, asked: RestartAsk): Promise<string | null> 
     try {
       told = restartNoticeText(await $.mcp.call(SERVER, RESTART_NOTICE_TOOL, asked.args))
     } catch (err: any) {
-      told = { kind: 'failed', reason: `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}` }
+      const message = String(err?.message ?? err)
+      const refusal = classifierRefusal(message)
+      // DX-4982: a refused call says the person's sentence, the session's line carries the fix
+      told = { kind: 'failed', reason: refusal === null ? `error: ${message.slice(0, CALL_ERROR_MAX)}` : `${BLOCKED_LINE} ${refusal.fix}` }
     }
   }
   return toldLine(told, restartFailureLine)

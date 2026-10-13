@@ -8,31 +8,38 @@ import { ownServerCheck, raisedByPlugin } from '../hooks/relay/refusal'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { test, CLASSIFIER_REFUSAL, SURFACES, dashboard, startSession } from './plan-kit'
 
-const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const ENGINE_WORDS = `danxbot: $.mcp.call(plugin:danxbot:danx-dashboard, plan_events_wait) refused: ${CLASSIFIER_REFUSAL}`
-const LOUD = /^\[danxbot plan event\] events stopped: events are NOT reaching this session: .*auto mode classifier gave no verdict.*Fix: .*mcp__plugin_danxbot_danx-dashboard__\*.*restart the session\.$/
+const LOUD = /^\[danxbot plan event\] events delayed: events are NOT reaching this session: .*auto mode classifier gave no verdict.*Fix: .*mcp__plugin_danxbot_danx-dashboard__\*.*it then resumes on its own \(restart if not\)\.$/
 const NAMES_START = /the person runs \/danxbot:start \(or you load its skill\), which adds the allow rule \S+ once the person says yes, or the person adds it to permissions\.allow in ~\/\.claude\/settings\.json/
 const NOT_THE_FIX = /\b(update[ds]?|updating|reinstall(ing)?)\b(?!( the plugin)? does not)/i
 
+const MODEL_CONNECTED = JSON.stringify({ ok: true, status: 200, body: { session: { plan_id: 23, plan_name: 'Plan twenty-three' } } })
+const bandText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+// DX-4982: the words the person reads, whole, and nothing of the engine's raw refusal in them
+const SAID = "Auto mode is blocking Danxbot's own calls to its dashboard. Run /danxbot:start to allow them; this clears by itself, or restart the session if it does not."
+const RAW = /\$\.mcp\.call|refused:|classifier gave no verdict|Sign in failed|Disconnected/
+
 for (const surface of SURFACES) {
   describe(`a classifier refusal on ${surface}`, () => {
-    test('a refused wait stops the relay: the band and ONE transcript line carry the refusal and the allow-rule fix, and it does not retry', async ($, on) => {
+    test('a refused wait keeps the relay retrying: the band says the sentence, ONE transcript line carries the engine words and the fix, and it resumes by itself', async ($, on) => {
       const d = dashboard(on)
       d.relay.server.script.push(() => ({ deny: ENGINE_WORDS }) as any)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('relay stopped')
+      expect(await text(band)).toContain(SAID)
       expect(d.relay.told).toHaveLength(1)
       expect(d.relay.told[0]).toMatch(LOUD)
       expect(d.relay.told[0]).not.toMatch(NOT_THE_FIX)
       expect(d.relay.told[0]).toMatch(NAMES_START)
+      // DX-4982: no halt, so the next wait (the script is spent) goes through with nothing more told
       await d.clock.advance(BACKOFF_MS[BACKOFF_MS.length - 1]! * 3)
-      expect(d.relay.calls).toHaveLength(1)
+      expect(d.relay.calls.length).toBeGreaterThan(1)
       expect(d.relay.told).toHaveLength(1)
     })
 
-    test('a refused first read (the relay never starts): the session is told once, with the refusal and the fix', async ($, on) => {
+    test('a refused first read: the band says the cause and the fix (never Disconnected or a raw refusal), the session is told once, and the view clears by itself once calls are allowed', async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
       await startSession($, d, surface)
       expect(d.relay.calls).toHaveLength(0)
@@ -42,6 +49,32 @@ for (const surface of SURFACES) {
       // the start's own retries keep reading (the refusal may clear) without telling it again
       await d.clock.advance(120_000)
       expect(d.relay.told).toHaveLength(1)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      const said = await text(band)
+      expect(said).toContain(SAID)
+      expect(said).not.toMatch(RAW)
+      expect(await bandText(band)).toContain('Danxbot: blocked by auto mode')
+      expect(await band.find({ key: 'sign-in' })).toBeFalsy()
+      expect(d.toasts.join(' | ')).not.toMatch(RAW)
+      // the rule is added: the next calls succeed, and the band shows the plan with no restart and no press
+      d.setMcp('up')
+      await d.clock.advance(300_000)
+      expect(await bandText(band)).toContain('PLAN-23')
+      expect(await bandText(band)).not.toContain(SAID)
+    })
+
+    test("the model's own successful plan_connect names its plan in the band while the plugin's own reads are refused, and a press that is refused toasts the sentence, never the raw text", async ($, on) => {
+      const d = dashboard(on, { mcp: 'refused' })
+      on('tool.call', { tool: toolName('plan_connect') }, () => ({ result: {}, text: MODEL_CONNECTED, isError: false }) as any)
+      await startSession($, d, surface)
+      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23 } as any)
+      await d.clock.settle()
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      const said = await bandText(band)
+      expect(said).toContain('PLAN-23 · Plan twenty-three')
+      expect(said).toContain(SAID)
+      expect(said).not.toMatch(RAW)
+      expect(d.toasts.join(' | ')).not.toMatch(RAW)
     })
   })
 }
