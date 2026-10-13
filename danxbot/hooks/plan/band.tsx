@@ -1,7 +1,7 @@
 import type { PlanView } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
-import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
+import { BLOCKED_LINE, DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
@@ -49,7 +49,7 @@ export function renderBand(
   )
   const plan = v.connected
   // DX-4420: a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
-  const badge = v.phase === 'error' ? '' : problemBadge(v)
+  const badge = v.phase === 'error' || v.phase === 'blocked' ? '' : problemBadge(v)
   const permissionLabel = permission === null ? '' : permissionBadge(permission.count)
   // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
@@ -83,14 +83,16 @@ export function renderBand(
   const percent = viewPercent(v)
   // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
   const failed = v.phase === 'error' || signedOut || revoked
-  const failedColor = failed ? DANGER : undefined
+  // DX-4982: auto mode blocking the plugin's calls is not a failure of the plan: yellow, with the sentence and fix on a line of its own (full width, wrapped)
+  const blocked = v.phase === 'blocked'
+  const failedColor = failed ? DANGER : blocked ? WARNING : undefined
   const indicator =
     percent === null ? (
       <Text color={failedColor ?? (plan === null ? WARNING : SUCCESS)}>●</Text>
     ) : (
       donutMark(E, percent, hasSvg, DONUT_BAND_PX)
     )
-  return (
+  const line = (
     <Box key="band-line" flexDirection="row" gap={1} minWidth={0}>
       <Box flexShrink={0}>{indicator}</Box>
       {/* DX-4626: a flex item never shrinks below its content's width unless its min width is 0, so without minWidth={0} and the
@@ -120,6 +122,13 @@ export function renderBand(
         {linkUrl !== null && mdLink(E, 'open-tab', OPEN_PLAN_LABEL, linkUrl)}
         {close}
       </Box>
+    </Box>
+  )
+  if (!blocked) return line
+  return (
+    <Box key="band-blocked" flexDirection="column" minWidth={0}>
+      {line}
+      <Text color={WARNING}>{BLOCKED_LINE}</Text>
     </Box>
   )
 }

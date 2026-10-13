@@ -18,10 +18,16 @@ export function mcpText(r: any): string {
 // DX-4233: the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {plan_id}}}` envelope. Null for anything
 // else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
 export function connectedPlanId(text: unknown): number | null {
+  return connectedPlanOf(text)?.id ?? null
+}
+
+// DX-4982: the same answer's plan with its name (`session.plan_name`, '' when the answer has none): what the band names while the plugin's own
+// reads are refused by auto mode's classifier and the model's own successful plan_connect is all that is known of the plan.
+export function connectedPlanOf(text: unknown): { id: number; name: string } | null {
   if (typeof text !== 'string') return null
   const outcome = textOutcome(text, false)
-  const planId = outcome.ok ? outcome.body?.session?.plan_id : undefined
-  return typeof planId === 'number' ? planId : null
+  const session = outcome.ok ? outcome.body?.session : undefined
+  return typeof session?.plan_id === 'number' ? { id: session.plan_id, name: typeof session.plan_name === 'string' ? session.plan_name : '' } : null
 }
 
 // A tool's result as danxbot_api and plan_connect word it: JSON text `{ok, status, body}` (pretty-printed),

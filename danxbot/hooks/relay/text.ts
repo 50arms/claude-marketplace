@@ -8,6 +8,9 @@ const trim = (text: string) => text.trim().replace(/\.+$/, '').slice(0, FAILURE_
 // The relay cannot go on until something is done: the reason and the fix.
 export const stoppedLine = (detail: string, fix: string) => `${RELAY_MARKER} events stopped: events are NOT reaching this session: ${trim(detail)}. Fix: ${trim(fix)}.`
 
+// DX-4982: the auto mode classifier refused the relay's call: told to the session once; the relay retries on its own and resumes when the calls are allowed.
+export const refusedLine = (detail: string, fix: string) => `${RELAY_MARKER} events delayed: events are NOT reaching this session: ${trim(detail)}. Fix: ${trim(fix)}.`
+
 // The relay is trying again on its own: a transient failure, with the cause.
 export const delayedLine = (message: string) => `${RELAY_MARKER} events delayed: ${trim(message)}. The relay keeps retrying on its own.`
 

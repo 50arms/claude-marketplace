@@ -49,6 +49,8 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // the band and pane say so and offer Sign in, never the server's agent-facing text.
 // `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band and pane say so and offer NO
 // Sign in, because a revoked agent must stop.
+// `blocked` (DX-4982): auto permission mode's classifier refused the plugin's own dashboard call: the band and pane say so and name the
+// fix. `connected` is then the plan the model's own successful plan_connect named, when it did one; nothing else of the plan is known.
 // DX-4448: `prefixes` are the issue prefixes (`DX`, `SG`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
 // EVERY card on the connected plan, any status (GET /api/plans/:id/cards, unscoped by board, closed cards included). Empty when not connected.
 export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: string[] } | { state: 'error'; message: string }
@@ -134,7 +136,7 @@ export type LiveSubagents = {
 
 export type PlanView = {
   // `loading` is both the first load (nothing known yet) and a connect answered with its numbers still pending (DX-4635: `connected` and `refreshedAt` set).
-  phase: 'loading' | 'ready' | 'error' | 'signed-out' | 'key-revoked'
+  phase: 'loading' | 'ready' | 'error' | 'signed-out' | 'key-revoked' | 'blocked'
   error: string | null
   // DX-4578: the load failed because the plugin's own MCP server is not connected (yet), the one failure the session-start retry waits out
   serverNotConnected: boolean
@@ -268,6 +270,8 @@ declare module 'claude-code' {
       title: string | null
       // DX-4630: the sign-in request waiting for the person (its approval link and confirm code), drawn by the band and the pane; null when none.
       signInRequest: { url: string; code: string } | null
+      // DX-4982: the plan the model's own successful plan_connect named, for the blocked view
+      modelPlan: { id: number; name: string } | null
       // DX-4435: the model's undecided permission requests, oldest first.
       permissionRequests: PermissionRequest[]
       // DX-4499: the clock (epoch ms) a running sub-agent's runtime counts up against: advanced once a second, only while one is

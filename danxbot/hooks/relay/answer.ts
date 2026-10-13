@@ -17,6 +17,8 @@ export type RelayEvent = { cursor: string; text: string; urgent: boolean }
 export type WaitAnswer =
   | { kind: 'events'; events: RelayEvent[] }
   | { kind: 'stopped'; detail: string; fix: string }
+  // DX-4982: the auto mode classifier refused the call: the relay keeps retrying (the refusal ends when the rule is allowed), telling the session once
+  | { kind: 'refused'; detail: string; fix: string }
   // the session holds no dashboard key, or a person revoked it (the server's sign-in or revoked-key halt): the band and pane already say
   // so (view phases); nothing more is told
   | { kind: 'signed-out' }
@@ -74,8 +76,8 @@ export function readWaitAnswer(r: any): WaitAnswer {
 export function classifyText(text: string): WaitAnswer {
   if (keyRevokedBy(text) !== null || text.includes(SIGNED_OUT_MARK)) return { kind: 'signed-out' }
   if (/unknown tool|no such tool|not found/i.test(text) && text.includes(RELAY_TOOL)) return { kind: 'old-server' }
-  // DX-4805: the auto mode classifier refused the plugin's own call: retrying cannot change that, so it ends the plan's relay saying why
+  // DX-4805 / DX-4982: the auto mode classifier refused the plugin's own call: the relay says why and keeps retrying, so it resumes by itself once the rule is added
   const refused = classifierRefusal(text)
-  if (refused !== null) return { kind: 'stopped', ...refused }
+  if (refused !== null) return { kind: 'refused', ...refused }
   return { kind: 'failed', message: cut(text) }
 }

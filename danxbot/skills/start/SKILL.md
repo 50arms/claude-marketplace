@@ -55,7 +55,7 @@ yourself.
 3. Only on a clear yes, add that one entry. Keep every other setting exactly as it was, add no
    other rule, and create the `permissions.allow` list only when it is missing. Never add it
    without the yes; on a no or no reply, change nothing and give the manual instruction.
-4. After adding it, say a session restart applies it.
+4. After adding it, say the plugin picks the rule up on its own within a few minutes (its plan band and event relay retry), and that a session restart is only needed if the band still says auto mode is blocking Danxbot after that.
 
 ### 3. Read the repo's origin
 

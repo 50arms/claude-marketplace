@@ -46,6 +46,8 @@ function toProblems(card: any): ProblemRow[] {
 
 // control flow only: thrown by `guarded` below, caught by loadPlan, never seen outside it
 class SignedOut extends Error {}
+// DX-4982: auto mode's classifier refused the plugin's own call (`Api.refusal`)
+class ClassifierBlocked extends Error {}
 class KeyRevoked extends Error {
   constructor(readonly by: string) {
     super(by)
@@ -53,12 +55,13 @@ class KeyRevoked extends Error {
 }
 
 // The whole load. A signed-out answer to ANY of its calls (the key can be dropped between two of them) ends it as the
-// `signed-out` view, and a key a person revoked as the `key-revoked` view (DX-4418), never as a generic error carrying the
+// `signed-out` view, a classifier refusal (DX-4982) as the `blocked` view, and a key a person revoked as the `key-revoked` view (DX-4418), never as a generic error carrying the
 // server's text. `resumePlan` is the caller's to fill.
 export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const guarded: Call = async (method, path, extra) => {
     const r = await call(method, path, extra)
     // revoked first: a revoked key's halt is a different text from the signed-out one, but the order says which wins
+    if (r.refusal !== undefined) throw new ClassifierBlocked()
     const by = outcomeRevokedBy(r)
     if (by !== null) throw new KeyRevoked(by)
     if (isSignedOut(r)) throw new SignedOut()
@@ -68,6 +71,7 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
     return await readPlan(guarded, refreshedAt)
   } catch (err) {
     if (err instanceof KeyRevoked) return { ...EMPTY, phase: 'key-revoked', revokedBy: err.by, refreshedAt }
+    if (err instanceof ClassifierBlocked) return { ...EMPTY, phase: 'blocked', refreshedAt }
     if (err instanceof SignedOut) return { ...EMPTY, phase: 'signed-out', refreshedAt }
     throw err
   }

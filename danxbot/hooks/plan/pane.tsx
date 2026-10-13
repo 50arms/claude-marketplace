@@ -9,7 +9,7 @@ import type { PanelModel } from './pacing-panel'
 import { pacingPane } from './pacing-panel-view'
 import { problemRow } from './problems'
 import { subagentSection } from './subagent-cards'
-import { DANGER, DISCONNECTING_TIP, DISCONNECT_GLYPH, DISCONNECT_TIP, DONUT_PANE_PX, NO_EVENT_STATUS, NO_IN_PROGRESS, PICKER_PLAN_NAME_MAX, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, SWITCH_GLYPH, SWITCH_TIP, WARNING, busyKey, cardUrl, planUrl } from './config'
+import { BLOCKED_LINE, DANGER, DISCONNECTING_TIP, DISCONNECT_GLYPH, DISCONNECT_TIP, DONUT_PANE_PX, NO_EVENT_STATUS, NO_IN_PROGRESS, PICKER_PLAN_NAME_MAX, KEY_REVOKED_LINE, SIGNED_OUT_LABEL, SIGNED_OUT_LINE, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, SWITCH_GLYPH, SWITCH_TIP, WARNING, busyKey, cardUrl, planUrl } from './config'
 import { bandLabel, cappedNote, cappedPlansNote, doneTotal, inProgressMore, planPercent, problemSplit } from './words'
 
 // Everything the pane reads, gathered by register.tsx from $.state (reads need `$`).
@@ -236,6 +236,15 @@ export function renderPane(E: any, hd: Handlers, m: PaneModel): any {
         ● {bandLabel(v)}
       </Text>,
       <Text>{KEY_REVOKED_LINE}</Text>,
+    )
+  }
+  // DX-4982: auto mode blocks the plugin's own calls: the cause and the fix, never the raw refusal. The plan the model connected, when known, heads it.
+  if (v.phase === 'blocked') {
+    return shell(
+      <Text key="blocked" color={WARNING} bold>
+        ● {bandLabel(v)}
+      </Text>,
+      <Text>{BLOCKED_LINE}</Text>,
     )
   }
   if (v.phase === 'error') {

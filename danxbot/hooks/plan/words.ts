@@ -1,5 +1,5 @@
 import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, keyRevokedLabel } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, BLOCKED_LABEL, keyRevokedLabel } from './config'
 
 export function age(iso: string, now: number): string {
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000))
@@ -56,6 +56,8 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   // DX-4418: a revoked key names who revoked it.
   if (v.phase === 'key-revoked') return keyRevokedLabel(v.revokedBy as string) // always set with the phase
+  // DX-4982: auto mode blocks the plugin's own calls: never Disconnected. The plan the model connected is named when known; the band's second line says the fix.
+  if (v.phase === 'blocked' && !v.connected) return BLOCKED_LABEL
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
   if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
   if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
@@ -112,6 +114,7 @@ export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' && !(v.connected && v.refreshedAt)) return null
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   if (v.phase === 'key-revoked') return KEY_REVOKED_FOOTER
+  if (v.phase === 'blocked' && !v.connected) return BLOCKED_LABEL
   return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND
 }
 
