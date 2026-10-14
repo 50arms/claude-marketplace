@@ -26,9 +26,9 @@ export const OLDER_DASHBOARD_LINE =
   'danxbot: this dashboard has no agent-pause route yet (GET /api/plan-sessions/me/pause answered 404), so reminders and keepalive prompts are not paused for you. ' +
   'It starts working once the dashboard is updated.'
 
-// The 404 a session the dashboard has never seen answers (it made no dashboard call yet, so it has no pause and nothing is held for it). Not the
-// older-dashboard 404: that one has no such text.
+// The 404 a session the dashboard has never seen answers (it made no dashboard call yet, so it has no pause and nothing is held for it). Matched by the
+// server's stable `message_id` (never its English sentence). Not the older-dashboard 404: that one carries no such id.
+export const UNREGISTERED_MESSAGE_ID = 'issuesDb.sessionNeverRegistered'
 export function isUnregisteredSession(body: unknown): boolean {
-  const b = body as { error?: unknown; message?: unknown } | null
-  return /has never registered/.test(String(b?.error ?? b?.message ?? ''))
+  return (body as { message_id?: unknown } | null)?.message_id === UNREGISTERED_MESSAGE_ID
 }

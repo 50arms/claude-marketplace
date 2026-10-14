@@ -778,7 +778,7 @@ describe('the keepalive while the session is in an agent pause', () => {
 
   test('a session the dashboard has never seen (404 has never registered) has no pause: the prompt goes and nothing is toasted about the dashboard', async ($, on) => {
     const d = dashboard(on)
-    d.world.reportReplies[`GET ${PAUSE_PATH}`] = { status: 404, body: { error: 'Session s1 has never registered' } }
+    d.world.reportReplies[`GET ${PAUSE_PATH}`] = { status: 404, body: { error: 'Session s1 has never registered', message_id: 'issuesDb.sessionNeverRegistered' } }
     await startSession($, d, 'desktop')
     await d.clock.advance(KEEPALIVE_IDLE_MS)
     expect(sent(d)).toEqual([PROMPT])

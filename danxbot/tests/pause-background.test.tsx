@@ -25,10 +25,15 @@ for (const surface of SURFACES) {
       expect(d.world.pause).toBeNull()
     })
 
-    test('the pause read itself is marked and keeps the pause; the agent pause calls keep it too', async ($, on) => {
+    test('the real Stop hook under an agent pause makes only marked calls and leaves the pause standing; the pause route itself never ends it', async ($, on) => {
+      answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
       d.world.pause = AGENT_PAUSE()
+      await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(d.world.pause).toMatchObject({ limit: 'agent' })
+      expect(d.unmarked).toEqual([])
       d.agentCall('PUT', PAUSE_PATH)
       expect(d.world.pause).toMatchObject({ limit: 'agent' })
     })

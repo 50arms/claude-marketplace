@@ -177,7 +177,8 @@ each reminder with "still waiting": pause.
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
    what would end the wait. The pause lasts at most `expires_in_minutes` (default 120, at most
    720) and ends by itself then; call again to renew it. A usage-limit pause already in force
-   refuses it (409): that one ends by itself when the limit resets.
+   refuses it (409): that one ends by itself when the limit resets. `reason` is at most 300
+   characters. A dispatched worker cannot pause (409): only a plan-connected operator session can.
 3. Then go idle. A pause is not a `block` (nothing on a card changes), not a stop, and not a
    place to hide: never pause while an unclaimed ready card exists, and never as a way to leave
    work undone.
@@ -190,8 +191,9 @@ calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or 
 silent.
 
 The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message.
-It arrives like a card comment from 50 Arms on an id such as `PAUSE-<n>`, but it is a notice (its
-text begins "This is a notice, not a card comment") and that id is not a card you can read. Over 30
+It arrives like a card comment from 50 Arms, attached to the card of the person's event that ended
+the pause, otherwise to the plan, otherwise to `SESSION`, but it is a notice (its text begins "This
+is a notice, not a card comment"), not a card comment. Over 30
 held events it lists them by card (one line per card with counts by kind) instead of one line each:
 read those cards for the detail. A long release continues in further frames ("Held while you were
 paused, continued"): read them all before acting. Act on it once, as on the
