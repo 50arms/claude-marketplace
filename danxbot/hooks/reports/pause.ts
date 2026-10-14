@@ -25,3 +25,10 @@ export function pauseOf(body: unknown, now: number): PauseRead {
 export const OLDER_DASHBOARD_LINE =
   'danxbot: this dashboard has no agent-pause route yet (GET /api/plan-sessions/me/pause answered 404), so reminders and keepalive prompts are not paused for you. ' +
   'It starts working once the dashboard is updated.'
+
+// The 404 a session the dashboard has never seen answers (it made no dashboard call yet, so it has no pause and nothing is held for it). Not the
+// older-dashboard 404: that one has no such text.
+export function isUnregisteredSession(body: unknown): boolean {
+  const b = body as { error?: unknown; message?: unknown } | null
+  return /has never registered/.test(String(b?.error ?? b?.message ?? ''))
+}

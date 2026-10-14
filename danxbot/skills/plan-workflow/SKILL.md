@@ -185,11 +185,16 @@ each reminder with "still waiting": pause.
 While paused, the dashboard holds its nudges, plan-event digests and agent or machine events for
 you, and the plugin's own ready-cards reminder and tab keepalive stay quiet. It ends when a person
 writes to you or acts on a card of yours (that message arrives at once), a critical usage-pacing
-stop, your next call that is not a pause call (`danxbot_api`, any dashboard tool), your own
-`DELETE /api/plan-sessions/me/pause`, the expiry, or your session going silent.
+stop, your own next dashboard call (the plugin's background reads do not count) other than the pause
+calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or your session going
+silent.
 
-A `Your pause ended (<cause>). N messages were held …` line is everything held, in one message
-(more than one frame when it is long: read them all before acting). Act on it once, as on the
+The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message.
+It arrives like a card comment from 50 Arms on an id such as `PAUSE-<n>`, but it is a notice (its
+text begins "This is a notice, not a card comment") and that id is not a card you can read. Over 30
+held events it lists them by card (one line per card with counts by kind) instead of one line each:
+read those cards for the detail. A long release continues in further frames ("Held while you were
+paused, continued"): read them all before acting. Act on it once, as on the
 messages themselves (a held nudge still means the cards it names are workable now). A pause that
 ended on your own call needs no reply. Read the plan before resuming, since the cause names what
 changed.

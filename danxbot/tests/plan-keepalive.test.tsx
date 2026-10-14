@@ -735,8 +735,54 @@ describe('the keepalive while the session is in an agent pause', () => {
     await startSession($, d, 'desktop')
     await d.clock.advance(KEEPALIVE_IDLE_MS * 4)
     expect(sent(d)).toEqual([])
-    expect(pauseReads(d)).toBe(1)
+    // a free read an idle period on, nothing else: at 25, 50, 75 and 100 minutes
+    expect(pauseReads(d)).toBe(4)
     expect(failures(d)).toEqual([])
+  })
+
+  test('a pause that ends with no turn (it expired with nothing held) gets the one tab check at the next period, then the keepalive carries on', async ($, on) => {
+    const d = dashboard(on)
+    d.world.pause = AGENT_PAUSE()
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS * 2)
+    expect(sent(d)).toEqual([])
+    d.world.pause = null
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  const NOT_QUIETING: [string, () => unknown][] = [
+    ['an agent pause whose expiry has passed', () => ({ ...AGENT_PAUSE(), until: new Date(CLOCK_START - 60_000).toISOString() })],
+    ['a usage-limit pause', () => ({ limit: 'five_hour', until: new Date(CLOCK_START + 3_600_000).toISOString() })],
+  ]
+  for (const [name, pause] of NOT_QUIETING) {
+    test(`${name} does not quiet the keepalive`, async ($, on) => {
+      const d = dashboard(on)
+      d.world.pause = pause()
+      await startSession($, d, 'desktop')
+      await d.clock.advance(KEEPALIVE_IDLE_MS)
+      expect(sent(d)).toEqual([PROMPT])
+    })
+  }
+
+  test('a signed-out session reads no pause and falls through to the ordinary attempt (which fails on the wording read, as it always did)', async ($, on) => {
+    const d = dashboard(on)
+    d.world.pause = AGENT_PAUSE()
+    await startSession($, d, 'desktop')
+    d.world.signedOut = 'lapsed'
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(sent(d)).toEqual([])
+    expect(failures(d)[0]).toContain('the wording was not read')
+    expect(failures(d).some(t => t.includes('the pause was not read'))).toBe(false)
+  })
+
+  test('a session the dashboard has never seen (404 has never registered) has no pause: the prompt goes and nothing is toasted about the dashboard', async ($, on) => {
+    const d = dashboard(on)
+    d.world.reportReplies[`GET ${PAUSE_PATH}`] = { status: 404, body: { error: 'Session s1 has never registered' } }
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(sent(d)).toEqual([PROMPT])
+    expect(d.toasts.filter((t: string) => t === OLDER_DASHBOARD_LINE)).toEqual([])
   })
 
   test('the turn that ends the pause has the session re-check its tab once; the keepalive is back after that turn', async ($, on) => {

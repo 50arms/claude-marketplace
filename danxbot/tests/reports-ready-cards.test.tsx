@@ -258,6 +258,15 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter(t => t === OLDER_DASHBOARD_LINE)).toHaveLength(1)
     })
 
+    test('a session the dashboard has never seen (404 has never registered) is not paused and is not told it has an older dashboard', async ($, on) => {
+      const d = await started($, on)
+      d.world.readyRows[BOARD] = [card()]
+      d.world.reportReplies[`GET ${PAUSE_PATH}`] = { status: 404, body: { error: 'Session s1 has never registered' } }
+      expect((await $.classic.Stop(STOP)).block).toBe(CARD_BLOCK)
+      await d.clock.settle()
+      expect(d.toasts.filter(t => t === OLDER_DASHBOARD_LINE)).toEqual([])
+    })
+
     test('a session not on a plan reads nothing and its stop is never blocked', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.readyRows[BOARD] = [card()]

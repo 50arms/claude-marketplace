@@ -83,7 +83,7 @@ import { BACKGROUND_WORK_PATH, countRunning, heartbeatCount } from './reports/ba
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
 import type { ReadyCard } from './reports/ready-cards'
-import { OLDER_DASHBOARD_LINE, PAUSE_PATH, pauseOf } from './reports/pause'
+import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
 import type { PauseRead } from './reports/pause'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
@@ -181,11 +181,13 @@ let liveQueue: Promise<void> = Promise.resolve()
 let agentListInFlight: { call: Promise<{ id: string; type: string; status: string }[]>; at: number } | null = null
 
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
-// x-danx-session-id header. Any rejection (including the engine's "no such server") is an error shown as one.
+// x-danx-session-id header. DX-4997 / DX-5033: EVERY call here is the plugin's background work, never the agent's own, so it carries
+// `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
+// the agent acting, which would end the agent's pause. The agent's own danxbot_api calls never pass through here. Any rejection (including the engine's "no such server") is an error shown as one.
 async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}): Promise<Api> {
   let res
   try {
-    res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra })
+    res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra, background: true })
   } catch (err: any) {
     const message = String(err?.message ?? err)
     // DX-4578: `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
@@ -1167,6 +1169,8 @@ async function keepaliveWake($: any, wait: KeepaliveWait): Promise<void> {
 async function readAgentPause($: any): Promise<PauseRead> {
   const r = await api($, 'GET', PAUSE_PATH)
   if (isNothingToCheck(r)) return { kind: 'nothing' }
+  // a session that has made no dashboard call yet is not registered: it has no pause, and this is not an older dashboard
+  if (r.status === 404 && isUnregisteredSession(r.body)) return { kind: 'free' }
   if (r.status === 404) {
     let first = false
     await update($, olderDashboardTold, cur => {
@@ -1193,7 +1197,8 @@ async function keepaliveAttempt($: any, epoch: number, deadline: number): Promis
   const endedAt = await $.clock.now()
   // a cancel (a turn began, the plan ended or moved) while the attempt ran: whatever it found is dropped, nothing is toasted or scheduled
   if (epoch !== keepaliveEpoch) return
-  if (fired.kind === 'sent' || fired.kind === 'paused') return
+  if (fired.kind === 'sent') return
+  if (fired.kind === 'paused') return waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_IDLE_MS, deadline: null }, endedAt)
   if (fired.kind === 'not-desktop') return startPeriod($, epoch, endedAt, endedAt)
   if (endedAt + KEEPALIVE_RETRY_MS > deadline) {
     $.ui.toast(`Plan tab keepalive gave up: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
@@ -1205,8 +1210,10 @@ async function keepaliveAttempt($: any, epoch: number, deadline: number): Promis
 }
 
 // DX-4997: a session in an agent pause is not prompted (each prompt is a paid turn at the session's whole context, and the dashboard holds its
-// messages anyway). Nothing is scheduled and `idleSince` is left as it is: the turn that ends the pause (the held messages, a person) finds the
-// period older than the app's timeout and has the session re-check its tab once (onTurnStart -> recheckTab), which is the whole of the check owed.
+// messages anyway). `idleSince` is left as it is, and the pause is read again an idle period on (a free read, no turn): the first attempt that finds
+// it over sends the one tab check, so a pause that ends with no turn (it expired with nothing held) is not left with the keepalive off. A turn that
+// ends the pause sooner (the held messages, a person) cancels that wait and finds the period older than the app's timeout, and has the session
+// re-check its tab once (onTurnStart -> recheckTab).
 // Answers null when the attempt goes on. Only a desktop session reads the pause: a terminal session has no tab to keep.
 async function firePaused($: any, epoch: number): Promise<Fired | null> {
   if (!(await read($, desktopHosted))) return null

@@ -550,6 +550,14 @@ export function dashboard(
   const contextReads: string[] = []
   // DX-4632: the arguments of each `restart_notice` call
   const restartCalls: unknown[] = []
+  // DX-4997 / DX-5033: the dashboard's rule for the agent pause. A `danxbot_api` call marked `background: true` (the plugin's own work) never ends it;
+  // an unmarked one (the agent's own call) does, except the route that manages the pause itself.
+  const serverPauseRule = (args: any) => {
+    const managesPause = args.path === '/api/plan-sessions/me/pause'
+    if (!managesPause && args.background !== true && (world.pause as { limit?: string } | null)?.limit === 'agent') world.pause = null
+  }
+  // DX-4997: every danxbot_api call the plugin made WITHOUT `background: true` (there must be none)
+  const unmarked: string[] = []
   // DX-4235: the fields every GET /api/issues row carries without being asked for (the issue resource's compact row)
   const ISSUE_ROW_FIELDS = ['id', 'type', 'title', 'status', 'parent_id', 'priority', 'created_at', 'updated_at', 'assigned_agent', 'content_hash']
   // DX-4235: the reports' calls and the ready-cards reads, in order, kept out of `calls` and `api` like the context reads (every suite that
@@ -593,6 +601,11 @@ export function dashboard(
   const pacingPath = (e: any, path: string) => e.server === 'plugin:danxbot:danx-dashboard' && e.tool === 'danxbot_api' && e.args.path === path
   on('mcp.call', async (_$: any, e: any) => {
     if (!world.bound) return unboundCall('$.mcp.call')
+    // DX-4997 / DX-5033: the dashboard's rule for the agent pause, applied to every danxbot_api call the plugin makes
+    if (e.server === SERVER && e.tool === 'danxbot_api') {
+      if (e.args.background !== true) unmarked.push(`${e.args.method} ${e.args.path}`)
+      serverPauseRule(e.args)
+    }
     if (pacingPath(e, '/api/pacing/line')) {
       pacingAttempts.n++
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
@@ -991,7 +1004,7 @@ export function dashboard(
   return { suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an
