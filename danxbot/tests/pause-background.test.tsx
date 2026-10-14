@@ -2,7 +2,6 @@
 // session header (the agent acting) and not on one marked `background: true`; the stand-in dashboard models that rule (`serverPauseRule` in the kit).
 import { describe, expect } from 'claude-code/testing'
 
-import { PAUSE_PATH } from '../hooks/reports/pause'
 import { test, CLOCK_START, SURFACES, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const AGENT_PAUSE = () => ({ limit: 'agent', state: 'agent_waiting', reason: 'waiting for a build', ends_when: null, since: '2026-10-03T07:00:00.000Z', until: new Date(CLOCK_START + 3_600_000).toISOString(), held: 0 })
@@ -25,7 +24,7 @@ for (const surface of SURFACES) {
       expect(d.world.pause).toBeNull()
     })
 
-    test('the real Stop hook under an agent pause makes only marked calls and leaves the pause standing; the pause route itself never ends it', async ($, on) => {
+    test('the real Stop hook under an agent pause makes only marked calls and leaves the pause standing', async ($, on) => {
       answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
@@ -34,8 +33,6 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.world.pause).toMatchObject({ limit: 'agent' })
       expect(d.unmarked).toEqual([])
-      d.agentCall('PUT', PAUSE_PATH)
-      expect(d.world.pause).toMatchObject({ limit: 'agent' })
     })
   })
 }

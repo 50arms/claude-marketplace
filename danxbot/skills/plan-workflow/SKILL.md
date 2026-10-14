@@ -178,7 +178,7 @@ each reminder with "still waiting": pause.
    what would end the wait. The pause lasts at most `expires_in_minutes` (default 120, at most
    720) and ends by itself then; call again to renew it. A usage-limit pause already in force
    refuses it (409): that one ends by itself when the limit resets. `reason` is at most 300
-   characters. A dispatched worker cannot pause (409): only a plan-connected operator session can.
+   characters. A dispatched worker cannot pause (409): only a registered non-worker session can.
 3. Then go idle. A pause is not a `block` (nothing on a card changes), not a stop, and not a
    place to hide: never pause while an unclaimed ready card exists, and never as a way to leave
    work undone.
