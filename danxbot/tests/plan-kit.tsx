@@ -21,6 +21,11 @@ const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringi
 // one, so a link built on a constant instead of the answer fails every test that checks a href.
 // DX-4234: the registry's effective text the fixture answers for an event (a distinct text per event, so a wrong event shows)
 export const EVENT_TEXT = (event: string) => `The ${event} text.`
+// DX-4993: a connected session's compaction is followed by the resume briefing in the same entry: here for the fixture's plan (PLAN-23 Danxbot plugin), DX-9 in
+// flight, no running sub-agent and a clean checkout of main. `TOLD(event)` is everything a session start of that event adds beside the time stamp.
+export const DEFAULT_BRIEFING = "[50 ARMS] Your conversation was just compacted. Resume from this briefing, then read your cards before acting. Your plan is PLAN-23 Danxbot plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed."
+export const TOLD = (event: string) => (event === 'after_compaction' ? `${EVENT_TEXT(event)}
+${DEFAULT_BRIEFING}` : EVENT_TEXT(event))
 // DX-4234: where the fixture's machine keeps the MCP server's connection record of a session (what makes a session locally known as plan-connected)
 export const HOME_DIR = '/home/u'
 export const RECORD_PATH = (sessionId: string) => `${HOME_DIR}/.config/danxbot/plan-sessions/${sessionId}.json`
@@ -328,6 +333,12 @@ export function dashboard(
     // DX-4997: what GET /api/plan-sessions/me/pause answers as `pause` (null, an agent pause, a usage pause)
     pause: null as unknown,
     reportReplies: {} as Record<string, { status?: number; body?: unknown; deny?: string; delayMs?: number }>,
+    // DX-4993: the context `$.session.usage()` answers (tokens now, the model's window): none by default, a session before its first response
+    context: {} as { tokens?: number; window?: number },
+    // DX-4993: files on the fixture's disk by path (the compaction control the relay writes), as `$.fs.exists` / `$.fs.read` see them
+    files: {} as Record<string, string>,
+    // DX-4993: what `git status --porcelain=v1 -b` prints in the session's directory (the resume briefing), or its exit code when it fails
+    gitStatus: { exitCode: 0, stdout: '## main...origin/main\n' } as { exitCode: number; stdout: string },
     // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
     rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
     // DX-4423: null while the session holds a key
@@ -901,8 +912,17 @@ export function dashboard(
   on('fs.exists', (_$: any, e: any) => {
     if (world.fsError !== undefined) return { deny: world.fsError } as any
     const path = e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
-    return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) } as any
+    return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) || path in world.files } as any
   })
+  // DX-4993: the compaction control file, the window the plugin arms, and the git status of the resume briefing
+  on('fs.read', (_$: any, e: any) => {
+    const path = e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
+    return (path in world.files ? { value: world.files[path] } : { deny: `ENOENT: no such file ${path}` }) as any
+  })
+  const envSets: { name: string; value: string | undefined }[] = []
+  on('env.set', (_$: any, e: any) => (envSets.push({ name: e.name, value: e.value }), { value: undefined }) as any)
+  on('session.cwd', () => ({ value: '/work/repo' }) as any)
+  on('process.run', (_$: any, e: any) => ({ value: { exitCode: world.gitStatus.exitCode, stdout: world.gitStatus.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as any)
   on('session.id', () => ({ value: world.sessionId }) as any)
   on('agent.list', async () => {
     agentLists.count++
@@ -955,7 +975,7 @@ export function dashboard(
     )
   })
   // DX-4336: what the harness knows of the account's windows
-  on('session.usage', () => (options.usageReadFails === undefined ? { value: { startedAt: 0, context: {}, rateLimits: world.rateLimits } } : { deny: options.usageReadFails }) as any)
+  on('session.usage', () => (options.usageReadFails === undefined ? { value: { startedAt: 0, context: world.context, rateLimits: world.rateLimits } } : { deny: options.usageReadFails }) as any)
   mock.env(on, { HOME: HOME_DIR, ...(options.entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: options.entrypoint }), ...(options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid }) })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)
@@ -1009,7 +1029,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
+  return { envSets, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
     }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }

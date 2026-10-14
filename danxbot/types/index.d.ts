@@ -302,6 +302,8 @@ declare module 'claude-code' {
       idleSince: number | null
       // DX-4997: the person was told, once, that this dashboard has no agent-pause route (a plugin newer than the dashboard).
       olderDashboardTold: boolean
+      // DX-4993: the auto-compact window the plugin armed on the session (the board's floor, tokens); null while it holds none. Kept by a reload of the hooks module, like the process's environment it lives in.
+      compactionArmed: number | null
       // DX-4235: the reports' memory (see ReportState).
       reports: ReportState
     }

@@ -5,6 +5,10 @@ import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRo
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
+import { briefingText, parseGitStatus } from './compaction/briefing'
+import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
+import { HELD_REASON, arming, controlPath, parseControlFile, verdict } from './compaction/control'
+import type { ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
@@ -138,6 +142,9 @@ const desktopHosted = atom({ plugin: 'danxbot', key: 'desktopHosted' } as const,
 const idleSince = atom({ plugin: 'danxbot', key: 'idleSince' } as const, null as number | null)
 // DX-4997: the person was told once that this dashboard has no agent-pause route (a plugin newer than the dashboard).
 const olderDashboardTold = atom({ plugin: 'danxbot', key: 'olderDashboardTold' } as const, false)
+// DX-4993: the auto-compact window this plugin armed on the session (the board's floor), null while it holds none. $.state because the window lives in
+// the process: a module reload keeps both, a new process starts without both.
+const compactionArmed = atom({ plugin: 'danxbot', key: 'compactionArmed' } as const, null as number | null)
 // DX-4235: the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], count: null, planId: null } as ReportState)
 
@@ -1917,7 +1924,9 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
       // DX-4235: no background-work snapshot survives a start, so the count is cleared; here, because classic.SessionStart cannot call the
       // dashboard and this is the first bound event after it that knows the session is on a plan
       await putBackgroundWork($, null, await $.clock.now())
-      return { line: await eventContext($, event), askRestart: false }
+      const line = await eventContext($, event)
+      // DX-4993: a compaction is followed by the resume briefing, in the same first turn as the registry's text
+      return { line: start.source === 'compact' ? [line, await compactionBriefing($)].filter(x => x !== null).join('\n') : line, askRestart: false }
     }
     if (plan.kind === 'failed') return fault(plan.reason)
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
@@ -1978,6 +1987,8 @@ async function onTurnComplete($: any, e: any, next: any) {
     if (prompts.length > 0) detach($, 'Telling the session', promptNotes($, prompts))
     // DX-3900: a sub-agent's end is not the session going idle
     await armKeepalive($, false)
+    // DX-4993: the first response of a session tells its window; the control may have changed during the turn
+    await syncCompactionWindow($)
   } else {
     // DX-4235: a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
@@ -1996,6 +2007,8 @@ async function onTurnStart($: any, e: any, next: any) {
   await update($, idleSince, () => null)
   if (keepalivePlan !== null && since !== null && now >= since + KEEPALIVE_GIVE_UP_MS) detach($, 'Plan tab re-check', recheckTab($))
   await update($, turn, () => turnStarted())
+  // DX-4993: the window is set before the turn's first model request
+  await syncCompactionWindow($)
   return next(e)
 }
 
@@ -2321,6 +2334,127 @@ async function onReportStopFailure($: any, e: any, next: any) {
   return r
 }
 
+// ---- DX-4993 (PLAN-42 rule R-4): an operator session is compacted only after its agent says ready ----------------------------------------------
+// The control is a local file the session's danx-dashboard MCP relay writes (hooks/compaction/control.ts has the shape and the reasoning). This block
+// does the two things the plugin owns: it sets the session's auto-compact window to the board's floor (`$.env.set`, verified live to take effect in the
+// running session), and it answers every automatic compaction proposal (`classic.PreCompact`) with a refusal until the agent said ready. A function
+// hook that throws lets the compaction through, so the gate catches everything and turns it into a refusal.
+
+// The last reason told to the person that the control file is unreadable; the same reason is told once.
+let compactionFaultTold: string | null = null
+// the git read of the resume briefing is a local status: it needs no longer than this
+const GIT_STATUS_TIMEOUT_MS = 5000
+
+async function compactionControl($: any): Promise<ControlFile> {
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+  if (home === undefined || home === null) return { kind: 'bad', reason: 'no home directory' }
+  const path = controlPath(String(home), await $.session.id())
+  if (!(await $.fs.exists(path))) return { kind: 'absent' }
+  return parseControlFile(await $.fs.read(path))
+}
+
+// The size of the context now and the session's real window (the model's), each null when the engine cannot say yet (before the first response).
+async function contextUsage($: any): Promise<{ tokens: number | null; window: number | null }> {
+  const context = (await $.session.usage())?.context
+  const count = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
+  return { tokens: count(context?.tokens), window: count(context?.window) }
+}
+
+// Arm, re-arm or take back the session's window (CLAUDE_CODE_AUTO_COMPACT_WINDOW, a literal because the engine lists the names a module writes) as the control says. Runs at the start and the end of every main-loop turn (onTurnStart, onTurnComplete): the window only matters
+// before a model request, and the control changes between turns (the board's switch, the model). Never throws: a failure is one line to the person.
+async function syncCompactionWindow($: any): Promise<void> {
+  try {
+    const file = await compactionControl($)
+    if (file.kind === 'bad') {
+      if (compactionFaultTold !== file.reason) $.ui.toast(`Compaction control unreadable (${file.reason}): automatic compaction stays held until it is fixed.`)
+      compactionFaultTold = file.reason
+      return
+    }
+    compactionFaultTold = null
+    const decision = arming(file, (await contextUsage($)).window)
+    const armed = await read($, compactionArmed)
+    if (decision.kind === 'set' && decision.floorTokens !== armed) {
+      await $.env.set('CLAUDE_CODE_AUTO_COMPACT_WINDOW', String(decision.floorTokens))
+      await update($, compactionArmed, () => decision.floorTokens)
+    } else if (decision.kind === 'unset' && armed !== null) {
+      await $.env.set('CLAUDE_CODE_AUTO_COMPACT_WINDOW')
+      await update($, compactionArmed, () => null)
+    }
+  } catch (err: any) {
+    $.ui.toast(`Compaction handshake could not set the session's window: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+  }
+}
+
+// The verdict for one proposal. A person's own /compact needs no reading at all. A session this plugin did not arm is not held. Every read that a
+// decision needs happens only for an automatic proposal on an armed session; whatever throws is a refusal.
+async function compactionVerdict($: any, e: any): Promise<Verdict> {
+  if (e.trigger === 'manual') return { pass: true, why: 'manual' }
+  try {
+    const armed = (await read($, compactionArmed)) !== null
+    const holding = armed && e.trigger === 'auto'
+    const usage = holding ? await contextUsage($) : { tokens: null, window: null }
+    const key = holding ? `compaction-used-release:${await $.session.id()}` : ''
+    const used = holding ? await $.store.get(key) : null
+    const v = verdict({
+      trigger: e.trigger,
+      armed,
+      tokens: usage.tokens,
+      windowTokens: usage.window,
+      file: holding ? await compactionControl($) : { kind: 'absent' },
+      usedReleaseId: typeof used === 'string' ? used : null,
+      nowMs: await $.clock.now(),
+    })
+    if (v.pass && v.why === 'released') {
+      // the release is spent the moment it lets a compaction through, before anything can ask again
+      await $.store.set(key, v.spend)
+      $.ui.toast('Compacting now: your agent said it is ready.')
+    } else if (v.pass && v.why === 'valve') {
+      $.ui.toast('Compacting now: the context reached the size where holding it would end the session.')
+    }
+    return v
+  } catch (err: any) {
+    return { pass: false, reason: `${HELD_REASON} (the gate failed closed: ${errMessage(err).slice(0, CALL_ERROR_MAX)})` }
+  }
+}
+
+async function onPreCompact($: any, e: any, next: any) {
+  const v = await compactionVerdict($, e)
+  let r: any
+  try {
+    r = await next(e)
+  } catch (err) {
+    if (v.pass) throw err
+    return { block: v.reason }
+  }
+  return v.pass ? r : { ...r, block: v.reason }
+}
+
+// The briefing's sources, each read on its own: one that cannot be read says so in the briefing and does not take the others with it.
+async function briefingSource<T>(readSource: () => Promise<T>): Promise<Source<T>> {
+  try {
+    return { ok: true, value: await readSource() }
+  } catch (err: any) {
+    return { ok: false, reason: errMessage(err) }
+  }
+}
+
+async function compactionBriefing($: any): Promise<string> {
+  const v = await read($, view)
+  const cards = await briefingSource<BriefingCard[]>(async () => v.inProgress.map(c => ({ id: c.id, title: c.title })))
+  const agents = await briefingSource<BriefingAgent[]>(async () => {
+    const listed: { id: string; type: string; description: string; status: string }[] = await $.agent.list()
+    return listed.filter(a => a.type !== 'teammate' && a.status === 'running').map(a => ({ id: a.id, type: a.type, description: a.description }))
+  })
+  const git = await briefingSource<GitState>(async () => {
+    const out = await $.process.run(['git', 'status', '--porcelain=v1', '-b'], { cwd: await $.session.cwd(), timeoutMs: GIT_STATUS_TIMEOUT_MS })
+    if (out.exitCode !== 0) throw new Error(`git status exited ${out.exitCode}`)
+    const state = parseGitStatus(out.stdout)
+    if (state === null) throw new Error('git status printed nothing readable')
+    return state
+  })
+  return briefingText({ plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, cards, agents, git })
+}
+
 export const register: Register = on => {
   on('session.start', onSessionStart)
   on('session.attach', onSessionAttach)
@@ -2332,6 +2466,8 @@ export const register: Register = on => {
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('turn.start', onTurnStart)
   on('turn.complete', onTurnComplete)
+  // DX-4993: an automatic compaction waits for the agent's ready (the window it is armed with follows the turns, see syncCompactionWindow)
+  on('classic.PreCompact', onPreCompact)
   on('session.measure', onMeasure)
   // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))

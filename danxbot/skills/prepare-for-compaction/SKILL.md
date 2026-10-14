@@ -6,7 +6,7 @@ description: 'The checklist to run right before a compaction or handoff. Load wh
 # Prepare for Compaction
 
 The mantra's zero-context rule, run as a checklist. Sub-agents keep running through a
-compaction, and nothing warns before one, so run this deliberately.
+compaction, and only a `[50 ARMS]` request warns before one, so run this deliberately.
 
 1. **Capture the tree now.** `git status` and `git diff --stat`: every modified and
    untracked path, captured, never reconstructed from memory.
@@ -21,3 +21,7 @@ compaction, and nothing warns before one, so run this deliberately.
    re-check which sub-agents are still running.
 6. **Say what compaction affects**, in the handoff: context is replaced by a summary; the
    tree, commits, pushes and running sub-agents carry on unchanged.
+7. **Say ready, only when 50 Arms asked.** A `[50 ARMS]` notice asking you to prepare is
+   answered by `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`, after
+   step 5. Until you do, nothing compacts. `409 compaction_not_requested` means you were not
+   asked: keep working. Your own `/compact`, or one the person types, needs no ready.
