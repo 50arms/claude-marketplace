@@ -2337,8 +2337,8 @@ async function onReportStopFailure($: any, e: any, next: any) {
 // ---- DX-4993 (PLAN-42 rule R-4): an operator session is compacted only after its agent says ready ----------------------------------------------
 // The control is a local file the session's danx-dashboard MCP relay writes (hooks/compaction/control.ts has the shape and the reasoning). This block
 // does the two things the plugin owns: it sets the session's auto-compact window to the board's floor (`$.env.set`, verified live to take effect in the
-// running session), and it answers every automatic compaction proposal (`classic.PreCompact`) with a refusal until the agent said ready. A function
-// hook that throws lets the compaction through, so the gate catches everything and turns it into a refusal.
+// running session), and it answers every automatic compaction proposal (`classic.PreCompact`) with a refusal until the agent said ready. It fails
+// OPEN: whatever it cannot establish lets Claude Code's own compaction through (a refusal with no way out ends the session), and says so once.
 
 // The last reason told to the person that the control file is unreadable; the same reason is told once.
 let compactionFaultTold: string | null = null
@@ -2350,13 +2350,14 @@ async function compactionControl($: any): Promise<ControlFile> {
   if (home === undefined || home === null) return { kind: 'bad', reason: 'no home directory' }
   const path = controlPath(String(home), await $.session.id())
   if (!(await $.fs.exists(path))) return { kind: 'absent' }
-  return parseControlFile(await $.fs.read(path))
+  return parseControlFile(await $.fs.read(path), String(await $.session.id()))
 }
 
-// The size of the context now, null when the engine cannot say yet (before the first response).
-async function contextTokens($: any): Promise<number | null> {
-  const tokens = (await $.session.usage())?.context?.tokens
-  return typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0 ? tokens : null
+// The size of the context now and the session's real window; each null when the engine cannot say yet (before the first response).
+async function contextReading($: any): Promise<{ tokens: number | null; window: number | null }> {
+  const context = (await $.session.usage())?.context
+  const count = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
+  return { tokens: count(context?.tokens), window: count(context?.window) }
 }
 
 // The store keeps one spent-release record per session ever held (DX-4993): the oldest past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
@@ -2376,12 +2377,10 @@ async function syncCompactionWindow($: any): Promise<void> {
   try {
     const file = await compactionControl($)
     if (file.kind === 'bad') {
-      if (compactionFaultTold !== file.reason) $.ui.toast(`Compaction control unreadable (${file.reason}): automatic compaction stays held until it is fixed.`)
+      if (compactionFaultTold !== file.reason) $.ui.toast(`Compaction control unreadable (${file.reason}): Claude Code's own automatic compaction applies until it is fixed.`)
       compactionFaultTold = file.reason
-      return
-    }
-    compactionFaultTold = null
-    const decision = arming(file)
+    } else compactionFaultTold = null
+    const decision = arming(file, (await contextReading($)).window)
     const armed = await read($, compactionArmed)
     if (decision.kind === 'set' && decision.floorTokens !== armed) {
       await $.env.set('CLAUDE_CODE_AUTO_COMPACT_WINDOW', String(decision.floorTokens))
@@ -2396,7 +2395,7 @@ async function syncCompactionWindow($: any): Promise<void> {
 }
 
 // The verdict for one proposal. A person's own /compact needs no reading at all. A session this plugin did not arm is not held. Every read that a
-// decision needs happens only for an automatic proposal on an armed session; whatever throws is a refusal.
+// decision needs happens only for an automatic proposal on an armed session; whatever throws lets the compaction through (fail open, hooks/compaction/control.ts).
 async function compactionVerdict($: any, e: any): Promise<Verdict> {
   if (e.trigger === 'manual') return { pass: true, why: 'manual' }
   try {
@@ -2404,10 +2403,12 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
     const holding = armed && e.trigger === 'auto'
     const key = holding ? usedReleaseKey(await $.session.id()) : ''
     const used = holding ? await $.store.get(key) : null
+    const reading = holding ? await contextReading($) : { tokens: null, window: null }
     const v = verdict({
       trigger: e.trigger,
       armed,
-      tokens: holding ? await contextTokens($) : null,
+      tokens: reading.tokens,
+      window: reading.window,
       file: holding ? await compactionControl($) : { kind: 'absent' },
       usedReleaseId: spentReleaseId(used),
       nowMs: await $.clock.now(),
@@ -2422,7 +2423,10 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
     }
     return v
   } catch (err: any) {
-    return { pass: false, reason: `${HELD_REASON} (the gate failed closed: ${errMessage(err).slice(0, CALL_ERROR_MAX)})` }
+    const told = `Compaction gate could not decide, so Claude Code's own automatic compaction applies: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
+    if (compactionFaultTold !== told) $.ui.toast(told)
+    compactionFaultTold = told
+    return { pass: true, why: 'unreadable' }
   }
 }
 
