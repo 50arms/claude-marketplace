@@ -4,14 +4,15 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
-import { GATE_MARGIN_TOKENS, HELD_REASON, arming, controlPath, parseControlFile, passAtTokens, verdict } from '../hooks/compaction/control'
+import { HELD_REASON, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, arming, controlPath, parseControlFile, staleUsedReleaseKeys, verdict } from '../hooks/compaction/control'
 import type { ControlFile, GateControl, GateInput } from '../hooks/compaction/control'
 import { CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
 const NOW = Date.parse('2026-10-14T12:00:00.000Z')
 const WINDOW = 1_000_000
-const PASS_AT = WINDOW - GATE_MARGIN_TOKENS
+// the pass-at size comes from the control file (50 Arms computes it); the plugin holds no margin of its own
+const PASS_AT = 907_000
 
 const gateControl = (over: Partial<GateControl> = {}): GateControl => ({ floorTokens: 250_000, passAtTokens: 907_000, releaseUntilMs: null, releaseId: null, ...over })
 const fileText = (control: GateControl | null, askedAt: string | null = null): string => JSON.stringify({ v: 1, control, askedAt })
@@ -34,26 +35,36 @@ describe('the control file (pure)', () => {
     expect(parseControlFile(JSON.stringify({ v: 2, control: null }))).toEqual({ kind: 'bad', reason: 'not a compaction file' })
     expect(parseControlFile(JSON.stringify({ v: 1 }))).toEqual({ kind: 'bad', reason: 'not a compaction file' })
     expect(parseControlFile(fileText({ ...gateControl(), floorTokens: 1.5 }))).toEqual({ kind: 'bad', reason: 'floorTokens and passAtTokens must be whole numbers' })
+    expect(parseControlFile(fileText({ ...gateControl(), passAtTokens: 250_000 }))).toEqual({ kind: 'bad', reason: 'passAtTokens must be above floorTokens' })
     expect(parseControlFile(fileText({ ...gateControl(), releaseUntilMs: 5 }))).toEqual({ kind: 'bad', reason: 'releaseUntilMs and releaseId are both set or both null' })
     expect(parseControlFile(fileText({ ...gateControl(), releaseUntilMs: 'x' as any, releaseId: 'r' }))).toEqual({ kind: 'bad', reason: 'releaseUntilMs must be a number or null' })
     expect(parseControlFile(fileText({ ...gateControl(), releaseUntilMs: 5, releaseId: '' }))).toEqual({ kind: 'bad', reason: 'releaseId must be a string or null' })
   })
 })
 
-describe('arming the window (pure)', () => {
-  test('a floor the session can hold is set; a session whose control is null is taken back; nothing known changes nothing', () => {
-    expect(arming(withControl(), WINDOW)).toEqual({ kind: 'set', floorTokens: 250_000 })
-    expect(arming({ kind: 'control', control: null }, WINDOW)).toEqual({ kind: 'unset' })
-    expect(arming({ kind: 'absent' }, WINDOW)).toEqual({ kind: 'keep' })
-    expect(arming({ kind: 'bad', reason: 'x' }, WINDOW)).toEqual({ kind: 'keep' })
-    expect(arming(withControl(), null)).toEqual({ kind: 'keep' })
-  })
+// The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
+// builds the same from the dashboard's frame, and danxbot's operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
+describe('the wire shape (pure)', () => {
+  const RELAY_FILE = '{"v":1,"control":{"floorTokens":250000,"passAtTokens":907000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z"},"askedAt":null}'
 
-  test("a floor at or above the size where the gate passes anything is never held in this session's own window", () => {
-    expect(arming(withControl({ floorTokens: PASS_AT - 1 }), WINDOW)).toEqual({ kind: 'set', floorTokens: PASS_AT - 1 })
-    expect(arming(withControl({ floorTokens: PASS_AT }), WINDOW)).toEqual({ kind: 'unset' })
-    // a 200k window cannot hold a 250k floor, whatever the board's capability table says
-    expect(arming(withControl(), 200_000)).toEqual({ kind: 'unset' })
+  test('the file the relay writes is read whole, and its pass-at size is the safety valve (the plugin has no margin of its own)', () => {
+    const file = parseControlFile(RELAY_FILE)
+    expect(file).toEqual({ kind: 'control', control: { floorTokens: 250_000, passAtTokens: 907_000, releaseUntilMs: 1_800_000_000_000, releaseId: '2026-10-14T11:59:00.000Z' } })
+    const input = { trigger: 'auto', armed: true, file, usedReleaseId: '2026-10-14T11:59:00.000Z', nowMs: 1_800_000_000_001 } as const
+    expect(verdict({ ...input, tokens: 906_999 })).toEqual({ pass: false, reason: HELD_REASON })
+    expect(verdict({ ...input, tokens: 907_000 })).toEqual({ pass: true, why: 'valve' })
+    // a different pass-at size moves the valve: nothing else decides it
+    const other = parseControlFile(RELAY_FILE.replace('907000', '500000'))
+    expect(verdict({ ...input, file: other, tokens: 500_000 })).toEqual({ pass: true, why: 'valve' })
+  })
+})
+
+describe('arming the window (pure)', () => {
+  test('a control is set at its floor; a null control or a file that is gone takes the window back; an unreadable file changes nothing', () => {
+    expect(arming(withControl())).toEqual({ kind: 'set', floorTokens: 250_000 })
+    expect(arming({ kind: 'control', control: null })).toEqual({ kind: 'unset' })
+    expect(arming({ kind: 'absent' })).toEqual({ kind: 'unset' })
+    expect(arming({ kind: 'bad', reason: 'x' })).toEqual({ kind: 'keep' })
   })
 })
 
@@ -62,7 +73,6 @@ describe('the gate (pure)', () => {
     trigger: 'auto',
     armed: true,
     tokens: 300_000,
-    windowTokens: WINDOW,
     file: withControl(),
     usedReleaseId: null,
     nowMs: NOW,
@@ -86,8 +96,11 @@ describe('the gate (pure)', () => {
 
   test('without the agent\'s ready an automatic proposal is held', () => {
     expect(verdict(input())).toEqual({ pass: false, reason: HELD_REASON })
-    expect(verdict(input({ file: { kind: 'control', control: null } }))).toEqual({ pass: false, reason: HELD_REASON })
-    expect(verdict(input({ file: { kind: 'absent' } }))).toEqual({ pass: false, reason: HELD_REASON })
+  })
+
+  test('a file with no control, or no file, holds nothing: there is no handshake to wait for', () => {
+    expect(verdict(input({ file: { kind: 'control', control: null } }))).toEqual({ pass: true, why: 'no-control' })
+    expect(verdict(input({ file: { kind: 'absent' }, tokens: null }))).toEqual({ pass: true, why: 'no-control' })
   })
 
   test('an unexpired release lets ONE proposal through, and a spent or expired one lets none', () => {
@@ -99,18 +112,23 @@ describe('the gate (pure)', () => {
     expect(verdict(input({ file: release({ releaseId: 'newer' }), usedReleaseId: '2026-10-14T11:59:00.000Z' }))).toMatchObject({ pass: true, spend: 'newer' })
   })
 
-  test("the safety valve passes at the size where holding would end the session, from the session's own window", () => {
+  test("the safety valve passes at the pass-at size the control names, whatever the session's window", () => {
     expect(verdict(input({ tokens: PASS_AT - 1 }))).toEqual({ pass: false, reason: HELD_REASON })
     expect(verdict(input({ tokens: PASS_AT }))).toEqual({ pass: true, why: 'valve' })
-    // a 200k window passes at 107k
-    expect(verdict(input({ tokens: 107_000, windowTokens: 200_000 }))).toEqual({ pass: true, why: 'valve' })
-    expect(passAtTokens(200_000)).toBe(107_000)
+    expect(verdict(input({ tokens: 107_000, file: withControl({ passAtTokens: 107_000 }) }))).toEqual({ pass: true, why: 'valve' })
   })
 
-  test('what the gate cannot establish is refused, never passed: an unknown size or window, an unreadable file', () => {
+  test('what the gate cannot establish is refused, never passed: an unknown size, an unreadable file', () => {
     expect(verdict(input({ tokens: null }))).toEqual({ pass: false, reason: `${HELD_REASON} (the context size is not known)` })
-    expect(verdict(input({ windowTokens: null }))).toEqual({ pass: false, reason: `${HELD_REASON} (the context size is not known)` })
     expect(verdict(input({ file: { kind: 'bad', reason: 'not JSON' } }))).toEqual({ pass: false, reason: `${HELD_REASON} (not JSON)` })
+  })
+})
+
+describe('spent releases in the store (pure)', () => {
+  test('the oldest past the keep count are stale', () => {
+    const entries = Array.from({ length: USED_RELEASE_KEEP + 2 }, (_, i) => ({ key: `k${i}`, at: i }))
+    expect(staleUsedReleaseKeys(entries)).toEqual(['k1', 'k0'])
+    expect(staleUsedReleaseKeys(entries.slice(2))).toEqual([])
   })
 })
 
@@ -199,13 +217,15 @@ for (const surface of SURFACES) {
       expect(windowSets(d)).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '250000' }])
     })
 
-    test('a floor the session cannot hold in its own window is not set', async ($, on) => {
+    test('a leftover file cannot arm a later session once the relay has pruned it: the window is taken back and nothing is held', async ($, on) => {
       const d = await started($, on)
-      d.world.context = { tokens: 50_000, window: 200_000 }
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
-      expect(windowSets(d)).toEqual([])
+      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
+      delete d.world.files[CONTROL_FILE]
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
+      await $.turn.complete(TURN)
+      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '250000' }, { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }])
     })
 
     test('an armed session holds an automatic proposal, and lets its own /compact through', async ($, on) => {
@@ -230,13 +250,28 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
-    test('a release is honoured once even when the module starts over (it is kept in the plugin store)', async ($, on) => {
+    test('a spent release is kept in the plugin store, with when it was spent, so it is not honoured again', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'ready-1' }))
       await $.classic.PreCompact(PRE('auto'))
-      expect(d.stored.get(`compaction-used-release:${OWN_SESSION.session_id}`)).toBe('ready-1')
+      expect(d.stored.get(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)).toEqual({ releaseId: 'ready-1', at: expect.any(Number) })
+    })
+
+    test("the store keeps the newest sessions' spent releases only", async ($, on) => {
+      const d = await started($, on)
+      for (let i = 0; i < USED_RELEASE_KEEP + 5; i++) d.stored.set(`${USED_RELEASE_PREFIX}old-${i}`, { releaseId: 'r', at: 100 + i })
+      d.stored.set('relayCursor:not-ours', { planId: 1, cursor: 'c', at: 1 })
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      await $.turn.start(START)
+      d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'ready-1' }))
+      await $.classic.PreCompact(PRE('auto'))
+      const kept = [...d.stored.keys()].filter(k => k.startsWith(USED_RELEASE_PREFIX))
+      expect(kept).toHaveLength(USED_RELEASE_KEEP)
+      expect(kept).toContain(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)
+      expect(kept).not.toContain(`${USED_RELEASE_PREFIX}old-0`)
+      expect(d.stored.has('relayCursor:not-ours')).toBe(true)
     })
 
     test('the safety valve passes an automatic proposal at the size where holding would end the session', async ($, on) => {

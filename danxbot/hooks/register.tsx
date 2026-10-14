@@ -7,7 +7,7 @@ import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { briefingText, parseGitStatus } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
-import { HELD_REASON, arming, controlPath, parseControlFile, verdict } from './compaction/control'
+import { HELD_REASON, USED_RELEASE_PREFIX, arming, controlPath, parseControlFile, spentReleaseId, staleUsedReleaseKeys, usedReleaseKey, verdict } from './compaction/control'
 import type { ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
@@ -2353,11 +2353,21 @@ async function compactionControl($: any): Promise<ControlFile> {
   return parseControlFile(await $.fs.read(path))
 }
 
-// The size of the context now and the session's real window (the model's), each null when the engine cannot say yet (before the first response).
-async function contextUsage($: any): Promise<{ tokens: number | null; window: number | null }> {
-  const context = (await $.session.usage())?.context
-  const count = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
-  return { tokens: count(context?.tokens), window: count(context?.window) }
+// The size of the context now, null when the engine cannot say yet (before the first response).
+async function contextTokens($: any): Promise<number | null> {
+  const tokens = (await $.session.usage())?.context?.tokens
+  return typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0 ? tokens : null
+}
+
+// The store keeps one spent-release record per session ever held (DX-4993): the oldest past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
+async function pruneUsedReleases($: any): Promise<void> {
+  const entries: { key: string; at: number }[] = []
+  for (const key of await $.store.keys()) {
+    if (!key.startsWith(USED_RELEASE_PREFIX)) continue
+    const rec: any = await $.store.get(key)
+    entries.push({ key, at: typeof rec?.at === 'number' ? rec.at : 0 })
+  }
+  for (const key of staleUsedReleaseKeys(entries)) await $.store.delete(key)
 }
 
 // Arm, re-arm or take back the session's window (CLAUDE_CODE_AUTO_COMPACT_WINDOW, a literal because the engine lists the names a module writes) as the control says. Runs at the start and the end of every main-loop turn (onTurnStart, onTurnComplete): the window only matters
@@ -2371,7 +2381,7 @@ async function syncCompactionWindow($: any): Promise<void> {
       return
     }
     compactionFaultTold = null
-    const decision = arming(file, (await contextUsage($)).window)
+    const decision = arming(file)
     const armed = await read($, compactionArmed)
     if (decision.kind === 'set' && decision.floorTokens !== armed) {
       await $.env.set('CLAUDE_CODE_AUTO_COMPACT_WINDOW', String(decision.floorTokens))
@@ -2392,21 +2402,20 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
   try {
     const armed = (await read($, compactionArmed)) !== null
     const holding = armed && e.trigger === 'auto'
-    const usage = holding ? await contextUsage($) : { tokens: null, window: null }
-    const key = holding ? `compaction-used-release:${await $.session.id()}` : ''
+    const key = holding ? usedReleaseKey(await $.session.id()) : ''
     const used = holding ? await $.store.get(key) : null
     const v = verdict({
       trigger: e.trigger,
       armed,
-      tokens: usage.tokens,
-      windowTokens: usage.window,
+      tokens: holding ? await contextTokens($) : null,
       file: holding ? await compactionControl($) : { kind: 'absent' },
-      usedReleaseId: typeof used === 'string' ? used : null,
+      usedReleaseId: spentReleaseId(used),
       nowMs: await $.clock.now(),
     })
     if (v.pass && v.why === 'released') {
       // the release is spent the moment it lets a compaction through, before anything can ask again
-      await $.store.set(key, v.spend)
+      await $.store.set(key, { releaseId: v.spend, at: await $.clock.now() })
+      await pruneUsedReleases($)
       $.ui.toast('Compacting now: your agent said it is ready.')
     } else if (v.pass && v.why === 'valve') {
       $.ui.toast('Compacting now: the context reached the size where holding it would end the session.')
