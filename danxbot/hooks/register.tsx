@@ -68,7 +68,7 @@ import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTE
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_PATH, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS, keepalivePrompt } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
-import { classifierRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
+import { classifierRefusal, isBackgroundRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
 import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
@@ -180,6 +180,23 @@ let liveQueue: Promise<void> = Promise.resolve()
 // queue behind it; an older one is given up (its late answer is dropped) and the check asks afresh.
 let agentListInFlight: { call: Promise<{ id: string; type: string; status: string }[]>; at: number } | null = null
 
+// DX-5066: a session that started on a danxbot MCP older than 0.1.300 keeps that server through a plugin update, and its strict schema refuses the
+// `background` key ("unrecognized_keys"). The first such refusal is retried at once without the key, and the session sends no more of it, so no
+// report is dropped; a current server never refuses, and every call keeps `background: true`. Reset at session start (a new process starts true).
+let backgroundRefused = false
+
+async function callDashboard($: any, args: { method: string; path: string; query?: object; body?: object; board?: string }): Promise<any> {
+  if (!backgroundRefused) {
+    try {
+      return await $.mcp.call(SERVER, 'danxbot_api', { ...args, background: true })
+    } catch (err: any) {
+      if (!isBackgroundRefusal(String(err?.message ?? err))) throw err
+      backgroundRefused = true
+    }
+  }
+  return $.mcp.call(SERVER, 'danxbot_api', args)
+}
+
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. DX-4997 / DX-5033: EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
@@ -187,7 +204,7 @@ let agentListInFlight: { call: Promise<{ id: string; type: string; status: strin
 async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}): Promise<Api> {
   let res
   try {
-    res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra, background: true })
+    res = await callDashboard($, { method, path, ...extra })
   } catch (err: any) {
     const message = String(err?.message ?? err)
     // DX-4578: `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
@@ -1504,6 +1521,7 @@ async function onSessionAttach($: any, e: any, next: any) {
 }
 
 async function onSessionStart($: any, e: any, next: any) {
+  backgroundRefused = false
   // DX-3900 / DX-4806: only ever raised here, never cleared. A reload of this module (the app's reload_plugins, paced to when the session is hidden) fires
   // session.start with the desktop detached (surfaces() is []); a flag set from that would forget the desktop hosts the session. `desktopHosted` is
   // $.state, which a reload keeps and a new process starts without.

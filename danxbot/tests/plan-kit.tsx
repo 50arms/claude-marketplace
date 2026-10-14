@@ -159,6 +159,8 @@ export function dashboard(
     dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky' | 'refused'
+    // DX-5066: a danxbot MCP older than 0.1.300, whose strict schema refuses the `background` key of every danxbot_api call
+    legacyMcp?: boolean
     // `sessionListenerAttached` on GET /api/plans: a state (any string, so an unknown one can be tried; default
     // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
     // as readCallerSessionOverlay does.
@@ -558,6 +560,8 @@ export function dashboard(
   }
   // DX-4997: every danxbot_api call the plugin made WITHOUT `background: true` (there must be none)
   const unmarked: string[] = []
+  // DX-5066: the calls a legacy MCP (`legacyMcp`) refused for carrying `background`
+  const backgroundRefusals: string[] = []
   // DX-4235: the fields every GET /api/issues row carries without being asked for (the issue resource's compact row)
   const ISSUE_ROW_FIELDS = ['id', 'type', 'title', 'status', 'parent_id', 'priority', 'created_at', 'updated_at', 'assigned_agent', 'content_hash']
   // DX-4235: the reports' calls and the ready-cards reads, in order, kept out of `calls` and `api` like the context reads (every suite that
@@ -603,7 +607,11 @@ export function dashboard(
     if (!world.bound) return unboundCall('$.mcp.call')
     // DX-4997 / DX-5033: the dashboard's rule for the agent pause, applied to every danxbot_api call the plugin makes
     if (e.server === SERVER && e.tool === 'danxbot_api') {
-      if (e.args.background !== true) unmarked.push(`${e.args.method} ${e.args.path}`)
+      if (options.legacyMcp === true && 'background' in e.args) {
+        backgroundRefusals.push(`${e.args.method} ${e.args.path}`)
+        return { deny: `MCP error -32602: Input validation error: Invalid arguments for tool danxbot_api: [ { "code": "unrecognized_keys", "keys": [ "background" ], "path": [], "message": "Unrecognized key(s) in object: 'background'" } ]` }
+      }
+      if (options.legacyMcp !== true && e.args.background !== true) unmarked.push(`${e.args.method} ${e.args.path}`)
       serverPauseRule(e.args)
     }
     if (pacingPath(e, '/api/pacing/line')) {
@@ -1004,7 +1012,7 @@ export function dashboard(
   return { suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an
