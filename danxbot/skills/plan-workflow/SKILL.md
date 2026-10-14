@@ -84,7 +84,8 @@ From the dashboard:
 
 - `has not made an MCP call …` → the dashboard's idle nudge: every card it names is workable by
   its recorded state. Work it, or record why you can't: a problem, `depends_on`/`conflict_on`, a
-  block with the real reason, or `rollback_pickup`. Never just ignore it.
+  block with the real reason, or `rollback_pickup`. Never just ignore it. It is not sent while
+  you are paused (see "Pausing"); it is held and arrives in the message that ends the pause.
 - `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
   record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
 - `commented on problem` → a follow-up, not an answer: reply with a comment on that problem.
@@ -94,6 +95,9 @@ From the dashboard:
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
 - a usage-pacing or auto-resume message from danxbot → follow it as written.
+- `Your pause ended (…)` (and `Held while you were paused, continued: …` after it) → the
+  dashboard's messages held during your pause, delivered once, oldest first, de-duplicated; see
+  "Pausing".
 
 From this session's event listener:
 
@@ -161,6 +165,35 @@ running system and the shipped code (the mantra's evidence rule):
   refuses it.
 - A plan is done only with both sign-offs; never report it done on card count alone.
 
+## Pausing
+
+Every message from the dashboard starts a paid turn at your whole context size. When you have
+nothing you can do (waiting on a person's answer, a long build, a dependency), do not answer
+each reminder with "still waiting": pause.
+
+1. Record why on the card first (a problem, a comment, `depends_on`, or the real block): the
+   pause is only the signal, never the record.
+2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, ends_when?,
+   expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
+   what would end the wait. The pause lasts at most `expires_in_minutes` (default 120, at most
+   720) and ends by itself then; call again to renew it. A usage-limit pause already in force
+   refuses it (409): that one ends by itself when the limit resets.
+3. Then go idle. A pause is not a `block` (nothing on a card changes), not a stop, and not a
+   place to hide: never pause while an unclaimed ready card exists, and never as a way to leave
+   work undone.
+
+While paused, the dashboard holds its nudges, plan-event digests and agent or machine events for
+you, and the plugin's own ready-cards reminder and tab keepalive stay quiet. It ends when a person
+writes to you or acts on a card of yours (that message arrives at once), a critical usage-pacing
+stop, your next call that is not a pause call (`danxbot_api`, any dashboard tool), your own
+`DELETE /api/plan-sessions/me/pause`, the expiry, or your session going silent.
+
+A `Your pause ended (<cause>). N messages were held …` line is everything held, in one message
+(more than one frame when it is long: read them all before acting). Act on it once, as on the
+messages themselves (a held nudge still means the cards it names are workable now). A pause that
+ended on your own call needs no reply. Read the plan before resuming, since the cause names what
+changed.
+
 ## Stopping
 
 Before stopping or saying "blocked", re-read every open plan card and write each real
@@ -201,7 +234,8 @@ time; trust those numbers, never your own estimate. Never retry a refused spawn.
   may be moved to haiku when the budget is nearly full.
 - **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.
   Let running agents finish; do only cheap work yourself (verify landed commits, card writes),
-  and record anything else on its card as paused.
+  and record anything else on its card as paused. (This is the account's usage pause, which
+  danxbot manages; it is not the pause you make yourself, described under "Pausing".)
 - **Critical**: every running agent makes a work-in-progress commit, pushes its branch, writes
   on its card where it is, and stops; do the same for your own state, note on each card what is
   paused, and go idle. A later message back to on pace means: read those cards and resume

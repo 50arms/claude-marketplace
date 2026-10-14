@@ -83,6 +83,8 @@ import { BACKGROUND_WORK_PATH, countRunning, heartbeatCount } from './reports/ba
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
 import type { ReadyCard } from './reports/ready-cards'
+import { OLDER_DASHBOARD_LINE, PAUSE_PATH, pauseOf } from './reports/pause'
+import type { PauseRead } from './reports/pause'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -134,6 +136,8 @@ const desktopHosted = atom({ plugin: 'danxbot', key: 'desktopHosted' } as const,
 // DX-4806: when the current keepalive idle period began (epoch ms): the last main-loop turn end, or the start of the plan connection. A reload
 // of the module arms from it, so the period is not restarted by the reload; null while no plan is followed.
 const idleSince = atom({ plugin: 'danxbot', key: 'idleSince' } as const, null as number | null)
+// DX-4997: the person was told once that this dashboard has no agent-pause route (a plugin newer than the dashboard).
+const olderDashboardTold = atom({ plugin: 'danxbot', key: 'olderDashboardTold' } as const, false)
 // DX-4235: the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], count: null, planId: null } as ReportState)
 
@@ -1157,8 +1161,27 @@ async function keepaliveWake($: any, wait: KeepaliveWait): Promise<void> {
   await keepaliveAttempt($, wait.epoch, deadline)
 }
 
+// DX-4997: whether the session is in an unexpired agent pause (reports/pause.ts), by the one read that does not end it. Signed out, revoked, or
+// on no plan: `nothing` (the caller has nothing to check either). A dashboard without the route (404) is free too, told once, never silently. Any other
+// failure is returned, and each caller decides what it costs (the Stop check allows the stop; the keepalive retries).
+async function readAgentPause($: any): Promise<PauseRead> {
+  const r = await api($, 'GET', PAUSE_PATH)
+  if (isNothingToCheck(r)) return { kind: 'nothing' }
+  if (r.status === 404) {
+    let first = false
+    await update($, olderDashboardTold, cur => {
+      first = !cur
+      return true
+    })
+    if (first) $.ui.toast(OLDER_DASHBOARD_LINE)
+    return { kind: 'free' }
+  }
+  if (!r.ok) return { kind: 'failed', reason: errText(r) }
+  return pauseOf(r.body, await $.clock.now())
+}
+
 // What an attempt came to: the prompt went in, the session is not on the desktop (nothing to keep open), or why it did not.
-type Fired = { kind: 'sent' } | { kind: 'not-desktop' } | { kind: 'failed'; why: string }
+type Fired = { kind: 'sent' } | { kind: 'paused' } | { kind: 'not-desktop' } | { kind: 'failed'; why: string }
 
 // One attempt: fire, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until `deadline`
 // (KEEPALIVE_GIVE_UP_MS after the period began, or the end of the retry window of an attempt that woke late), then it gives up, loudly,
@@ -1166,11 +1189,11 @@ type Fired = { kind: 'sent' } | { kind: 'not-desktop' } | { kind: 'failed'; why:
 // A prompt that went in is followed by its turn, whose end starts the next idle period. A session that is not on the desktop at this moment
 // (it may attach later; the surface is read now, not at session start) is looked at again an idle period on.
 async function keepaliveAttempt($: any, epoch: number, deadline: number): Promise<void> {
-  const fired = await fireKeepalive($, () => epoch === keepaliveEpoch)
+  const fired = await firePaused($, epoch) ?? (await fireKeepalive($, () => epoch === keepaliveEpoch))
   const endedAt = await $.clock.now()
   // a cancel (a turn began, the plan ended or moved) while the attempt ran: whatever it found is dropped, nothing is toasted or scheduled
   if (epoch !== keepaliveEpoch) return
-  if (fired.kind === 'sent') return
+  if (fired.kind === 'sent' || fired.kind === 'paused') return
   if (fired.kind === 'not-desktop') return startPeriod($, epoch, endedAt, endedAt)
   if (endedAt + KEEPALIVE_RETRY_MS > deadline) {
     $.ui.toast(`Plan tab keepalive gave up: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
@@ -1179,6 +1202,19 @@ async function keepaliveAttempt($: any, epoch: number, deadline: number): Promis
   }
   $.ui.toast(`Plan tab keepalive failed, trying again: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
   waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_RETRY_MS, deadline }, endedAt)
+}
+
+// DX-4997: a session in an agent pause is not prompted (each prompt is a paid turn at the session's whole context, and the dashboard holds its
+// messages anyway). Nothing is scheduled and `idleSince` is left as it is: the turn that ends the pause (the held messages, a person) finds the
+// period older than the app's timeout and has the session re-check its tab once (onTurnStart -> recheckTab), which is the whole of the check owed.
+// Answers null when the attempt goes on. Only a desktop session reads the pause: a terminal session has no tab to keep.
+async function firePaused($: any, epoch: number): Promise<Fired | null> {
+  if (!(await read($, desktopHosted))) return null
+  const pause = await readAgentPause($)
+  if (epoch !== keepaliveEpoch) return { kind: 'sent' }
+  if (pause.kind === 'paused') return { kind: 'paused' }
+  if (pause.kind === 'failed') return { kind: 'failed', why: `the pause was not read: ${pause.reason}` }
+  return null
 }
 
 // Ask the session to re-check its plan tab: the registry's wording plus the plan page. `isLive` is checked again before the prompt goes in.
@@ -2210,6 +2246,11 @@ function isNothingToCheck(r: Api): boolean {
 // DX-4534: the plan this session is on and its boards, then the plan's ToDo cards on each board (a plan can span boards; an issues read
 // names its board with the danxbot_api tool's own `board` argument).
 async function readReadyCards($: any): Promise<ReadyRead> {
+  // DX-4997: the pause is read FIRST, and while the session is in an agent pause neither card read is made: both carry the session header, so
+  // they would count as the agent's own dashboard call and end the pause (the pause read does not, DX-4951). The stop is allowed.
+  const pause = await readAgentPause($)
+  if (pause.kind === 'paused' || pause.kind === 'nothing') return { kind: 'quiet' }
+  if (pause.kind === 'failed') return { kind: 'failed', reason: pause.reason }
   const mine = await api($, 'GET', '/api/plans/mine')
   if (isNothingToCheck(mine)) return { kind: 'quiet' }
   if (!mine.ok) return { kind: 'failed', reason: errText(mine) }

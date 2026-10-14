@@ -5,6 +5,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS, keepalivePrompt } from '../hooks/relay/keepalive'
+import { OLDER_DASHBOARD_LINE, PAUSE_PATH } from '../hooks/reports/pause'
 import { test, CLOCK_START, DASHBOARD_URL, EVENT_TEXT, answerPlanConnect, dashboard, forceRefresh, leaveSession, startSession, viewSession } from './plan-kit'
 
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
@@ -720,5 +721,66 @@ describe('a computer that sleeps during the idle period (DX-4952)', () => {
       await started
       expect(sent(d)).toEqual([])
     })
+  })
+})
+
+// DX-4997: a session in an agent pause is not prompted; the tab is checked once, by the turn that ends the pause.
+describe('the keepalive while the session is in an agent pause', () => {
+  const AGENT_PAUSE = () => ({ limit: 'agent', state: 'agent_waiting', reason: 'waiting for a build', ends_when: null, since: '2026-10-13T20:00:00.000Z', until: new Date(CLOCK_START + 3 * 3_600_000).toISOString(), held: 0 })
+  const pauseReads = (d: any): number => d.reports.filter((r: any) => r.path === PAUSE_PATH).length
+
+  test('sends no prompt for as long as the pause lasts, however many periods pass, and schedules nothing more', async ($, on) => {
+    const d = dashboard(on)
+    d.world.pause = AGENT_PAUSE()
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS * 4)
+    expect(sent(d)).toEqual([])
+    expect(pauseReads(d)).toBe(1)
+    expect(failures(d)).toEqual([])
+  })
+
+  test('the turn that ends the pause has the session re-check its tab once; the keepalive is back after that turn', async ($, on) => {
+    const d = dashboard(on)
+    on('turn.complete', () => ({ text: 'done' }) as any)
+    d.world.pause = AGENT_PAUSE()
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS * 2)
+    expect(sent(d)).toEqual([])
+    d.world.pause = null
+    await $.turn.start(START)
+    await d.clock.settle()
+    expect(sent(d)).toEqual([PROMPT])
+    await $.turn.complete(TURN)
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(sent(d)).toEqual([PROMPT, PROMPT])
+  })
+
+  test('no pause: the prompt goes, after one pause read', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(sent(d)).toEqual([PROMPT])
+    expect(pauseReads(d)).toBe(1)
+  })
+
+  test('a pause read that fails is toasted and retried like any failed attempt, sending nothing', async ($, on) => {
+    const d = dashboard(on)
+    d.world.reportReplies[`GET ${PAUSE_PATH}`] = { status: 500, body: { error: 'pause boom' } }
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(sent(d)).toEqual([])
+    expect(failures(d)).toEqual(['Plan tab keepalive failed, trying again: the pause was not read: 500: pause boom'])
+    delete d.world.reportReplies[`GET ${PAUSE_PATH}`]
+    await d.clock.advance(KEEPALIVE_RETRY_MS)
+    expect(sent(d)).toEqual([PROMPT])
+  })
+
+  test('a dashboard without the pause route is not paused: the prompt goes, and the person is told once', async ($, on) => {
+    const d = dashboard(on)
+    d.world.reportReplies[`GET ${PAUSE_PATH}`] = { status: 404, body: { error: 'Not found' } }
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(sent(d)).toEqual([PROMPT])
+    expect(d.toasts.filter((t: string) => t === OLDER_DASHBOARD_LINE)).toHaveLength(1)
   })
 })

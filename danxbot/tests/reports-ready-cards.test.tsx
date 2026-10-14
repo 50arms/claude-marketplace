@@ -4,9 +4,10 @@
 // definition of "ready" (ported from danxbot's packages/danx-dashboard-mcp ready-cards tests).
 import { describe, expect } from 'claude-code/testing'
 
+import { OLDER_DASHBOARD_LINE, PAUSE_PATH, pauseOf } from '../hooks/reports/pause'
 import { READY_CARDS_DEADLINE_MS, blockReason, isReadyCard, parseCardRow, planOf, readyCardsOf } from '../hooks/reports/ready-cards'
 import type { CardRow } from '../hooks/reports/ready-cards'
-import { test, SURFACES, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
+import { test, CLOCK_START, SURFACES, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const BOARD = 'danxbot:danxbot-main'
 const GPT_BOARD = 'gpt-manager:gpt-manager-main'
@@ -67,6 +68,24 @@ describe('ready (pure)', () => {
   })
 })
 
+describe('the pause (pure)', () => {
+  const NOW = Date.parse('2026-10-13T21:00:00.000Z')
+  const agent = (until: string) => ({ pause: { limit: 'agent', state: 'agent_waiting', reason: 'r', until } })
+
+  test('only an unexpired agent pause is paused', () => {
+    expect(pauseOf(agent('2026-10-13T22:00:00.000Z'), NOW)).toEqual({ kind: 'paused', reason: 'r', until: Date.parse('2026-10-13T22:00:00.000Z') })
+    expect(pauseOf(agent('2026-10-13T21:00:00.000Z'), NOW)).toEqual({ kind: 'free' })
+    expect(pauseOf({ pause: null }, NOW)).toEqual({ kind: 'free' })
+    expect(pauseOf({ pause: { limit: 'weekly', until: '2026-10-14T00:00:00.000Z' } }, NOW)).toEqual({ kind: 'free' })
+  })
+
+  test('a malformed answer is a failure, never a guess', () => {
+    for (const body of [{}, null, { pause: 'x' }, agent('not a date'), { pause: { limit: 'agent', until: '2026-10-13T22:00:00.000Z' } }]) {
+      expect(pauseOf(body, NOW)).toMatchObject({ kind: 'failed', reason: expect.stringMatching(/^bad_response/) })
+    }
+  })
+})
+
 for (const surface of SURFACES) {
   describe(`the ready-cards check on ${surface}`, () => {
     async function started($: any, on: any, options: Parameters<typeof dashboard>[1] = {}) {
@@ -75,7 +94,8 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       return d
     }
-    const reads = (d: any) => d.reports.filter((r: any) => r.method === 'GET')
+    const reads = (d: any) => d.reports.filter((r: any) => r.method === 'GET' && r.path !== PAUSE_PATH)
+    const pauseReads = (d: any) => d.reports.filter((r: any) => r.path === PAUSE_PATH)
     const STOP = { stop_hook_active: false, background_tasks: [] } as any
 
     test('ready cards block the stop once, naming at most five and counting the rest', async ($, on) => {
@@ -139,7 +159,9 @@ for (const surface of SURFACES) {
         d.world.readyRows[BOARD] = [card()]
         expect((await $.classic.Stop(STOP)).block).toBeUndefined()
         await d.clock.settle()
-        expect(reads(d).map((r: any) => r.path)).toEqual(['/api/plans/mine'])
+        // the pause is read first and refused the same way: nothing else is read
+        expect(pauseReads(d)).toHaveLength(1)
+        expect(reads(d)).toEqual([])
         expect(d.toasts.filter(t => t.startsWith('danxbot ready-cards'))).toEqual([])
       })
     }
@@ -193,6 +215,47 @@ for (const surface of SURFACES) {
       expect((await $.classic.Stop(STOP)).block).toBeUndefined()
       await d.clock.settle()
       expect(d.toasts.filter(t => t.startsWith('danxbot ready-cards'))).toEqual([])
+    })
+
+    const AGENT_PAUSE = (until: string) => ({ limit: 'agent', state: 'agent_waiting', reason: 'waiting for a build', ends_when: null, since: '2026-10-13T20:00:00.000Z', until, held: 0 })
+    const CARD_BLOCK = blockReason([{ id: 'DX-1', title: 'A card' }])
+
+    test('a session in an unexpired agent pause is not reminded, and no card is read: only the pause read is made', async ($, on) => {
+      const d = await started($, on)
+      d.world.readyRows[BOARD] = [card()]
+      d.world.pause = AGENT_PAUSE(new Date(CLOCK_START + 3_600_000).toISOString())
+      expect((await $.classic.Stop(STOP)).block).toBeUndefined()
+      expect(pauseReads(d)).toHaveLength(1)
+      expect(reads(d)).toEqual([])
+    })
+
+    test('an agent pause past its expiry, a usage pause and no pause all leave the reminder on', async ($, on) => {
+      const d = await started($, on)
+      d.world.readyRows[BOARD] = [card()]
+      for (const pause of [null, AGENT_PAUSE(new Date(CLOCK_START - 60_000).toISOString()), { limit: 'five_hour', until: new Date(CLOCK_START + 3_600_000).toISOString() }]) {
+        d.world.pause = pause
+        expect((await $.classic.Stop(STOP)).block).toBe(CARD_BLOCK)
+      }
+    })
+
+    test('a pause read that fails allows the stop with one line naming why, and reads no card', async ($, on) => {
+      const d = await started($, on)
+      d.world.readyRows[BOARD] = [card()]
+      d.world.reportReplies[`GET ${PAUSE_PATH}`] = { status: 500, body: { error: 'pause boom' } }
+      expect((await $.classic.Stop(STOP)).block).toBeUndefined()
+      await d.clock.settle()
+      expect(reads(d)).toEqual([])
+      expect(d.toasts.filter(t => t.startsWith('danxbot ready-cards'))).toEqual(['danxbot ready-cards check skipped (the stop is allowed): 500: pause boom'])
+    })
+
+    test('a dashboard without the pause route behaves as not paused and says so once', async ($, on) => {
+      const d = await started($, on)
+      d.world.readyRows[BOARD] = [card()]
+      d.world.reportReplies[`GET ${PAUSE_PATH}`] = { status: 404, body: { error: 'Not found' } }
+      expect((await $.classic.Stop(STOP)).block).toBe(CARD_BLOCK)
+      expect((await $.classic.Stop(STOP)).block).toBe(CARD_BLOCK)
+      await d.clock.settle()
+      expect(d.toasts.filter(t => t === OLDER_DASHBOARD_LINE)).toHaveLength(1)
     })
 
     test('a session not on a plan reads nothing and its stop is never blocked', async ($, on) => {

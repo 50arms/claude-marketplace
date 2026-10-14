@@ -323,6 +323,8 @@ export function dashboard(
     // its body), the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock
     planBoards: ['danxbot:danxbot-main'] as string[],
     readyRows: {} as Record<string, unknown[]>,
+    // DX-4997: what GET /api/plan-sessions/me/pause answers as `pause` (null, an agent pause, a usage pause)
+    pause: null as unknown,
     reportReplies: {} as Record<string, { status?: number; body?: unknown; deny?: string; delayMs?: number }>,
     // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
     rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
@@ -558,11 +560,12 @@ export function dashboard(
   const isReportCall = (a: any) =>
     (a.method === 'POST' && a.path === '/api/plan-sessions/me/activity') ||
     (a.method === 'PUT' && a.path === '/api/plan-sessions/me/background-work') ||
-    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues'))
+    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause'))
   // ... answered as the real routes answer them (danxbot plan-sessions-routes, plans/mine, the issues list)
   function reportAnswer(a: any) {
     if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })
     if (a.path === '/api/plan-sessions/me/background-work') return reply({ count: a.body.count, applied: true })
+    if (a.path === '/api/plan-sessions/me/pause') return reply({ pause: world.pause })
     if (a.path === '/api/plans/mine') return world.planId === null ? reply({ error: 'session_not_connected' }, 409) : reply({ id: world.planId, boards: world.planBoards })
     // as the issues list answers: the always-returned row, plus only the fields the `fields` tree names
     const rows = (world.readyRows[a.board] ?? []).map((row: any) =>

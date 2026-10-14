@@ -300,6 +300,8 @@ declare module 'claude-code' {
       desktopHosted: boolean
       // DX-4806: when the keepalive's current idle period began (epoch ms); null while no plan is followed. A reload of the hooks module resumes from it.
       idleSince: number | null
+      // DX-4997: the person was told, once, that this dashboard has no agent-pause route (a plugin newer than the dashboard).
+      olderDashboardTold: boolean
       // DX-4235: the reports' memory (see ReportState).
       reports: ReportState
     }
