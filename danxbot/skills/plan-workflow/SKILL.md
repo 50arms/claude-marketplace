@@ -95,6 +95,13 @@ From the dashboard:
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
 - a usage-pacing or auto-resume message from danxbot → follow it as written.
+- `[50 ARMS] Your context is … tokens and 50 Arms has decided compacting it now pays` → a request to
+  prepare for a compaction. Load `danxbot:prepare-for-compaction` and run it now, then call
+  `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. Nothing compacts until you
+  have: the next compaction happens only after that call, once, and pauses you for about two
+  minutes; afterwards you get a briefing of your plan, cards and unpushed work to resume from. It ends
+  a pause you are in. It repeats while compacting still pays and you have not answered. `409
+  compaction_not_requested` → you were not asked (or already answered): keep working.
 - `Your pause ended (…)` (and `Held while you were paused, continued: …` after it) → the
   dashboard's messages held during your pause, delivered once, oldest first, de-duplicated; see
   "Pausing".
@@ -109,8 +116,8 @@ From this session's event listener:
 From the plugin's relay (delivery itself):
 
 - Delivery: an event reaches you as your next prompt, after the turn you are in ends (or at once
-  when you are idle). Only an urgent one, a critical usage-pacing stop or a revoked key, is added
-  to the running turn as a note, which you read with your next tool result.
+  when you are idle). Only an urgent one, a critical usage-pacing stop, a revoked key or a request to
+  prepare for a compaction, is added to the running turn as a note, which you read with your next tool result.
 - `(repeat of an urgent note already added to this conversation) …` → the turn ended before any
   tool result carried that note, so it comes once more as a prompt. You have seen it: act once,
   never twice.

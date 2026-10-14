@@ -4,7 +4,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine } from '../hooks/context/events'
-import { test, EVENT_TEXT, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, EVENT_TEXT, TOLD, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' }
 const EVENT_PATHS = (reads: string[]) => reads.filter(p => p.startsWith('/api/reminders/event/'))
@@ -24,7 +24,7 @@ for (const surface of SURFACES) {
       test(`a connected session's ${source} is told the ${event} text`, async ($, on) => {
         const d = await started($, on)
         const r = await firstPrompt($, source)
-        expect(r.startLines).toEqual([EVENT_TEXT(event)])
+        expect(r.startLines).toEqual([TOLD(event)])
         expect(EVENT_PATHS(d.contextReads)).toEqual([`/api/reminders/event/${event}`])
       })
     }

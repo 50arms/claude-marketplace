@@ -5,7 +5,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { eventFailureLine } from '../hooks/context/events'
-import { test, EVENT_TEXT, OTHER_SESSION, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, TOLD, OTHER_SESSION, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const SOURCES = ['startup', 'resume', 'fork', 'clear', 'compact'] as const
@@ -41,7 +41,7 @@ for (const surface of SURFACES) {
         const { d } = await unboundStart($, on, source)
         const first = await $.prompt.submit({ text: 'hello' })
         expect(first.context).toHaveLength(2)
-        expect(first.context![1]).toBe(EVENT_TEXT(event))
+        expect(first.context![1]).toBe(TOLD(event))
         expect(d.contextReads.filter((p: string) => p.startsWith('/api/reminders/event/'))).toEqual([`/api/reminders/event/${event}`])
         const second = await $.prompt.submit({ text: 'again' })
         expect(second.context).toHaveLength(1)
@@ -88,7 +88,7 @@ for (const surface of SURFACES) {
       // the engine compacts mid-turn (bound): SessionStart records it, no prompt is coming
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
-      expect(tool.context!.slice(1)).toEqual([EVENT_TEXT('after_compaction')])
+      expect(tool.context!.slice(1)).toEqual([TOLD('after_compaction')])
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
     })
@@ -101,7 +101,7 @@ for (const surface of SURFACES) {
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const sub = await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)
       expect(sub.context).toHaveLength(1)
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([EVENT_TEXT('after_compaction')])
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([TOLD('after_compaction')])
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
     })
 
@@ -114,7 +114,7 @@ for (const surface of SURFACES) {
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       expect((await $.tool.call({ tool: 'Bash', command: 'rm' } as any)).context).toBeUndefined()
       answer = { result: {}, text: 'done' }
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([EVENT_TEXT('after_compaction')])
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([TOLD('after_compaction')])
     })
 
     test('the start records the session id SessionStart was given, not the one $.session.id() answers', async ($, on) => {
