@@ -74,6 +74,16 @@ describe('the plugin ships the permission its own calls need', () => {
     expect((await ownServerCheck({ tool: 'Bash' }, nextOf('danxbot', 'ask'))).reason).toBe('engine')
     expect((await ownServerCheck({ tool: 'mcp__plugin_other_server__plan_events_wait' }, nextOf('danxbot', 'ask'))).reason).toBe('engine')
   })
+
+  // DX-5093: the three pane tools the plan-tab keepalive calls, raised by this plugin only
+  test("the keepalive's three Browser pane tools are allowed for a call the plugin raised, and no other pane tool is", async () => {
+    for (const tool of ['tabs_context', 'tabs_create', 'navigate']) {
+      expect((await ownServerCheck({ tool: `mcp__Claude_Browser__${tool}` }, nextOf('danxbot', 'ask'))).decision).toBe('allow')
+      expect((await ownServerCheck({ tool: `mcp__Claude_Browser__${tool}` }, nextOf('engine', 'ask'))).reason).toBe('engine')
+      expect((await ownServerCheck({ tool: `mcp__Claude_Browser__${tool}` }, nextOf('danxbot', 'deny'))).decision).toBe('deny')
+    }
+    expect((await ownServerCheck({ tool: 'mcp__Claude_Browser__computer' }, nextOf('danxbot', 'ask'))).reason).toBe('engine')
+  })
 })
 
 describe('raisedByPlugin (DX-4857)', () => {

@@ -1,4 +1,5 @@
 import { toolName } from '../plan/config'
+import { isBrowserKeepaliveTool } from './browser'
 
 // The plugin's name as the host stamps it on a call the plugin raised (`next.origin.plugin`).
 export const PLUGIN_NAME = 'danxbot'
@@ -41,11 +42,13 @@ export function isBackgroundRefusal(message: string): boolean {
 // DX-4805: the plugin ships the permission its own hooks need. Auto permission mode puts a hook-initiated `$.mcp.call` to its classifier like any
 // tool call, and a call the classifier gave no verdict on is refused, which left the relay dead. `tool.check` is the engine's permission decision,
 // asked before the mode's decider (the classifier) and last-word-wins, so an `allow` here settles a call THIS plugin raised on its OWN server's
-// tools. `next.origin` is set by the host from where the call came from: the model's own call to the same tool arrives as `engine` and keeps the
+// tools (and the Browser pane tools above). `next.origin` is set by the host from where the call came from: the model's own call to the same tool arrives as `engine` and keeps the
 // engine's verdict. The engine's verdict is asked first and a `deny` (a user's `permissions.deny`, an organization's rule) always stands; an
 // organization `ceiling` of `ask` also stands, as the ceiling is the most permissive verdict it lets the tool reach.
+// DX-5093: also the three tools of the desktop's Browser pane the plan-tab keepalive calls (relay/browser.ts): a look at the pane and the plan page opened
+// again, raised by this plugin only; the model's own call to the same tool keeps the engine's verdict.
 export function isOwnServerCall(origin: { plugin: string }, tool: string): boolean {
-  return origin.plugin === PLUGIN_NAME && tool.startsWith(toolName(''))
+  return origin.plugin === PLUGIN_NAME && (tool.startsWith(toolName('')) || isBrowserKeepaliveTool(tool))
 }
 
 type CheckInput = { tool: string; ceiling?: string }

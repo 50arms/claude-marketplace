@@ -306,6 +306,18 @@ export function dashboard(
     // DX-4686: every `$.agent.list()` call waits on its OWN release (`agentListCalls[i].release()`), answering `world.agents` as they stand then,
     // so a test can answer one call while another stays out
     agentListHoldEach: false,
+    // DX-5093: the desktop's Browser pane server (`Claude_Browser`) as the plan-tab keepalive reaches it: whether the session has the server, whether the
+    // pane is open, the origins of its tabs, the failures of each tool (the text of an `isError` answer), how long `tabs_context` takes, and the calls made
+    // (`tabs_context`, `tabs_create`, `navigate <url> <tabId|->`). Default: the pane holds a tab on the dashboard's site, so a look changes nothing.
+    browser: {
+      present: true,
+      open: true,
+      tabs: [new URL(DASHBOARD_URL).origin] as string[],
+      errors: {} as Partial<Record<'tabs_context' | 'tabs_create' | 'navigate', string>>,
+      rejects: undefined as string | undefined,
+      delayMs: 0,
+      calls: [] as string[],
+    },
     // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
     tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
@@ -614,6 +626,33 @@ export function dashboard(
   const pacingPath = (e: any, path: string) => e.server === 'plugin:danxbot:danx-dashboard' && e.tool === 'danxbot_api' && e.args.path === path
   on('mcp.call', async (_$: any, e: any) => {
     if (!world.bound) return unboundCall('$.mcp.call')
+    // DX-5093: the Browser pane's server, as the real one answers (tabs_context: `{browserOpen, tabs: [{tabId, origin, isActive}]}`; tabs_create: `{serverId,
+    // tabId, reused, type}`)
+    if (e.server === 'Claude_Browser') {
+      const browser = world.browser
+      if (!browser.present) return { deny: `$.mcp.call: no connected MCP tool "${e.tool}" on a server named "Claude_Browser"` }
+      if (browser.rejects !== undefined) return { deny: browser.rejects }
+      if (browser.delayMs > 0) await clock.sleep(browser.delayMs)
+      const failed = browser.errors[e.tool as 'tabs_context']
+      if (e.tool === 'tabs_context') {
+        browser.calls.push('tabs_context')
+        if (failed !== undefined) return { value: { content: [{ type: 'text', text: failed }], isError: true } }
+        return { value: text({ browserOpen: browser.open, tabs: browser.open ? browser.tabs.map((origin, i) => ({ tabId: `tab-${i}`, origin, isActive: i === 0 })) : [] }) }
+      }
+      if (e.tool === 'tabs_create') {
+        browser.calls.push('tabs_create')
+        if (failed !== undefined) return { value: { content: [{ type: 'text', text: failed }], isError: true } }
+        return { value: text({ serverId: 'preview-local_x', tabId: `tab-${browser.tabs.length}`, reused: false, type: 'browser' }) }
+      }
+      if (e.tool === 'navigate') {
+        browser.calls.push(`navigate ${e.args.url} ${e.args.tabId ?? '-'}`)
+        if (failed !== undefined) return { value: { content: [{ type: 'text', text: failed }], isError: true } }
+        browser.open = true
+        browser.tabs.push(new URL(e.args.url).origin)
+        return { value: { content: [{ type: 'text', text: `Navigated to ${e.args.url}` }], isError: false } }
+      }
+      return { deny: `unknown Browser tool ${e.tool}` }
+    }
     // DX-4997 / DX-5033: the dashboard's rule for the agent pause, applied to every danxbot_api call the plugin makes
     if (e.server === SERVER && e.tool === 'danxbot_api') {
       if (options.legacyMcp === true && 'background' in e.args) {

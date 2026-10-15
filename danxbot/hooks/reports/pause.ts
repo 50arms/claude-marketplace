@@ -1,6 +1,6 @@
 // DX-4997 / DX-4951: the agent pause, as the plugin's hooks read it. A session with nothing it can do tells 50 Arms so (`PUT` this path); while the pause
-// stands, the dashboard holds the machine's messages, so a hook that would cost the session a paid turn (the ready-cards Stop reminder, the plan-tab
-// keepalive) stays quiet. Pure: register.tsx makes the read and asks these functions what the answer means.
+// stands, the dashboard holds the machine's messages, so a hook that would cost the session a paid turn (the ready-cards Stop reminder) stays quiet.
+// (DX-5093: the plan-tab keepalive costs no turn any more, so it ignores the pause.) Pure: register.tsx makes the read and asks these functions what the answer means.
 
 // `GET` answers `{pause}`: null, the session's agent pause, or a usage-limit pause. The read stamps nothing and ends nothing: it is the ONE
 // pause-neutral read (every other call carrying the session header to a card or plan route is the agent's own call and ends its pause).
@@ -23,7 +23,7 @@ export function pauseOf(body: unknown, now: number): PauseRead {
 
 // A dashboard older than this plugin has no pause route (404). The hooks then behave as "not paused", and the person is told once.
 export const OLDER_DASHBOARD_LINE =
-  'danxbot: this dashboard has no agent-pause route yet (GET /api/plan-sessions/me/pause answered 404), so reminders and keepalive prompts are not paused for you. ' +
+  'danxbot: this dashboard has no agent-pause route yet (GET /api/plan-sessions/me/pause answered 404), so reminders are not paused for you. ' +
   'It starts working once the dashboard is updated.'
 
 // The 404 a session the dashboard has never seen answers (it made no dashboard call yet, so it has no pause and nothing is held for it). Matched by the

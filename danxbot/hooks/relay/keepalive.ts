@@ -1,10 +1,8 @@
-import { eventPath } from '../context/events'
-import { relayLine } from './delivery'
-
 // DX-3900: the plan-tab keepalive. The desktop app disconnects a session's preview (its in-app browser pane) after 1800 s with no turn
 // (main.log: `[WarmLifecycle:preview] Starting idle timeout ...: 1800s` at every turn end, `Idle timeout reached, disconnecting` 30 minutes
 // later). A plan-connected desktop session that sits idle past that loses the tab the operator follows it through, so after
-// KEEPALIVE_IDLE_MS without a turn the module submits one prompt that has the session re-check the tab; its turn restarts the app's timer.
+// KEEPALIVE_IDLE_MS without a turn the module looks at the Browser pane itself and opens the plan page's tab again when it is missing
+// (DX-5093: a hook reaches the pane's server with `$.mcp.call`, hooks/relay/browser.ts; it used to submit a paid model turn for it).
 // 25 minutes: five minutes inside the app's 30, for the turn's own length and the clock's drift.
 export const KEEPALIVE_IDLE_MS = 25 * 60_000
 
@@ -23,8 +21,6 @@ export const KEEPALIVE_RETRY_WINDOW_MS = KEEPALIVE_GIVE_UP_MS - KEEPALIVE_IDLE_M
 // tab. The keepalive waits in slices of at most this long and reads the wall clock after each, so a wake is noticed within one slice.
 export const KEEPALIVE_WAKE_CHECK_MS = 30_000
 
-// The registry event whose effective text is the wording (overridable per plan like the other event texts).
-export const KEEPALIVE_PATH = eventPath('tab_keepalive')
-
-// The prompt: the marker (the model knows it as a plan event), the registry's wording, and the plan page the wording refers to.
-export const keepalivePrompt = (text: string, planUrl: string) => relayLine(`${text} Plan page: ${planUrl}`)
+// DX-5093: a look at the pane costs no model turn, so once the first one is made the idle session is looked at again this often: a tab the app
+// closes at its 30 minutes is open again within this long, whether or not a call to the pane counts as use to the app's timer (UNVERIFIED live).
+export const KEEPALIVE_CHECK_MS = 5 * 60_000

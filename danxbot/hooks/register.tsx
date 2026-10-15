@@ -69,7 +69,8 @@ import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots,
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
-import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_PATH, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS, keepalivePrompt } from './relay/keepalive'
+import { BROWSER_SERVER, createdTabId, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
+import { KEEPALIVE_CHECK_MS, KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { classifierRefusal, isBackgroundRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
@@ -1188,7 +1189,7 @@ async function keepaliveWake($: any, wait: KeepaliveWait): Promise<void> {
 
 // DX-4997: whether the session is in an unexpired agent pause (reports/pause.ts), by the one read that does not end it. Signed out, revoked, or
 // on no plan: `nothing` (the caller has nothing to check either). A dashboard without the route (404) is free too, told once, never silently. Any other
-// failure is returned, and each caller decides what it costs (the Stop check allows the stop; the keepalive retries).
+// failure is returned, and the Stop check allows the stop.
 async function readAgentPause($: any): Promise<PauseRead> {
   const r = await api($, 'GET', PAUSE_PATH)
   if (isNothingToCheck(r)) return { kind: 'nothing' }
@@ -1207,22 +1208,22 @@ async function readAgentPause($: any): Promise<PauseRead> {
   return pauseOf(r.body, await $.clock.now())
 }
 
-// What an attempt came to: the prompt went in, the session is not on the desktop (nothing to keep open), or why it did not.
-type Fired = { kind: 'sent' } | { kind: 'paused' } | { kind: 'not-desktop' } | { kind: 'failed'; why: string }
+// What an attempt came to: the pane holds the plan page's tab (it was there, or has been opened again), the session is not on the desktop (nothing to
+// keep open), the desktop has no Browser pane server in this session (nothing to look at), or why it failed.
+type Fired = { kind: 'checked' } | { kind: 'not-desktop' } | { kind: 'no-browser' } | { kind: 'failed'; why: string }
 
-// One attempt: fire, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until `deadline`
-// (KEEPALIVE_GIVE_UP_MS after the period began, or the end of the retry window of an attempt that woke late), then it gives up, loudly,
-// and starts the next period.
-// A prompt that went in is followed by its turn, whose end starts the next idle period. A session that is not on the desktop at this moment
-// (it may attach later; the surface is read now, not at session start) is looked at again an idle period on.
+// One attempt: look at the pane, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until `deadline`
+// (KEEPALIVE_GIVE_UP_MS after the period began, or the end of the retry window of an attempt that woke late), then it gives up, loudly, and starts the next period.
+// DX-5093: a look costs no model turn, so a session whose tab is held (or opened again) is looked at again KEEPALIVE_CHECK_MS on, for as long as it is idle;
+// a session that is not on the desktop at this moment (it may attach later; the surface is read now, not at session start) or has no Browser pane
+// server (the app may add it later) is looked at again an idle period on.
 async function keepaliveAttempt($: any, epoch: number, deadline: number): Promise<void> {
-  const fired = await firePaused($, epoch) ?? (await fireKeepalive($, () => epoch === keepaliveEpoch))
+  const fired = await fireKeepalive($, () => epoch === keepaliveEpoch)
   const endedAt = await $.clock.now()
   // a cancel (a turn began, the plan ended or moved) while the attempt ran: whatever it found is dropped, nothing is toasted or scheduled
   if (epoch !== keepaliveEpoch) return
-  if (fired.kind === 'sent') return
-  if (fired.kind === 'paused') return waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_IDLE_MS, deadline: null }, endedAt)
-  if (fired.kind === 'not-desktop') return startPeriod($, epoch, endedAt, endedAt)
+  if (fired.kind === 'checked') return waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_CHECK_MS, deadline: null }, endedAt)
+  if (fired.kind === 'not-desktop' || fired.kind === 'no-browser') return startPeriod($, epoch, endedAt, endedAt)
   if (endedAt + KEEPALIVE_RETRY_MS > deadline) {
     $.ui.toast(`Plan tab keepalive gave up: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
     // DX-4806: a give-up ends this period only; the next is started here, not left to a turn end that an idle session never has
@@ -1232,49 +1233,51 @@ async function keepaliveAttempt($: any, epoch: number, deadline: number): Promis
   waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_RETRY_MS, deadline }, endedAt)
 }
 
-// DX-4997: a session in an agent pause is not prompted (each prompt is a paid turn at the session's whole context, and the dashboard holds its
-// messages anyway). `idleSince` is left as it is, and the pause is read again an idle period on (a free read, no turn): the first attempt that finds
-// it over sends the one tab check, so a pause that ends with no turn (it expired with nothing held) is not left with the keepalive off. A turn that
-// ends the pause sooner (the held messages, a person) cancels that wait and finds the period older than the app's timeout, and has the session
-// re-check its tab once (onTurnStart -> recheckTab).
-// Answers null when the attempt goes on. Only a desktop session reads the pause: a terminal session has no tab to keep.
-async function firePaused($: any, epoch: number): Promise<Fired | null> {
-  if (!(await read($, desktopHosted))) return null
-  const pause = await readAgentPause($)
-  if (epoch !== keepaliveEpoch) return { kind: 'sent' }
-  if (pause.kind === 'paused') return { kind: 'paused' }
-  if (pause.kind === 'failed') return { kind: 'failed', why: `the pause was not read: ${pause.reason}` }
-  return null
+// DX-5093: one call to the Browser pane's server, through the engine's own connection (relay/browser.ts says why a hook can). null: the session has no
+// such server (the engine's own words); a rejection otherwise (a refused or timed-out call) is the caller's failure.
+async function browserCall($: any, tool: BrowserTool, args: Record<string, unknown>): Promise<BrowserResult | null> {
+  try {
+    return (await $.mcp.call(BROWSER_SERVER, tool, args)) as BrowserResult
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/no connected MCP tool/.test(message)) return null
+    throw new Error(`${tool}: ${message}`)
+  }
 }
 
-// Ask the session to re-check its plan tab: the registry's wording plus the plan page. `isLive` is checked again before the prompt goes in.
-// The period is answered before the prompt is submitted (`idleSince` cleared, put back if the prompt is not taken): the engine may raise the
-// prompt's turn.start before the submit resolves, and that turn must not take the period for a stale one (onTurnStart).
+// Looks at the Browser pane and opens the plan page's tab again when it is missing, with no model turn (DX-5093). `isLive` is checked again before
+// the pane is changed. A closed pane is opened by `navigate` itself; an open pane without the tab gets a background tab of its own, so a page the
+// person is reading is never navigated away.
 async function fireKeepalive($: any, isLive: () => boolean): Promise<Fired> {
   if (!(await read($, desktopHosted))) return { kind: 'not-desktop' }
   const plan = (await read($, view)).connected
   // the page named is the one the view holds: a move is followed by a view refresh at once, and the arm that came with the move restarts the period
   if (plan === null) return { kind: 'failed', why: 'the connected plan is not loaded' }
-  const told = eventText(await api($, 'GET', KEEPALIVE_PATH))
-  if (told.kind !== 'text') return { kind: 'failed', why: `the wording was not read: ${told.kind === 'failed' ? told.reason : 'no text'}` }
-  if (!isLive()) return { kind: 'sent' }
-  const was = await read($, idleSince)
-  // DX-4952: the clear is decided where the write is made. A turn start that cancelled this attempt reads `idleSince` to see whether the app
-  // already closed the tab, and finds the stale value only if the attempt has not cleared it: a clear made after that cancel would leave the
-  // turn start nothing to re-check and the attempt, cancelled, would send nothing. A cancel that lands between the updater and the write (a write
-  // of the same key by the turn start) makes this write conflict, and the updater runs again and sees the cancel.
-  let answered = false
-  await update($, idleSince, cur => {
-    answered = isLive()
-    return answered ? null : cur
-  })
-  if (!answered) return { kind: 'sent' }
-  const failure = await submitEvent($, keepalivePrompt(told.text, planUrl(plan)))
-  if (failure === null) return { kind: 'sent' }
-  // DX-4952: put back only while this attempt is still the one answering. After a sign-out, a plan move or a plan disconnect the old value is
-  // another plan's, and a newer period (`cur`) is never replaced by it
-  if (isLive()) await update($, idleSince, cur => cur ?? was)
-  return { kind: 'failed', why: `the prompt was not taken: ${failure}` }
+  const page = planUrl(plan)
+  try {
+    const looked = await browserCall($, 'tabs_context', {})
+    if (looked === null) return { kind: 'no-browser' }
+    const pane = paneState(looked)
+    if (pane.kind === 'unreadable') return { kind: 'failed', why: pane.why }
+    if (pane.kind === 'open' && holdsPlanTab(pane, page)) return { kind: 'checked' }
+    if (!isLive()) return { kind: 'checked' }
+    let tabId: string | undefined
+    if (pane.kind === 'open') {
+      const created = await browserCall($, 'tabs_create', {})
+      if (created === null) return { kind: 'no-browser' }
+      const failure = failureOf('tabs_create', created)
+      if (failure !== null) return { kind: 'failed', why: failure }
+      const id = createdTabId(created)
+      if (id === null) return { kind: 'failed', why: 'tabs_create named no tab' }
+      tabId = id
+    }
+    const opened = await browserCall($, 'navigate', tabId === undefined ? { url: page } : { url: page, tabId })
+    if (opened === null) return { kind: 'no-browser' }
+    const failure = failureOf('navigate', opened)
+    return failure === null ? { kind: 'checked' } : { kind: 'failed', why: failure }
+  } catch (error) {
+    return { kind: 'failed', why: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 // DX-4952: a turn began after the app has closed the tab (an idle period older than the app's timeout that no attempt answered: the computer

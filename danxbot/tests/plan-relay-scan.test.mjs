@@ -35,8 +35,10 @@ const relaySources = () => [["register.tsx relay block", relayBlock()], ...files
 
 test("R-1 / R-2: the relay's one outside call is plan_events_wait on the plugin's dashboard server, and no process, state file or bridge trace exists anywhere", () => {
   const block = relayBlock();
-  const calls = [...block.matchAll(/\$\.mcp\.call\(/g)];
+  // DX-5093: the keepalive's look at the desktop's Browser pane sits in this block too (browserCall); it is not a dashboard call
+  const calls = [...block.matchAll(/\$\.mcp\.call\((?!BROWSER_SERVER,)/g)];
   assert.equal(calls.length, 1, "exactly one dashboard call in the relay block");
+  assert.equal([...block.matchAll(/\$\.mcp\.call\(BROWSER_SERVER,/g)].length, 1, "exactly one call to the Browser pane's server, in browserCall");
   assert.match(block, /\$\.mcp\.call\(SERVER, RELAY_TOOL,/);
   assert.match(read("hooks/relay/config.ts"), /RELAY_TOOL = 'plan_events_wait'/);
 
