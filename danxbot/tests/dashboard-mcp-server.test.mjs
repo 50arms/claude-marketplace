@@ -1,5 +1,5 @@
 // dashboard-mcp-server.mjs (DX-4555, DX-4578, DX-4235): the MCP server the plugin ships, the one dashboard server of every
-// session. It starts the server from the recorded version at once and refreshes the record in the background. A fake
+// session. It refreshes the record from the registry before it starts the server (DX-5075), falling back to the recorded version. A fake
 // registry (fixtures/fake-registry.mjs) stands in for npm's registry and an injected spawn for npm and the server; the
 // end-to-end cases run the real launcher process against a pre-installed fake package. Nothing here touches the network.
 //
@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DASHBOARD_MCP_PACKAGE_NAME, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
-import { dashboardUrl, launch } from "../scripts/dashboard-mcp-server.mjs";
+import { START_WAIT_ENV, dashboardUrl, launch } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -108,24 +108,23 @@ describe("dashboardUrl", () => {
   });
 });
 
-describe("launch: the version the server starts from (DX-4235)", () => {
-  test("a recorded version starts the server at once, before any registry request", async () => {
+describe("launch: the version the server starts from (DX-4235, DX-5075)", () => {
+  test("the registry is asked before the server starts, and an installed latest that is already recorded starts at once", async () => {
     recordAt(A);
     layDown(A);
     const h = harness();
     const { child, version, refresh } = await launch(h.options);
     assert.equal(version, A);
-    assert.equal(h.timeline[0], `server ${A}`, `the server came first: ${h.timeline}`);
     assert.equal(await refresh, A);
-    assert.deepEqual(h.timeline, [`server ${A}`, "registry request"]);
+    assert.deepEqual(h.timeline, ["registry request", `server ${A}`]);
     assert.equal(child.killed, false);
   });
 
-  test("a recorded version that is not installed is installed first, still before any registry request", async () => {
+  test("a recorded version that is not installed is installed first, then the registry is asked", async () => {
     recordAt(A);
     const h = harness();
     await (await launch(h.options)).refresh;
-    assert.deepEqual(h.timeline, [`npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, `server ${A}`, "registry request"]);
+    assert.deepEqual(h.timeline, [`npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, "registry request", `server ${A}`]);
   });
 
   test("with no record it resolves from the registry first, installs and records that version, then starts the server", async () => {
@@ -134,26 +133,42 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     assert.equal(version, A);
     assert.equal(recordedVersionOrNull(env), A);
     await refresh;
-    assert.deepEqual(h.timeline, ["registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, `server ${A}`, "registry request"]);
+    assert.deepEqual(h.timeline, ["registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, "registry request", `server ${A}`]);
   });
 
-  test("the background refresh records and installs a newer version without restarting the server; the next session starts it", async () => {
+  test("DX-5075: the first session started after a publish runs the publish: B is installed and recorded BEFORE the server starts", async () => {
     recordAt(A);
     layDown(A);
     registry.setVersion(B);
     const h = harness();
-    const { child, refresh } = await launch(h.options);
+    const { child, version, refresh } = await launch(h.options);
+    assert.equal(version, B, "the release, not the version the previous refresh recorded");
     assert.equal(await refresh, B);
     assert.equal(recordedVersionOrNull(env), B);
     assert.ok(existsSync(installedBin(dataDir, B)));
-    assert.deepEqual(h.timeline, [`server ${A}`, "registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${B}`]);
-    assert.equal(h.servers.length, 1, "one server: the running one is never replaced");
-    assert.equal(child.killed, false, "the running server is never restarted");
+    assert.deepEqual(h.timeline, ["registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${B}`, `server ${B}`]);
+    assert.equal(h.servers.length, 1);
+    assert.equal(child.killed, false);
     assert.deepEqual(h.errLines, []);
+    assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp", B, ".leases")), [String(process.pid)], "the lease is on the version it runs");
 
     const next = harness();
     await (await launch(next.options)).refresh;
-    assert.deepEqual(next.timeline, [`server ${B}`, "registry request"], "the next session start runs B at once, with no install");
+    assert.deepEqual(next.timeline, ["registry request", `server ${B}`], "the next start installs nothing");
+  });
+
+  test("DX-5075: an install not done within the start's wait starts the recorded version, and the install goes on in the background", async () => {
+    recordAt(A);
+    layDown(A);
+    registry.setVersion(B);
+    const h = harness({ npmMode: "hang" });
+    const run = await launch({ ...h.options, startWaitMs: 30 });
+    assert.equal(run.version, A);
+    assert.deepEqual(h.timeline, ["registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${B}`, `server ${A}`]);
+    assert.equal(h.npms[0].killed, false, "the install is not abandoned");
+    run.stopRefresh();
+    assert.equal(await run.refresh, null);
+    run.release();
   });
 
   test("a refresh that cannot read the registry writes ONE stderr line naming the reason and keeps the record", async () => {
@@ -161,7 +176,8 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     layDown(A);
     registry.setMode("status-500");
     const h = harness();
-    const { child, refresh } = await launch(h.options);
+    const { child, refresh, version } = await launch(h.options);
+    assert.equal(version, A, "the recorded version runs");
     assert.equal(await refresh, null);
     assert.equal(h.errLines.length, 1);
     assert.match(h.errLines[0], /^\[danxbot dashboard MCP\] could not refresh the @thehammer\/danx-dashboard-mcp version \(.*HTTP 500\); this session keeps running 0\.1\.7\n$/);
@@ -175,7 +191,8 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     layDown(A);
     registry.setVersion(B);
     const h = harness({ npmMode: "fail" });
-    const { refresh } = await launch(h.options);
+    const { refresh, version } = await launch(h.options);
+    assert.equal(version, A, "the recorded version runs");
     assert.equal(await refresh, null);
     assert.equal(h.errLines.length, 1);
     assert.match(h.errLines[0], /could not refresh .*install_failed: npm install @thehammer\/danx-dashboard-mcp@0\.1\.8 exited 1: npm error 404 Not Found\); this session keeps running 0\.1\.7\n$/);
@@ -292,7 +309,7 @@ describe("the launcher process", () => {
     return spawnSync(process.execPath, [LAUNCHER], {
       input: "",
       encoding: "utf8",
-      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9", ...extraEnv },
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9", [START_WAIT_ENV]: "200", ...extraEnv },
     });
   }
 
@@ -340,7 +357,7 @@ const tick = setInterval(() => { if (fs.readdirSync(root).some((n) => n.startsWi
       input: "",
       encoding: "utf8",
       timeout: 60_000,
-      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_DASHBOARD_URL: "https://dash.example", [REGISTRY_BASE_URL_ENV]: registry.url, npm_config_registry: registry.url },
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_DASHBOARD_URL: "https://dash.example", [REGISTRY_BASE_URL_ENV]: registry.url, [START_WAIT_ENV]: "200", npm_config_registry: registry.url },
     });
     assert.equal(result.status, 4, result.stderr);
     assert.equal(result.stderr, "", "a stopped refresh writes no failure line");

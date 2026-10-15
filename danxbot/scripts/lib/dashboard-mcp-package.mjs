@@ -4,10 +4,10 @@
 // This file carries NO version literal.
 //
 // WHICH VERSION. The npm registry's `latest` for the package, recorded in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`
-// (temp file + rename, so a reader never sees a partial one). The launcher starts the server from the recorded version at
-// once (`startVersion`: it resolves from the registry only when nothing is recorded), then refreshes the record from the
-// registry while the server runs (`refreshInstall`). A danxbot publish therefore reaches the next session start with no
-// plugin release and no added start latency.
+// (temp file + rename, so a reader never sees a partial one). The launcher (DX-5075) refreshes the record from the
+// registry (`refreshInstall`) before it starts the server, waiting a bounded time, and runs the version that gives; `startVersion`
+// is the recorded one (it resolves from the registry only when nothing is recorded). A danxbot publish therefore runs from the
+// first session start after it, with no plugin release.
 //
 // WHY EXACT, NOT `latest` AT RUN TIME (DX-3392): `npx -y` never re-checks the registry once a version is cached, so an
 // unpinned spec would keep serving whatever this machine cached first. The plugin runs an exact version; it reads which
@@ -104,7 +104,7 @@ export async function resolveLatestVersion({ env = process.env, fetchFn = fetch,
   return version;
 }
 
-function dataDirOf(env) {
+export function dataDirOf(env) {
   if (!env.CLAUDE_PLUGIN_DATA) throw new Error("CLAUDE_PLUGIN_DATA is not set: this only runs as part of the danxbot plugin");
   return env.CLAUDE_PLUGIN_DATA;
 }
