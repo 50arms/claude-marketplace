@@ -108,8 +108,10 @@ From the dashboard:
 
 From this session's event listener:
 
-- `[plan events] this session's listener stopped reaching the dashboard …` → it is renewing the
-  connection itself; nothing to do.
+- `… listener has not reached the dashboard for N minutes (its heartbeats keep failing) …` → it
+  keeps reconnecting on its own; nothing to do.
+- `… listener has stopped … and does not reconnect by itself …` → the next `plan_events_wait`
+  reply says why; follow it, and tell the person (a restart of the session brings it back).
 - a notice that this session's key was revoked → stop dashboard work as it says and tell the
   person.
 
