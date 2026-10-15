@@ -138,6 +138,27 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(activityRows(d).filter(r => r.finishedAt !== null)).toHaveLength(2)
     })
+
+    // DX-5060: the dashboard decides a session is busy from its own running set; the PUT /api/plan-sessions/me/background-work route is
+    // gone from the server, so no hook may call it (a call would be a 404 toasted at every Stop).
+    test('no hook calls PUT /api/plan-sessions/me/background-work, through a whole session of starts, stops, heartbeats and a failure', async ($, on) => {
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      answerReportEvents(on)
+      on('classic.StopFailure', () => ({}) as any)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await d.clock.advance(LIVENESS_MS + 1_000)
+      await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1b2c3' } as any)
+      await $.classic.SubagentStop({ agent_id: 'a1b2c3', stop_hook_active: false, agent_transcript_path: '/x/agent-a1b2c3.jsonl', agent_type: 'Explore', background_tasks: [shell('b1')] } as any)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [shell('b1')] } as any)
+      await $.classic.StopFailure({ error: 'server_error' } as any)
+      await d.clock.settle()
+      expect(d.api.filter(a => a.path.includes('background-work'))).toEqual([])
+      expect(d.calls.filter(c => JSON.stringify(c.args).includes('background-work'))).toEqual([])
+      // the session did report (so the checks above ran against a live report path, not a silent one)
+      expect(activityRows(d).length).toBeGreaterThan(0)
+    })
   })
 
   describe(`a working sub-agent's liveness on ${surface} (comment 10017)`, () => {
