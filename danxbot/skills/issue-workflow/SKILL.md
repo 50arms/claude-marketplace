@@ -45,6 +45,9 @@ worktree, DB resets) live only in danxbot's `work` profile.
    until terminal), citing the sha now on the target branch (on a pull request: the pull
    request link and the branch tip). A phase card leaves `Notes from
    Phase N` on the next phase card.
+   A card with an open problem never becomes Done: `complete`, a board drop or move to Done
+   and a container roll-up are refused (409 `open_problems_block_completion`).
+   Answer or remove each open problem first.
 
 ## Gates
 
@@ -82,7 +85,7 @@ never passed to get it out of the way.
 Genuinely need a human → open a problem on the card: an `action` when only a person can do
 it (access, credentials, hardware, authority), else a `question`. Never `AskUserQuestion` or
 a plan-mode pause. A card needs a human exactly while it has an open problem; removing its
-last open problem closes that need.
+last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
 
 A call refused 403 for a missing permission → `request_permission` with a reason (show the person its code) and keep working; blocked without it, open an action problem.
 
