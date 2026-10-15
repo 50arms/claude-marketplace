@@ -67,6 +67,5 @@ export function createdTab(result: BrowserResult): CreatedTab {
 export const BROWSER_MISSING_LINE =
   "danxbot: the desktop's Browser pane is not reachable from the plugin, so this session's plan tab will close after the app's 30 idle minutes and nothing reopens it."
 
-
 // A failed tool answer, as the sentence a toast says.
 export const failureOf = (tool: BrowserTool, result: BrowserResult): string | null => (result.isError ? `${tool} failed: ${textOf(result)}` : null)
