@@ -1,12 +1,12 @@
 // DX-3900 / DX-5093: the plan-tab keepalive. The desktop app disconnects a session's preview 1800 s after its last turn ended; a plan-connected DESKTOP
 // session idle for KEEPALIVE_IDLE_MS is looked at by the module itself: it asks the Browser pane's server which tabs the pane holds and opens the plan
-// page again when its tab is missing, with no model turn (no prompt is ever submitted). An idle session is looked at again every KEEPALIVE_CHECK_MS. A failed
+// page again when its tab is missing, with no model turn (no prompt is ever submitted). The next look is an idle period on, the cadence the keepalive always had. A failed
 // attempt is retried every KEEPALIVE_RETRY_MS inside the margin that is left, until KEEPALIVE_GIVE_UP_MS after the turn ended (an attempt that starts late,
 // after the computer slept through its time, has the same margin from when it starts: KEEPALIVE_RETRY_WINDOW_MS).
 import { describe, expect } from 'claude-code/testing'
 
-import { KEEPALIVE_CHECK_MS, KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from '../hooks/relay/keepalive'
-import { createdTabId, failureOf, holdsPlanTab, isBrowserKeepaliveTool, paneState } from '../hooks/relay/browser'
+import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from '../hooks/relay/keepalive'
+import { createdTab, failureOf, holdsPlanTab, isBrowserKeepaliveTool, paneState } from '../hooks/relay/browser'
 import { PAUSE_PATH } from '../hooks/reports/pause'
 import { test, CLOCK_START, DASHBOARD_URL, answerPlanConnect, dashboard, forceRefresh, leaveSession, startSession, viewSession } from './plan-kit'
 
@@ -17,8 +17,8 @@ const HOURS = 60 * MINUTE
 const written = (d: any, key: string): unknown[] => d.stateWrites.filter((w: any) => w.plugin === 'danxbot' && w.key === key).map((w: any) => w.value)
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 
-// no model turn: nothing is ever submitted as a prompt
-const sent = (d: any): string[] => d.relay.delivered.map((x: any) => x.text)
+// no model turn: EVERY prompt the plugin submitted, marked as a plan event or not (the kit's `delivered` holds only the marked ones)
+const sent = (d: any): string[] => d.relay.submitted
 // every call the module made to the Browser pane's server, in order
 const calls = (d: any): string[] => d.world.browser.calls
 const looks = (d: any): number => calls(d).filter(c => c === 'tabs_context').length
@@ -51,9 +51,13 @@ describe('the Browser pane answers, as the module reads them', () => {
   })
 
   test('tabs_create names the new tab; an answer without one names none', () => {
-    expect(createdTabId(answer({ serverId: 's', tabId: 'tab-1', reused: false, type: 'browser' }))).toBe('tab-1')
-    expect(createdTabId(answer({ serverId: 's' }))).toBe(null)
-    expect(createdTabId(answer({ tabId: 'tab-1' }, true))).toBe(null)
+    expect(createdTab(answer({ serverId: 's', tabId: 'tab-1', reused: false, type: 'browser' }))).toEqual({ kind: 'created', tabId: 'tab-1' })
+    expect(createdTab(answer({ serverId: 's' })).kind).toBe('refused')
+    expect(createdTab(answer({ tabId: 'tab-1' }, true)).kind).toBe('refused')
+  })
+
+  test('a reused tab is refused: it may be one the person holds', () => {
+    expect(createdTab(answer({ serverId: 's', tabId: 'tab-1', reused: true, type: 'browser' })).kind).toBe('refused')
   })
 
   test('a failed answer is a sentence naming the tool; a good one is none', () => {
@@ -69,6 +73,16 @@ describe('the Browser pane answers, as the module reads them', () => {
   })
 })
 
+describe('the no-prompt guard of these tests', () => {
+  test('sees a prompt that carries no plan-event marker', async ($, on) => {
+    const d = dashboard(on)
+    await startSession($, d, 'desktop')
+    await $.prompt.submit({ text: 'Plan tab keepalive. check the tab' } as any)
+    expect(sent(d)).toEqual(['Plan tab keepalive. check the tab'])
+    expect(d.relay.delivered).toEqual([])
+  })
+})
+
 describe('the keepalive on the desktop', () => {
   test('an idle plan-connected session has its pane looked at once after the idle time, and no prompt is submitted', async ($, on) => {
     const d = dashboard(on)
@@ -80,17 +94,17 @@ describe('the keepalive on the desktop', () => {
     expect(sent(d)).toEqual([])
   })
 
-  test('a pane that holds the plan tab is left as it is, and looked at again every check time while idle', async ($, on) => {
+  test('a pane that holds the plan tab is left as it is, and looked at again an idle period on, never sooner', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
     await d.clock.advance(KEEPALIVE_IDLE_MS)
     expect(looks(d)).toBe(1)
-    await d.clock.advance(KEEPALIVE_CHECK_MS - 1)
+    await d.clock.advance(KEEPALIVE_IDLE_MS - 1)
     expect(looks(d)).toBe(1)
     await d.clock.advance(1)
     expect(looks(d)).toBe(2)
-    await d.clock.advance(2 * KEEPALIVE_CHECK_MS)
-    expect(looks(d)).toBe(4)
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(looks(d)).toBe(3)
     expect(opens(d)).toEqual([])
     expect(sent(d)).toEqual([])
     expect(failures(d)).toEqual([])
@@ -102,7 +116,7 @@ describe('the keepalive on the desktop', () => {
     closePane(d)
     await d.clock.advance(KEEPALIVE_IDLE_MS)
     expect(calls(d)).toEqual(['tabs_context', `navigate ${pageOf(23)} -`])
-    await d.clock.advance(KEEPALIVE_CHECK_MS)
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
     expect(calls(d)).toEqual(['tabs_context', `navigate ${pageOf(23)} -`, 'tabs_context'])
     expect(sent(d)).toEqual([])
   })
@@ -217,16 +231,65 @@ describe('the keepalive on the desktop', () => {
 })
 
 describe('a session whose desktop has no Browser pane server', () => {
-  test('is looked at quietly an idle period on: nothing is toasted, and nothing is asked of the model', async ($, on) => {
+  const missing = (d: any): string[] => d.toasts.filter((t: string) => t.includes('Browser pane is not reachable'))
+
+  test('is toasted exactly once, however many idle periods pass, and no prompt stands in for the pane', async ($, on) => {
     const d = dashboard(on)
     d.world.browser.present = false
     await startSession($, d, 'desktop')
-    await d.clock.advance(2 * KEEPALIVE_IDLE_MS)
+    expect(missing(d)).toEqual([])
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(missing(d)).toHaveLength(1)
+    expect(missing(d)[0]).toContain('30 idle minutes')
+    await d.clock.advance(3 * KEEPALIVE_IDLE_MS)
+    expect(missing(d)).toHaveLength(1)
     expect(failures(d)).toEqual([])
     expect(sent(d)).toEqual([])
+  })
+
+  test('is looked at again an idle period on, and the pane is used once it appears', async ($, on) => {
+    const d = dashboard(on)
+    d.world.browser.present = false
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
     d.world.browser.present = true
     await d.clock.advance(KEEPALIVE_IDLE_MS)
     expect(looks(d)).toBe(1)
+    expect(missing(d)).toHaveLength(1)
+  })
+
+  test('the toast is remembered in $.state, so a reload of the module does not say it again', async ($, on) => {
+    const d = dashboard(on)
+    d.world.browser.present = false
+    d.seedState('browserMissingTold', true)
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(missing(d)).toEqual([])
+    expect(written(d, 'browserMissingTold')).not.toContain(false)
+  })
+
+  test('the first toast is written to $.state', async ($, on) => {
+    const d = dashboard(on)
+    d.world.browser.present = false
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(written(d, 'browserMissingTold')).toEqual([true])
+  })
+
+  test('a terminal session, which has no plan tab, is never told', async ($, on) => {
+    const d = dashboard(on)
+    d.world.browser.present = false
+    await startSession($, d, 'terminal')
+    await d.clock.advance(2 * KEEPALIVE_IDLE_MS)
+    expect(missing(d)).toEqual([])
+  })
+
+  test('a session on no plan is never told', async ($, on) => {
+    const d = dashboard(on, { connected: false })
+    d.world.browser.present = false
+    await startSession($, d, 'desktop')
+    await d.clock.advance(2 * KEEPALIVE_IDLE_MS)
+    expect(missing(d)).toEqual([])
   })
 })
 
@@ -357,19 +420,31 @@ describe('a failed attempt on the desktop', () => {
     expect(failures(d).at(-1)).toContain('gave up')
   })
 
-  test('a failure after a good look is retried within its own window, then the checks go on', async ($, on) => {
+  test('a failure after a good look is retried within its own window, then the next look is an idle period on', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
     await d.clock.advance(KEEPALIVE_IDLE_MS)
     expect(looks(d)).toBe(1)
     d.world.browser.errors.tabs_context = 'busy'
-    await d.clock.advance(KEEPALIVE_CHECK_MS)
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
     expect(looks(d)).toBe(2)
     delete d.world.browser.errors.tabs_context
     await d.clock.advance(KEEPALIVE_RETRY_MS)
     expect(looks(d)).toBe(3)
-    await d.clock.advance(KEEPALIVE_CHECK_MS)
+    await d.clock.advance(KEEPALIVE_IDLE_MS - 1)
+    expect(looks(d)).toBe(3)
+    await d.clock.advance(1)
     expect(looks(d)).toBe(4)
+  })
+
+  test('a tab the pane hands back as reused is not navigated, and is toasted', async ($, on) => {
+    const d = dashboard(on)
+    d.world.browser.tabs = ['https://example.com']
+    d.world.browser.reuses = true
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(failures(d)[0]).toContain('already existed')
+    expect(opens(d)).toEqual([])
   })
 })
 
@@ -472,13 +547,12 @@ describe('a reload of the module in a session the desktop hosts (DX-4806)', () =
     expect(written(d, 'idleSince').at(-1)).toBe(null)
   })
 
-  test('a look leaves the period start as it is: the app times the tab from the last turn end', async ($, on) => {
+  test('a look starts the next idle period from itself', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
-    const before = written(d, 'idleSince').at(-1)
-    await d.clock.advance(KEEPALIVE_IDLE_MS + KEEPALIVE_CHECK_MS)
-    expect(looks(d)).toBe(2)
-    expect(written(d, 'idleSince').at(-1)).toBe(before)
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(looks(d)).toBe(1)
+    expect(written(d, 'idleSince').at(-1)).toBe(CLOCK_START + KEEPALIVE_IDLE_MS)
   })
 
   test('a fresh load that finds a turn running looks at nothing mid-turn, whatever period start was left; the turn end starts the idle time', async ($, on) => {
@@ -604,12 +678,12 @@ describe('a computer that sleeps during the idle period (DX-4952)', () => {
     expect(looks(d)).toBe(1)
   })
 
-  test('is looked at once at the wake: no wake check after it looks again before the check time', async ($, on) => {
+  test('is looked at once at the wake: no wake check after it looks again before an idle period is over', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
     d.suspend(3 * HOURS)
     await d.clock.advance(KEEPALIVE_WAKE_CHECK_MS)
-    await d.clock.advance(KEEPALIVE_CHECK_MS - 1)
+    await d.clock.advance(KEEPALIVE_IDLE_MS - 1)
     expect(looks(d)).toBe(1)
   })
 

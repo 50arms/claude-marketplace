@@ -315,6 +315,8 @@ export function dashboard(
       tabs: [new URL(DASHBOARD_URL).origin] as string[],
       errors: {} as Partial<Record<'tabs_context' | 'tabs_create' | 'navigate', string>>,
       rejects: undefined as string | undefined,
+      // `tabs_create` hands back a tab that already existed
+      reuses: false,
       delayMs: 0,
       calls: [] as string[],
     },
@@ -536,6 +538,8 @@ export function dashboard(
   // appended to the conversation with $.session.append (DX-4793: since Claude Code 2.1.293 the kit lets the append through and calls the
   // test's session.append hook with the row; what the live engine then does with the row is proved on a live session)
   const delivered: { text: string }[] = []
+  // DX-5093: every prompt the plugin submitted, marked or not (`delivered` holds only the plan-event ones)
+  const submitted: string[] = []
   const told: string[] = []
   const deliveryFlags = {
     submitDrops: undefined as string | undefined,
@@ -555,6 +559,7 @@ export function dashboard(
     await deliveryFlags.duringPrompt?.()
     if (deliveryFlags.submitRejects !== undefined) throw new Error(deliveryFlags.submitRejects)
     if (deliveryFlags.submitDrops !== undefined) return { drop: deliveryFlags.submitDrops } as any
+    submitted.push(e.text)
     if (e.text.startsWith(RELAY_MARKER)) delivered.push({ text: e.text })
     // core answers the context it was given beside the text
     return { text: e.text, context: e.context } as any
@@ -642,7 +647,7 @@ export function dashboard(
       if (e.tool === 'tabs_create') {
         browser.calls.push('tabs_create')
         if (failed !== undefined) return { value: { content: [{ type: 'text', text: failed }], isError: true } }
-        return { value: text({ serverId: 'preview-local_x', tabId: `tab-${browser.tabs.length}`, reused: false, type: 'browser' }) }
+        return { value: text({ serverId: 'preview-local_x', tabId: `tab-${browser.tabs.length}`, reused: browser.reuses, type: 'browser' }) }
       }
       if (e.tool === 'navigate') {
         browser.calls.push(`navigate ${e.args.url} ${e.args.tabId ?? '-'}`)
@@ -1035,6 +1040,7 @@ export function dashboard(
   const relay = {
     server,
     delivered,
+    submitted,
     // the plan_events_wait calls the plugin made
     calls: server.calls,
     // events appear on the dashboard: a held wait answers at once

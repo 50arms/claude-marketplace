@@ -20,7 +20,3 @@ export const KEEPALIVE_RETRY_WINDOW_MS = KEEPALIVE_GIVE_UP_MS - KEEPALIVE_IDLE_M
 // long as it had left when the machine slept, while the app's own 30-minute timer, which runs on the wall clock, fires at the wake and closes the
 // tab. The keepalive waits in slices of at most this long and reads the wall clock after each, so a wake is noticed within one slice.
 export const KEEPALIVE_WAKE_CHECK_MS = 30_000
-
-// DX-5093: a look at the pane costs no model turn, so once the first one is made the idle session is looked at again this often: a tab the app
-// closes at its 30 minutes is open again within this long, whether or not a call to the pane counts as use to the app's timer (UNVERIFIED live).
-export const KEEPALIVE_CHECK_MS = 5 * 60_000

@@ -53,12 +53,20 @@ export function holdsPlanTab(state: Extract<PaneState, { kind: 'open' }>, planPa
   return state.origins.includes(new URL(planPage).origin)
 }
 
-// The id of the tab `tabs_create` made, or null when its answer names none.
-export function createdTabId(result: BrowserResult): string | null {
-  if (result.isError) return null
-  const id = jsonOf(result)?.tabId
-  return typeof id === 'string' && id !== '' ? id : null
+// What `tabs_create` answered (`{serverId, tabId, reused, type}`): the new tab, or why it is not one to navigate. A `reused` tab was not made for
+// this call and may be one the person holds, so it is refused rather than taken over.
+export type CreatedTab = { kind: 'created'; tabId: string } | { kind: 'refused'; why: string }
+export function createdTab(result: BrowserResult): CreatedTab {
+  const body = result.isError ? null : jsonOf(result)
+  if (body === null) return { kind: 'refused', why: `tabs_create answered an unknown shape: ${textOf(result)}` }
+  if (body.reused === true) return { kind: 'refused', why: 'tabs_create handed back a tab that already existed, which may be one the person holds' }
+  return typeof body.tabId === 'string' && body.tabId !== '' ? { kind: 'created', tabId: body.tabId } : { kind: 'refused', why: 'tabs_create named no tab' }
 }
+
+// DX-5093: said once per session when the desktop session has no Browser pane the plugin can call.
+export const BROWSER_MISSING_LINE =
+  "danxbot: the desktop's Browser pane is not reachable from the plugin, so this session's plan tab will close after the app's 30 idle minutes and nothing reopens it."
+
 
 // A failed tool answer, as the sentence a toast says.
 export const failureOf = (tool: BrowserTool, result: BrowserResult): string | null => (result.isError ? `${tool} failed: ${textOf(result)}` : null)

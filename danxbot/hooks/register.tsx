@@ -69,8 +69,8 @@ import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots,
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
-import { BROWSER_SERVER, createdTabId, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
-import { KEEPALIVE_CHECK_MS, KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
+import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
+import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { classifierRefusal, isBackgroundRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
@@ -142,6 +142,8 @@ const desktopHosted = atom({ plugin: 'danxbot', key: 'desktopHosted' } as const,
 const idleSince = atom({ plugin: 'danxbot', key: 'idleSince' } as const, null as number | null)
 // DX-4997: the person was told once that this dashboard has no agent-pause route (a plugin newer than the dashboard).
 const olderDashboardTold = atom({ plugin: 'danxbot', key: 'olderDashboardTold' } as const, false)
+// DX-5093: the person was told once that the Browser pane is not reachable from the plugin, so the plan tab is not kept open (a reload keeps it).
+const browserMissingTold = atom({ plugin: 'danxbot', key: 'browserMissingTold' } as const, false)
 // DX-4993: the auto-compact window this plugin armed on the session (the board's floor), null while it holds none. $.state because the window lives in
 // the process: a module reload keeps both, a new process starts without both.
 const compactionArmed = atom({ plugin: 'danxbot', key: 'compactionArmed' } as const, null as number | null)
@@ -1214,16 +1216,15 @@ type Fired = { kind: 'checked' } | { kind: 'not-desktop' } | { kind: 'no-browser
 
 // One attempt: look at the pane, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until `deadline`
 // (KEEPALIVE_GIVE_UP_MS after the period began, or the end of the retry window of an attempt that woke late), then it gives up, loudly, and starts the next period.
-// DX-5093: a look costs no model turn, so a session whose tab is held (or opened again) is looked at again KEEPALIVE_CHECK_MS on, for as long as it is idle;
-// a session that is not on the desktop at this moment (it may attach later; the surface is read now, not at session start) or has no Browser pane
-// server (the app may add it later) is looked at again an idle period on.
+// DX-5093: a look costs no model turn. A session whose tab is held (or opened again) is looked at again an idle period on, the cadence the keepalive
+// always had, so a tab the person closes on purpose is not reopened more often than it was; so is a session that is not on the desktop at this
+// moment (it may attach later; the surface is read now, not at session start) or has no Browser pane server (the app may add it later; it was told once).
 async function keepaliveAttempt($: any, epoch: number, deadline: number): Promise<void> {
   const fired = await fireKeepalive($, () => epoch === keepaliveEpoch)
   const endedAt = await $.clock.now()
   // a cancel (a turn began, the plan ended or moved) while the attempt ran: whatever it found is dropped, nothing is toasted or scheduled
   if (epoch !== keepaliveEpoch) return
-  if (fired.kind === 'checked') return waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_CHECK_MS, deadline: null }, endedAt)
-  if (fired.kind === 'not-desktop' || fired.kind === 'no-browser') return startPeriod($, epoch, endedAt, endedAt)
+  if (fired.kind === 'checked' || fired.kind === 'not-desktop' || fired.kind === 'no-browser') return startPeriod($, epoch, endedAt, endedAt)
   if (endedAt + KEEPALIVE_RETRY_MS > deadline) {
     $.ui.toast(`Plan tab keepalive gave up: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
     // DX-4806: a give-up ends this period only; the next is started here, not left to a turn end that an idle session never has
@@ -1245,6 +1246,19 @@ async function browserCall($: any, tool: BrowserTool, args: Record<string, unkno
   }
 }
 
+// DX-5093: a desktop-hosted, plan-connected session whose tool list has no callable Browser pane is never kept alive, and nothing else would say so:
+// told once per session, in words that name the consequence. No prompt stands in for the pane (it could not tell whether the tab is missing, so it
+// would ask every idle period again).
+async function noBrowser($: any): Promise<Fired> {
+  let first = false
+  await update($, browserMissingTold, cur => {
+    first = !cur
+    return true
+  })
+  if (first) $.ui.toast(BROWSER_MISSING_LINE)
+  return { kind: 'no-browser' }
+}
+
 // Looks at the Browser pane and opens the plan page's tab again when it is missing, with no model turn (DX-5093). `isLive` is checked again before
 // the pane is changed. A closed pane is opened by `navigate` itself; an open pane without the tab gets a background tab of its own, so a page the
 // person is reading is never navigated away.
@@ -1256,7 +1270,7 @@ async function fireKeepalive($: any, isLive: () => boolean): Promise<Fired> {
   const page = planUrl(plan)
   try {
     const looked = await browserCall($, 'tabs_context', {})
-    if (looked === null) return { kind: 'no-browser' }
+    if (looked === null) return noBrowser($)
     const pane = paneState(looked)
     if (pane.kind === 'unreadable') return { kind: 'failed', why: pane.why }
     if (pane.kind === 'open' && holdsPlanTab(pane, page)) return { kind: 'checked' }
@@ -1264,15 +1278,15 @@ async function fireKeepalive($: any, isLive: () => boolean): Promise<Fired> {
     let tabId: string | undefined
     if (pane.kind === 'open') {
       const created = await browserCall($, 'tabs_create', {})
-      if (created === null) return { kind: 'no-browser' }
+      if (created === null) return noBrowser($)
       const failure = failureOf('tabs_create', created)
       if (failure !== null) return { kind: 'failed', why: failure }
-      const id = createdTabId(created)
-      if (id === null) return { kind: 'failed', why: 'tabs_create named no tab' }
-      tabId = id
+      const made = createdTab(created)
+      if (made.kind === 'refused') return { kind: 'failed', why: made.why }
+      tabId = made.tabId
     }
     const opened = await browserCall($, 'navigate', tabId === undefined ? { url: page } : { url: page, tabId })
-    if (opened === null) return { kind: 'no-browser' }
+    if (opened === null) return noBrowser($)
     const failure = failureOf('navigate', opened)
     return failure === null ? { kind: 'checked' } : { kind: 'failed', why: failure }
   } catch (error) {
@@ -1281,8 +1295,8 @@ async function fireKeepalive($: any, isLive: () => boolean): Promise<Fired> {
 }
 
 // DX-4952: a turn began after the app has closed the tab (an idle period older than the app's timeout that no attempt answered: the computer
-// slept through it and the wake check did not run first). The turn's own end starts the next period, 25 minutes on, so the session is told now,
-// in a prompt that queues behind this turn, to re-check its tab. It follows the plan connection, not the keepalive epoch: the turn's own end
+// slept through it and the wake check did not run first). The turn's own end starts the next period, 25 minutes on, so the pane is looked at now
+// and the plan page opened again if its tab is missing (no prompt). It follows the plan connection, not the keepalive epoch: the turn's own end
 // restarts the period (bumping the epoch) and must not drop it.
 async function recheckTab($: any): Promise<void> {
   const plan = keepalivePlan
