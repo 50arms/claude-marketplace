@@ -6,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { toolName } from '../hooks/plan/config'
 import { LEAVE_CLOSE_DEADLINE_MS, agentRow, shellRow } from '../hooks/reports/activity'
-import { test, SURFACES, answerReportEvents, countReports, dashboard, finishes, startSession } from './plan-kit'
+import { test, SURFACES, answerReportEvents, dashboard, finishes, startSession } from './plan-kit'
 
 const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
@@ -156,7 +156,7 @@ for (const surface of SURFACES) {
     })
 
     for (const [name, options] of [['refused', { connectFails: true }], ['thrown', { connectThrows: true }]] as const) {
-      test(`the pane's Switch plan + Connect ${name} after its closes failed: they are owed again, with the plan they belong to and the count`, async ($, on) => {
+      test(`the pane's Switch plan + Connect ${name} after its closes failed: they are owed again, with the plan they belong to`, async ($, on) => {
         const d = await working($, on, options)
         await $.classic.Stop({ stop_hook_active: true, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'x' }, { id: 'a1', type: 'subagent', status: 'running', description: 'x' }, { id: 'a9', type: 'subagent', status: 'running', description: 'x' }] } as any)
         await d.clock.settle()
@@ -167,11 +167,6 @@ for (const surface of SURFACES) {
         await p.press({ key: 'connect' })
         await d.clock.settle()
         d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
-        // the count came back: a liveness re-post of the running sub-agent re-sends 3, not 1
-        await d.clock.advance(61_000)
-        await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)
-        await d.clock.settle()
-        expect(countReports(d).at(-1)?.count).toBe(3)
         // the plan came back: the model's move to another plan still closes what was owed, before the call
         const before = finishes(d).length
         d.sequence.length = 0

@@ -4,7 +4,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { LIVENESS_MS, agentRow, endedShells, shellRow, subagentActivityId } from '../hooks/reports/activity'
-import { test, SURFACES, activityRows, answerReportEvents, countReports, dashboard, finishes, forceRefresh, startSession } from './plan-kit'
+import { test, SURFACES, activityRows, answerReportEvents, dashboard, finishes, forceRefresh, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1b2c3', agent_type: 'danxbot:worker-sonnet-high' }
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
@@ -64,12 +64,10 @@ for (const surface of SURFACES) {
       await d.clock.advance(5_000)
       const now = d.clock.now()
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
-      // the failed one: its turn ends on an error, and the engine raises StopFailure for it instead of SubagentStop
+      // the failed one: its turn ends on an error
       await $.turn.complete({ ...TURN, reason: 'error', agentId: 'f00' })
-      await $.classic.StopFailure({ agent_id: 'f00', error: 'server_error' } as any)
       await d.clock.settle()
       expect(finishes(d)).toEqual([agentRow('agent-a1b2c3', null, now, now), agentRow('agent-f00', null, now, now)])
-      expect(countReports(d)).toEqual([])
     })
 
     test("a resumed sub-agent opens again and its next turn finishes it again; a turn with no start since its finish owes nothing", async ($, on) => {
@@ -162,7 +160,6 @@ for (const surface of SURFACES) {
       await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1b2c3' } as any)
       await d.clock.settle()
       expect(posts()).toEqual([expect.anything(), agentRow('agent-a1b2c3', null, beat, null)])
-      expect(countReports(d)).toEqual([{ count: 1, eventAt: new Date(beat).toISOString() }])
       // two calls 10 s apart after that: one post; 61 s apart: two
       await d.clock.advance(10_000)
       await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1b2c3' } as any)
@@ -184,7 +181,6 @@ for (const surface of SURFACES) {
       await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'stranger' } as any)
       await d.clock.settle()
       expect(activityRows(d).filter(r => r.finishedAt === null)).toHaveLength(1)
-      expect(countReports(d)).toEqual([])
     })
   })
 
@@ -310,7 +306,7 @@ for (const surface of SURFACES) {
       expect(finishes(d)).toEqual([])
     })
 
-    test("a main-session StopFailure seen while off its plan forgets everything owed: back on the plan, the sub-agent's end posts nothing", async ($, on) => {
+    test("a main-session Stop seen while off its plan forgets everything owed: back on the plan, the sub-agent's end posts nothing", async ($, on) => {
       answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
@@ -318,13 +314,12 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       d.world.planId = null
       await forceRefresh($, d)
-      await $.classic.StopFailure({ error: 'server_error' } as any)
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
       d.world.planId = 23
       await forceRefresh($, d)
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
       await d.clock.settle()
       expect(finishes(d)).toEqual([])
-      expect(countReports(d)).toEqual([])
     })
 
     test('nothing new opens while the plan state is unknown: no start row, no shell row, no liveness post', async ($, on) => {

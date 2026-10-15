@@ -571,12 +571,10 @@ export function dashboard(
   const sequence: string[] = []
   const isReportCall = (a: any) =>
     (a.method === 'POST' && a.path === '/api/plan-sessions/me/activity') ||
-    (a.method === 'PUT' && a.path === '/api/plan-sessions/me/background-work') ||
     (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause'))
   // ... answered as the real routes answer them (danxbot plan-sessions-routes, plans/mine, the issues list)
   function reportAnswer(a: any) {
     if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })
-    if (a.path === '/api/plan-sessions/me/background-work') return reply({ count: a.body.count, applied: true })
     if (a.path === '/api/plan-sessions/me/pause') return reply({ pause: world.pause })
     if (a.path === '/api/plans/mine') return world.planId === null ? reply({ error: 'session_not_connected' }, 409) : reply({ id: world.planId, boards: world.planBoards })
     // as the issues list answers: the always-returned row, plus only the fields the `fields` tree names
@@ -1137,17 +1135,15 @@ export async function forceRefresh($: any, d: Dashboard) {
   await d.clock.settle()
 }
 
-// DX-4235: what the reports sent, read off the kit's `reports` list: every activity row posted, in order, and every background-work
-// body put, in order.
+// DX-4235: what the reports sent, read off the kit's `reports` list: every activity row posted, in order
 export const activityRows = (d: Dashboard): any[] => d.reports.filter(r => r.path === '/api/plan-sessions/me/activity').flatMap(r => r.body.activities)
 // ... and the finished ones among them
 export const finishes = (d: Dashboard): any[] => activityRows(d).filter(r => r.finishedAt !== null)
-export const countReports = (d: Dashboard): { count: number | null; eventAt: string }[] => d.reports.filter(r => r.path === '/api/plan-sessions/me/background-work').map(r => r.body)
 
 // DX-4235: the engine's own answers to the events the reports ride (nothing beneath the plugins answers a classic event or a turn's end
 // in a test): registered before the test first uses `$`, like every hook.
 export function answerReportEvents(on: On) {
-  for (const event of ['classic.SubagentStart', 'classic.SubagentStop', 'classic.Stop', 'classic.StopFailure'] as const) on(event, () => ({}) as any)
+  for (const event of ['classic.SubagentStart', 'classic.SubagentStop', 'classic.Stop'] as const) on(event, () => ({}) as any)
   on('turn.complete', () => ({ text: 'done' }) as any)
 }
 

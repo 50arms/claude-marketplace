@@ -39,7 +39,7 @@ export function subagentActivityId(agentId: string): string {
 }
 
 // The id the engine's `background_tasks` lists a sub-agent under: without the prefix.
-export function bareAgentId(agentId: string): string {
+function bareAgentId(agentId: string): string {
   return agentId.startsWith(SUBAGENT_PREFIX) ? agentId.slice(SUBAGENT_PREFIX.length) : agentId
 }
 

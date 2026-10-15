@@ -4,9 +4,9 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { isBackgroundRefusal } from '../hooks/relay/refusal'
-import { test, SURFACES, answerReportEvents, countReports, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, answerReportEvents, activityRows, dashboard, startSession } from './plan-kit'
 
-const SHELL = { id: 'b1', type: 'shell', status: 'running', description: 'sleep' }
+const START = { agent_id: 'a1b2c3', agent_type: 'danxbot:worker-sonnet-high' }
 const OLD_SERVER_WORDS =
   'MCP error -32602: Input validation error: Invalid arguments for tool danxbot_api: [ { "code": "unrecognized_keys", "keys": [ "background" ], "path": [], "message": "Unrecognized key(s) in object: \'background\'" } ]'
 
@@ -31,11 +31,11 @@ for (const surface of SURFACES) {
       // calls already in flight at the first refusal each meet it once; every call made after it goes without the key
       const refusedAtStart = d.backgroundRefusals.length
       expect(refusedAtStart).toBeGreaterThanOrEqual(1)
-      await $.classic.Stop({ stop_hook_active: false, background_tasks: [SHELL] } as any)
+      await $.classic.SubagentStart(START)
       await d.clock.settle()
-      await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as any)
+      await $.classic.SubagentStart({ ...START, agent_id: 'b4' })
       await d.clock.settle()
-      expect(countReports(d).map(r => r.count)).toEqual([1, 0])
+      expect(activityRows(d).map(r => r.activityId)).toEqual(['agent-a1b2c3', 'agent-b4'])
       expect(d.backgroundRefusals).toHaveLength(refusedAtStart)
       expect(d.unmarked).toEqual([])
     })
@@ -44,9 +44,9 @@ for (const surface of SURFACES) {
       answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
-      await $.classic.Stop({ stop_hook_active: false, background_tasks: [SHELL] } as any)
+      await $.classic.SubagentStart(START)
       await d.clock.settle()
-      expect(countReports(d).map(r => r.count)).toEqual([1])
+      expect(activityRows(d).map(r => r.activityId)).toEqual(['agent-a1b2c3'])
       expect(d.backgroundRefusals).toEqual([])
       expect(d.unmarked).toEqual([])
     })
