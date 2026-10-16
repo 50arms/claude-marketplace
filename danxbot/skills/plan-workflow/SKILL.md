@@ -88,7 +88,11 @@ From the dashboard:
   you are paused (see "Pausing"); it is held and arrives in the message that ends the pause.
 - `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
   record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
-- `commented on problem` → a follow-up, not an answer: reply with a comment on that problem.
+  Recording the outcome means, in that same turn, editing every plan record, architecture
+  section and card it changes, and removing (with a note) each problem it settles or moots.
+  A new build card alone records nothing.
+- `commented on problem` → a follow-up: reply with a comment on that problem. A comment that
+  decides the question (for example "do it this other way") is an answer: handle it as one.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
   read it for the full text.
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
