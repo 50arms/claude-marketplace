@@ -961,6 +961,11 @@ export function dashboard(
     const path = e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
     return (path in world.files ? { value: world.files[path] } : { deny: `ENOENT: no such file ${path}` }) as any
   })
+  // DX-5093: the keepalive's trace file lands in `world.files` like any file the plugin writes
+  on('fs.write', (_$: any, e: any) => {
+    world.files[e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')] = e.text
+    return { value: undefined } as any
+  })
   const envSets: { name: string; value: string | undefined }[] = []
   on('env.set', (_$: any, e: any) => (envSets.push({ name: e.name, value: e.value }), { value: undefined }) as any)
   on('session.cwd', () => ({ value: '/work/repo' }) as any)

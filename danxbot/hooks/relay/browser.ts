@@ -29,7 +29,7 @@ function jsonOf(result: BrowserResult): Record<string, unknown> | null {
   return null
 }
 
-const textOf = (result: BrowserResult): string =>
+export const answerText = (result: BrowserResult): string =>
   result.content
     .filter(block => block.type === 'text' && block.text !== undefined)
     .map(block => block.text)
@@ -40,9 +40,9 @@ export type PaneState = { kind: 'closed' } | { kind: 'open'; origins: string[] }
 
 // What `tabs_context` answered: `{browserOpen, tabs: [{tabId, origin, isActive}]}`.
 export function paneState(result: BrowserResult): PaneState {
-  if (result.isError) return { kind: 'unreadable', why: `tabs_context failed: ${textOf(result)}` }
+  if (result.isError) return { kind: 'unreadable', why: `tabs_context failed: ${answerText(result)}` }
   const body = jsonOf(result)
-  if (body === null || typeof body.browserOpen !== 'boolean') return { kind: 'unreadable', why: `tabs_context answered an unknown shape: ${textOf(result)}` }
+  if (body === null || typeof body.browserOpen !== 'boolean') return { kind: 'unreadable', why: `tabs_context answered an unknown shape: ${answerText(result)}` }
   if (!body.browserOpen) return { kind: 'closed' }
   if (!Array.isArray(body.tabs)) return { kind: 'unreadable', why: 'tabs_context named no tab list' }
   return { kind: 'open', origins: body.tabs.map((tab: any) => String(tab?.origin ?? '')) }
@@ -58,7 +58,7 @@ export function holdsPlanTab(state: Extract<PaneState, { kind: 'open' }>, planPa
 export type CreatedTab = { kind: 'created'; tabId: string } | { kind: 'refused'; why: string }
 export function createdTab(result: BrowserResult): CreatedTab {
   const body = result.isError ? null : jsonOf(result)
-  if (body === null) return { kind: 'refused', why: `tabs_create answered an unknown shape: ${textOf(result)}` }
+  if (body === null) return { kind: 'refused', why: `tabs_create answered an unknown shape: ${answerText(result)}` }
   if (body.reused === true) return { kind: 'refused', why: 'tabs_create handed back a tab that already existed, which may be one the person holds' }
   return typeof body.tabId === 'string' && body.tabId !== '' ? { kind: 'created', tabId: body.tabId } : { kind: 'refused', why: 'tabs_create named no tab' }
 }
@@ -68,4 +68,4 @@ export const BROWSER_MISSING_LINE =
   "danxbot: the desktop's Browser pane is not reachable from the plugin, so this session's plan tab will close after the app's 30 idle minutes and nothing reopens it."
 
 // A failed tool answer, as the sentence a toast says.
-export const failureOf = (tool: BrowserTool, result: BrowserResult): string | null => (result.isError ? `${tool} failed: ${textOf(result)}` : null)
+export const failureOf = (tool: BrowserTool, result: BrowserResult): string | null => (result.isError ? `${tool} failed: ${answerText(result)}` : null)
