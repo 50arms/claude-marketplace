@@ -42,10 +42,12 @@ Feature.
 **Other repos' work doesn't count.** A card lives on one board; another repo's slice is its
 own card on its own board.
 
-**Never a childless container.** A Feature/Epic without children can't be readied or picked
-up, so create its children the same turn (Epic → `phase_children[]`; Feature → child cards
-with `parent_id`). Can't → it's a Story. Parent→child: Epic → Feature/Story/Bug/Chore/Task;
-Feature → Story/Bug/Chore/Task; leaves have none.
+**A childless container is allowed; children are recommended.** A Feature/Epic may be created
+with no children as a placeholder while questions or actions are open: record each one as a
+problem on the container, then add the children. An empty container produces no work, so add
+its children as soon as they are known: Epic → `phase_children[]` (optional on create, and the
+convenient way to add them at create); Feature → child cards with `parent_id`. Parent→child:
+Epic → Feature/Story/Bug/Chore/Task; Feature → Story/Bug/Chore/Task; leaves have none.
 
 ## Effort
 
