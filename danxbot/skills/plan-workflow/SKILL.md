@@ -181,7 +181,8 @@ nothing you can do (waiting on a person's answer, a long build, a dependency), d
 each reminder with "still waiting": pause.
 
 1. Record why on the card first (a problem, a comment, `depends_on`, or the real block): the
-   pause is only the signal, never the record.
+   pause is only the signal, never the record. Waiting on a person is always an open problem
+   on a card of this plan, worded for the step left now (a comment never reaches Needs You).
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
    what would end the wait. The pause lasts at most `expires_in_minutes` (default 120, at most
