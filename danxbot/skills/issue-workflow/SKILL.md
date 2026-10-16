@@ -123,7 +123,9 @@ first, then end `failed`.
 
 - **AC/checklists** — each item's id is under the card's `checklists[].items[]`; set it
   `passing` on its checklist item.
-- **Comments** — narrative only; a durable decision goes on a card, never a comment alone.
+- **Comments** — trace, audit and context only; a durable decision goes on a card, never a
+  comment alone. Anything a person must read and act on, answer or decide is a problem
+  (create one, or update the open one it belongs to), never only a comment.
 - **Dependencies** — only for a card already known, never a discovery scan.
 - Never write a `status:` literal; transitions derive it.
 - **MCP down** → curl the same route with the credential the dashboard MCP's config names,
