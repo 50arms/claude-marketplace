@@ -69,8 +69,7 @@ import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots,
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
-import { BROWSER_MISSING_LINE, BROWSER_SERVER, answerText, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
-import { appendTrace, dataDirOf, traceLine, tracePath, type TraceFields } from './relay/trace'
+import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
@@ -1166,7 +1165,6 @@ async function armKeepalive($: any, resume: boolean): Promise<void> {
 async function startPeriod($: any, epoch: number, since: number, now: number): Promise<void> {
   if (epoch !== keepaliveEpoch) return
   await update($, idleSince, () => since)
-  if (epoch === keepaliveEpoch) await trace($, { event: 'period', plan: keepalivePlan, note: `next look due ${new Date(since + KEEPALIVE_IDLE_MS).toISOString()}` })
   if (epoch === keepaliveEpoch) waitSlice($, { epoch, dueAt: since + KEEPALIVE_IDLE_MS, deadline: null }, now)
 }
 
@@ -1222,7 +1220,7 @@ type Fired = { kind: 'checked' } | { kind: 'not-desktop' } | { kind: 'no-browser
 // always had, so a tab the person closes on purpose is not reopened more often than it was; so is a session that is not on the desktop at this
 // moment (it may attach later; the surface is read now, not at session start) or has no Browser pane server (the app may add it later; it was told once).
 async function keepaliveAttempt($: any, epoch: number, deadline: number): Promise<void> {
-  const fired = await fireKeepalive($, () => epoch === keepaliveEpoch, 'idle period')
+  const fired = await fireKeepalive($, () => epoch === keepaliveEpoch)
   const endedAt = await $.clock.now()
   // a cancel (a turn began, the plan ended or moved) while the attempt ran: whatever it found is dropped, nothing is toasted or scheduled
   if (epoch !== keepaliveEpoch) return
@@ -1234,29 +1232,6 @@ async function keepaliveAttempt($: any, epoch: number, deadline: number): Promis
   }
   $.ui.toast(`Plan tab keepalive failed, trying again: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
   waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_RETRY_MS, deadline }, endedAt)
-}
-
-// DX-5093: the keepalive's local trace (relay/trace.ts says what it is for). Writes are one chain, so two lines never read the same file text; a
-// failed write is toasted once and never stops the look.
-let traceChain: Promise<void> = Promise.resolve()
-let traceFailureTold = false
-function trace($: any, fields: TraceFields): Promise<void> {
-  const write = async () => {
-    try {
-      const dir = dataDirOf($.plugin.root, $.plugin.name, (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? null)
-      if (dir === null) throw new Error("no plugin data directory: the plugin is not in the app's cache and the environment names no home")
-      const sessionId: string = await $.session.id()
-      const path = tracePath(dir, sessionId)
-      const existing = (await $.fs.exists(path)) ? await $.fs.read(path) : ''
-      await $.fs.write(path, appendTrace(existing, traceLine(await $.clock.now(), sessionId, fields)))
-    } catch (error) {
-      if (traceFailureTold) return
-      traceFailureTold = true
-      $.ui.toast(`danxbot: the keepalive trace could not be written: ${error instanceof Error ? error.message : String(error)}`.slice(0, TOAST_ERROR_MAX))
-    }
-  }
-  traceChain = traceChain.then(write)
-  return traceChain
 }
 
 // DX-5093: one call to the Browser pane's server, through the engine's own connection (relay/browser.ts says why a hook can). null: the session has no
@@ -1287,38 +1262,27 @@ async function noBrowser($: any): Promise<Fired> {
 // Looks at the Browser pane and opens the plan page's tab again when it is missing, with no model turn (DX-5093). `isLive` is checked again before
 // the pane is changed. A closed pane is opened by `navigate` itself; an open pane without the tab gets a background tab of its own, so a page the
 // person is reading is never navigated away.
-async function fireKeepalive($: any, isLive: () => boolean, trigger: string): Promise<Fired> {
-  const seen: Seen = { action: 'none' }
+async function fireKeepalive($: any, isLive: () => boolean): Promise<Fired> {
   let fired: Fired
   try {
-    fired = await lookAtPane($, isLive, seen)
+    fired = await lookAtPane($, isLive)
   } catch (error) {
     fired = { kind: 'failed', why: error instanceof Error ? error.message : String(error) }
   }
-  // DX-5093: the trace line of every look, whatever it came to
-  const fields: TraceFields = { event: 'look', trigger, plan: seen.plan ?? null, tabs: seen.tabs, action: seen.action, outcome: fired.kind, note: seen.note }
-  if (fired.kind === 'failed') fields.error = fired.why
-  await trace($, fields)
   return fired
 }
 
-// DX-5093: what a look saw and did, for its trace line.
-type Seen = { plan?: number | null; tabs?: string[]; action: string; note?: string }
-
-async function lookAtPane($: any, isLive: () => boolean, seen: Seen): Promise<Fired> {
+async function lookAtPane($: any, isLive: () => boolean): Promise<Fired> {
   if (!(await read($, desktopHosted))) return { kind: 'not-desktop' }
   const plan = (await read($, view)).connected
-  seen.plan = plan === null ? null : plan.id
   // the page named is the one the view holds: a move is followed by a view refresh at once, and the arm that came with the move restarts the period
   if (plan === null) return { kind: 'failed', why: 'the connected plan is not loaded' }
   const page = planUrl(plan)
   try {
     const looked = await browserCall($, 'tabs_context', {})
     if (looked === null) return noBrowser($)
-    seen.note = `tabs_context: ${answerText(looked)}`
     const pane = paneState(looked)
     if (pane.kind === 'unreadable') return { kind: 'failed', why: pane.why }
-    seen.tabs = pane.kind === 'open' ? pane.origins : []
     if (pane.kind === 'open' && holdsPlanTab(pane, page)) return { kind: 'checked' }
     if (!isLive()) return { kind: 'checked' }
     let tabId: string | undefined
@@ -1331,10 +1295,8 @@ async function lookAtPane($: any, isLive: () => boolean, seen: Seen): Promise<Fi
       if (made.kind === 'refused') return { kind: 'failed', why: made.why }
       tabId = made.tabId
     }
-    seen.action = tabId === undefined ? 'navigate' : 'tabs_create+navigate'
     const opened = await browserCall($, 'navigate', tabId === undefined ? { url: page } : { url: page, tabId })
     if (opened === null) return noBrowser($)
-    seen.note = `${seen.note}; navigate: ${answerText(opened)}`
     const failure = failureOf('navigate', opened)
     return failure === null ? { kind: 'checked' } : { kind: 'failed', why: failure }
   } catch (error) {
@@ -1348,7 +1310,7 @@ async function lookAtPane($: any, isLive: () => boolean, seen: Seen): Promise<Fi
 // restarts the period (bumping the epoch) and must not drop it.
 async function recheckTab($: any): Promise<void> {
   const plan = keepalivePlan
-  const fired = await fireKeepalive($, () => keepalivePlan === plan, 'turn start')
+  const fired = await fireKeepalive($, () => keepalivePlan === plan)
   if (keepalivePlan !== plan || fired.kind !== 'failed') return
   $.ui.toast(`Plan tab re-check failed: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
 }

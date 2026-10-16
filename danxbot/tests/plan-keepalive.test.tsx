@@ -6,10 +6,9 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from '../hooks/relay/keepalive'
-import { appendTrace, dataDirOf, TRACE_MAX_LINES, traceLine } from '../hooks/relay/trace'
 import { createdTab, failureOf, holdsPlanTab, isBrowserKeepaliveTool, paneState } from '../hooks/relay/browser'
 import { PAUSE_PATH } from '../hooks/reports/pause'
-import { test, CLOCK_START, DASHBOARD_URL, HOME_DIR, answerPlanConnect, dashboard, forceRefresh, leaveSession, startSession, viewSession } from './plan-kit'
+import { test, CLOCK_START, DASHBOARD_URL, answerPlanConnect, dashboard, forceRefresh, leaveSession, startSession, viewSession } from './plan-kit'
 
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { turnId: 't1' } as any
@@ -45,7 +44,7 @@ describe('the Browser pane answers, as the module reads them', () => {
     expect(paneState(answer('x', true))).toEqual({ kind: 'unreadable', why: 'tabs_context failed: "x"' })
   })
 
-  // the two answers a live trace recorded, verbatim: one text block, the pretty-printed object, a newline, a sentence
+  // the two answers a live check recorded, verbatim: one text block, the pretty-printed object, a newline, a sentence
   const CLOSED_VERBATIM = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.'
   const HIDDEN_VERBATIM = '{\n  "browserOpen": true,\n  "tabs": [\n    {\n      "tabId": "seed",\n      "origin": "https://danxbot.sageus.ai",\n      "isActive": true\n    }\n  ]\n}\nThe Browser pane is currently hidden.'
 
@@ -93,82 +92,6 @@ describe('the no-prompt guard of these tests', () => {
     await $.prompt.submit({ text: 'Plan tab keepalive. check the tab' } as any)
     expect(sent(d)).toEqual(['Plan tab keepalive. check the tab'])
     expect(d.relay.delivered).toEqual([])
-  })
-})
-
-// DX-5093: the trace lines the keepalive wrote for the session, parsed (a kit session is a folder-loaded plugin: its data directory is the home's `danxbot-inline`)
-const traces = (d: any): any[] =>
-  (d.world.files[`${HOME_DIR}/.claude/plugins/data/danxbot-inline/keepalive-trace/${d.world.sessionId}.log`] ?? '')
-    .split('\n')
-    .filter((l: string) => l !== '')
-    .map((l: string) => JSON.parse(l))
-const looksTraced = (d: any): any[] => traces(d).filter(t => t.event === 'look')
-
-describe('the keepalive trace', () => {
-  test('the data directory: a cached plugin has its marketplace-named one, a folder-loaded plugin the inline one, none without a home', () => {
-    expect(dataDirOf('C:\\Users\\u\\.claude\\plugins\\cache\\50arms\\danxbot\\0.15.19', 'danxbot', null)).toBe('C:/Users/u/.claude/plugins/data/danxbot-50arms')
-    expect(dataDirOf('/work/claude-plugins/danxbot', 'danxbot', '/home/u')).toBe('/home/u/.claude/plugins/data/danxbot-inline')
-    expect(dataDirOf('/work/claude-plugins/danxbot', 'danxbot', null)).toBe(null)
-  })
-
-  test('the file keeps the newest lines only', () => {
-    let text = ''
-    for (let i = 0; i < TRACE_MAX_LINES + 5; i++) text = appendTrace(text, traceLine(i, 's', { event: 'look', note: String(i) }))
-    const lines = text.split('\n').filter(l => l !== '')
-    expect(lines.length).toBe(TRACE_MAX_LINES)
-    expect(JSON.parse(lines.at(-1)!).note).toBe(String(TRACE_MAX_LINES + 4))
-    expect(JSON.parse(lines[0]).note).toBe('5')
-  })
-
-  test('a period begins with a line naming when its look is due', async ($, on) => {
-    const d = dashboard(on)
-    await startSession($, d, 'desktop')
-    const period = traces(d).find(t => t.event === 'period')
-    expect(period.session).toBe(d.world.sessionId)
-    expect(period.plan).toBe(23)
-    expect(period.note).toBe(`next look due ${new Date(CLOCK_START + KEEPALIVE_IDLE_MS).toISOString()}`)
-  })
-
-  test('a look that holds the tab traces the tabs it found and the pane\'s own words', async ($, on) => {
-    const d = dashboard(on)
-    await startSession($, d, 'desktop')
-    await d.clock.advance(KEEPALIVE_IDLE_MS)
-    const [look] = looksTraced(d)
-    expect(look).toMatchObject({ session: d.world.sessionId, plan: 23, trigger: 'idle period', tabs: [new URL(DASHBOARD_URL).origin], action: 'none', outcome: 'checked' })
-    expect(look.note).toContain('tabs_context: ')
-    expect(look.error).toBeUndefined()
-  })
-
-  test('a look that opens a closed pane traces the navigate and what the pane answered', async ($, on) => {
-    const d = dashboard(on)
-    await startSession($, d, 'desktop')
-    closePane(d)
-    await d.clock.advance(KEEPALIVE_IDLE_MS)
-    const [look] = looksTraced(d)
-    expect(look).toMatchObject({ tabs: [], action: 'navigate', outcome: 'checked' })
-    expect(look.note).toContain('navigate: ')
-  })
-
-  test('a failed look traces the error; a session with no pane server and a terminal session trace their outcome', async ($, on) => {
-    const d = dashboard(on)
-    await startSession($, d, 'desktop')
-    d.world.browser.errors.tabs_context = 'pane unavailable'
-    await d.clock.advance(KEEPALIVE_IDLE_MS)
-    expect(looksTraced(d)[0]).toMatchObject({ outcome: 'failed', error: expect.stringContaining('pane unavailable') })
-    d.world.browser.errors = {}
-    d.world.browser.present = false
-    await d.clock.advance(KEEPALIVE_RETRY_MS)
-    expect(looksTraced(d).at(-1)).toMatchObject({ outcome: 'no-browser' })
-  })
-
-  test('a trace that cannot be written is toasted once and does not stop the looks', async ($, on) => {
-    const d = dashboard(on)
-    await startSession($, d, 'desktop')
-    d.world.fsError = 'EACCES'
-    await d.clock.advance(KEEPALIVE_IDLE_MS)
-    await d.clock.advance(KEEPALIVE_IDLE_MS)
-    expect(looks(d)).toBe(2)
-    expect(d.toasts.filter((t: string) => t.startsWith('danxbot: the keepalive trace could not be written')).length).toBe(1)
   })
 })
 
