@@ -231,6 +231,18 @@ for plugin in "${TARGETS[@]}"; do
   fi
 done
 
+# --- Pre-flight: the repo-wide scans and node tests ----------------------
+#
+# DX-5201 — the .mjs suites (plan-relay-scan, own-server-check-scan, ...) are
+# the plugin's rule scans; `claude plugin test` runs only the tsx cases, so a
+# scan failure used to reach main unnoticed. Run them before any bump.
+
+info "Running the node test suites (npm test)..."
+if ! (cd "${REPO_ROOT}" && npm test --silent); then
+  err "npm test failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
+  exit 1
+fi
+
 # --- Pre-flight: injection budget ---------------------------------------
 #
 # DX-3053 — same shape as the frontmatter lint above: one shared check
