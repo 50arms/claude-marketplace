@@ -642,7 +642,10 @@ export function dashboard(
       if (e.tool === 'tabs_context') {
         browser.calls.push('tabs_context')
         if (failed !== undefined) return { value: { content: [{ type: 'text', text: failed }], isError: true } }
-        return { value: text({ browserOpen: browser.open, tabs: browser.open ? browser.tabs.map((origin, i) => ({ tabId: `tab-${i}`, origin, isActive: i === 0 })) : [] }) }
+        // DX-5093: the real answer is ONE text block: the pretty-printed object, a newline, then a sentence (read from a live trace)
+        const body = { browserOpen: browser.open, tabs: browser.open ? browser.tabs.map((origin, i) => ({ tabId: `tab-${i}`, origin, isActive: i === 0 })) : [] }
+        const sentence = browser.open ? 'The Browser pane is currently hidden.' : "The Browser pane isn't open yet, so there are no tabs. Call preview_start or navigate with {\"url\": \"https://…\"} to open it."
+        return { value: { content: [{ type: 'text', text: `${JSON.stringify(body, null, 2)}\n${sentence}` }], isError: false } }
       }
       if (e.tool === 'tabs_create') {
         browser.calls.push('tabs_create')

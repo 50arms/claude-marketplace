@@ -15,16 +15,38 @@ export const isBrowserKeepaliveTool = (name: string): boolean => BROWSER_TOOLS.s
 type Block = { type: string; text?: string }
 export type BrowserResult = { content: readonly Block[]; isError: boolean }
 
-// The first text block of a result that parses as a JSON object, or null.
+// The JSON object a text opens with, however much prose follows it (the real pane answers one block: the pretty-printed object, a newline, then a
+// sentence such as "The Browser pane is currently hidden."), or null. Braces inside strings do not count.
+function leadingObject(text: string): Record<string, unknown> | null {
+  const start = text.search(/\S/)
+  if (start < 0 || text[start] !== '{') return null
+  let depth = 0
+  let inString = false
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      if (c === '\\') i++
+      else if (c === '"') inString = false
+    } else if (c === '"') inString = true
+    else if (c === '{') depth++
+    else if (c === '}' && --depth === 0) {
+      try {
+        const parsed: unknown = JSON.parse(text.slice(start, i + 1))
+        return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
+      } catch {
+        return null
+      }
+    }
+  }
+  return null
+}
+
+// The first text block of a result that opens with a JSON object, or null.
 function jsonOf(result: BrowserResult): Record<string, unknown> | null {
   for (const block of result.content) {
     if (block.type !== 'text' || block.text === undefined) continue
-    try {
-      const parsed: unknown = JSON.parse(block.text)
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
-    } catch {
-      // another block (a note after the JSON, such as "The Browser pane is currently hidden.")
-    }
+    const parsed = leadingObject(block.text)
+    if (parsed !== null) return parsed
   }
   return null
 }
@@ -48,7 +70,8 @@ export function paneState(result: BrowserResult): PaneState {
   return { kind: 'open', origins: body.tabs.map((tab: any) => String(tab?.origin ?? '')) }
 }
 
-// Whether the pane holds a tab on the plan page's site (a tab's `origin` is the scheme, host and port only).
+// Whether the pane holds a tab on the plan page's site (a tab's `origin` is the scheme, host and port only). `tabs_context` names no URL, so a tab on the
+// dashboard's site counts, the pane's seed tab included: the keepalive keeps a dashboard tab in the pane, and a closed or missing one is what it reopens.
 export function holdsPlanTab(state: Extract<PaneState, { kind: 'open' }>, planPage: string): boolean {
   return state.origins.includes(new URL(planPage).origin)
 }

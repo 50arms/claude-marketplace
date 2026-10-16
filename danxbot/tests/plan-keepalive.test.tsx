@@ -45,6 +45,18 @@ describe('the Browser pane answers, as the module reads them', () => {
     expect(paneState(answer('x', true))).toEqual({ kind: 'unreadable', why: 'tabs_context failed: "x"' })
   })
 
+  // the two answers a live trace recorded, verbatim: one text block, the pretty-printed object, a newline, a sentence
+  const CLOSED_VERBATIM = '{\n  "browserOpen": false,\n  "tabs": []\n}\nThe Browser pane isn\'t open yet, so there are no tabs. Call preview_start or navigate with {"url": "https://…"} to open it.'
+  const HIDDEN_VERBATIM = '{\n  "browserOpen": true,\n  "tabs": [\n    {\n      "tabId": "seed",\n      "origin": "https://danxbot.sageus.ai",\n      "isActive": true\n    }\n  ]\n}\nThe Browser pane is currently hidden.'
+
+  test('tabs_context as the live pane answers it: the object, then a sentence in the same block', () => {
+    expect(paneState({ content: [{ type: 'text', text: CLOSED_VERBATIM }], isError: false })).toEqual({ kind: 'closed' })
+    expect(paneState({ content: [{ type: 'text', text: HIDDEN_VERBATIM }], isError: false })).toEqual({ kind: 'open', origins: ['https://danxbot.sageus.ai'] })
+    // braces inside a string or in the sentence do not end or extend the object
+    expect(paneState({ content: [{ type: 'text', text: '{"browserOpen":true,"tabs":[{"tabId":"a}","origin":"https://x.test","isActive":true}]}\nUse {"url": 1}' }], isError: false })).toEqual({ kind: 'open', origins: ['https://x.test'] })
+    expect(paneState({ content: [{ type: 'text', text: '{"browserOpen":true,"tabs":[' }], isError: false }).kind).toBe('unreadable')
+  })
+
   test('the plan page is held by a tab on its site', () => {
     expect(holdsPlanTab({ kind: 'open', origins: ['http://localhost:5555'] }, 'http://localhost:5555/plans/23')).toBe(true)
     expect(holdsPlanTab({ kind: 'open', origins: ['https://example.com'] }, 'http://localhost:5555/plans/23')).toBe(false)
