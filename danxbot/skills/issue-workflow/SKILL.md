@@ -283,6 +283,9 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 
 ## Shell
 
+- Temporary files (helper scripts, logs, SQL, captures) go in the session's scratchpad
+  directory when one is given, else the repo's git-ignored `.junk/`; never `/tmp`, a
+  filesystem root or a tracked path. Pipe a one-off script on stdin instead of saving it.
 - After a long command the next step is `RC=$?` or `&&`/`||` — a trailing
   `tail`/`grep`/`echo` hides the real exit code.
 - Never leave stdin open for a prompt (`ssh`, `psql`, `sudo`, `npm login`, `-i`): close it
