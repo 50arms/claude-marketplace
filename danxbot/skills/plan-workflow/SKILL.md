@@ -41,7 +41,8 @@ note = real milestone; remove a wrong-plan card from the plan; rename a stale pl
 
 They read cards, not chat. A chat reply is at most 3 lines, no headings, tables, lists or
 fences: an answer to their question, a one-line start of a deploy, dispatch or publish, a
-real failure or correction, or card ids. Findings, options and status go on the card;
+real failure or correction, card ids, or a 50 Arms feedback offer or its `FB-` ref (see
+"Feedback to 50 Arms"). Findings, options and status go on the card;
 already there → give the id. Every card id in chat is a markdown link to that card
 (`[<card id>](<dashboard>/plans/<plan id>/cards/<card id>)`), never a plan or board page.
 
@@ -55,20 +56,24 @@ that does not exist, wants a UI change, cannot work out how to do something in i
 plainly frustrated with it → offer to send it to the 50 Arms team. Never for a passing
 nuance, a question 50 Arms already answers, or your own mistake.
 
-1. `GET /api/feedback/mine` (`q` narrows it): already sent → skip it.
+1. `GET /api/feedback/mine` (`q` matches a substring of the title or message: try a keyword
+   or two, or read the list): already sent → skip it.
 2. Draft: `type` (`bug`, `idea`, `ui_change`, `confusing`, `praise`, `other`), `mood` 1 (very
    unhappy) to 5 (very happy) only when they showed one, and a `body` that stands alone: what
    they tried, what happened, what they want. A screenshot → `attach_file` with
    `target: "inline_image"` and only `path`; put the `markdown` it returns in the body.
-3. Ask. They voiced it in the thread → ask there in one line, showing the draft; their yes
-   → `consent: {via: "thread", quote}` holding their words. Otherwise ask on the plan card it
-   concerns:
-   `POST /api/feedback/consent-problems` `{issue_id, type, mood?, body}`; the server writes
-   the problem and answers `{problem_id, send_solution_id}`. Never write a consent problem
-   yourself. Their answer arrives as an `answered` event: the send solution →
-   `consent: {via: "problem", issue_id, problem_id, solution_id}`; anything else → drop it.
-4. `POST /api/feedback` `{type, mood?, body, issue_id, consent}`, with exactly the drafted
-   `type`, `mood` and `body`. One consent sends one item.
+3. Ask.
+   - They voiced it in the thread → offer there, within the 3-line reply: the type and a short
+     gist of the draft (keep the full `body` for the send). Yes → `consent: {via: "thread",
+     quote}` holding their words; no → drop it.
+   - Otherwise → `POST /api/feedback/consent-problems` `{issue_id, type, mood?, body}` on the
+     plan card it concerns (none fits → skip it); the server writes the problem and answers
+     `{problem_id, send_solution_id}`. Never write a consent problem yourself. Their answer
+     arrives as an `answered` event: the send solution → `consent: {via: "problem", issue_id,
+     problem_id, solution_id}`; anything else → drop it.
+4. `POST /api/feedback` `{type, mood?, body, issue_id?, consent}`, with exactly the drafted
+   `type`, `mood` and `body`; `issue_id` is the card the feedback is about. One consent sends
+   one item.
 5. Tell them its `FB-` ref in one line.
 
 ## Scope
