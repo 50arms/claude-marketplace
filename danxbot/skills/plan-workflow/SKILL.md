@@ -48,6 +48,28 @@ already there → give the id. Every card id in chat is a markdown link to that 
 A question is not a stop or a command. "Why X?" gets an answer: running work keeps running
 and nothing new starts. Stop, redirect or act only on an explicit verb.
 
+## Feedback to 50 Arms
+
+The person hits a bug in 50 Arms itself (not their own code), asks for a 50 Arms feature
+that does not exist, wants a UI change, cannot work out how to do something in it, or is
+plainly frustrated with it → offer to send it to the 50 Arms team. Never for a passing
+nuance, a question 50 Arms already answers, or your own mistake.
+
+1. `GET /api/feedback/mine` (`q` narrows it): already sent → skip it.
+2. Draft: `type` (`bug`, `idea`, `ui_change`, `confusing`, `praise`, `other`), `mood` 1 (very
+   unhappy) to 5 (very happy) only when they showed one, and a `body` that stands alone: what
+   they tried, what happened, what they want. A screenshot → `attach_file` with
+   `target: "inline_image"` and only `path`; put the `markdown` it returns in the body.
+3. Consent. They told you in the thread to send it → `consent: {via: "thread", quote}`
+   holding their words. Otherwise ask on the plan card it concerns:
+   `POST /api/feedback/consent-problems` `{issue_id, type, mood?, body}`; the server writes
+   the problem and answers `{problem_id, send_solution_id}`. Never write a consent problem
+   yourself. Their answer arrives as an `answered` event: the send solution →
+   `consent: {via: "problem", issue_id, problem_id, solution_id}`; anything else → drop it.
+4. `POST /api/feedback` `{type, mood?, body, issue_id, consent}`, with exactly the drafted
+   `type`, `mood` and `body`. One consent sends one item.
+5. Tell them its `FB-` ref in one line.
+
 ## Scope
 
 Before adding a card to the plan, name the `G-n` it advances — can't → not this plan. A bug
