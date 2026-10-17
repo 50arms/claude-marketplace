@@ -3,10 +3,13 @@
 //
 // What the handshake is. 50 Arms decides when a session is worth compacting (cost saved against time lost), asks the session's agent to prepare, and only
 // after the agent says ready does a compaction pass. Nothing compacts by itself. This module decides the two things the plugin owns:
-//   - ARMING: Claude Code proposes an automatic compaction before every model request once the context passes its auto-compact window. The plugin sets
-//     that window to the session's FLOOR (the smallest size at which the policy could ever ask), through `$.env.set`, on a session the board's switch
-//     covers. Verified live on a running interactive session (DX-4993): a plugin's `$.env.set(CLAUDE_CODE_AUTO_COMPACT_WINDOW, n)` takes effect at
-//     once, in the session's running process, and overrides a settings file.
+//   - ARMING: Claude Code proposes an automatic compaction before every model request once the context passes its compaction threshold. The plugin sets
+//     that threshold to the session's FLOOR (the smallest size at which the policy could ever ask), through `$.env.set`, on a session the board's switch
+//     covers. It sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, a PERCENT of the model's window, and never `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (DX-5217): that one
+//     also becomes the window Claude Code's context meter (the `/context` breakdown) measures against, so a 1M session showed 400k as its maximum. The
+//     percent moves only where proposals start: the meter keeps the model's full window, every agent loop (a sub-agent too) proposes at that fraction of its
+//     own model's window, and a request above it is still accepted. Verified live on Claude Code 2.1.299 (DX-5217 comments): `$.env.set` of it takes effect
+//     in the running process at once. UNDOCUMENTED: Claude Code's source names it `testPctOverride`, so re-check it on every new CLI (CLAUDE.md "Validated CLI").
 //   - THE GATE: a `classic.PreCompact` hook refuses an automatic proposal until the agent said ready. A person's own /compact (trigger `manual`) always
 //     passes, and so does a proposal at the size where refusing would end the session (the SAFETY VALVE, `passAtTokens`): a refused proposal there
 //     ends the turn with "Context limit reached" until a manual /compact (verified live, Haiku 4.5).
@@ -86,14 +89,18 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
 // the valve would never be reached. Armed only when the real window is not known to be smaller.
 export const windowFits = (control: GateControl, realWindow: number | null): boolean => realWindow === null || realWindow >= control.windowTokens
 
-// What to do with the session's auto-compact window.
-// `set`: arm it at `floorTokens`. `unset`: take it back (the board no longer holds the session, the relay has no control for it any more, the control cannot be
-// read, or the session's real window is smaller than the one the control assumed): Claude Code's own compaction applies.
-export type Arming = { kind: 'set'; floorTokens: number } | { kind: 'unset' }
+// What to do with the session's early-proposal percent.
+// `set`: arm it at `percent` of the model's window. `unset`: take it back (the board no longer holds the session, the relay has no control for it any more, the
+// control cannot be read, the session's real window is smaller than the one the control assumed, or the window is unknown): Claude Code's own compaction applies.
+export type Arming = { kind: 'set'; percent: number } | { kind: 'unset' }
+
+// The percent of `realWindow` that `floorTokens` is, rounded DOWN to two decimals: a proposal that starts a little below the floor is held and costs a hook call,
+// one that starts above it would leave an agent that said ready with no proposal to release. Integer arithmetic, so 400000 of 1000000 is exactly 40.
+export const floorPercent = (floorTokens: number, realWindow: number): number => Math.floor((floorTokens * 10_000) / realWindow) / 100
 
 export function arming(file: ControlFile, realWindow: number | null): Arming {
-  if (file.kind === 'bad' || file.kind === 'absent' || file.control === null || !windowFits(file.control, realWindow)) return { kind: 'unset' }
-  return { kind: 'set', floorTokens: file.control.floorTokens }
+  if (file.kind === 'bad' || file.kind === 'absent' || file.control === null || realWindow === null || !windowFits(file.control, realWindow)) return { kind: 'unset' }
+  return { kind: 'set', percent: floorPercent(file.control.floorTokens, realWindow) }
 }
 
 export type GateInput = {

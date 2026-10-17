@@ -4,7 +4,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
-import { HELD_REASON, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, arming, controlPath, parseControlFile, staleUsedReleaseKeys, verdict } from '../hooks/compaction/control'
+import { HELD_REASON, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, arming, controlPath, floorPercent, parseControlFile, staleUsedReleaseKeys, verdict } from '../hooks/compaction/control'
 import type { ControlFile, GateControl, GateInput } from '../hooks/compaction/control'
 import { CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -66,21 +66,30 @@ describe('the wire shape (pure)', () => {
   })
 })
 
-describe('arming the window (pure)', () => {
-  test('a control is set at its floor; a null control, a file that is gone or a file that cannot be read takes the window back (fail open)', () => {
-    expect(arming(withControl(), WINDOW)).toEqual({ kind: 'set', floorTokens: 250_000 })
+describe('arming the early-proposal percent (pure)', () => {
+  // DX-5217: a percent of the model's window, never a window of its own: the meter keeps the full window
+  test('the floor is a percent of the real window, rounded down to two decimals', () => {
+    expect(floorPercent(400_000, 1_000_000)).toBe(40)
+    expect(floorPercent(250_000, 1_000_000)).toBe(25)
+    expect(floorPercent(80_000, 200_000)).toBe(40)
+    expect(floorPercent(333_333, 1_000_000)).toBe(33.33)
+    expect(floorPercent(333_339, 1_000_000)).toBe(33.33)
+  })
+
+  test('a control is set at its floor as a percent; a null control, a file that is gone or a file that cannot be read takes it back (fail open)', () => {
+    expect(arming(withControl(), WINDOW)).toEqual({ kind: 'set', percent: 25 })
     expect(arming({ kind: 'control', control: null }, WINDOW)).toEqual({ kind: 'unset' })
     expect(arming({ kind: 'absent' }, WINDOW)).toEqual({ kind: 'unset' })
     expect(arming({ kind: 'bad', reason: 'x' }, WINDOW)).toEqual({ kind: 'unset' })
   })
 
   // A2: the dashboard knows a window per model line; the session may run at a smaller one, where the floor could never be reached
-  test('a session whose real window is smaller than the one the control assumed is not armed; an unknown window arms', () => {
+  test('a session whose real window is smaller than the one the control assumed is not armed; a larger one keeps the floor in tokens; an unknown window is not armed (no fraction of it exists)', () => {
     expect(arming(withControl(), 200_000)).toEqual({ kind: 'unset' })
     expect(arming(withControl(), WINDOW - 1)).toEqual({ kind: 'unset' })
-    expect(arming(withControl(), WINDOW)).toEqual({ kind: 'set', floorTokens: 250_000 })
-    expect(arming(withControl(), 2_000_000)).toEqual({ kind: 'set', floorTokens: 250_000 })
-    expect(arming(withControl(), null)).toEqual({ kind: 'set', floorTokens: 250_000 })
+    expect(arming(withControl(), WINDOW)).toEqual({ kind: 'set', percent: 25 })
+    expect(arming(withControl(), 2_000_000)).toEqual({ kind: 'set', percent: 12.5 })
+    expect(arming(withControl(), null)).toEqual({ kind: 'unset' })
   })
 })
 
@@ -211,7 +220,7 @@ describe('the resume briefing (pure)', () => {
 for (const surface of SURFACES) {
   describe(`the handshake on ${surface}`, () => {
     const PRE = (trigger: string, extra: Record<string, unknown> = {}) => ({ trigger, session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl', cwd: '/work', custom_instructions: null, ...extra }) as any
-    const windowSets = (d: any) => d.envSets.filter((s: any) => s.name === 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')
+    const windowSets = (d: any) => d.envSets.filter((s: any) => s.name === 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
 
     async function started($: any, on: any, options: Parameters<typeof dashboard>[1] = {}) {
       on('turn.complete', () => ({ text: 'done' }) as any)
@@ -231,13 +240,14 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
-    test('the window is set to the floor at the start of a turn, once however many turns follow', async ($, on) => {
+    test('the floor is set as a percent of the window at the start of a turn, once however many turns follow, and the window variable is never touched (DX-5217)', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)
       await $.turn.start(START)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '250000' }])
+      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }])
+      expect(d.envSets.filter((s: any) => s.name === 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')).toEqual([])
     })
 
     test('a leftover file cannot arm a later session once the relay has pruned it: the window is taken back and nothing is held', async ($, on) => {
@@ -248,7 +258,7 @@ for (const surface of SURFACES) {
       delete d.world.files[CONTROL_FILE]
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
       await $.turn.complete(TURN)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '250000' }, { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }])
+      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
     })
 
     test('an armed session holds an automatic proposal, and lets its own /compact through', async ($, on) => {
@@ -317,12 +327,12 @@ for (const surface of SURFACES) {
       await $.turn.complete(TURN)
       await $.turn.start(START)
       expect(d.toasts.filter(t => t.startsWith('Compaction control unreadable (not JSON)'))).toHaveLength(1)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '250000' }, { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }])
+      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
       // once the relay writes a readable control again, the session is armed again
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.complete(TURN)
       await $.turn.start(START)
-      expect(windowSets(d).at(-1)).toEqual({ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '250000' })
+      expect(windowSets(d).at(-1)).toEqual({ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' })
       d.world.context = { window: WINDOW }
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
@@ -360,29 +370,34 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
-    test('a session armed before its real window was known stops being held once the engine reports a smaller one', async ($, on) => {
+    // DX-5217: a percent needs the real window; until the engine reports it nothing is armed, and a smaller one than the control assumed takes it back
+    test('a session is armed once the engine reports its real window, and stops being held when a smaller one is reported', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       d.world.context = {}
       await $.turn.start(START)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '250000' }])
-      d.world.context = { tokens: 150_000, window: 200_000 }
+      expect(windowSets(d)).toEqual([])
+      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
+      d.world.context = { tokens: 120_000, window: WINDOW }
       await $.turn.complete(TURN)
-      expect(windowSets(d).at(-1)).toEqual({ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined })
+      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }])
+      d.world.context = { tokens: 150_000, window: 200_000 }
+      await $.turn.start(START)
+      expect(windowSets(d).at(-1)).toEqual({ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined })
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
-    test('the switch going off takes the window back, and the session is held no more', async ($, on) => {
+    test('the switch going off takes the percent back, and the session is held no more', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       d.world.files[CONTROL_FILE] = fileText(null)
       await $.turn.complete(TURN)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: '250000' }, { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }])
+      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
-    test('a session the plugin never armed never takes a window back', async ($, on) => {
+    test('a session the plugin never armed never takes the percent back', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(null)
       await $.turn.start(START)
