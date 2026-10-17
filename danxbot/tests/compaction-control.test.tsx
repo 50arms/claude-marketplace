@@ -251,7 +251,9 @@ for (const surface of SURFACES) {
     // DX-5231 / DX-5222: the main agent's compaction is started by the plugin's own /compact; the early-proposal percent is armed for the SUB-AGENTS (whose proposals are the only way they
     // compact), once, from the floor (compaction-agents.test.tsx has the rest)
     test('the plugin arms the sub-agents percent once, from the floor, however many turns follow', async ($, on) => {
-      const d = await started($, on)
+      const d = await started($, on, { stateSteps: true })
+      // this host runs session.compact (a session's first such event raises it: compaction-agents.test.tsx)
+      d.seedState('sessionCompactSeen', true)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)
@@ -393,7 +395,8 @@ for (const surface of SURFACES) {
 
     // DX-5217 / DX-5231: a process an older plugin version armed still holds CLAUDE_CODE_AUTO_COMPACT_WINDOW (the shrunken meter) or the percent after a plugin reload
     test('a window or percent variable left by an older plugin version is cleared while the session is under the handshake', async ($, on) => {
-      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })
+      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25', stateSteps: true })
+      d.seedState('sessionCompactSeen', true)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)
@@ -408,7 +411,8 @@ for (const surface of SURFACES) {
 
     // DX-5231: the clear is once per process: a value set after it (the percent the sub-agents are armed with, or a person's) is never wiped by a later turn
     test('a leftover variable is cleared once per process: a value set after the first clear is never touched', async ($, on) => {
-      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })
+      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25', stateSteps: true })
+      d.seedState('sessionCompactSeen', true)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)

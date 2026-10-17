@@ -905,8 +905,12 @@ export function dashboard(
   // DX-5222: every `$.session.send` the plugin makes (the recipient as the engine spells it, and the text), and how the host answers it: delivered, refused or a rejection
   const sends: { to: string; text: string }[] = []
   const sendMode = { current: 'delivered' as 'delivered' | 'refused' | 'throws' }
-  on('session.send', (_$: any, e: any) => {
+  // a test can hold the host's answer to a send (the plugin is then in the middle of it) until it releases it
+  const sendHold: { gate?: Promise<void>; entered?: () => void } = {}
+  on('session.send', async (_$: any, e: any) => {
     sends.push({ to: e.to, text: e.text })
+    sendHold.entered?.()
+    await sendHold.gate
     if (sendMode.current === 'throws') throw new Error('the host dropped the send')
     return (sendMode.current === 'refused' ? { isDelivered: false, reason: 'nobody by that name' } : { isDelivered: true }) as any
   })
@@ -996,7 +1000,14 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { envSets, envClearedAtSet, sends, setSendMode: (mode: 'delivered' | 'refused' | 'throws') => void (sendMode.current = mode), suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
+  return { envSets, envClearedAtSet, sends, setSendMode: (mode: 'delivered' | 'refused' | 'throws') => void (sendMode.current = mode), holdSends: () => {
+      let release!: () => void
+      let entered!: () => void
+      sendHold.gate = new Promise<void>(r => (release = r))
+      const reached = new Promise<void>(r => (entered = r))
+      sendHold.entered = entered
+      return { reached, release: () => release() }
+    }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
     }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }

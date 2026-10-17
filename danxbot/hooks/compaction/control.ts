@@ -21,10 +21,12 @@
 // never asks the network, because Claude Code proposes before every model request. A function hook that THROWS lets the compaction through (verified
 // live), so every decision here returns a verdict.
 //
-// FAIL OPEN. Holding is a courtesy of 50 Arms' cost policy, never worth ending a session for: a session that refuses every proposal ends with "Context
+// FAIL OPEN, with ONE exception. Holding is a courtesy of 50 Arms' cost policy, never worth ending a session for: a session that refuses every proposal ends with "Context
 // limit reached" (verified live), and the only escape, the safety valve's size, lives in the very file the gate may be unable to read. So whatever the gate
-// cannot establish (a control file it cannot read, a read that throws, a context size it cannot see) lets Claude Code's own compaction apply and holds nothing.
-// The person is told once that the control is unreadable (register.tsx).
+// cannot establish (a control file it cannot read, a read that throws, the MAIN agent's context size) lets Claude Code's own compaction apply and holds nothing.
+// The person is told once that the control is unreadable (register.tsx). The exception is a SUB-AGENT whose context size or model the plugin never saw
+// (DX-5222, `agentVerdict`): that proposal is refused and told, never guessed; the agent's next model response (`turn.step`) fills its size, and the next
+// proposal is judged on it.
 //
 // The shapes mirror the relay's `CompactionFile` (packages/danx-dashboard-mcp/src/compaction-control.ts in danxbot): a plugin cannot import it.
 // A file this module cannot read is `bad`, never a guess.
@@ -206,14 +208,15 @@ export type GateInput = {
 export type Verdict = { pass: true; why: 'manual' | 'no-control' | 'unreadable' | 'unknown-size' | 'valve' } | { pass: false; reason: string }
 
 // The decision, in order:
-//   a person's own /compact (and the plugin's own start of a ready compaction) always passes; anything that is not exactly `auto` is refused;
+//   a person's own /compact (and the plugin's own start of a ready compaction) always passes; anything that is not exactly `auto` (or `precompute`, judged the same) is refused;
 //   a file with no control (the switch went off, or the file is gone - a week's pruning by the relay) holds nothing: there is no handshake to wait for;
 //   a file the gate cannot read, a window smaller than the one the control assumed, and an unknown context size hold nothing either (fail open, above);
 //   at the safety valve's size (the file's `passAtTokens`) the proposal passes whatever the handshake says;
 //   otherwise it is refused: a ready agent is compacted by the plugin's own /compact, never by releasing a proposal.
 export function verdict(input: GateInput): Verdict {
   if (input.trigger === 'manual') return { pass: true, why: 'manual' }
-  if (input.trigger !== 'auto') return { pass: false, reason: `${HELD_REASON} (unexpected PreCompact trigger ${JSON.stringify(input.trigger)})` }
+  // DX-5222: a `precompute` (a compaction computed ahead of time, installed by nothing) is judged exactly like an automatic proposal
+  if (input.trigger !== 'auto' && input.trigger !== 'precompute') return { pass: false, reason: `${HELD_REASON} (unexpected PreCompact trigger ${JSON.stringify(input.trigger)})` }
   if (input.file.kind === 'bad') return { pass: true, why: 'unreadable' }
   if (input.file.kind === 'absent' || input.file.control === null) return { pass: true, why: 'no-control' }
   if (!windowFits(input.file.control, input.window)) return { pass: true, why: 'no-control' }
@@ -239,6 +242,9 @@ export const sizeOfUsage = (usage: { input_tokens: number; cache_read_input_toke
   // a failed turn ("Prompt is too long") reports no usage at all; it says nothing about the context
   return tokens > 0 ? { tokens, model: usage.model } : null
 }
+
+// DX-5222: how many sub-agents' last responses the plugin keeps (the oldest goes first)
+export const AGENT_SIZES_KEEP = 256
 
 export const AGENT_HELD_REASON = '[50 ARMS] automatic compaction is held: this sub-agent compacts when it says ready'
 

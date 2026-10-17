@@ -7,7 +7,7 @@ import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { briefingText, parseGitStatus } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
-import { ASK_SENT_PREFIX, HELD_REASON, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
@@ -134,6 +134,13 @@ const browserMissingTold = atom({ plugin: 'danxbot', key: 'browserMissingTold' }
 const leftoverArmingCleared = atom({ plugin: 'danxbot', key: 'leftoverArmingCleared' } as const, false)
 // DX-5222: the percent CLAUDE_AUTOCOMPACT_PCT_OVERRIDE holds because the plugin armed it for the sub-agents (null: the plugin armed none). $.state because the variable lives in the process: a module reload keeps both.
 const armedPercent = atom({ plugin: 'danxbot', key: 'armedPercent' } as const, null as number | null)
+// DX-5222: this host runs `session.compact`: raised by the first such event of the session. $.state, so a module reload keeps it (a reload that forgot it would take the armed percent back
+// until the next compaction event). Two things hang on it: the classic PreCompact gate leaves an automatic proposal to `session.compact` (which judged it per agent), and the sub-agents' percent
+// is armed only then (a host with no `session.compact` has only the classic gate, which cannot tell the agents apart, so an early proposal there would hold every agent).
+const sessionCompactSeen = atom({ plugin: 'danxbot', key: 'sessionCompactSeen' } as const, false)
+// DX-5222: the sub-agent requests the plugin has claimed to send (`<session>:<agent>` to the request's `at`). One compare-and-set before `$.session.send`, like claimedRelease, so the 5 s check and
+// a turn's sync never both send it; a send that fails gives the claim back.
+const claimedAsks = atom({ plugin: 'danxbot', key: 'claimedAsks' } as const, {} as Record<string, string>)
 // DX-5231: the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
 // check and a person's own /compact racing each other start (or spend) a ready exactly once.
 const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as const, null as string | null)
@@ -2132,14 +2139,9 @@ let compactionFaultTold: string | null = null
 // DX-5222: each sub-agent's last model response (its context size and model), noted at `turn.step`: `session.compact` names the proposing sub-agent but not its size, and
 // `$.session.usage()` is the main conversation's. A Map keeps insertion order, so the oldest agent goes first once AGENT_SIZES_KEEP are held; a reload starts empty (the
 // next response of each agent fills it), and an agent whose size is unknown is refused and told, never guessed (agentVerdict).
-const AGENT_SIZES_KEEP = 256
 const agentSizes = new Map<string, AgentSize>()
 // DX-5222: the sub-agent refusals already told to the person (`agent id: reason`), each once
 const agentFaultTold = new Set<string>()
-// DX-5222: how many automatic proposals `onSessionCompact` has let through and the classic gate has not yet seen. Core runs the classic PreCompact hooks beneath
-// `session.compact`; their input names no agent, so the classic gate would hold a sub-agent's proposal the per-agent gate released. A proposal `session.compact` passed is not judged
-// a second time (the classic gate judges only what reaches it with this at 0: a host that runs no `session.compact`, the managed installs).
-let classicPasses = 0
 // the git read of the resume briefing is a local status: it needs no longer than this
 const GIT_STATUS_TIMEOUT_MS = 5000
 // how often an idle session looks for an agent's ready in the local control file (a file read, no network)
@@ -2221,10 +2223,12 @@ async function clearLeftoverArming($: any, file: ControlFile): Promise<void> {
 // DX-5222: a sub-agent has no command form that starts its compaction (`$.command.run` compacts the main session only), so the only compaction it can have is Claude Code's own
 // automatic proposal. The plugin makes that proposal come early, from the floor: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, a process-wide variable (the main loop proposes early too; the gate
 // holds its proposals, onSessionCompact). It is armed while the session is under the handshake, re-armed when the floor moves, and taken back when the handshake ends or the file
-// cannot be read: an armed percent with nothing holding the proposals would compact every agent at the floor. Whether a variable set at runtime reaches a sub-agent that is
-// already running is UNVERIFIED (DX-5222 AC 4).
+// cannot be read: an armed percent with nothing holding the proposals would compact every agent at the floor. A variable set at runtime DOES reach a sub-agent that is already
+// running (verified live, Claude Code 2.1.299, DX-5222 comment 16303: a running sub-agent proposed three times within 12 s of the set).
+// It is armed only once this host has shown that it runs `session.compact` (`sessionCompactSeen`): the per-agent gate lives there, and on a host without it the classic gate alone
+// would hold every agent's early proposal, which can end an agent's work.
 async function armSubAgents($: any, file: ControlFile): Promise<void> {
-  const wanted = armedPercentOf(file)
+  const wanted = (await read($, sessionCompactSeen)) ? armedPercentOf(file) : null
   if (wanted === (await read($, armedPercent))) return
   // DX-5222 (comment 15880): the once-per-process clear must never wipe the value armed here, so `leftoverArmingCleared` is already true when this first sets it: syncCompaction runs
   // clearLeftoverArming first, and it raises the flag on the first control file of the session (the one that can arm). compaction-agents.test.tsx pins the order.
@@ -2283,14 +2287,16 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
     return { pass: true, why: 'manual' }
   }
   try {
-    const reading = e.trigger === 'auto' ? await contextReading($) : { tokens: null, window: null }
+    // DX-5222: a `precompute` is judged like an automatic proposal (and, installing nothing, announces nothing)
+    const judged = e.trigger === 'auto' || e.trigger === 'precompute'
+    const reading = judged ? await contextReading($) : { tokens: null, window: null }
     const v = verdict({
       trigger: e.trigger,
       tokens: reading.tokens,
       window: reading.window,
-      file: e.trigger === 'auto' ? await compactionControl($) : { kind: 'absent' },
+      file: judged ? await compactionControl($) : { kind: 'absent' },
     })
-    if (v.pass && v.why === 'valve') $.ui.toast('Compacting now: the context reached the size where holding it would end the session.')
+    if (v.pass && v.why === 'valve' && e.trigger === 'auto') $.ui.toast('Compacting now: the context reached the size where holding it would end the session.')
     return v
   } catch (err: any) {
     const told = `Compaction gate could not decide, so Claude Code's own automatic compaction applies: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
@@ -2301,8 +2307,11 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
 }
 
 async function onPreCompact($: any, e: any, next: any) {
-  // DX-5222: an automatic proposal `session.compact` passed (the per-agent gate judged it) is not judged again by this gate, which cannot tell the agents apart
-  if (e.trigger === 'auto' && classicPasses > 0) return next(e)
+  // DX-5222: on a host that runs `session.compact` every automatic proposal was judged there, per agent, before core ran this classic hook, which cannot tell the agents apart: it is
+  // not judged a second time. The one proposal that skips `session.compact` is an isolated `delegatedObservation` sub-agent's (it still runs the classic hooks); it passes too. That is
+  // the safe side: holding it by the MAIN agent's size would never release it (its own context is not the main conversation's), so it would end that agent's work at its window.
+  // Its context is short-lived and bounded, and the main agent's compaction stays held.
+  if ((e.trigger === 'auto' || e.trigger === 'precompute') && (await read($, sessionCompactSeen))) return next(e)
   const v = await compactionVerdict($, e)
   let r: any
   try {
@@ -2316,13 +2325,14 @@ async function onPreCompact($: any, e: any, next: any) {
 
 // ---- DX-5222: each sub-agent is gated, and recommended, on its own --------------------------------------------------------------------------------------------
 
-// Every model request of a sub-agent notes its context: `turn.step` (streaming) hands back the response with the usage the API reported and the model that answered. The
-// event of a MAIN-loop request has no agentId and is not noted (its size is `$.session.usage()`). Whatever goes wrong here is the plugin's own bookkeeping and never the
-// request's: the response always passes on untouched.
+// Every model request of a sub-agent notes its context: `turn.step` (streaming) hands back the response with the usage the API reported and the model that answered. Only a
+// sub-agent's request reaches this hook: the registration matches an `agentId`, and that matcher is the one place that keeps the main loop out (its size is `$.session.usage()`).
+// Whatever goes wrong here is the plugin's own bookkeeping and never the request's. It returns nothing, which the typed contract of a streaming hook defines as "its last next(e)'s result
+// stands": the response the model gave passes on untouched (compaction-agents.test.tsx asserts the result a caller reads).
 async function* noteAgentStep($: any, e: any, next: any): any {
   const response = yield* next(e)
   try {
-    const size = e.agentId === undefined || response?.usage === null || response?.usage === undefined ? null : sizeOfUsage(response.usage)
+    const size = response?.usage === null || response?.usage === undefined ? null : sizeOfUsage(response.usage)
     if (size !== null) {
       agentSizes.delete(e.agentId)
       agentSizes.set(e.agentId, size)
@@ -2331,37 +2341,39 @@ async function* noteAgentStep($: any, e: any, next: any): any {
   } catch (err: any) {
     $.ui.toast(`Compaction handshake could not note a sub-agent's context: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
   }
-  return response
 }
 
-// Claude Code's own automatic proposal (`session.compact`, trigger `auto`) for the main agent or, with an `agentId`, for a sub-agent. A person's /compact (and the plugin's own
-// start) is not matched here: the classic gate still sees it and spends a waiting ready. The main agent's verdict is the one the classic gate has always given
-// (compactionVerdict); a sub-agent's is its own (agentCompactionVerdict). A proposal that passes goes on to core, whose classic PreCompact hooks are told it was judged
-// (`classicPasses`); one that does not is a skip, so core runs nothing.
+// Every `session.compact` event, whatever the trigger: this host runs it (`sessionCompactSeen`), which arms the sub-agents' percent and hands the judging of automatic proposals to
+// the per-agent gate below. Observes only.
+async function onSessionCompactSeen($: any, e: any, next: any) {
+  if (!(await read($, sessionCompactSeen))) await update($, sessionCompactSeen, () => true)
+  return next(e)
+}
+
+// Claude Code's own automatic proposal (`session.compact`, trigger `auto`, and a `precompute`, the same compaction computed ahead of time) for the main agent or, with an `agentId`,
+// for a sub-agent. A person's /compact (and the plugin's own start) is not matched here: the classic gate still sees it and spends a waiting ready. The main agent's verdict is the
+// one the classic gate has always given (compactionVerdict); a sub-agent's is its own (agentCompactionVerdict). A `precompute` is judged the same way but SPENDS no release (it
+// installs nothing; the compaction that follows is an `auto` proposal judged then) and announces nothing. A proposal that passes goes on to core, whose classic PreCompact hook
+// leaves it alone (onPreCompact); one that does not is a skip, so core runs nothing.
 async function onSessionCompact($: any, e: any, next: any) {
   const v = e.agentId === undefined ? await compactionVerdict($, e) : await agentCompactionVerdict($, e)
-  if (!v.pass) return { skip: v.reason }
-  classicPasses += 1
-  try {
-    return await next(e)
-  } finally {
-    classicPasses -= 1
-  }
+  return v.pass ? next(e) : { skip: v.reason }
 }
 
 async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
   const agentId: string = e.agentId
+  const spends = e.trigger === 'auto'
   try {
     const sessionId = String(await $.session.id())
     const key = usedReleaseKey(sessionId, agentId)
     const now = await $.clock.now()
     const v = agentVerdict({ agentId, file: await compactionControl($), size: agentSizes.get(agentId) ?? null, usedReleaseId: spentReleaseId(await $.store.get(key)), nowMs: now })
-    if (v.pass && v.why === 'release') {
+    if (v.pass && v.why === 'release' && spends) {
       // spent before the compaction runs: this agent's release passes once, however many proposals follow
       await $.store.set(key, { releaseId: v.releaseId, at: now })
       await pruneUsedReleases($)
       $.ui.toast(`Compacting sub-agent ${agentId} now: it said it is ready.`)
-    } else if (v.pass && v.why === 'valve') $.ui.toast(`Compacting sub-agent ${agentId} now: its context reached the size where holding it would end its work.`)
+    } else if (v.pass && v.why === 'valve' && spends) $.ui.toast(`Compacting sub-agent ${agentId} now: its context reached the size where holding it would end its work.`)
     else if (!v.pass && v.told && !agentFaultTold.has(`${agentId}: ${v.reason}`)) {
       agentFaultTold.add(`${agentId}: ${v.reason}`)
       $.ui.toast(v.reason)
@@ -2388,10 +2400,19 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
   for (const { id, ask } of asks) {
     const key = askSentKey(sessionId, id)
     if (!running.has(id) || sentAskAt(await $.store.get(key)) === ask.at) continue
+    // DX-5222: the claim, one compare-and-set before the send: of every sync that read this request as unsent, exactly one sends it
+    let won = false
+    await update($, claimedAsks, cur => {
+      won = cur[key] !== ask.at
+      return won ? { ...cur, [key]: ask.at } : cur
+    })
+    if (!won) continue
     try {
       const sent = await $.session.send({ to: { agentId: id }, text: ask.text })
       if (!sent.isDelivered) throw new Error(sent.reason)
     } catch (err: any) {
+      // the claim goes back, so the next sync sends it again
+      await update($, claimedAsks, cur => Object.fromEntries(Object.entries(cur).filter(([k, at]) => !(k === key && at === ask.at))))
       const told = `Compaction request for sub-agent ${id} was not delivered: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
       if (!agentFaultTold.has(told)) {
         agentFaultTold.add(told)
@@ -2444,9 +2465,10 @@ export const register: Register = on => {
   on('turn.complete', onTurnComplete)
   // DX-4993 / DX-5231: an automatic compaction is held while the session is under the handshake; the agent's ready starts /compact itself (startReadyCompaction)
   on('classic.PreCompact', onPreCompact)
-  // DX-5222: Claude Code's own automatic proposals are judged per agent (a person's /compact and the plugin's own start are not matched: the classic gate answers them); each sub-agent's
+  // DX-5222: Claude Code's own automatic proposals (and the same compaction computed ahead of time) are judged per agent (a person's /compact and the plugin's own start are not matched: the classic gate answers them); each sub-agent's
   // last response is noted at `turn.step`
-  on('session.compact', { trigger: 'auto' }, onSessionCompact)
+  on('session.compact', onSessionCompactSeen)
+  on('session.compact', { trigger: /^(auto|precompute)$/ }, onSessionCompact)
   // only a sub-agent's requests (an agentId): the main loop's every streamed chunk would otherwise cross into the plugin for nothing
   on('turn.step', { agentId: /.+/ }, noteAgentStep)
   on('session.measure', onMeasure)
