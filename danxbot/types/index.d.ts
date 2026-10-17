@@ -304,7 +304,7 @@ declare module 'claude-code' {
       olderDashboardTold: boolean
       // DX-5093: the person was told, once, that the desktop's Browser pane is not reachable from the plugin (the plan tab is not kept open).
       browserMissingTold: boolean
-      // DX-4993: the auto-compact window the plugin armed on the session (the board's floor, tokens); null while it holds none. Kept by a reload of the hooks module, like the process's environment it lives in.
+      // DX-4993 / DX-5217: the early-proposal percent (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) the plugin armed on the session (the board's floor as a percent of the model's window); null while it holds none. Kept by a reload of the hooks module, like the process's environment it lives in.
       compactionArmed: number | null
       // DX-4235: the reports' memory (see ReportState).
       reports: ReportState
