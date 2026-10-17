@@ -1,18 +1,3 @@
-export type PlanRow = {
-  id: number
-  ref: string
-  name: string
-  needsYou: number
-}
-
-export type ProblemRow = {
-  id: number
-  cardId: string
-  cardTitle: string
-  type: 'question' | 'action'
-  statement: string
-}
-
 // The plan this session is bound to, read from the same response as the plan list (session.plan_id
 // and session.plan_name), so a plan beyond the list's cap still labels correctly.
 export type ConnectedPlan = {
@@ -34,7 +19,7 @@ export type StatusBreakdown = {
   Cancelled: number
 }
 
-// A card in the plan's in-progress bucket (not waiting on the operator): the pane lists its id (DX-4415); the title
+// A card in the plan's in-progress bucket (not waiting on the operator): the plugin lists its id (DX-4415); the title
 // titles a sub-agent's card link that no other loaded card names.
 export type InProgressRow = {
   id: string
@@ -46,8 +31,8 @@ export type InProgressRow = {
 export type ListenerStatus = { state: string; nextStep: string | null }
 
 // `signed-out` (DX-4423): the server is there but the session holds no dashboard key (lapsed, or never approved):
-// the band and pane say so and offer Sign in, never the server's agent-facing text.
-// `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band and pane say so and offer NO
+// the band says so and offers Sign in, never the server's agent-facing text.
+// `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band says so and offers NO
 // Sign in, because a revoked agent must stop.
 // DX-4448: `prefixes` are the issue prefixes (`DX`, `SG`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
 // EVERY card on the connected plan, any status (GET /api/plans/:id/cards, unscoped by board, closed cards included). Empty when not connected.
@@ -63,24 +48,19 @@ export type PlanView = {
   // last one this machine saw answered; null only while none has ever been seen.
   dashboardUrl: string | null
   connected: ConnectedPlan | null
-  plans: PlanRow[]
-  problems: ProblemRow[]
-  // DX-4458: one person-facing line per card the load could not read; the other cards still show.
-  cardErrors: string[]
   // Needs-you cards the dashboard has, and how many this view read; more than read means the
-  // problem list is a lower bound and the pane says so.
+  // open-problem count is a lower bound and the band's count is marked `+`.
   cardsTotal: number
   cardsRead: number
-  // Plans the dashboard has that the capped plan list did not return.
-  plansUnread: number
   // Card counts by status of the connected plan; null when not connected.
   statusBreakdown: StatusBreakdown | null
-  // The in-progress bucket's rows, and how many cards the bucket has (its own count, never the
-  // status count's: a card in progress with an open problem sits in needs-you).
+  // The in-progress bucket's rows (a card in progress with an open problem sits in needs-you, not here).
   inProgress: InProgressRow[]
-  inProgressTotal: number
+  // DX-5232: the open problems on the connected plan's needs-you cards that this view read (the sum of each card's
+  // `open_problem_count`); a count, never the problems themselves. A lower bound while cardsRead < cardsTotal.
+  openProblems: number
   // DX-4448: what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
-  // failed read of it leaves the plan view `ready` and says so in the pane, and replies are then drawn as written.
+  // failed read of it leaves the plan view `ready`, shows one toast, and replies are then drawn as written.
   links: CardLinks
   // The event listener as GET /api/plans answers it (`sessionListenerAttached`): the server's health state and
   // its next step; null when the answer carries none (a session on no plan, or no session row).
@@ -99,14 +79,14 @@ export type RefreshGate = {
   at: number | null
 }
 
-// DX-4339: the usage pacing panel's state (see hooks/plan/pacing-panel.ts).
+// DX-4339: the usage pacing state (see hooks/plan/pacing-model.ts).
 export type PacingMode = 'fast_then_hold' | 'spread_evenly'
 export type LimitSettings = { enabled: boolean; targetPercent: number; mode: PacingMode; criticalPercent: number }
 // DX-4595 (PLAN-29 G-5): spend is the third limit. Its settings carry the money budget and the period it is spent over; its figure is never computed here
 // (the plugin cannot price tokens) but read from the line answer (`SpendFigure`).
 export type SpendSettings = LimitSettings & { budgetUsd: number | null; period: { kind: 'hours' | 'days'; count: number } }
 export type TeamSettings = { five_hour: LimitSettings; weekly: LimitSettings; spend: SpendSettings }
-export type PanelLimit = { kind: string; percentUsed: number; resetsAt?: string }
+export type PacingLimit = { kind: string; percentUsed: number; resetsAt?: string }
 export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
 // The account's verdict for this session (DX-4340's cache): `budget` null = no cap, 0 = start nothing new, n = most agents at once.
 // DX-4595: the account's spend limit as the server priced it (GET /api/pacing/line `spend`): percent of the account's budget spent in the current period, the period end as `resetsAt`.
@@ -130,8 +110,8 @@ export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsA
 // How the last read of the team's settings went. `pending`: none yet (session start), quiet. `silent`: no danx-dashboard MCP, no danxbot or no key
 // (DX-3421 / DX-4340: said nowhere but the band's `local`). `error`: danxbot answered and the answer was unusable (the band says `local`).
 export type SettingsRead = { state: 'pending' | 'ok' | 'silent' } | { state: 'error'; message: string }
-export type PanelState = {
-  // the last settings read; kept through a failed read so the panel can still show them, marked local
+export type PacingSnapshot = {
+  // the last settings read; kept through a failed read so the pacing can still show them, marked local
   settings: TeamSettings | null
   settingsRead: SettingsRead
   // the account verdict as of the last refresh (null: none, or not trusted while the settings read is failing)
@@ -141,7 +121,7 @@ export type PanelState = {
   // DX-4656: each enabled limit's state and headroom and the worst one, from the same line answer (null: none, or not trusted while the settings read is failing)
   readout: PacingReadout | null
   // the session's own windows, as the harness last reported them (empty when its usage could not be read)
-  limits: PanelLimit[]
+  limits: PacingLimit[]
 }
 
 // DX-4435: a `request_permission` request the band counts until it is decided. DX-4530: no expiry clock (the claim decides it).
@@ -151,7 +131,7 @@ export type PermissionRequest = { url: string; code: string; publicId: string; p
 // appended into it that no main-loop tool result has carried yet (hooks/relay/delivery.ts).
 export type TurnState = { isRunning: boolean; pending: string[] }
 
-// DX-4233: the event relay's state, as the pane's event line shows it. `streaming`: waiting on the server for events (or just
+// DX-4233: the event relay's state, as the band's events warning shows it. `streaming`: waiting on the server for events (or just
 // delivered some); `retrying`: the last wait or delivery failed and the relay tries again on its own (`detail` is the cause);
 // `stopped`: the server said the relay cannot go on (`detail` is its fix); `off`: no relay runs (not connected, signed out).
 export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; planId: number | null; detail: string | null }
@@ -182,7 +162,7 @@ declare module 'claude-code' {
       busy: string[]
       // The session's title as the app last reported it, passed to `plan_connect`.
       title: string | null
-      // DX-4630: the sign-in request waiting for the person (its approval link and confirm code), drawn by the band and the pane; null when none.
+      // DX-4630: the sign-in request waiting for the person (its approval link and confirm code), drawn by the band; null when none.
       signInRequest: { url: string; code: string } | null
       // DX-4435: the model's undecided permission requests, oldest first.
       permissionRequests: PermissionRequest[]
@@ -194,9 +174,9 @@ declare module 'claude-code' {
       measuredAt: number | null
       // DX-4336: the sub-agents running now, by id and start time (the report's runningAgents is this plus the main thread).
       liveAgents: { id: string; since: number }[]
-      // DX-4339: what the usage pacing panel draws: the session's own windows, the team's pacing settings and the account verdict as last read.
-      panel: PanelState
-      // DX-4233: the event relay's state (see RelayState): the pane's event line says it when it is not streaming.
+      // DX-4339: what the usage pacing draws: the session's own windows, the team's pacing settings and the account verdict as last read.
+      pacingState: PacingSnapshot
+      // DX-4233: the event relay's state (see RelayState): the band's events warning says it when it is not streaming.
       relay: RelayState
       // DX-4721: the main loop's turn as the delivery of an urgent event needs it (see TurnState).
       turn: TurnState

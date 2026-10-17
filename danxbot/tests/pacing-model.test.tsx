@@ -8,10 +8,10 @@ import { describe, expect } from 'claude-code/testing'
 
 import { BAND_GAP_COLS, DANGER, ORANGE, PACING_POLL_MS, SUCCESS, USAGE_TICK_MS, WARNING } from '../hooks/plan/config'
 import { bandText, formatMinutes } from '../hooks/plan/pacing-format'
-import { EMPTY_PANEL_STATE, buildPanel } from '../hooks/plan/pacing-panel'
+import { EMPTY_PACING_STATE, buildPacing } from '../hooks/plan/pacing-model'
 import { parseTeamPacing } from '../hooks/plan/pacing-settings'
-import { TONE_COLOR } from '../hooks/plan/pacing-panel-view'
-import type { LimitReadout, PanelState } from '../types'
+import { TONE_COLOR } from '../hooks/plan/pacing-view'
+import type { LimitReadout, PacingSnapshot } from '../types'
 import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 const FIVE = '2026-10-03T11:10:00.000Z'
@@ -48,15 +48,15 @@ async function paced($: any, on: any, surface: string, options: Parameters<typeo
 }
 
 const SPEND_OFF = { enabled: false, targetPercent: 80, mode: 'spread_evenly' as const, criticalPercent: 95, budgetUsd: 50, period: { kind: 'days' as const, count: 7 } }
-const state = (over: Partial<PanelState> = {}): PanelState => ({
-  ...EMPTY_PANEL_STATE,
+const state = (over: Partial<PacingSnapshot> = {}): PacingSnapshot => ({
+  ...EMPTY_PACING_STATE,
   settings: { five_hour: { enabled: true, targetPercent: 80, mode: 'spread_evenly', criticalPercent: 95 }, weekly: { enabled: true, targetPercent: 70, mode: 'fast_then_hold', criticalPercent: 90 }, spend: SPEND_OFF },
   settingsRead: { state: 'ok' },
   limits: WINDOWS.map(w => ({ ...w })),
   ...over,
 })
 
-describe('the panel model', () => {
+describe('the pacing model', () => {
   test('parseTeamPacing reads danxbot settings and refuses anything else', () => {
     expect(parseTeamPacing({ id: 1, ...SETTINGS })).toEqual({
       five_hour: { enabled: true, targetPercent: 80, mode: 'spread_evenly', criticalPercent: 95 },
@@ -80,36 +80,36 @@ describe('the panel model', () => {
   })
 
   describe('the spend limit (DX-4595)', () => {
-    const enabled = (over: Partial<PanelState> = {}) => state({ settings: { ...state().settings!, spend: { ...SPEND_OFF, enabled: true } }, ...over })
+    const enabled = (over: Partial<PacingSnapshot> = {}) => state({ settings: { ...state().settings!, spend: { ...SPEND_OFF, enabled: true } }, ...over })
     const figure = { usedPercent: 61.6, level: 'over_pace' as const, resetsAt: WEEK, spentUsd: 30.8, budgetUsd: 50 }
 
     test('is hidden while the team has not enabled it, even when the line carries a figure', () => {
-      const m = buildPanel(state({ spend: figure }))
+      const m = buildPacing(state({ spend: figure }))
       expect(m.spend).toBeNull()
       expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70%')
     })
 
     test("its figure and level come straight from the server's spend, and the money shows", () => {
-      const m = buildPanel(enabled({ spend: figure }))
+      const m = buildPacing(enabled({ spend: figure }))
       expect(m.spend).toMatchObject({ state: 'figure', used: 62, level: 'over_pace' })
       expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70% spend 62%/80% ▲')
     })
 
     test('the server level stands even when it is worse than the thresholds would give', () => {
-      const m = buildPanel(enabled({ spend: { ...figure, usedPercent: 10, level: 'critical' } }))
+      const m = buildPacing(enabled({ spend: { ...figure, usedPercent: 10, level: 'critical' } }))
       expect(m.spend).toMatchObject({ used: 10, level: 'critical' })
       expect(bandText(m)).toContain('spend 10%/80% ‼')
     })
 
     test('with no spend on the line there is no figure and no level', () => {
-      const m = buildPanel(enabled({ spend: null }))
+      const m = buildPacing(enabled({ spend: null }))
       expect(m.spend).toMatchObject({ state: 'unjudged', used: null, level: null })
       expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70% spend …')
     })
 
     test('with the dashboard unreachable it needs danxbot, while 5-hour and weekly keep their local figures', () => {
       for (const settingsRead of [{ state: 'silent' }, { state: 'error', message: 'boom' }] as const) {
-        const m = buildPanel(enabled({ settingsRead, spend: figure }))
+        const m = buildPacing(enabled({ settingsRead, spend: figure }))
         expect(m.spend).toMatchObject({ state: 'needs_danxbot', used: null, level: null })
         expect(m.local).toBe(true)
         expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70% spend needs danxbot local')
@@ -118,74 +118,74 @@ describe('the panel model', () => {
 
     test('shows alone when the session has no window figures and the windows are off', () => {
       const s = enabled().settings!
-      const m = buildPanel(enabled({ limits: [], settings: { ...s, five_hour: { ...s.five_hour, enabled: false }, weekly: { ...s.weekly, enabled: false } }, spend: figure }))
+      const m = buildPacing(enabled({ limits: [], settings: { ...s, five_hour: { ...s.five_hour, enabled: false }, weekly: { ...s.weekly, enabled: false } }, spend: figure }))
       expect(bandText(m)).toBe('spend 62%/80% ▲')
     })
   })
 
   test('each limit is judged by its own thresholds: on pace below the target, over pace at it, critical at the threshold', () => {
-    const level = (used: number) => buildPanel(state({ limits: [{ kind: 'five_hour', percentUsed: used, resetsAt: FIVE }] })).entries[0]!.level
+    const level = (used: number) => buildPacing(state({ limits: [{ kind: 'five_hour', percentUsed: used, resetsAt: FIVE }] })).entries[0]!.level
     expect([79, 80, 94, 95, 100].map(level)).toEqual(['on_pace', 'over_pace', 'over_pace', 'critical', 'critical'])
   })
 
   // DX-4591: a team may set the critical threshold equal to the target; then the used percent alone has no over-pace band (on pace below it, critical at it); the server's verdict can still call over pace below the target from its reserve or projection.
   test('a critical threshold equal to the target leaves no over-pace band by used percent: on pace below it, critical at it', () => {
     const equal = state({ settings: { five_hour: { enabled: true, targetPercent: 80, mode: 'spread_evenly', criticalPercent: 80 }, weekly: { enabled: false, targetPercent: 85, mode: 'fast_then_hold', criticalPercent: 85 } } })
-    const level = (used: number) => buildPanel({ ...equal, limits: [{ kind: 'five_hour', percentUsed: used, resetsAt: FIVE }] }).entries[0]!.level
+    const level = (used: number) => buildPacing({ ...equal, limits: [{ kind: 'five_hour', percentUsed: used, resetsAt: FIVE }] }).entries[0]!.level
     expect([79, 79.9, 80, 100].map(level)).toEqual(['on_pace', 'on_pace', 'critical', 'critical'])
   })
 
   test('the level is judged on the unrounded figure and only the display is rounded', () => {
-    const m = buildPanel(state({ limits: [{ kind: 'five_hour', percentUsed: 79.6, resetsAt: FIVE }] }))
+    const m = buildPacing(state({ limits: [{ kind: 'five_hour', percentUsed: 79.6, resetsAt: FIVE }] }))
     expect(m.entries[0]).toMatchObject({ used: 80, level: 'on_pace' })
     expect(bandText(m)).toBe('5h 80%/80% 7d …')
   })
 
   test('a limit the team switched off is not shown, and one with no figure shows no reading', () => {
-    const off = buildPanel(state({ settings: { ...state().settings!, weekly: { ...state().settings!.weekly, enabled: false } } }))
+    const off = buildPacing(state({ settings: { ...state().settings!, weekly: { ...state().settings!.weekly, enabled: false } } }))
     expect(off.entries.map(e => e.limit)).toEqual(['five_hour'])
-    const none = buildPanel(state({ limits: [{ kind: 'five_hour', percentUsed: 10, resetsAt: FIVE }] }))
+    const none = buildPacing(state({ limits: [{ kind: 'five_hour', percentUsed: 10, resetsAt: FIVE }] }))
     expect(none.entries.map(e => [e.limit, e.used, e.level])).toEqual([['five_hour', 10, 'on_pace'], ['weekly', null, null]])
   })
 
   test('no settings read and no figure is nothing to show; no settings with a figure shows the figure with no level', () => {
-    expect(buildPanel(EMPTY_PANEL_STATE).entries).toEqual([])
-    const m = buildPanel({ ...EMPTY_PANEL_STATE, limits: [{ kind: 'five_hour', percentUsed: 33.4, resetsAt: FIVE }] })
+    expect(buildPacing(EMPTY_PACING_STATE).entries).toEqual([])
+    const m = buildPacing({ ...EMPTY_PACING_STATE, limits: [{ kind: 'five_hour', percentUsed: 33.4, resetsAt: FIVE }] })
     expect(m.entries).toEqual([{ limit: 'five_hour', used: 33, settings: null, level: null }])
   })
 
   test('not read yet is its own quiet state: not local', () => {
-    const m = buildPanel({ ...EMPTY_PANEL_STATE, limits: [{ kind: 'five_hour', percentUsed: 33, resetsAt: FIVE }] })
+    const m = buildPacing({ ...EMPTY_PACING_STATE, limits: [{ kind: 'five_hour', percentUsed: 33, resetsAt: FIVE }] })
     expect(m.local).toBe(false)
     expect(bandText(m)).toBe('5h 33%')
   })
 
   test('a session with no danxbot, and one whose settings read failed, are both local', () => {
     const limits = [{ kind: 'five_hour', percentUsed: 33, resetsAt: FIVE }]
-    const silent = buildPanel({ ...EMPTY_PANEL_STATE, limits, settingsRead: { state: 'silent' } })
+    const silent = buildPacing({ ...EMPTY_PACING_STATE, limits, settingsRead: { state: 'silent' } })
     expect(silent.local).toBe(true)
     expect(bandText(silent)).toBe('5h 33% local')
-    const failed = buildPanel({ ...EMPTY_PANEL_STATE, limits, settingsRead: { state: 'error', message: 'the team pacing read answered 500' } })
+    const failed = buildPacing({ ...EMPTY_PACING_STATE, limits, settingsRead: { state: 'error', message: 'the team pacing read answered 500' } })
     expect(failed.local).toBe(true)
   })
 
   test("the account's verdict raises the level of the window it is about, and only that one", () => {
-    const m = buildPanel(state({ verdict: { level: 'over_pace', budget: 0, resetsAt: FIVE, runningAgents: 3 } }))
+    const m = buildPacing(state({ verdict: { level: 'over_pace', budget: 0, resetsAt: FIVE, runningAgents: 3 } }))
     expect(m.entries.map(e => [e.limit, e.level])).toEqual([['five_hour', 'over_pace'], ['weekly', 'on_pace']])
     // a verdict never lowers a threshold's own level
-    const worse = buildPanel(state({ limits: [{ kind: 'five_hour', percentUsed: 96, resetsAt: FIVE }], verdict: { level: 'over_pace', budget: 0, resetsAt: FIVE, runningAgents: 1 } }))
+    const worse = buildPacing(state({ limits: [{ kind: 'five_hour', percentUsed: 96, resetsAt: FIVE }], verdict: { level: 'over_pace', budget: 0, resetsAt: FIVE, runningAgents: 1 } }))
     expect(worse.entries[0]!.level).toBe('critical')
   })
 
-  test('with the settings read failing the verdict is dropped and the panel is local, still against the last settings', () => {
-    const m = buildPanel(state({ settingsRead: { state: 'silent' }, verdict: { level: 'critical', budget: 0, resetsAt: FIVE, runningAgents: 1 } }))
+  test('with the settings read failing the verdict is dropped and the pacing is local, still against the last settings', () => {
+    const m = buildPacing(state({ settingsRead: { state: 'silent' }, verdict: { level: 'critical', budget: 0, resetsAt: FIVE, runningAgents: 1 } }))
     expect(m.entries.map(e => e.level)).toEqual(['on_pace', 'on_pace'])
     expect(m.local).toBe(true)
     expect(bandText(m)).toBe('5h 62%/80% 7d 41%/70% local')
   })
 
   test('the band text is used / target with a mark besides the colour for a level above on pace', () => {
-    const m = buildPanel(state({ limits: [{ kind: 'five_hour', percentUsed: 85, resetsAt: FIVE }, { kind: 'seven_day', percentUsed: 91, resetsAt: WEEK }] }))
+    const m = buildPacing(state({ limits: [{ kind: 'five_hour', percentUsed: 85, resetsAt: FIVE }, { kind: 'seven_day', percentUsed: 91, resetsAt: WEEK }] }))
     expect(bandText(m)).toBe('5h 85%/80% ▲ 7d 91%/70% ‼')
   })
 
@@ -194,7 +194,7 @@ describe('the panel model', () => {
 // DX-4656: the server's readout on the band, in its four forms
 describe('the worst-limit readout', () => {
   const lim = (over: Partial<LimitReadout>): LimitReadout => ({ limit: 'five_hour', level: 'on_pace', state: 'spare', headroomMinutes: 60, resetsInMinutes: 100, usedPercent: 3, targetPercent: 95, criticalPercent: 99, resetsAt: FIVE, ...over })
-  const band = (l: LimitReadout[], worst = l[0]!.limit) => buildPanel(state({ readout: { limits: l, worst } }))
+  const band = (l: LimitReadout[], worst = l[0]!.limit) => buildPacing(state({ readout: { limits: l, worst } }))
 
   test('formatMinutes: 45m, 1h, 1h30m, -1h30m, 0m', () => {
     expect([45, 60, 90, -90, 0, 1440, 0.4, 2879].map(formatMinutes)).toEqual(['45m', '1h', '1h30m', '-1h30m', '0m', '24h', '0m', '47h59m'])
@@ -223,15 +223,15 @@ describe('the worst-limit readout', () => {
   })
 
   test('with no readout the band is the session figures, and a failing settings read drops a stale one', () => {
-    expect(bandText(buildPanel(state()))).toBe('5h 62%/80% 7d 41%/70%')
+    expect(bandText(buildPacing(state()))).toBe('5h 62%/80% 7d 41%/70%')
     const stale = state({ readout: { limits: [lim({})], worst: 'five_hour' }, settingsRead: { state: 'error', message: 'boom' } })
-    expect(bandText(buildPanel(stale))).toBe('5h 62%/80% 7d 41%/70% local')
+    expect(bandText(buildPacing(stale))).toBe('5h 62%/80% 7d 41%/70% local')
   })
 
 })
 
 for (const surface of SURFACES)
-  describe(`the pacing panel on ${surface}`, () => {
+  describe(`the pacing on ${surface}`, () => {
     test('with the server readout the band shows the worst limit alone, coloured by its state', async ($, on) => {
       const d = await paced($, on, surface, { teamPacing: { body: SETTINGS }, pacingLine: { body: verdictBody() } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
@@ -328,7 +328,7 @@ for (const surface of SURFACES)
       expect(d.toasts.filter(t => t.startsWith('Usage not reported'))).toHaveLength(1)
     })
 
-    test('a settings change appears at the next poll with no restart, and a switched-off limit leaves the panel', async ($, on) => {
+    test('a settings change appears at the next poll with no restart, and a switched-off limit leaves the pacing', async ($, on) => {
       const d = await paced($, on, surface, { teamPacing: { body: SETTINGS } })
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70%')
@@ -358,8 +358,8 @@ for (const surface of SURFACES)
       await d.clock.advance(PACING_POLL_MS + 1)
       await d.clock.settle()
       expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70% local')
-      // the panel itself toasts nothing: the one toast is DX-4340's own pacing-line read, told once, now that a read had succeeded
-      expect(d.toasts.filter(t => /panel|settings/i.test(t))).toEqual([])
+      // the pacing itself toasts nothing: the one toast is DX-4340's own pacing-line read, told once, now that a read had succeeded
+      expect(d.toasts.filter(t => /pacing|settings/i.test(t))).toEqual([])
       expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))).toEqual([
         'Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): the danx-dashboard MCP server is not reachable from this session',
       ])
@@ -377,7 +377,7 @@ for (const surface of SURFACES)
       await d.clock.advance(PACING_POLL_MS + 1)
       await d.clock.settle()
       expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70% local')
-      expect(d.toasts.filter(t => /panel|settings/i.test(t))).toEqual([])
+      expect(d.toasts.filter(t => /pacing|settings/i.test(t))).toEqual([])
       // a wrong-shaped answer is an error too
       d.setTeamPacing({ body: { five_hour: five } })
       await d.clock.advance(PACING_POLL_MS + 1)
@@ -392,7 +392,7 @@ for (const surface of SURFACES)
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         expect(await joined(band)).toContain('5h 62% 7d 41% local')
-        expect(d.toasts.filter(t => /panel|settings/i.test(t))).toEqual([])
+        expect(d.toasts.filter(t => /pacing|settings/i.test(t))).toEqual([])
       })
 
     test('a session that never read settings (an old dashboard answers 404) shows its own usage with no targets, marked local', async ($, on) => {

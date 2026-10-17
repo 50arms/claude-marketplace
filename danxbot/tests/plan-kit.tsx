@@ -185,7 +185,7 @@ export function dashboard(
     pacingLine?: { body: unknown } | { status: number }
     // DX-4631: each pacing line read answers only after this long on the harness clock (a slow or hung dashboard); the read is counted when it starts
     pacingHoldMs?: number
-    // DX-4339: what GET /api/team/pacing answers (the team's pacing settings): a body (any shape) or an error status; unreachable by default (the panel's silent, local state)
+    // DX-4339: what GET /api/team/pacing answers (the team's pacing settings): a body (any shape) or an error status; unreachable by default (the usage pacing's silent, local state)
     teamPacing?: { body: unknown } | { status: number }
     // DX-4952: the test puts steps before reads of $.state (`beforeNextRead`), which needs the `state.get` hook from the start
     stateSteps?: boolean
@@ -393,7 +393,7 @@ export function dashboard(
       const c = world.cards.find(x => x.id === issue[1])
       if (!c) return reply({ error: 'nope' }, 404)
       // as the real route answers: scalars always, a relation only when `fields` names it
-      return reply({ id: c.id, title: c.title, ...(query?.fields?.problems ? { problems: c.problems } : {}) })
+      return reply({ id: c.id, title: c.title, ...(query?.fields?.problems ? { problems: c.problems } : {}), ...(query?.fields?.open_problem_count ? { open_problem_count: c.problems.filter(p => p.open).length } : {}) })
     }
     // DX-4336: the usage route as it answers a report (danxbot handleUsage's view)
     if (method === 'PUT' && path === '/api/plan-sessions/me/usage') {

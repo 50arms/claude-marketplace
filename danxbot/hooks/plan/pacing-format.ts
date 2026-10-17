@@ -1,7 +1,7 @@
 import type { LimitReadout, PacingLevel, PacingLimitKey, PacingReadout, PacingState } from '../../types'
-import type { PanelEntry, PanelModel, SpendEntry } from './pacing-panel'
+import type { PacingEntry, PacingModel, SpendEntry } from './pacing-model'
 
-// DX-4339: the pacing panel's wording, pure: the band's entries and the server's readout.
+// DX-4339: the usage pacing wording, pure: the band's entries and the server's readout.
 
 export const LIMIT_LABEL: Record<PacingLimitKey, string> = { five_hour: '5h', weekly: '7d', spend: '$' }
 // DX-4595: the third limit; the server's PACING_LIMIT_LABELS names it "spend"
@@ -12,7 +12,7 @@ const LEVEL_MARK: Record<PacingLevel, string> = { on_pace: '', over_pace: '▲',
 export const LOCAL_MARK = 'local'
 
 // The band's text for one entry: `5h 62%/80% ▲` (used / target), `5h 62%` while the target is unknown, `5h …` with no figure.
-function entryText(e: PanelEntry): string {
+function entryText(e: PacingEntry): string {
   const figure = e.used === null ? '…' : e.settings === null ? `${e.used}%` : `${e.used}%/${e.settings.targetPercent}%`
   return [LIMIT_LABEL[e.limit], figure, e.level === null ? '' : LEVEL_MARK[e.level]].filter(Boolean).join(' ')
 }
@@ -64,7 +64,7 @@ export function readoutWorst(r: PacingReadout): LimitReadout {
 // The band's segments, the ONE composition both the drawing and the width budget read. With the server's readout: the worst limit alone.
 // Without one (no server verdict, or the settings read failing): the session's own figures per limit, then `local`, exactly as before.
 // Empty with nothing to show.
-export function bandSegments(m: PanelModel): BandSegment[] {
+export function bandSegments(m: PacingModel): BandSegment[] {
   if (m.readout !== null) {
     const worst = readoutWorst(m.readout)
     return [{ key: 'worst', text: readoutText(worst), tone: worst.state }]
@@ -78,7 +78,7 @@ export function bandSegments(m: PanelModel): BandSegment[] {
 }
 
 // What the band's label budget counts.
-export function bandText(m: PanelModel): string {
+export function bandText(m: PacingModel): string {
   return bandSegments(m)
     .map(s => s.text)
     .join(' ')

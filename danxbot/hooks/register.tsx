@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
+import type { ConnectedPlan, PacingSnapshot, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -17,12 +17,12 @@ import { linkCardIds } from './plan/card-links'
 import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
-import { footerLabel } from './plan/words'
+import { eventsReason, eventsWarning, footerLabel } from './plan/words'
 import {
   APPROVAL_TOAST_MS,
   CALL_ERROR_MAX,
   COMMAND,
-  CONNECT_ERROR_MAX,
+  FAILURE_TOAST_MAX,
   EMPTY,
   LOAD_DEADLINE_MS,
   LOAD_ORPHAN_WAIT_MS,
@@ -68,7 +68,7 @@ import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, peekPacing, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
-import { EMPTY_PANEL_STATE, buildPanel } from './plan/pacing-panel'
+import { EMPTY_PACING_STATE, buildPacing } from './plan/pacing-model'
 import { readTeamSettings } from './plan/pacing-settings'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow, subagentActivityId } from './reports/activity'
 import type { ActivityChange } from './reports/activity'
@@ -103,10 +103,12 @@ const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null 
 // that was never counted (a reload lost the start, a duplicate stop) changes nothing, so the count cannot go negative; an entry older than
 // SUBAGENT_LIVE_MAX_MS (an agent that died with no stop) is no longer counted.
 const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
-// DX-4339: what the usage pacing panel draws from: the session's own windows, the team's settings and the account verdict as last read.
-const panel = atom({ plugin: 'danxbot', key: 'panel' } as const, EMPTY_PANEL_STATE as PanelState)
+// DX-4339: what the usage pacing draws from: the session's own windows, the team's settings and the account verdict as last read.
+const pacingState = atom({ plugin: 'danxbot', key: 'pacingState' } as const, EMPTY_PACING_STATE as PacingSnapshot)
 // DX-4233: the plan event relay's state (the band's events warning). DX-4721: and the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
+// DX-5232: the events warning the band last showed (null: none), so its reason is told once on the transition into it.
+const eventsWarned = atom({ plugin: 'danxbot', key: 'eventsWarned' } as const, null as string | null)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // DX-4234: the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
 const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
@@ -152,7 +154,7 @@ let relayRun: RelayRun | null = null
 // model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
 // DX-4884: boxed, because a halt on no plan (`planId: null`) is a halt too.
 let relayHalted: { planId: number | null } | null = null
-// DX-4339: the pacing panel's poll, one per session.
+// DX-4339: the usage pacing poll, one per session.
 let pacingTicker: { cancel: () => void } | null = null
 // DX-4336: the usage report's timer, one per session.
 let usageTicker: { cancel: () => void } | null = null
@@ -222,7 +224,10 @@ async function loadView($: any) {
 // DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one) for Sign in to ask
 // for again; a loaded view knows its own.
 async function applyLoaded($: any, loaded: any): Promise<void> {
+  const before = await read($, view)
   await update($, view, cur => (loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }))
+  // DX-5232: the card links' error is told once, on the load that makes the links unavailable (the replies are drawn as written)
+  if (loaded.links?.state === 'error' && before.links?.state !== 'error') $.ui.toast(`Card links unavailable: ${loaded.links.message}`.slice(0, TOAST_ERROR_MAX))
   // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
 }
@@ -420,14 +425,14 @@ async function accessEnded($: any, outcome: ToolOutcome): Promise<boolean> {
 // refresh reports its own load failures in the view, and anything it throws past that is a toast. Only the environment ending under
 // it escapes (settleDetached). `what` names the task in that toast.
 function detach($: any, what: string, task: Promise<unknown>): void {
-  void settleDetached(task).catch(err => $.ui.toast(`${what} failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`))
+  void settleDetached(task).catch(err => $.ui.toast(`${what} failed: ${String(err?.message ?? err).slice(0, FAILURE_TOAST_MAX)}`))
 }
 
 const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
 
 // DX-4635: what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards, sub-agents,
-// listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin and the plan list). A leave puts the session on no plan.
-const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl, plans: cur.plans, plansUnread: cur.plansUnread })
+// listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin). A leave puts the session on no plan.
+const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl })
 function leftView(cur: any): any {
   return { ...planIndependent(cur), phase: 'ready', refreshedAt: cur.refreshedAt }
 }
@@ -435,7 +440,7 @@ function leftView(cur: any): any {
 // Takes the session OFF its plan (plan_connect with disconnect: true, guarded by the plan we think we
 // are on). A refusal is shown, never swallowed: a 409 means the band was stale (the server names the
 // plan the session is really on, or says it is on none), so it also refreshes; a 404 or any other
-// failure carries its status and message. No confirm: one Connect undoes it.
+// failure carries its status and message. No confirm: the model can ask plan_connect for the plan again to undo it.
 function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
     // DX-4235: the leave closes what the session opened under the plan first; a leave that does not happen takes that back
@@ -446,14 +451,14 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
       r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
       await settleLeave($, closes, false, why)
-      $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
+      $.ui.toast(`Disconnect failed: ${String(err?.message ?? err).slice(0, FAILURE_TOAST_MAX)}`)
       return
     }
     const outcome = toolOutcome(r)
     await settleLeave($, closes, outcome.ok, why)
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
-      $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
+      $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, FAILURE_TOAST_MAX))
       if (outcome.status === 409) detach($, 'Plan refresh', refresh($, true))
       return
     }
@@ -671,8 +676,8 @@ async function reportUsage($: any, reading: UsageReading): Promise<void> {
             // DX-4854: danxbot places a session on its account from this very report, so until the first one is taken the pacing line answers
             // unknown (`no_usage_account`) and the band has no verdict. Ask again now instead of leaving the account's readings to the next poll.
             // This runs after every accepted report (each session.measure, whenever a window moves, and the usage tick), so a session whose account
-            // still has no verdict re-reads the line each time, until the panel holds a readout; once it does the poll alone keeps it fresh.
-            if ((await read($, panel)).readout === null) detach($, 'Pacing panel', refreshPacingPanel($))
+            // still has no verdict re-reads the line each time, until the pacing holds a readout; once it does the poll alone keeps it fresh.
+            if ((await read($, pacingState)).readout === null) detach($, 'Usage pacing', refreshPacingView($))
           }
         }
       }
@@ -689,14 +694,14 @@ async function reportUsage($: any, reading: UsageReading): Promise<void> {
   }
 }
 
-// DX-4339: the panel draws the session's own windows whether or not the session is connected to a plan, so they are kept here, apart from
+// DX-4339: the pacing draws the session's own windows whether or not the session is connected to a plan, so they are kept here, apart from
 // the report (which only a signed-in session makes). An unreadable usage clears them: a frozen figure must not stand as current.
 async function noteLimits($: any, limits: readonly SessionRateLimit[]): Promise<void> {
-  await update($, panel, cur => ({ ...cur, limits: limits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })) }))
+  await update($, pacingState, cur => ({ ...cur, limits: limits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })) }))
 }
 
 // The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure. A reading that fails clears the
-// panel's windows (a frozen figure must not stand as current) and, for a signed-in session, is toasted by the report.
+// usage pacing windows (a frozen figure must not stand as current) and, for a signed-in session, is toasted by the report.
 async function reportUsageNow($: any): Promise<void> {
   let reading: UsageReading
   try {
@@ -714,11 +719,11 @@ async function reportUsageNow($: any): Promise<void> {
   return reportUsage($, reading)
 }
 
-// DX-4339: the team's pacing settings (GET /api/team/pacing) and the account verdict (the DX-4340 cache) into the panel's state. The settings
+// DX-4339: the team's pacing settings (GET /api/team/pacing) and the account verdict (the DX-4340 cache) into the usage pacing state. The settings
 // read's outcome is kept (`settingsRead`) so the band tells a quiet start or a session with no danxbot from a real error; a failed read keeps
 // the last settings and toasts nothing (DX-4340's decision). The verdict is re-read every poll (danxbot itself changes it every 10 minutes, so
 // a change shows within a poll or two). Run at session start and on the poll; a throw here is toasted, never an unhandled rejection.
-async function refreshPacingPanel($: any): Promise<void> {
+async function refreshPacingView($: any): Promise<void> {
   try {
     const env = pacingEnv($)
     const fetched = await readTeamSettings(env.call)
@@ -728,13 +733,13 @@ async function refreshPacingPanel($: any): Promise<void> {
     const verdict = pacing?.verdict ?? null
     const spend = pacing?.spend ?? null
     const readout = pacing?.readout ?? null
-    await update($, panel, cur =>
+    await update($, pacingState, cur =>
       'settings' in fetched
         ? { ...cur, settings: fetched.settings, settingsRead: { state: 'ok' }, verdict, spend, readout }
         : { ...cur, settingsRead: fetched.read, verdict: null, spend: null, readout: null },
     )
   } catch (err: any) {
-    $.ui.toast(`Usage pacing panel could not refresh: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+    $.ui.toast(`Usage pacing could not refresh: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
   }
 }
 
@@ -1346,18 +1351,18 @@ async function onSessionStart($: any, e: any, next: any) {
   await update($, busy, () => [])
   // DX-4630: nor a sign-in request: its watch died with the old process
   await update($, signInRequest, () => null)
-  // DX-4233: no plan polling timer (the relay's events, the turns and the sub-agents refresh the view). DX-4339: the pacing panel has no
+  // DX-4233: no plan polling timer (the relay's events, the turns and the sub-agents refresh the view). DX-4339: the pacing has no
   // event to ride, so only it is read on the poll
   pacingTicker?.cancel()
-  pacingTicker = $.clock.every(PACING_POLL_MS, () => refreshPacingPanel($))
+  pacingTicker = $.clock.every(PACING_POLL_MS, () => refreshPacingView($))
   startUsageTicker($, USAGE_TICK_MS)
   // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
   permissionTicker?.cancel()
   permissionTicker = null
   await syncPermissionPoll($)
-  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are the panel's poll, a sub-agent start when the cache is a minute old, and every spawn
+  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are the usage pacing poll, a sub-agent start when the cache is a minute old, and every spawn
   resetPacing()
-  detach($, 'Pacing panel', refreshPacingPanel($))
+  detach($, 'Usage pacing', refreshPacingView($))
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
   // DX-4233: the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
   detach($, 'Plan event relay start', startRelayWhenKnown($))
@@ -1794,11 +1799,21 @@ async function onTitle($: any, e: any, next: any) {
   return next(e)
 }
 
+// DX-5232: the events warning's reason, toasted once on the transition into the warning (a redraw that shows the same warning says nothing).
+async function noteEventsWarning($: any, v: PlanView, relayState: RelayState): Promise<void> {
+  const warning = eventsWarning(v, relayState)
+  if (warning === (await read($, eventsWarned))) return
+  await update($, eventsWarned, () => warning)
+  const reason = eventsReason(v, relayState)
+  if (reason !== null) $.ui.toast(reason.slice(0, TOAST_ERROR_MAX))
+}
+
 async function drawBand($: any, e: any, next: any) {
   if (e.props.hasSurvey) return next(e)
+  const v = await read($, view)
+  await noteEventsWarning($, v, await read($, relay))
   // a dismissed band draws nothing, whatever the connection (the footer button brings it back)
   if (await read($, dismissed)) return next(e)
-  const v = await read($, view)
   const permissions = await read($, permissionRequests)
   const newestPermission = permissions.at(-1)
   return renderBand(
@@ -1810,7 +1825,7 @@ async function drawBand($: any, e: any, next: any) {
     newestPermission === undefined ? null : { count: permissions.length, newest: asApproval(newestPermission) },
     await read($, signInRequest),
     e.props.bodyColumns,
-    buildPanel(await read($, panel)),
+    buildPacing(await read($, pacingState)),
     await read($, relay),
   )
 }

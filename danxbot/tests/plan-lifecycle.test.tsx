@@ -72,7 +72,7 @@ describe('the MCP server connects after session start', () => {
     await startSession($, d, 'desktop')
     const apiCalls = () => d.calls.filter(c => c.tool === 'danxbot_api' && c.server === SERVER).length
     expect(apiCalls()).toBe(1)
-    // each wait is advanced on its own, so no poll tick (the pacing panel's) can land inside the sequence
+    // each wait is advanced on its own, so no poll tick (the usage pacing's) can land inside the sequence
     for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
     expect(apiCalls()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
     await d.clock.advance(30_000)
@@ -103,10 +103,10 @@ describe('what one load says about what it did not read', () => {
       const d = dashboard(on, { noTotal: true })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('Danxbot Plan: Disconnected')
+      expect(await text(band)).toContain('Danxbot: Disconnected')
       expect(await problemBadgeOf(band)).toBeUndefined()
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('red')
-      const label = await band.find({ type: 'Text', text: /Danxbot Plan: Disconnected/ })
+      const label = await band.find({ type: 'Text', text: /Danxbot: Disconnected/ })
       expect(label?.props.color).toBe('red')
       expect(label?.props.dimColor).toBeFalsy()
     })
@@ -136,7 +136,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // DX-4233: the deadline ends the load as an error shown now; the call that never settled still holds the lock, so a refresh in this window
     // starts no second load beside it
     await d.clock.advance(LOAD_DEADLINE_MS / 2 + 1_000)
-    expect(await text(band)).toContain('Danxbot Plan: Disconnected')
+    expect(await text(band)).toContain('Danxbot: Disconnected')
     await ask($, d)
     expect(loadsOf(d)).toBe(1)
 
@@ -202,7 +202,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await d.clock.settle()
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await d.clock.advance(LOAD_DEADLINE_MS + 1_000)
-    expect(await text(band)).toContain('Danxbot Plan: Disconnected')
+    expect(await text(band)).toContain('Danxbot: Disconnected')
     d.release()
     await d.clock.settle()
     expect(loadsOf(d)).toBe(1)

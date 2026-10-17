@@ -1,13 +1,5 @@
 import type { PlanView, RelayState, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, keyRevokedLabel } from './config'
-
-export function age(iso: string, now: number): string {
-  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000))
-  if (s < 60) return 'just now'
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
-}
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, keyRevokedLabel } from './config'
 
 // "+" when the view read fewer needs-you cards than the dashboard has: every count of open problems is then a
 // lower bound. The one home of that rule.
@@ -18,7 +10,7 @@ export function capMark(v: PlanView): string {
 // DX-4420: the band button's label: a problem glyph and the count, "3+" when the view read fewer cards than exist,
 // '' for none (the button is then not drawn). The count is a button, not label text: see band.tsx.
 export function problemBadge(v: PlanView): string {
-  const n = v.problems.length
+  const n = v.openProblems
   return n === 0 ? '' : `${PROBLEM_GLYPH} ${n}${capMark(v)}`
 }
 
@@ -46,8 +38,8 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
   // DX-4418: a revoked key names who revoked it.
   if (v.phase === 'key-revoked') return keyRevokedLabel(v.revokedBy as string) // always set with the phase
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
-  if (v.phase === 'error') return `${PLAN_TITLE}: Disconnected`
-  if (v.phase === 'loading' && !v.refreshedAt) return `${PLAN_TITLE}: loading…`
+  if (v.phase === 'error') return `${BRAND}: Disconnected`
+  if (v.phase === 'loading' && !v.refreshedAt) return `${BRAND}: loading…`
   if (!v.connected) return `${BRAND}: not connected to a plan`
   // DX-4420: a connected band reads `PLAN-NN · name`; the Danxbot prefix stays on the states with no plan.
   const { ref, name } = v.connected
@@ -104,4 +96,14 @@ export function eventsWarning(v: PlanView, relay: RelayState): string | null {
   if (relay.planId !== v.connected.id || relay.phase === 'off') return 'events: relay not running'
   if (v.listener === null) return NO_EVENT_STATUS
   return v.listener.state === 'healthy' ? null : `events: ${v.listener.state}`
+}
+
+// DX-5232: the reason behind the events warning, for the one toast the transition into it draws: the relay's own detail when the relay
+// is the fault, else the server's next step for the listener. Null when the events are flowing.
+export function eventsReason(v: PlanView, relay: RelayState): string | null {
+  const warning = eventsWarning(v, relay)
+  if (warning === null) return null
+  const relayFault = v.connected !== null && relay.planId === v.connected.id && (relay.phase === 'retrying' || relay.phase === 'stopped')
+  const detail = relayFault ? relay.detail : (v.listener?.nextStep ?? null)
+  return detail ? `${warning}. ${detail}` : warning
 }

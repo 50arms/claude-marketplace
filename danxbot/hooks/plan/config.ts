@@ -3,7 +3,6 @@ import type { ConnectedPlan, PlanView } from '../../types'
 // DX-4419: the name every footer label, and the band's not-connected, loading and disconnected states, carry,
 // so the operator can tell the text is danxbot's.
 export const BRAND = 'Danxbot'
-export const PLAN_TITLE = `${BRAND} Plan`
 // DX-4420: the problem icon on the band's count button (a Button label is text only).
 export const PROBLEM_GLYPH = '⚠'
 export const COMMAND = 'danx-plan'
@@ -12,10 +11,10 @@ export const COMMAND = 'danx-plan'
 // declares a `danx-dashboard` server of its own any more, so there is no second name to try.
 export const SERVER = 'plugin:danxbot:danx-dashboard'
 export const toolName = (tool: string) => `mcp__${SERVER.replace(/:/g, '_')}__${tool}`
-// DX-4339: how often the usage pacing panel is read (it has no event to ride). The plan view is never polled (DX-4233).
+// DX-4339: how often the usage pacing is read (it has no event to ride). The plan view is never polled (DX-4233).
 export const PACING_POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
-// DX-4530: while a permission request is open its claim is polled this often (the pacing panel's poll otherwise), so the model hears the
+// DX-4530: while a permission request is open its claim is polled this often (the usage pacing poll otherwise), so the model hears the
 // decision within seconds. The server's per-key claim limit (danxbot permission-request-routes.ts: twice one 3 s poll, about
 // 0.67 claims a second) fits the MCP's own 3 s poll plus this one for ONE open request; with more open at once the MCP's poll
 // alone passes it, and this poll's 429 only keeps the request for the next tick.
@@ -28,7 +27,6 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 
 // How much one load reads. Past a cap the view says so (cardsTotal vs cardsRead)
 // rather than presenting a lower bound as the whole.
-export const MAX_PLANS = 30
 export const MAX_CARDS = 15
 // DX-4448: an issue prefix as a board names it (`DX`, `SSL`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
@@ -70,7 +68,8 @@ export const BAND_GAP_COLS = 1
 export const BAND_NAME_MIN_COLS = 4
 export const BAND_SPARE_COLS = 2
 export const TOAST_ERROR_MAX = 160
-export const CONNECT_ERROR_MAX = 200
+// DX-5232: the longest a failure toast's message is cut to (sign-in, Disconnect and a failed detached task all use it)
+export const FAILURE_TOAST_MAX = 200
 export const CALL_ERROR_MAX = 200
 export const ERROR_BODY_MAX = 200
 
@@ -93,15 +92,11 @@ export const EMPTY: PlanView = {
   serverNotConnected: false,
   dashboardUrl: null,
   connected: null,
-  plans: [],
-  problems: [],
-  cardErrors: [],
   cardsTotal: 0,
   cardsRead: 0,
-  plansUnread: 0,
   statusBreakdown: null,
   inProgress: [],
-  inProgressTotal: 0,
+  openProblems: 0,
   // DX-4448: nothing to link until a load reads the boards and the plan's cards
   links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,
@@ -171,7 +166,7 @@ export const SIGN_IN_EXPIRED_TOAST = 'Sign in expired. A new request is open.'
 // the shortest a watch's round may take: the MCP's own ~45 s wait normally paces it; an answer that returns at once must not spin it
 export const SIGN_IN_MIN_ROUND_MS = 5_000
 export const SIGN_IN_DENIED_TOAST = 'Sign in was denied.'
-export const signInFailedToast = (message: string) => `Sign in failed: ${message.slice(0, CONNECT_ERROR_MAX)}`
+export const signInFailedToast = (message: string) => `Sign in failed: ${message.slice(0, FAILURE_TOAST_MAX)}`
 
 // DX-4418: a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
 // makes no access request: `keyRevokedHalt` in packages/danx-dashboard-mcp key-revoked-halt.ts, which begins

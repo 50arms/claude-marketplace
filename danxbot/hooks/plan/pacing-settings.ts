@@ -2,7 +2,7 @@ import type { SettingsRead, TeamSettings } from '../../types'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
 import type { Call } from './pacing-line'
 
-// DX-4339 (PLAN-29): the team's pacing settings, read from GET /api/team/pacing. Wire parse and the one read; the model is pacing-panel.ts.
+// DX-4339 (PLAN-29): the team's pacing settings, read from GET /api/team/pacing. Wire parse and the one read; the model is pacing-model.ts.
 
 export const SETTINGS_PATH = '/api/team/pacing'
 const MODES = ['fast_then_hold', 'spread_evenly']

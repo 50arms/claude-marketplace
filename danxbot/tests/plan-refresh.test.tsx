@@ -30,13 +30,13 @@ for (const surface of SURFACES) {
       expect(await problemBadgeOf(band)).toBe('⚠ 4')
     })
 
-    test('a refresh error shows `Danxbot Plan: Disconnected` in the band', async ($, on) => {
+    test('a refresh error shows `Danxbot: Disconnected` in the band', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.failList()
       await forceRefresh($, d)
-      expect(await label(band)).toContain('Danxbot Plan: Disconnected')
+      expect(await label(band)).toContain('Danxbot: Disconnected')
       expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
       // and it recovers on the next good load
       d.failList(false)
@@ -62,7 +62,7 @@ describe('the dashboard cannot be read', () => {
       const d = dashboard(on, { mcp: 'flaky' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await label(band)).toContain('Danxbot Plan: Disconnected')
+      expect(await label(band)).toContain('Danxbot: Disconnected')
       expect(await label(band)).not.toContain('not connected in this session')
       expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
     })

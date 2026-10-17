@@ -7,8 +7,8 @@ import type { Handlers } from './handlers'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
 import { bandText } from './pacing-format'
-import type { PanelModel } from './pacing-panel'
-import { pacingBand } from './pacing-panel-view'
+import type { PacingModel } from './pacing-model'
+import { pacingBand } from './pacing-view'
 import { bandLabel, bandLabelCols, eventsWarning, problemBadge, viewPercent } from './words'
 
 // The controls' labels the width budget counts.
@@ -29,13 +29,13 @@ export function renderBand(
   permission: { count: number; newest: ApprovalRequest } | null,
   // DX-4630: the sign-in request waiting for the person: its link and confirm code are drawn at once.
   signIn: ApprovalRequest | null,
-  // The band's width in columns (`bodyColumns`); absent in a test mount or a surface that does not say it, then only the
+  // The band's width in columns (`bodyColumns`); undefined in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
-  columns?: number,
+  columns: number | undefined,
   // DX-4339: the pacing entries beside the controls: each enabled limit's usage against its target, coloured by level.
-  pacing?: PanelModel,
-  // DX-5232: the plan event relay's state, for the events warning.
-  relay?: RelayState,
+  pacing: PacingModel | undefined,
+  // DX-5232: the plan event relay's state, for the events warning (its reason is toasted by the caller, once).
+  relay: RelayState,
 ): any {
   const { Box, Text, Button } = E
   const close = (
@@ -60,10 +60,10 @@ export function renderBand(
   // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
   const linkUrl = plan !== null ? planUrl(plan) : v.dashboardUrl !== null ? plansUrl(v.dashboardUrl) : null
   const pacingLabel = pacing === undefined ? '' : bandText(pacing)
-  // DX-5232: Disconnect is the only way off a plan from the UI (Connect and Switch are the model's `plan_connect`); the events warning shows only while the events are not flowing.
+  // DX-5232: Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`); the events warning shows only while the events are not flowing.
   const disconnecting = busyKey.isDisconnecting(busy)
   const disconnectLabel = disconnecting ? DISCONNECTING_TIP : DISCONNECT_TIP
-  const warning = relay === undefined ? null : eventsWarning(v, relay)
+  const warning = eventsWarning(v, relay)
   const controls = [
     ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),

@@ -1,5 +1,5 @@
-import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, StatusBreakdown } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, NEEDS_YOU_BUCKET_ID, PREFIX_PATTERN, STATUS_KEYS } from './config'
+import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
+import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, NEEDS_YOU_BUCKET_ID, PREFIX_PATTERN, STATUS_KEYS } from './config'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
 import type { Refusal } from '../relay/refusal'
 
@@ -25,22 +25,6 @@ export function errText(r: Api): string {
   if (isOversize(r)) return failureReason(r)
   const b = r.body ?? {}
   return `${r.status || 'mcp'}: ${b.message ?? b.error ?? JSON.stringify(b).slice(0, ERROR_BODY_MAX)}`
-}
-
-// A card read for its problem rows: only the open ones, which is what the band counts. A problem answered in the browser leaves the list
-// on the next refresh; its history lives there too.
-function toProblems(card: any): ProblemRow[] {
-  return (card.problems ?? [])
-    .filter((p: any) => p.open)
-    .map(
-      (p: any): ProblemRow => ({
-        id: p.id,
-        cardId: card.id,
-        cardTitle: card.title,
-        type: p.type === 'action' ? 'action' : 'question',
-        statement: p.statement,
-      }),
-    )
 }
 
 // control flow only: thrown by `guarded` below, caught by loadPlan, never seen outside it
@@ -72,29 +56,18 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   }
 }
 
+// DX-5232: the plan list is read for its answer's `dashboard_url` and `session` (and sessionListenerAttached) only: one row is enough.
+const PLAN_LIST_QUERY = { limit: 1 }
+
 async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
-  const list = await call('GET', '/api/plans', { query: { limit: MAX_PLANS } })
+  const list = await call('GET', '/api/plans', { query: PLAN_LIST_QUERY })
   if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true }
 
-  // A paged route that does not say how many there are cannot be read as complete.
-  if (typeof list.body.total !== 'number') {
-    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered no total: cannot tell whether the plan list is complete' }
-  }
   // DX-4317: the origin every link is built on. Without it no link can be right, so the load is an error.
   const dashboardUrl = readOrigin(list.body.dashboard_url)
   if (dashboardUrl === null) {
     return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered no valid dashboard_url (an http(s) origin): cannot build plan links' }
   }
-  const plansRead: any[] = list.body.plans ?? []
-  const plansUnread = Math.max(0, list.body.total - plansRead.length)
-  const plans: PlanRow[] = plansRead
-    .filter((p: any) => !p.archived_at)
-    .map((p: any) => ({
-      id: p.id,
-      ref: p.ref,
-      name: p.name,
-      needsYou: p.bucket_counts?.[NEEDS_YOU_BUCKET_ID] ?? 0,
-    }))
   // The session in this same response says WHICH plan; the plan itself is read by id below.
   const session = list.body.session
   const connectedId: number | null = session?.plan_id ?? null
@@ -104,7 +77,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   if (listener === MALFORMED_LISTENER) {
     return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
   }
-  const noPlan = { dashboardUrl, connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
+  const noPlan = { dashboardUrl, connected: null, listener, cardsTotal: 0, cardsRead: 0 }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
   // One load of everything about the connected plan: the plan itself (its status counts),
@@ -133,7 +106,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
+  const base = { dashboardUrl, connected, listener, cardsTotal: 0, cardsRead: 0, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
 
   if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
   if (typeof cards.body.total !== 'number') {
@@ -146,35 +119,35 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
   const rows: { id: string }[] = (cards.body.cards ?? []).map((c: any) => ({ id: c.id }))
   const ipRows: any[] = inProg.body.cards ?? []
-  // DX-4635: the needs-you card reads are one parallel step. DX-4415: the in-progress cards ride along.
+  // DX-4635: the needs-you card reads are one parallel step. DX-5232: each card's open-problem COUNT is all that is read from it.
   const fetched = await Promise.all(
     rows.map(async row => ({
       row,
-      r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { problems: true } } }),
+      r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { open_problem_count: true } } }),
     })),
   )
-  // DX-4458: a card that cannot be read is one line naming it, never the whole view; the other cards still show.
-  const cardErrors: string[] = []
-  const cardProblems: ProblemRow[][] = []
+  // DX-4458: a card that cannot be read is not counted: the count is then a lower bound (cardsRead < cardsTotal), which the band marks.
+  let openProblems = 0
+  let cardsRead = 0
   for (const f of fetched) {
-    if (f.r.ok) cardProblems.push(toProblems(f.r.body))
-    else cardErrors.push(`Couldn't load ${f.row.id}: ${failureReason(f.r)}`)
+    if (!f.r.ok) continue
+    const count = f.r.body?.open_problem_count
+    if (typeof count !== 'number') {
+      return fail(`GET /api/issues/${f.row.id} answered no open_problem_count: cannot count the open problems`)
+    }
+    openProblems += count
+    cardsRead += 1
   }
-  // cards arrive priority-sorted; keep that order
-  const problems: ProblemRow[] = cardProblems.flat()
   const inProgress: InProgressRow[] = ipRows.map(row => ({ id: row.id, title: row.title }))
   return {
     ...EMPTY,
     ...base,
     phase: 'ready',
     error: null,
-    problems,
-    cardErrors,
+    openProblems,
     cardsTotal: cards.body.total,
-    // DX-4458: only the cards read: an unread card makes the problem list a lower bound, as a cap does
-    cardsRead: cardProblems.length,
+    cardsRead,
     inProgress,
-    inProgressTotal: inProg.body.total,
     refreshedAt,
   }
 }

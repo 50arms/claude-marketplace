@@ -232,7 +232,7 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($)).deny).toBeUndefined()
     // the slow read will answer critical, long after its deadline
     options.pacingLine = { body: wire({ level: 'critical', budget: 0 }) }
-    // it answers 1 s after its deadline: well inside the panel poll's minute, so only the late answer can touch the cache in between
+    // it answers 1 s after its deadline: well inside the pacing poll's minute, so only the late answer can touch the cache in between
     options.pacingHoldMs = PACING_READ_DEADLINE_MS + 1_000
     const pending = spawn($)
     await d.clock.advance(PACING_READ_DEADLINE_MS + 1)

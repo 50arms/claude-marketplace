@@ -38,8 +38,8 @@ describe('plan band', () => {
   })
 
 
-  test('the first load reads Danxbot Plan: loading…', () => {
-    expect(bandLabel({ ...EMPTY, phase: 'loading', refreshedAt: null })).toBe('Danxbot Plan: loading…')
+  test('the first load reads Danxbot: loading…', () => {
+    expect(bandLabel({ ...EMPTY, phase: 'loading', refreshedAt: null })).toBe('Danxbot: loading…')
   })
 
   test('shows Not connected and a close control with no command typed, on every surface', async ($, on) => {
