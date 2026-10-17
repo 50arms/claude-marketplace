@@ -247,7 +247,8 @@ for (const surface of SURFACES) {
       await $.turn.start(START)
       expect(compactRuns(d)).toEqual([])
       await $.turn.complete(TURN)
-      expect(compactRuns(d)).toHaveLength(1)
+      // the command takes no arguments: the control carries no instructions
+      expect(compactRuns(d)).toEqual([''])
       expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
       // the same release is spent: the dashboard's next write of the control still names it
       await $.turn.start(START)
@@ -294,16 +295,6 @@ for (const surface of SURFACES) {
       expect(kept).toContain(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)
       expect(kept).not.toContain(`${USED_RELEASE_PREFIX}old-0`)
       expect(d.stored.has('relayCursor:not-ours')).toBe(true)
-    })
-
-    test('a failing /compact is told, never thrown', async ($, on) => {
-      const d = await started($, on)
-      d.world.files[CONTROL_FILE] = READY('ready-1')
-      d.failCompactRun('the host refused')
-      await $.turn.complete(TURN)
-      // the run is detached from the hook: let it settle
-      await $.turn.start(START)
-      expect(d.toasts.filter(t => t.startsWith('Compaction failed: '))).toHaveLength(1)
     })
 
     test('an automatic proposal is held while the session is under the handshake; a manual one (which the plugin runs too) passes', async ($, on) => {

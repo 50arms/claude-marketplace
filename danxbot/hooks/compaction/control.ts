@@ -29,7 +29,7 @@
 // so a change to the margin moves every gate (DX-4993). Pinned from both sides by the same literal (tests/compaction-control.test.tsx and, in danxbot,
 // operator-session.test.ts and packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts).
 
-export const HELD_REASON = '[50 ARMS] automatic compaction is held until your agent says ready'
+export const HELD_REASON = '[50 ARMS] automatic compaction is held: your agent compacts the session when it says ready'
 
 // `windowTokens` is the context window 50 Arms assumed for the session's model line (its table lists a window per line, not per session variant); the floor and
 // the valve were computed from it, so a session whose real window is smaller must not be held (`windowFits`).
@@ -57,7 +57,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
 
 // The file's text (`null`: no file) as a control, for session `sessionId`. Anything the relay would not have written is `bad` with the reason, and so is a file
-// written for another session (the relay names the session in the file: a leftover must not arm a different one).
+// written for another session (the relay names the session in the file: a leftover must not hold a different one).
 export function parseControlFile(text: string | null, sessionId: string): ControlFile {
   if (text === null) return { kind: 'absent' }
   let parsed: unknown
