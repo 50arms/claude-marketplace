@@ -7,7 +7,7 @@ import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { briefingText, parseGitStatus } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
-import { HELD_REASON, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, spentReleaseId, staleUsedReleaseKeys, usedReleaseKey, verdict } from './compaction/control'
+import { HELD_REASON, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, spentReleaseId, staleUsedReleaseKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
@@ -1578,9 +1578,10 @@ async function onSessionStart($: any, e: any, next: any) {
   pacingTicker?.cancel()
   pacingTicker = $.clock.every(PACING_POLL_MS, () => refreshPacingPanel($))
   startUsageTicker($, USAGE_TICK_MS)
-  // DX-5231: a reload starts with no compaction check; the first sync that finds the session under the handshake arms it (syncCompactionTicker)
+  // DX-5231: a reload starts with no compaction check: the sync below arms it again when the session is under the handshake (syncCompactionTicker)
   compactionTicker?.cancel()
   compactionTicker = null
+  await syncCompaction($, { start: false })
   // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
   permissionTicker?.cancel()
   permissionTicker = null
@@ -2398,7 +2399,7 @@ async function syncCompaction($: any, { start }: { start: boolean }): Promise<vo
 // with no handshake pays nothing; the check stops the moment the control goes (the switch off, the file pruned or unreadable). A ready lands after the sync that read the
 // file, so the check cannot wait for a release to appear in it.
 function syncCompactionTicker($: any, file: ControlFile): void {
-  const wanted = file.kind === 'control' && file.control !== null
+  const wanted = underHandshake(file)
   if (wanted && compactionTicker === null) compactionTicker = $.clock.every(COMPACTION_IDLE_CHECK_MS, () => idleCompactionCheck($))
   else if (!wanted && compactionTicker !== null) {
     compactionTicker.cancel()
@@ -2427,6 +2428,7 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
   const now = await $.clock.now()
   const releaseId = readyRelease(file, spentReleaseId(await $.store.get(key)), now)
   if (releaseId === null) return null
+  // the store record outlives this process (claimedRelease below does not): a new process must not start the same release again
   // DX-5231: the claim, one compare-and-set before any further await: of every caller that read the release as waiting, exactly one gets it
   let won = false
   await update($, claimedRelease, cur => {
@@ -2457,7 +2459,7 @@ async function idleCompactionCheck($: any): Promise<void> {
   await syncCompaction($, { start: true })
 }
 
-// The verdict for one proposal. A person's own /compact passes without a reading (it only spends a waiting ready, above). Every read that a decision needs happens only for an automatic proposal;
+// The verdict for one proposal. A person's own /compact passes whatever the file says (it reads the file only to spend a waiting ready, above). Every read that a decision needs happens only for an automatic proposal;
 // whatever throws lets the compaction through (fail open, hooks/compaction/control.ts).
 async function compactionVerdict($: any, e: any): Promise<Verdict> {
   if (e.trigger === 'manual') {

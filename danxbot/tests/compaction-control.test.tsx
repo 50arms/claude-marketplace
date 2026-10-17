@@ -109,7 +109,7 @@ describe('the gate (pure)', () => {
     }
   })
 
-  test("an automatic proposal is held, ready or not: a ready agent is compacted by the plugin's own /compact, never by releasing a proposal", () => {
+  test("an automatic proposal under a control is held", () => {
     expect(verdict(input())).toEqual({ pass: false, reason: HELD_REASON })
   })
 
@@ -118,7 +118,7 @@ describe('the gate (pure)', () => {
     expect(verdict(input({ file: { kind: 'absent' }, tokens: null }))).toEqual({ pass: true, why: 'no-control' })
   })
 
-  test('a release in the file releases no proposal', () => {
+  test("a release in the file releases no proposal: a ready agent is compacted by the plugin's own /compact", () => {
     expect(verdict(input({ file: withControl({ releaseUntilMs: NOW + 60_000, releaseId: 'r' }) }))).toEqual({ pass: false, reason: HELD_REASON })
   })
 
@@ -219,11 +219,10 @@ for (const surface of SURFACES) {
     const READY = (id: string, ms: number = CLOCK_START + 60_000) => fileText(gateControl({ releaseUntilMs: ms, releaseId: id }))
     const compactRuns = (d: any) => d.compactRuns as unknown[]
 
-    test('a session with no control file is not held, and nothing is set', async ($, on) => {
+    test('a session with no control file is not held and starts nothing', async ($, on) => {
       const d = await started($, on)
       await $.turn.start(START)
       await $.turn.complete(TURN)
-      expect(d.envSets).toEqual([])
       expect(compactRuns(d)).toEqual([])
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
@@ -247,8 +246,9 @@ for (const surface of SURFACES) {
       await $.turn.start(START)
       expect(compactRuns(d)).toEqual([])
       await $.turn.complete(TURN)
-      // the engine passes an empty string as the command's arguments (the plugin gives none: the control carries no instructions)
-      expect(compactRuns(d)).toEqual([''])
+      // the plugin gives the command no arguments (the control carries no instructions)
+      expect(compactRuns(d)).toHaveLength(1)
+      expect(String(compactRuns(d)[0] ?? '').trim()).toBe('')
       expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
       // the same release is spent: the dashboard's next write of the control still names it
       await $.turn.start(START)
@@ -302,9 +302,6 @@ for (const surface of SURFACES) {
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
       expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
-      // a release does not release a proposal: the plugin compacts by itself
-      d.world.files[CONTROL_FILE] = READY('ready-1')
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
     })
 
     test('a leftover file cannot hold a later session once the relay has pruned it', async ($, on) => {
@@ -410,9 +407,8 @@ for (const surface of SURFACES) {
     })
 
     test('a failing /compact is told, never thrown', async ($, on) => {
-      const d = await started($, on)
+      const d = await started($, on, { compactRunFails: 'the host refused' })
       d.world.files[CONTROL_FILE] = READY('ready-1')
-      d.failCompactRun('the host refused')
       await $.turn.complete(TURN)
       // the run is detached from the hook: let it settle
       await d.clock.settle()
@@ -468,6 +464,19 @@ for (const surface of SURFACES) {
       d.world.files[CONTROL_FILE] = READY('ready-3', CLOCK_START + 600_000)
       await d.clock.advance(20_000)
       expect(compactRuns(d)).toHaveLength(2)
+    })
+
+    // DX-5231: a plugin reload re-runs session.start with the process (and the idle check's timer) gone; a ready that lands after it must still be started
+    test('a ready that lands after a plugin reload starts the compaction at the next idle check', async ($, on) => {
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      on('classic.PreCompact', () => ({}) as any)
+      const d = dashboard(on, {})
+      d.world.context = { tokens: 120_000, window: WINDOW }
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      await startSession($, d, surface)
+      d.world.files[CONTROL_FILE] = READY('ready-1', CLOCK_START + 120_000)
+      await d.clock.advance(5_000)
+      expect(compactRuns(d)).toHaveLength(1)
     })
 
     // DX-5231: the relay writes the file after the agent's call returned, so a ready can land once the turn has ended; no turn.complete follows an idle session

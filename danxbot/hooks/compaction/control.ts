@@ -83,8 +83,12 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
 }
 
 // Whether the control's floor and valve can be reached in this session. 50 Arms computed them from the window it assumed for the model line; when the session's
-// real window (`$.session.usage().context.window`, null when the engine cannot say yet) is smaller, a proposal could come before the floor and the valve would never be reached. Held only when the real window is not known to be smaller.
+// real window (`$.session.usage().context.window`, null when the engine cannot say yet) is smaller, a proposal could come before the floor and the valve would
+// never be reached. Held only when the real window is not known to be smaller.
 export const windowFits = (control: GateControl, realWindow: number | null): boolean => realWindow === null || realWindow >= control.windowTokens
+
+// DX-5231: the session is under the handshake exactly when its file carries a control; only such a session can be given a ready.
+export const underHandshake = (file: ControlFile): boolean => file.kind === 'control' && file.control !== null
 
 // The release waiting to be acted on: the control's release when it has not expired and the plugin has not spent it, else null. A release is acted on once.
 export function readyRelease(file: ControlFile, usedReleaseId: string | null, nowMs: number): string | null {
