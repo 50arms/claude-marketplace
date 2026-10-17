@@ -236,10 +236,10 @@ land. Every brief makes the sub-agent stop each background task it started befor
 or name it. Stop a dispatch once its report is consumed. A report is a lead, not a finding:
 read the diff, confirm the push, check for leftover worktrees, commits or background tasks.
 
-Slice a long job into sub-agents that each end well under about 300k tokens of context. A sub-agent
-nearing that asks for its own `HANDOFF` note (last item done, next item, what the next agent must know);
-relaunch a fresh one from the original brief plus that note, in the foreground: a background relaunch
-ends your turn. A fresh agent carries far less context than a compacted one, but only what the note says
+Slice a long job into sub-agents that each end well under about 300k tokens of context. When a
+sub-agent nears that, ask it to write a `HANDOFF` note (last item done, next item, what the next agent
+must know) and stop; relaunch a fresh one from the original brief plus that note, in the foreground: a
+background relaunch ends your turn. A fresh agent carries far less context than a compacted one, but only what the note says
 crosses, so use it when the job's state is on disk, not in half-finished reasoning, an open browser or an
 unsaved edit.
 
