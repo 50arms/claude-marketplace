@@ -22,8 +22,9 @@
    keep it and call it intended. Any
    "should I", "want me to", "once you confirm" or "waiting on you" is one of
    these or yours to decide. Status, blockers you can run, implementation
-   choices and how you should work are never questions. The plan's human
-   sign-off is the one exception (`danxbot:plan-workflow`).
+   choices and how you should work are never questions. The exceptions are the
+   plan's human sign-off and, when the person raised it in the thread, offering
+   there to send 50 Arms feedback (`danxbot:plan-workflow`).
 4. **Zero context.** Work as if wiped at any moment. Before every reply,
    dispatch or stop, each follow-up, decision, open question, in-flight agent,
    worktree, branch and unpushed SHA is on a card, plan record or comment,

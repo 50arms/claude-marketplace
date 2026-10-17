@@ -60,8 +60,9 @@ nuance, a question 50 Arms already answers, or your own mistake.
    unhappy) to 5 (very happy) only when they showed one, and a `body` that stands alone: what
    they tried, what happened, what they want. A screenshot → `attach_file` with
    `target: "inline_image"` and only `path`; put the `markdown` it returns in the body.
-3. Consent. They told you in the thread to send it → `consent: {via: "thread", quote}`
-   holding their words. Otherwise ask on the plan card it concerns:
+3. Ask. They voiced it in the thread → ask there in one line, showing the draft; their yes
+   → `consent: {via: "thread", quote}` holding their words. Otherwise ask on the plan card it
+   concerns:
    `POST /api/feedback/consent-problems` `{issue_id, type, mood?, body}`; the server writes
    the problem and answers `{problem_id, send_solution_id}`. Never write a consent problem
    yourself. Their answer arrives as an `answered` event: the send solution →

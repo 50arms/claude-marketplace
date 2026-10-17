@@ -37,11 +37,16 @@ test("rule 1 holds for every agent: no main-session qualifier, and an agent that
   assert.match(orchestrate, /cannot spawn sub-agents does the work itself/);
 });
 
-test("rule 3 routes a human decision to a problem on the card, with the plan sign-off as the one exception", () => {
+// DX-5242: the person asked that feedback be offered in the thread when they voiced it there,
+// so that offer is rule 3's second named exception beside the plan sign-off.
+test("rule 3 routes a human decision to a problem on the card, with the plan sign-off and an in-thread feedback offer as the exceptions", () => {
   const decide = rule(3);
   assert.match(decide, /problem, with solutions, on the card it\s+concerns/);
   assert.match(decide, /never a question in the\s+session/);
-  assert.match(decide, /human\s+sign-off is the one exception \(`danxbot:plan-workflow`\)/);
+  assert.match(
+    decide,
+    /The exceptions are the\s+plan's human sign-off and, when the person raised it in the thread, offering\s+there to send 50 Arms feedback \(`danxbot:plan-workflow`\)/,
+  );
 });
 
 const MOVED = [
