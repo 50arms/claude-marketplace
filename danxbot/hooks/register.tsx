@@ -2447,7 +2447,8 @@ export const register: Register = on => {
   // DX-5222: Claude Code's own automatic proposals are judged per agent (a person's /compact and the plugin's own start are not matched: the classic gate answers them); each sub-agent's
   // last response is noted at `turn.step`
   on('session.compact', { trigger: 'auto' }, onSessionCompact)
-  on('turn.step', noteAgentStep)
+  // only a sub-agent's requests (an agentId): the main loop's every streamed chunk would otherwise cross into the plugin for nothing
+  on('turn.step', { agentId: /.+/ }, noteAgentStep)
   on('session.measure', onMeasure)
   // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
