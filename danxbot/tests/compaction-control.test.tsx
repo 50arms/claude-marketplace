@@ -247,7 +247,7 @@ for (const surface of SURFACES) {
       await $.turn.start(START)
       expect(compactRuns(d)).toEqual([])
       await $.turn.complete(TURN)
-      // the command takes no arguments: the control carries no instructions
+      // the engine passes an empty string as the command's arguments (the plugin gives none: the control carries no instructions)
       expect(compactRuns(d)).toEqual([''])
       expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
       // the same release is spent: the dashboard's next write of the control still names it
@@ -409,13 +409,65 @@ for (const surface of SURFACES) {
       expect(d.stored.get(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)).toMatchObject({ releaseId: 'ready-1' })
     })
 
-    test('the compaction the plugin starts itself reaches PreCompact as manual without a second run', async ($, on) => {
+    test('a failing /compact is told, never thrown', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = READY('ready-1')
+      d.failCompactRun('the host refused')
       await $.turn.complete(TURN)
-      expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
+      // the run is detached from the hook: let it settle
+      await d.clock.settle()
+      expect(d.toasts.filter(t => t.startsWith('Compaction failed: '))).toHaveLength(1)
+    })
+
+    // DX-5231: the claim of a ready is one step: a tick landing between a start's check and its spend, or a person's own /compact there, must not start a second /compact
+    test('an idle check that fires while the turn end is starting the compaction runs it exactly once', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      await $.turn.start(START)
+      d.world.files[CONTROL_FILE] = READY('ready-1', CLOCK_START + 120_000)
+      d.beforeNextWrite('claimedRelease', () => d.clock.advance(5_000))
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(compactRuns(d)).toHaveLength(1)
+    })
+
+    test("a person's own /compact that lands while an idle check is starting the compaction runs it exactly once", async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      d.world.files[CONTROL_FILE] = READY('ready-1', CLOCK_START + 120_000)
+      d.beforeNextWrite('claimedRelease', async () => {
+        expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
+      })
+      await d.clock.advance(5_000)
+      await d.clock.settle()
+      expect(compactRuns(d)).toHaveLength(0)
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toHaveLength(0)
+    })
+
+    // DX-5231: only a session under the handshake can be given a ready, so only it looks for one
+    test('the idle check runs only while the session is under the handshake', async ($, on) => {
+      const d = await started($, on)
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      d.world.files[CONTROL_FILE] = READY('ready-1', CLOCK_START + 600_000)
+      await d.clock.advance(5_000)
+      // no control file when the turn ended: the check was never armed
+      expect(compactRuns(d)).toHaveLength(0)
+      await $.turn.start(START)
       await $.turn.complete(TURN)
       expect(compactRuns(d)).toHaveLength(1)
+      d.world.files[CONTROL_FILE] = READY('ready-2', CLOCK_START + 600_000)
+      await d.clock.advance(5_000)
+      expect(compactRuns(d)).toHaveLength(2)
+      // the switch goes off: the next check finds no control and stops
+      d.world.files[CONTROL_FILE] = fileText(null)
+      await d.clock.advance(5_000)
+      d.world.files[CONTROL_FILE] = READY('ready-3', CLOCK_START + 600_000)
+      await d.clock.advance(20_000)
+      expect(compactRuns(d)).toHaveLength(2)
     })
 
     // DX-5231: the relay writes the file after the agent's call returned, so a ready can land once the turn has ended; no turn.complete follows an idle session

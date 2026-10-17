@@ -146,6 +146,9 @@ const olderDashboardTold = atom({ plugin: 'danxbot', key: 'olderDashboardTold' }
 const browserMissingTold = atom({ plugin: 'danxbot', key: 'browserMissingTold' } as const, false)
 // DX-5231: the leftover compaction-trigger variables an older plugin version armed were cleared in this process. $.state because the variables live in the process: a module reload keeps both.
 const leftoverArmingCleared = atom({ plugin: 'danxbot', key: 'leftoverArmingCleared' } as const, false)
+// DX-5231: the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
+// check and a person's own /compact racing each other start (or spend) a ready exactly once.
+const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as const, null as string | null)
 // DX-4235: the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
 
@@ -1575,8 +1578,9 @@ async function onSessionStart($: any, e: any, next: any) {
   pacingTicker?.cancel()
   pacingTicker = $.clock.every(PACING_POLL_MS, () => refreshPacingPanel($))
   startUsageTicker($, USAGE_TICK_MS)
+  // DX-5231: a reload starts with no compaction check; the first sync that finds the session under the handshake arms it (syncCompactionTicker)
   compactionTicker?.cancel()
-  compactionTicker = $.clock.every(COMPACTION_IDLE_CHECK_MS, () => idleCompactionCheck($))
+  compactionTicker = null
   // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
   permissionTicker?.cancel()
   permissionTicker = null
@@ -2382,6 +2386,7 @@ async function syncCompaction($: any, { start }: { start: boolean }): Promise<vo
       if (compactionFaultTold !== file.reason) $.ui.toast(`Compaction control unreadable (${file.reason}): Claude Code's own automatic compaction applies until it is fixed.`)
       compactionFaultTold = file.reason
     } else compactionFaultTold = null
+    syncCompactionTicker($, file)
     await clearLeftoverArming($, file)
     if (start) await startReadyCompaction($, file)
   } catch (err: any) {
@@ -2389,10 +2394,24 @@ async function syncCompaction($: any, { start }: { start: boolean }): Promise<vo
   }
 }
 
+// DX-5231: the idle check runs only while the session is under the handshake (its control file carries a control): a ready can only come to such a session. A session
+// with no handshake pays nothing; the check stops the moment the control goes (the switch off, the file pruned or unreadable). A ready lands after the sync that read the
+// file, so the check cannot wait for a release to appear in it.
+function syncCompactionTicker($: any, file: ControlFile): void {
+  const wanted = file.kind === 'control' && file.control !== null
+  if (wanted && compactionTicker === null) compactionTicker = $.clock.every(COMPACTION_IDLE_CHECK_MS, () => idleCompactionCheck($))
+  else if (!wanted && compactionTicker !== null) {
+    compactionTicker.cancel()
+    compactionTicker = null
+  }
+}
+
 // The plugin arms nothing for the main agent. An older plugin version armed CLAUDE_CODE_AUTO_COMPACT_WINDOW (DX-4993, DX-5217) and then CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 // (DX-5217) in this process, and a variable stays in a running process after a plugin reload: the first shrinks the context meter's window, the second makes the main loop
 // propose early. Once the session has a control file (it is under the handshake) both are cleared, ONCE per process (`leftoverArmingCleared`): a later writer of the same
-// variable (DX-5218 to DX-5224 arm the process-wide percent for a sub-agent, which outlives main turns) is never wiped by a later turn. `$.env.set(name)` with no value
+// variable (DX-5218 to DX-5224 arm the process-wide percent for a sub-agent, which outlives main turns) is never wiped by a later turn.
+// DX-5222 (narrow window, recorded not built): the one-time clear waits for the first control file, so a sub-agent's percent set before it exists would be wiped by it; the
+// DX-5222 sub-agent cards must set `leftoverArmingCleared` when they first set the percent variable. `$.env.set(name)` with no value
 // restores the default at once (verified, Claude Code 2.1.299). The literal names are kept so the engine lists them as writes of this module. A session with no control
 // file keeps whatever its person set.
 async function clearLeftoverArming($: any, file: ControlFile): Promise<void> {
@@ -2408,6 +2427,13 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
   const now = await $.clock.now()
   const releaseId = readyRelease(file, spentReleaseId(await $.store.get(key)), now)
   if (releaseId === null) return null
+  // DX-5231: the claim, one compare-and-set before any further await: of every caller that read the release as waiting, exactly one gets it
+  let won = false
+  await update($, claimedRelease, cur => {
+    won = cur !== releaseId
+    return won ? releaseId : cur
+  })
+  if (!won) return null
   await $.store.set(key, { releaseId, at: now })
   await pruneUsedReleases($)
   return releaseId
@@ -2444,13 +2470,12 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
     return { pass: true, why: 'manual' }
   }
   try {
-    const holding = e.trigger === 'auto'
-    const reading = holding ? await contextReading($) : { tokens: null, window: null }
+    const reading = e.trigger === 'auto' ? await contextReading($) : { tokens: null, window: null }
     const v = verdict({
       trigger: e.trigger,
       tokens: reading.tokens,
       window: reading.window,
-      file: holding ? await compactionControl($) : { kind: 'absent' },
+      file: e.trigger === 'auto' ? await compactionControl($) : { kind: 'absent' },
     })
     if (v.pass && v.why === 'valve') $.ui.toast('Compacting now: the context reached the size where holding it would end the session.')
     return v
