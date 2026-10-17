@@ -20,7 +20,7 @@ const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
 const STATES: readonly PacingState[] = ['spare', 'short', 'hold', 'stop']
 const LIMIT_KEYS: readonly PacingLimitKey[] = ['five_hour', 'weekly', 'spend']
 
-// The verdict as the guard reads it (`PacingVerdict`, types/index.d.ts, shared with the plan panel) and danxbot's one-sentence line.
+// The verdict as the guard reads it (`PacingVerdict`, types/index.d.ts, shared with the usage pacing) and danxbot's one-sentence line.
 // `spend` (DX-4595) is the server's own pricing of the account's spend limit, or null when it has none; the plugin never computes one.
 // `readout` (DX-4656) is the server's per-limit state and headroom with its worst limit, exactly as answered.
 export type Pacing = { verdict: PacingVerdict; line: string; spend: SpendFigure | null; readout: PacingReadout }
@@ -37,7 +37,7 @@ export type PacingEnv = {
 
 export const LINE_PATH = '/api/pacing/line'
 // danxbot changes the verdict only at its 10-minute tick; the plugin cannot hear `pacing-verdicts:updated` (a hooks module has no
-// dashboard event source), so the cache is read on session start, by the panel's poll every minute, by the sub-agent line when it is a minute
+// dashboard event source), so the cache is read on session start, by the usage pacing poll every minute, by the sub-agent line when it is a minute
 // old, and by the spawn guard before every decision (`refreshPacing`).
 export const PACING_REFRESH_MS = 60_000
 export const PACING_EXPIRY_MS = 30 * 60_000

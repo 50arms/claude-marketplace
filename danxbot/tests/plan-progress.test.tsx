@@ -1,16 +1,11 @@
 // DX-4346: the plan-progress figure. DX-4374: the footer is one `PLAN-NN` button with no figure (plan-footer.test.tsx);
-// the Svg donut lives in the band line and the pane header (plan-pane-progress.test.tsx).
+// the Svg donut lives in the band line.
 import { describe, expect } from 'claude-code/testing'
 
 import { donutGlyph, planPercent } from '../hooks/plan/words'
 import { test, SURFACES, dashboard, expectIndicator, footerText, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const PANE = {
-  component: 'Pane',
-  requestId: 'danx-plan',
-  props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
-} as any
 const counts = (o: Record<string, number>) => ({ 'In Progress': 0, ToDo: 0, Backlog: 0, Review: 0, Done: 0, Cancelled: 0, ...o })
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 
@@ -68,8 +63,9 @@ for (const surface of SURFACES) {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
         expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
-        const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-        expect(await text(pane)).toContain('status_breakdown')
+        const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+        expect(await text(band)).toContain('Disconnected')
+        expect(await band.find({ type: 'Svg' })).toBeUndefined()
       })
     }
 
@@ -95,7 +91,7 @@ for (const surface of SURFACES) {
       await expectIndicator(band, surface, 100)
     })
 
-    test('not connected: the footer reads Plan, the band draws no donut, a press opens the pane', async ($, on) => {
+    test('not connected: the footer reads Plan, the band draws no donut', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
@@ -103,10 +99,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await text(band)).not.toMatch(/%/)
-      await footer.press({ key: 'footer-plan' })
-      expect(d.opened.map(o => o.id)).toEqual(['danx-plan'])
     })
-
 
     test('the engine\'s own mode labels survive beside the plan entry', async ($, on) => {
       const d = dashboard(on)
@@ -117,10 +110,8 @@ for (const surface of SURFACES) {
     })
 
     test('no $.ui.status call remains: the footer button replaced it (R-1)', async ($, on) => {
-      const d = dashboard(on, { connected: false })
+      const d = dashboard(on)
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      await pane.press({ key: 'connect' })
       await d.clock.settle()
       await d.clock.advance(60_000)
       d.failList()

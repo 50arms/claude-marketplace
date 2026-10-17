@@ -30,7 +30,7 @@ export function connectedPlanId(text: unknown): number | null {
 // that is not an envelope is a failure here, never a success.
 export type ToolOutcome = { ok: boolean; status: number; body: any }
 
-// An MCP tool result's envelope: api() and the pane's plan_connect calls use it.
+// An MCP tool result's envelope: api() and the band's plan_connect calls use it.
 export function toolOutcome(r: any): ToolOutcome {
   if (r === null || r === undefined) return { ok: false, status: 0, body: { error: 'the tool answered no result' } }
   return textOutcome(mcpText(r), r.isError === true)

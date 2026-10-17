@@ -1,6 +1,6 @@
 // DX-4235 (PBLM-2121): the label a background shell's activity row carries: the shell call's own `description`, redacted. It is the
 // label the old command hook sent (danxbot packages/danx-dashboard-mcp activity.ts: `description: labelOf(toolInput.description)`),
-// byte for byte, so the dashboard's Plan pane keeps naming a background shell by what the agent said it does.
+// byte for byte, so the dashboard's plan page keeps naming a background shell by what the agent said it does.
 //
 // PORTED, not imported: the plugin's hooks module cannot load the npm package (no Node, no package resolution), so this is a copy of
 // `redactLabel` / `labelOf` from danxbot `packages/danx-session-telemetry/src/activity-observer.ts` at commit

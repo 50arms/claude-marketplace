@@ -15,7 +15,7 @@ const START = { turnId: 't1' } as any
 const MINUTE = 60_000
 const HOURS = 60 * MINUTE
 const written = (d: any, key: string): unknown[] => d.stateWrites.filter((w: any) => w.plugin === 'danxbot' && w.key === key).map((w: any) => w.value)
-const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
 // no model turn: EVERY prompt the plugin submitted, marked as a plan event or not (the kit's `delivered` holds only the marked ones)
 const sent = (d: any): string[] => d.relay.submitted
@@ -208,8 +208,8 @@ describe('the keepalive on the desktop', () => {
     const d = dashboard(on)
     on('turn.complete', () => ({ text: 'done' }) as any)
     await startSession($, d, 'desktop')
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
-    await pane.press({ key: 'disconnect' })
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
+    await band.press({ key: 'disconnect' })
     await d.clock.settle()
     expect(written(d, 'idleSince').at(-1)).toBe(null)
     await $.turn.complete(TURN)
@@ -821,11 +821,11 @@ describe('a computer that sleeps during the idle period (DX-4952)', () => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
     closePane(d)
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
+    const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     d.suspend(3 * HOURS)
     d.world.browser.delayMs = MINUTE
     await $.turn.start(START)
-    await pane.press({ key: 'disconnect' })
+    await band.press({ key: 'disconnect' })
     await d.clock.advance(2 * MINUTE)
     expect(opens(d)).toEqual([])
   })

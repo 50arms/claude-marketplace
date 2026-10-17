@@ -1,28 +1,20 @@
-import type { LimitReadout, PacingLevel, PacingLimitKey, PacingMode, PacingReadout, PacingState, PacingVerdict } from '../../types'
-import type { PanelEntry, PanelModel, SpendEntry } from './pacing-panel'
+import type { LimitReadout, PacingLevel, PacingLimitKey, PacingReadout, PacingState } from '../../types'
+import type { PacingEntry, PacingModel, SpendEntry } from './pacing-model'
 
-// DX-4339: the pacing panel's wording, pure: the band's entries, times, and the pane's verdict lines.
+// DX-4339: the usage pacing wording, pure: the band's entries and the server's readout.
 
-export const LIMIT_LABEL: Record<PacingLimitKey, { band: string; pane: string }> = { five_hour: { band: '5h', pane: '5-hour' }, weekly: { band: '7d', pane: 'weekly' }, spend: { band: '$', pane: 'spend' } }
+export const LIMIT_LABEL: Record<PacingLimitKey, string> = { five_hour: '5h', weekly: '7d', spend: '$' }
 // DX-4595: the third limit; the server's PACING_LIMIT_LABELS names it "spend"
 export const SPEND_LABEL = 'spend'
 export const NEEDS_DANXBOT = 'needs danxbot'
-export const SPEND_UNJUDGED = 'danxbot has not judged spend for this account yet'
-// DX-4854: the same on the one visible line; the full sentence is the row's hover card
-export const SPEND_UNJUDGED_SHORT = 'not judged yet'
-// DX-4854: the hover card of a window the session has no figure for yet
-export const NO_READING_TIP = 'This session has no usage reading from Claude yet; one appears after its next reply.'
-export const usd = (n: number): string => `$${n.toFixed(2)}`
-export const MODE_LABEL: Record<PacingMode, string> = { fast_then_hold: 'fast then hold', spread_evenly: 'spread evenly' }
-export const LEVEL_LABEL: Record<PacingLevel, string> = { on_pace: 'on pace', over_pace: 'over pace', critical: 'critical' }
 // a mark besides the colour, so the level reads on a terminal with no colour
 const LEVEL_MARK: Record<PacingLevel, string> = { on_pace: '', over_pace: '▲', critical: '‼' }
 export const LOCAL_MARK = 'local'
 
 // The band's text for one entry: `5h 62%/80% ▲` (used / target), `5h 62%` while the target is unknown, `5h …` with no figure.
-function entryText(e: PanelEntry): string {
+function entryText(e: PacingEntry): string {
   const figure = e.used === null ? '…' : e.settings === null ? `${e.used}%` : `${e.used}%/${e.settings.targetPercent}%`
-  return [LIMIT_LABEL[e.limit].band, figure, e.level === null ? '' : LEVEL_MARK[e.level]].filter(Boolean).join(' ')
+  return [LIMIT_LABEL[e.limit], figure, e.level === null ? '' : LEVEL_MARK[e.level]].filter(Boolean).join(' ')
 }
 
 // `spend 62%/80% ▲`, `spend …` while danxbot has not judged it, `spend needs danxbot` with no dashboard.
@@ -62,18 +54,7 @@ function readoutValue(l: LimitReadout): string {
 }
 
 export function readoutText(l: LimitReadout): string {
-  return `${LIMIT_LABEL[l.limit].band} ${Math.round(l.targetPercent)}%: ${readoutValue(l)}`
-}
-
-// One limit in plain words, for the pane (the band surface has no tooltip that can hold it).
-export function readoutSentence(l: LimitReadout): string {
-  const name = `${LIMIT_LABEL[l.limit].pane[0]!.toUpperCase()}${LIMIT_LABEL[l.limit].pane.slice(1)} limit`
-  const target = `${Math.round(l.targetPercent)}%`
-  const reset = formatMinutes(l.resetsInMinutes)
-  if (l.state === 'spare') return `${name}: at the current rate the window resets before you reach ${target}, with ${formatMinutes(l.headroomMinutes)} spare.`
-  if (l.state === 'short') return `${name}: at the current rate you reach ${target} ${formatMinutes(-l.headroomMinutes)} before the window resets, so you are ${formatMinutes(-l.headroomMinutes)} short.`
-  if (l.state === 'hold') return `${name}: over pace, so nothing new starts until it eases or the window resets in ${reset}.`
-  return `${name}: critical (at or past ${Math.round(l.criticalPercent)}%), so everything new stops until the window resets in ${reset}.`
+  return `${LIMIT_LABEL[l.limit]} ${Math.round(l.targetPercent)}%: ${readoutValue(l)}`
 }
 
 export function readoutWorst(r: PacingReadout): LimitReadout {
@@ -83,7 +64,7 @@ export function readoutWorst(r: PacingReadout): LimitReadout {
 // The band's segments, the ONE composition both the drawing and the width budget read. With the server's readout: the worst limit alone.
 // Without one (no server verdict, or the settings read failing): the session's own figures per limit, then `local`, exactly as before.
 // Empty with nothing to show.
-export function bandSegments(m: PanelModel): BandSegment[] {
+export function bandSegments(m: PacingModel): BandSegment[] {
   if (m.readout !== null) {
     const worst = readoutWorst(m.readout)
     return [{ key: 'worst', text: readoutText(worst), tone: worst.state }]
@@ -97,60 +78,8 @@ export function bandSegments(m: PanelModel): BandSegment[] {
 }
 
 // What the band's label budget counts.
-export function bandText(m: PanelModel): string {
+export function bandText(m: PacingModel): string {
   return bandSegments(m)
     .map(s => s.text)
     .join(' ')
-}
-
-// "2h 10m", "3d 4h", "under a minute": the time to a reset (a figure already past reads as under a minute).
-export function untilText(targetMs: number, now: number): string {
-  const min = Math.max(0, Math.floor((targetMs - now) / 60_000))
-  if (min < 1) return 'under a minute'
-  if (min < 60) return `${min}m`
-  const h = Math.floor(min / 60)
-  if (h < 24) return `${h}h ${min % 60}m`
-  return `${Math.floor(h / 24)}d ${h % 24}h`
-}
-
-// "Sat 11:10Z": a UTC clock time, with the weekday so a reset days away is not mistaken for today's.
-export function clockText(ms: number): string {
-  const d = new Date(ms)
-  return `${d.toUTCString().slice(0, 3)} ${d.toISOString().slice(11, 16)}Z`
-}
-
-// The pane's lines for the account verdict: its level and budget, how many agents run, and, when it holds new work, until when.
-export function verdictLines(v: PacingVerdict, now: number): string[] {
-  const budget = v.budget === null ? 'no cap' : v.budget === 0 ? '0 agents may start' : `${v.budget} agent${v.budget === 1 ? '' : 's'} at most at once`
-  const lines = [`Account: ${LEVEL_LABEL[v.level]} · budget ${budget} · ${v.runningAgents} running`]
-  if (v.budget === 0 && v.level !== 'on_pace') {
-    const resets = v.resetsAt === null ? Number.NaN : Date.parse(v.resetsAt)
-    lines.push(
-      Number.isNaN(resets) ? 'Holding: no new agents start until the window resets.' : `Holding: no new agents start until the window resets, ${clockText(resets)} (in ${untilText(resets, now)}).`,
-    )
-  }
-  return lines
-}
-
-// DX-4854: a limit's hover card, the detail its one visible line leaves out: the server's plain-words sentence when it has judged the
-// limit (the readout), then the targets and the reset as a clock time. `settings` null: the team's settings were never read.
-
-function targetsText(s: { targetPercent: number; criticalPercent: number; mode: PacingMode }): string {
-  return `target ${s.targetPercent}% · critical ${s.criticalPercent}% · ${MODE_LABEL[s.mode]}`
-}
-
-const sentenceOf = (readout: PacingReadout | null, limit: PacingLimitKey): string[] => {
-  const found = readout?.limits.find(l => l.limit === limit)
-  return found === undefined ? [] : [readoutSentence(found)]
-}
-
-export function entryTip(e: PanelEntry, readout: PacingReadout | null): string[] {
-  const detail = [e.settings === null ? null : targetsText(e.settings), e.resetsAt === null ? null : `resets ${clockText(e.resetsAt)}`].filter(Boolean)
-  return [...(e.used === null ? [NO_READING_TIP] : sentenceOf(readout, e.limit)), ...(detail.length === 0 ? [] : [detail.join(' · ')])]
-}
-
-export function spendTip(s: SpendEntry, readout: PacingReadout | null): string[] {
-  const unjudged = s.state === 'unjudged' ? [SPEND_UNJUDGED] : []
-  const detail = [s.state === 'figure' ? `${usd(s.spentUsd!)} of ${usd(s.budgetUsd!)}` : null, targetsText(s.settings), s.resetsAt === null ? null : `resets ${clockText(s.resetsAt)}`].filter(Boolean)
-  return [...unjudged, ...sentenceOf(readout, 'spend'), detail.join(' · ')]
 }

@@ -3,7 +3,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { linkCardIds } from '../hooks/plan/card-links'
-import { test, DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { test, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
 
 const plan = { id: 23, ref: 'PLAN-23', name: 'p', status: 'building', dashboardUrl: DASHBOARD_URL } as any
 const PREFIXES = ['DX', 'SG']
@@ -60,8 +60,6 @@ const message = (text: string, extra: object = {}) =>
   ({ plugin: 'danxbot', component: 'AssistantMessage', props: { text, isFirstOfReply: true, ...extra } }) as any
 // the engine's own drawing stand-in (plan-kit) draws the props' text, so what reaches it is what is drawn
 const drawnText = async (ui: any): Promise<string | undefined> => (await ui.find({ type: 'Text' }))?.text
-const paneText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
-const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 
 for (const surface of SURFACES) {
   describe(`card links in an assistant reply on ${surface}`, () => {
@@ -112,28 +110,44 @@ for (const surface of SURFACES) {
       expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
     })
 
-    // DX-4448: what the links stand on failing is the links' own error: the plan view stays ready, the pane says why, the reply stays as written
-    for (const [name, options, shown] of [
-      ['the boards call failing', { boardsFail: true }, 'boards boom'],
-      ['a boards answer with no boards', { boardsShape: 'none' }, 'answered no list of boards'],
-      ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }, 'answered a board with no issue_prefix'],
-      ['a boards answer with no boards key', { boardsShape: 'noKey' }, 'answered no list of boards'],
-      ['the plan cards call failing', { planCardsFail: true }, 'plan cards boom'],
-      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }, 'answered 6 of 9 cards'],
-      ['the plan cards answer with no list', { planCardsShape: 'noList' }, 'answered no list of cards'],
-      ['the plan cards answer with no total', { planCardsShape: 'noTotal' }, 'answered no total'],
-      ['a plan card with no id', { planCardsShape: 'noId' }, 'answered a card with no id'],
-      ['cards that do not add up to the plan card_count (a board missing)', { planCardsShape: 'otherCount' }, 'answered 6 cards but the plan has 7'],
+    // DX-4448: what the links stand on failing is the links' own error: the plan view stays ready and the reply stays as written
+    for (const [name, options] of [
+      ['the boards call failing', { boardsFail: true }],
+      ['a boards answer with no boards', { boardsShape: 'none' }],
+      ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }],
+      ['a boards answer with no boards key', { boardsShape: 'noKey' }],
+      ['a plan card with no id', { planCardsShape: 'noId' }],
+      ['cards that do not add up to the plan card_count (a board missing)', { planCardsShape: 'otherCount' }],
     ] as const) {
-      test(`${name}: the plan stays ready, the pane says why, the reply is drawn as it is`, async ($, on) => {
+      test(`${name}: the plan stays ready, the reply is drawn as it is`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
         expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
-        const pane = await paneText(await $.ui.mount({ plugin: 'danxbot', surface, ...PANE }))
-        expect(pane).toContain('Needs You')
-        expect(pane).toContain(`Card ids in replies are not linked: GET /api/`)
-        expect(pane).toContain(shown)
         expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
+        expect(d.toasts.filter(t => t.startsWith('Card links unavailable: '))).toHaveLength(1)
+      })
+    }
+
+    // DX-5232: the open-problem count is summed from the same every-card read; one that cannot be read whole leaves the plan ready,
+    // the band with no count (never a guessed 0), and the reason told once
+    for (const [name, options] of [
+      ['the plan cards call failing', { planCardsFail: true }],
+      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }],
+      ['the plan cards answer with no list', { planCardsShape: 'noList' }],
+      ['the plan cards answer with no total', { planCardsShape: 'noTotal' }],
+    ] as const) {
+      test(`${name}: the plan stays ready, no count is shown, the reason is told once`, async ($, on) => {
+        const d = dashboard(on, options as any)
+        await startSession($, d, surface)
+        await forceRefresh($, d)
+        const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+        const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+        expect(all).not.toContain('Disconnected')
+        expect(all).toContain('PLAN-23')
+        expect(await problemBadgeOf(band)).toBeUndefined()
+        // one toast for the shared cause: the count and the links both stand on this read
+        expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)
+        expect(d.toasts.filter(t => t.startsWith('Card links unavailable'))).toEqual([])
       })
     }
   })

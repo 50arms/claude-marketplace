@@ -1,8 +1,8 @@
-import type { LimitSettings, PacingLevel, PacingLimitKey, PacingReadout, PacingVerdict, PanelState, SpendSettings } from '../../types'
+import type { LimitSettings, PacingLevel, PacingLimitKey, PacingReadout, PacingSnapshot, SpendSettings } from '../../types'
 
-// DX-4339 (PLAN-29): the pacing panel's model, pure (no `$`): the session's own usage windows (`$.session.usage().rateLimits`, which move live)
+// DX-4339 (PLAN-29): the usage pacing model, pure (no `$`): the session's own usage windows (`$.session.usage().rateLimits`, which move live)
 // set against the team's pacing settings (pacing-settings.ts) and the session's account verdict (the DX-4340 cache, pacing-line.ts). A limit the
-// team switched off is not shown. The text is pacing-format.ts, the drawing pacing-panel-view.tsx.
+// team switched off is not shown. The text is pacing-format.ts, the drawing pacing-view.tsx.
 
 // the two windows the session itself reports (spend is the server's alone)
 export type WindowKey = Exclude<PacingLimitKey, 'spend'>
@@ -10,14 +10,12 @@ export const LIMIT_KEYS: readonly WindowKey[] = ['five_hour', 'weekly']
 // the harness names the weekly window `seven_day`
 const WINDOW_KIND: Record<WindowKey, string> = { five_hour: 'five_hour', weekly: 'seven_day' }
 
-export const EMPTY_PANEL_STATE: PanelState = { settings: null, settingsAt: null, settingsRead: { state: 'pending' }, verdict: null, spend: null, readout: null, limits: [] }
+export const EMPTY_PACING_STATE: PacingSnapshot = { settings: null, settingsRead: { state: 'pending' }, verdict: null, spend: null, readout: null, limits: [] }
 
-export type PanelEntry = {
+export type PacingEntry = {
   limit: WindowKey
   // percent used of the window, rounded for display; null when the session has no figure for it yet
   used: number | null
-  // epoch ms the window resets; null with no figure
-  resetsAt: number | null
   // null when the team's settings were never read
   settings: LimitSettings | null
   // the limit's own level; null with no figure or no settings to judge it by
@@ -31,22 +29,14 @@ export type SpendEntry = {
   state: 'figure' | 'unjudged' | 'needs_danxbot'
   // percent used of the budget, rounded for display; null without a figure
   used: number | null
-  // epoch ms the spend period ends; null without a figure
-  resetsAt: number | null
-  spentUsd: number | null
-  budgetUsd: number | null
   // the server's level, never recomputed here; null without a figure
   level: PacingLevel | null
 }
-export type PanelModel = {
-  entries: PanelEntry[]
+export type PacingModel = {
+  entries: PacingEntry[]
   spend: SpendEntry | null
   // the settings read is not working (`silent` or `error`): the figures are the session's own, the targets the last read, and there is no verdict
   local: boolean
-  // the settings read's failure to name in the pane, else null
-  error: string | null
-  settingsAt: number | null
-  verdict: PacingVerdict | null
   // DX-4656: the server's per-limit readout, null while there is no server verdict or the settings read is failing
   readout: PacingReadout | null
 }
@@ -60,24 +50,23 @@ function thresholdLevel(used: number, s: LimitSettings): PacingLevel {
   return used >= s.criticalPercent ? 'critical' : used >= s.targetPercent ? 'over_pace' : 'on_pace'
 }
 
-function buildSpend(state: PanelState, local: boolean): SpendEntry | null {
+function buildSpend(state: PacingSnapshot, local: boolean): SpendEntry | null {
   const settings = state.settings?.spend
   if (settings === undefined || !settings.enabled) return null
-  const none = { used: null, resetsAt: null, spentUsd: null, budgetUsd: null, level: null }
+  const none = { used: null, level: null }
   if (local) return { settings, state: 'needs_danxbot', ...none }
   const f = state.spend
   if (f === null) return { settings, state: 'unjudged', ...none }
-  const resets = Date.parse(f.resetsAt)
-  return { settings, state: 'figure', used: Math.round(f.usedPercent), resetsAt: Number.isNaN(resets) ? null : resets, spentUsd: f.spentUsd, budgetUsd: f.budgetUsd, level: f.level }
+  return { settings, state: 'figure', used: Math.round(f.usedPercent), level: f.level }
 }
 
-export function buildPanel(state: PanelState): PanelModel {
+export function buildPacing(state: PacingSnapshot): PacingModel {
   const read = state.settingsRead
   const local = read.state === 'silent' || read.state === 'error'
   // a verdict from before danxbot stopped answering is not shown as current
   const verdict = local ? null : state.verdict
   const verdictResets = verdict?.resetsAt == null ? null : Date.parse(verdict.resetsAt)
-  const entries: PanelEntry[] = []
+  const entries: PacingEntry[] = []
   for (const limit of LIMIT_KEYS) {
     const settings = state.settings?.[limit] ?? null
     if (settings !== null && !settings.enabled) continue
@@ -91,7 +80,7 @@ export function buildPanel(state: PanelState): PanelModel {
     if (level !== null && verdict !== null && verdictResets !== null && resetsAt !== null && Math.abs(resetsAt - verdictResets) <= SAME_RESET_MS && SEVERITY[verdict.level] > SEVERITY[level]) {
       level = verdict.level
     }
-    entries.push({ limit, used: win === undefined ? null : Math.round(win.percentUsed), resetsAt, settings, level })
+    entries.push({ limit, used: win === undefined ? null : Math.round(win.percentUsed), settings, level })
   }
-  return { entries, spend: buildSpend(state, local), local, error: read.state === 'error' ? read.message : null, settingsAt: state.settingsAt, verdict, readout: local ? null : state.readout }
+  return { entries, spend: buildSpend(state, local), local, readout: local ? null : state.readout }
 }

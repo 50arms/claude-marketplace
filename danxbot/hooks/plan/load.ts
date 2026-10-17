@@ -1,8 +1,7 @@
-import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanRow, PlanView, ProblemRow, StatusBreakdown, SubagentRow, SubagentsView } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, MAX_PLANS, MAX_SESSIONS, NEEDS_YOU_BUCKET_ID, PREFIX_PATTERN, STATUS_KEYS } from './config'
+import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
+import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, PREFIX_PATTERN, SESSION_PLAN_PROBE, STATUS_KEYS } from './config'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
 import type { Refusal } from '../relay/refusal'
-import { parentLoop, toSubagent } from './subagents'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -26,22 +25,6 @@ export function errText(r: Api): string {
   if (isOversize(r)) return failureReason(r)
   const b = r.body ?? {}
   return `${r.status || 'mcp'}: ${b.message ?? b.error ?? JSON.stringify(b).slice(0, ERROR_BODY_MAX)}`
-}
-
-// A card read for its problem rows: only the open ones, which is what the pane lists. A problem answered in the browser leaves the list
-// on the next refresh; its history lives there too.
-function toProblems(card: any): ProblemRow[] {
-  return (card.problems ?? [])
-    .filter((p: any) => p.open)
-    .map(
-      (p: any): ProblemRow => ({
-        id: p.id,
-        cardId: card.id,
-        cardTitle: card.title,
-        type: p.type === 'action' ? 'action' : 'question',
-        statement: p.statement,
-      }),
-    )
 }
 
 // control flow only: thrown by `guarded` below, caught by loadPlan, never seen outside it
@@ -74,28 +57,15 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
 }
 
 async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
-  const list = await call('GET', '/api/plans', { query: { limit: MAX_PLANS } })
+  // DX-5232: only the answer's `dashboard_url`, `session` and `sessionListenerAttached` are read; one row is asked for (DX-4458: never the whole list)
+  const list = await call('GET', '/api/plans', { query: SESSION_PLAN_PROBE })
   if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true }
 
-  // A paged route that does not say how many there are cannot be read as complete.
-  if (typeof list.body.total !== 'number') {
-    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered no total: cannot tell whether the plan list is complete' }
-  }
   // DX-4317: the origin every link is built on. Without it no link can be right, so the load is an error.
   const dashboardUrl = readOrigin(list.body.dashboard_url)
   if (dashboardUrl === null) {
     return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered no valid dashboard_url (an http(s) origin): cannot build plan links' }
   }
-  const plansRead: any[] = list.body.plans ?? []
-  const plansUnread = Math.max(0, list.body.total - plansRead.length)
-  const plans: PlanRow[] = plansRead
-    .filter((p: any) => !p.archived_at)
-    .map((p: any) => ({
-      id: p.id,
-      ref: p.ref,
-      name: p.name,
-      needsYou: p.bucket_counts?.[NEEDS_YOU_BUCKET_ID] ?? 0,
-    }))
   // The session in this same response says WHICH plan; the plan itself is read by id below.
   const session = list.body.session
   const connectedId: number | null = session?.plan_id ?? null
@@ -105,15 +75,14 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   if (listener === MALFORMED_LISTENER) {
     return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
   }
-  const noPlan = { dashboardUrl, connected: null, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread }
+  const noPlan = { dashboardUrl, connected: null, listener }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
   // One load of everything about the connected plan: the plan itself (its status counts),
-  // the needs-you cards and the in-progress cards, together.
-  const [planR, cards, inProg, boards, allCards, subagents] = await Promise.all([
+  // the in-progress cards, the boards and every card, together.
+  const [planR, inProg, boards, allCards] = await Promise.all([
     call('GET', `/api/plans/${connectedId}`),
-    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_BUCKET_ID, sort: 'priority', order: 'desc', limit: MAX_CARDS } }),
-    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', order: 'desc', limit: MAX_CARDS } }),
+    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', order: 'desc', limit: IN_PROGRESS_LIMIT } }),
     // DX-4448: the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
     // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
     call('GET', '/api/boards'),
@@ -121,8 +90,6 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     // lists `/api/plans/:planId/cards` as false; GET /api/issues would be stamped with the session's board and miss a plan's other
     // boards) and, with no `limit`, answers every row (rows come whole: the route takes no `fields`).
     call('GET', `/api/plans/${connectedId}/cards`),
-    // DX-4499: the sub-agents of the plan's live sessions: its own state, so a failed read leaves the plan view `ready`.
-    loadSubagents(call, connectedId),
   ])
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
   if (!planR.ok) return fail(errText(planR))
@@ -136,102 +103,58 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, plans, listener, cardsTotal: 0, cardsRead: 0, plansUnread, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
+  const read = readAllCards(allCards, connectedId)
+  const base = { dashboardUrl, connected, listener, statusBreakdown: breakdown, links: readLinks(boards, read, planR.body.card_count) }
 
-  if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
-  if (typeof cards.body.total !== 'number') {
-    return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards answered no total: cannot tell whether the card list is complete` }
-  }
-  // The in-progress bucket: the same completeness rule, checked before any card read so the two read groups below can run together.
+  // The in-progress bucket: the same completeness rule.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
   if (typeof inProg.body.total !== 'number') {
     return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
   }
-  const rows: { id: string }[] = (cards.body.cards ?? []).map((c: any) => ({ id: c.id }))
   const ipRows: any[] = inProg.body.cards ?? []
-  // DX-4635: the needs-you card reads are one parallel step. DX-4415: the pane lists the in-progress cards by id, so they
-  // need no read of their own.
-  const fetched = await Promise.all(
-    rows.map(async row => ({
-      row,
-      r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { problems: true } } }),
-    })),
-  )
-  // DX-4458: a card that cannot be read is one line naming it, never the whole pane; the other cards still show.
-  const cardErrors: string[] = []
-  const cardProblems: ProblemRow[][] = []
-  for (const f of fetched) {
-    if (f.r.ok) cardProblems.push(toProblems(f.r.body))
-    else cardErrors.push(`Couldn't load ${f.row.id}: ${failureReason(f.r)}`)
-  }
-  // cards arrive priority-sorted; keep that order
-  const problems: ProblemRow[] = cardProblems.flat()
   const inProgress: InProgressRow[] = ipRows.map(row => ({ id: row.id, title: row.title }))
+  // DX-5232: the open problems are the sum of each card's `openProblemCount` on the every-card read. A read that cannot give that count leaves the
+  // view ready (the plan itself was read) with the count unknown (null, never a guessed 0) and the reason in `openProblemsError`.
+  const counted = countOpenProblems(read)
   return {
     ...EMPTY,
     ...base,
     phase: 'ready',
     error: null,
-    problems,
-    cardErrors,
-    cardsTotal: cards.body.total,
-    // DX-4458: only the cards read: an unread card makes the problem list a lower bound, as a cap does
-    cardsRead: cardProblems.length,
+    openProblems: typeof counted === 'number' ? counted : null,
+    openProblemsError: typeof counted === 'string' ? counted : null,
     inProgress,
-    inProgressTotal: inProg.body.total,
-    subagents,
     refreshedAt,
   }
 }
 
-// DX-4499: the sub-agents of every live session on the plan (GET /api/plan-sessions, newest activity first, the pane's own session
-// among them), one read each (GET /api/plan-sessions/:sessionId/subagents, DX-4498), each row carrying its session's id (DX-4508: the
-// live numbers lay over this session's own rows). A read
-// that fails is one line naming what could not be read; the other sessions' rows still show. Signed-out and revoked answers are
-// `guarded`'s: they end the whole load before they reach here.
-async function loadSubagents(call: Call, planId: number): Promise<SubagentsView> {
-  const list = await call('GET', '/api/plan-sessions', { query: { plan_id: planId, live: true, limit: MAX_SESSIONS } })
-  const unreadable = (what: string, detail: string): SubagentsView => ({ rows: [], errors: [`Couldn't read ${what}: ${detail}`], sessionsCapped: false, unavailable: false })
-  if (!list.ok) return unreadable("the plan's sessions", failureReason(list))
-  const sessions: unknown = list.body?.sessions
-  if (!Array.isArray(sessions)) return unreadable("the plan's sessions", 'the dashboard sent no list of them')
-  if (!sessions.every(s => typeof s?.session_id === 'string' && typeof s?.title === 'string')) {
-    return unreadable("the plan's sessions", 'the dashboard sent a session with no id or title')
+type AllCards = { cards: any[]; route: string } | { error: string }
+
+// DX-5232: the plan's every-card read, whole or the one reason it is not: the one home of the checks that make it a complete list.
+function readAllCards(allCards: Api, planId: number): AllCards {
+  const route = `GET /api/plans/${planId}/cards (all)`
+  if (!allCards.ok) return { error: `${route} ${errText(allCards)}` }
+  const cards = allCards.body?.cards
+  if (!Array.isArray(cards)) return { error: `${route} answered no list of cards` }
+  if (typeof allCards.body.total !== 'number') return { error: `${route} answered no total` }
+  if (allCards.body.total !== cards.length) return { error: `${route} answered ${cards.length} of ${allCards.body.total} cards` }
+  return { cards, route }
+}
+
+// The sum of `openProblemCount` over a whole every-card read, or the reason it cannot be a count (never a lower bound).
+function countOpenProblems(read: AllCards): number | string {
+  if ('error' in read) return `${read.error}: cannot count the open problems`
+  let sum = 0
+  for (const c of read.cards) {
+    if (typeof c?.openProblemCount !== 'number') return `${read.route} answered a card with no openProblemCount: cannot count the open problems`
+    sum += c.openProblemCount
   }
-  const reads = await Promise.all(
-    sessions.map(async s => ({ s, r: await call('GET', `/api/plan-sessions/${s.session_id}/subagents`) })),
-  )
-  const rows: SubagentRow[] = []
-  const errors: string[] = []
-  const sessionsCapped = sessions.length >= MAX_SESSIONS
-  // DX-4499: a dashboard that predates DX-4498 answers 404 to the sub-agents route of EVERY session it lists. That is the route
-  // missing, not a session failing, so it is one quiet line (`unavailable`), never one warning per session. A 404 for only some
-  // sessions is a real failure of those, and stays a line each.
-  if (reads.length > 0 && reads.every(({ r }) => r.status === 404)) return { rows: [], errors: [], sessionsCapped, unavailable: true }
-  for (const { s, r } of reads) {
-    const named = `the sub-agents of "${s.title}"`
-    if (!r.ok) {
-      errors.push(`Couldn't read ${named}: ${failureReason(r)}`)
-      continue
-    }
-    const raw: unknown = r.body?.subagents
-    if (!Array.isArray(raw)) {
-      errors.push(`Couldn't read ${named}: the dashboard sent no list of them`)
-      continue
-    }
-    const shaped = raw.map(x => toSubagent(x, s.session_id))
-    const bad = shaped.find((x): x is string => typeof x === 'string')
-    if (bad !== undefined) errors.push(`Couldn't read ${named}: ${bad}`)
-    else rows.push(...(shaped as SubagentRow[]))
-  }
-  const looped = parentLoop(rows)
-  if (looped !== null) return { rows: [], errors: [...errors, `Couldn't draw the sub-agents: ${looped} is its own ancestor`], sessionsCapped, unavailable: false }
-  return { rows, errors, sessionsCapped, unavailable: false }
+  return sum
 }
 
 // DX-4448: the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays
-// `ready` (the plan itself was read), the pane says why replies are not linked, and replies are drawn as written.
-function readLinks(boards: Api, allCards: Api, planId: number, planCardCount: unknown): CardLinks {
+// `ready` (the plan itself was read), the view says why replies are not linked, and replies are drawn as written.
+function readLinks(boards: Api, read: AllCards, planCardCount: unknown): CardLinks {
   const error = (message: string): CardLinks => ({ state: 'error', message })
   if (!boards.ok) return error(`GET /api/boards ${errText(boards)}`)
   const list = boards.body?.boards
@@ -240,14 +163,8 @@ function readLinks(boards: Api, allCards: Api, planId: number, planCardCount: un
   if (!prefixes.every((p): p is string => typeof p === 'string' && PREFIX_PATTERN.test(p))) {
     return error('GET /api/boards answered a board with no issue_prefix of capital letters')
   }
-  const route = `GET /api/plans/${planId}/cards (all)`
-  if (!allCards.ok) return error(`${route} ${errText(allCards)}`)
-  const cards = allCards.body?.cards
-  if (!Array.isArray(cards)) return error(`${route} answered no list of cards`)
-  if (typeof allCards.body.total !== 'number') return error(`${route} answered no total`)
-  if (allCards.body.total !== cards.length) {
-    return error(`${route} answered ${cards.length} of ${allCards.body.total} cards: cannot tell which ids are the plan's`)
-  }
+  if ('error' in read) return error(`${read.error}: cannot tell which ids are the plan's`)
+  const { cards, route } = read
   // the plan's own count (every board's cards) must agree, so a board-scoped or partial answer is an error, never a smaller set
   if (planCardCount !== cards.length) return error(`${route} answered ${cards.length} cards but the plan has ${String(planCardCount)}`)
   if (!cards.every(c => typeof c?.id === 'string')) return error(`${route} answered a card with no id`)

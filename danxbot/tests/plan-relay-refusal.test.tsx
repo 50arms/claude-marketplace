@@ -8,11 +8,7 @@ import { ownServerCheck, raisedByPlugin } from '../hooks/relay/refusal'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { test, CLASSIFIER_REFUSAL, SURFACES, dashboard, startSession } from './plan-kit'
 
-const PANE = {
-  component: 'Pane',
-  requestId: 'danx-plan',
-  props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
-} as any
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const ENGINE_WORDS = `danxbot: $.mcp.call(plugin:danxbot:danx-dashboard, plan_events_wait) refused: ${CLASSIFIER_REFUSAL}`
 const LOUD = /^\[danxbot plan event\] events stopped: events are NOT reaching this session: .*auto mode classifier gave no verdict.*Fix: .*mcp__plugin_danxbot_danx-dashboard__\*.*restart the session\.$/
@@ -21,12 +17,12 @@ const NOT_THE_FIX = /\b(update[ds]?|updating|reinstall(ing)?)\b(?!( the plugin)?
 
 for (const surface of SURFACES) {
   describe(`a classifier refusal on ${surface}`, () => {
-    test('a refused wait stops the relay: the pane and ONE transcript line carry the refusal and the allow-rule fix, and it does not retry', async ($, on) => {
+    test('a refused wait stops the relay: the band and ONE transcript line carry the refusal and the allow-rule fix, and it does not retry', async ($, on) => {
       const d = dashboard(on)
       d.relay.server.script.push(() => ({ deny: ENGINE_WORDS }) as any)
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await text(pane)).toContain('auto mode classifier refused the plugin')
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await text(band)).toContain('relay stopped')
       expect(d.relay.told).toHaveLength(1)
       expect(d.relay.told[0]).toMatch(LOUD)
       expect(d.relay.told[0]).not.toMatch(NOT_THE_FIX)
@@ -36,7 +32,7 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toHaveLength(1)
     })
 
-    test('a refused first read (the relay never starts): the session is told once, and the view says the refusal and the fix', async ($, on) => {
+    test('a refused first read (the relay never starts): the session is told once, with the refusal and the fix', async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
       await startSession($, d, surface)
       expect(d.relay.calls).toHaveLength(0)
@@ -46,8 +42,6 @@ for (const surface of SURFACES) {
       // the start's own retries keep reading (the refusal may clear) without telling it again
       await d.clock.advance(120_000)
       expect(d.relay.told).toHaveLength(1)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await text(pane)).toContain('mcp__plugin_danxbot_danx-dashboard__*')
     })
   })
 }

@@ -225,7 +225,7 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toHaveLength(calls)
     })
 
-    test("a run ended while it delivers leaves the pane's relay state on the NEW plan", async ($, on) => {
+    test("a run ended while it delivers leaves the band's relay state on the NEW plan", async ($, on) => {
       const d = dashboard(on)
       answerPlanConnect(on, d)
       await startSession($, d, surface)
