@@ -5,7 +5,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
-import { HELD_REASON, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, staleUsedReleaseKeys, verdict } from '../hooks/compaction/control'
+import { HELD_REASON, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
 import type { ControlFile, GateControl, GateInput } from '../hooks/compaction/control'
 import { CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -15,7 +15,9 @@ const WINDOW = 1_000_000
 // the pass-at size comes from the control file (50 Arms computes it); the plugin holds no margin of its own
 const PASS_AT = 907_000
 
-const gateControl = (over: Partial<GateControl> = {}): GateControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, ...over })
+// DX-5222: the dashboard's per-model-line valves (the sub-agent with no entry is measured against its model's line) and the sub-agents' own controls
+const VALVES = { haiku: 180_000, sonnet: 600_000, opus: 907_000 }
+const gateControl = (over: Partial<GateControl> = {}): GateControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
 const fileText = (control: GateControl | null, askedAt: string | null = null, sessionId: string = OWN_SESSION.session_id): string => JSON.stringify({ v: 1, sessionId, control, askedAt })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
 const withControl = (over: Partial<GateControl> = {}): ControlFile => ({ kind: 'control', control: gateControl(over) })
@@ -53,11 +55,22 @@ describe('the control file (pure)', () => {
 // The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
 // builds the same from the dashboard's frame, and danxbot's operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
 describe('the wire shape (pure)', () => {
-  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z"},"askedAt":null}'
+  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000,"ask":{"seq":1,"at":"2026-10-14T11:58:00.000Z","text":"Prepare."},"releaseUntilMs":null,"releaseId":null}},"valves":{"haiku":180000,"sonnet":600000,"opus":907000}},"askedAt":null}'
 
   test('the file the relay writes is read whole, and its pass-at size is the safety valve (the plugin has no margin of its own)', () => {
     const file = parse(RELAY_FILE)
-    expect(file).toEqual({ kind: 'control', control: { floorTokens: 250_000, passAtTokens: 907_000, windowTokens: 1_000_000, releaseUntilMs: 1_800_000_000_000, releaseId: '2026-10-14T11:59:00.000Z' } })
+    expect(file).toEqual({
+      kind: 'control',
+      control: {
+        floorTokens: 250_000,
+        passAtTokens: 907_000,
+        windowTokens: 1_000_000,
+        releaseUntilMs: 1_800_000_000_000,
+        releaseId: '2026-10-14T11:59:00.000Z',
+        agents: { a1: { passAtTokens: 600_000, ask: { seq: 1, at: '2026-10-14T11:58:00.000Z', text: 'Prepare.' }, releaseUntilMs: null, releaseId: null } },
+        valves: VALVES,
+      },
+    })
     const input = { trigger: 'auto', window: WINDOW, file } as const
     expect(verdict({ ...input, tokens: 906_999 })).toEqual({ pass: false, reason: HELD_REASON })
     expect(verdict({ ...input, tokens: 907_000 })).toEqual({ pass: true, why: 'valve' })
@@ -141,10 +154,18 @@ describe('the gate (pure)', () => {
 })
 
 describe('spent releases in the store (pure)', () => {
-  test('the oldest past the keep count are stale', () => {
-    const entries = Array.from({ length: USED_RELEASE_KEEP + 2 }, (_, i) => ({ key: `k${i}`, at: i }))
-    expect(staleUsedReleaseKeys(entries)).toEqual(['k1', 'k0'])
+  test('the oldest sessions past the keep count are stale', () => {
+    const entries = Array.from({ length: USED_RELEASE_KEEP + 2 }, (_, i) => ({ key: usedReleaseKey(`s${i}`), at: i }))
+    expect(staleUsedReleaseKeys(entries)).toEqual([usedReleaseKey('s0'), usedReleaseKey('s1')])
     expect(staleUsedReleaseKeys(entries.slice(2))).toEqual([])
+  })
+
+  // DX-5222: a session's sub-agents' records belong to the session: its newer sub-agent records never evict its own older main record, and an old session goes whole
+  test("a session's records stay and go together, so its sub-agents never evict its own main record", () => {
+    const old = [{ key: usedReleaseKey('old'), at: 1 }, { key: usedReleaseKey('old', 'a1'), at: 2 }]
+    const sessions = Array.from({ length: USED_RELEASE_KEEP - 1 }, (_, i) => ({ key: usedReleaseKey(`s${i}`), at: 100 + i }))
+    const current = [{ key: usedReleaseKey('cur'), at: 50 }, ...Array.from({ length: 60 }, (_, i) => ({ key: usedReleaseKey('cur', `a${i}`), at: 1000 + i }))]
+    expect(staleUsedReleaseKeys([...old, ...sessions, ...current])).toEqual(old.map(e => e.key))
   })
 })
 
@@ -227,14 +248,17 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
-    // DX-5231: nothing is armed for the main agent, whatever the control says
-    test('the plugin sets no early-proposal variable for the main agent, however many turns follow', async ($, on) => {
-      const d = await started($, on)
+    // DX-5231 / DX-5222: the main agent's compaction is started by the plugin's own /compact; the early-proposal percent is armed for the SUB-AGENTS (whose proposals are the only way they
+    // compact), once, from the floor (compaction-agents.test.tsx has the rest)
+    test('the plugin arms the sub-agents percent once, from the floor, however many turns follow', async ($, on) => {
+      const d = await started($, on, { stateSteps: true })
+      // this host runs session.compact (a session's first such event raises it: compaction-agents.test.tsx)
+      d.seedState('sessionCompactSeen', true)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)
       await $.turn.start(START)
-      expect(d.envSets).toEqual([])
+      expect(d.envSets).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }])
     })
 
     test("the agent's ready starts /compact once, at the main loop's turn end, and not before", async ($, on) => {
@@ -371,28 +395,33 @@ for (const surface of SURFACES) {
 
     // DX-5217 / DX-5231: a process an older plugin version armed still holds CLAUDE_CODE_AUTO_COMPACT_WINDOW (the shrunken meter) or the percent after a plugin reload
     test('a window or percent variable left by an older plugin version is cleared while the session is under the handshake', async ($, on) => {
-      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })
+      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25', stateSteps: true })
+      d.seedState('sessionCompactSeen', true)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)
-      expect(d.envSets).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
+      // the older plugin's window variable is taken back, and the percent it left is replaced by the one armed for the sub-agents (25 = 250,000 of 1,000,000)
+      expect(d.envSets).toEqual([
+        { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined },
+        { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined },
+        { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' },
+      ])
+      expect(d.env('CLAUDE_CODE_AUTO_COMPACT_WINDOW')).toBeUndefined()
     })
 
-    // DX-5231: DX-5222 arms the process-wide percent for a sub-agent, which outlives main turns: a later turn must not wipe it
+    // DX-5231: the clear is once per process: a value set after it (the percent the sub-agents are armed with, or a person's) is never wiped by a later turn
     test('a leftover variable is cleared once per process: a value set after the first clear is never touched', async ($, on) => {
-      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })
+      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25', stateSteps: true })
+      d.seedState('sessionCompactSeen', true)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)
-      expect(d.envSets).toHaveLength(2)
+      expect(d.envSets).toHaveLength(3)
       d.setEnv('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', '30')
       await $.turn.start(START)
       await $.turn.complete(TURN)
       await $.turn.start(START)
-      expect(d.envSets).toEqual([
-        { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined },
-        { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined },
-      ])
+      expect(d.envSets).toHaveLength(3)
       expect(d.env('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')).toBe('30')
     })
 

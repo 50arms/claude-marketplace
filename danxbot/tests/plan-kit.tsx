@@ -889,8 +889,11 @@ export function dashboard(
     ...(options.autocompactPct === undefined ? {} : { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: options.autocompactPct }),
   }
   const envSets: { name: string; value: string | undefined }[] = []
+  // DX-5222: whether the plugin had already written `leftoverArmingCleared` true when each set in `envSets` happened (the arming order)
+  const envClearedAtSet: boolean[] = []
   on('env.set', (_$: any, e: any) => {
     envSets.push({ name: e.name, value: e.value })
+    envClearedAtSet.push(stateWrites.some(w => w.key === 'leftoverArmingCleared' && w.value === true))
     if (e.value === undefined) delete liveEnv[e.name]
     else liveEnv[e.name] = e.value
     return { value: undefined } as any
@@ -899,6 +902,21 @@ export function dashboard(
   on('session.cwd', () => ({ value: '/work/repo' }) as any)
   on('process.run', (_$: any, e: any) => ({ value: { exitCode: world.gitStatus.exitCode, stdout: world.gitStatus.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as any)
   on('session.id', () => ({ value: world.sessionId }) as any)
+  // DX-5222: every `$.session.send` the plugin makes (the recipient as the engine spells it, and the text), and how the host answers it: delivered, refused or a rejection
+  const sends: { to: string; text: string }[] = []
+  const sendMode = { current: 'delivered' as 'delivered' | 'refused' | 'throws' }
+  // a test can hold the host's answer to a send (the plugin is then in the middle of it) until it releases it
+  const sendHold: { gate?: Promise<void>; entered?: () => void } = {}
+  // a recipient whose sends the host drops at once, whatever the others get (DX-5222)
+  const sendFails = new Set<string>()
+  on('session.send', async (_$: any, e: any) => {
+    sends.push({ to: e.to, text: e.text })
+    if ([...sendFails].some(id => String(e.to).includes(id))) throw new Error('the host dropped the send')
+    sendHold.entered?.()
+    await sendHold.gate
+    if (sendMode.current === 'throws') throw new Error('the host dropped the send')
+    return (sendMode.current === 'refused' ? { isDelivered: false, reason: 'nobody by that name' } : { isDelivered: true }) as any
+  })
   on('agent.list', async () => {
     return { value: world.agents } as any
   })
@@ -985,7 +1003,14 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { envSets, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
+  return { envSets, envClearedAtSet, sends, failSendsTo: (id: string) => void sendFails.add(id), setSendMode: (mode: 'delivered' | 'refused' | 'throws') => void (sendMode.current = mode), holdSends: () => {
+      let release!: () => void
+      let entered!: () => void
+      sendHold.gate = new Promise<void>(r => (release = r))
+      const reached = new Promise<void>(r => (entered = r))
+      sendHold.entered = entered
+      return { reached, release: () => release() }
+    }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
     }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
