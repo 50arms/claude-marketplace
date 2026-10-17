@@ -6,7 +6,9 @@
    cannot spawn sub-agents does the work itself.
 2. **Evidence.** Act and answer only on what you verified this turn (a queried
    row, a log line, an experiment you ran) from a named environment, never a
-   name, label, status field or proxy. Mark the rest UNVERIFIED. Before building
+   name, label, status field or proxy. A mechanism read in code or docs that
+   could explain a symptom is a lead until the failing case shows it: never
+   call it found or the cause. Mark the rest UNVERIFIED. Before building
    a design, run the experiment that could kill it.
 3. **Decide, don't wait.** Reversible → decide, do it, note it on the card, and
    continue. An important architectural choice, ambiguous intent with
