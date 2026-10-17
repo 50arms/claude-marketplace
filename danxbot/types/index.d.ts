@@ -197,6 +197,8 @@ declare module 'claude-code' {
       browserMissingTold: boolean
       // DX-5231: the leftover compaction-trigger variables of an older plugin version were cleared in this process (once; a later writer's value is never touched).
       leftoverArmingCleared: boolean
+      // DX-5222: the percent CLAUDE_AUTOCOMPACT_PCT_OVERRIDE holds because the plugin armed it for the sub-agents (null: it armed none); the variable lives in the process, so a reload keeps both.
+      armedPercent: number | null
       // DX-5231: the release the plugin claimed to start a compaction with (one compare-and-set, so a ready starts once)
       claimedRelease: string | null
       // DX-4235: the reports' memory (see ReportState).

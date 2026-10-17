@@ -7,8 +7,8 @@ import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { briefingText, parseGitStatus } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
-import { HELD_REASON, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, spentReleaseId, staleUsedReleaseKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
-import type { ControlFile, Verdict } from './compaction/control'
+import { ASK_SENT_PREFIX, HELD_REASON, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
@@ -132,6 +132,8 @@ const olderDashboardTold = atom({ plugin: 'danxbot', key: 'olderDashboardTold' }
 const browserMissingTold = atom({ plugin: 'danxbot', key: 'browserMissingTold' } as const, false)
 // DX-5231: the leftover compaction-trigger variables an older plugin version armed were cleared in this process. $.state because the variables live in the process: a module reload keeps both.
 const leftoverArmingCleared = atom({ plugin: 'danxbot', key: 'leftoverArmingCleared' } as const, false)
+// DX-5222: the percent CLAUDE_AUTOCOMPACT_PCT_OVERRIDE holds because the plugin armed it for the sub-agents (null: the plugin armed none). $.state because the variable lives in the process: a module reload keeps both.
+const armedPercent = atom({ plugin: 'danxbot', key: 'armedPercent' } as const, null as number | null)
 // DX-5231: the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
 // check and a person's own /compact racing each other start (or spend) a ready exactly once.
 const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as const, null as string | null)
@@ -2127,6 +2129,17 @@ async function onReportStop($: any, e: any, next: any) {
 
 // The last reason told to the person that the control file is unreadable; the same reason is told once.
 let compactionFaultTold: string | null = null
+// DX-5222: each sub-agent's last model response (its context size and model), noted at `turn.step`: `session.compact` names the proposing sub-agent but not its size, and
+// `$.session.usage()` is the main conversation's. A Map keeps insertion order, so the oldest agent goes first once AGENT_SIZES_KEEP are held; a reload starts empty (the
+// next response of each agent fills it), and an agent whose size is unknown is refused and told, never guessed (agentVerdict).
+const AGENT_SIZES_KEEP = 256
+const agentSizes = new Map<string, AgentSize>()
+// DX-5222: the sub-agent refusals already told to the person (`agent id: reason`), each once
+const agentFaultTold = new Set<string>()
+// DX-5222: how many automatic proposals `onSessionCompact` has let through and the classic gate has not yet seen. Core runs the classic PreCompact hooks beneath
+// `session.compact`; their input names no agent, so the classic gate would hold a sub-agent's proposal the per-agent gate released. A proposal `session.compact` passed is not judged
+// a second time (the classic gate judges only what reaches it with this at 0: a host that runs no `session.compact`, the managed installs).
+let classicPasses = 0
 // the git read of the resume briefing is a local status: it needs no longer than this
 const GIT_STATUS_TIMEOUT_MS = 5000
 // how often an idle session looks for an agent's ready in the local control file (a file read, no network)
@@ -2147,15 +2160,18 @@ async function contextReading($: any): Promise<{ tokens: number | null; window: 
   return { tokens: count(context?.tokens), window: count(context?.window) }
 }
 
-// The store keeps one spent-release record per session ever held (DX-4993): the oldest past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
-async function pruneUsedReleases($: any): Promise<void> {
+// The store keeps the spent-release records (DX-4993) and the delivered-request records (DX-5222) of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
+async function pruneSessionRecords($: any, prefix: string, atField: 'at' | 'sentAt'): Promise<void> {
   const entries: { key: string; at: number }[] = []
   for (const key of await $.store.keys()) {
-    if (!key.startsWith(USED_RELEASE_PREFIX)) continue
+    if (!key.startsWith(prefix)) continue
     const rec: any = await $.store.get(key)
-    entries.push({ key, at: typeof rec?.at === 'number' ? rec.at : 0 })
+    entries.push({ key, at: typeof rec?.[atField] === 'number' ? rec[atField] : 0 })
   }
-  for (const key of staleUsedReleaseKeys(entries)) await $.store.delete(key)
+  for (const key of staleSessionKeys(entries, prefix)) await $.store.delete(key)
+}
+async function pruneUsedReleases($: any): Promise<void> {
+  await pruneSessionRecords($, USED_RELEASE_PREFIX, 'at')
 }
 
 // DX-5231: one read of the control file per main-loop moment (a turn's start, its end, the idle check) serves everything the plugin does with it: telling the person the
@@ -2169,6 +2185,8 @@ async function syncCompaction($: any, { start }: { start: boolean }): Promise<vo
     } else compactionFaultTold = null
     syncCompactionTicker($, file)
     await clearLeftoverArming($, file)
+    await armSubAgents($, file)
+    await deliverAgentAsks($, file)
     if (start) await startReadyCompaction($, file)
   } catch (err: any) {
     $.ui.toast(`Compaction handshake could not run: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
@@ -2187,19 +2205,32 @@ function syncCompactionTicker($: any, file: ControlFile): void {
   }
 }
 
-// The plugin arms nothing for the main agent. An older plugin version armed CLAUDE_CODE_AUTO_COMPACT_WINDOW (DX-4993, DX-5217) and then CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
-// (DX-5217) in this process, and a variable stays in a running process after a plugin reload: the first shrinks the context meter's window, the second makes the main loop
-// propose early. Once the session has a control file (it is under the handshake) both are cleared, ONCE per process (`leftoverArmingCleared`): a later writer of the same
-// variable (DX-5218 to DX-5224 arm the process-wide percent for a sub-agent, which outlives main turns) is never wiped by a later turn.
-// DX-5222 (narrow window, recorded not built): the one-time clear waits for the first control file, so a sub-agent's percent set before it exists would be wiped by it; the
-// DX-5222 sub-agent cards must set `leftoverArmingCleared` when they first set the percent variable. `$.env.set(name)` with no value
-// restores the default at once (verified, Claude Code 2.1.299). The literal names are kept so the engine lists them as writes of this module. A session with no control
-// file keeps whatever its person set.
+// The plugin arms nothing for the MAIN agent's own start (DX-5231: it runs /compact itself). An older plugin version armed CLAUDE_CODE_AUTO_COMPACT_WINDOW (DX-4993, DX-5217) and
+// then CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (DX-5217) in this process, and a variable stays in a running process after a plugin reload: the first shrinks the context meter's window,
+// the second makes every loop propose early. Once the session has a control file (it is under the handshake) both are cleared, ONCE per process (`leftoverArmingCleared`): the
+// sub-agents' percent (armSubAgents, DX-5222), which outlives main turns, is never wiped by a later turn, and armSubAgents sets the flag BEFORE it first sets the variable, so
+// the clear can never wipe the value it armed. `$.env.set(name)` with no value restores the default at once (verified, Claude Code 2.1.299). The literal names are kept so
+// the engine lists them as writes of this module. A session with no control file keeps whatever its person set.
 async function clearLeftoverArming($: any, file: ControlFile): Promise<void> {
   if (file.kind === 'absent' || (await read($, leftoverArmingCleared))) return
   if ((await $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')) !== undefined) await $.env.set('CLAUDE_CODE_AUTO_COMPACT_WINDOW')
   if ((await $.env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')) !== undefined) await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
   await update($, leftoverArmingCleared, () => true)
+}
+
+// DX-5222: a sub-agent has no command form that starts its compaction (`$.command.run` compacts the main session only), so the only compaction it can have is Claude Code's own
+// automatic proposal. The plugin makes that proposal come early, from the floor: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, a process-wide variable (the main loop proposes early too; the gate
+// holds its proposals, onSessionCompact). It is armed while the session is under the handshake, re-armed when the floor moves, and taken back when the handshake ends or the file
+// cannot be read: an armed percent with nothing holding the proposals would compact every agent at the floor. Whether a variable set at runtime reaches a sub-agent that is
+// already running is UNVERIFIED (DX-5222 AC 4).
+async function armSubAgents($: any, file: ControlFile): Promise<void> {
+  const wanted = armedPercentOf(file)
+  if (wanted === (await read($, armedPercent))) return
+  // DX-5222 (comment 15880): the once-per-process clear must never wipe the value armed here, so `leftoverArmingCleared` is already true when this first sets it: syncCompaction runs
+  // clearLeftoverArming first, and it raises the flag on the first control file of the session (the one that can arm). compaction-agents.test.tsx pins the order.
+  if (wanted === null) await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
+  else await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', String(wanted))
+  await update($, armedPercent, () => wanted)
 }
 
 // The file's unexpired release, if the plugin has not spent it: spent now (kept in $.store, so one release is acted on once however many turns follow) and returned.
@@ -2234,9 +2265,9 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
 // The agent's ready is written to the control file by the relay, after its tool call returned, so it can land after the turn that made it already ended (an idle
 // session: no turn.complete follows). The plugin cannot watch the file: its `$.fs` is read, write, list, stat, exists and ancestors only (the hook catalog of Claude Code
 // 2.1.299 has no watch), so a local file read every COMPACTION_IDLE_CHECK_MS starts it, only while no main turn is running.
+// DX-5222: a sub-agent's request is delivered while the main turn runs too (the sub-agents work inside it), so the check runs always and only the START waits for no turn.
 async function idleCompactionCheck($: any): Promise<void> {
-  if ((await read($, turn)).isRunning) return
-  await syncCompaction($, { start: true })
+  await syncCompaction($, { start: !(await read($, turn)).isRunning })
 }
 
 // The verdict for one proposal. A person's own /compact passes whatever the file says (it reads the file only to spend a waiting ready, above). Every read that a decision needs happens only for an automatic proposal;
@@ -2270,6 +2301,8 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
 }
 
 async function onPreCompact($: any, e: any, next: any) {
+  // DX-5222: an automatic proposal `session.compact` passed (the per-agent gate judged it) is not judged again by this gate, which cannot tell the agents apart
+  if (e.trigger === 'auto' && classicPasses > 0) return next(e)
   const v = await compactionVerdict($, e)
   let r: any
   try {
@@ -2279,6 +2312,97 @@ async function onPreCompact($: any, e: any, next: any) {
     return { block: v.reason }
   }
   return v.pass ? r : { ...r, block: v.reason }
+}
+
+// ---- DX-5222: each sub-agent is gated, and recommended, on its own --------------------------------------------------------------------------------------------
+
+// Every model request of a sub-agent notes its context: `turn.step` (streaming) hands back the response with the usage the API reported and the model that answered. The
+// event of a MAIN-loop request has no agentId and is not noted (its size is `$.session.usage()`). Whatever goes wrong here is the plugin's own bookkeeping and never the
+// request's: the response always passes on untouched.
+async function* noteAgentStep($: any, e: any, next: any): any {
+  const response = yield* next(e)
+  try {
+    const size = e.agentId === undefined || response?.usage === null || response?.usage === undefined ? null : sizeOfUsage(response.usage)
+    if (size !== null) {
+      agentSizes.delete(e.agentId)
+      agentSizes.set(e.agentId, size)
+      if (agentSizes.size > AGENT_SIZES_KEEP) agentSizes.delete(agentSizes.keys().next().value as string)
+    }
+  } catch (err: any) {
+    $.ui.toast(`Compaction handshake could not note a sub-agent's context: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+  }
+  return response
+}
+
+// Claude Code's own automatic proposal (`session.compact`, trigger `auto`) for the main agent or, with an `agentId`, for a sub-agent. A person's /compact (and the plugin's own
+// start) is not matched here: the classic gate still sees it and spends a waiting ready. The main agent's verdict is the one the classic gate has always given
+// (compactionVerdict); a sub-agent's is its own (agentCompactionVerdict). A proposal that passes goes on to core, whose classic PreCompact hooks are told it was judged
+// (`classicPasses`); one that does not is a skip, so core runs nothing.
+async function onSessionCompact($: any, e: any, next: any) {
+  const v = e.agentId === undefined ? await compactionVerdict($, e) : await agentCompactionVerdict($, e)
+  if (!v.pass) return { skip: v.reason }
+  classicPasses += 1
+  try {
+    return await next(e)
+  } finally {
+    classicPasses -= 1
+  }
+}
+
+async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
+  const agentId: string = e.agentId
+  try {
+    const sessionId = String(await $.session.id())
+    const key = usedReleaseKey(sessionId, agentId)
+    const now = await $.clock.now()
+    const v = agentVerdict({ agentId, file: await compactionControl($), size: agentSizes.get(agentId) ?? null, usedReleaseId: spentReleaseId(await $.store.get(key)), nowMs: now })
+    if (v.pass && v.why === 'release') {
+      // spent before the compaction runs: this agent's release passes once, however many proposals follow
+      await $.store.set(key, { releaseId: v.releaseId, at: now })
+      await pruneUsedReleases($)
+      $.ui.toast(`Compacting sub-agent ${agentId} now: it said it is ready.`)
+    } else if (v.pass && v.why === 'valve') $.ui.toast(`Compacting sub-agent ${agentId} now: its context reached the size where holding it would end its work.`)
+    else if (!v.pass && v.told && !agentFaultTold.has(`${agentId}: ${v.reason}`)) {
+      agentFaultTold.add(`${agentId}: ${v.reason}`)
+      $.ui.toast(v.reason)
+    }
+    return v
+  } catch (err: any) {
+    const told = `Compaction gate could not decide for sub-agent ${agentId}, so Claude Code's own automatic compaction applies: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
+    if (compactionFaultTold !== told) $.ui.toast(told)
+    compactionFaultTold = told
+    return { pass: true, why: 'unreadable' }
+  }
+}
+
+// Each sub-agent's request to prepare for compaction reaches THAT sub-agent only, through `$.session.send`, once per `ask.at`; the text is the dashboard's and never composed here, and
+// the main agent's request is the relay's (it shows it as a record). Only a running sub-agent is sent to: a message to a finished one would resume it from its transcript. A failed
+// send (a refusal, a rejection) is not recorded, so the next sync sends it again.
+async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
+  if (file.kind !== 'control' || file.control === null) return
+  const asks = Object.entries(file.control.agents).flatMap(([id, a]) => (a.ask === null ? [] : [{ id, ask: a.ask }]))
+  if (asks.length === 0) return
+  const sessionId = String(await $.session.id())
+  const running = new Set<string>(((await $.agent.list()) as { id: string; status: string }[]).filter(a => a.status === 'running').map(a => a.id))
+  let recorded = false
+  for (const { id, ask } of asks) {
+    const key = askSentKey(sessionId, id)
+    if (!running.has(id) || sentAskAt(await $.store.get(key)) === ask.at) continue
+    try {
+      const sent = await $.session.send({ to: { agentId: id }, text: ask.text })
+      if (!sent.isDelivered) throw new Error(sent.reason)
+    } catch (err: any) {
+      const told = `Compaction request for sub-agent ${id} was not delivered: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
+      if (!agentFaultTold.has(told)) {
+        agentFaultTold.add(told)
+        $.ui.toast(told)
+      }
+      continue
+    }
+    await $.store.set(key, { at: ask.at, sentAt: await $.clock.now() })
+    recorded = true
+  }
+  if (recorded) await pruneSessionRecords($, ASK_SENT_PREFIX, 'sentAt')
 }
 
 // The briefing's sources, each read on its own: one that cannot be read says so in the briefing and does not take the others with it.
@@ -2320,6 +2444,10 @@ export const register: Register = on => {
   on('turn.complete', onTurnComplete)
   // DX-4993 / DX-5231: an automatic compaction is held while the session is under the handshake; the agent's ready starts /compact itself (startReadyCompaction)
   on('classic.PreCompact', onPreCompact)
+  // DX-5222: Claude Code's own automatic proposals are judged per agent (a person's /compact and the plugin's own start are not matched: the classic gate answers them); each sub-agent's
+  // last response is noted at `turn.step`
+  on('session.compact', { trigger: 'auto' }, onSessionCompact)
+  on('turn.step', noteAgentStep)
   on('session.measure', onMeasure)
   // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
