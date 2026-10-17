@@ -1,17 +1,11 @@
 import type { PlanView, RelayState, StatusBreakdown } from '../../types'
 import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, keyRevokedLabel } from './config'
 
-// "+" when the view read fewer needs-you cards than the dashboard has: every count of open problems is then a
-// lower bound. The one home of that rule.
-export function capMark(v: PlanView): string {
-  return v.cardsTotal > v.cardsRead ? '+' : ''
-}
-
-// DX-4420: the band button's label: a problem glyph and the count, "3+" when the view read fewer cards than exist,
+// DX-4420: the band button's label: a problem glyph and the count,
 // '' for none (the button is then not drawn). The count is a button, not label text: see band.tsx.
 export function problemBadge(v: PlanView): string {
   const n = v.openProblems
-  return n === 0 ? '' : `${PROBLEM_GLYPH} ${n}${capMark(v)}`
+  return n === 0 ? '' : `${PROBLEM_GLYPH} ${n}`
 }
 
 // `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.
@@ -99,11 +93,12 @@ export function eventsWarning(v: PlanView, relay: RelayState): string | null {
 }
 
 // DX-5232: the reason behind the events warning, for the one toast the transition into it draws: the relay's own detail when the relay
-// is the fault, else the server's next step for the listener. Null when the events are flowing or no reason was given (no toast then).
+// retries or has stopped, the server's next step when the listener is the fault, none when the relay simply is not running (its state
+// is "off" on every connect, before the relay starts) or the events are flowing.
 export function eventsReason(v: PlanView, relay: RelayState): string | null {
   const warning = eventsWarning(v, relay)
-  if (warning === null) return null
-  const relayFault = v.connected !== null && relay.planId === v.connected.id && (relay.phase === 'retrying' || relay.phase === 'stopped')
-  const detail = relayFault ? relay.detail : (v.listener?.nextStep ?? null)
+  if (warning === null || v.connected === null) return null
+  const relayOwn = relay.planId === v.connected.id
+  const detail = relayOwn && (relay.phase === 'retrying' || relay.phase === 'stopped') ? relay.detail : relayOwn && relay.phase !== 'off' ? (v.listener?.nextStep ?? null) : null
   return detail ? `${warning}. ${detail}` : null
 }

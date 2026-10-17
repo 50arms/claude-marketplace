@@ -35,7 +35,6 @@ for (const surface of SURFACES) {
       ['0%', { breakdown: counts({ ToDo: 4 }) }],
       ['50%', { breakdown: counts({ Done: 1, ToDo: 1 }) }],
       ['100%', { breakdown: counts({ Done: 5, Cancelled: 1 }) }],
-      ['a capped 3+ load', { cardsTotal: 9 }],
     ] as const) {
       test(`${name}: the text is still exactly Danxbot · PLAN-23 (no percent, glyph or open count)`, async ($, on) => {
         const d = dashboard(on, options as any)

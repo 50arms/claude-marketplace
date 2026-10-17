@@ -1,5 +1,4 @@
-// DX-4458: a card with dozens of problems (DX-4443: 49 questions) is read for its problem rows only; one card that cannot be
-// read leaves the plan ready and the band's count a lower bound.
+// DX-4458: a card with dozens of problems (DX-4443: 49 questions) is never read for its rows: the count comes from the every-card list.
 import { describe, expect } from 'claude-code/testing'
 
 import { errText, failureReason, loadPlan } from '../hooks/plan/load'
@@ -19,31 +18,18 @@ const issueReads = (d: any) => d.api.filter((a: any) => a.method === 'GET' && /^
 
 for (const surface of SURFACES) {
   describe(`a card with many problems on ${surface}`, () => {
-    test('the load reads each card for its problem rows only: no solutions, no comments, no descriptions', async ($, on) => {
+    test('the load reads no card of its own: the count is summed from the every-card list, whatever one card holds', async ($, on) => {
       const { d, band } = await openBand($, on, surface, { bigCard: true })
-      // DX-4415: an in-progress card is listed by its id from the cards list alone: no read of its own
-      const reads = issueReads(d)
-      expect(reads.map((a: any) => a.path).sort()).toEqual(['/api/issues/DX-1', '/api/issues/DX-2', '/api/issues/DX-3'])
-      for (const a of reads) expect(a.query).toEqual({ fields: { open_problem_count: true } })
+      expect(issueReads(d)).toEqual([])
       expect(await problemBadgeOf(band)).toBe('⚠ 52')
       expect(await text(band)).not.toContain('Disconnected')
     })
 
-    test('one card that cannot be read leaves the plan ready; the count covers the cards that were read and is a lower bound', async ($, on) => {
-      const { band } = await openBand($, on, surface, { cardFails: 'DX-2' })
-      expect(await problemBadgeOf(band)).toBe('⚠ 2+')
-      expect(await text(band)).not.toContain('Disconnected')
-    })
-
-    test('an unread card makes the count a lower bound', async ($, on) => {
-      const { band } = await openBand($, on, surface, { cardFails: 'DX-1' })
-      expect(await problemBadgeOf(band)).toBe('⚠ 1+')
-    })
-
-    test('an oversize answer for one card leaves the plan ready, and the host notice is never shown', async ($, on) => {
-      const { d, band } = await openBand($, on, surface, { cardOversize: 'DX-2' })
-      expect(await text(band)).not.toMatch(/exceeds maximum|tool-results|characters across|Disconnected/)
-      expect(d.toasts.join(' ')).not.toContain('exceeds')
+    test('the plan list is asked for one row only, however many plans exist', async ($, on) => {
+      const { d } = await openBand($, on, surface)
+      const lists = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans')
+      expect(lists.length).toBeGreaterThan(0)
+      for (const a of lists) expect(a.query).toEqual({ limit: 1 })
     })
 
     test('the host notice on any call of the load is never the band text', async () => {

@@ -1,5 +1,5 @@
 import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, MAX_CARDS, NEEDS_YOU_BUCKET_ID, PREFIX_PATTERN, STATUS_KEYS } from './config'
+import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, PREFIX_PATTERN, SESSION_PLAN_PROBE, STATUS_KEYS } from './config'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
 import type { Refusal } from '../relay/refusal'
 
@@ -57,8 +57,8 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
 }
 
 async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
-  // DX-5232: only the answer's `dashboard_url`, `session` and `sessionListenerAttached` are read; the plan rows are not
-  const list = await call('GET', '/api/plans')
+  // DX-5232: only the answer's `dashboard_url`, `session` and `sessionListenerAttached` are read; one row is asked for (DX-4458: never the whole list)
+  const list = await call('GET', '/api/plans', { query: SESSION_PLAN_PROBE })
   if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true }
 
   // DX-4317: the origin every link is built on. Without it no link can be right, so the load is an error.
@@ -75,15 +75,14 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   if (listener === MALFORMED_LISTENER) {
     return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
   }
-  const noPlan = { dashboardUrl, connected: null, listener, cardsTotal: 0, cardsRead: 0 }
+  const noPlan = { dashboardUrl, connected: null, listener }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
   // One load of everything about the connected plan: the plan itself (its status counts),
-  // the needs-you cards and the in-progress cards, together.
-  const [planR, cards, inProg, boards, allCards] = await Promise.all([
+  // the in-progress cards, the boards and every card, together.
+  const [planR, inProg, boards, allCards] = await Promise.all([
     call('GET', `/api/plans/${connectedId}`),
-    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: NEEDS_YOU_BUCKET_ID, sort: 'priority', order: 'desc', limit: MAX_CARDS } }),
-    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', order: 'desc', limit: MAX_CARDS } }),
+    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', order: 'desc', limit: IN_PROGRESS_LIMIT } }),
     // DX-4448: the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
     // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
     call('GET', '/api/boards'),
@@ -104,50 +103,44 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, listener, cardsTotal: 0, cardsRead: 0, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
+  const base = { dashboardUrl, connected, listener, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
 
-  if (!cards.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(cards) }
-  if (typeof cards.body.total !== 'number') {
-    return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards answered no total: cannot tell whether the card list is complete` }
-  }
-  // The in-progress bucket: the same completeness rule, checked before any card read so the two read groups below can run together.
+  // DX-5232: the open problems are the sum of each card's `openProblemCount` on the every-card read, which must be complete to be a count.
+  const counted = countOpenProblems(allCards, connectedId)
+  if (typeof counted === 'string') return { ...EMPTY, ...base, phase: 'error', error: counted }
+  // The in-progress bucket: the same completeness rule.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
   if (typeof inProg.body.total !== 'number') {
     return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
   }
-  const rows: { id: string }[] = (cards.body.cards ?? []).map((c: any) => ({ id: c.id }))
   const ipRows: any[] = inProg.body.cards ?? []
-  // DX-4635: the needs-you card reads are one parallel step. DX-5232: each card's open-problem COUNT is all that is read from it.
-  const fetched = await Promise.all(
-    rows.map(async row => ({
-      row,
-      r: await call('GET', `/api/issues/${row.id}`, { query: { fields: { open_problem_count: true } } }),
-    })),
-  )
-  // DX-4458: a card that cannot be read is not counted: the count is then a lower bound (cardsRead < cardsTotal), which the band marks.
-  let openProblems = 0
-  let cardsRead = 0
-  for (const f of fetched) {
-    if (!f.r.ok) continue
-    const count = f.r.body?.open_problem_count
-    if (typeof count !== 'number') {
-      return fail(`GET /api/issues/${f.row.id} answered no open_problem_count: cannot count the open problems`)
-    }
-    openProblems += count
-    cardsRead += 1
-  }
   const inProgress: InProgressRow[] = ipRows.map(row => ({ id: row.id, title: row.title }))
   return {
     ...EMPTY,
     ...base,
     phase: 'ready',
     error: null,
-    openProblems,
-    cardsTotal: cards.body.total,
-    cardsRead,
+    openProblems: counted,
     inProgress,
     refreshedAt,
   }
+}
+
+// DX-5232: the open problems on the plan's cards: the sum of `openProblemCount` over the every-card read, or the one reason it cannot
+// be a count (a failed, partial or malformed read is an error, never a lower bound).
+function countOpenProblems(allCards: Api, planId: number): number | string {
+  const route = `GET /api/plans/${planId}/cards (all)`
+  if (!allCards.ok) return `${route} ${errText(allCards)}`
+  const cards = allCards.body?.cards
+  if (!Array.isArray(cards)) return `${route} answered no list of cards: cannot count the open problems`
+  if (typeof allCards.body.total !== 'number') return `${route} answered no total: cannot tell whether the card list is complete`
+  if (allCards.body.total !== cards.length) return `${route} answered ${cards.length} of ${allCards.body.total} cards: cannot count the open problems`
+  let sum = 0
+  for (const c of cards) {
+    if (typeof c?.openProblemCount !== 'number') return `${route} answered a card with no openProblemCount: cannot count the open problems`
+    sum += c.openProblemCount
+  }
+  return sum
 }
 
 // DX-4448: the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays

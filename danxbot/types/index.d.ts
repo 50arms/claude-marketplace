@@ -1,5 +1,5 @@
 // The plan this session is bound to, read from the same response as the plan list (session.plan_id
-// and session.plan_name), so a plan beyond the list's cap still labels correctly.
+// and session.plan_name), so any plan labels correctly whatever the list holds.
 export type ConnectedPlan = {
   id: number
   ref: string
@@ -20,7 +20,7 @@ export type StatusBreakdown = {
 }
 
 // A card in the plan's in-progress bucket (not waiting on the operator): the plugin lists its id (DX-4415); the title
-// titles a sub-agent's card link that no other loaded card names.
+// is read by the compaction briefing (compactionBriefing in register.tsx).
 export type InProgressRow = {
   id: string
   title: string
@@ -48,16 +48,12 @@ export type PlanView = {
   // last one this machine saw answered; null only while none has ever been seen.
   dashboardUrl: string | null
   connected: ConnectedPlan | null
-  // Needs-you cards the dashboard has, and how many this view read; more than read means the
-  // open-problem count is a lower bound and the band's count is marked `+`.
-  cardsTotal: number
-  cardsRead: number
   // Card counts by status of the connected plan; null when not connected.
   statusBreakdown: StatusBreakdown | null
   // The in-progress bucket's rows (a card in progress with an open problem sits in needs-you, not here).
   inProgress: InProgressRow[]
   // DX-5232: the open problems on the connected plan's needs-you cards that this view read (the sum of each card's
-  // `open_problem_count`); a count, never the problems themselves. A lower bound while cardsRead < cardsTotal.
+  // `openProblemCount` on the every-card read); a count, never the problems themselves.
   openProblems: number
   // DX-4448: what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready`, shows one toast, and replies are then drawn as written.

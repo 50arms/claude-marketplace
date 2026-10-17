@@ -141,8 +141,6 @@ export function dashboard(
     // plan_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
-    // the dashboard has more needs-you cards than the one load reads
-    cardsTotal?: number
     // ... and more plans than the plan list returns
     plansTotal?: number
     // the paged routes answer no `total` at all
@@ -311,6 +309,8 @@ export function dashboard(
     ] as Card[],
   }
   if (options.bigCard) world.cards.push(bigCard())
+  // DX-5232: every card of the plan (any status, either board): the fixture's own cards and the others
+  const planCardIds = [...new Set([...PLAN_CARD_IDS, ...world.cards.map(c => c.id)])]
   const plans = [
     { id: 23, ref: 'PLAN-23', name: options.planName ?? 'Danxbot plugin', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 2 } },
     { id: 24, ref: 'PLAN-24', name: 'Agent mode', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 0 } },
@@ -319,6 +319,9 @@ export function dashboard(
 
   function route(method: string, path: string, body: any, query: any) {
     if (method === 'GET' && path === '/api/plans') {
+      // DX-4233: GET /api/plans answers this as its body, whatever its shape (a string makes the plugin's session read throw)
+      if (world.plansBody !== undefined) return reply(world.plansBody)
+      if (world.plansStatus !== undefined) return reply({ error: 'plans boom' }, world.plansStatus)
       if (options.listFails) return reply({ error: 'boom' }, 500)
       return reply({
         plans: options.emptyPlanListOf ? [] : options.planOutsideList ? plans.filter(p => p.id !== world.planId) : plans,
@@ -358,7 +361,7 @@ export function dashboard(
         ref: p.ref,
         name: p.name,
         status: p.status,
-        card_count: options.planCardsShape === 'otherCount' ? PLAN_CARD_IDS.length + 1 : PLAN_CARD_IDS.length,
+        card_count: options.planCardsShape === 'otherCount' ? planCardIds.length + 1 : planCardIds.length,
         ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
       })
     }
@@ -375,16 +378,11 @@ export function dashboard(
     if (method === 'GET' && cards && query?.bucket === undefined) {
       if (options.planCardsFail) return reply({ error: 'plan cards boom' }, 500)
       if (options.planCardsShape === 'noList') return reply({ total: 0 })
-      const rows = PLAN_CARD_IDS.map(id => (options.planCardsShape === 'noId' ? { title: id } : { id, boardId: id.startsWith('SG') ? 'gpt-manager:gpt-manager-main' : 'danxbot:danxbot-main' }))
-      return reply({ cards: rows, ...(options.planCardsShape === 'noTotal' ? {} : { total: options.planCardsTotal ?? rows.length }) })
-    }
-    if (method === 'GET' && cards) {
-      return reply({
-        cards: world.cards
-          .filter(c => c.problems.some(p => p.open))
-          .map(c => ({ id: c.id, priority: c.priority, title: c.title })),
-        ...(options.noTotal ? {} : { total: options.cardsTotal ?? world.cards.filter(c => c.problems.some(p => p.open)).length }),
+      const rows = planCardIds.map(id => {
+        const openProblemCount = world.cards.find(c => c.id === id)?.problems.filter(p => p.open).length ?? 0
+        return options.planCardsShape === 'noId' ? { title: id, openProblemCount } : { id, openProblemCount, boardId: id.startsWith('SG') ? 'gpt-manager:gpt-manager-main' : 'danxbot:danxbot-main' }
       })
+      return reply({ cards: rows, ...(options.planCardsShape === 'noTotal' ? {} : { total: options.planCardsTotal ?? rows.length }) })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)
@@ -525,13 +523,8 @@ export function dashboard(
     )
     return reply({ issues: rows, total: rows.length })
   }
-  const isContextRead = (a: any) => a.method === 'GET' && (a.path.startsWith('/api/reminders/event/') || (a.path === '/api/plans' && a.query?.limit === 1))
+  const isContextRead = (a: any) => a.method === 'GET' && a.path.startsWith('/api/reminders/event/')
   function contextAnswer(path: string) {
-    // DX-4233: GET /api/plans answers this as its body, whatever its shape (a string makes the plugin's session read throw)
-    if (path === '/api/plans' && world.plansBody !== undefined) return reply(world.plansBody)
-    if (path === '/api/plans' && world.plansStatus !== undefined) return reply({ error: 'plans boom' }, world.plansStatus)
-    // DX-5232: the plugin's one-row plan read (limit 1) answers as the plan list does, so the load and the session probe agree
-    if (path === '/api/plans') return route('GET', path, undefined, { limit: 1 })
     const event = /^\/api\/reminders\/event\/(.+)$/.exec(path)
     if (event) {
       const given = world.eventText[event[1]]
@@ -755,9 +748,11 @@ export function dashboard(
         return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id } } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
-      if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
+      if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 2) {
         return hung.promise.then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
       }
+      // DX-5232: the plan read is one path now (load and session probe alike), so a slow dashboard slows it as it slows a context read
+      if (e.args.path === '/api/plans' && world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
       if (world.permissionClaimDelayMs > 0 && /\/claim$/.test(String(e.args.path))) await clock.sleep(world.permissionClaimDelayMs)
       // DX-4635: every danxbot_api read answers after `apiHoldMs` on the harness clock (a slow dashboard), and the card reads in flight together are counted
       const isIssueRead = String(e.args.path).startsWith('/api/issues/')

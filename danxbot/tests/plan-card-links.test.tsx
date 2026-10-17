@@ -116,10 +116,6 @@ for (const surface of SURFACES) {
       ['a boards answer with no boards', { boardsShape: 'none' }],
       ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }],
       ['a boards answer with no boards key', { boardsShape: 'noKey' }],
-      ['the plan cards call failing', { planCardsFail: true }],
-      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }],
-      ['the plan cards answer with no list', { planCardsShape: 'noList' }],
-      ['the plan cards answer with no total', { planCardsShape: 'noTotal' }],
       ['a plan card with no id', { planCardsShape: 'noId' }],
       ['cards that do not add up to the plan card_count (a board missing)', { planCardsShape: 'otherCount' }],
     ] as const) {
@@ -128,6 +124,21 @@ for (const surface of SURFACES) {
         await startSession($, d, surface)
         expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
         expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
+      })
+    }
+
+    // DX-5232: the open-problem count is summed from the same every-card read, so one that cannot be read whole fails the load
+    for (const [name, options] of [
+      ['the plan cards call failing', { planCardsFail: true }],
+      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }],
+      ['the plan cards answer with no list', { planCardsShape: 'noList' }],
+      ['the plan cards answer with no total', { planCardsShape: 'noTotal' }],
+    ] as const) {
+      test(`${name}: the load is an error, never a lower bound`, async ($, on) => {
+        const d = dashboard(on, options as any)
+        await startSession($, d, surface)
+        const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+        expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')).toContain('Disconnected')
       })
     }
   })

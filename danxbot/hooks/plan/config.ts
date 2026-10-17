@@ -25,9 +25,10 @@ export const PERMISSION_TOLD_MAX = 100
 // The dashboard's six card statuses, in the order a view's breakdown is read.
 export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const
 
-// How much one load reads. Past a cap the view says so (cardsTotal vs cardsRead)
-// rather than presenting a lower bound as the whole.
-export const MAX_CARDS = 15
+// The in-progress bucket is listed at most this many rows long (a longer bucket is cut, its total still read).
+export const IN_PROGRESS_LIMIT = 15
+// `GET /api/plans` is asked for one row only because only its `session`, `dashboard_url` and listener fields are read (DX-4458: never the whole list).
+export const SESSION_PLAN_PROBE = { limit: 1 }
 // DX-4448: an issue prefix as a board names it (`DX`, `SSL`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10
@@ -92,8 +93,6 @@ export const EMPTY: PlanView = {
   serverNotConnected: false,
   dashboardUrl: null,
   connected: null,
-  cardsTotal: 0,
-  cardsRead: 0,
   statusBreakdown: null,
   inProgress: [],
   openProblems: 0,
@@ -113,7 +112,7 @@ export const busyKey = {
   isDisconnecting: (busy: string[]) => busy.some(k => k.startsWith('disconnect:')),
 }
 
-// DX-4317: every link is built on the origin the plan list answered (`dashboard_url`), carried on the
+// DX-4317: every link is built on the origin the plan read answered (`dashboard_url`), carried on the
 // connected plan: there is no origin constant, so a link always opens the dashboard the data came from.
 export function planUrl(plan: ConnectedPlan): string {
   return `${plan.dashboardUrl}/plans/${plan.id}`

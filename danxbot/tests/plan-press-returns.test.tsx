@@ -26,19 +26,6 @@ for (const surface of SURFACES) {
       expect(await text(band)).toContain('Danxbot: not connected to a plan')
     })
 
-    test('the needs-you card reads of one load are in flight together', async ($, on) => {
-      const d = dashboard(on)
-      d.holdApi(100)
-      await $.session.start({ cwd: '/work', surface, isInteractive: true })
-      await d.clock.advance(5_000)
-      await d.clock.settle()
-      // every card read of the load (the needs-you cards) was in flight at once, none waiting for another
-      expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(1)
-      const reads = d.api.filter(a => a.path.startsWith('/api/issues/'))
-      expect(reads.length).toBeGreaterThan(1)
-      expect(d.issueReads.max).toBe(reads.length)
-    })
-
     test('a detached task that throws is toasted under its own name, not a press update', async ($, on) => {
       const d = dashboard(on)
       // the host refuses the view write, in the load and again in its error handler: the throw escapes the session-start refresh

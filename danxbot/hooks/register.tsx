@@ -48,6 +48,7 @@ import {
   TOAST_ERROR_MAX,
   planUrl,
   busyKey,
+  SESSION_PLAN_PROBE,
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
@@ -432,7 +433,7 @@ function detach($: any, what: string, task: Promise<unknown>): void {
 
 const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
 
-// DX-4635: what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards, sub-agents,
+// DX-4635: what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards,
 // listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin). A leave puts the session on no plan.
 const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl })
 function leftView(cur: any): any {
@@ -1580,9 +1581,6 @@ async function onToolStamp($: any, e: any, next: any) {
 // the model, retried by the relay's start).
 type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connected' } | { kind: 'silent' } | { kind: 'unreachable' } | { kind: 'failed'; reason: string; refusal?: Refusal }
 
-// `GET /api/plans` is asked for one row only because only its `session` field is read (the session's own plan binding).
-const SESSION_PLAN_PROBE = { limit: 1 }
-
 // The ONE place a key that is gone or revoked is made quiet (its own tools say so, never a failure line): this read is the first of every
 // context lookup, so a later read that finds the key gone in between is an ordinary failure line.
 async function sessionPlan($: any): Promise<SessionPlan> {
@@ -1806,8 +1804,13 @@ async function onTitle($: any, e: any, next: any) {
 // DX-5232: the events warning's reason, toasted once on the transition into the warning (a redraw that shows the same warning says nothing).
 async function noteEventsWarning($: any, v: PlanView, relayState: RelayState): Promise<void> {
   const warning = eventsWarning(v, relayState)
-  if (warning === (await read($, eventsWarned))) return
-  await update($, eventsWarned, () => warning)
+  // decided inside the update (like the gate atom), so two overlapping calls toast once
+  let changed = false
+  await update($, eventsWarned, cur => {
+    changed = cur !== warning
+    return warning
+  })
+  if (!changed) return
   const reason = eventsReason(v, relayState)
   if (reason !== null) $.ui.toast(reason.slice(0, TOAST_ERROR_MAX))
 }

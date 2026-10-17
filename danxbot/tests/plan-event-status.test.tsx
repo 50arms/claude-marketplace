@@ -103,5 +103,20 @@ for (const surface of SURFACES) {
       expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(before + 1)
       expect((await warning(band))?.text).toBe('events: unattached')
     })
+
+    // DX-5232: the relay is "off" on every connect, before it starts, so "relay not running" must not borrow the listener's next step
+    test('a fresh connect with an unhealthy listener never pairs the relay-not-running warning with the listener next step', async ($, on) => {
+      const d = dashboard(on, { listener: 'stopped' })
+      await startSession($, d, surface)
+      expect(d.toasts.filter(t => t.startsWith('events: relay not running'))).toEqual([])
+    })
+
+    test('overlapping refreshes into the same warning toast it at most once', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.setListener('unattached')
+      await Promise.all([forceRefresh($, d), forceRefresh($, d)])
+      expect(d.toasts.filter(t => t.includes('events: ')).length).toBeLessThanOrEqual(1)
+    })
   })
 }

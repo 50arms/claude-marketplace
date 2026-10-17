@@ -33,11 +33,6 @@ for (const surface of SURFACES) {
   })
 
   describe(`what one load reads, on ${surface}`, () => {
-    test('more needs-you cards than were read: the band counts a lower bound', async ($, on) => {
-      const { band } = await openBand($, on, surface, { cardsTotal: 20 })
-      expect(await problemBadgeOf(band)).toBe('⚠ 3+')
-    })
-
     test('a plan beyond the plan list cap still labels correctly, from the session in the same response', async ($, on) => {
       const { band } = await openBand($, on, surface, { planOutsideList: true })
       const label = await band.find({ type: 'Text', text: /PLAN-23/ })

@@ -150,11 +150,11 @@ for (const surface of SURFACES) {
     test('a burst of sub-agent events while the dashboard is slow issues ONE plan read', async ($, on) => {
       const d = await unstarted($, on)
       d.world.contextDelayMs = 1_000
-      d.contextReads.length = 0
+      const before = d.api.filter(a => a.path === '/api/plans').length
       await Promise.all([1, 2, 3, 4, 5].map(i => $.classic.SubagentStop({ agent_id: `a${i}`, agent_type: 'x', transcript_path: '/work/main.jsonl' })))
       await d.clock.advance(5_000)
       await d.clock.settle()
-      expect(d.contextReads).toEqual(['/api/plans'])
+      expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(before + 2) // the one shared probe and the one refresh the stops ask for, however many stops
       expect(d.relay.calls).toHaveLength(1)
     })
 
