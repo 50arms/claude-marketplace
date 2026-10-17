@@ -230,9 +230,10 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   await update($, view, cur => {
     told = []
     if (loaded.phase === 'error' && cur.phase !== 'error' && !loaded.serverNotConnected) told.push(`Plan load failed: ${loaded.error}`)
-    if (loaded.openProblemsError && cur.openProblemsError !== loaded.openProblemsError) told.push(`Open problem count unavailable: ${loaded.openProblemsError}`)
+    // one toast for the every-card read's failure: it takes the count and the links down together
+    if (loaded.openProblemsError && cur.openProblemsError !== loaded.openProblemsError) told.push(`Plan cards unavailable: ${loaded.openProblemsError}`)
     // the card links' error: the replies are drawn as written
-    if (loaded.links?.state === 'error' && cur.links?.state !== 'error') told.push(`Card links unavailable: ${loaded.links.message}`)
+    if (loaded.links?.state === 'error' && cur.links?.state !== 'error' && !loaded.openProblemsError) told.push(`Card links unavailable: ${loaded.links.message}`)
     return loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }
   })
   for (const t of told) $.ui.toast(t.slice(0, TOAST_ERROR_MAX))
@@ -645,6 +646,9 @@ async function retryWhileNotConnected($: any): Promise<void> {
     if (cur.phase !== 'error' || !cur.serverNotConnected) return
     await refresh($, true)
   }
+  // the retries ran out: the reason is told once, here (applyLoaded stays quiet while a retry may still connect)
+  const last = await read($, view)
+  if (last.phase === 'error' && last.serverNotConnected) $.ui.toast(`Plan load failed: ${last.error}`.slice(0, TOAST_ERROR_MAX))
 }
 
 // DX-4374: v0.10.0 pinned a status line; the footer is the PLAN-NN button alone, so unpin anything an older loaded version left.
@@ -1819,24 +1823,21 @@ async function onTitle($: any, e: any, next: any) {
 }
 
 // DX-5232: the events warning's reason, toasted once on the transition into the warning (a redraw that shows the same warning says nothing).
-// The warning is computed from the view and relay as they are NOW and stored atomically; the update cannot read those two atoms itself, so after
-// it the state is read again and, if either moved meanwhile (an older snapshot must not leave a newer one's warning overwritten), it is settled again.
+// One pass: read the view and relay, compute the warning, store it atomically, toast if the update changed it. The update cannot read those two
+// atoms itself, so a snapshot that went stale between the read and the update can only repeat one toast or miss one, never store a wrong warning
+// for long: the next write path (a load or a relay state change) computes it again from the latest state.
 async function noteEventsWarning($: any): Promise<void> {
-  for (let settle = 0; settle < 4; settle++) {
-    const v: PlanView = await read($, view)
-    const relayState: RelayState = await read($, relay)
-    const warning = eventsWarning(v, relayState)
-    let changed = false
-    await update($, eventsWarned, cur => {
-      changed = cur !== warning
-      return warning
-    })
-    if (changed) {
-      const reason = eventsReason(v, relayState)
-      if (reason !== null) $.ui.toast(reason.slice(0, TOAST_ERROR_MAX))
-    }
-    if (eventsWarning(await read($, view), await read($, relay)) === warning) return
-  }
+  const v: PlanView = await read($, view)
+  const relayState: RelayState = await read($, relay)
+  const warning = eventsWarning(v, relayState)
+  let changed = false
+  await update($, eventsWarned, cur => {
+    changed = cur !== warning
+    return warning
+  })
+  if (!changed) return
+  const reason = eventsReason(v, relayState)
+  if (reason !== null) $.ui.toast(reason.slice(0, TOAST_ERROR_MAX))
 }
 
 async function drawBand($: any, e: any, next: any) {

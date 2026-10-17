@@ -145,8 +145,9 @@ for (const surface of SURFACES) {
         expect(all).not.toContain('Disconnected')
         expect(all).toContain('PLAN-23')
         expect(await problemBadgeOf(band)).toBeUndefined()
-        expect(d.toasts.filter(t => t.startsWith('Open problem count unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)
-        expect(d.toasts.filter(t => t.startsWith('Card links unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)
+        // one toast for the shared cause: the count and the links both stand on this read
+        expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)
+        expect(d.toasts.filter(t => t.startsWith('Card links unavailable'))).toEqual([])
       })
     }
   })

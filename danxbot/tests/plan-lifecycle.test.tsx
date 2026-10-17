@@ -74,9 +74,11 @@ describe('the MCP server connects after session start', () => {
     // each wait is advanced on its own, so no poll tick (the usage pacing's) can land inside the sequence
     for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
     // DX-5232: the plan read is one path, so the relay's own probe retries are counted by apiCalls; the view's loads are counted apart (one gate claim each)
-    expect(d.viewLoads()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
+    expect(d.viewClaims()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
     await d.clock.advance(30_000)
-    expect(d.viewLoads()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
+    expect(d.viewClaims()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
+    // the retries ran out: the reason is told once
+    expect(d.toasts.filter(t => t.startsWith('Plan load failed: '))).toHaveLength(1)
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     expect(await text(band)).toContain('Disconnected')
   })
@@ -84,9 +86,9 @@ describe('the MCP server connects after session start', () => {
   test('a first load that fails with any other error (a refusal, a 500) is not retried at session start', async ($, on) => {
     const d = dashboard(on, { listFails: true })
     await startSession($, d, 'desktop')
-    expect(d.viewLoads()).toBe(1)
+    expect(d.viewClaims()).toBe(1)
     for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
-    expect(d.viewLoads()).toBe(1)
+    expect(d.viewClaims()).toBe(1)
     expect(await text(await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND }))).toContain('Disconnected')
   })
 

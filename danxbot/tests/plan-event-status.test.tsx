@@ -3,7 +3,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { NO_EVENT_STATUS } from '../hooks/plan/config'
-import { test, LISTENER_STATES, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh } from './plan-kit'
+import { test, LISTENER_STATES, NEXT_STEP, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const YELLOW = 'yellow'
@@ -116,7 +116,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       d.setListener('unattached')
       await Promise.all([forceRefresh($, d), forceRefresh($, d)])
-      expect(d.toasts.filter(t => t.includes('events: ')).length).toBeLessThanOrEqual(1)
+      expect(d.toasts.filter(t => t.startsWith('events: unattached'))).toEqual([`events: unattached. ${NEXT_STEP('unattached')}`])
     })
 
     // DX-5232: a relay that stops (a write path of the relay) and a refresh (a write path of the load) both reach the events warning at once
