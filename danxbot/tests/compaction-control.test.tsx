@@ -387,6 +387,23 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
+    // DX-5217: a process an older plugin version started the handshake in still holds CLAUDE_CODE_AUTO_COMPACT_WINDOW (the shrunken meter) after a plugin reload
+    test('a window variable left by an older plugin version is cleared once, while the handshake is held, and the percent is set', async ($, on) => {
+      const d = await started($, on, { autoCompactWindow: '400000' })
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      await $.turn.start(START)
+      expect(d.envSets).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }])
+    })
+
+    test('a session the plugin never armed keeps a window variable it did not set', async ($, on) => {
+      const d = await started($, on, { autoCompactWindow: '400000' })
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      expect(d.envSets).toEqual([])
+    })
+
     test('the switch going off takes the percent back, and the session is held no more', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
