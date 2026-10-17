@@ -3,11 +3,6 @@ import { describe, expect } from 'claude-code/testing'
 import { test, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const PANE = {
-  component: 'Pane',
-  requestId: 'danx-plan',
-  props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
-} as any
 const label = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
 
 for (const surface of SURFACES) {
@@ -35,16 +30,14 @@ for (const surface of SURFACES) {
       expect(await problemBadgeOf(band)).toBe('⚠ 4')
     })
 
-    test('a refresh error shows `Danxbot Plan: Disconnected` in the band and the message in the pane', async ($, on) => {
+    test('a refresh error shows `Danxbot Plan: Disconnected` in the band', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       d.failList()
       await forceRefresh($, d)
       expect(await label(band)).toContain('Danxbot Plan: Disconnected')
       expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
-      expect(await label(pane)).toContain('500: boom')
       // and it recovers on the next good load
       d.failList(false)
       await forceRefresh($, d)
@@ -69,10 +62,8 @@ describe('the dashboard cannot be read', () => {
       const d = dashboard(on, { mcp: 'flaky' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       expect(await label(band)).toContain('Danxbot Plan: Disconnected')
-      expect(await label(pane)).toContain('request timed out after 60000ms')
-      expect(await label(pane)).not.toContain('not connected in this session')
+      expect(await label(band)).not.toContain('not connected in this session')
       expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
     })
   }
@@ -130,7 +121,6 @@ describe('the refresh lock', () => {
   test('a refresh that throws releases the lock: the next one still loads', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
-    const pane = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...PANE })
     const loads = () => d.api.filter(a => a.path === '/api/plans').length
     // the host refuses the view write, in the load and again in its error handler: the throw escapes the refresh
     d.failViewWrite()

@@ -5,7 +5,7 @@
 // at the end that checks the REAL published package, deliberately.
 import { test, describe, before, beforeEach, after, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs, { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,12 +27,10 @@ import {
   refreshInstall,
   registryUrl,
   renameRetrying,
-  requireRecordedVersion,
   resolveLatestVersion,
   startVersion,
   writeRecordedVersion,
 } from "../scripts/lib/dashboard-mcp-package.mjs";
-import { LIVE_SUBCOMMAND } from "../scripts/subagents-live.mjs";
 import { listPluginFiles } from "../../scripts/check-general-audience.mjs";
 import { REGISTRY_BASE_URL_ENV, REGISTRY_TIMEOUT_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
@@ -228,12 +226,6 @@ describe("recorded version", () => {
     await assert.rejects(startVersion({ env, spawnFn: npm.spawnFn, npm: NPM }), /cannot be read/);
     assert.deepEqual(registry.requests(), [], "a damaged record is reported, not papered over with a network request");
     assert.deepEqual(npm.calls, []);
-  });
-
-  test("requireRecordedVersion (subagents-live.mjs's read) answers the record, and with none a line saying nothing can run", () => {
-    assert.throws(() => requireRecordedVersion(env), /no .*version is recorded.*nothing that runs it can start/);
-    recordAt("0.1.7");
-    assert.equal(requireRecordedVersion(env), "0.1.7");
   });
 
   test("a write targets a temp name and renames it onto the record: the record itself is never written in place", () => {
@@ -463,7 +455,7 @@ describe("pruneInstalls (DX-4321)", () => {
     assert.equal(recordedVersionOrNull(env), "0.1.4");
   });
 
-  test("DX-4235: an old version a live process leases (another session's server or live reader) is kept; one whose leaseholder is gone is removed", () => {
+  test("DX-4235: an old version a live process leases (another session's server) is kept; one whose leaseholder is gone is removed", () => {
     const leased = dirAt("0.1.1", T0);
     const abandoned = dirAt("0.1.2", T0);
     leaseVersion("0.1.1", { env, pid: 111 });
@@ -714,8 +706,7 @@ describe("no shipped plugin file carries a package version literal", () => {
 
 // DX-3673 / DX-3811 / DX-4235 — the REAL registry and the REAL package, deliberately: a fake can never catch a drift
 // between this plugin and what the registry publishes, which is the one thing these guard. A danxbot publish that moved the
-// package's entry point would make every install end in install_incomplete; one that removed a subcommand this plugin
-// still runs (`subagents-live`, subagents-live.mjs) reaches every session start at once. Both are caught here by a real,
+// package's entry point would make every install end in install_incomplete. That is caught here by a real,
 // shell-free install of the registry's current `latest` (also the live proof that npm runs with no shell on this OS).
 // Network dependent by design; slower than the rest of this file (a real npm install, ~5-20 s).
 describe("the registry's current package, installed for real with no shell", { timeout: INSTALL_TIMEOUT_MS + 30_000 }, () => {
@@ -729,19 +720,8 @@ describe("the registry's current package, installed for real with no shell", { t
   });
   after(() => rmSync(realData, { recursive: true, force: true }));
 
-  test("its published entry point is the layout the plugin runs and subagents-live.mjs reads", () => {
+  test("its published entry point is the layout the plugin runs", () => {
     assert.equal(installed.bin, installedBin(realData, installed.version));
     assert.ok(existsSync(installed.bin), installed.bin);
-  });
-
-  test("it supports every subcommand this plugin invokes on it", () => {
-    // An unknown subcommand makes the published entry point refuse with its own list: `... (the only ones are "a", "b", ...)`.
-    const probe = spawnSync(process.execPath, [installed.bin, "__dx-3673-guard-probe__"], { encoding: "utf8" });
-    assert.equal(probe.status, 2, `expected the package's own "unknown subcommand" refusal; got ${probe.status}: ${probe.stderr}`);
-    const listed = [...probe.stderr.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    assert.ok(
-      listed.includes(LIVE_SUBCOMMAND),
-      `${SPEC(installed.version)} does not support "${LIVE_SUBCOMMAND}", which subagents-live.mjs runs: a release removed it. Published: [${listed.join(", ")}]`,
-    );
   });
 });

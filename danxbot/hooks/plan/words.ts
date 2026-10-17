@@ -1,5 +1,5 @@
-import type { PlanView, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, keyRevokedLabel } from './config'
+import type { PlanView, RelayState, StatusBreakdown } from '../../types'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PLAN_TITLE, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, keyRevokedLabel } from './config'
 
 export function age(iso: string, now: number): string {
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000))
@@ -22,17 +22,6 @@ export function problemBadge(v: PlanView): string {
   return n === 0 ? '' : `${PROBLEM_GLYPH} ${n}${capMark(v)}`
 }
 
-// What the pane says when it read fewer cards than the dashboard has.
-export function cappedNote(v: PlanView): string | null {
-  const unread = v.cardsTotal - v.cardsRead
-  return unread > 0 ? `+${unread} more card${unread === 1 ? '' : 's'} with open problems in the browser` : null
-}
-
-// "+3 more plans in the browser" when the plan list was capped.
-export function cappedPlansNote(v: PlanView): string | null {
-  return v.plansUnread > 0 ? `+${v.plansUnread} more plan${v.plansUnread === 1 ? '' : 's'} in the browser` : null
-}
-
 // `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.
 export function ellipsize(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
@@ -49,7 +38,7 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
   return columns - BAND_INDICATOR_COLS - 2 * BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
 }
 
-// The band's label for a view that is not the Panel-button-only one. `maxCols`: the columns the label may take (absent:
+// The band's label for a view. `maxCols`: the columns the label may take (absent:
 // no limit, the layout truncates); a connected plan's name is cut to what `PLAN-NN · ` leaves, with an ellipsis.
 export function bandLabel(v: PlanView, maxCols?: number): string {
   // DX-4423: a session with no key reads signed out, in the operator's words, whatever it was connected to before.
@@ -72,14 +61,8 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
 // total = In Progress + ToDo + Backlog + Review + Done (Cancelled is NOT counted);
 // percent = total > 0 ? Math.round(Done / total * 100) : 0. The two must never disagree.
 export function planPercent(b: StatusBreakdown): number {
-  const { done, total } = doneTotal(b)
-  return total > 0 ? Math.round((done / total) * 100) : 0
-}
-
-// DX-4374: the same rule's two whole numbers (the pane shows `done / total`): Done over In Progress + ToDo +
-// Backlog + Review + Done, Cancelled excluded. planPercent and the pane both read it, so they never disagree.
-export function doneTotal(b: StatusBreakdown): { done: number; total: number } {
-  return { done: b.Done, total: b['In Progress'] + b.ToDo + b.Backlog + b.Review + b.Done }
+  const total = b['In Progress'] + b.ToDo + b.Backlog + b.Review + b.Done
+  return total > 0 ? Math.round((b.Done / total) * 100) : 0
 }
 
 // The text donut for a percent: ○ 0, ◔ 1-37, ◑ 38-62, ◕ 63-99, ● 100.
@@ -97,12 +80,6 @@ export function viewPercent(v: PlanView): number | null {
   return v.phase === 'ready' && v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
 }
 
-// Open problems split into questions and actions: one count for the pane.
-export function problemSplit(v: PlanView): { questions: number; actions: number } {
-  const actions = v.problems.filter(p => p.type === 'action').length
-  return { questions: v.problems.length - actions, actions }
-}
-
 // DX-4374: the footer button's label, read from `view.connected` alone (never from the phase's error):
 // `Danxbot · PLAN-NN` when a plan is known, `Danxbot` otherwise (DX-4419); null where the footer shows nothing (loading with no plan shown yet; a connect shows its plan at once, DX-4635).
 // The label can flip to `Danxbot` when a plan-list load fails: that error view carries no connected plan (the
@@ -115,8 +92,16 @@ export function footerLabel(v: PlanView): string | null {
   return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND
 }
 
-// DX-4415: "+4" at the end of the refs row when the in-progress bucket has more cards than the load read.
-export function inProgressMore(v: PlanView): string | null {
-  const unread = v.inProgressTotal - v.inProgress.length
-  return unread > 0 ? `+${unread}` : null
+// DX-5232: the band's events warning: why the plan's events are not flowing, or null while they are.
+// The plugin's own relay comes first: one that retries or stopped, or is not running for the plan the session is on, is never drawn healthy
+// whatever the dashboard last read; then the dashboard's own view of the session's listener (no status at all is a warning, never healthy).
+export function eventsWarning(v: PlanView, relay: RelayState): string | null {
+  if (v.connected === null) return null
+  // the relay's state belongs to the plan it serves: one left over from another plan says nothing about this one
+  if ((relay.phase === 'retrying' || relay.phase === 'stopped') && relay.planId === v.connected.id) {
+    return relay.phase === 'stopped' ? 'events: relay stopped' : 'events: relay retrying'
+  }
+  if (relay.planId !== v.connected.id || relay.phase === 'off') return 'events: relay not running'
+  if (v.listener === null) return NO_EVENT_STATUS
+  return v.listener.state === 'healthy' ? null : `events: ${v.listener.state}`
 }

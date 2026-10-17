@@ -1,5 +1,5 @@
 // DX-4423: a session with no dashboard key (lapsed, never approved; a key a person revoked is its own view, DX-4418). The danx-dashboard MCP answers every tool but
-// plan_connect with an error result written for the agent; the band, pane and footer must say "Danxbot: signed out" in the
+// plan_connect with an error result written for the agent; the band and footer must say "Danxbot: signed out" in the
 // person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.
 import { describe, expect } from 'claude-code/testing'
 
@@ -12,7 +12,6 @@ import { signInStep } from '../hooks/plan/sign-in'
 import { test, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const PANE = { component: 'Pane', requestId: 'danx-plan', props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' } } as any
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
 const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => b.text)
 // the server's agent-facing wording: none of it may reach the person, in any drawing or toast
@@ -21,7 +20,6 @@ const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|laps
 // waking prompt (`woken`), never a row
 const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('Could not tell the model'))
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:danxbot:danx-dashboard' && c.tool === 'plan_connect')
-// the page loads by preview_start (pane closed) or navigate (pane open)
 // DX-4630: EVERY Claude_Browser call, so a sign-in that touched the browser in any way (tabs_context, tabs_create, ...) fails
 const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
 // the model's own plan_connect call, answering the same approval request the dashboard's world gives the Sign in press
@@ -145,48 +143,39 @@ describe('signInNote', () => {
 for (const surface of SURFACES) {
   for (const kind of ['signed-out', 'lapsed'] as const) {
     describe(`${kind} on ${surface}`, () => {
-      test("band, pane and footer say Danxbot: signed out in red, with a Sign in button and none of the server's words", async ($, on) => {
+      test("band and footer say Danxbot: signed out in red, with a Sign in button and none of the server's words", async ($, on) => {
         const d = dashboard(on, { signedOut: kind })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-        const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
         const footer = await mountIndicator($, surface)
 
         const label = await band.find({ type: 'Text', text: /Danxbot: signed out/ })
         expect(label.props.color).toBe('red')
         expect(await buttons(band)).toContain('Sign in')
-        expect(await texts(pane)).toContain('Danxbot: signed out')
-        expect(await texts(pane)).toContain("This session's access ended. Sign in to reconnect.")
-        expect(await buttons(pane)).toContain('Sign in')
         expect(await footerText(footer)).toBe('Danxbot: signed out')
-        for (const shown of [await texts(band), await texts(pane), (await buttons(band)).join(' '), (await buttons(pane)).join(' ')]) expect(shown).not.toMatch(AGENT_TEXT)
-        expect(await buttons(pane)).not.toContain('Disconnect')
-        expect(await buttons(pane)).not.toContain('Switch plan')
+        for (const shown of [await texts(band), (await buttons(band)).join(' ')]) expect(shown).not.toMatch(AGENT_TEXT)
+        expect(await buttons(band)).not.toContain('Disconnect')
         expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
       })
     })
   }
 
   describe(`a revoked key on ${surface}`, () => {
-    test('band, pane and footer say access revoked by the person in red, with no Sign in anywhere and none of the halt', async ($, on) => {
+    test('band and footer say access revoked by the person in red, with no Sign in anywhere and none of the halt', async ($, on) => {
       const d = dashboard(on, { signedOut: 'revoked' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       const footer = await mountIndicator($, surface)
 
       const label = await band.find({ type: 'Text', text: /Danxbot: access revoked by dana/ })
       expect(label.props.color).toBe('red')
-      expect(await texts(pane)).toContain('Danxbot: access revoked by dana')
-      expect(await texts(pane)).toContain("A person revoked this session's access, so the session must stop.")
       expect(await footerText(footer)).toBe('Danxbot: access revoked')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
-      expect(await pane.find({ key: 'sign-in' })).toBeUndefined()
-      for (const shown of [await texts(band), await texts(pane), (await buttons(band)).join(' '), (await buttons(pane)).join(' ')]) {
+      for (const shown of [await texts(band), (await buttons(band)).join(' ')]) {
         expect(shown).not.toMatch(AGENT_TEXT)
         expect(shown).not.toContain('Sign in')
       }
-      expect(await buttons(pane)).not.toContain('Disconnect')
+      expect(await buttons(band)).not.toContain('Disconnect')
       expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
     })
 
@@ -208,17 +197,17 @@ for (const surface of SURFACES) {
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
     })
 
-    test('a leave pressed on a pane drawn before the revoke: the person reads the view\'s words, never the halt, and the view reloads revoked', async ($, on) => {
+    test('a leave pressed on a band drawn before the revoke: the person reads the view\'s words, never the halt, and the view reloads revoked', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.world.signedOut = 'revoked'
       d.toasts.length = 0
       d.relay.told.length = 0
-      await pane.press({ key: 'disconnect' })
+      await band.press({ key: 'disconnect' })
       await d.clock.settle()
       expect(d.toasts).toEqual(['Danxbot: access revoked by dana. This session must stop.'])
-      expect(await texts(pane)).toContain('Danxbot: access revoked by dana')
+      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
     })
 
     test('a person revokes the key while Sign in waits: one toast, the view reads revoked, and no further call is made', async ($, on) => {
@@ -281,19 +270,16 @@ for (const surface of SURFACES) {
 
     // DX-4630: the link and code are drawn the moment the request exists, whatever the browser does: a refused or slow browser
     // cannot delay or hide them, and no browser call is made for sign-in at all.
-    test('the request is drawn in the band and the pane at once, with a toast, and no browser call is made', async ($, on) => {
+    test('the request is drawn in the band at once, with a toast, and no browser call is made', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       d.calls.length = 0
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
       expect(browserCalls(d)).toEqual([])
-      for (const ui of [band, pane]) {
-        expect((await linksOf(ui)).map(l => l.href)).toContain(APPROVAL_URL)
-        expect(await texts(ui)).toContain(`code ${CONFIRM_CODE}`)
-      }
+      expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
+      expect(await texts(band)).toContain(`code ${CONFIRM_CODE}`)
       expect(approvalToasts(d)).toEqual([signInToast({ url: APPROVAL_URL, code: CONFIRM_CODE })])
       expect(d.toastTimeouts.at(-1)).toBe(APPROVAL_TOAST_MS)
       // the later rounds of the same wait say nothing more
@@ -338,17 +324,15 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('the buttons read Signing in… while it waits, a second press makes no second call, and approval reloads the view by itself', async ($, on) => {
+    test('the button reads Signing in… while it waits, a second press makes no second call, and approval reloads the view by itself', async ($, on) => {
       const d = dashboard(on, { signedOut: 'lapsed' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
       expect((await band.find({ key: 'sign-in' })).text).toBe('Signing in…')
-      expect((await pane.find({ key: 'sign-in' })).text).toBe('Signing in…')
       const calls = connectCalls(d).length
-      await Promise.all([band.press({ key: 'sign-in' }), pane.press({ key: 'sign-in' })])
+      await Promise.all([band.press({ key: 'sign-in' }), band.press({ key: 'sign-in' })])
       await d.clock.settle()
       expect(connectCalls(d)).toHaveLength(calls)
 
@@ -359,9 +343,8 @@ for (const surface of SURFACES) {
       expect(d.toasts).toContain('Signed in')
       expect(await texts(band)).not.toContain('signed out')
       expect(await texts(band)).toContain('PLAN-23')
-      expect(await texts(pane)).toContain('Connected: PLAN-23')
-      expect(await buttons(pane)).not.toContain('Sign in')
-      expect(await buttons(pane)).not.toContain('Signing in…')
+      expect(await buttons(band)).not.toContain('Sign in')
+      expect(await buttons(band)).not.toContain('Signing in…')
       // not one toast of the whole sign-in carried the server's words (a "Could not tell the model" toast, which carries the model's text, aside)
       expect(personToasts(d).join(' ')).not.toMatch(AGENT_TEXT)
       // DX-4530: the model did not press Sign in, so it is told, once

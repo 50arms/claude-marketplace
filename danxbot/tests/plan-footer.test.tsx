@@ -1,5 +1,5 @@
 // DX-4374: the footer is ONE button: `PLAN-NN` when a plan is known, `Plan` otherwise, and one press (the same
-// function as /danx-plan) brings the band back and opens the Plan pane.
+// function as /danx-plan) brings a dismissed band back (nothing is opened).
 import { describe, expect } from 'claude-code/testing'
 
 import { test, FOOTER_PAD, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
@@ -66,13 +66,12 @@ for (const surface of SURFACES) {
       ['not connected', { connected: false }],
       ['an error view', { listFails: true }],
     ] as const) {
-      test(`a press from ${name} clears dismissed and opens the pane; it tells the model nothing and toasts nothing`, async ($, on) => {
+      test(`a press from ${name} clears dismissed; it tells the model nothing and toasts nothing`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
         const footer = await mountIndicator($, surface)
         await footer.press({ key: 'footer-plan' })
         await d.clock.settle()
-        expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Danxbot Plan', focus: true }])
         expect(d.stateWrites.filter(w => w.key === 'dismissed').map(w => w.value)).toEqual([false])
         expect(d.toasts).toEqual([])
         expect(d.relay.told).toEqual([])
@@ -80,39 +79,32 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('on a dismissed band one press brings the band back AND opens the pane; a second press hides and closes nothing', async ($, on) => {
+    test('on a dismissed band one press brings the band back; a second press hides nothing', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const footer = await mountIndicator($, surface)
       await band.press({ key: 'band-close' })
-      expect(await band.find({ key: 'open-pane' })).toBeUndefined()
+      expect(await band.find({ key: 'disconnect' })).toBeUndefined()
       await footer.press({ key: 'footer-plan' })
-      expect(await band.find({ key: 'open-pane' })).toBeDefined()
-      expect(d.opened.map(o => o.id)).toEqual(['danx-plan'])
+      expect(await band.find({ key: 'disconnect' })).toBeDefined()
       await footer.press({ key: 'footer-plan' })
-      expect(await band.find({ key: 'open-pane' })).toBeDefined()
-      expect(d.opened.map(o => o.id)).toEqual(['danx-plan', 'danx-plan'])
-      expect(d.opened.map(o => o.focus)).toEqual([true, true])
+      expect(await band.find({ key: 'disconnect' })).toBeDefined()
       expect(d.stateWrites.filter(w => w.key === 'dismissed').map(w => w.value)).toEqual([true, false, false])
     })
 
-    test('/danx-plan and the footer press are one function: the same state writes and the same open call', async ($, on) => {
+    test('/danx-plan and the footer press are one function: the same state writes', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
       await footer.press({ key: 'footer-plan' })
       const footerWrites = d.stateWrites.filter(w => w.key === 'dismissed')
-      const footerOpened = [...d.opened]
 
       d.stateWrites.length = 0
-      d.opened.length = 0
-      await $.command.run({ command: 'danx-plan' })
+      const ran = await $.command.run({ command: 'danx-plan' })
       await d.clock.settle()
+      expect(JSON.stringify(ran)).toContain('Plan band shown.')
       expect(d.stateWrites.filter(w => w.key === 'dismissed')).toEqual(footerWrites)
-      expect(d.opened).toEqual(footerOpened)
-      // both opened the pane with focus
-      expect(d.opened).toEqual([{ id: 'danx-plan', title: 'Danxbot Plan', focus: true }])
     })
   })
 }

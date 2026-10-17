@@ -23,9 +23,9 @@ describe('plan band', () => {
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     const labelOf = async (ui: any) => (await ui.find({ type: 'Text', text: /PLAN-23/ }))?.text as string
     expect(await labelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Panel 10, `⚠ 3` 8, Open plan 9, × 6
-    expect(await labelOf(narrow)).toBe('PLAN-23 · A very long plan name t…')
-    expect((await narrow.find({ key: 'open-pane' }))?.text).toBe('Panel')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Disconnect 15, `⚠ 3` 8, Open plan 9, × 6
+    expect(await labelOf(narrow)).toBe('PLAN-23 · A very long plan n…')
+    expect((await narrow.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
   })
   test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {
     const d = dashboard(on, { planName: 'A very long plan name that goes on and on and on' })
@@ -34,7 +34,7 @@ describe('plan band', () => {
     const label = await narrow.find({ type: 'Text', text: /PLAN-23/ })
     expect(label?.text).toBe('PLAN-23 · A very long plan name that goes on and on and on')
     expect(label?.props.wrap).toBe('truncate-end')
-    expect((await narrow.find({ key: 'open-pane' }))?.text).toBe('Panel')
+    expect((await narrow.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
   })
 
 
@@ -42,13 +42,14 @@ describe('plan band', () => {
     expect(bandLabel({ ...EMPTY, phase: 'loading', refreshedAt: null })).toBe('Danxbot Plan: loading…')
   })
 
-  test('shows Not connected and a Plan button with no command typed, on every surface', async ($, on) => {
+  test('shows Not connected and a close control with no command typed, on every surface', async ($, on) => {
     const d = dashboard(on, { connected: false })
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expectText(await ui.find({ type: 'Text', text: /Danxbot: not connected to a plan/ }), /Danxbot: not connected to a plan/)
-      expect(await ui.find({ type: 'Button', key: 'open-pane' })).toBeDefined()
+      expect(await ui.find({ type: 'Button', key: 'band-close' })).toBeDefined()
+      expect(await ui.find({ key: 'disconnect' })).toBeUndefined()
       await ui.unmount()
     }
   })
@@ -100,10 +101,10 @@ describe('plan band', () => {
     await startSession($, d, 'desktop')
     const ui = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: true } } as any)
     expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
-    expect(await ui.find({ key: 'open-pane' })).toBeUndefined()
+    expect(await ui.find({ key: 'disconnect' })).toBeUndefined()
     // and without a survey the same band draws
     const free = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
-    expect(await free.find({ key: 'open-pane' })).toBeDefined()
+    expect(await free.find({ key: 'disconnect' })).toBeDefined()
   })
 })
 
@@ -116,18 +117,17 @@ async function mounted($: any, d: any, surface: string) {
 
 for (const surface of SURFACES) {
   describe(`dismissing the band on ${surface}`, () => {
-    test('the close control hides the band; one footer press brings it back and opens the pane', async ($, on) => {
+    test('the close control hides the band; one footer press brings it back', async ($, on) => {
       const d = dashboard(on)
       const { band, footer } = await mounted($, d, surface)
       expect(await band.find({ key: 'band-close' })).toBeDefined()
       await band.press({ key: 'band-close' })
-      expect(await band.find({ key: 'open-pane' })).toBeUndefined()
+      expect(await band.find({ key: 'disconnect' })).toBeUndefined()
       // the footer is untouched by the dismissal
       expect(await footerText(footer)).toBe('Danxbot · PLAN-23')
 
       await footer.press({ key: 'footer-plan' })
-      expect(await band.find({ key: 'open-pane' })).toBeDefined()
-      expect(d.opened.map(o => o.id)).toEqual(['danx-plan'])
+      expect(await band.find({ key: 'disconnect' })).toBeDefined()
     })
 
     test('a second dismiss after a restore works', async ($, on) => {
@@ -136,9 +136,9 @@ for (const surface of SURFACES) {
       await band.press({ key: 'band-close' })
       await footer.press({ key: 'footer-plan' })
       await band.press({ key: 'band-close' })
-      expect(await band.find({ key: 'open-pane' })).toBeUndefined()
+      expect(await band.find({ key: 'disconnect' })).toBeUndefined()
       await footer.press({ key: 'footer-plan' })
-      expect(await band.find({ key: 'open-pane' })).toBeDefined()
+      expect(await band.find({ key: 'disconnect' })).toBeDefined()
     })
 
     test('it stays dismissed through a refresh, a second session.start, a /clear and a connection change', async ($, on) => {
@@ -155,7 +155,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(60_000)
       d.world.planId = 24
       await d.clock.advance(60_000)
-      expect(await band.find({ key: 'open-pane' })).toBeUndefined()
+      expect(await band.find({ key: 'disconnect' })).toBeUndefined()
       expect(d.stateWrites.filter(w => w.key === 'dismissed' && w.value === false)).toHaveLength(0)
     })
 
@@ -165,7 +165,7 @@ for (const surface of SURFACES) {
       await band.press({ key: 'band-close' })
       await $.command.run({ command: 'danx-plan' })
       await d.clock.settle()
-      expect(await band.find({ key: 'open-pane' })).toBeDefined()
+      expect(await band.find({ key: 'disconnect' })).toBeDefined()
     })
 
     test('a dismissed band with no danx-dashboard MCP server draws nothing', async ($, on) => {
@@ -195,14 +195,14 @@ for (const surface of SURFACES) {
       const kids = row.children
       const spacerAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexGrow === 1)
       const labelAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexShrink === 1)
-      const controlsAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexShrink === 0 && c.children?.some((x: any) => x?.props?.key === 'open-pane'))
+      const controlsAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexShrink === 0 && c.children?.some((x: any) => x?.props?.key === 'disconnect'))
       expect(labelAt).toBeGreaterThan(-1)
       expect(spacerAt).toBeGreaterThan(labelAt)
       expect(controlsAt).toBeGreaterThan(spacerAt)
       expect((await band.find({ type: 'Text', text: /PLAN-23/ }))?.props.wrap).toBe('truncate-end')
       // order and keys unchanged, the close control last
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
-      expect(keys).toEqual(['open-pane', 'band-close'])
+      expect(keys).toEqual(['disconnect', 'band-close'])
       expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-tab'])
       expect((await band.find({ key: 'band-close' }))?.props.role).toBe('dismiss')
     })

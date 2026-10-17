@@ -1,4 +1,4 @@
-import type { LimitSettings, PacingLevel, PacingLimitKey, PacingReadout, PacingVerdict, PanelState, SpendSettings } from '../../types'
+import type { LimitSettings, PacingLevel, PacingLimitKey, PacingReadout, PanelState, SpendSettings } from '../../types'
 
 // DX-4339 (PLAN-29): the pacing panel's model, pure (no `$`): the session's own usage windows (`$.session.usage().rateLimits`, which move live)
 // set against the team's pacing settings (pacing-settings.ts) and the session's account verdict (the DX-4340 cache, pacing-line.ts). A limit the
@@ -10,14 +10,12 @@ export const LIMIT_KEYS: readonly WindowKey[] = ['five_hour', 'weekly']
 // the harness names the weekly window `seven_day`
 const WINDOW_KIND: Record<WindowKey, string> = { five_hour: 'five_hour', weekly: 'seven_day' }
 
-export const EMPTY_PANEL_STATE: PanelState = { settings: null, settingsAt: null, settingsRead: { state: 'pending' }, verdict: null, spend: null, readout: null, limits: [] }
+export const EMPTY_PANEL_STATE: PanelState = { settings: null, settingsRead: { state: 'pending' }, verdict: null, spend: null, readout: null, limits: [] }
 
 export type PanelEntry = {
   limit: WindowKey
   // percent used of the window, rounded for display; null when the session has no figure for it yet
   used: number | null
-  // epoch ms the window resets; null with no figure
-  resetsAt: number | null
   // null when the team's settings were never read
   settings: LimitSettings | null
   // the limit's own level; null with no figure or no settings to judge it by
@@ -31,10 +29,6 @@ export type SpendEntry = {
   state: 'figure' | 'unjudged' | 'needs_danxbot'
   // percent used of the budget, rounded for display; null without a figure
   used: number | null
-  // epoch ms the spend period ends; null without a figure
-  resetsAt: number | null
-  spentUsd: number | null
-  budgetUsd: number | null
   // the server's level, never recomputed here; null without a figure
   level: PacingLevel | null
 }
@@ -43,10 +37,6 @@ export type PanelModel = {
   spend: SpendEntry | null
   // the settings read is not working (`silent` or `error`): the figures are the session's own, the targets the last read, and there is no verdict
   local: boolean
-  // the settings read's failure to name in the pane, else null
-  error: string | null
-  settingsAt: number | null
-  verdict: PacingVerdict | null
   // DX-4656: the server's per-limit readout, null while there is no server verdict or the settings read is failing
   readout: PacingReadout | null
 }
@@ -63,12 +53,11 @@ function thresholdLevel(used: number, s: LimitSettings): PacingLevel {
 function buildSpend(state: PanelState, local: boolean): SpendEntry | null {
   const settings = state.settings?.spend
   if (settings === undefined || !settings.enabled) return null
-  const none = { used: null, resetsAt: null, spentUsd: null, budgetUsd: null, level: null }
+  const none = { used: null, level: null }
   if (local) return { settings, state: 'needs_danxbot', ...none }
   const f = state.spend
   if (f === null) return { settings, state: 'unjudged', ...none }
-  const resets = Date.parse(f.resetsAt)
-  return { settings, state: 'figure', used: Math.round(f.usedPercent), resetsAt: Number.isNaN(resets) ? null : resets, spentUsd: f.spentUsd, budgetUsd: f.budgetUsd, level: f.level }
+  return { settings, state: 'figure', used: Math.round(f.usedPercent), level: f.level }
 }
 
 export function buildPanel(state: PanelState): PanelModel {
@@ -91,7 +80,7 @@ export function buildPanel(state: PanelState): PanelModel {
     if (level !== null && verdict !== null && verdictResets !== null && resetsAt !== null && Math.abs(resetsAt - verdictResets) <= SAME_RESET_MS && SEVERITY[verdict.level] > SEVERITY[level]) {
       level = verdict.level
     }
-    entries.push({ limit, used: win === undefined ? null : Math.round(win.percentUsed), resetsAt, settings, level })
+    entries.push({ limit, used: win === undefined ? null : Math.round(win.percentUsed), settings, level })
   }
-  return { entries, spend: buildSpend(state, local), local, error: read.state === 'error' ? read.message : null, settingsAt: state.settingsAt, verdict, readout: local ? null : state.readout }
+  return { entries, spend: buildSpend(state, local), local, readout: local ? null : state.readout }
 }

@@ -1,7 +1,7 @@
-import type { PlanView } from '../../types'
+import type { PlanView, RelayState } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
-import { DANGER, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
+import { DANGER, DISCONNECTING_TIP, DISCONNECT_TIP, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
@@ -9,14 +9,13 @@ import { permissionBadge } from './permission'
 import { bandText } from './pacing-format'
 import type { PanelModel } from './pacing-panel'
 import { pacingBand } from './pacing-panel-view'
-import { bandLabel, bandLabelCols, problemBadge, viewPercent } from './words'
+import { bandLabel, bandLabelCols, eventsWarning, problemBadge, viewPercent } from './words'
 
-// DX-4420: the band button that opens the pane (it read `Plan`), and the other controls' labels the width budget counts.
-const OPEN_PANE_LABEL = 'Panel'
+// The controls' labels the width budget counts.
 const OPEN_PLAN_LABEL = 'Open plan'
 const CLOSE_LABEL = '×'
 
-// The band above the prompt: the plan line (indicator, label, then Panel / the open-problem count (DX-4420) / the permission
+// The band above the prompt: the plan line (indicator, label, then the events warning / Disconnect / the open-problem count (DX-4420) / the permission
 // request / Open plan and a close control hugging the right edge, the label truncating first). DX-4630: every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text).
@@ -35,13 +34,10 @@ export function renderBand(
   columns?: number,
   // DX-4339: the pacing entries beside the controls: each enabled limit's usage against its target, coloured by level.
   pacing?: PanelModel,
+  // DX-5232: the plan event relay's state, for the events warning.
+  relay?: RelayState,
 ): any {
   const { Box, Text, Button } = E
-  const openPane = (
-    <Button key="open-pane" onPress={() => hd.openPane()}>
-      {OPEN_PANE_LABEL}
-    </Button>
-  )
   const close = (
     <Button key="band-close" role="dismiss" onPress={() => hd.dismissBand()}>
       {CLOSE_LABEL}
@@ -56,7 +52,7 @@ export function renderBand(
   const showBadge = plan !== null && badge !== ''
   // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
-  // DX-4630: the sign-in request's link and code show while signed out, as the pane's do
+  // DX-4630: the sign-in request's link and code show while signed out
   const approve = signedOut ? signIn : null
   // DX-4418: a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
@@ -64,11 +60,16 @@ export function renderBand(
   // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
   const linkUrl = plan !== null ? planUrl(plan) : v.dashboardUrl !== null ? plansUrl(v.dashboardUrl) : null
   const pacingLabel = pacing === undefined ? '' : bandText(pacing)
+  // DX-5232: Disconnect is the only way off a plan from the UI (Connect and Switch are the model's `plan_connect`); the events warning shows only while the events are not flowing.
+  const disconnecting = busyKey.isDisconnecting(busy)
+  const disconnectLabel = disconnecting ? DISCONNECTING_TIP : DISCONNECT_TIP
+  const warning = relay === undefined ? null : eventsWarning(v, relay)
   const controls = [
     ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
-    { label: OPEN_PANE_LABEL, isButton: true },
+    ...(warning !== null ? [{ label: warning, isButton: false }] : []),
+    ...(plan !== null ? [{ label: disconnectLabel, isButton: true }] : []),
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
     ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
@@ -111,7 +112,16 @@ export function renderBand(
         )}
         {approve !== null && mdLink(E, 'approve-sign-in', APPROVE_SIGN_IN_LABEL, approve.url)}
         {approve !== null && <Text key="sign-in-code">{codeLabel(approve)}</Text>}
-        {openPane}
+        {warning !== null && (
+          <Text key="events-warning" color={WARNING}>
+            {warning}
+          </Text>
+        )}
+        {plan !== null && (
+          <Button key="disconnect" dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
+            {disconnectLabel}
+          </Button>
+        )}
         {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab. */}
         {showBadge && plan !== null && mdLink(E, 'open-problems', badge, needsYouUrl(plan))}
         {/* DX-4435: the newest open permission request: its approval page, with the code to check against the page. */}

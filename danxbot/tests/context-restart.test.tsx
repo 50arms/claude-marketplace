@@ -243,7 +243,7 @@ for (const surface of SURFACES) {
     test('R-2: the restart notice is the server’s own tool; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {
       const d = await started($, on)
       await firstPrompt($, 'startup')
-      expect(d.readers).toEqual([])
+      expect(d.spawns).toEqual([])
     })
   })
 }

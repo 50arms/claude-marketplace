@@ -35,7 +35,7 @@ export function donutAlt(percent: number): string {
 }
 
 // DX-4374: the one donut mark: a real Svg of `px` CSS pixels where the surface draws one (the desktop), the
-// glyph as text elsewhere. The band line (small) and the pane header (large) both draw it.
+// glyph as text elsewhere. The band line draws it.
 export function donutMark(E: any, percent: number, hasSvg: boolean, px: number): any {
   const { Text, Svg } = E
   return hasSvg ? (

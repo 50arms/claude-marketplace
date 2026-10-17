@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, SessionRateLimit } from 'claude-code'
+import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, PlanRow, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
+import type { ConnectedPlan, PanelState, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -24,26 +24,18 @@ import {
   COMMAND,
   CONNECT_ERROR_MAX,
   EMPTY,
-  LIVE_REASON_MAX,
-  LIVE_CHECK_DEADLINE_MS,
-  LIVE_CHECK_RETRY_MS,
   LOAD_DEADLINE_MS,
   LOAD_ORPHAN_WAIT_MS,
   LOCK_STALE_MS,
   MIN_GAP_MS,
-  NO_LIVE,
-  PANE,
   PERMISSION_POLL_MS,
   PERMISSION_TOLD_MAX,
-  PLAN_TITLE,
   PACING_POLL_MS,
   SIGNED_IN_TOAST,
   keyRevokedLabel,
   SIGN_IN_DENIED_TOAST,
   SIGN_IN_EXPIRED_TOAST,
   SIGN_IN_MIN_ROUND_MS,
-  SUBAGENT_SETTLE_MS,
-  TICK_MS,
   MIN_USAGE_TICK_MS,
   USAGE_PATH,
   USAGE_TICK_MS,
@@ -61,11 +53,8 @@ import { errText, loadPlan } from './plan/load'
 import type { Api } from './plan/load'
 import { connectedPlanId, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
-import type { Naming } from './plan/notes'
-import { connectNote, disconnectNote, parseNaming, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
-import { renderPane } from './plan/pane'
+import { disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { signInStep } from './plan/sign-in'
-import { NEW_READER, exitReason, liveReaderArgv, mergeSnapshots, pruneSnapshots, readPiece } from './plan/live'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
@@ -75,7 +64,6 @@ import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { classifierRefusal, isBackgroundRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
-import { shownSubagents } from './plan/subagent-cards'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
@@ -94,23 +82,18 @@ import type { PauseRead } from './reports/pause'
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
 const view = atom({ plugin: 'danxbot', key: 'view' } as const, EMPTY)
 const gate = atom({ plugin: 'danxbot', key: 'gate' } as const, { inFlight: false, again: false, at: null } as RefreshGate)
-const pick = atom({ plugin: 'danxbot', key: 'pick' } as const, '')
-const switching = atom({ plugin: 'danxbot', key: 'switching' } as const, false)
 // the band is hidden for the session: its own atom, since refresh replaces `view` whole
 const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string | null)
 // DX-4630: the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
-// ends (approved, denied, expired and renewed, or the conversation ended). The band and the pane draw it as a Markdown link and the
+// ends (approved, denied, expired and renewed, or the conversation ended). The band draws it as a Markdown link and the
 // code the moment it exists. Also what tells a watch is running.
 const signInRequest = atom({ plugin: 'danxbot', key: 'signInRequest' } as const, null as ApprovalRequest | null)
 // DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
-// DX-4499: the clock a running sub-agent's runtime counts up against (see tickClock).
-const tick = atom({ plugin: 'danxbot', key: 'tick' } as const, 0)
-// DX-4508: the main session's transcript path (the classic events carry it) and the live child's reports for this session.
+// DX-4508: the main session's transcript path (the classic events carry it).
 const transcript = atom({ plugin: 'danxbot', key: 'transcript' } as const, null as string | null)
-const live = atom({ plugin: 'danxbot', key: 'live' } as const, NO_LIVE)
 // DX-4336: the text of the last usage report's failure (null while the reports are accepted), so a failure that repeats every tick is
 // shown once, not every minute.
 const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null as string | null)
@@ -122,7 +105,7 @@ const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null 
 const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
 // DX-4339: what the usage pacing panel draws from: the session's own windows, the team's settings and the account verdict as last read.
 const panel = atom({ plugin: 'danxbot', key: 'panel' } as const, EMPTY_PANEL_STATE as PanelState)
-// DX-4233: the plan event relay's state (the pane's event line). DX-4721: and the main loop's turn (TurnState).
+// DX-4233: the plan event relay's state (the band's events warning). DX-4721: and the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // DX-4234: the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
@@ -173,21 +156,11 @@ let relayHalted: { planId: number | null } | null = null
 let pacingTicker: { cancel: () => void } | null = null
 // DX-4336: the usage report's timer, one per session.
 let usageTicker: { cancel: () => void } | null = null
-// DX-4499: the runtime clock's timer, one per session.
-let runtimeClock: { cancel: () => void } | null = null
 // DX-4530: the fast claim poll, running only while a permission request is open (syncPermissionPoll).
 let permissionTicker: { cancel: () => void } | null = null
 // DX-4530: a fast tick is skipped while the last one's claims are still out (slow answers must not stack claim traffic). A
 // module variable: a reload starts with no claim of its own in flight.
 let permissionTickBusy = false
-// DX-4508: the live child's stream, at most one; a handle, so a module variable (a reload kills the child with the module).
-let liveChild: HookStream<ProcessSpawnChunk, ProcessSpawnResult> | null = null
-// DX-4508: the live checks run one after another, so two events landing together cannot both start a child.
-let liveQueue: Promise<void> = Promise.resolve()
-// DX-4686: the engine's one `$.agent.list()` call still unanswered, if any, and when it was asked. A check that finds one younger than
-// LIVE_CHECK_RETRY_MS races its own deadline against that same call instead of asking again, so a hung engine is asked once however many checks
-// queue behind it; an older one is given up (its late answer is dropped) and the check asks afresh.
-let agentListInFlight: { call: Promise<{ id: string; type: string; status: string }[]>; at: number } | null = null
 
 // DX-5066: a session that started on a danxbot MCP older than 0.1.300 keeps that server through a plugin update, and its strict schema refuses the
 // `background` key ("unrecognized_keys"). The first such refusal is retried at once without the key, and the session sends no more of it, so no
@@ -252,9 +225,6 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   await update($, view, cur => (loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }))
   // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
-  await syncRuntimeClock($)
-  // DX-4686: a press's refresh never waits on a live check; its failures are shown in the section, anything past that is a toast
-  detach($, 'Live sub-agent check', syncLive($, false))
 }
 
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked
@@ -280,7 +250,7 @@ async function refresh($: any, force = false): Promise<void> {
     let again = true
     while (again) {
       try {
-        // DX-4233: EVERY load (not only the first) is an error shown at LOAD_DEADLINE_MS, so a hung call does not hold the pane's state or the relay's
+        // DX-4233: EVERY load (not only the first) is an error shown at LOAD_DEADLINE_MS, so a hung call does not hold the view's state or the relay's
         // start. The call itself is not abandoned to run beside the next load: this refresh keeps the lock for up to LOAD_ORPHAN_WAIT_MS more and
         // applies its answer if it comes then, so at most one load runs (through that wait; past it the call is given up).
         const load = loadView($)
@@ -406,7 +376,7 @@ const withPermissionNote = (ran: any, approval: ApprovalRequest) => ({ ...ran, c
 // DX-4630: the sign-in request's toast: link and code together, for the longest the host allows.
 const toastSignIn = ($: any, approval: ApprovalRequest) => $.ui.toast(signInToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
 
-// DX-4630: a sign-in request, drawn the moment it exists: the band and the pane read it from $.state and draw its link and confirm
+// DX-4630: a sign-in request, drawn the moment it exists: the band reads it from $.state and draws its link and confirm
 // code, and the toast carries both. The plugin opens no page: the person follows the link.
 async function showSignInRequest($: any, approval: ApprovalRequest): Promise<void> {
   await update($, signInRequest, () => approval)
@@ -433,13 +403,13 @@ async function withBusy($: any, key: string, work: () => Promise<void>, release:
   }
 }
 
-// DX-4423 / DX-4418: a connect or leave pressed on a pane that went stale: the key is gone since the pane drew. The person is told
+// DX-4423 / DX-4418: a leave pressed on a band that went stale: the key is gone since the band drew. The person is told
 // in the view's words, never the server's (a revoked key's answer is the agent's stop order), and the view reloads to say so.
 // True when that was the answer.
 async function accessEnded($: any, outcome: ToolOutcome): Promise<boolean> {
   const by = outcomeRevokedBy(outcome)
   if (by === null && !isSignedOut(outcome)) return false
-  $.ui.toast(by !== null ? `${keyRevokedLabel(by)}. This session must stop.` : 'Signed out. Sign in from the band or the pane.')
+  $.ui.toast(by !== null ? `${keyRevokedLabel(by)}. This session must stop.` : 'Signed out. Sign in from the band.')
   detach($, 'Plan refresh', refresh($, true))
   return true
 }
@@ -456,64 +426,14 @@ function detach($: any, what: string, task: Promise<unknown>): void {
 const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
 
 // DX-4635: what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards, sub-agents,
-// listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin and the plan list). A connect puts
-// the plan the person pressed on the pane, loading its numbers (the refresh fills them); a leave puts the session on no plan.
+// listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin and the plan list). A leave puts the session on no plan.
 const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl, plans: cur.plans, plansUnread: cur.plansUnread })
-function connectedView(cur: any, plan: PlanRow, refreshedAt: string): any {
-  const connected: ConnectedPlan = { id: plan.id, ref: plan.ref, name: plan.name, dashboardUrl: cur.dashboardUrl }
-  return { ...planIndependent(cur), phase: 'loading', connected, refreshedAt: cur.refreshedAt ?? refreshedAt }
-}
 function leftView(cur: any): any {
   return { ...planIndependent(cur), phase: 'ready', refreshedAt: cur.refreshedAt }
 }
 
-function connect($: any, plan: PlanRow): Promise<void> {
-  return withBusy($, busyKey.connect(plan.id), async () => {
-    // DX-4235: a move to another plan closes what the session opened under the one it leaves; a move that does not happen takes that back
-    const why = `moving to ${plan.ref}`
-    const closes = (await movesOffReportedPlan($, plan.id)) ? await closeOwedBeforeLeave($, why) : null
-    const sessionTitle = await read($, title)
-    let r
-    try {
-      r = await $.mcp.call(SERVER, 'plan_connect', {
-        plan_id: plan.id,
-        ...(sessionTitle ? { title: sessionTitle } : {}),
-      })
-    } catch (err: any) {
-      await settleLeave($, closes, false, why)
-      $.ui.toast(`Connect failed: ${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}`)
-      return
-    }
-    const outcome = toolOutcome(r)
-    await settleLeave($, closes, outcome.ok, why)
-    if (await accessEnded($, outcome)) return
-    if (!outcome.ok) {
-      // a refusal is `ok: false`, not an error result: nothing connected, so the model is told nothing
-      $.ui.toast(`Connect refused: ${refusalText(outcome)}`.slice(0, CONNECT_ERROR_MAX))
-      return
-    }
-    $.ui.toast(`Connected to ${plan.ref}`)
-    await update($, switching, () => false)
-    const shownAt = await isoNow($)
-    await update($, view, cur => connectedView(cur, plan, shownAt))
-    // the plan the session left stops being listened to now, and the plan it is on starts (syncRelay reads the view just written)
-    await syncRelay($)
-    // DX-4612: a malformed naming block is shown, never read as "nothing to rename"; the connect itself did happen, so the model is told it
-    let naming: Naming = { status: 'ok' }
-    try {
-      naming = parseNaming(outcome.body?.naming)
-    } catch (err: any) {
-      $.ui.toast(`Connected, but the answer's naming block is malformed (${String(err?.message ?? err).slice(0, CONNECT_ERROR_MAX)}): the model was not told to rename its thread`)
-    }
-    // DX-4635 / R-4: tellModel appends before its first await, so the note is issued here, in press order and before the press returns;
-    // its answer, then the refresh (DX-4233: it starts the relay of the plan connected, a halt of another plan being cleared there),
-    // are detached. The refresh waits for the answer so a failed telling is toasted before the load's own toasts.
-    detach($, 'Plan update', tellModel($, connectNote(plan, naming)).then(() => refresh($, true)))
-  })
-}
-
 // Takes the session OFF its plan (plan_connect with disconnect: true, guarded by the plan we think we
-// are on). A refusal is shown, never swallowed: a 409 means the pane was stale (the server names the
+// are on). A refusal is shown, never swallowed: a 409 means the band was stale (the server names the
 // plan the session is really on, or says it is on none), so it also refreshes; a 404 or any other
 // failure carries its status and message. No confirm: one Connect undoes it.
 function disconnect($: any, plan: ConnectedPlan): Promise<void> {
@@ -545,14 +465,13 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
       return
     }
     $.ui.toast(`Disconnected from ${plan.ref}`)
-    await update($, switching, () => false)
     await update($, view, leftView)
     detach($, 'Plan update', tellModel($, disconnectNote({ ref: plan.ref, name: left.name })).then(() => refresh($, true)))
   })
 }
 
 // DX-4423 / DX-4548: the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
-// `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's and the pane's link and code). Each call waits
+// `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's link and code). Each call waits
 // there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
 // request stays open for as long as its session lives (DX-4530). The status of the request cannot be read any other way: its
 // claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
@@ -665,17 +584,10 @@ async function signInArgs($: any): Promise<object> {
   return { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
 }
 
-// DX-4374: the one way into the plan UI, for the footer button and /danx-plan alike: bring the band
-// back (clear `dismissed`) and open the Plan pane. It never closes anything and tells the model nothing
-// (R-4 covers actions that change plan state; this changes none).
+// DX-4374 / DX-5232: the one way back to the plan UI, for the footer button and /danx-plan alike: bring the band back (clear
+// `dismissed`). It tells the model nothing (R-4 covers actions that change plan state; this changes none).
 async function showPlan($: any): Promise<void> {
   await update($, dismissed, () => false)
-  await openPlanPane($)
-}
-
-// The one open of the Plan pane (the band's Panel button and showPlan): focused, so it takes the keyboard.
-function openPlanPane($: any): Promise<unknown> {
-  return $.ui.open({ id: PANE, title: PLAN_TITLE, focus: true })
 }
 
 // The band's close control: the band hides until the footer button or /danx-plan is used.
@@ -685,15 +597,10 @@ async function dismissBand($: any): Promise<void> {
 
 function handlers($: any): Handlers {
   return {
-    openPane: () => openPlanPane($),
-    connect: plan => connect($, plan),
     showPlan: () => showPlan($),
     dismissBand: () => dismissBand($),
     disconnect: plan => disconnect($, plan),
     signIn: () => startSignIn($),
-    toggleSwitch: () => update($, switching, cur => !cur),
-    cancelSwitch: () => update($, switching, () => false),
-    pickPlan: value => update($, pick, () => value),
   }
 }
 
@@ -720,143 +627,13 @@ async function unpinStatus($: any): Promise<void> {
   await $.ui.status(undefined)
 }
 
-// DX-4499: the runtime clock runs only while the pane has a sub-agent to count (a running one, or an ended one not yet past its
-// `visibleUntil`): started by a load that brings one, stopped by the first tick that finds none, so a plan with no sub-agents has no
-// timer at all. A cosmetic timer: it makes no call, it only redraws a pane that shows the clock.
-async function syncRuntimeClock($: any): Promise<void> {
-  const shown = shownSubagents(await read($, view), await read($, live), await $.clock.now()).length > 0
-  if (shown && runtimeClock === null) {
-    runtimeClock = $.clock.every(TICK_MS, () => tickClock($))
-  } else if (!shown && runtimeClock !== null) {
-    runtimeClock.cancel()
-    runtimeClock = null
-  }
-}
-
-async function tickClock($: any): Promise<void> {
-  const now = await $.clock.now()
-  await update($, tick, () => now)
-  await syncRuntimeClock($)
-}
-
-// ---- DX-4508: the live sub-agent numbers ------------------------------------
-// While this session is plan-connected and has a running sub-agent (`$.agent.list()`), ONE host child streams its sub-agents'
-// numbers: `node <plugin root>/scripts/subagents-live.mjs <main transcript>` (the installed danx-dashboard-mcp's `subagents-live`), one
-// JSON line per change. Each line is checked and merged into the `live` atom, which redraws the pane with no dashboard read. The
-// child stops once none runs. A child that cannot start, exits, or prints a line that cannot be read is one muted line in the
-// section, the dashboard's numbers stand, and nothing retries until the next sub-agent starts.
-
 function errMessage(err: any): string {
   return String(err?.message ?? err)
-}
-
-// `agent-<id>` -> status of this session's sub-agents (a teammate is not one), or why the engine could not list them.
-async function agentStatuses($: any): Promise<Record<string, string> | string> {
-  let agents: { id: string; type: string; status: string }[]
-  try {
-    // DX-4686: a call that never answers is abandoned at the deadline (its late answer falls on the floor, never applied), so the queue moves on
-    const now = await $.clock.now()
-    if (agentListInFlight === null || now - agentListInFlight.at > LIVE_CHECK_RETRY_MS) {
-      const flight = {
-        at: now,
-        // only the call still current clears the record: a replaced call's late settling must not clear its successor
-        call: Promise.resolve($.agent.list()).finally(() => {
-          if (agentListInFlight === flight) agentListInFlight = null
-        }),
-      }
-      agentListInFlight = flight
-    }
-    const answer = await withinDeadline<typeof agents | null>($, LIVE_CHECK_DEADLINE_MS, agentListInFlight.call, () => null)
-    if (answer === null) return `the engine did not list this session's sub-agents within ${LIVE_CHECK_DEADLINE_MS / 1000}s`
-    agents = answer
-  } catch (err: any) {
-    return `the engine did not list this session's sub-agents (${errMessage(err)})`
-  }
-  // DX-4508: the dashboard and the live child name a sub-agent `agent-<agent id>`; `$.agent.list()` names it by the agent id alone
-  return Object.fromEntries(agents.filter(a => a.type !== 'teammate').map(a => [`agent-${a.id}`, a.status]))
 }
 
 async function noteTranscript($: any, e: any): Promise<void> {
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : ''
   if (path !== '') await update($, transcript, cur => (cur === path ? cur : path))
-}
-
-// Ends the child (leaving its loop kills it); its loop then sees it is no longer the child and returns quietly.
-function stopLive(): void {
-  const child = liveChild
-  liveChild = null
-  if (child !== null) void child.return(undefined as any)
-}
-
-async function liveFailed($: any, reason: string): Promise<void> {
-  await update($, live, cur => ({ ...cur, warning: reason.slice(0, LIVE_REASON_MAX), failed: true }))
-}
-
-// `isStart`: a sub-agent just started, the one moment a failure is tried again.
-function syncLive($: any, isStart: boolean): Promise<void> {
-  liveQueue = liveQueue.then(() => checkLive($, isStart)).catch(err => liveFailed($, `the live check failed: ${errMessage(err)}`))
-  return liveQueue
-}
-
-async function checkLive($: any, isStart: boolean): Promise<void> {
-  if (isStart) await update($, live, cur => (cur.failed ? { ...cur, failed: false } : cur))
-  if ((await read($, view)).connected === null) return stopLive()
-  const statuses = await agentStatuses($)
-  if (typeof statuses === 'string') {
-    stopLive()
-    return liveFailed($, statuses)
-  }
-  // with none running there is nothing live to show, so an earlier failure's line goes too (the failure itself stands)
-  const anyRunning = Object.values(statuses).includes('running')
-  await update($, live, cur => ({ ...cur, statuses, warning: anyRunning ? cur.warning : null }))
-  if (!anyRunning) return stopLive()
-  if (liveChild !== null || (await read($, live)).failed) return
-  await startLive($)
-}
-
-async function startLive($: any): Promise<void> {
-  const path = await read($, transcript)
-  if (path === null) return liveFailed($, 'the session has not reported its transcript path yet')
-  const sessionId: string = await $.session.id()
-  const child: HookStream<ProcessSpawnChunk, ProcessSpawnResult> = $.process.spawn({ argv: liveReaderArgv($.plugin.root, path) })
-  liveChild = child
-  // a new child's first line carries every sub-agent; until it comes, what this session's last child said stands
-  await update($, live, cur => ({ ...cur, sessionId, warning: null, failed: false, snapshots: cur.sessionId === sessionId ? cur.snapshots : {} }))
-  // DX-4546 / DX-4586: this detached promise has no caller to reject to; see `detach`
-  detach($, 'Live sub-agent reader', readLive($, child))
-}
-
-// The child's life, detached from the event that started it (plugin-authoring: "a child for the session's life").
-async function readLive($: any, child: HookStream<ProcessSpawnChunk, ProcessSpawnResult>): Promise<void> {
-  let reader = NEW_READER
-  let isFirst = true
-  const ended = async (reason: string) => {
-    if (liveChild !== child) return
-    stopLive()
-    await liveFailed($, reason)
-  }
-  try {
-    for (;;) {
-      const r = await child.next()
-      // stopped (stopLive): whatever ended the stream was ours
-      if (liveChild !== child) return
-      if (r.done) return ended(exitReason(r.value, reader.stderr))
-      const step = readPiece(reader, r.value, LIVE_REASON_MAX)
-      reader = step.reader
-      for (const snapshots of step.lines) {
-        const statuses = await agentStatuses($)
-        if (typeof statuses === 'string') return ended(statuses)
-        const now = await $.clock.now()
-        const first = isFirst
-        isFirst = false
-        await update($, live, cur => ({ ...cur, statuses, snapshots: pruneSnapshots(mergeSnapshots(cur.snapshots, snapshots, first), now) }))
-      }
-      if (step.failure !== null) return ended(step.failure)
-      if (step.lines.length > 0) await syncRuntimeClock($)
-    }
-  } catch (err: any) {
-    await ended(`the live reader could not run: ${errMessage(err)}`)
-  }
 }
 
 // What the session's usage reading came to: its windows, or why they could not be read (DX-4339: the tick reads them itself).
@@ -892,7 +669,7 @@ async function reportUsage($: any, reading: UsageReading): Promise<void> {
             if (!Number.isInteger(every) || every < MIN_USAGE_TICK_MS) failure = `the answer named no usable report_every_ms (${JSON.stringify(every)})`
             else if (every !== usageEveryMs) startUsageTicker($, every)
             // DX-4854: danxbot places a session on its account from this very report, so until the first one is taken the pacing line answers
-            // unknown (`no_usage_account`) and the pane has no verdict. Ask again now instead of leaving the account's readings to the next poll.
+            // unknown (`no_usage_account`) and the band has no verdict. Ask again now instead of leaving the account's readings to the next poll.
             // This runs after every accepted report (each session.measure, whenever a window moves, and the usage tick), so a session whose account
             // still has no verdict re-reads the line each time, until the panel holds a readout; once it does the poll alone keeps it fresh.
             if ((await read($, panel)).readout === null) detach($, 'Pacing panel', refreshPacingPanel($))
@@ -938,7 +715,7 @@ async function reportUsageNow($: any): Promise<void> {
 }
 
 // DX-4339: the team's pacing settings (GET /api/team/pacing) and the account verdict (the DX-4340 cache) into the panel's state. The settings
-// read's outcome is kept (`settingsRead`) so the pane tells a quiet start or a session with no danxbot from a real error; a failed read keeps
+// read's outcome is kept (`settingsRead`) so the band tells a quiet start or a session with no danxbot from a real error; a failed read keeps
 // the last settings and toasts nothing (DX-4340's decision). The verdict is re-read every poll (danxbot itself changes it every 10 minutes, so
 // a change shows within a poll or two). Run at session start and on the poll; a throw here is toasted, never an unhandled rejection.
 async function refreshPacingPanel($: any): Promise<void> {
@@ -953,7 +730,7 @@ async function refreshPacingPanel($: any): Promise<void> {
     const readout = pacing?.readout ?? null
     await update($, panel, cur =>
       'settings' in fetched
-        ? { ...cur, settings: fetched.settings, settingsAt: now, settingsRead: { state: 'ok' }, verdict, spend, readout }
+        ? { ...cur, settings: fetched.settings, settingsRead: { state: 'ok' }, verdict, spend, readout }
         : { ...cur, settingsRead: fetched.read, verdict: null, spend: null, readout: null },
     )
   } catch (err: any) {
@@ -1101,7 +878,7 @@ async function startRelayWhenKnown($: any): Promise<void> {
 }
 
 // Ends the loop: its pending call is left to the server (a newer wait supersedes it, or it times out), and everything it answers late is
-// ignored (relay state, cursor and delivery are each gated on `dead`). It leaves the relay state as it was: the pane draws that state
+// ignored (relay state, cursor and delivery are each gated on `dead`). It leaves the relay state as it was: the band draws that state
 // only for the plan it belongs to, and the next run of that plan writes its own first.
 function stopRelay(): void {
   if (relayRun === null) return
@@ -1323,7 +1100,7 @@ async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detai
   return true
 }
 
-// One failure, shown in the pane's event line and told to the session ONCE (the same text is not told again until a wait succeeds).
+// One failure, shown in the band's events warning and told to the session ONCE (the same text is not told again until a wait succeeds).
 // `stopped` also halts the relay for this plan until something asks for it again (syncRelay).
 async function relayFailed($: any, run: RelayRun, phase: 'retrying' | 'stopped', detail: string, line: string): Promise<void> {
   if (!(await setRelay($, run, phase, detail))) return
@@ -1494,7 +1271,7 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
     return { next: 'again', cursor: out.cursor }
   }
   if (got.kind === 'signed-out') {
-    // the band and the pane already say it (and offer Sign in unless a person revoked the key): nothing more is told
+    // the band already says it (and offer Sign in unless a person revoked the key): nothing more is told
     if (await setRelay($, run, 'off', null)) relayHalted = { planId: run.planId }
     return { next: 'end', cursor }
   }
@@ -1511,7 +1288,7 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
 async function relayLoop($: any, run: RelayRun): Promise<void> {
   let failures = 0
   try {
-    // the run's first word comes before any await of its own: until then the pane would still show the state the last run of this plan left
+    // the run's first word comes before any await of its own: until then the band would still show the state the last run of this plan left
     await setRelay($, run, 'streaming', null)
     await pruneCursors($)
     let cursor = await loadCursor($, run.planId)
@@ -1537,7 +1314,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
       await $.clock.sleep(backoffMs(failures))
     }
   } catch (err: any) {
-    // An error nothing above anticipated halts the relay for this plan, shown in the pane and told once, never restarted by a refresh
+    // An error nothing above anticipated halts the relay for this plan, shown in the band and told once, never restarted by a refresh
     // behind the person's back (an ended run says nothing: relayFailed's gate). When the environment itself is gone the writes below
     // reject, and settleDetached (the loop's caller) is what drops that one rejection.
     const detail = `the relay hit an error: ${errMessage(err)}`
@@ -1564,7 +1341,7 @@ async function onSessionStart($: any, e: any, next: any) {
     await update($, desktopHosted, () => true)
   }
   await unpinStatus($)
-  await $.command.register({ name: COMMAND, description: 'Show the danxbot plan pane (connection + open problems)' })
+  await $.command.register({ name: COMMAND, description: 'Show the danxbot plan band (connection + open problems)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
   // DX-4630: nor a sign-in request: its watch died with the old process
@@ -1611,18 +1388,11 @@ async function onSessionEnd($: any, e: any, next: any) {
     pacingTicker = null
     usageTicker?.cancel()
     usageTicker = null
-    runtimeClock?.cancel()
-    runtimeClock = null
     permissionTicker?.cancel()
     permissionTicker = null
-    settleTimer?.cancel()
-    settleTimer = null
-    stopLive()
   } else if (e.reason === 'clear' || e.reason === 'resume') {
     // DX-4508: another conversation: its sub-agents and transcript are not this one's
-    stopLive()
     await update($, liveAgents, () => [])
-    await update($, live, () => NO_LIVE)
     await update($, transcript, () => null)
     // a fresh conversation (or another session taking this one's place) in the same process: what
     // the dashboard shows may have moved while they were in the old one
@@ -1634,11 +1404,11 @@ async function onSessionEnd($: any, e: any, next: any) {
 async function onCommand($: any) {
   await showPlan($)
   detach($, 'Plan refresh', refresh($, true))
-  return { text: 'Plan pane opened.' }
+  return { text: 'Plan band shown.' }
 }
 
 // The model connected (or moved) this session: show it at once. A signed-out session's `approval_required`
-// answer draws the approval link and the code in the band and the pane; the plan page is not opened (there is
+// answer draws the approval link and the code in the band; the plan page is not opened (there is
 // no connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
   // DX-4235: the model's leave, or its move to another plan, closes what the session opened under the plan it is on first; a leave or move
@@ -1696,21 +1466,6 @@ async function onRequestPermission($: any, e: any, next: any) {
   return withPermissionNote(ran, approval)
 }
 
-// DX-4499: a sub-agent started or stopped: read the dashboard now (not forced: a load within MIN_GAP_MS of the last stands), and once
-// more SUBAGENT_SETTLE_MS later. The activity report of the change (DX-4235: posted detached as this start hook runs, and at the
-// sub-agent's own turn.complete for its end, which comes around this stop hook) can reach the dashboard after the first read; the
-// second read is after it. One wait pending at a time, so a burst of sub-agents costs one extra read.
-// A `$.clock.after` timer, not a `$.clock.sleep` inside the hook: the wait outlives the event's dispatch (plugin-authoring,
-// "Work that outlives a dispatch"), and a reload cancels it with the environment.
-let settleTimer: { cancel: () => void } | null = null
-function settleSubagents($: any): void {
-  if (settleTimer !== null) return
-  settleTimer = $.clock.after(SUBAGENT_SETTLE_MS, () => {
-    settleTimer = null
-    detach($, 'Plan refresh', refresh($, true))
-  })
-}
-
 async function trackAgent($: any, agentId: unknown, isStart: boolean): Promise<void> {
   if (typeof agentId !== 'string' || agentId === '') return
   const now = await $.clock.now()
@@ -1725,10 +1480,6 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   if (!isStart) await markMeasured($)
   detach($, 'Plan refresh', refresh($))
   void watchRelay($)
-  // only a session connected to a plan has a Sub-agents section to settle
-  if ((await read($, view)).connected !== null) settleSubagents($)
-  // DX-4508: start the live child for a new sub-agent, or stop it with the last one. DX-4686: detached, so the hook never waits on a queued check
-  detach($, 'Live sub-agent check', syncLive($, isStart))
   return r
 }
 
@@ -2035,7 +1786,7 @@ async function onTurnStart($: any, e: any, next: any) {
   return next(e)
 }
 
-// The app's session title, handed to `plan_connect` from the pane's Connect; and (DX-4508) the main transcript's path.
+// The app's session title, handed to `plan_connect`; and (DX-4508) the main transcript's path.
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
   const t = typeof e.session_title === 'string' ? e.session_title.trim() : ''
@@ -2060,6 +1811,7 @@ async function drawBand($: any, e: any, next: any) {
     await read($, signInRequest),
     e.props.bodyColumns,
     buildPanel(await read($, panel)),
+    await read($, relay),
   )
 }
 
@@ -2084,24 +1836,6 @@ async function drawAssistantMessage($: any, e: any, next: any) {
   }
   const text = linkCardIds(e.props.text, v.links.prefixes, v.connected, new Set(v.links.planCardIds))
   return next(text === e.props.text ? e : { ...e, props: { ...e.props, text } })
-}
-
-async function drawPane($: any, e: any) {
-  // DX-4499: read for the subscription alone: the tick redraws the pane, and `now` below is what a runtime counts against
-  await read($, tick)
-  const m = {
-    v: await read($, view),
-    picked: await read($, pick),
-    working: await read($, busy),
-    isSwitching: await read($, switching),
-    now: await $.clock.now(),
-    hasSvg: e.surface === 'desktop',
-    live: await read($, live),
-    pacing: buildPanel(await read($, panel)),
-    relay: await read($, relay),
-    signIn: await read($, signInRequest),
-  }
-  return renderPane($.ui.resolve(e), handlers($), m)
 }
 
 // DX-4340: the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
@@ -2498,6 +2232,5 @@ export const register: Register = on => {
   on('classic.UserPromptSubmit', onTitle)
   on('ui.render', { component: 'AbovePrompt' }, drawBand)
   on('ui.render', { component: 'SessionMode' }, drawSessionMode)
-  on('ui.render', { component: 'Pane', requestId: PANE }, drawPane)
   on('ui.render', { component: 'AssistantMessage' }, drawAssistantMessage)
 }

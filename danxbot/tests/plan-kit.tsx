@@ -1,6 +1,6 @@
 // Shared stand-ins for the `claude plugin test danxbot` suites: a fake danx-dashboard MCP server
 // (danxbot_api + plan_connect), and recorders for the engine calls the
-// plugin makes beneath it (toast, status, session.append, ui.open, command.register).
+// plugin makes beneath it (toast, status, session.append, command.register).
 import { expect, mock, test as baseTest } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
@@ -32,23 +32,6 @@ export const RECORD_PATH = (sessionId: string) => `${HOME_DIR}/.config/danxbot/p
 export const DASHBOARD_URL = 'http://localhost:5555'
 // `dashboardUrl: NO_DASHBOARD_URL` leaves the field out of the answer (a JSON null is sent as one)
 export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
-// DX-4612: the `naming` block of a plan_connect answer. NAMING_NEEDED is the real block (DX-4608, src/issues/plan-session-naming.ts
-// buildNeededNaming for PLAN-23, a live name Amara, recent names Amara and Kenji, suggested name Aarav), copied verbatim.
-// `naming: NO_NAMING` leaves the field out of the answer.
-export const NO_NAMING = Symbol('no naming')
-export const NAMING_OK = { status: 'ok' }
-export const NAMING_NEEDED = {
-  status: 'needed',
-  format: '{Name}: PLAN-NNN {short title}',
-  planRef: 'PLAN-23',
-  shortTitle: 'Danxbot plugin on native Claude Code',
-  instruction: 'Name this session\'s thread "{Name}: PLAN-NNN {short title}" so the operator can tell the agents on their plans apart. {Name} is one short given name (letters, apostrophes and hyphens, 30 characters at most). Pick a given name that no live session holds; "Aarav" is free. Names in use right now: Amara. The rest is fixed: this plan is PLAN-23 and its short title is "Danxbot plugin on native Claude Code", so the thread is e.g. "Aarav: PLAN-23 Danxbot plugin on native Claude Code". Rename the thread: in Claude Desktop call the set_session_title tool with that title; in a terminal Claude Code session run /rename with it. Then call plan_connect({plan_id: 23, title}) again with the same title.',
-  liveNames: ['Amara'],
-  recentNames: ['Amara', 'Kenji'],
-  suggestedName: 'Aarav',
-  suggestedTitle: 'Aarav: PLAN-23 Danxbot plugin on native Claude Code',
-}
-
 // DX-4423 / DX-4418: what the danx-dashboard MCP (0.1.225, session-access.ts and key-revoked-halt.ts) answers every tool but
 // plan_connect while the session holds no key: an error result. SIGN_IN_HALT is a session that never signed in, KEY_LAPSED_HALT
 // what the first call after a lapsed key's 401 answers (it ends in the sign-in sentence), and KEY_REVOKED_HALT the one stop halt
@@ -73,7 +56,7 @@ const SESSION_ID = '41365fb5-6b43-443b-a01b-81245574f648'
 const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, body })
 
 // DX-4458: the host refuses a tool result past its size limit, with a notice written for the model (captured 2026-10-04 from the
-// plan pane on DX-4443). The fixture's limit is lower than the real one so a fixture card can pass it.
+// session on DX-4443). The fixture's limit is lower than the real one so a fixture card can pass it.
 export const HOST_LIMIT_CHARS = 60_000
 export const HOST_OVERSIZE = (chars: number) => `Error: result (${chars.toLocaleString('en-US')} characters across 2,050 lines) exceeds maximum allowed tokens. Output has been saved to C:\tool-results\mcp-danx-dashboard-danxbot_api-1.txt
 Format: JSON
@@ -104,46 +87,9 @@ export const LISTENER_STATES = ['unattached', 'stopped', 'reconnecting', 'creden
 // The next step never contains the state's name, so a test that finds the state name cannot be satisfied by it.
 export const NEXT_STEP = (state: string) => `Run plan_connect again (step ${[...state].reduce((n, c) => n + c.charCodeAt(0), 0)}).`
 
-// DX-4499: the plan's live sessions as GET /api/plan-sessions answers them (newest activity first), and one sub-agent row as
-// GET /api/plan-sessions/:sessionId/subagents answers it (danxbot's plan_session_subagent resource: snake_case, epoch ms). The
-// defaults are a running sub-agent that started 4 minutes before the fake clock's start (2026-10-03T08:00:00Z).
 export const CLOCK_START = Date.parse('2026-10-03T08:00:00.000Z')
 export const OWN_SESSION = { session_id: 'sess-own', title: 'PLAN-23: danxbot plugin' }
 export const OTHER_SESSION = { session_id: 'sess-other', title: 'PLAN-23: review pass' }
-export function rawSubagent(id: string, over: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: `agent-${id}`,
-    session_id: OWN_SESSION.session_id,
-    parent_id: null,
-    description: `Build ${id}`,
-    agent_type: 'danxbot:worker-sonnet-high',
-    model: 'claude-sonnet-5-5',
-    effort: 'high',
-    state: 'running',
-    end_status: null,
-    started_at: CLOCK_START - 252_000,
-    last_activity_at: CLOCK_START - 5_000,
-    finished_at: null,
-    runtime_ms: null,
-    visible_until: null,
-    tokens_in: 20,
-    tokens_out: 40,
-    cache_read: 12_000,
-    cache_write: 300,
-    tokens_total: 12_360,
-    cost_usd: 0.4216,
-    tool_call_count: 7,
-    current_activity: 'Bash: Run the affected tests',
-    card: { id: 'DX-9', title: 'In flight card', via: 'brief' },
-    ...over,
-  }
-}
-// an ended row: it finished `agoMs` before the fake clock's start and stays listed until ten minutes after that
-export function endedSubagent(id: string, state: 'done' | 'failed' | 'stopped', agoMs: number, over: Record<string, unknown> = {}): Record<string, unknown> {
-  const finished = CLOCK_START - agoMs
-  return rawSubagent(id, { state, end_status: state === 'done' ? 'completed' : state, finished_at: finished, runtime_ms: 90_000, started_at: finished - 90_000, visible_until: finished + 600_000, ...over })
-}
-
 type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean }
 type Card = { id: string; title: string; priority: number; problems: Prob[] }
 
@@ -195,9 +141,6 @@ export function dashboard(
     // plan_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
-    // DX-4612: the `naming` block a successful plan_connect answers: NAMING_OK (default), NAMING_NEEDED, any other value (a malformed
-    // one, sent as is), or NO_NAMING for an answer without the field
-    naming?: unknown
     // the dashboard has more needs-you cards than the one load reads
     cardsTotal?: number
     // ... and more plans than the plan list returns
@@ -225,14 +168,6 @@ export function dashboard(
     cardFails?: string | string[]
     // DX-4458: ... and the host refuses that card's answer as too large
     cardOversize?: string
-    // DX-4499: GET /api/plan-sessions fails (500) / answers something that is no list / a session with no title
-    sessionsFail?: boolean
-    sessionsShape?: 'noList' | 'noTitle'
-    // ... GET /api/plan-sessions/<id>/subagents answers 500 for these session ids, or no list at all
-    subagentsFail?: string | string[]
-    subagentsNoList?: boolean
-    // ... answers 404 for these session ids, or for every one (a dashboard that predates DX-4498 has no such route)
-    subagentsNotFound?: string | string[] | true
     // DX-4336: the session's account uuid (CLAUDE_CODE_ACCOUNT_UUID, set only by a desktop-hosted session); none by default
     accountUuid?: string
     // DX-4806: the process's CLAUDE_CODE_ENTRYPOINT ('claude-desktop' for the desktop app, 'cli' for a terminal); none by default
@@ -284,7 +219,6 @@ export function dashboard(
   const toasts: string[] = []
   const toastTimeouts: number[] = []
   const statuses: (string | undefined)[] = []
-  const opened: { id: string; title?: string; focus?: boolean }[] = []
   const stateWrites: { plugin: string; key: string; value: unknown }[] = []
   const commands: string[] = []
   const world = {
@@ -303,11 +237,6 @@ export function dashboard(
     // `bind()` model that. Every kit session is bound unless a test unbinds it.
     bound: true,
     plansBody: undefined as unknown,
-    // DX-4233: `$.agent.list()` never answers until `release()`
-    agentListHangs: false,
-    // DX-4686: every `$.agent.list()` call waits on its OWN release (`agentListCalls[i].release()`), answering `world.agents` as they stand then,
-    // so a test can answer one call while another stays out
-    agentListHoldEach: false,
     // DX-5093: the desktop's Browser pane server (`Claude_Browser`) as the plan-tab keepalive reaches it: whether the session has the server, whether the
     // pane is open, the origins of its tabs, the failures of each tool (the text of an `isError` answer), how long `tabs_context` takes, and the calls made
     // (`tabs_context`, `tabs_create`, `navigate <url> <tabId|->`). Default: the pane holds a tab on the dashboard's site, so a look changes nothing.
@@ -335,9 +264,6 @@ export function dashboard(
     // DX-4234: what the server's `restart_notice` tool answers (DX-4632): `{notice: null}` unless a test sets a JSON answer (`json`), a raw
     // result (`raw`), or a rejection (`deny`). `delayMs` / `hangs`: it answers late / never.
     restart: {} as { json?: unknown; raw?: unknown; deny?: string; delayMs?: number; hangs?: boolean },
-    // DX-4499: the plan's live sessions, and each one's sub-agent rows (raw, as the route answers them)
-    sessions: [OWN_SESSION] as { session_id: string; title: string }[],
-    subagents: {} as Record<string, Record<string, unknown>[]>,
     // DX-4508: this session's sub-agents as `$.agent.list()` answers them (the engine's own list), none by default
     agents: [] as { id: string; type: string; description: string; status: string }[],
     titleSeen: undefined as string | undefined,
@@ -409,20 +335,6 @@ export function dashboard(
             : { attached: options.attached ?? world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
       })
-    }
-    // DX-4499: the live sessions of the plan, newest activity first, and a session's sub-agents (danxbot DX-4498)
-    if (method === 'GET' && path === '/api/plan-sessions') {
-      if (options.sessionsFail) return reply({ error: 'sessions boom' }, 500)
-      if (options.sessionsShape === 'noList') return reply({})
-      const rows = world.sessions.map(x => ({ ...x, plan_id: world.planId, plan_name: 'Danxbot plugin', last_active_at: 1 }))
-      return reply({ sessions: options.sessionsShape === 'noTitle' ? rows.map(({ title, ...r }) => r) : rows })
-    }
-    const subs = /^\/api\/plan-sessions\/([^/]+)\/subagents$/.exec(path)
-    if (method === 'GET' && subs) {
-      if ([options.subagentsFail ?? []].flat().includes(subs[1])) return reply({ error: 'subagents boom' }, 500)
-      if (options.subagentsNotFound === true || [options.subagentsNotFound ?? []].flat().includes(subs[1])) return reply({ error: 'not found' }, 404)
-      if (options.subagentsNoList) return reply({})
-      return reply({ subagents: world.subagents[subs[1]] ?? [] })
     }
     // DX-4448: the boards (danxbot's own and gpt-manager's), whose `issue_prefix` the card links are built on
     if (method === 'GET' && path === '/api/boards') {
@@ -839,8 +751,7 @@ export function dashboard(
         }
         world.planId = e.args.plan_id
         world.titleSeen = e.args.title
-        const naming = options.naming === undefined ? NAMING_OK : options.naming
-        return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id }, ...(naming === NO_NAMING ? {} : { naming }) } }) }
+        return { value: text({ ok: true, status: 200, body: { session: { plan_id: e.args.plan_id } } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
       if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 1) {
@@ -940,10 +851,6 @@ export function dashboard(
   })
   on('store.delete', (_$: any, e: any) => (stored.delete(e.key), { value: undefined }) as any)
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
-  // DX-4508: the engine's own answers the live sub-agent check reads: this session's id (the fixture's own plan session) and its
-  // sub-agents (world.agents).
-  const agentLists = { count: 0 }
-  const agentListCalls: { release: () => void }[] = []
   // the tools the session lists: the plugin's when its server is connected
   // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
   const toolLists = { n: 0 }
@@ -990,33 +897,13 @@ export function dashboard(
   on('process.run', (_$: any, e: any) => ({ value: { exitCode: world.gitStatus.exitCode, stdout: world.gitStatus.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as any)
   on('session.id', () => ({ value: world.sessionId }) as any)
   on('agent.list', async () => {
-    agentLists.count++
-    // DX-4233 / DX-4686: the engine's list never answers: only the live-check queue waits on it (each check abandons it at its deadline)
-    if (world.agentListHangs) await hung.promise
-    if (world.agentListHoldEach) await new Promise<void>(release => agentListCalls.push({ release }))
     return { value: world.agents } as any
   })
-  // DX-4508: the live reader child (`$.process.spawn`): each start is recorded with its argv; a test queues what it prints
-  // (`pieces`) and how it ends on its own (`end`), delivered a mocked-clock second apart (READER_PIECE_MS). `stopped` says the
-  // plugin ended it (its stream returned, the call abandoned); a child that exited on its own is not stopped.
-  const readers: FakeReader[] = []
-  on('process.spawn', async function* (_$: any, e: any, next: any) {
-    const child: FakeReader = { argv: [...e.argv], pieces: [], end: null, stopped: false }
-    readers.push(child)
-    let exited = false
-    try {
-      while (!next.signal.aborted) {
-        while (child.pieces.length > 0) yield child.pieces.shift()!
-        if (child.end !== null) {
-          exited = true
-          return { value: child.end }
-        }
-        await clock.sleep(READER_PIECE_MS)
-      }
-      return { value: { code: null, signal: 'SIGTERM' } }
-    } finally {
-      child.stopped = !exited
-    }
+  // every `$.process.spawn` the plugin makes, as its argv: the plugin spawns no child, and a test says so by reading this
+  const spawns: string[][] = []
+  on('process.spawn', async function* (_$: any, e: any) {
+    spawns.push([...e.argv])
+    return { value: { code: 0, signal: null } }
   } as any)
   // what the engine draws above the prompt when no plugin does: nothing
   on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
@@ -1049,10 +936,6 @@ export function dashboard(
   on('ui.status', (_$: any, e: any) => {
     statuses.push(e.text)
     return { value: undefined }
-  })
-  on('ui.open', (_$: any, e: any) => {
-    opened.push({ id: e.id, title: e.title, focus: e.focus })
-    return { value: { isPlaced: true } }
   })
   on('command.register', (_$: any, e: any) => {
     commands.push(e.name)
@@ -1097,7 +980,7 @@ export function dashboard(
   return { envSets, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), agentLists, agentListCalls, readers, toastTimeouts, serveSubagents: () => void (options.subagentsNotFound = undefined), setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, opened, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, commands, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an
@@ -1112,15 +995,6 @@ export function expectRowCarries(row: string, fields: string[]) {
     const token = new RegExp(`(?<![\\w-])${escapeRegExp(field)}(?![\\w-])`)
     expect(token.test(row), `the model row lacks "${field}": ${row}`).toBe(true)
   }
-}
-
-// DX-4508: one start of the live reader child, as the kit's process.spawn stand-in records it (see `readers` in dashboard()).
-export const READER_PIECE_MS = 1_000
-export type FakeReader = {
-  argv: string[]
-  pieces: { stream: 'stdout' | 'stderr'; text: string }[]
-  end: { code: number | null; signal: string | null } | null
-  stopped: boolean
 }
 
 // session.start as the engine raises it (the plugin loads the plan, registers its command and
@@ -1186,7 +1060,7 @@ export async function expectIndicator(band: any, surface: string, percent: numbe
   }
 }
 
-// DX-4630: every link the band and the pane draw is a Markdown link `[label](url)` (no `Link` element). The one finder: each Markdown
+// DX-4630: every link the band draws is a Markdown link `[label](url)` (no `Link` element). The one finder: each Markdown
 // element's link, as {key, label, href}, the label as written in the markdown (escapes included).
 export async function linksOf(ui: any): Promise<{ key: string | undefined; label: string; href: string }[]> {
   return (await ui.findAll({ type: 'Markdown' })).map((m: any) => {
@@ -1216,7 +1090,7 @@ export function answerPlanConnect(on: On, d: { world: { planId: number | null } 
 }
 
 // DX-4233: there is no polling timer any more, so a refresh a test used to wait 60 s of the fake clock for is asked for here: the
-// `/danx-plan` command forces one (it also opens the pane), and the load is let to finish.
+// `/danx-plan` command forces one, and the load is let to finish.
 export async function forceRefresh($: any, d: Dashboard) {
   await $.command.run({ command: 'danx-plan' })
   await d.clock.settle()
@@ -1236,15 +1110,3 @@ export function answerReportEvents(on: On) {
 
 // A drawn tree (`ui.drawn()`): every element in document order, an element's direct element children, the text one element shows (its
 // string children) and the texts of every Text beneath a node.
-export type Node = { type: string; props: Record<string, any>; children: any[] }
-export const isNode = (x: any): x is Node => x !== null && typeof x === 'object' && typeof x.type === 'string'
-export function flat(node: any, out: Node[] = []): Node[] {
-  if (!isNode(node)) return out
-  out.push(node)
-  for (const child of node.children ?? []) flat(child, out)
-  return out
-}
-export const shown = (n: Node) => (n.children ?? []).filter((c: any) => typeof c === 'string').join('')
-export const texts = (node: any) => flat(node).filter(n => n.type === 'Text').map(shown)
-export const elementChildren = (n: Node) => (n.children ?? []).filter(isNode)
-export const treeOf = async (pane: any): Promise<Node> => (await pane.drawn()) as Node

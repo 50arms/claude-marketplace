@@ -53,85 +53,6 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // EVERY card on the connected plan, any status (GET /api/plans/:id/cards, unscoped by board, closed cards included). Empty when not connected.
 export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: string[] } | { state: 'error'; message: string }
 
-// DX-4499: one sub-agent of a connected session, as GET /api/plan-sessions/:sessionId/subagents (DX-4498) answers it, in the
-// shape the pane draws a card from. `state` is the server's (running, or how it ended); the pane counts a running one's
-// runtime up from `startedAt` on its own clock and drops an ended one at `visibleUntil` (epoch ms, both).
-export type SubagentState = 'running' | 'done' | 'failed' | 'stopped'
-// DX-4508: the card a sub-agent works on. `title` is null when only the live child named the card and the pane has loaded
-// no card of that id: the id link is drawn alone.
-export type SubagentCard = {
-  id: string
-  title: string | null
-}
-export type SubagentRow = {
-  // `agent-<agent id>`: the key `parentId` of another row names
-  id: string
-  sessionId: string
-  parentId: string | null
-  // the label its spawning call gave it; null when it was given none
-  label: string | null
-  agentType: string | null
-  model: string | null
-  effort: string | null
-  state: SubagentState
-  startedAt: number
-  // null while it runs
-  finishedAt: number | null
-  // null while it runs
-  visibleUntil: number | null
-  tokensTotal: number
-  costUsd: number
-  toolCalls: number
-  // its latest tool call as the server words it (a tool name and at most a label the agent wrote); null before its first
-  activity: string | null
-  card: SubagentCard | null
-}
-
-// The pane's sub-agents: every row the live sessions of the plan answered, and one person-facing line per read that failed
-// (the plan view stays `ready` either way, as with `links` and `cardErrors`). `sessionsCapped`: the plan has as many live
-// sessions as one load reads, so there may be more than were read.
-export type SubagentsView = {
-  rows: SubagentRow[]
-  errors: string[]
-  sessionsCapped: boolean
-  // every session's sub-agents read answered 404: the dashboard has no such route yet (it predates DX-4498). Not an error line per
-  // session: the section says so once, quietly.
-  unavailable: boolean
-}
-
-// DX-4508: one sub-agent as the live child (`danx-dashboard-mcp subagents-live <main transcript>`) prints it, epoch ms.
-export type LiveSnapshot = {
-  // `agent-<agent id>`, the dashboard row's id
-  id: string
-  parentId: string | null
-  description: string | null
-  agentType: string | null
-  model: string | null
-  effort: string | null
-  startedAt: number
-  lastActivityAt: number
-  finishedAt: number | null
-  endStatus: 'completed' | 'failed' | 'stopped' | null
-  tokensTotal: number
-  costUsd: number
-  toolCallCount: number
-  currentActivity: string | null
-  cardId: string | null
-}
-
-// DX-4508: what the live child has reported for THIS session, laid over the dashboard rows when the pane draws.
-export type LiveSubagents = {
-  // the session the snapshots are of (`$.session.id()` when the child started); null before any child ran
-  sessionId: string | null
-  snapshots: Record<string, LiveSnapshot>
-  // `agent-<id>` -> `$.agent.list()`'s status, read at each start check and each line
-  statuses: Record<string, string>
-  // why the live numbers are not shown (the child could not start, exited, or printed a line it cannot read); null when they are
-  warning: string | null
-  // a failure stands until the next sub-agent start (never retried on a refresh)
-  failed: boolean
-}
-
 export type PlanView = {
   // `loading` is both the first load (nothing known yet) and a connect answered with its numbers still pending (DX-4635: `connected` and `refreshedAt` set).
   phase: 'loading' | 'ready' | 'error' | 'signed-out' | 'key-revoked'
@@ -158,8 +79,6 @@ export type PlanView = {
   // status count's: a card in progress with an open problem sits in needs-you).
   inProgress: InProgressRow[]
   inProgressTotal: number
-  // DX-4499: the sub-agents of the plan's live sessions, read in the same refresh as everything above.
-  subagents: SubagentsView
   // DX-4448: what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready` and says so in the pane, and replies are then drawn as written.
   links: CardLinks
@@ -209,12 +128,11 @@ export type LimitReadout = {
 export type PacingReadout = { limits: LimitReadout[]; worst: PacingLimitKey }
 export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number }
 // How the last read of the team's settings went. `pending`: none yet (session start), quiet. `silent`: no danx-dashboard MCP, no danxbot or no key
-// (DX-3421 / DX-4340: said nowhere but the band's `local`). `error`: danxbot answered and the answer was unusable; the pane names it.
+// (DX-3421 / DX-4340: said nowhere but the band's `local`). `error`: danxbot answered and the answer was unusable (the band says `local`).
 export type SettingsRead = { state: 'pending' | 'ok' | 'silent' } | { state: 'error'; message: string }
 export type PanelState = {
-  // the last settings read, and when; kept through a failed read so the panel can still show them, marked local
+  // the last settings read; kept through a failed read so the panel can still show them, marked local
   settings: TeamSettings | null
-  settingsAt: number | null
   settingsRead: SettingsRead
   // the account verdict as of the last refresh (null: none, or not trusted while the settings read is failing)
   verdict: PacingVerdict | null
@@ -257,8 +175,6 @@ declare module 'claude-code' {
     danxbot: {
       view: PlanView
       gate: RefreshGate
-      pick: string
-      switching: boolean
       // The band is hidden for the session (the footer button or /danx-plan brings it back). Its own atom: refresh
       // replaces `view` whole, so a flag inside it would be reset by every refresh.
       dismissed: boolean
@@ -270,13 +186,8 @@ declare module 'claude-code' {
       signInRequest: { url: string; code: string } | null
       // DX-4435: the model's undecided permission requests, oldest first.
       permissionRequests: PermissionRequest[]
-      // DX-4499: the clock (epoch ms) a running sub-agent's runtime counts up against: advanced once a second, only while one is
-      // shown, and used for nothing but drawing (no call is made on it).
-      tick: number
-      // DX-4508: the MAIN session's transcript path, as the classic events last carried it (`transcript_path`): the live child reads it.
+      // DX-4508: the MAIN session's transcript path, as the classic events last carried it (`transcript_path`): the plan event wait carries it.
       transcript: string | null
-      // DX-4508: the live child's reports for this session (see LiveSubagents).
-      live: LiveSubagents
       // DX-4336: the failure text of the last usage report to danxbot, null while reports are accepted (a repeat is toasted once).
       usageError: string | null
       // DX-4336: when the last API response arrived (epoch ms): the age of the usage figure. null until one has.

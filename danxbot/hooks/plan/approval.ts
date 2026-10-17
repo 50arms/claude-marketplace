@@ -39,7 +39,7 @@ export const permissionShownNote = (a: ApprovalRequest) =>
 // DX-4630: a sign-in request's toast: the link and code together, no browser involved (the person follows the link).
 export const signInToast = (a: ApprovalRequest) => `Approve this session: open ${a.url} and check that confirm code ${a.code} matches.`
 
-// The label of the band's and the pane's sign-in link, and the words beside a request's code.
+// The label of the band's sign-in link, and the words beside a request's code.
 export const APPROVE_SIGN_IN_LABEL = 'Approve sign-in ↗'
 export const codeLabel = (a: ApprovalRequest) => `code ${a.code}`
 

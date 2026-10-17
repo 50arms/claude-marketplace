@@ -1,4 +1,4 @@
-// DX-4233: a relay that cannot deliver says so: the pane's event line and ONE transcript line (the server's own words), never silence;
+// DX-4233: a relay that cannot deliver says so: the band's events warning and ONE transcript line (the server's own words), never silence;
 // it retries on one bounded backoff, and stops only when the server says it cannot go on. A malformed answer is a failure, not an
 // empty list.
 import { describe, expect } from 'claude-code/testing'
@@ -7,24 +7,19 @@ import { BACKOFF_MS } from '../hooks/relay/config'
 import { NO_URGENT_DETAIL, NO_URGENT_FIX, OLD_SERVER_FIX } from '../hooks/relay/text'
 import { test, SURFACES, SIGN_IN_HALT, answerPlanConnect, forceRefresh, dashboard, startSession } from './plan-kit'
 
-const PANE = {
-  component: 'Pane',
-  requestId: 'danx-plan',
-  props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
-} as any
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })
 const raw = (t: string, isError = false) => ({ value: { content: [{ type: 'text', text: t }], isError } })
 
 for (const surface of SURFACES) {
   describe(`relay failure on ${surface}`, () => {
-    test('a rejected call: the pane says retrying, the session is told once, the loop retries after the first backoff step', async ($, on) => {
+    test('a rejected call: the band says retrying, the session is told once, the loop retries after the first backoff step', async ($, on) => {
       const d = dashboard(on)
       for (let i = 0; i < 3; i++) d.relay.server.script.push(() => ({ deny: 'request timed out after 60000ms' }) as any)
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await text(pane)).toContain('relay retrying')
-      expect(await text(pane)).toContain('request timed out after 60000ms')
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await text(band)).toContain('relay retrying')
       expect(d.relay.told).toHaveLength(1)
       expect(d.relay.told[0]).toMatch(/^\[danxbot plan event\] events delayed: .*request timed out after 60000ms\. The relay keeps retrying on its own\.$/)
       await d.clock.advance(BACKOFF_MS[0])
@@ -55,12 +50,12 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       d.relay.server.script.push(() => ({ deny: 'boom' }) as any)
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       await d.clock.advance(BACKOFF_MS[0])
       // the retry's wait answers (an event arrives): streaming again
       d.relay.push({ cursor: 'c5', text: 'x' })
       await d.clock.settle()
-      expect(await text(pane)).not.toContain('relay retrying')
+      expect(await text(band)).not.toContain('relay retrying')
       // a failure after that is told afresh, even with the same words
       d.relay.server.script.push(() => ({ deny: 'boom' }) as any)
       d.relay.push({ cursor: 'c6', text: 'y' })
@@ -72,9 +67,8 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       d.relay.server.stopped = { reason: 'relay_failed', detail: 'the relay cannot go on', fix: 'Connect this session to a plan with plan_connect' }
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await text(pane)).toContain('relay stopped')
-      expect(await text(pane)).toContain('Connect this session to a plan with plan_connect')
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await text(band)).toContain('relay stopped')
       expect(d.relay.told).toEqual([
         '[danxbot plan event] events stopped: events are NOT reaching this session: the relay cannot go on. Fix: Connect this session to a plan with plan_connect.',
       ])
@@ -89,9 +83,8 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       d.relay.server.script.push(() => answer({ events: [{ cursor: 'c3', text: 'x', urgent: false }, { cursor: 'c4', text: 'y' }] }))
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await text(pane)).toContain('relay stopped')
-      expect(await text(pane)).toContain(NO_URGENT_FIX)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await text(band)).toContain('relay stopped')
       expect(d.relay.told).toEqual([
         `[danxbot plan event] events stopped: events are NOT reaching this session: ${NO_URGENT_DETAIL}. Fix: ${NO_URGENT_FIX}.`,
       ])
@@ -101,24 +94,22 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toHaveLength(1)
     })
 
-    // The pane reads the relay's state as the last run on ANY plan left it: after a move the new run's first write comes after async work,
-    // so the pane must not draw a state that belongs to another plan.
-    test("the pane draws the relay's retrying state only for the plan it belongs to", async ($, on) => {
+    // The band reads the relay's state as the last run on ANY plan left it: after a move the new run's first write comes after async work,
+    // so the band must not draw a state that belongs to another plan.
+    test("the band draws the relay's retrying state only for the plan it belongs to", async ($, on) => {
       const other = dashboard(on)
       other.seedRelay({ phase: 'retrying', planId: 24, detail: 'left over from plan 24' })
       await startSession($, other, surface)
-      const stale = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      const stale = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await text(stale)).not.toContain('relay retrying')
-      expect(await text(stale)).not.toContain('left over from plan 24')
     })
 
     test("the same retrying state on the connected plan is drawn", async ($, on) => {
       const d = dashboard(on)
       d.seedRelay({ phase: 'retrying', planId: 23, detail: 'this plan failed' })
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(await text(pane)).toContain('relay retrying')
-      expect(await text(pane)).toContain('this plan failed')
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await text(band)).toContain('relay retrying')
     })
 
     test('a halt is cleared by leaving the plan: the same plan connected again starts a relay of its own', async ($, on) => {
@@ -231,15 +222,15 @@ for (const surface of SURFACES) {
         const d = dashboard(on)
         d.relay.server.script.push(() => raw(body))
         await startSession($, d, surface)
-        const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-        expect(await text(pane)).toContain('relay retrying')
+        const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+        expect(await text(band)).toContain('relay retrying')
         expect(d.relay.told).toHaveLength(1)
         expect(d.relay.told[0]).toContain('plan_events_wait answered')
         expect(d.relay.delivered).toEqual([])
       })
     }
 
-    test('a session that lost its key is not told: the band and pane already say so, and the relay stops quietly', async ($, on) => {
+    test('a session that lost its key is not told: the band already says so, and the relay stops quietly', async ($, on) => {
       const d = dashboard(on)
       d.relay.server.script.push(() => raw(SIGN_IN_HALT, true))
       await startSession($, d, surface)

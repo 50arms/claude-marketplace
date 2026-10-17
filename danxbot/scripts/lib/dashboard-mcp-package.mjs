@@ -1,6 +1,6 @@
 // The ONE module that owns `@thehammer/danx-dashboard-mcp` for this plugin: which version runs (DX-4321) and installing it
 // (DX-3811, DX-4235). Its callers: the plugin's MCP server launcher (dashboard-mcp-server.mjs), which starts the server
-// from the recorded version and refreshes the record; subagents-live.mjs, which runs the recorded, installed version.
+// from the recorded version and refreshes the record.
 // This file carries NO version literal.
 //
 // WHICH VERSION. The npm registry's `latest` for the package, recorded in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`
@@ -50,7 +50,7 @@ export const RENAME_RETRY_ATTEMPTS = 8;
 export const RENAME_RETRY_BASE_MS = 25;
 export const RENAME_RETRYABLE_CODES = ["EPERM", "EBUSY", "EACCES"];
 /**
- * DX-4235: each process that runs an installed version (the server launcher, the live reader) leaves a lease file named by its
+ * DX-4235: each process that runs an installed version (the server launcher) leaves a lease file named by its
  * pid in `<version>/.leases/` while it runs, so a refresh in ANOTHER session never prunes a version a live session still runs.
  */
 const LEASES_DIR = ".leases";
@@ -145,13 +145,6 @@ export function recordedVersionOrNull(env = process.env) {
     );
   }
   return text;
-}
-
-/** The recorded version; throws, with the line saying nothing can run, when none is recorded. Sync, no network. */
-export function requireRecordedVersion(env = process.env) {
-  const version = recordedVersionOrNull(env);
-  if (version === null) throw new Error(noVersionLine("the dashboard MCP server has not recorded one yet"));
-  return version;
 }
 
 function sleepSync(ms) {

@@ -203,14 +203,11 @@ for (const surface of SURFACES) {
 
     test('R-2: the reads go through the session’s own server; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {
       const d = await started($, on)
-      // a running sub-agent with a transcript makes the live reader start: the recorder is seen to record a spawn, so "no CLI spawn" cannot pass vacuously
-      d.world.agents = [{ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build a1', status: 'running' }]
       await firstPrompt($, 'startup')
       await $.classic.SubagentStart({ ...START, transcript_path: '/work/main.jsonl' })
       await d.clock.settle()
       expect(d.contextReads).toContain('/api/reminders/event/session_start')
-      expect(d.readers).toHaveLength(1)
-      expect(d.readers.filter(r => /event-text|restart-notice/.test(r.argv.join(' ')))).toEqual([])
+      expect(d.spawns).toEqual([])
     })
   })
 }

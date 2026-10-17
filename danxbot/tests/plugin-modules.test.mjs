@@ -1,5 +1,5 @@
 // The shape of the danxbot plugin: every hook is a native function hook of one module (hooks/register.tsx), and scripts/ holds
-// only the MCP server launcher, the Plan pane's live sub-agent reader and the screenshot tool. The module's own behaviour is tested
+// only the MCP server launcher and the screenshot tool. The module's own behaviour is tested
 // by `claude plugin test danxbot` (tests/*.test.tsx); this file pins the manifest shape and that the engine's own validator accepts
 // the plugin.
 import { test } from "node:test";
@@ -40,7 +40,6 @@ test("DX-4235: scripts/ holds only the MCP server launcher, the live sub-agent r
     "lib/dashboard-mcp-package.mjs",
     "lib/page-errors.mjs",
     "lib/page-programs.mjs",
-    "subagents-live.mjs",
   ]);
 });
 

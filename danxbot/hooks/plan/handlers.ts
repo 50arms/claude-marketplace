@@ -1,4 +1,4 @@
-import type { ConnectedPlan, PlanRow } from '../../types'
+import type { ConnectedPlan } from '../../types'
 
 // What a drawing may do. The drawing files are pure (`$` cannot cross an import), so
 // register.tsx builds this from `$` and hands it in. Each returns its work's promise, which a
@@ -6,11 +6,6 @@ import type { ConnectedPlan, PlanRow } from '../../types'
 export type Handlers = {
   showPlan: () => Promise<unknown>
   dismissBand: () => Promise<unknown>
-  openPane: () => Promise<unknown>
-  connect: (plan: PlanRow) => Promise<unknown>
   disconnect: (plan: ConnectedPlan) => Promise<unknown>
   signIn: () => Promise<unknown>
-  toggleSwitch: () => Promise<unknown>
-  cancelSwitch: () => Promise<unknown>
-  pickPlan: (value: string) => Promise<unknown>
 }

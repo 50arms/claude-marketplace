@@ -5,11 +5,7 @@ import { SERVER, toolName } from '../hooks/plan/config'
 import { WAIT_MS } from '../hooks/relay/config'
 import { test, SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
 
-const PANE = {
-  component: 'Pane',
-  requestId: 'danx-plan',
-  props: { title: 'Plan', isFocused: false, bodyColumns: 100, placement: 'dock' },
-} as any
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const URL_A = 'https://danxbot.example/connect/aaaa'
 const required = JSON.stringify({ state: 'approval_required', approvalUrl: URL_A, confirmCode: 'NXGUF88G', expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the code.' })
 const pending = JSON.stringify({ state: 'approval_pending', approvalUrl: URL_A, confirmCode: 'NXGUF88G', expiresAt: 'x', instruction: 'Wait.' })
@@ -35,16 +31,6 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toEqual([{ plan_id: null, cursor: null, timeout_ms: WAIT_MS }, { plan_id: 23, cursor: null, timeout_ms: WAIT_MS }])
       // the calls (the no-plan one, then the plan's) reached the plugin's own server
       expect(d.calls.filter(c => c.tool === 'plan_events_wait' && c.server === SERVER)).toHaveLength(2)
-    })
-
-    test("on the pane's Connect", async ($, on) => {
-      const d = dashboard(on, { connected: false })
-      await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
-      expect(d.relay.calls.map(c => c.plan_id)).toEqual([null])
-      await pane.press({ key: 'connect' })
-      await d.clock.settle()
-      expect(d.relay.calls.map(c => c.plan_id)).toEqual([null, 23])
     })
 
     // DX-4884: a signed-in session on no plan still runs the relay, for its session records (pacing, auto-resume)
@@ -80,9 +66,9 @@ for (const surface of SURFACES) {
     test('after a leave: the plan wait is dropped, the session runs its own (plan_id null) and a record is delivered once', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
-      const pane = await $.ui.mount({ plugin: 'danxbot', surface, ...PANE })
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(d.relay.calls).toHaveLength(1)
-      await pane.press({ key: 'disconnect' })
+      await band.press({ key: 'disconnect' })
       await d.clock.settle()
       expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, null])
       d.relay.push({ cursor: 'c5', text: 'after the leave' })

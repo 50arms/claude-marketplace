@@ -17,7 +17,7 @@ export type RelayEvent = { cursor: string; text: string; urgent: boolean }
 export type WaitAnswer =
   | { kind: 'events'; events: RelayEvent[] }
   | { kind: 'stopped'; detail: string; fix: string }
-  // the session holds no dashboard key, or a person revoked it (the server's sign-in or revoked-key halt): the band and pane already say
+  // the session holds no dashboard key, or a person revoked it (the server's sign-in or revoked-key halt): the band already says
   // so (view phases); nothing more is told
   | { kind: 'signed-out' }
   // the session's danx-dashboard server answered that it has no such tool (an older release, or a repo's own pinned copy)

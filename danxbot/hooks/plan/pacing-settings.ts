@@ -38,7 +38,7 @@ export function parseTeamPacing(body: any): TeamSettings | { error: string } {
 export type SettingsOutcome = { settings: TeamSettings } | { read: Exclude<SettingsRead, { state: 'pending' | 'ok' }> }
 
 // One read. No danx-dashboard MCP server, no key (signed out, revoked) or no danxbot is `silent`: a session with no danxbot says nothing about
-// it (DX-3421, DX-4340). Anything else (a 500, a 403, an answer of the wrong shape) is a named `error` for the pane.
+// it (DX-3421, DX-4340). Anything else (a 500, a 403, an answer of the wrong shape) is a named `error`.
 export async function readTeamSettings(call: Call): Promise<SettingsOutcome> {
   let r
   try {
