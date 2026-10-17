@@ -99,11 +99,11 @@ export function eventsWarning(v: PlanView, relay: RelayState): string | null {
 }
 
 // DX-5232: the reason behind the events warning, for the one toast the transition into it draws: the relay's own detail when the relay
-// is the fault, else the server's next step for the listener. Null when the events are flowing.
+// is the fault, else the server's next step for the listener. Null when the events are flowing or no reason was given (no toast then).
 export function eventsReason(v: PlanView, relay: RelayState): string | null {
   const warning = eventsWarning(v, relay)
   if (warning === null) return null
   const relayFault = v.connected !== null && relay.planId === v.connected.id && (relay.phase === 'retrying' || relay.phase === 'stopped')
   const detail = relayFault ? relay.detail : (v.listener?.nextStep ?? null)
-  return detail ? `${warning}. ${detail}` : warning
+  return detail ? `${warning}. ${detail}` : null
 }

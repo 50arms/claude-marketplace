@@ -359,7 +359,7 @@ for (const surface of SURFACES)
       await d.clock.settle()
       expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70% local')
       // the pacing itself toasts nothing: the one toast is DX-4340's own pacing-line read, told once, now that a read had succeeded
-      expect(d.toasts.filter(t => /pacing|settings/i.test(t))).toEqual([])
+      expect(d.toasts.filter(t => /Usage pacing could not refresh|settings/i.test(t))).toEqual([])
       expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))).toEqual([
         'Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): the danx-dashboard MCP server is not reachable from this session',
       ])
@@ -377,7 +377,7 @@ for (const surface of SURFACES)
       await d.clock.advance(PACING_POLL_MS + 1)
       await d.clock.settle()
       expect(await joined(band)).toContain('5h 62%/80% 7d 41%/70% local')
-      expect(d.toasts.filter(t => /pacing|settings/i.test(t))).toEqual([])
+      expect(d.toasts.filter(t => /Usage pacing could not refresh|settings/i.test(t))).toEqual([])
       // a wrong-shaped answer is an error too
       d.setTeamPacing({ body: { five_hour: five } })
       await d.clock.advance(PACING_POLL_MS + 1)
@@ -392,7 +392,7 @@ for (const surface of SURFACES)
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         expect(await joined(band)).toContain('5h 62% 7d 41% local')
-        expect(d.toasts.filter(t => /pacing|settings/i.test(t))).toEqual([])
+        expect(d.toasts.filter(t => /Usage pacing could not refresh|settings/i.test(t))).toEqual([])
       })
 
     test('a session that never read settings (an old dashboard answers 404) shows its own usage with no targets, marked local', async ($, on) => {

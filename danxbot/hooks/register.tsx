@@ -228,6 +228,8 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   await update($, view, cur => (loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }))
   // DX-5232: the card links' error is told once, on the load that makes the links unavailable (the replies are drawn as written)
   if (loaded.links?.state === 'error' && before.links?.state !== 'error') $.ui.toast(`Card links unavailable: ${loaded.links.message}`.slice(0, TOAST_ERROR_MAX))
+  // DX-5232: a write path, never the draw: the events warning's reason is told on the change into it
+  await noteEventsWarning($, await read($, view), await read($, relay))
   // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
 }
@@ -1102,6 +1104,8 @@ async function recheckTab($: any): Promise<void> {
 async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detail: string | null): Promise<boolean> {
   if (run.dead) return false
   await update($, relay, cur => (cur.phase === phase && cur.detail === detail && cur.planId === run.planId ? cur : { phase, planId: run.planId, detail }))
+  // DX-5232: the events warning follows the relay's state (a write path, never the draw)
+  await noteEventsWarning($, await read($, view), await read($, relay))
   return true
 }
 
@@ -1811,7 +1815,6 @@ async function noteEventsWarning($: any, v: PlanView, relayState: RelayState): P
 async function drawBand($: any, e: any, next: any) {
   if (e.props.hasSurvey) return next(e)
   const v = await read($, view)
-  await noteEventsWarning($, v, await read($, relay))
   // a dismissed band draws nothing, whatever the connection (the footer button brings it back)
   if (await read($, dismissed)) return next(e)
   const permissions = await read($, permissionRequests)

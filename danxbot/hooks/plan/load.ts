@@ -56,11 +56,9 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
   }
 }
 
-// DX-5232: the plan list is read for its answer's `dashboard_url` and `session` (and sessionListenerAttached) only: one row is enough.
-const PLAN_LIST_QUERY = { limit: 1 }
-
 async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
-  const list = await call('GET', '/api/plans', { query: PLAN_LIST_QUERY })
+  // DX-5232: only the answer's `dashboard_url`, `session` and `sessionListenerAttached` are read; the plan rows are not
+  const list = await call('GET', '/api/plans')
   if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true }
 
   // DX-4317: the origin every link is built on. Without it no link can be right, so the load is an error.

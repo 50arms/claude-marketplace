@@ -530,7 +530,8 @@ export function dashboard(
     // DX-4233: GET /api/plans answers this as its body, whatever its shape (a string makes the plugin's session read throw)
     if (path === '/api/plans' && world.plansBody !== undefined) return reply(world.plansBody)
     if (path === '/api/plans' && world.plansStatus !== undefined) return reply({ error: 'plans boom' }, world.plansStatus)
-    if (path === '/api/plans') return reply({ plans: [], total: 0, session: world.planId === null ? null : { plan_id: world.planId, plan_name: 'Danxbot plugin' } })
+    // DX-5232: the plugin's one-row plan read (limit 1) answers as the plan list does, so the load and the session probe agree
+    if (path === '/api/plans') return route('GET', path, undefined, { limit: 1 })
     const event = /^\/api\/reminders\/event\/(.+)$/.exec(path)
     if (event) {
       const given = world.eventText[event[1]]

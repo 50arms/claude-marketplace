@@ -24,7 +24,7 @@ for (const surface of SURFACES) {
       // DX-4415: an in-progress card is listed by its id from the cards list alone: no read of its own
       const reads = issueReads(d)
       expect(reads.map((a: any) => a.path).sort()).toEqual(['/api/issues/DX-1', '/api/issues/DX-2', '/api/issues/DX-3'])
-      for (const a of reads) expect(a.query).toEqual({ fields: { problems: true } })
+      for (const a of reads) expect(a.query).toEqual({ fields: { open_problem_count: true } })
       expect(await problemBadgeOf(band)).toBe('⚠ 52')
       expect(await text(band)).not.toContain('Disconnected')
     })

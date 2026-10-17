@@ -178,6 +178,8 @@ declare module 'claude-code' {
       pacingState: PacingSnapshot
       // DX-4233: the event relay's state (see RelayState): the band's events warning says it when it is not streaming.
       relay: RelayState
+      // DX-5232: the events warning last toasted (null: none), so its reason is told once per transition
+      eventsWarned: string | null
       // DX-4721: the main loop's turn as the delivery of an urgent event needs it (see TurnState).
       turn: TurnState
       // DX-4234: the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
