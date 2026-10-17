@@ -3,7 +3,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { linkCardIds } from '../hooks/plan/card-links'
-import { test, DASHBOARD_URL, SURFACES, dashboard, footerText, mountIndicator, startSession } from './plan-kit'
+import { test, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
 
 const plan = { id: 23, ref: 'PLAN-23', name: 'p', status: 'building', dashboardUrl: DASHBOARD_URL } as any
 const PREFIXES = ['DX', 'SG']
@@ -124,21 +124,29 @@ for (const surface of SURFACES) {
         await startSession($, d, surface)
         expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
         expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
+        expect(d.toasts.filter(t => t.startsWith('Card links unavailable: '))).toHaveLength(1)
       })
     }
 
-    // DX-5232: the open-problem count is summed from the same every-card read, so one that cannot be read whole fails the load
+    // DX-5232: the open-problem count is summed from the same every-card read; one that cannot be read whole leaves the plan ready,
+    // the band with no count (never a guessed 0), and the reason told once
     for (const [name, options] of [
       ['the plan cards call failing', { planCardsFail: true }],
       ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }],
       ['the plan cards answer with no list', { planCardsShape: 'noList' }],
       ['the plan cards answer with no total', { planCardsShape: 'noTotal' }],
     ] as const) {
-      test(`${name}: the load is an error, never a lower bound`, async ($, on) => {
+      test(`${name}: the plan stays ready, no count is shown, the reason is told once`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
+        await forceRefresh($, d)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
-        expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')).toContain('Disconnected')
+        const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+        expect(all).not.toContain('Disconnected')
+        expect(all).toContain('PLAN-23')
+        expect(await problemBadgeOf(band)).toBeUndefined()
+        expect(d.toasts.filter(t => t.startsWith('Open problem count unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)
+        expect(d.toasts.filter(t => t.startsWith('Card links unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)
       })
     }
   })

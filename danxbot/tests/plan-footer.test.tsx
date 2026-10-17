@@ -65,14 +65,16 @@ for (const surface of SURFACES) {
       ['not connected', { connected: false }],
       ['an error view', { listFails: true }],
     ] as const) {
-      test(`a press from ${name} clears dismissed; it tells the model nothing and toasts nothing`, async ($, on) => {
+      test(`a press from ${name} clears dismissed; it tells the model nothing and toasts nothing of its own`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
+        // DX-5232: a failed load toasts its reason on the load itself; the press adds none
+        const toastsBefore = [...d.toasts]
         const footer = await mountIndicator($, surface)
         await footer.press({ key: 'footer-plan' })
         await d.clock.settle()
         expect(d.stateWrites.filter(w => w.key === 'dismissed').map(w => w.value)).toEqual([false])
-        expect(d.toasts).toEqual([])
+        expect(d.toasts).toEqual(toastsBefore)
         expect(d.relay.told).toEqual([])
         expect(d.writes()).toEqual([])
       })

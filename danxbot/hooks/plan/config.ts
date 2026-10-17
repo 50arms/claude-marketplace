@@ -96,6 +96,7 @@ export const EMPTY: PlanView = {
   statusBreakdown: null,
   inProgress: [],
   openProblems: 0,
+  openProblemsError: null,
   // DX-4448: nothing to link until a load reads the boards and the plan's cards
   links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,

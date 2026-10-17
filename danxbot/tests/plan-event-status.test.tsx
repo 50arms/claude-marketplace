@@ -118,5 +118,22 @@ for (const surface of SURFACES) {
       await Promise.all([forceRefresh($, d), forceRefresh($, d)])
       expect(d.toasts.filter(t => t.includes('events: ')).length).toBeLessThanOrEqual(1)
     })
+
+    // DX-5232: a relay that stops (a write path of the relay) and a refresh (a write path of the load) both reach the events warning at once
+    test('the relay stopping while refreshes run toasts the warning once, with the relay detail', async ($, on) => {
+      const d = dashboard(on)
+      d.relay.server.stopped = { reason: 'relay_failed', detail: 'the relay cannot go on', fix: 'Connect this session to a plan with plan_connect' }
+      const started = startSession($, d, surface)
+      await Promise.all([started, forceRefresh($, d), forceRefresh($, d)])
+      await d.clock.settle()
+      expect(d.toasts.filter(t => t.startsWith('events: relay stopped'))).toEqual(['events: relay stopped. Connect this session to a plan with plan_connect'])
+    })
+
+    test('a failed load toasts its reason once, on the change into the error', async ($, on) => {
+      const d = dashboard(on, { listFails: true })
+      await startSession($, d, surface)
+      await forceRefresh($, d)
+      expect(d.toasts.filter(t => t.startsWith('Plan load failed: '))).toHaveLength(1)
+    })
   })
 }

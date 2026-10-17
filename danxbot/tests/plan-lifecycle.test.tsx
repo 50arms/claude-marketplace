@@ -71,15 +71,12 @@ describe('the MCP server connects after session start', () => {
   test('the retries are bounded: one more load per wait, then the view settles on the error', async ($, on) => {
     const d = dashboard(on, { mcp: 'down' })
     await startSession($, d, 'desktop')
-    const apiCalls = () => d.calls.filter(c => c.tool === 'danxbot_api' && c.server === SERVER).length
-    // DX-5232: the relay's session probe and the load are both plan reads, and each wait retries both
-    const started = apiCalls()
     // each wait is advanced on its own, so no poll tick (the usage pacing's) can land inside the sequence
     for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
-    const settled = apiCalls()
-    expect(settled).toBeGreaterThan(started + NOT_CONNECTED_RETRY_MS.length)
-    // the relay's own start retry (a probe, not the view's load) goes on beyond these waits, so only the view's settling is asserted
+    // DX-5232: the plan read is one path, so the relay's own probe retries are counted by apiCalls; the view's loads are counted apart (one gate claim each)
+    expect(d.viewLoads()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
     await d.clock.advance(30_000)
+    expect(d.viewLoads()).toBe(1 + NOT_CONNECTED_RETRY_MS.length)
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     expect(await text(band)).toContain('Disconnected')
   })
@@ -87,8 +84,9 @@ describe('the MCP server connects after session start', () => {
   test('a first load that fails with any other error (a refusal, a 500) is not retried at session start', async ($, on) => {
     const d = dashboard(on, { listFails: true })
     await startSession($, d, 'desktop')
+    expect(d.viewLoads()).toBe(1)
     for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
-    // DX-5232: the plan read is one path now, so the relay's own probe retries are counted with the load: what stays is the view's answer
+    expect(d.viewLoads()).toBe(1)
     expect(await text(await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND }))).toContain('Disconnected')
   })
 
@@ -103,7 +101,7 @@ describe('the MCP server connects after session start', () => {
 describe('what one load says about what it did not read', () => {
   for (const surface of ['terminal', 'desktop'] as const) {
     test(`a response with no total is an error, never a complete list (${surface})`, async ($, on) => {
-      const d = dashboard(on, { planCardsShape: 'noTotal' })
+      const d = dashboard(on, { noInProgressTotal: true })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await text(band)).toContain('Danxbot: Disconnected')

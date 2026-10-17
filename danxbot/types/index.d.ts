@@ -1,10 +1,10 @@
-// The plan this session is bound to, read from the same response as the plan list (session.plan_id
-// and session.plan_name), so any plan labels correctly whatever the list holds.
+// The plan this session is bound to, read from the session in the `GET /api/plans` answer (session.plan_id
+// and session.plan_name); that read asks for one plan row only, so the label never depends on a list.
 export type ConnectedPlan = {
   id: number
   ref: string
   name: string
-  // The dashboard's public origin (`dashboard_url` on GET /api/plans, e.g. `https://host` or
+  // The dashboard's public origin (`dashboard_url` on the GET /api/plans answer, e.g. `https://host` or
   // `http://localhost:5555`), with no path: every link to the plan, a card or a problem starts with it.
   dashboardUrl: string
 }
@@ -52,9 +52,11 @@ export type PlanView = {
   statusBreakdown: StatusBreakdown | null
   // The in-progress bucket's rows (a card in progress with an open problem sits in needs-you, not here).
   inProgress: InProgressRow[]
-  // DX-5232: the open problems on the connected plan's needs-you cards that this view read (the sum of each card's
+  // DX-5232: the open problems on the connected plan's cards (the sum of each card's
   // `openProblemCount` on the every-card read); a count, never the problems themselves.
-  openProblems: number
+  // null when the every-card read could not give a count (the band then shows none); `openProblemsError` says why.
+  openProblems: number | null
+  openProblemsError: string | null
   // DX-4448: what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready`, shows one toast, and replies are then drawn as written.
   links: CardLinks

@@ -5,7 +5,7 @@ import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME
 // '' for none (the button is then not drawn). The count is a button, not label text: see band.tsx.
 export function problemBadge(v: PlanView): string {
   const n = v.openProblems
-  return n === 0 ? '' : `${PROBLEM_GLYPH} ${n}`
+  return n === null || n === 0 ? '' : `${PROBLEM_GLYPH} ${n}`
 }
 
 // `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.
@@ -98,7 +98,8 @@ export function eventsWarning(v: PlanView, relay: RelayState): string | null {
 export function eventsReason(v: PlanView, relay: RelayState): string | null {
   const warning = eventsWarning(v, relay)
   if (warning === null || v.connected === null) return null
-  const relayOwn = relay.planId === v.connected.id
-  const detail = relayOwn && (relay.phase === 'retrying' || relay.phase === 'stopped') ? relay.detail : relayOwn && relay.phase !== 'off' ? (v.listener?.nextStep ?? null) : null
+  if (relay.planId !== v.connected.id) return null
+  if (relay.phase === 'off') return null
+  const detail = relay.phase === 'retrying' || relay.phase === 'stopped' ? relay.detail : (v.listener?.nextStep ?? null)
   return detail ? `${warning}. ${detail}` : null
 }

@@ -225,14 +225,31 @@ async function loadView($: any) {
 // DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one) for Sign in to ask
 // for again; a loaded view knows its own.
 async function applyLoaded($: any, loaded: any): Promise<void> {
-  const before = await read($, view)
-  await update($, view, cur => (loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }))
-  // DX-5232: the card links' error is told once, on the load that makes the links unavailable (the replies are drawn as written)
-  if (loaded.links?.state === 'error' && before.links?.state !== 'error') $.ui.toast(`Card links unavailable: ${loaded.links.message}`.slice(0, TOAST_ERROR_MAX))
+  // DX-5232: each failure is told once, on the load that makes it appear; the change is decided inside the update, so overlapping loads toast once
+  let told: string[] = []
+  await update($, view, cur => {
+    told = []
+    if (loaded.phase === 'error' && cur.phase !== 'error' && !loaded.serverNotConnected) told.push(`Plan load failed: ${loaded.error}`)
+    if (loaded.openProblemsError && cur.openProblemsError !== loaded.openProblemsError) told.push(`Open problem count unavailable: ${loaded.openProblemsError}`)
+    // the card links' error: the replies are drawn as written
+    if (loaded.links?.state === 'error' && cur.links?.state !== 'error') told.push(`Card links unavailable: ${loaded.links.message}`)
+    return loaded.phase === 'ready' ? loaded : { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }
+  })
+  for (const t of told) $.ui.toast(t.slice(0, TOAST_ERROR_MAX))
   // DX-5232: a write path, never the draw: the events warning's reason is told on the change into it
-  await noteEventsWarning($, await read($, view), await read($, relay))
+  await noteEventsWarning($)
   // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
+}
+
+// DX-5232: a load that failed outside the load itself (its deadline, a throw): the view goes to the error phase, told once on the change into it.
+async function failView($: any, error: string): Promise<void> {
+  let first = false
+  await update($, view, cur => {
+    first = cur.phase !== 'error'
+    return { ...cur, phase: 'error', error }
+  })
+  if (first) $.ui.toast(`Plan load failed: ${error}`.slice(0, TOAST_ERROR_MAX))
 }
 
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked
@@ -264,12 +281,12 @@ async function refresh($: any, force = false): Promise<void> {
         const load = loadView($)
         let v = await withinDeadline($, LOAD_DEADLINE_MS, load, () => null)
         if (v === null) {
-          await update($, view, cur => ({ ...cur, phase: 'error', error: `the plan did not load within ${LOAD_DEADLINE_MS / 1000}s` }))
+          await failView($, `the plan did not load within ${LOAD_DEADLINE_MS / 1000}s`)
           v = await withinDeadline($, LOAD_ORPHAN_WAIT_MS, load, () => null)
         }
         if (v !== null) await applyLoaded($, v)
       } catch (err: any) {
-        await update($, view, cur => ({ ...cur, phase: 'error', error: String(err?.message ?? err) }))
+        await failView($, String(err?.message ?? err))
       }
       await settlePermissionRequests($)
       await update($, gate, cur => {
@@ -1106,7 +1123,7 @@ async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detai
   if (run.dead) return false
   await update($, relay, cur => (cur.phase === phase && cur.detail === detail && cur.planId === run.planId ? cur : { phase, planId: run.planId, detail }))
   // DX-5232: the events warning follows the relay's state (a write path, never the draw)
-  await noteEventsWarning($, await read($, view), await read($, relay))
+  await noteEventsWarning($)
   return true
 }
 
@@ -1802,17 +1819,24 @@ async function onTitle($: any, e: any, next: any) {
 }
 
 // DX-5232: the events warning's reason, toasted once on the transition into the warning (a redraw that shows the same warning says nothing).
-async function noteEventsWarning($: any, v: PlanView, relayState: RelayState): Promise<void> {
-  const warning = eventsWarning(v, relayState)
-  // decided inside the update (like the gate atom), so two overlapping calls toast once
-  let changed = false
-  await update($, eventsWarned, cur => {
-    changed = cur !== warning
-    return warning
-  })
-  if (!changed) return
-  const reason = eventsReason(v, relayState)
-  if (reason !== null) $.ui.toast(reason.slice(0, TOAST_ERROR_MAX))
+// The warning is computed from the view and relay as they are NOW and stored atomically; the update cannot read those two atoms itself, so after
+// it the state is read again and, if either moved meanwhile (an older snapshot must not leave a newer one's warning overwritten), it is settled again.
+async function noteEventsWarning($: any): Promise<void> {
+  for (let settle = 0; settle < 4; settle++) {
+    const v: PlanView = await read($, view)
+    const relayState: RelayState = await read($, relay)
+    const warning = eventsWarning(v, relayState)
+    let changed = false
+    await update($, eventsWarned, cur => {
+      changed = cur !== warning
+      return warning
+    })
+    if (changed) {
+      const reason = eventsReason(v, relayState)
+      if (reason !== null) $.ui.toast(reason.slice(0, TOAST_ERROR_MAX))
+    }
+    if (eventsWarning(await read($, view), await read($, relay)) === warning) return
+  }
 }
 
 async function drawBand($: any, e: any, next: any) {

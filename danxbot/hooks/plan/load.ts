@@ -103,11 +103,9 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, listener, statusBreakdown: breakdown, links: readLinks(boards, allCards, connectedId, planR.body.card_count) }
+  const read = readAllCards(allCards, connectedId)
+  const base = { dashboardUrl, connected, listener, statusBreakdown: breakdown, links: readLinks(boards, read, planR.body.card_count) }
 
-  // DX-5232: the open problems are the sum of each card's `openProblemCount` on the every-card read, which must be complete to be a count.
-  const counted = countOpenProblems(allCards, connectedId)
-  if (typeof counted === 'string') return { ...EMPTY, ...base, phase: 'error', error: counted }
   // The in-progress bucket: the same completeness rule.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
   if (typeof inProg.body.total !== 'number') {
@@ -115,29 +113,40 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
   const ipRows: any[] = inProg.body.cards ?? []
   const inProgress: InProgressRow[] = ipRows.map(row => ({ id: row.id, title: row.title }))
+  // DX-5232: the open problems are the sum of each card's `openProblemCount` on the every-card read. A read that cannot give that count leaves the
+  // view ready (the plan itself was read) with the count unknown (null, never a guessed 0) and the reason in `openProblemsError`.
+  const counted = countOpenProblems(read)
   return {
     ...EMPTY,
     ...base,
     phase: 'ready',
     error: null,
-    openProblems: counted,
+    openProblems: typeof counted === 'number' ? counted : null,
+    openProblemsError: typeof counted === 'string' ? counted : null,
     inProgress,
     refreshedAt,
   }
 }
 
-// DX-5232: the open problems on the plan's cards: the sum of `openProblemCount` over the every-card read, or the one reason it cannot
-// be a count (a failed, partial or malformed read is an error, never a lower bound).
-function countOpenProblems(allCards: Api, planId: number): number | string {
+type AllCards = { cards: any[]; route: string } | { error: string }
+
+// DX-5232: the plan's every-card read, whole or the one reason it is not: the one home of the checks that make it a complete list.
+function readAllCards(allCards: Api, planId: number): AllCards {
   const route = `GET /api/plans/${planId}/cards (all)`
-  if (!allCards.ok) return `${route} ${errText(allCards)}`
+  if (!allCards.ok) return { error: `${route} ${errText(allCards)}` }
   const cards = allCards.body?.cards
-  if (!Array.isArray(cards)) return `${route} answered no list of cards: cannot count the open problems`
-  if (typeof allCards.body.total !== 'number') return `${route} answered no total: cannot tell whether the card list is complete`
-  if (allCards.body.total !== cards.length) return `${route} answered ${cards.length} of ${allCards.body.total} cards: cannot count the open problems`
+  if (!Array.isArray(cards)) return { error: `${route} answered no list of cards` }
+  if (typeof allCards.body.total !== 'number') return { error: `${route} answered no total` }
+  if (allCards.body.total !== cards.length) return { error: `${route} answered ${cards.length} of ${allCards.body.total} cards` }
+  return { cards, route }
+}
+
+// The sum of `openProblemCount` over a whole every-card read, or the reason it cannot be a count (never a lower bound).
+function countOpenProblems(read: AllCards): number | string {
+  if ('error' in read) return `${read.error}: cannot count the open problems`
   let sum = 0
-  for (const c of cards) {
-    if (typeof c?.openProblemCount !== 'number') return `${route} answered a card with no openProblemCount: cannot count the open problems`
+  for (const c of read.cards) {
+    if (typeof c?.openProblemCount !== 'number') return `${read.route} answered a card with no openProblemCount: cannot count the open problems`
     sum += c.openProblemCount
   }
   return sum
@@ -145,7 +154,7 @@ function countOpenProblems(allCards: Api, planId: number): number | string {
 
 // DX-4448: the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays
 // `ready` (the plan itself was read), the view says why replies are not linked, and replies are drawn as written.
-function readLinks(boards: Api, allCards: Api, planId: number, planCardCount: unknown): CardLinks {
+function readLinks(boards: Api, read: AllCards, planCardCount: unknown): CardLinks {
   const error = (message: string): CardLinks => ({ state: 'error', message })
   if (!boards.ok) return error(`GET /api/boards ${errText(boards)}`)
   const list = boards.body?.boards
@@ -154,14 +163,8 @@ function readLinks(boards: Api, allCards: Api, planId: number, planCardCount: un
   if (!prefixes.every((p): p is string => typeof p === 'string' && PREFIX_PATTERN.test(p))) {
     return error('GET /api/boards answered a board with no issue_prefix of capital letters')
   }
-  const route = `GET /api/plans/${planId}/cards (all)`
-  if (!allCards.ok) return error(`${route} ${errText(allCards)}`)
-  const cards = allCards.body?.cards
-  if (!Array.isArray(cards)) return error(`${route} answered no list of cards`)
-  if (typeof allCards.body.total !== 'number') return error(`${route} answered no total`)
-  if (allCards.body.total !== cards.length) {
-    return error(`${route} answered ${cards.length} of ${allCards.body.total} cards: cannot tell which ids are the plan's`)
-  }
+  if ('error' in read) return error(`${read.error}: cannot tell which ids are the plan's`)
+  const { cards, route } = read
   // the plan's own count (every board's cards) must agree, so a board-scoped or partial answer is an error, never a smaller set
   if (planCardCount !== cards.length) return error(`${route} answered ${cards.length} cards but the plan has ${String(planCardCount)}`)
   if (!cards.every(c => typeof c?.id === 'string')) return error(`${route} answered a card with no id`)
