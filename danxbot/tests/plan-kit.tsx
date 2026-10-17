@@ -237,6 +237,8 @@ export function dashboard(
     accountUuid?: string
     // DX-4806: the process's CLAUDE_CODE_ENTRYPOINT ('claude-desktop' for the desktop app, 'cli' for a terminal); none by default
     entrypoint?: string
+    // DX-5217: CLAUDE_CODE_AUTO_COMPACT_WINDOW as the session's process starts with it (an older plugin version set it to the floor)
+    autoCompactWindow?: string
     // ... what the usage route answers a report with: accepted (default), the dashboard's refusal of a session on no plan (409), a server
     // error (500) or an answer that names no usable cadence
     usageReply?: 'ok' | 'notConnected' | 'boom' | 'noCadence'
@@ -969,8 +971,21 @@ export function dashboard(
     world.files[e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')] = e.text
     return { value: undefined } as any
   })
+  // DX-5217: the process environment is live: a set changes what the next get answers, as in the engine (an undefined value unsets)
+  const liveEnv: Record<string, string> = {
+    HOME: HOME_DIR,
+    ...(options.entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: options.entrypoint }),
+    ...(options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid }),
+    ...(options.autoCompactWindow === undefined ? {} : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: options.autoCompactWindow }),
+  }
   const envSets: { name: string; value: string | undefined }[] = []
-  on('env.set', (_$: any, e: any) => (envSets.push({ name: e.name, value: e.value }), { value: undefined }) as any)
+  on('env.set', (_$: any, e: any) => {
+    envSets.push({ name: e.name, value: e.value })
+    if (e.value === undefined) delete liveEnv[e.name]
+    else liveEnv[e.name] = e.value
+    return { value: undefined } as any
+  })
+  on('env.get', (_$: any, e: any) => ({ value: liveEnv[e.name] }) as any)
   on('session.cwd', () => ({ value: '/work/repo' }) as any)
   on('process.run', (_$: any, e: any) => ({ value: { exitCode: world.gitStatus.exitCode, stdout: world.gitStatus.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as any)
   on('session.id', () => ({ value: world.sessionId }) as any)
@@ -1026,7 +1041,6 @@ export function dashboard(
   })
   // DX-4336: what the harness knows of the account's windows
   on('session.usage', () => (options.usageReadFails === undefined ? { value: { startedAt: 0, context: world.context, rateLimits: world.rateLimits } } : { deny: options.usageReadFails }) as any)
-  mock.env(on, { HOME: HOME_DIR, ...(options.entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: options.entrypoint }), ...(options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid }) })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text)
     if (e.timeoutMs !== undefined) toastTimeouts.push(e.timeoutMs)

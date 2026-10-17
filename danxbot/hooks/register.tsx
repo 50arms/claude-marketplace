@@ -2382,6 +2382,10 @@ async function syncCompactionProposal($: any): Promise<void> {
     } else compactionFaultTold = null
     const decision = arming(file, (await contextReading($)).window)
     const armed = await read($, compactionArmed)
+    // DX-5217: an older plugin version armed CLAUDE_CODE_AUTO_COMPACT_WINDOW, which stays in a running process (and its meter) after a plugin reload. While this plugin holds
+    // or takes back the handshake, that variable must not be set; clearing it restores the meter's full window at once (verified, Claude Code 2.1.299). The literal name is
+    // kept so the engine lists it as a write of this module.
+    if ((decision.kind === 'set' || armed !== null) && (await $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')) !== undefined) await $.env.set('CLAUDE_CODE_AUTO_COMPACT_WINDOW')
     if (decision.kind === 'set' && decision.percent !== armed) {
       await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', String(decision.percent))
       await update($, compactionArmed, () => decision.percent)
