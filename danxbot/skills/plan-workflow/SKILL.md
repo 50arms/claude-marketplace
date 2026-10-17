@@ -103,7 +103,8 @@ From the dashboard:
   you are doing now whether compacting is worth it. If yes, load `danxbot:prepare-for-compaction`,
   run it, then call `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
   carry on and answer nothing; it comes again at the next +step of context. Nothing compacts until
-  you call ready: the compaction happens once, pauses you for about two minutes, and is followed by
+  you call ready; then end your turn, and the plugin starts the compaction when the turn ends (the
+  ready lasts about ten minutes). It happens once, pauses you for about two minutes, and is followed by
   a briefing of your plan, cards and unpushed work to resume from. Ready ends a pause you are in.
   `409 compaction_not_requested` → you were not asked (or already answered): keep working.
 - `Your pause ended (…)` (and `Held while you were paused, continued: …` after it) → the

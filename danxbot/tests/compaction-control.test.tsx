@@ -390,6 +390,60 @@ for (const surface of SURFACES) {
       expect(d.envSets).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
     })
 
+    // DX-5231: DX-5222 arms the process-wide percent for a sub-agent, which outlives main turns: a later turn must not wipe it
+    test('a leftover variable is cleared once per process: a value set after the first clear is never touched', async ($, on) => {
+      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      expect(d.envSets).toHaveLength(2)
+      d.setEnv('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', '30')
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      await $.turn.start(START)
+      expect(d.envSets).toEqual([
+        { name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined },
+        { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined },
+      ])
+      expect(d.env('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')).toBe('30')
+    })
+
+    test("a person's own /compact answers a waiting ready: the plugin runs no second one at the turn's end", async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = READY('ready-1')
+      await $.turn.start(START)
+      expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toEqual([])
+      expect(d.stored.get(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)).toMatchObject({ releaseId: 'ready-1' })
+    })
+
+    test('the compaction the plugin starts itself reaches PreCompact as manual without a second run', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = READY('ready-1')
+      await $.turn.complete(TURN)
+      expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toHaveLength(1)
+    })
+
+    // DX-5231: the relay writes the file after the agent's call returned, so a ready can land once the turn has ended; no turn.complete follows an idle session
+    test('a ready that lands while no turn is running starts the compaction at the next idle check, and never while a turn runs', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      d.world.files[CONTROL_FILE] = READY('ready-1', CLOCK_START + 120_000)
+      await d.clock.advance(5_000)
+      expect(compactRuns(d)).toHaveLength(1)
+      d.world.files[CONTROL_FILE] = READY('ready-2', CLOCK_START + 120_000)
+      await $.turn.start(START)
+      await d.clock.advance(10_000)
+      expect(compactRuns(d)).toHaveLength(1)
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toHaveLength(2)
+    })
+
     test('a session with no control file keeps a variable it did not set', async ($, on) => {
       const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })
       await $.turn.start(START)

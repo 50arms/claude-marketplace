@@ -144,6 +144,8 @@ const idleSince = atom({ plugin: 'danxbot', key: 'idleSince' } as const, null as
 const olderDashboardTold = atom({ plugin: 'danxbot', key: 'olderDashboardTold' } as const, false)
 // DX-5093: the person was told once that the Browser pane is not reachable from the plugin, so the plan tab is not kept open (a reload keeps it).
 const browserMissingTold = atom({ plugin: 'danxbot', key: 'browserMissingTold' } as const, false)
+// DX-5231: the leftover compaction-trigger variables an older plugin version armed were cleared in this process. $.state because the variables live in the process: a module reload keeps both.
+const leftoverArmingCleared = atom({ plugin: 'danxbot', key: 'leftoverArmingCleared' } as const, false)
 // DX-4235: the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
 
@@ -170,6 +172,8 @@ let relayHalted: { planId: number | null } | null = null
 let pacingTicker: { cancel: () => void } | null = null
 // DX-4336: the usage report's timer, one per session.
 let usageTicker: { cancel: () => void } | null = null
+// DX-5231: the idle check for an agent's ready that lands while no main turn is running (see idleCompactionCheck).
+let compactionTicker: { cancel: () => void } | null = null
 // DX-4499: the runtime clock's timer, one per session.
 let runtimeClock: { cancel: () => void } | null = null
 // DX-4530: the fast claim poll, running only while a permission request is open (syncPermissionPoll).
@@ -1571,6 +1575,8 @@ async function onSessionStart($: any, e: any, next: any) {
   pacingTicker?.cancel()
   pacingTicker = $.clock.every(PACING_POLL_MS, () => refreshPacingPanel($))
   startUsageTicker($, USAGE_TICK_MS)
+  compactionTicker?.cancel()
+  compactionTicker = $.clock.every(COMPACTION_IDLE_CHECK_MS, () => idleCompactionCheck($))
   // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
   permissionTicker?.cancel()
   permissionTicker = null
@@ -1608,6 +1614,8 @@ async function onSessionEnd($: any, e: any, next: any) {
     pacingTicker = null
     usageTicker?.cancel()
     usageTicker = null
+    compactionTicker?.cancel()
+    compactionTicker = null
     runtimeClock?.cancel()
     runtimeClock = null
     permissionTicker?.cancel()
@@ -2337,6 +2345,8 @@ async function onReportStop($: any, e: any, next: any) {
 let compactionFaultTold: string | null = null
 // the git read of the resume briefing is a local status: it needs no longer than this
 const GIT_STATUS_TIMEOUT_MS = 5000
+// how often an idle session looks for an agent's ready in the local control file (a file read, no network)
+const COMPACTION_IDLE_CHECK_MS = 5000
 
 async function compactionControl($: any): Promise<ControlFile> {
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
@@ -2366,10 +2376,10 @@ async function pruneUsedReleases($: any): Promise<void> {
 
 // DX-5231: the plugin arms nothing for the main agent. An older plugin version armed CLAUDE_CODE_AUTO_COMPACT_WINDOW (DX-4993, DX-5217) and then CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 // (DX-5217) in this process, and a variable stays in a running process after a plugin reload: the first shrinks the context meter's window, the second makes the main loop
-// propose early. While the session has a control file (it is under the handshake) both are cleared; `$.env.set(name)` with no value restores the default at once (verified,
-// Claude Code 2.1.299). The literal names are kept so the engine lists them as writes of this module. A session with no control file keeps whatever its person set.
-// DX-5218 to DX-5224 (sub-agents, which have no command form) arm a proposal for themselves later and own that variable then.
-// Runs at the start and the end of every main-loop turn. Never throws: a failure is one line to the person.
+// propose early. Once the session has a control file (it is under the handshake) both are cleared, ONCE per process (`leftoverArmingCleared`): a later writer of the same
+// variable (DX-5218 to DX-5224 arm the process-wide percent for a sub-agent, which outlives main turns) is never wiped by a later turn. `$.env.set(name)` with no value
+// restores the default at once (verified, Claude Code 2.1.299). The literal names are kept so the engine lists them as writes of this module. A session with no control
+// file keeps whatever its person set. Runs at the start and the end of every main-loop turn. Never throws: a failure is one line to the person.
 async function clearLeftoverArming($: any): Promise<void> {
   try {
     const file = await compactionControl($)
@@ -2377,27 +2387,33 @@ async function clearLeftoverArming($: any): Promise<void> {
       if (compactionFaultTold !== file.reason) $.ui.toast(`Compaction control unreadable (${file.reason}): Claude Code's own automatic compaction applies until it is fixed.`)
       compactionFaultTold = file.reason
     } else compactionFaultTold = null
-    if (file.kind === 'absent') return
+    if (file.kind === 'absent' || (await read($, leftoverArmingCleared))) return
     if ((await $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')) !== undefined) await $.env.set('CLAUDE_CODE_AUTO_COMPACT_WINDOW')
     if ((await $.env.get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')) !== undefined) await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
+    await update($, leftoverArmingCleared, () => true)
   } catch (err: any) {
     $.ui.toast(`Compaction handshake could not clear the session's compaction trigger: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
   }
 }
 
-// DX-5231: the agent said ready, so the compaction runs: at the main loop's turn end (never inside a turn or a command hook) the plugin queues Claude Code's own /compact,
-// which the host runs once the session is idle. The control file's unexpired release is the ready; it is spent first, so it starts one compaction however many turns follow.
-// The compaction reaches PreCompact and `session.compact` as trigger `manual`. Nothing else is passed as the command's arguments: the control carries no instructions.
+// The control's unexpired release, if the plugin has not spent it: spent now (kept in $.store, so one release is acted on once however many turns follow) and returned.
+async function spendReadyRelease($: any): Promise<string | null> {
+  const key = usedReleaseKey(String(await $.session.id()))
+  const now = await $.clock.now()
+  const releaseId = readyRelease(await compactionControl($), spentReleaseId(await $.store.get(key)), now)
+  if (releaseId === null) return null
+  await $.store.set(key, { releaseId, at: now })
+  await pruneUsedReleases($)
+  return releaseId
+}
+
+// DX-5231: the agent said ready, so the compaction runs: when no main-loop turn is running (its turn end, or the idle check below) the plugin queues Claude Code's own
+// /compact, which the host runs once the session is idle. Never from inside a turn or a command hook. The control file's unexpired release is the ready.
+// The compaction reaches PreCompact and `session.compact` as trigger `manual`. Nothing is passed as the command's arguments: the control carries no instructions.
 // Never throws: a failure is one line to the person, and the dashboard re-asks once the release has expired.
 async function startReadyCompaction($: any): Promise<void> {
   try {
-    const sessionId = String(await $.session.id())
-    const key = usedReleaseKey(sessionId)
-    const now = await $.clock.now()
-    const releaseId = readyRelease(await compactionControl($), spentReleaseId(await $.store.get(key)), now)
-    if (releaseId === null) return
-    await $.store.set(key, { releaseId, at: now })
-    await pruneUsedReleases($)
+    if ((await spendReadyRelease($)) === null) return
     $.ui.toast('Compacting now: your agent said it is ready.')
     detach($, 'Compaction', $.command.run({ command: 'compact' }))
   } catch (err: any) {
@@ -2405,10 +2421,25 @@ async function startReadyCompaction($: any): Promise<void> {
   }
 }
 
-// The verdict for one proposal. A person's own /compact needs no reading at all. Every read that a decision needs happens only for an automatic proposal;
+// The agent's ready is written to the control file by the relay, after its tool call returned, so it can land after the turn that made it already ended (an idle
+// session: no turn.complete follows). The plugin gets no event for a file change, so a local file read every COMPACTION_IDLE_CHECK_MS starts it, only while no main turn is running.
+async function idleCompactionCheck($: any): Promise<void> {
+  if ((await read($, turn)).isRunning) return
+  await startReadyCompaction($)
+}
+
+// The verdict for one proposal. A person's own /compact passes without a reading (it only spends a waiting ready, above). Every read that a decision needs happens only for an automatic proposal;
 // whatever throws lets the compaction through (fail open, hooks/compaction/control.ts).
 async function compactionVerdict($: any, e: any): Promise<Verdict> {
-  if (e.trigger === 'manual') return { pass: true, why: 'manual' }
+  if (e.trigger === 'manual') {
+    // a person's own /compact answers a waiting ready: the plugin must not run a second one at the turn's end (the plugin's own start has spent it already)
+    try {
+      await spendReadyRelease($)
+    } catch (err: any) {
+      $.ui.toast(`Compaction handshake could not note the compaction: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+    }
+    return { pass: true, why: 'manual' }
+  }
   try {
     const holding = e.trigger === 'auto'
     const reading = holding ? await contextReading($) : { tokens: null, window: null }
