@@ -1,10 +1,11 @@
 // DX-4993 (PLAN-42 rule R-4): the plugin's half of an operator session's compaction handshake, as pure rules (hooks/compaction/*) and as the engine runs the
-// hooks: the window is armed from the control file the relay writes, an automatic compaction is refused until the agent said ready, a person's own
-// /compact and the safety valve always pass, a release is honoured once, and the first turn after a compaction carries the resume briefing.
+// hooks: the agent's ready (a release in the control file the relay writes) makes the plugin run /compact itself at the next main-loop turn end, once; an automatic
+// proposal is refused while the session is under the handshake; a manual /compact and the safety valve always pass; nothing is armed for the main agent (DX-5231);
+// and the first turn after a compaction carries the resume briefing.
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
-import { HELD_REASON, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, arming, controlPath, floorPercent, parseControlFile, staleUsedReleaseKeys, verdict } from '../hooks/compaction/control'
+import { HELD_REASON, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, staleUsedReleaseKeys, verdict } from '../hooks/compaction/control'
 import type { ControlFile, GateControl, GateInput } from '../hooks/compaction/control'
 import { CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -57,7 +58,7 @@ describe('the wire shape (pure)', () => {
   test('the file the relay writes is read whole, and its pass-at size is the safety valve (the plugin has no margin of its own)', () => {
     const file = parse(RELAY_FILE)
     expect(file).toEqual({ kind: 'control', control: { floorTokens: 250_000, passAtTokens: 907_000, windowTokens: 1_000_000, releaseUntilMs: 1_800_000_000_000, releaseId: '2026-10-14T11:59:00.000Z' } })
-    const input = { trigger: 'auto', armed: true, window: WINDOW, file, usedReleaseId: '2026-10-14T11:59:00.000Z', nowMs: 1_800_000_000_001 } as const
+    const input = { trigger: 'auto', window: WINDOW, file } as const
     expect(verdict({ ...input, tokens: 906_999 })).toEqual({ pass: false, reason: HELD_REASON })
     expect(verdict({ ...input, tokens: 907_000 })).toEqual({ pass: true, why: 'valve' })
     // a different pass-at size moves the valve: nothing else decides it
@@ -66,45 +67,37 @@ describe('the wire shape (pure)', () => {
   })
 })
 
-describe('arming the early-proposal percent (pure)', () => {
-  // DX-5217: a percent of the model's window, never a window of its own: the meter keeps the full window
-  test('the floor is a percent of the real window, rounded down to two decimals', () => {
-    expect(floorPercent(400_000, 1_000_000)).toBe(40)
-    expect(floorPercent(250_000, 1_000_000)).toBe(25)
-    expect(floorPercent(80_000, 200_000)).toBe(40)
-    expect(floorPercent(333_333, 1_000_000)).toBe(33.33)
-    expect(floorPercent(333_339, 1_000_000)).toBe(33.33)
+describe('the release that starts a compaction (pure)', () => {
+  const REL = '2026-10-14T11:59:00.000Z'
+  const release = (over: Partial<GateControl> = {}) => withControl({ releaseUntilMs: NOW + 60_000, releaseId: REL, ...over })
+
+  test('an unexpired release the plugin has not spent is waiting; a spent one, an expired one and no release are not', () => {
+    expect(readyRelease(release(), null, NOW)).toBe(REL)
+    expect(readyRelease(release(), REL, NOW)).toBeNull()
+    expect(readyRelease(release({ releaseUntilMs: NOW }), null, NOW)).toBeNull()
+    expect(readyRelease(release({ releaseUntilMs: NOW - 1 }), null, NOW)).toBeNull()
+    expect(readyRelease(withControl(), null, NOW)).toBeNull()
   })
 
-  test('a control is set at its floor as a percent; a null control, a file that is gone or a file that cannot be read takes it back (fail open)', () => {
-    expect(arming(withControl(), WINDOW)).toEqual({ kind: 'set', percent: 25 })
-    expect(arming({ kind: 'control', control: null }, WINDOW)).toEqual({ kind: 'unset' })
-    expect(arming({ kind: 'absent' }, WINDOW)).toEqual({ kind: 'unset' })
-    expect(arming({ kind: 'bad', reason: 'x' }, WINDOW)).toEqual({ kind: 'unset' })
+  test('a later release is a new one', () => {
+    expect(readyRelease(release({ releaseId: 'newer' }), REL, NOW)).toBe('newer')
   })
 
-  // A2: the dashboard knows a window per model line; the session may run at a smaller one, where the floor could never be reached
-  test('a session whose real window is smaller than the one the control assumed is not armed; a larger one keeps the floor in tokens; an unknown window is not armed (no fraction of it exists)', () => {
-    expect(arming(withControl(), 200_000)).toEqual({ kind: 'unset' })
-    expect(arming(withControl(), WINDOW - 1)).toEqual({ kind: 'unset' })
-    expect(arming(withControl(), WINDOW)).toEqual({ kind: 'set', percent: 25 })
-    expect(arming(withControl(), 2_000_000)).toEqual({ kind: 'set', percent: 12.5 })
-    expect(arming(withControl(), null)).toEqual({ kind: 'unset' })
+  test('a session the handshake does not hold, or whose file cannot be read, has none', () => {
+    expect(readyRelease({ kind: 'control', control: null }, null, NOW)).toBeNull()
+    expect(readyRelease({ kind: 'absent' }, null, NOW)).toBeNull()
+    expect(readyRelease({ kind: 'bad', reason: 'x' }, null, NOW)).toBeNull()
   })
 })
 
 describe('the gate (pure)', () => {
   const input = (over: Partial<GateInput> = {}): GateInput => ({
     trigger: 'auto',
-    armed: true,
     tokens: 300_000,
     window: WINDOW,
     file: withControl(),
-    usedReleaseId: null,
-    nowMs: NOW,
     ...over,
   })
-  const release = (over: Partial<GateControl> = {}) => withControl({ releaseUntilMs: NOW + 60_000, releaseId: '2026-10-14T11:59:00.000Z', ...over })
 
   test("a person's own /compact always passes, whatever else is true", () => {
     expect(verdict(input({ trigger: 'manual', file: { kind: 'bad', reason: 'x' }, tokens: null }))).toEqual({ pass: true, why: 'manual' })
@@ -116,11 +109,7 @@ describe('the gate (pure)', () => {
     }
   })
 
-  test('a session the plugin did not arm is not held', () => {
-    expect(verdict(input({ armed: false, file: { kind: 'absent' }, tokens: null }))).toEqual({ pass: true, why: 'not-armed' })
-  })
-
-  test('without the agent\'s ready an automatic proposal is held', () => {
+  test("an automatic proposal is held, ready or not: a ready agent is compacted by the plugin's own /compact, never by releasing a proposal", () => {
     expect(verdict(input())).toEqual({ pass: false, reason: HELD_REASON })
   })
 
@@ -129,13 +118,8 @@ describe('the gate (pure)', () => {
     expect(verdict(input({ file: { kind: 'absent' }, tokens: null }))).toEqual({ pass: true, why: 'no-control' })
   })
 
-  test('an unexpired release lets ONE proposal through, and a spent or expired one lets none', () => {
-    expect(verdict(input({ file: release() }))).toEqual({ pass: true, why: 'released', spend: '2026-10-14T11:59:00.000Z' })
-    expect(verdict(input({ file: release(), usedReleaseId: '2026-10-14T11:59:00.000Z' }))).toEqual({ pass: false, reason: HELD_REASON })
-    expect(verdict(input({ file: release({ releaseUntilMs: NOW }) }))).toEqual({ pass: false, reason: HELD_REASON })
-    expect(verdict(input({ file: release({ releaseUntilMs: NOW - 1 }) }))).toEqual({ pass: false, reason: HELD_REASON })
-    // a later release is a new one
-    expect(verdict(input({ file: release({ releaseId: 'newer' }), usedReleaseId: '2026-10-14T11:59:00.000Z' }))).toMatchObject({ pass: true, spend: 'newer' })
+  test('a release in the file releases no proposal', () => {
+    expect(verdict(input({ file: withControl({ releaseUntilMs: NOW + 60_000, releaseId: 'r' }) }))).toEqual({ pass: false, reason: HELD_REASON })
   })
 
   test("the safety valve passes at the pass-at size the control names, whatever the session's window", () => {
@@ -220,7 +204,6 @@ describe('the resume briefing (pure)', () => {
 for (const surface of SURFACES) {
   describe(`the handshake on ${surface}`, () => {
     const PRE = (trigger: string, extra: Record<string, unknown> = {}) => ({ trigger, session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl', cwd: '/work', custom_instructions: null, ...extra }) as any
-    const windowSets = (d: any) => d.envSets.filter((s: any) => s.name === 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
 
     async function started($: any, on: any, options: Parameters<typeof dashboard>[1] = {}) {
       on('turn.complete', () => ({ text: 'done' }) as any)
@@ -233,62 +216,70 @@ for (const surface of SURFACES) {
     const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
     const START = { prompt: 'go', turnId: 't1' } as any
 
-    test('a session with no control file is not armed, and nothing is held', async ($, on) => {
+    const READY = (id: string, ms: number = CLOCK_START + 60_000) => fileText(gateControl({ releaseUntilMs: ms, releaseId: id }))
+    const compactRuns = (d: any) => d.compactRuns as unknown[]
+
+    test('a session with no control file is not held, and nothing is set', async ($, on) => {
       const d = await started($, on)
       await $.turn.start(START)
-      expect(windowSets(d)).toEqual([])
+      await $.turn.complete(TURN)
+      expect(d.envSets).toEqual([])
+      expect(compactRuns(d)).toEqual([])
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
-    test('the floor is set as a percent of the window at the start of a turn, once however many turns follow, and the window variable is never touched (DX-5217)', async ($, on) => {
+    // DX-5231: nothing is armed for the main agent, whatever the control says
+    test('the plugin sets no early-proposal variable for the main agent, however many turns follow', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)
       await $.turn.start(START)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }])
-      expect(d.envSets.filter((s: any) => s.name === 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')).toEqual([])
+      expect(d.envSets).toEqual([])
     })
 
-    test('a leftover file cannot arm a later session once the relay has pruned it: the window is taken back and nothing is held', async ($, on) => {
+    test("the agent's ready starts /compact once, at the main loop's turn end, and not before", async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
-      delete d.world.files[CONTROL_FILE]
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
+      d.world.files[CONTROL_FILE] = READY('ready-1')
+      // a turn's start is inside the session's work: nothing runs
+      await $.turn.start(START)
+      expect(compactRuns(d)).toEqual([])
       await $.turn.complete(TURN)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
-    })
-
-    test('an armed session holds an automatic proposal, and lets its own /compact through', async ($, on) => {
-      const d = await started($, on)
-      d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
-      expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
-    })
-
-    test('the agent\'s ready lets one automatic compaction through, then holds again until the next ready', async ($, on) => {
-      const d = await started($, on)
-      d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
-      const now = CLOCK_START
-      d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: now + 60_000, releaseId: 'ready-1' }))
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
+      expect(compactRuns(d)).toHaveLength(1)
       expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
       // the same release is spent: the dashboard's next write of the control still names it
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
-      d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: now + 60_000, releaseId: 'ready-2' }))
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toHaveLength(1)
+      d.world.files[CONTROL_FILE] = READY('ready-2')
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toHaveLength(2)
     })
 
-    test('a spent release is kept in the plugin store, with when it was spent, so it is not honoured again', async ($, on) => {
+    test("a sub-agent's turn end never starts the compaction", async ($, on) => {
       const d = await started($, on)
-      d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
-      d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'ready-1' }))
-      await $.classic.PreCompact(PRE('auto'))
+      d.world.files[CONTROL_FILE] = READY('ready-1')
+      await $.turn.complete({ ...TURN, agentId: 'a1' })
+      expect(compactRuns(d)).toEqual([])
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toHaveLength(1)
+    })
+
+    test('an expired release, or a session the handshake does not hold, starts nothing', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = READY('ready-1', CLOCK_START - 1)
+      await $.turn.complete(TURN)
+      d.world.files[CONTROL_FILE] = fileText(null)
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toEqual([])
+    })
+
+    test('the start is kept in the plugin store with when it was spent, so it is not started again', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = READY('ready-1')
+      await $.turn.complete(TURN)
       expect(d.stored.get(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)).toEqual({ releaseId: 'ready-1', at: expect.any(Number) })
     })
 
@@ -296,10 +287,8 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       for (let i = 0; i < USED_RELEASE_KEEP + 5; i++) d.stored.set(`${USED_RELEASE_PREFIX}old-${i}`, { releaseId: 'r', at: 100 + i })
       d.stored.set('relayCursor:not-ours', { planId: 1, cursor: 'c', at: 1 })
-      d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
-      d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'ready-1' }))
-      await $.classic.PreCompact(PRE('auto'))
+      d.world.files[CONTROL_FILE] = READY('ready-1')
+      await $.turn.complete(TURN)
       const kept = [...d.stored.keys()].filter(k => k.startsWith(USED_RELEASE_PREFIX))
       expect(kept).toHaveLength(USED_RELEASE_KEEP)
       expect(kept).toContain(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)
@@ -307,32 +296,55 @@ for (const surface of SURFACES) {
       expect(d.stored.has('relayCursor:not-ours')).toBe(true)
     })
 
+    test('a failing /compact is told, never thrown', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = READY('ready-1')
+      d.failCompactRun('the host refused')
+      await $.turn.complete(TURN)
+      // the run is detached from the hook: let it settle
+      await $.turn.start(START)
+      expect(d.toasts.filter(t => t.startsWith('Compaction failed: '))).toHaveLength(1)
+    })
+
+    test('an automatic proposal is held while the session is under the handshake; a manual one (which the plugin runs too) passes', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
+      expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
+      // a release does not release a proposal: the plugin compacts by itself
+      d.world.files[CONTROL_FILE] = READY('ready-1')
+      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
+    })
+
+    test('a leftover file cannot hold a later session once the relay has pruned it', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = fileText(gateControl())
+      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
+      delete d.world.files[CONTROL_FILE]
+      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
+    })
+
     test('the safety valve passes an automatic proposal at the size where holding would end the session', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
       d.world.context = { tokens: PASS_AT, window: WINDOW }
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
       expect(d.toasts).toContain('Compacting now: the context reached the size where holding it would end the session.')
     })
 
     // A1: the only way out of a hold is the valve, and it lives in the control file; a gate that cannot read the file must not hold the session until it ends
-    test('a control that cannot be read holds nothing, takes the window back, and is told once; a gate that cannot establish the size holds nothing either', async ($, on) => {
+    test('a control that cannot be read holds nothing and is told once; a gate that cannot establish the size holds nothing either', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
       d.world.files[CONTROL_FILE] = 'not json'
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
       await $.turn.complete(TURN)
       await $.turn.start(START)
       expect(d.toasts.filter(t => t.startsWith('Compaction control unreadable (not JSON)'))).toHaveLength(1)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
-      // once the relay writes a readable control again, the session is armed again
+      expect(compactRuns(d)).toEqual([])
       d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.complete(TURN)
-      await $.turn.start(START)
-      expect(windowSets(d).at(-1)).toEqual({ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' })
+      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
       d.world.context = { window: WINDOW }
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
@@ -340,25 +352,25 @@ for (const surface of SURFACES) {
     test('a read that throws holds nothing (a hook that throws also lets the compaction through, and the person is told once)', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
       d.failUsage('the engine has no usage reading')
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
       expect(d.toasts.filter(t => t.startsWith("Compaction gate could not decide, so Claude Code's own automatic compaction applies"))).toHaveLength(1)
     })
 
-    // B1: a leftover file written for another session never arms this one
-    test('a file written for another session arms nothing and holds nothing', async ($, on) => {
+    // B1: a leftover file written for another session holds nothing and starts nothing
+    test('a file written for another session holds nothing and starts nothing', async ($, on) => {
       const d = await started($, on)
-      d.world.files[CONTROL_FILE] = fileText(gateControl(), null, 'sess-earlier')
+      d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'r' }), null, 'sess-earlier')
       await $.turn.start(START)
-      expect(windowSets(d)).toEqual([])
+      await $.turn.complete(TURN)
+      expect(compactRuns(d)).toEqual([])
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
       expect(d.toasts.some(t => t.startsWith('Compaction control unreadable (written for another session)'))).toBe(true)
     })
 
     // A2: the board's table lists the model line at 1M; this session runs it at 200k
-    test("a session whose real window is smaller than the one the control assumed is never armed or held", async ($, on) => {
+    test('a session whose real window is smaller than the one the control assumed is never held', async ($, on) => {
       on('turn.complete', () => ({ text: 'done' }) as any)
       on('classic.PreCompact', () => ({}) as any)
       const d = dashboard(on)
@@ -366,65 +378,28 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
-      expect(windowSets(d)).toEqual([])
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
-    // DX-5217: a percent needs the real window; until the engine reports it nothing is armed, and a smaller one than the control assumed takes it back
-    test('a session is armed once the engine reports its real window, and stops being held when a smaller one is reported', async ($, on) => {
-      const d = await started($, on)
-      d.world.files[CONTROL_FILE] = fileText(gateControl())
-      d.world.context = {}
-      await $.turn.start(START)
-      expect(windowSets(d)).toEqual([])
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
-      d.world.context = { tokens: 120_000, window: WINDOW }
-      await $.turn.complete(TURN)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }])
-      d.world.context = { tokens: 150_000, window: 200_000 }
-      await $.turn.start(START)
-      expect(windowSets(d).at(-1)).toEqual({ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined })
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
-    })
-
-    // DX-5217: a process an older plugin version started the handshake in still holds CLAUDE_CODE_AUTO_COMPACT_WINDOW (the shrunken meter) after a plugin reload
-    test('a window variable left by an older plugin version is cleared once, while the handshake is held, and the percent is set', async ($, on) => {
-      const d = await started($, on, { autoCompactWindow: '400000' })
+    // DX-5217 / DX-5231: a process an older plugin version armed still holds CLAUDE_CODE_AUTO_COMPACT_WINDOW (the shrunken meter) or the percent after a plugin reload
+    test('a window or percent variable left by an older plugin version is cleared while the session is under the handshake', async ($, on) => {
+      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       await $.turn.start(START)
       await $.turn.complete(TURN)
-      await $.turn.start(START)
-      expect(d.envSets).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }])
+      expect(d.envSets).toEqual([{ name: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', value: undefined }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
     })
 
-    test('a session the plugin never armed keeps a window variable it did not set', async ($, on) => {
-      const d = await started($, on, { autoCompactWindow: '400000' })
+    test('a session with no control file keeps a variable it did not set', async ($, on) => {
+      const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })
       await $.turn.start(START)
       await $.turn.complete(TURN)
       expect(d.envSets).toEqual([])
     })
 
-    test('the switch going off takes the percent back, and the session is held no more', async ($, on) => {
-      const d = await started($, on)
-      d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
-      d.world.files[CONTROL_FILE] = fileText(null)
-      await $.turn.complete(TURN)
-      expect(windowSets(d)).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }, { name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: undefined }])
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
-    })
-
-    test('a session the plugin never armed never takes the percent back', async ($, on) => {
-      const d = await started($, on)
-      d.world.files[CONTROL_FILE] = fileText(null)
-      await $.turn.start(START)
-      expect(windowSets(d)).toEqual([])
-    })
-
     test('a sub-agent proposal is held with the main session (it cannot be told apart, and the agent prepares for both)', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = fileText(gateControl())
-      await $.turn.start(START)
       expect((await $.classic.PreCompact(PRE('auto', { agent_id: 'a1' }))).block).toBe(HELD_REASON)
     })
 
