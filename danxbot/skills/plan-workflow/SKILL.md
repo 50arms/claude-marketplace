@@ -92,7 +92,8 @@ change → split it into its own card. Report goal by goal. Said "stop if X" →
 **Your lane only.** Never monitor, investigate or unstick another plan's cards or another
 session unless the user asks. Their work goes to them as a card on the right plan
 (create it with `plan: null`, then `POST /api/plans/:id/cards`), readied, `depends_on` from
-your waiting card. Then wait.
+your waiting card. Then wait. A new plan you write from the person's request is not yours
+either: once it is written, it goes to a session of its own, and you go back to your own plan.
 
 ## Before a plan is ready
 
