@@ -23,7 +23,7 @@ worktree, DB resets) live only in danxbot's `work` profile.
 
 ## Flow
 
-1. Read the card with its description, AC, comments and dependencies; read the parent if
+1. Read the card with its description, AC, comments, agent notes and dependencies; read the parent if
    set; on a plan, read its architecture and note overlapping siblings.
    Any investigation that takes more than a few commands (understanding unread code,
    reproducing a bug, debugging a failing test, proving an idea works) goes to a foreground
@@ -44,7 +44,7 @@ worktree, DB resets) live only in danxbot's `work` profile.
    Only then transition `complete` with a summary and write the retro (last — it 409s
    until terminal), citing the sha now on the target branch (on a pull request: the pull
    request link and the branch tip). A phase card leaves `Notes from
-   Phase N` on the next phase card.
+   Phase N` as an agent note on the next phase card.
    A card with an open problem never becomes Done: `complete`, a board drop or move to Done
    and a container roll-up are refused (409 `open_problems_block_completion`).
    Answer or remove each open problem first.
@@ -77,7 +77,7 @@ and says when to land. Whoever runs a gate:
 
 Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
 that doesn't apply to the card is removed (`POST` the same card route with
-`{action: "remove"}`) with a card comment saying why —
+`{action: "remove"}`) with an agent note saying why —
 never passed to get it out of the way.
 
 ## Needing a human
@@ -123,8 +123,12 @@ first, then end `failed`.
 
 - **AC/checklists** — each item's id is under the card's `checklists[].items[]`; set it
   `passing` on its checklist item.
-- **Comments** — trace, audit and context; an ask for a person is a problem (the comment
-  route reminds you). A durable decision goes on a card, never a comment alone.
+- **Comments** — only for talking with a person: a reply to what they wrote or asked.
+- **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
+  progress, evidence, gate results, handoffs, blockers, `## Docs impact`; trace, audit and
+  context for the next agent. Append-only; read them as `agent_notes` on a card read.
+- **Decisions** — a durable decision goes in the card's description or AC, never in a
+  comment or agent note alone.
 - **Dependencies** — only for a card already known, never a discovery scan.
 - Never write a `status:` literal; transitions derive it.
 - **MCP down** → curl the same route with the credential the dashboard MCP's config names,
