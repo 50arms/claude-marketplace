@@ -203,8 +203,10 @@ declare module 'claude-code' {
       leftoverArmingCleared: boolean
       // DX-5222: the percent CLAUDE_AUTOCOMPACT_PCT_OVERRIDE holds because the plugin armed it for the sub-agents (null: it armed none); the variable lives in the process, so a reload keeps both.
       armedPercent: number | null
-      // DX-5222: this host runs `session.compact` (raised by its first event): the classic PreCompact gate leaves automatic proposals to it, and the sub-agents' percent is armed only then.
+      // DX-5222: this host runs `session.compact` (raised by its first event). One of two inputs to `hostRunsSessionCompact` (the other: the engine release, `engineCompact`): when it holds, the classic PreCompact gate leaves automatic proposals to `session.compact`, and the sub-agents' percent is armed.
       sessionCompactSeen: boolean
+      // DX-5365: what the engine's release says about `session.compact`, read once per process: 'unread' until first asked, then 'runs' (a release from 2.1.299), 'older', or 'unreadable' (the call threw or named no release).
+      engineCompact: 'unread' | 'runs' | 'older' | 'unreadable'
       // DX-5222: the sub-agent requests claimed for sending (`<session>:<agent>` to the request's `at`), one compare-and-set before `$.session.send`; a failed send gives the claim back.
       claimedAsks: Record<string, string>
       // DX-5231: the release the plugin claimed to start a compaction with (one compare-and-set, so a ready starts once)

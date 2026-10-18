@@ -174,6 +174,8 @@ export function dashboard(
     autoCompactWindow?: string
     // DX-5231: a CLAUDE_AUTOCOMPACT_PCT_OVERRIDE an older plugin version left in the process
     autocompactPct?: string
+    // DX-5365: what `$.session.version()` answers: the engine's `base` release (default 2.1.298, one under the floor that runs `session.compact` per agent), no `base` at all, or a call that throws
+    engineVersion?: { base: string | undefined } | 'throws'
     // DX-5231: the reason the host refuses the plugin's own `/compact` run with (a handler that throws)
     compactRunFails?: string
     // ... what the usage route answers a report with: accepted (default), the dashboard's refusal of a session on no plan (409), a server
@@ -219,6 +221,8 @@ export function dashboard(
   const calls: { server: string; tool: string; args: any }[] = []
   const api: { method: string; path: string; body?: any; query?: any }[] = []
   const toasts: string[] = []
+  // DX-5365: how many times the plugin asked the engine for its version
+  let versionReads = 0
   const toastTimeouts: number[] = []
   const statuses: (string | undefined)[] = []
   const stateWrites: { plugin: string; key: string; value: unknown }[] = []
@@ -947,6 +951,13 @@ export function dashboard(
       </Box>
     )
   })
+  // DX-5365: the engine's version, as the plugin reads it to know the host runs `session.compact` before any event
+  on('session.version', () => {
+    versionReads++
+    const v = options.engineVersion ?? { base: '2.1.298' }
+    if (v === 'throws') return { deny: 'no version reading' } as any
+    return { value: { version: v.base ?? 'custom-build', ...(v.base === undefined ? {} : { base: v.base }) } } as any
+  })
   // DX-4336: what the harness knows of the account's windows
   on('session.usage', () => (options.usageReadFails === undefined ? { value: { startedAt: 0, context: world.context, rateLimits: world.rateLimits } } : { deny: options.usageReadFails }) as any)
   on('ui.toast', (_$: any, e: any) => {
@@ -1013,7 +1024,7 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an

@@ -63,6 +63,10 @@ export type SubagentControl = {
 export const RELAY_OLDER_NOTICE =
   'The danxbot dashboard MCP relay of this session is older than the danxbot plugin, so sub-agent compaction is off (the main agent still compacts when it says ready). Reconnect the danxbot dashboard MCP server (/mcp) or start a new session to fix it.'
 
+// DX-5365: the notice for an engine release the plugin could not read; register.tsx shows it once per process, when the handshake would arm the sub-agents.
+export const ENGINE_VERSION_NOTICE =
+  'The Claude Code release could not be read, so sub-agent compaction stays off until this session has compacted once (the main agent still compacts when it says ready).'
+
 // DX-5222: one sub-agent's control as the relay writes it: its own valve, its request (`at` names it; the plugin delivers each once) and its own single-use release
 export type AgentAsk = { seq: number; at: string; text: string }
 export type AgentControl = { passAtTokens: number; ask: AgentAsk | null; releaseUntilMs: number | null; releaseId: string | null }
@@ -242,6 +246,20 @@ export function verdict(input: GateInput): Verdict {
 // (the same rule as danxbot's floorPercent in src/agent/compaction-recommendation.ts: a proposal a little below the floor is held and costs a hook call, one above it could leave an
 // agent that said ready with no proposal to release). Integer arithmetic, so 250000 of 1000000 is exactly 25.
 export const floorPercent = (floorTokens: number, windowTokens: number): number => Math.floor((floorTokens * 100 * 100) / windowTokens) / 100
+
+// DX-5365: the engine release whose `session.compact` is known to judge each sub-agent's automatic proposal by agent (verified live, Claude Code 2.1.299, DX-5222). The types of every
+// release from 2.1.286 declare the event, but none tells whether an engine serves it per agent, and the runtime exposes no capability flag, so this floor is a verified fact, not a
+// guess: a later card can lower it once an older engine is tried. `base` is `$.session.version()`'s release (`2.1.299`, or `2.1.299-dev` for a development build of it); no `base` is no release.
+export const SESSION_COMPACT_FLOOR = [2, 1, 299] as const
+export function runsSessionCompact(base: string | undefined): boolean {
+  const m = base === undefined ? null : /^(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(base)
+  if (m === null) return false
+  for (let i = 0; i < 3; i++) {
+    const part = Number(m[i + 1])
+    if (part !== SESSION_COMPACT_FLOOR[i]) return part > SESSION_COMPACT_FLOOR[i]
+  }
+  return true
+}
 
 // The percent the plugin arms the sub-agents with, null when the session is not under the handshake (nothing is armed, and an armed value is taken back).
 // DX-5314: also null while sub-agent control is unavailable (an older relay): nothing the plugin arms could be gated.

@@ -3,7 +3,7 @@
 // delivers each sub-agent's request, and the sub-agents' early-proposal percent is armed after `leftoverArmingCleared`. The main agent's own gate is compaction-control.test.tsx.
 import { describe, expect } from 'claude-code/testing'
 
-import { AGENT_HELD_REASON, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, USED_RELEASE_KEEP, agentVerdict, armedPercentOf, askSentKey, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import { AGENT_HELD_REASON, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, USED_RELEASE_KEEP, agentVerdict, armedPercentOf, askSentKey, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
 import type { AgentControl, AgentGateInput, ControlFile, GateControl, LineValves } from '../hooks/compaction/control'
 import { CLOCK_START, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -429,14 +429,14 @@ for (const surface of SURFACES) {
       })
 
       test('the classic gate alone (a host that has run no session.compact) holds every automatic proposal like the main agent', async ($, on) => {
-        const k = await started($, on)
+        const k = await started($, on, { engineVersion: { base: '2.1.298' } })
         k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
         expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
       })
 
       test('once the host has run session.compact the classic gate leaves automatic proposals to it, including an isolated sub-agent the per-agent gate never sees', async ($, on) => {
-        const k = await started($, on)
+        const k = await started($, on, { engineVersion: { base: '2.1.298' } })
         k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
         await k.see()
@@ -446,6 +446,26 @@ for (const surface of SURFACES) {
         // the main agent's own proposal still goes through session.compact, where it is held
         expect(await k.propose()).toEqual({ skip: HELD_REASON })
         expect(k.core).toEqual([{ agentId: undefined, skipped: undefined }])
+      })
+
+      // DX-5365: the same answer that arms decides the classic gate, so a fresh 2.1.299 process (no event seen) does not hold the proposals that never reach session.compact
+      test('a fresh process on an engine that runs session.compact passes an automatic proposal at the classic gate, with no event seen yet', async ($, on) => {
+        const k = await started($, on, { engineVersion: { base: '2.1.299' } })
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
+        expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
+        expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
+        // the main agent's own proposal is still held at session.compact
+        expect(await k.propose()).toEqual({ skip: HELD_REASON })
+      })
+
+      test('the engine release is read once per process, however many syncs and classic proposals follow', async ($, on) => {
+        const k = await started($, on, { engineVersion: { base: '2.1.299' } })
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl())
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        await $.classic.PreCompact(PRE('auto'))
+        await $.turn.start(START)
+        expect(k.d.versionReads).toBe(1)
       })
     })
 
@@ -630,6 +650,74 @@ for (const surface of SURFACES) {
         await $.turn.start(START)
         expect(k.d.env(PCT)).toBe('25')
         expect(k.d.envSets).toHaveLength(1)
+      })
+
+      // DX-5365: 2.1.299 is the engine release the per-agent `session.compact` gate was verified on (DX-5222), so a fresh process on it arms at the first sync, with no event seen yet
+      test('a fresh process on an engine that runs session.compact arms at the first handshake sync, before any compaction event', async ($, on) => {
+        const k = await started($, on, { engineVersion: { base: '2.1.299' } })
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl())
+        await $.turn.start(START)
+        expect(k.d.envSets).toEqual([{ name: PCT, value: '25' }])
+        // the once-per-process clear ran before the first set (DX-5222 comment 15880)
+        expect(k.d.envClearedAtSet).toEqual([true])
+        expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
+      })
+
+      for (const base of ['2.1.300', '2.2.0', '3.0.0', '2.1.299-dev']) {
+        test(`engine ${base} arms too, a later release or a development build of the floor`, async ($, on) => {
+          const k = await started($, on, { engineVersion: { base } })
+          k.d.world.files[CONTROL_FILE] = fileText(gateControl())
+          await $.turn.start(START)
+          expect(k.d.env(PCT)).toBe('25')
+          expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
+        })
+      }
+
+      // 2.0.999 has a higher patch than the floor's 299 and a lower minor: a field-by-field compare would arm it
+      for (const base of ['2.1.298', '2.0.999', '1.9.999']) {
+        test(`a fresh process on engine ${base}, below the floor, arms nothing until a session.compact event is seen`, async ($, on) => {
+          const k = await started($, on, { engineVersion: { base } })
+          k.d.world.files[CONTROL_FILE] = fileText(gateControl())
+          await $.turn.start(START)
+          await $.turn.complete(TURN)
+          expect(k.d.envSets).toEqual([])
+          expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
+          await k.see()
+          await $.turn.start(START)
+          expect(k.d.envSets).toEqual([{ name: PCT, value: '25' }])
+        })
+      }
+
+      for (const [name, engineVersion] of [['throws', 'throws'], ['names no release', { base: undefined }]] as const) {
+        test(`a version reading that ${name} never arms, and the sync still runs`, async ($, on) => {
+          const k = await started($, on, { engineVersion })
+          k.d.world.files[CONTROL_FILE] = fileText(gateControl())
+          await $.turn.start(START)
+          await $.turn.complete(TURN)
+          expect(k.d.envSets).toEqual([])
+          expect(k.d.toasts.some(t => t.startsWith('Compaction handshake could not run'))).toBe(false)
+          // the person is told once, however many syncs follow, and it was asked for the version once
+          await $.turn.start(START)
+          expect(k.d.toasts.filter(t => t === ENGINE_VERSION_NOTICE)).toHaveLength(1)
+          expect(k.d.versionReads).toBe(1)
+        })
+      }
+
+      // DX-5365: a session.compact event already proved the host runs it, so an unreadable release is no news to the person
+      test('an unreadable engine release is not told once a session.compact event was seen', async ($, on) => {
+        const k = await started($, on, { engineVersion: 'throws' })
+        await k.see()
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl())
+        await $.turn.start(START)
+        expect(k.d.env(PCT)).toBe('25')
+        expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
+      })
+
+      test('an unreadable engine release is not told to a session that is not under the handshake', async ($, on) => {
+        const k = await started($, on, { engineVersion: 'throws' })
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
       })
 
       test('a percent an older plugin version left is replaced, after the flag, by the value armed now', async ($, on) => {
