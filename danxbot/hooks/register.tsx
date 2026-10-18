@@ -7,7 +7,7 @@ import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { COMPACTING_NOTE_TTL_MS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
-import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
@@ -139,6 +139,9 @@ const armedPercent = atom({ plugin: 'danxbot', key: 'armedPercent' } as const, n
 // until the next compaction event). Two things hang on it: the classic PreCompact gate leaves an automatic proposal to `session.compact` (which judged it per agent), and the sub-agents' percent
 // is armed only then (a host with no `session.compact` has only the classic gate, which cannot tell the agents apart, so an early proposal there would hold every agent).
 const sessionCompactSeen = atom({ plugin: 'danxbot', key: 'sessionCompactSeen' } as const, false)
+// DX-5365: what the engine's release says about `session.compact`, read once per process (`$.session.version()`), $.state like the flag above: 'unread' until the first question, then 'runs' (a
+// release from SESSION_COMPACT_FLOOR), 'older' (an earlier release), or 'unreadable' (the call threw or named no release: not known to run it, and the person is told once, `engineVersionTold`).
+const engineCompact = atom({ plugin: 'danxbot', key: 'engineCompact' } as const, 'unread' as 'unread' | 'runs' | 'older' | 'unreadable')
 // DX-5222: the sub-agent requests the plugin has claimed to send (`<session>:<agent>` to the request's `at`). One compare-and-set before `$.session.send`, like claimedRelease, so the 5 s check and
 // a turn's sync never both send it; a send that fails gives the claim back.
 const claimedAsks = atom({ plugin: 'danxbot', key: 'claimedAsks' } as const, {} as Record<string, string>)
@@ -2225,6 +2228,8 @@ async function onReportStop($: any, e: any, next: any) {
 let compactionFaultTold: string | null = null
 // DX-5314: the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
 let relayOlderTold: string | null = null
+// DX-5365: the person was told once that the engine's release could not be read, so sub-agent compaction waits for the first compaction event
+let engineVersionTold = false
 // DX-5222: each sub-agent's last model response (its context size and model), noted at `turn.step`: `session.compact` names the proposing sub-agent but not its size, and
 // `$.session.usage()` is the main conversation's. A Map keeps insertion order, so the oldest agent goes first once AGENT_SIZES_KEEP are held; a reload starts empty (the
 // next response of each agent fills it), and an agent whose size is unknown is refused and told, never guessed (agentVerdict).
@@ -2321,17 +2326,33 @@ async function clearLeftoverArming($: any, file: ControlFile): Promise<void> {
 // would hold every agent's early proposal, which can end an agent's work.
 // DX-5365: whether this host runs `session.compact`, known at the first sync without waiting for a compaction: the event was seen (`sessionCompactSeen`), or the engine's release is one that
 // serves it per agent (SESSION_COMPACT_FLOOR; the runtime has no capability flag). A version reading that throws or names no release is a host that is not known to run it: nothing arms.
-async function hostRunsSessionCompact($: any): Promise<boolean> {
-  if (await read($, sessionCompactSeen)) return true
+async function engineCompactState($: any): Promise<'runs' | 'older' | 'unreadable'> {
+  const known = await read($, engineCompact)
+  if (known !== 'unread') return known
+  let state: 'runs' | 'older' | 'unreadable'
   try {
-    return runsSessionCompact((await $.session.version()).base)
+    const base = (await $.session.version()).base
+    state = base === undefined ? 'unreadable' : runsSessionCompact(base) ? 'runs' : 'older'
   } catch {
-    return false
+    state = 'unreadable'
   }
+  await update($, engineCompact, () => state)
+  return state
+}
+
+// ONE answer for both decisions that hang on it: whether the sub-agents' percent is armed (armSubAgents) and whether the classic PreCompact gate steps aside for an automatic proposal
+// (onPreCompact). Arming without stepping aside would hold, at the classic gate, every early proposal that never reaches `session.compact`, for good.
+async function hostRunsSessionCompact($: any): Promise<boolean> {
+  return (await read($, sessionCompactSeen)) || (await engineCompactState($)) === 'runs'
 }
 
 async function armSubAgents($: any, file: ControlFile): Promise<void> {
   const wanted = (await hostRunsSessionCompact($)) ? armedPercentOf(file) : null
+  // DX-5365: an engine release that cannot be read is not armed, and the person is told once (the compaction handshake's sub-agent half is off until a compaction event shows the host runs it)
+  if (!engineVersionTold && armedPercentOf(file) !== null && !(await read($, sessionCompactSeen)) && (await engineCompactState($)) === 'unreadable') {
+    engineVersionTold = true
+    $.ui.toast(ENGINE_VERSION_NOTICE)
+  }
   if (wanted === (await read($, armedPercent))) return
   // DX-5222 (comment 15880): the once-per-process clear must never wipe the value armed here, so `leftoverArmingCleared` is already true when this first sets it: syncCompaction runs
   // clearLeftoverArming first, and it raises the flag on the first control file of the session (the one that can arm). compaction-agents.test.tsx pins the order.
@@ -2415,7 +2436,7 @@ async function onPreCompact($: any, e: any, next: any) {
   // them: (1) a model whose window source is `auto` (under 1M in the catalog), (2) the in-process runner, (3) an isolated sub-agent (the built-in comment-thread-analyst,
   // `delegatedObservation`). That assumes the 1M models the handshake is built for (PLAN-42 caveat CAV-2): holding any of them by the MAIN agent's size would never release it (its own
   // context is not the main conversation's) and would end that agent's work at its window. Their contexts are short-lived and bounded, and the main agent's compaction stays held.
-  if (e.trigger === 'auto' && (await read($, sessionCompactSeen))) return next(e)
+  if (e.trigger === 'auto' && (await hostRunsSessionCompact($))) return next(e)
   const v = await compactionVerdict($, e)
   let r: any
   try {

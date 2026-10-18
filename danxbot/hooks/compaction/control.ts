@@ -63,6 +63,10 @@ export type SubagentControl = {
 export const RELAY_OLDER_NOTICE =
   'The danxbot dashboard MCP relay of this session is older than the danxbot plugin, so sub-agent compaction is off (the main agent still compacts when it says ready). Reconnect the danxbot dashboard MCP server (/mcp) or start a new session to fix it.'
 
+// DX-5365: the notice for an engine release the plugin could not read; register.tsx shows it once per process, when the handshake would arm the sub-agents.
+export const ENGINE_VERSION_NOTICE =
+  'The Claude Code release could not be read, so sub-agent compaction stays off until this session has compacted once (the main agent still compacts when it says ready).'
+
 // DX-5222: one sub-agent's control as the relay writes it: its own valve, its request (`at` names it; the plugin delivers each once) and its own single-use release
 export type AgentAsk = { seq: number; at: string; text: string }
 export type AgentControl = { passAtTokens: number; ask: AgentAsk | null; releaseUntilMs: number | null; releaseId: string | null }
