@@ -10,16 +10,14 @@ Feature/Epic, print the Slice Plan (below) in your message; no plan, no create.
 
 ## Types
 
-| Type | Is |
-|---|---|
-| Story | One vertical slice that ships as one green functional commit — the atomic unit, as small as still testable |
-| Bug / Chore | A defect fix / work with no direct user value (deps, docs, tooling, a decision); sized like a Story |
-| Feature | A few Stories delivering one stakeholder-facing capability |
-| Epic | Many Stories, or several Features |
-| Task | A planning record (question, decision, note) — never dispatched |
+The team's card types are rows the team's admins edit, so no type list lives here. Before
+choosing a type, read them: `danxbot_api` `GET /api/card-types`. Each row gives its guidance
+(`when_to_use`) and its fixed facts (kind, whether it is dispatched, its gates, and its parent
+and child types). Choose by that guidance, and create a child only under a parent type whose
+row allows it. A container type holds context and goal only, its status rolled up from its
+children; work written into a container's own body or AC is a defect.
 
-Feature and Epic are containers: context and goal only, status rolled up from children,
-never worked. Work written into a container's own body or AC is a defect.
+A card records the docs it changes as a `## Docs impact` comment, never by editing docs pages.
 
 ## The slice gate
 
@@ -42,12 +40,12 @@ Feature.
 **Other repos' work doesn't count.** A card lives on one board; another repo's slice is its
 own card on its own board.
 
-**A childless container is allowed; children are recommended.** A Feature/Epic may be created
-with no children as a placeholder while questions or actions are open: record each one as a
-problem on the container, then add the children. An empty container produces no work, so add
-its children as soon as they are known: Epic → `phase_children[]` (optional on create, and the
-convenient way to add them at create); Feature → child cards with `parent_id`. Parent→child:
-Epic → Feature/Story/Bug/Chore/Task; Feature → Story/Bug/Chore/Task; leaves have none.
+**A childless container is allowed; children are recommended.** A container card may be
+created with no children as a placeholder while questions or actions are open: record each
+one as a problem on the container, then add the children. An empty container produces no
+work, so add its children as soon as they are known: through `phase_children[]` (optional on
+create, and the convenient way to add them at create) or as child cards with `parent_id`.
+Which child types a parent type accepts comes from `GET /api/card-types`.
 
 ## Effort
 
