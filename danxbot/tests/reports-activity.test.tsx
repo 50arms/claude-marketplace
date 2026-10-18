@@ -3,7 +3,8 @@
 // working sub-agent re-posts its row so it never reads as silent (comment 10017). Checked as the engine runs the hooks, on both surfaces.
 import { describe, expect } from 'claude-code/testing'
 
-import { LIVENESS_MS, agentRow, endedShells, shellRow, subagentActivityId } from '../hooks/reports/activity'
+import { LIVENESS_MS, agentRow, endedShells, shellRow } from '../hooks/reports/activity'
+import { bareSubagentId, subagentKey } from '../hooks/compaction/subagent-key'
 import { test, SURFACES, activityRows, answerReportEvents, dashboard, finishes, forceRefresh, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1b2c3', agent_type: 'danxbot:worker-sonnet-high' }
@@ -13,9 +14,13 @@ const BACKGROUNDED = { result: { stdout: '', stderr: '', interrupted: false, bac
 const shell = (id: string, status = 'running') => ({ id, type: 'shell', status, description: 'sleep' })
 
 describe('the activity rows (pure)', () => {
-  test("a sub-agent's key is agent-<id>, whichever way the id arrives", () => {
-    expect(subagentActivityId('abc')).toBe('agent-abc')
-    expect(subagentActivityId('agent-abc')).toBe('agent-abc')
+  test("a sub-agent's key is agent-<id> from Claude Code's bare id, and the conversion accepts no other form (DX-5328)", () => {
+    expect(subagentKey('abc')).toBe('agent-abc')
+    expect(bareSubagentId('agent-abc')).toBe('abc')
+    expect(() => subagentKey('agent-abc')).toThrow('bare sub-agent id')
+    expect(() => subagentKey('')).toThrow('bare sub-agent id')
+    expect(() => bareSubagentId('abc')).toThrow('agent-<id>')
+    expect(() => bareSubagentId('agent-')).toThrow('agent-<id>')
   })
 
   test('a row carries every field the stats wire requires, the transcript-only facts unknown', () => {

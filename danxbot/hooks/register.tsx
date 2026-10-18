@@ -71,7 +71,8 @@ import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, peekPacing, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { EMPTY_PACING_STATE, buildPacing } from './plan/pacing-model'
 import { readTeamSettings } from './plan/pacing-settings'
-import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow, subagentActivityId } from './reports/activity'
+import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
+import { bareSubagentId, subagentKey } from './compaction/subagent-key'
 import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
@@ -2011,7 +2012,7 @@ async function reportSubagentStart($: any, e: any): Promise<void> {
   if (typeof e.agent_id !== 'string' || e.agent_id === '') return
   const planId = await openingPlan($)
   if (planId === null) return
-  const id = subagentActivityId(e.agent_id)
+  const id = subagentKey(e.agent_id)
   const now = await $.clock.now()
   await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: now }, planId }))
   postActivity($, [agentRow(id, typeof e.agent_type === 'string' && e.agent_type !== '' ? e.agent_type : null, now, null)])
@@ -2021,7 +2022,7 @@ async function reportSubagentStart($: any, e: any): Promise<void> {
 // finish its posted start is owed goes out, and it is forgotten. An agent this session never reported (an engine fork, a workflow's
 // agent, one already finished) reports nothing; a resumed sub-agent is reported again from its next start.
 async function reportSubagentEnd($: any, agentId: string): Promise<void> {
-  const id = subagentActivityId(agentId)
+  const id = subagentKey(agentId)
   if ((await read($, reports)).agents[id] === undefined) return
   const state = await reportingState($)
   if (state === 'off') return forgetReports($)
@@ -2049,7 +2050,7 @@ async function reportShellStart($: any, e: any, r: any): Promise<void> {
 // DX-4235: a running sub-agent's own tool call re-posts its row with a fresh lastActivityAt, at most once a LIVENESS_MS, so a sub-agent
 // working for minutes never reads as silent (comment 10017).
 async function reportSubagentAlive($: any, agentId: string): Promise<void> {
-  const id = subagentActivityId(agentId)
+  const id = subagentKey(agentId)
   const now = await $.clock.now()
   const state = await read($, reports)
   const lastPost = state.agents[id]
@@ -2339,8 +2340,10 @@ async function* noteAgentStep($: any, e: any, next: any): any {
   const response = yield* next(e)
   const size = response?.usage === null || response?.usage === undefined ? null : sizeOfUsage(response.usage)
   if (size !== null) {
-    agentSizes.delete(e.agentId)
-    agentSizes.set(e.agentId, size)
+    // DX-5328: sizes are kept under the canonical key the verdict and the handshake's `agents` map use; the event carries Claude Code's bare id
+    const key = subagentKey(e.agentId)
+    agentSizes.delete(key)
+    agentSizes.set(key, size)
     if (agentSizes.size > AGENT_SIZES_KEEP) agentSizes.delete(agentSizes.keys().next().value as string)
   }
 }
@@ -2363,7 +2366,8 @@ async function onSessionCompact($: any, e: any, next: any) {
 }
 
 async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
-  const agentId: string = e.agentId
+  // DX-5328: the event's `agentId` is Claude Code's bare id; the control's `agents` map is keyed `agent-<id>`, so it is converted once here and the verdict sees only the key
+  const agentId: string = subagentKey(e.agentId)
   const spends = e.trigger === 'auto'
   try {
     const sessionId = String(await $.session.id())
@@ -2398,7 +2402,7 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
   const asks = Object.entries(file.control.subagents.agents).flatMap(([id, a]) => (a.ask === null ? [] : [{ id, ask: a.ask }]))
   if (asks.length === 0) return
   const sessionId = String(await $.session.id())
-  const running = new Set<string>(((await $.agent.list()) as { id: string; status: string }[]).filter(a => a.status === 'running').map(a => a.id))
+  const running = new Set<string>(((await $.agent.list()) as { id: string; status: string }[]).filter(a => a.status === 'running').map(a => subagentKey(a.id))) // DX-5328: the engine lists a sub-agent by its bare id, the control by `agent-<id>`
   let recorded = false
   for (const { id, ask } of asks) {
     const key = askSentKey(sessionId, id)
@@ -2411,7 +2415,7 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
     })
     if (!won) continue
     try {
-      const sent = await $.session.send({ to: { agentId: id }, text: ask.text })
+      const sent = await $.session.send({ to: { agentId: bareSubagentId(id) }, text: ask.text }) // DX-5328: `to.agentId` is the bare id
       if (!sent.isDelivered) throw new Error(sent.reason)
     } catch (err: any) {
       // the claim goes back, so the next sync sends it again
