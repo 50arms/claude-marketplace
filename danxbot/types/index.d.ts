@@ -139,6 +139,10 @@ export type StampState = { at: number; day: string } | null
 
 // DX-4234: a session start the model has not yet been told about: SessionStart records it (the engine has not bound the session yet, so it
 // cannot call the MCP), and the next prompt.submit or main-loop tool.call result consumes it.
+// DX-5344: who is compacting. `main` is the epoch ms of the main agent's compaction proposal (null: none); `agents` has one entry per sub-agent (bare id), `at` its proposal's time, or its
+// compaction's finish once `done`, and `done` is true once its compaction finished and its own briefing waits for its next tool result.
+export type CompactingState = { main: number | null; agents: Record<string, { at: number; done: boolean }> }
+
 export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null } | null
 
 // DX-4235: what the reports remember between events: what this session reported opening and still owes a close. `agents`: by activity id
@@ -205,6 +209,8 @@ declare module 'claude-code' {
       claimedAsks: Record<string, string>
       // DX-5231: the release the plugin claimed to start a compaction with (one compare-and-set, so a ready starts once)
       claimedRelease: string | null
+      // DX-5344: who is compacting, one entry per agent (see CompactingState).
+      compacting: CompactingState
       // DX-4235: the reports' memory (see ReportState).
       reports: ReportState
     }

@@ -1,11 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { ConnectedPlan, PacingSnapshot, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
+import type { CompactingState, ConnectedPlan, PacingSnapshot, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { briefingText, parseGitStatus } from './compaction/briefing'
+import { COMPACTING_NOTE_TTL_MS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
 import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
@@ -145,6 +145,15 @@ const claimedAsks = atom({ plugin: 'danxbot', key: 'claimedAsks' } as const, {} 
 // DX-5231: the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
 // check and a person's own /compact racing each other start (or spend) a ready exactly once.
 const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as const, null as string | null)
+// DX-5344: who is compacting, one entry per agent so overlapping compactions (parallel sub-agents crossing the one process-wide threshold together, or a main-agent compaction among them) never
+// overwrite each other. Claude Code's classic SessionStart input names no agent (2.1.299), so a `session.compact` proposal that passed enters its agent here and the `compact` restart reads the
+// entries to decide whether the MAIN agent is briefed. `main` is the main agent's entry (epoch ms of its proposal) or null. An agent's entry is `done` once core finished its compaction (the
+// `session.compact` result), and its own briefing is then told on its first tool result; a proposal that was skipped or failed removes its entry. An entry older than COMPACTING_NOTE_TTL_MS, or of
+// a sub-agent that stopped, is dropped. Residual risk, UNVERIFIED live: a compaction whose result never comes back (the engine dies mid-way) keeps its entry for up to the age bound, during which a restart
+// that cannot be attributed (the three kinds in CLAUDE.md) is read as that sub-agent's and does not brief the main agent. The same holds while a sub-agent has finished compacting but has not yet made its next
+// tool call (its entry stays until that call). Rare case: when the main agent and a sub-agent compact together, the sub-agent's restart can use up the main entry; if the main compaction then fails,
+// the main agent gets a stray briefing.
+const compacting = atom({ plugin: 'danxbot', key: 'compacting' } as const, { main: null, agents: {} } as CompactingState)
 // DX-4235: the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
 
@@ -1528,6 +1537,8 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   const r = await next(e)
   // DX-4336: the running-agent count follows the sub-agents' starts and stops; a finished one's last response also moved the parent's figure
   await trackAgent($, e.agent_id, isStart)
+  // DX-5344: a sub-agent that stopped owes no briefing, and must not make a later restart read as its own
+  if (!isStart) await forgetCompactingAgent($, e.agent_id)
   if (!isStart) await markMeasured($)
   detach($, 'Plan refresh', refresh($))
   void watchRelay($)
@@ -1613,7 +1624,9 @@ async function onToolStamp($: any, e: any, next: any) {
   detach($, 'danxbot activity report', reportShellStart($, e, r))
   if (e.agentId !== undefined) detach($, 'danxbot activity report', reportSubagentAlive($, e.agentId))
   if (r.deny !== undefined) return r
-  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined))] }
+  // DX-5344: a sub-agent's compaction briefs that sub-agent, in its own tool result
+  const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
+  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined)), ...(briefing === null ? [] : [briefing])] }
 }
 
 // DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -1764,6 +1777,77 @@ async function readSubagentContext($: any): Promise<string | null> {
   return plan.kind === 'failed' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine('sub_agent_start', plan.reason) : null
 }
 
+// DX-5344: the entries still within COMPACTING_NOTE_TTL_MS
+function liveCompacting(cur: CompactingState, now: number): CompactingState {
+  const fresh = (at: number) => now - at <= COMPACTING_NOTE_TTL_MS
+  return { main: cur.main !== null && fresh(cur.main) ? cur.main : null, agents: Object.fromEntries(Object.entries(cur.agents).filter(([, a]) => fresh(a.at))) }
+}
+
+// A `compact` restart. The main agent is briefed when it has an entry (consumed here), or when no agent has one (a compaction nobody noted, the unattributable kinds); a restart that only
+// sub-agents account for briefs nobody here: each of them is told on its own first tool result, whichever restart came first. Returns whether the main agent is briefed.
+async function restartBriefsMain($: any): Promise<boolean> {
+  const now = await $.clock.now()
+  let briefsMain = true
+  await update($, compacting, cur => {
+    const live = liveCompacting(cur, now)
+    briefsMain = live.main !== null || Object.keys(live.agents).length === 0
+    return { ...live, main: null }
+  })
+  return briefsMain
+}
+
+async function noteCompacting($: any, agentId: string | null): Promise<void> {
+  const now = await $.clock.now()
+  await update($, compacting, cur => {
+    const live = liveCompacting(cur, now)
+    return agentId === null ? { ...live, main: now } : { ...live, agents: { ...live.agents, [agentId]: { at: now, done: false } } }
+  })
+}
+
+// The compaction of this agent finished (`done`), or did not happen (skipped, or failed: the entry goes).
+async function settleCompacting($: any, agentId: string | null, completed: boolean): Promise<void> {
+  const now = await $.clock.now()
+  await update($, compacting, cur => {
+    if (agentId === null) return completed ? cur : { ...cur, main: null }
+    const entry = cur.agents[agentId]
+    if (entry === undefined) return cur
+    const { [agentId]: _gone, ...rest } = cur.agents
+    return { ...cur, agents: completed ? { ...rest, [agentId]: { at: now, done: true } } : rest }
+  })
+}
+
+async function forgetCompactingAgent($: any, agentId: unknown): Promise<void> {
+  if (typeof agentId !== 'string' || agentId === '') return
+  await update($, compacting, cur => {
+    if (!(agentId in cur.agents)) return cur
+    const { [agentId]: _gone, ...rest } = cur.agents
+    return { ...cur, agents: rest }
+  })
+}
+
+// DX-5344: the briefing of the sub-agent whose tool result this is, once its own compaction finished: once, to that sub-agent only, and only when the session is on a plan (an unconnected
+// session gets no danxbot text at all, DX-3421). The engine's list names its type and task; a list that fails is toasted and the briefing names the id alone.
+async function takeAgentBriefing($: any, agentId: string): Promise<string | null> {
+  const now = await $.clock.now()
+  let waiting = false
+  await update($, compacting, cur => {
+    const live = liveCompacting(cur, now)
+    waiting = live.agents[agentId]?.done === true
+    if (!waiting) return live
+    const { [agentId]: _taken, ...rest } = live.agents
+    return { ...live, agents: rest }
+  })
+  if (!waiting || !(await isPlanConnected($, String(await $.session.id())))) return null
+  let listed: { id: string; type: string; description: string }[] = []
+  try {
+    listed = await $.agent.list()
+  } catch (err: any) {
+    $.ui.toast(`The sub-agent briefing could not read the agent list: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+  }
+  const found = listed.find(a => a.id === agentId)
+  return subagentBriefingText({ id: agentId, type: found?.type ?? null, description: found?.description ?? null })
+}
+
 // SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. Nothing else: the session is not bound yet on a
 // desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see stampEntries).
 async function onClassicSessionStart($: any, e: any, next: any) {
@@ -1771,6 +1855,8 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
   // the ended session is consumed by this start only: a later clear that saw no end must not be asked about this one's
   const ended = await takeEndedSession($)
+  // DX-5344: a restart only sub-agents account for is theirs to be briefed about; the main agent's pending start is for its own compaction (and every other start, and a restart nobody noted)
+  if (e.source === 'compact' && !(await restartBriefsMain($))) return below
   const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended }
   await update($, pendingStart, () => start)
   return below
@@ -2352,7 +2438,24 @@ async function* noteAgentStep($: any, e: any, next: any): any {
 // the per-agent gate below. Observes only.
 async function onSessionCompactSeen($: any, e: any, next: any) {
   if (!(await read($, sessionCompactSeen))) await update($, sessionCompactSeen, () => true)
-  return next(e)
+  // DX-5344: a person's own /compact (or the plugin's) is the main agent's, and replaces the note of a sub-agent proposal that never delivered a start
+  if (e.trigger !== 'manual') return next(e)
+  await noteCompacting($, null)
+  return settledCompaction($, null, next, e)
+}
+
+// DX-5344: runs core's compaction and settles the agent's entry by what came back: a result that is not a skip is a compaction that finished, a skip or a throw is one that did not happen
+// (the throw goes on).
+async function settledCompaction($: any, agentId: string | null, next: any, e: any) {
+  let r: any
+  try {
+    r = await next(e)
+  } catch (err) {
+    await settleCompacting($, agentId, false)
+    throw err
+  }
+  await settleCompacting($, agentId, r?.skip === undefined)
+  return r
 }
 
 // Claude Code's own automatic proposal (`session.compact`, trigger `auto`, and a `precompute`, the same compaction computed ahead of time) for the main agent or, with an `agentId`,
@@ -2362,7 +2465,11 @@ async function onSessionCompactSeen($: any, e: any, next: any) {
 // leaves it alone (onPreCompact); one that does not is a skip, so core runs nothing.
 async function onSessionCompact($: any, e: any, next: any) {
   const v = e.agentId === undefined ? await compactionVerdict($, e) : await agentCompactionVerdict($, e)
-  return v.pass ? next(e) : { skip: v.reason }
+  if (!v.pass) return { skip: v.reason }
+  // DX-5344: the proposal passed, so this agent compacts next (a precompute installs nothing and names nobody)
+  if (e.trigger !== 'auto') return next(e)
+  await noteCompacting($, e.agentId ?? null)
+  return settledCompaction($, e.agentId ?? null, next, e)
 }
 
 async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
