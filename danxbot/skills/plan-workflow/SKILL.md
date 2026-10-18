@@ -33,12 +33,12 @@ Goal record = outcome measured against; rule record = constraint; caveat record 
 trade-off; architecture section (one per concern) = design; card (on the board it changes) =
 actionable work; AC item = a step finishing an existing card; agent note on the card
 (`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
-handoffs, blockers; card comment = talking with a person (a reply to what they wrote);
-problem on the card it concerns = user question; steps a
-person must perform (a live check, a manual task) = an `action` problem whose solution steps
-are the procedure, each with a short title and a description saying where (exact link), what
-to do and what to look for, never an AC checklist; plan
-note = real milestone; remove a wrong-plan card from the plan; rename a stale plan.
+handoffs, blockers; card comment = talking with a person (a reply to what they wrote or
+asked); problem on the card it concerns = user question; steps a person must perform (a
+live check, a manual task) = an `action` problem whose solution steps are the procedure,
+each with a short title and a description saying where (exact link), what to do and what to
+look for, never an AC checklist; plan note = real milestone; remove a wrong-plan card from
+the plan; rename a stale plan.
 
 ## The user
 
@@ -294,11 +294,11 @@ time; trust those numbers, never your own estimate. Never retry a refused spawn.
   may be moved to haiku when the budget is nearly full.
 - **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.
   Let running agents finish; do only cheap work yourself (verify landed commits, card writes),
-  and record anything else on its card as paused. (This is the account's usage pause, which
+  and record anything else as paused in an agent note on its card. (This is the account's usage pause, which
   danxbot manages; it is not the pause you make yourself, described under "Pausing".)
 - **Critical**: every running agent makes a work-in-progress commit, pushes its branch, writes
-  on its card where it is, and stops; do the same for your own state, note on each card what is
-  paused, and go idle. A later message back to on pace means: read those cards and resume
+  an agent note on its card saying where it is, and stops; do the same for your own state,
+  write an agent note on each card saying what is paused, and go idle. A later message back to on pace means: read those cards and resume
   what was paused.
 
 ## Liveness

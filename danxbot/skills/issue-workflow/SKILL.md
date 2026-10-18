@@ -123,13 +123,12 @@ first, then end `failed`.
 
 - **AC/checklists** — each item's id is under the card's `checklists[].items[]`; set it
   `passing` on its checklist item.
-- **Comments** — only for talking with a person: a reply to what they wrote or asked. An
-  ask for a person is a problem (the comment route reminds you).
+- **Comments** — only for talking with a person: a reply to what they wrote or asked.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
   progress, evidence, gate results, handoffs, blockers, `## Docs impact`; trace, audit and
-  context for the next agent. Append-only, and no person is asked anything there: what a
-  person must act on or decide is a problem. Read them as `agent_notes` on a card read.
-- A durable decision goes on a card (description, AC), never a comment or note alone.
+  context for the next agent. Append-only; read them as `agent_notes` on a card read.
+- **Decisions** — a durable decision goes in the card's description or AC, never in a
+  comment or agent note alone.
 - **Dependencies** — only for a card already known, never a discovery scan.
 - Never write a `status:` literal; transitions derive it.
 - **MCP down** → curl the same route with the credential the dashboard MCP's config names,

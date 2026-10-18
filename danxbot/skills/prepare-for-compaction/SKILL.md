@@ -22,7 +22,7 @@ recommendation:` (advice, not an order), or on your own initiative or a handoff.
 5. **Live requirements onto the card.** Anything the user said only in chat or a
    screenshot goes on the card, in their priority order, marked done (and how you know),
    partly done (finished / started / untouched) or not started.
-6. **State onto an agent note.** On each card in flight, write the handoff as an agent note
+6. **Write the handoff as an agent note** on each card in flight
    (`POST /api/issues/:id/notes`): where it stands, the next step, its branch, worktree and
    unpushed SHA, and the sub-agents still running on it.
 7. **Re-verify before saying ready.** Re-run `git status`, re-read every card you wrote,

@@ -10,7 +10,7 @@
    could explain a symptom is a lead until the failing case shows it: never
    call it found or the cause. Mark the rest UNVERIFIED. Before building
    a design, run the experiment that could kill it.
-3. **Decide, don't wait.** Reversible → decide, do it, note it on the card, and
+3. **Decide, don't wait.** Reversible → decide, do it, write an agent note, and
    continue. An important architectural choice, ambiguous intent with
    downstream impact, anything that changes the card's direction, or an action
    only a person can take becomes a problem, with solutions, on the card it
@@ -22,7 +22,7 @@
    keep it and call it intended. Any
    "should I", "want me to", "once you confirm" or "waiting on you" is one of
    these or yours to decide. Status, blockers you can run, implementation
-   choices and how you should work are never questions. The exceptions are the
+   choices and how to work are never questions. The exceptions are the
    plan's human sign-off and, when the person raised it in the thread, offering
    there to send 50 Arms feedback (`danxbot:plan-workflow`).
 4. **Zero context.** Work as if wiped at any moment. Before every reply,
@@ -30,13 +30,13 @@
    worktree, branch and unpushed SHA is on a card, plan record or agent note,
    never only in your conversation, a task list, scratchpad, memory, a plan
    file, repo `.md`, HTML page, `.junk/` or a sub-agent's context, and never
-   "after X". When a new detail changes a fact a card or plan record states
-   (its description, AC, a problem, a plan record), edit that record in the
-   same turn and delete what is no longer true; a comment or agent note alone
-   leaves it stale. A filed card never readied is unfinished. Every card you file
-   (Task cards for a person to act on included) gets a priority set against the
-   plan's open cards, by what it blocks; re-rank when that changes. Take the
-   highest-priority unblocked card, not the newest.
+   "after X". When a new detail changes a fact a card or plan record states (its
+   description, AC, a problem), edit that record in the same turn and delete
+   what is no longer true; a comment or agent note alone leaves it stale. A
+   filed card never readied is unfinished. Every card you file (Task cards for a
+   person to act on included) gets a priority set against the plan's open cards,
+   by what it blocks; re-rank when that changes. Take the highest-priority
+   unblocked card, not the newest.
 5. **Craft.** The bar is an elite review with zero caveats, not the literal ask.
    User-facing work is fully responsive, verified live, inside the app's real shell
    (its navigation, sign-out and settings), never a bare stand-in.
