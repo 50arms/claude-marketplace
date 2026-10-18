@@ -205,6 +205,10 @@ declare module 'claude-code' {
       claimedAsks: Record<string, string>
       // DX-5231: the release the plugin claimed to start a compaction with (one compare-and-set, so a ready starts once)
       claimedRelease: string | null
+      // DX-5344: who is compacting, noted by the `session.compact` proposal that passed (`agentId` null: the main agent) and taken once by the `compact` session start; `at` is epoch ms.
+      compactingNote: { agentId: string | null; at: number } | null
+      // DX-5344: sub-agents (bare id to epoch ms) whose compaction finished and whose own briefing waits for their next tool result.
+      briefAgents: Record<string, number>
       // DX-4235: the reports' memory (see ReportState).
       reports: ReportState
     }

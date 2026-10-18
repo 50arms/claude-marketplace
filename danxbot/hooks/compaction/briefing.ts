@@ -71,3 +71,15 @@ export function briefingText(input: BriefingInput): string {
   const plan = input.plan === null ? 'You are on no plan.' : `Your plan is ${input.plan.ref} ${oneLine(input.plan.name, 80)}.`
   return `[50 ARMS] Your conversation was just compacted. Resume from this briefing, then read your cards before acting. ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
 }
+
+// DX-5344: a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
+// from its summary and the progress notes it kept before compacting, so the briefing names who it is and points at them. `type` and `description` are null when the engine no longer lists the agent.
+export type SubagentBriefingInput = { id: string; type: string | null; description: string | null }
+
+// How long the plugin keeps the note of an agent whose compaction proposal passed: a compaction that never delivered a start must not name the agent for a later, different compaction.
+export const COMPACTING_NOTE_TTL_MS = 10 * 60_000
+
+export function subagentBriefingText(input: SubagentBriefingInput): string {
+  const label = `${input.id}${input.type === null ? '' : ` (${input.type})`}${input.description === null ? '' : ` ${oneLine(input.description, 80)}`}`
+  return `[50 ARMS] Your conversation was just compacted. You are sub-agent ${label}. Resume from your summary and from the progress notes you kept before compacting, then carry on with the task you were given and report back to the session that spawned you. The plan and cards are your parent's, not yours.`
+}
