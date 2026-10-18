@@ -32,15 +32,24 @@ for (const surface of SURFACES) {
       on('classic.SessionStart', () => ({}) as any)
       on('classic.PreCompact', () => ({}) as any)
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
-      on('session.compact', async () => COMPACTED as any)
+      // what core does with a proposal that passed: by agent ('main' for the main agent), compact, answer a skip, or throw
+      const core = new Map<string, 'skip' | 'throw'>()
+      const hold = new Map<string, Promise<void>>()
+      on('session.compact', async (_$: any, e: any) => {
+        await hold.get(e.agentId ?? 'main')
+        const mode = core.get(e.agentId ?? 'main')
+        if (mode === 'throw') throw new Error('compaction failed')
+        return (mode === 'skip' ? { skip: 'no' } : COMPACTED) as any
+      })
+      on('classic.SubagentStop', () => ({}) as any)
       const d = dashboard(on, {})
-      d.world.agents = [AGENT]
+      d.world.agents = [AGENT, { ...AGENT, id: 'a2', description: 'the other task' }]
       await startSession($, d, surface)
       const propose = (agentId?: string, trigger = 'auto') => $.session.compact({ trigger, messages: TRANSCRIPT, ...(agentId === undefined ? {} : { agentId }) })
       const compactStart = () => $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'own', transcript_path: '/work/main.jsonl' })
       const prompt = async () => ((await $.prompt.submit({ text: 'hello' })).context ?? []) as string[]
       const toolResult = async (agentId?: string) => (((await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)).context ?? []) as string[])
-      return { d, propose, compactStart, prompt, toolResult }
+      return { d, core, hold, propose, compactStart, prompt, toolResult, stop: (id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: AGENT.type }) }
     }
     const briefings = (lines: string[]) => lines.filter(l => l.includes('Your conversation was just compacted'))
 
@@ -73,12 +82,12 @@ for (const surface of SURFACES) {
       expect(briefings(await k.prompt())).toEqual([])
     })
 
-    test("a person's /compact (manual) after a sub-agent's compaction briefs the main agent, not the sub-agent", async ($, on) => {
+    test("a person's /compact (manual) beside a sub-agent's compaction: the main agent is briefed for it, the sub-agent for its own", async ($, on) => {
       const k = await started($, on)
       await k.propose('a1')
       await k.propose(undefined, 'manual')
       await k.compactStart()
-      expect(briefings(await k.toolResult('a1'))).toEqual([])
+      expect(briefings(await k.toolResult('a1'))).toHaveLength(1)
       expect((await k.prompt()).join('\n')).toContain(MAIN)
     })
 
@@ -96,6 +105,62 @@ for (const surface of SURFACES) {
       await k.d.clock.advance(11 * 60_000)
       await k.compactStart()
       expect(briefings(await k.toolResult('a1'))).toEqual([])
+      expect((await k.prompt()).join('\n')).toContain(MAIN)
+    })
+
+    test("two sub-agents compacting together each get their own briefing and the main agent gets none, whichever restart came first", async ($, on) => {
+      const k = await started($, on)
+      await Promise.all([k.propose('a1'), k.propose('a2')])
+      await k.compactStart()
+      await k.compactStart()
+      expect(briefings(await k.prompt())).toEqual([])
+      expect(briefings(await k.toolResult('a2'))).toEqual([subagentBriefingText({ id: 'a2', type: AGENT.type, description: 'the other task' })])
+      expect(briefings(await k.toolResult('a1'))).toEqual([subagentBriefingText({ id: 'a1', type: AGENT.type, description: AGENT.description })])
+      expect(briefings(await k.toolResult('a1'))).toEqual([])
+      expect(briefings(await k.toolResult('a2'))).toEqual([])
+    })
+
+    test("a sub-agent compacting while the main agent does: the main agent is briefed once, the sub-agent once", async ($, on) => {
+      const k = await started($, on)
+      await Promise.all([k.propose('a1'), k.propose()])
+      await k.compactStart()
+      await k.compactStart()
+      expect((await k.prompt()).filter(l => l.includes(MAIN))).toHaveLength(1)
+      expect(briefings(await k.prompt())).toEqual([])
+      expect(briefings(await k.toolResult('a1'))).toHaveLength(1)
+      expect(briefings(await k.toolResult('a1'))).toEqual([])
+    })
+
+    test("a sub-agent is not briefed before its own compaction finished", async ($, on) => {
+      const k = await started($, on)
+      let release: () => void = () => {}
+      const held = new Promise<void>(r => void (release = r))
+      k.hold.set('a1', held)
+      const proposal = k.propose('a1')
+      await k.d.clock.settle()
+      expect(briefings(await k.toolResult('a1'))).toEqual([])
+      release()
+      await proposal
+      await k.compactStart()
+      expect(briefings(await k.toolResult('a1'))).toHaveLength(1)
+    })
+
+    test("a compaction that was skipped or failed leaves no note: a later unattributable start is the main agent's", async ($, on) => {
+      const k = await started($, on)
+      k.core.set('a1', 'skip')
+      await k.propose('a1')
+      k.core.set('a1', 'throw')
+      await k.propose('a1').catch(() => undefined)
+      await k.compactStart()
+      expect(briefings(await k.toolResult('a1'))).toEqual([])
+      expect((await k.prompt()).join('\n')).toContain(MAIN)
+    })
+
+    test('a sub-agent that stopped before its start came leaves no note either', async ($, on) => {
+      const k = await started($, on)
+      await k.propose('a1')
+      await k.stop('a1')
+      await k.compactStart()
       expect((await k.prompt()).join('\n')).toContain(MAIN)
     })
 
