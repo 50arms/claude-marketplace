@@ -5,8 +5,8 @@
 //
 // WHICH VERSION. The npm registry's `latest` for the package, recorded in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`
 // (temp file + rename, so a reader never sees a partial one). The launcher starts the server from the recorded version at
-// once (`startVersion`: it resolves from the registry only when nothing is recorded), then refreshes the record from the
-// registry while the server runs (`refreshInstall`). A danxbot publish therefore reaches the next session start with no
+// once (`startVersion`: it resolves from the registry only when nothing is recorded), then hands the refresh from the
+// registry (`refreshInstall`) to a detached child that outlives the launcher (DX-5314). A danxbot publish therefore reaches the next session start with no
 // plugin release and no added start latency.
 //
 // WHY EXACT, NOT `latest` AT RUN TIME (DX-3392): `npx -y` never re-checks the registry once a version is cached, so an
@@ -37,6 +37,8 @@ export const DASHBOARD_MCP_PACKAGE_NAME = "@thehammer/danx-dashboard-mcp";
 export const DEFAULT_REGISTRY_BASE_URL = "https://registry.npmjs.org";
 export const REGISTRY_BASE_URL_ENV = "DASHBOARD_MCP_REGISTRY_BASE_URL";
 export const REGISTRY_TIMEOUT_ENV = "DASHBOARD_MCP_REGISTRY_TIMEOUT_MS";
+/** Tests only: a JS file this node runs in place of npm (DX-5314: the detached refresh is a real process, so no spawn seam reaches it). */
+export const NPM_CLI_ENV = "DASHBOARD_MCP_NPM_CLI";
 /** Bounds the one registry request. */
 export const REGISTRY_TIMEOUT_MS = 5_000;
 /** DX-3811: an unreachable registry cannot wedge an install for longer than this. */
@@ -50,10 +52,64 @@ export const RENAME_RETRY_ATTEMPTS = 8;
 export const RENAME_RETRY_BASE_MS = 25;
 export const RENAME_RETRYABLE_CODES = ["EPERM", "EBUSY", "EACCES"];
 /**
- * DX-4235: each process that runs an installed version (the server launcher) leaves a lease file named by its
+ * DX-4235: each process that runs an installed version (the server launcher, and since DX-5314 the detached refresh child) leaves a lease file named by its
  * pid in `<version>/.leases/` while it runs, so a refresh in ANOTHER session never prunes a version a live session still runs.
  */
 const LEASES_DIR = ".leases";
+
+/**
+ * DX-5314: the detached refresh child has no stderr of its own to a reader (a pipe it inherited would stay open after the launcher exits, and the MCP
+ * transport may wait for it), so its failure line is appended here, and the NEXT launcher prints what was written since it last read (`drainRefreshLog`).
+ */
+export const REFRESH_LOG = "refresh.log";
+export function refreshLogFile(env = process.env) {
+  return path.join(installRoot(dataDirOf(env)), REFRESH_LOG);
+}
+/** Appends `text` (a whole line, newline included) to the refresh log. */
+export function appendRefreshLog(text, env = process.env) {
+  const file = refreshLogFile(env);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, text);
+}
+/**
+ * The lines written to the refresh log since the last read, or "" for none. The file is renamed away first (atomic), so a line the child appends meanwhile
+ * lands in a fresh file and is read next time, never lost; the renamed copy is read and removed. A copy left by a launcher that died between the rename
+ * and the removal (`refresh.log.<pid>.read`, its pid gone) is read and removed here too, its lines first, so a crashed read leaves neither a file nor a lost line.
+ */
+export function drainRefreshLog(env = process.env, alive = isAlive) {
+  const file = refreshLogFile(env);
+  const dir = path.dirname(file);
+  let text = "";
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  for (const name of names.sort()) {
+    const m = name.match(/^refresh\.log\.(\d+)\.read$/);
+    if (!m || (Number(m[1]) !== process.pid && alive(Number(m[1])))) continue; // DX-5314: a file named by OUR pid is a dead launcher's, the pid reused (this read has not made one yet)
+    const orphan = path.join(dir, name);
+    try {
+      text += fs.readFileSync(orphan, "utf8");
+      fs.rmSync(orphan, { force: true });
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err; // another launcher took it first
+    }
+  }
+  const taken = `${file}.${process.pid}.read`;
+  try {
+    fs.renameSync(file, taken);
+  } catch (err) {
+    if (err.code === "ENOENT") return text;
+    throw err;
+  }
+  try {
+    return text + fs.readFileSync(taken, "utf8");
+  } finally {
+    fs.rmSync(taken, { force: true });
+  }
+}
 
 const STRICT_VERSION = /^\d+\.\d+\.\d+$/;
 /** How much of a damaged record's content its error quotes. */
@@ -213,7 +269,9 @@ export function noVersionLine(reason) {
  * executable (a link to that same `npm-cli.js`, or a distribution's script) that the OS starts directly.
  * Throws, naming the path, when a Windows node has no npm beside it.
  */
-export function npmCommand(platform = process.platform, execPath = process.execPath, exists = fs.existsSync) {
+export function npmCommand(platform = process.platform, execPath = process.execPath, exists = fs.existsSync, env = process.env) {
+  // the tests' seam (DX-5314): the detached refresh is a real process, so a test names the npm it runs
+  if (env[NPM_CLI_ENV]) return { command: execPath, args: [env[NPM_CLI_ENV]] };
   if (platform !== "win32") return { command: "npm", args: [] };
   const cli = path.win32.join(path.win32.dirname(execPath), "node_modules", "npm", "bin", "npm-cli.js");
   if (!exists(cli)) throw new Error(`npm_not_found: the node running this (${execPath}) has no npm beside it at ${cli}`);
@@ -223,7 +281,7 @@ export function npmCommand(platform = process.platform, execPath = process.execP
 /**
  * `npm <args>`, its output captured (never inherited: the launcher's stdout is the MCP stream). Resolves
  * `{code, signal, output}`; rejects with one line when npm cannot be started, outlives `timeoutMs` or is aborted (`abort`:
- * the server exited mid-refresh). A stopped npm is killed, and the rejection waits for it to close, so the caller's removal of
+ * the refresh was stopped). A stopped npm is killed, and the rejection waits for it to close, so the caller's removal of
  * the stage finds no file npm still holds open.
  */
 function runNpm(npm, args, { env, spawnFn, timeoutMs, label, abort }) {
@@ -246,7 +304,7 @@ function runNpm(npm, args, { env, spawnFn, timeoutMs, label, abort }) {
       child.kill();
     };
     const timer = setTimeout(() => stop(`timeout: ${label} took longer than ${timeoutMs / 1000}s`), timeoutMs);
-    const onAbort = () => stop(`aborted: ${label} was stopped because the server exited`);
+    const onAbort = () => stop(`aborted: ${label} was stopped`);
     if (abort?.aborted) onAbort();
     else abort?.addEventListener("abort", onAbort);
     child.on("error", (err) => settle(reject, new Error(`npm_not_started: could not start npm (${npm.command}) for ${label}: ${err.message}`)));
@@ -270,7 +328,7 @@ export async function installVersion(version, { env = process.env, spawnFn = spa
   const stage = fs.mkdtempSync(path.join(root, STAGE_PREFIX));
   try {
     const result = await runNpm(
-      npm ?? npmCommand(),
+      npm ?? npmCommand(process.platform, process.execPath, fs.existsSync, env),
       ["install", "--prefix", stage, "--no-audit", "--no-fund", "--no-save", "--loglevel=error", spec],
       { env, spawnFn, timeoutMs: installTimeoutMs, label: `installing ${spec}`, abort },
     );
@@ -389,10 +447,10 @@ export async function startVersion(options = {}) {
 }
 
 /**
- * The refresh that runs while the server does: the registry's `latest` is installed, THEN recorded (DX-4235: the record
- * only ever names an installed version, so the next start never pays a cold install). Returns the version recorded. The
- * running server is never touched: a new version is adopted at the next session start. Throws (the caller reports one line
- * and keeps running what it runs). `options.abort` stops an install in flight (installVersion). Pruning old installs is the
+ * The refresh the detached refresh child runs (DX-5314; it outlives the launcher): the registry's `latest` is installed, THEN
+ * recorded (DX-4235: the record only ever names an installed version, so the next start never pays a cold install). Returns
+ * the version recorded. The running server is never touched: a new version is adopted at the next session start. Throws (the
+ * child appends one line to refresh.log, which the next launcher prints, and keeps the recorded version). `options.abort` stops an install in flight (installVersion). Pruning old installs is the
  * caller's separate step (pruneInstalls), so a prune failure is never reported as a failed refresh.
  */
 export async function refreshInstall(options = {}) {
