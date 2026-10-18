@@ -23,15 +23,18 @@ throughout; this skill is the plan mechanics.
    yourself (two tabs). The same holds for `request_permission`. Every other dashboard tool
    answers "not signed in" until then.
 4. Orient from the connect briefing, else read the plan's records, architecture and cards,
-   plus one batch read of its In-Progress/open-problem cards and the newest handoff comment.
+   plus one batch read of its In-Progress/open-problem cards and the newest handoff agent note
+   (`agent_notes` on the card read).
 5. Follow `plan_connect`'s browser instruction as written.
 
 ## Where things go
 
 Goal record = outcome measured against; rule record = constraint; caveat record = lasting
 trade-off; architecture section (one per concern) = design; card (on the board it changes) =
-actionable work; AC item = a step finishing an existing card; card comment = progress,
-evidence, status, local state; problem on the card it concerns = user question; steps a
+actionable work; AC item = a step finishing an existing card; agent note on the card
+(`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
+handoffs, blockers; card comment = talking with a person (a reply to what they wrote);
+problem on the card it concerns = user question; steps a
 person must perform (a live check, a manual task) = an `action` problem whose solution steps
 are the procedure, each with a short title and a description saying where (exact link), what
 to do and what to look for, never an AC checklist; plan
@@ -186,7 +189,7 @@ A note edit replaces its link list per kind — resend them all.
 
 Create via `danxbot:issue-workflow` (load before choosing a type) — but `ready` the card AND
 build it here; the plan never waits on a worker. An archived (Backlog) card was parked on
-purpose: read why in its comments before reopening it; a park the user made is theirs
+purpose: read why in its comments and agent notes before reopening it; a park the user made is theirs
 to lift. A design talked through with the user is decided the moment their answers leave
 no open question: write it into the plan, slice, ready and build in that same turn, never a
 card held in Review for a "go" (a point still open is a problem on that card).
@@ -213,9 +216,9 @@ Every message from the dashboard starts a paid turn at your whole context size. 
 nothing you can do (waiting on a person's answer, a long build, a dependency), do not answer
 each reminder with "still waiting": pause.
 
-1. Record why on the card first (a problem, a comment, `depends_on`, or the real block): the
+1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block): the
    pause is only the signal, never the record. Waiting on a person is always an open problem
-   on a card of this plan, worded for the step left now (a comment never reaches Needs You).
+   on a card of this plan, worded for the step left now (no note or comment reaches Needs You).
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
    what would end the wait. The pause lasts at most `expires_in_minutes` (default 120, at most
@@ -247,7 +250,7 @@ changed.
 ## Stopping
 
 Before stopping or saying "blocked", re-read every open plan card and write each real
-blocker (card id, open problem, user action) to a card comment.
+blocker (card id, open problem, user action) to an agent note on that card.
 
 ## Sub-agents
 
@@ -266,7 +269,7 @@ or name it. Stop a dispatch once its report is consumed. A report is a lead, not
 read the diff, confirm the push, check for leftover worktrees, commits or background tasks.
 
 Slice a long job into sub-agents that each end well under about 300k tokens of context. When a
-sub-agent nears that, ask it to write a `HANDOFF` note (last item done, next item, what the next agent
+sub-agent nears that, ask it to write a `HANDOFF` agent note on its card (last item done, next item, what the next agent
 must know) and stop; relaunch a fresh one from the original brief plus that note, in the foreground: a
 background relaunch ends your turn. A fresh agent carries far less context than a compacted one, but only what the note says
 crosses, so use it when the job's state is on disk, not in half-finished reasoning, an open browser or an
@@ -308,5 +311,5 @@ the JSONL last-entry age — name the source.
 Before an actual compaction, load `danxbot:prepare-for-compaction`.
 
 Retiring this session (a handoff, not a compaction): as your last plan action, after the handoff
-comment, call `plan_connect({plan_id, disconnect: true})` (`plan_id` = the plan you are on). Moving to
+agent note, call `plan_connect({plan_id, disconnect: true})` (`plan_id` = the plan you are on). Moving to
 another plan needs no leave.

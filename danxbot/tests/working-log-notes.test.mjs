@@ -1,0 +1,50 @@
+// DX-5324 (follows DX-5323) — a card's comments are the conversation between people and
+// agents; an agent's working log (progress, evidence, handoffs, blockers, gate notes) is an
+// agent note, written through `POST /api/issues/:id/notes`. Every plugin text that tells an
+// agent where to put its log says so, and none still sends the log to a comment.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const read = (rel) => readFileSync(path.join(here, "..", rel), "utf8");
+const flat = (s) => s.replace(/\s+/g, " ");
+
+const mantra = flat(read("mantra.md"));
+const planWorkflow = flat(read("skills/plan-workflow/SKILL.md"));
+const issueWorkflow = flat(read("skills/issue-workflow/SKILL.md"));
+const cardCreation = flat(read("skills/issue-workflow/references/card-creation-and-reference.md"));
+const compaction = flat(read("skills/prepare-for-compaction/SKILL.md"));
+
+test("mantra rule 4 keeps state on a card, plan record or agent note, and neither a comment nor a note alone updates a record", () => {
+  assert.match(mantra, /unpushed SHA is on a card, plan record or agent note, never only in your conversation/);
+  assert.match(mantra, /a comment or agent note alone leaves it stale/);
+  assert.doesNotMatch(mantra, /plan record or comment/);
+});
+
+test("plan-workflow sends the working log, handoffs and blockers to agent notes and keeps comments for a person", () => {
+  assert.match(planWorkflow, /agent note on the card \(`POST \/api\/issues\/:id\/notes`\) = your working log: progress, evidence, status, local state, handoffs, blockers; card comment = talking with a person/);
+  assert.match(planWorkflow, /the newest handoff agent note \(`agent_notes` on the card read\)/);
+  assert.match(planWorkflow, /write each real blocker \(card id, open problem, user action\) to an agent note on that card/);
+  assert.match(planWorkflow, /after the handoff agent note, call `plan_connect\(\{plan_id, disconnect: true\}\)`/);
+  assert.match(planWorkflow, /Record why on the card first \(a problem, an agent note, `depends_on`, or the real block\)/);
+  assert.doesNotMatch(planWorkflow, /card comment = progress|handoff comment|to a card comment/);
+});
+
+test("issue-workflow splits Mechanics into Comments (a person) and Agent notes (the working log)", () => {
+  assert.match(issueWorkflow, /\*\*Comments\*\* — only for talking with a person/);
+  assert.match(issueWorkflow, /\*\*Agent notes\*\* — your working log on the card, `POST \/api\/issues\/:id\/notes` `\{text\}`: progress, evidence, gate results, handoffs, blockers, `## Docs impact`/);
+  assert.match(issueWorkflow, /what a person must act on or decide is a problem/);
+  assert.match(issueWorkflow, /Read the card with its description, AC, comments, agent notes and dependencies/);
+  assert.match(issueWorkflow, /`Notes from Phase N` as an agent note on the next phase card/);
+  assert.doesNotMatch(issueWorkflow, /\*\*Comments\*\* — trace, audit and context/);
+  assert.match(cardCreation, /a `## Docs impact` agent note, never by editing docs pages/);
+});
+
+test("prepare-for-compaction writes the handoff state as an agent note", () => {
+  assert.match(compaction, /\*\*State onto an agent note\.\*\* On each card in flight, write the handoff as an agent note \(`POST \/api\/issues\/:id\/notes`\)/);
+  assert.match(compaction, /record the SHA in an agent note on its card/);
+});

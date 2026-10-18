@@ -18,17 +18,20 @@ recommendation:` (advice, not an order), or on your own initiative or a handoff.
 3. **Attribute each changed file to its card**, including files another card owns;
    otherwise "commit everything dirty" merges unrelated, unreviewed work into one commit.
 4. **Another agent's uncommitted work:** commit it as WIP, never discard it, and record
-   the SHA on its card.
+   the SHA in an agent note on its card.
 5. **Live requirements onto the card.** Anything the user said only in chat or a
    screenshot goes on the card, in their priority order, marked done (and how you know),
    partly done (finished / started / untouched) or not started.
-6. **Re-verify before saying ready.** Re-run `git status`, re-read every card you wrote,
+6. **State onto an agent note.** On each card in flight, write the handoff as an agent note
+   (`POST /api/issues/:id/notes`): where it stands, the next step, its branch, worktree and
+   unpushed SHA, and the sub-agents still running on it.
+7. **Re-verify before saying ready.** Re-run `git status`, re-read every card you wrote,
    re-check which sub-agents are still running.
-7. **Say what compaction affects**, in the handoff: context is replaced by a summary; the
+8. **Say what compaction affects**, in the handoff note: context is replaced by a summary; the
    tree, commits, pushes and running sub-agents carry on unchanged.
-8. **Say ready, only after a recommendation.** A `[50 ARMS] Compaction recommendation:` you
+9. **Say ready, only after a recommendation.** A `[50 ARMS] Compaction recommendation:` you
    decided to act on is answered by `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`, after
-   step 6. Until you do, nothing compacts. After ready, end your turn: the plugin starts the
+   step 7. Until you do, nothing compacts. After ready, end your turn: the plugin starts the
    compaction when the turn ends (the ready lasts about ten minutes, so do not start long work
    first). `409 compaction_not_requested` means you were not asked: keep working. Your own
    `/compact`, or one the person types, needs no ready.

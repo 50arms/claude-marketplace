@@ -19,7 +19,7 @@ children; work written into a container's own body or AC is a defect.
 
 The type names the slicing rules below use (Story, Feature, Epic) stand for the team's seeded work and container types; the team's own rows from `GET /api/card-types` decide what each type may hold.
 
-A card records the docs it changes as a `## Docs impact` comment, never by editing docs pages.
+A card records the docs it changes as a `## Docs impact` agent note, never by editing docs pages.
 
 ## The slice gate
 
