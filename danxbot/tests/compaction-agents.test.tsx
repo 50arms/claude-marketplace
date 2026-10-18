@@ -246,7 +246,7 @@ for (const surface of SURFACES) {
 
       test("a sub-agent's proposal is judged on ITS context: held under its valve, through at it, and the classic gate does not hold what the per-agent gate passed", async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         await k.request('a1', AGENT_TURN_USAGE(300_000))
         expect(await k.propose('a1')).toEqual({ skip: AGENT_HELD_REASON })
         expect(k.core).toEqual([])
@@ -254,12 +254,12 @@ for (const surface of SURFACES) {
         // the main agent's size is far under its own valve and the classic gate cannot name an agent: the proposal still passes
         expect(await k.propose('a1')).toEqual(COMPACTED)
         expect(k.core).toEqual([{ agentId: 'a1', skipped: undefined }])
-        expect(k.d.toasts).toContain('Compacting sub-agent a1 now: its context reached the size where holding it would end its work.')
+        expect(k.d.toasts).toContain('Compacting sub-agent agent-a1 now: its context reached the size where holding it would end its work.')
       })
 
       test('the size is the LAST response of that sub-agent: after it compacted and shrank, the next proposal is held', async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         await k.request('a1', AGENT_TURN_USAGE(650_000))
         expect(await k.propose('a1')).toEqual(COMPACTED)
         await k.request('a1', AGENT_TURN_USAGE(40_000))
@@ -268,7 +268,7 @@ for (const surface of SURFACES) {
 
       test("each sub-agent's size is its own", async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry(), a2: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry(), 'agent-a2': entry() } }))
         await k.request('a1', AGENT_TURN_USAGE(700_000))
         await k.request('a2', AGENT_TURN_USAGE(100_000))
         expect(await k.propose('a2')).toEqual({ skip: AGENT_HELD_REASON })
@@ -309,34 +309,34 @@ for (const surface of SURFACES) {
 
       test("a sub-agent's release passes ONCE, is spent for that sub-agent only, and a new release passes again", async ($, on) => {
         const k = await started($, on)
-        const release = (id: string) => fileText(gateControl({ agents: { a1: entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: id }), a2: entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: id }) } }))
+        const release = (id: string) => fileText(gateControl({ agents: { 'agent-a1': entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: id }), 'agent-a2': entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: id }) } }))
         k.d.world.files[CONTROL_FILE] = release('r1')
         await k.request('a1', AGENT_TURN_USAGE(300_000))
         await k.request('a2', AGENT_TURN_USAGE(300_000))
         expect(await k.propose('a1')).toEqual(COMPACTED)
-        expect(k.d.stored.get(usedReleaseKey(OWN_SESSION.session_id, 'a1'))).toEqual({ releaseId: 'r1', at: expect.any(Number) })
+        expect(k.d.stored.get(usedReleaseKey(OWN_SESSION.session_id, 'agent-a1'))).toEqual({ releaseId: 'r1', at: expect.any(Number) })
         // the dashboard writes the same release again: spent
         expect(await k.propose('a1')).toEqual({ skip: AGENT_HELD_REASON })
         // a2's release is its own, though it has the same id
         expect(await k.propose('a2')).toEqual(COMPACTED)
         k.d.world.files[CONTROL_FILE] = release('r2')
         expect(await k.propose('a1')).toEqual(COMPACTED)
-        expect(k.d.toasts).toContain('Compacting sub-agent a1 now: it said it is ready.')
+        expect(k.d.toasts).toContain('Compacting sub-agent agent-a1 now: it said it is ready.')
       })
 
       test("the main agent's release never passes a sub-agent and a sub-agent's release never passes the main agent", async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'main-r', agents: { a1: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'main-r', agents: { 'agent-a1': entry() } }))
         await k.request('a1', AGENT_TURN_USAGE(300_000))
         expect(await k.propose('a1')).toEqual({ skip: AGENT_HELD_REASON })
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'a1-r' }) } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'a1-r' }) } }))
         expect(await k.propose()).toEqual({ skip: HELD_REASON })
         expect(k.core).toEqual([])
       })
 
       test("a manual /compact is not this gate's: it is not matched, and the classic gate lets it through", async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         expect(await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })).toEqual(COMPACTED)
         expect(k.core).toEqual([{ agentId: undefined, skipped: undefined }])
       })
@@ -356,18 +356,18 @@ for (const surface of SURFACES) {
       test("a precompute is judged per agent like an automatic proposal, and spends no release or announcement: the compaction that follows is the one that does", async ($, on) => {
         const k = await started($, on)
         const release = { releaseUntilMs: CLOCK_START + 60_000, releaseId: 'r1' }
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry(release), a2: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry(release), 'agent-a2': entry() } }))
         await k.request('a1', AGENT_TURN_USAGE(300_000))
         await k.request('a2', AGENT_TURN_USAGE(300_000))
         // held for the agent with no release, through for the one whose release is waiting, and the main agent under its valve is held
         expect(await k.propose('a2', 'precompute')).toEqual({ skip: AGENT_HELD_REASON })
         expect(await k.propose('a1', 'precompute')).toEqual(COMPACTED)
         expect(await k.propose(undefined, 'precompute')).toEqual({ skip: HELD_REASON })
-        expect(k.d.stored.has(usedReleaseKey(OWN_SESSION.session_id, 'a1'))).toBe(false)
+        expect(k.d.stored.has(usedReleaseKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(false)
         expect(k.d.toasts.filter(t => t.startsWith('Compacting'))).toEqual([])
         // the release is still a1's for the automatic proposal that follows
         expect(await k.propose('a1')).toEqual(COMPACTED)
-        expect(k.d.stored.has(usedReleaseKey(OWN_SESSION.session_id, 'a1'))).toBe(true)
+        expect(k.d.stored.has(usedReleaseKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(true)
         // at the main valve a precompute passes with no announcement
         k.d.world.context = { tokens: 907_000, window: WINDOW }
         expect(await k.propose(undefined, 'precompute')).toEqual(COMPACTED)
@@ -418,26 +418,26 @@ for (const surface of SURFACES) {
 
       test('a gate that cannot decide for a sub-agent holds nothing and tells the person once (fail open)', async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         await k.request('a1', AGENT_TURN_USAGE(300_000))
         expect(await k.propose('a1')).toEqual({ skip: AGENT_HELD_REASON })
         k.d.world.fsError = 'the disk is gone'
         expect(await k.propose('a1')).toEqual(COMPACTED)
         expect(await k.propose('a1')).toEqual(COMPACTED)
-        expect(k.d.toasts.filter(t => t.startsWith('Compaction gate could not decide for sub-agent a1, so Claude Code\'s own automatic compaction applies'))).toHaveLength(1)
+        expect(k.d.toasts.filter(t => t.startsWith('Compaction gate could not decide for sub-agent agent-a1, so Claude Code\'s own automatic compaction applies'))).toHaveLength(1)
         expect(k.core).toHaveLength(2)
       })
 
       test('the classic gate alone (a host that has run no session.compact) holds every automatic proposal like the main agent', async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
         expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
       })
 
       test('once the host has run session.compact the classic gate leaves automatic proposals to it, including an isolated sub-agent the per-agent gate never sees', async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
         await k.see()
         // a proposal that skips session.compact (an isolated delegatedObservation sub-agent, a model whose window source is auto, the in-process runner) reaches only the classic hook,
@@ -453,31 +453,46 @@ for (const surface of SURFACES) {
       test("a request reaches only that sub-agent, once per ask.at, as the dashboard worded it; the main agent never gets one", async ($, on) => {
         const k = await started($, on)
         running(k.d, 'a1', 'a2')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: ASK }), a2: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }), 'agent-a2': entry() } }))
         await $.turn.start(START)
         expect(k.d.sends).toHaveLength(1)
         expect(k.d.sends[0].to).toContain('a1')
+        // DX-5328: the control is keyed `agent-a1`, the real pairing; the engine addresses the sub-agent by the BARE id Claude Code lists it under
+        expect(String(k.d.sends[0].to)).not.toContain('agent-a1')
         expect(k.d.sends[0].text).toBe(ASK.text)
         // the same request, however many syncs follow, is not sent again
         await $.turn.complete(TURN)
         await $.turn.start(START)
         await $.turn.complete(TURN)
         expect(k.d.sends).toHaveLength(1)
-        expect(k.d.stored.get(askSentKey(OWN_SESSION.session_id, 'a1'))).toEqual({ at: ASK.at, sentAt: expect.any(Number) })
+        expect(k.d.stored.get(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toEqual({ at: ASK.at, sentAt: expect.any(Number) })
         // a later request (a new `at`) is a new one
         const later = { ...ASK, seq: 3, at: '2026-10-14T12:30:00.000Z', text: 'Prepare again.' }
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: later }), a2: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: later }), 'agent-a2': entry() } }))
         await $.turn.start(START)
         expect(k.d.sends.map(s => s.text)).toEqual([ASK.text, 'Prepare again.'])
         expect(k.d.sends.every(s => s.to.includes('a1'))).toBe(true)
       })
 
+      // DX-5328: one id of the wrong form in `$.agent.list()` is left out and told once; it never breaks the sync (which goes on to start the main agent's ready compaction)
+      test('one agent-list id that is not a bare id is excluded and told once, and the other sub-agents still get their request', async ($, on) => {
+        const k = await started($, on)
+        running(k.d, 'agent-bad', 'a1')
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        await $.turn.start(START)
+        expect(k.d.sends).toHaveLength(1)
+        expect(k.d.toasts.filter(t => t.startsWith('Compaction request delivery skips sub-agent "agent-bad"'))).toHaveLength(1)
+        expect(k.d.toasts.some(t => t.startsWith('Compaction handshake could not run'))).toBe(false)
+      })
+
       test('a request is delivered while the main turn is running, at the idle check, not only at a turn boundary', async ($, on) => {
         const k = await started($, on)
         running(k.d, 'a1')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         await $.turn.start(START)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: ASK }) } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
         await k.d.clock.advance(5_000)
         expect(k.d.sends).toHaveLength(1)
         await $.turn.complete(TURN)
@@ -486,19 +501,19 @@ for (const surface of SURFACES) {
       test('a failed send is not recorded and is sent again at the next sync, and the person hears of it once', async ($, on) => {
         const k = await started($, on)
         running(k.d, 'a1')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: ASK }) } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
         for (const mode of ['refused', 'throws'] as const) {
           k.d.setSendMode(mode)
           await $.turn.start(START)
           await $.turn.complete(TURN)
         }
         expect(k.d.sends).toHaveLength(4)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'a1'))).toBe(false)
-        expect(k.d.toasts.filter(t => t.startsWith('Compaction request for sub-agent a1 was not delivered'))).toHaveLength(2)
+        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(false)
+        expect(k.d.toasts.filter(t => t.startsWith('Compaction request for sub-agent agent-a1 was not delivered'))).toHaveLength(2)
         k.d.setSendMode('delivered')
         await $.turn.start(START)
         expect(k.d.sends).toHaveLength(5)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'a1'))).toBe(true)
+        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(true)
         await $.turn.complete(TURN)
         expect(k.d.sends).toHaveLength(5)
       })
@@ -507,7 +522,7 @@ for (const surface of SURFACES) {
       test("a failed send gives back only its own claim: another sub-agent's send in flight is not sent twice", async ($, on) => {
         const k = await started($, on)
         running(k.d, 'a1', 'a2')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: ASK }), a2: entry({ ask: ASK }) } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }), 'agent-a2': entry({ ask: ASK }) } }))
         k.d.failSendsTo('a2')
         const hold = k.d.holdSends()
         const first = $.turn.start(START)
@@ -522,13 +537,13 @@ for (const surface of SURFACES) {
         hold.release()
         await first
         expect(sentTo('a1')).toBe(1)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'a1'))).toBe(true)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'a2'))).toBe(false)
+        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(true)
+        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a2'))).toBe(false)
       })
 
       test('only a running sub-agent is sent to: a finished one would be resumed by the message', async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: ASK }) } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
         k.d.world.agents = [{ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'agent a1', status: 'completed' }] as any
         await $.turn.start(START)
         expect(k.d.sends).toEqual([])
@@ -539,7 +554,7 @@ for (const surface of SURFACES) {
 
       test('a request to a finished sub-agent is not sent while another sub-agent runs', async ($, on) => {
         const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: ASK }), a2: entry({ ask: ASK }) } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }), 'agent-a2': entry({ ask: ASK }) } }))
         k.d.world.agents = [
           { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'agent a1', status: 'completed' },
           { id: 'a2', type: 'danxbot:worker-sonnet-high', description: 'agent a2', status: 'running' },
@@ -548,14 +563,14 @@ for (const surface of SURFACES) {
         await $.turn.complete(TURN)
         expect(k.d.sends.map(s => s.to)).toHaveLength(1)
         expect(k.d.sends[0].to).toContain('a2')
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'a1'))).toBe(false)
+        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(false)
       })
 
       // the first sync is in the middle of its send (the host has not answered) when a second one reads the same request as unsent
       test('two syncs racing each other send a request once', async ($, on) => {
         const k = await started($, on)
         running(k.d, 'a1')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: ASK }) } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
         const hold = k.d.holdSends()
         const first = $.turn.start(START)
         await hold.reached
@@ -564,7 +579,7 @@ for (const surface of SURFACES) {
         hold.release()
         await first
         expect(k.d.sends).toHaveLength(1)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'a1'))).toBe(true)
+        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(true)
       })
 
       test("the store keeps the newest sessions' delivered requests only", async ($, on) => {
@@ -572,11 +587,11 @@ for (const surface of SURFACES) {
         running(k.d, 'a1')
         for (let i = 0; i < USED_RELEASE_KEEP + 5; i++) k.d.stored.set(`${ASK_SENT_PREFIX}old-${i}:a1`, { at: 'x', sentAt: 100 + i })
         k.d.stored.set('relayCursor:not-ours', { planId: 1, cursor: 'c', at: 1 })
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { a1: entry({ ask: ASK }) } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
         await $.turn.start(START)
         const kept = [...k.d.stored.keys()].filter(key => key.startsWith(ASK_SENT_PREFIX))
         expect(kept).toHaveLength(USED_RELEASE_KEEP)
-        expect(kept).toContain(askSentKey(OWN_SESSION.session_id, 'a1'))
+        expect(kept).toContain(askSentKey(OWN_SESSION.session_id, 'agent-a1'))
         expect(kept).not.toContain(`${ASK_SENT_PREFIX}old-0:a1`)
         expect(k.d.stored.has('relayCursor:not-ours')).toBe(true)
       })
