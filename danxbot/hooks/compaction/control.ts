@@ -245,6 +245,20 @@ export const floorPercent = (floorTokens: number, windowTokens: number): number 
 
 // The percent the plugin arms the sub-agents with, null when the session is not under the handshake (nothing is armed, and an armed value is taken back).
 // DX-5314: also null while sub-agent control is unavailable (an older relay): nothing the plugin arms could be gated.
+// DX-5365: the engine release whose `session.compact` is known to judge each sub-agent's automatic proposal by agent (verified live, Claude Code 2.1.299, DX-5222). The types of every
+// release from 2.1.286 declare the event, but none tells whether an engine serves it per agent, and the runtime exposes no capability flag, so this floor is a verified fact, not a
+// guess: a later card can lower it once an older engine is tried. `base` is `$.session.version()`'s release (`2.1.299`, or `2.1.299-dev` for a development build of it); no `base` is no release.
+export const SESSION_COMPACT_FLOOR = [2, 1, 299] as const
+export function runsSessionCompact(base: string | undefined): boolean {
+  const m = base === undefined ? null : /^(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(base)
+  if (m === null) return false
+  for (let i = 0; i < 3; i++) {
+    const part = Number(m[i + 1])
+    if (part !== SESSION_COMPACT_FLOOR[i]) return part > SESSION_COMPACT_FLOOR[i]
+  }
+  return true
+}
+
 export const armedPercentOf = (file: ControlFile): number | null => (file.kind === 'control' && file.control !== null && file.control.subagents !== null ? floorPercent(file.control.floorTokens, file.control.windowTokens) : null)
 
 // A sub-agent's context as its last model response reported it: the whole prompt it was answered over (uncached, cache-read and cache-written input) and the model that answered.

@@ -7,7 +7,7 @@ import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { COMPACTING_NOTE_TTL_MS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
-import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
@@ -2317,10 +2317,21 @@ async function clearLeftoverArming($: any, file: ControlFile): Promise<void> {
 // holds its proposals, onSessionCompact). It is armed while the session is under the handshake, re-armed when the floor moves, and taken back when the handshake ends or the file
 // cannot be read: an armed percent with nothing holding the proposals would compact every agent at the floor. A variable set at runtime DOES reach a sub-agent that is already
 // running (verified live, Claude Code 2.1.299, DX-5222 comment 16303: a running sub-agent proposed three times within 12 s of the set).
-// It is armed only once this host has shown that it runs `session.compact` (`sessionCompactSeen`): the per-agent gate lives there, and on a host without it the classic gate alone
+// It is armed only once this host is known to run `session.compact` (`hostRunsSessionCompact`: an event seen, or an engine release from the floor, DX-5365): the per-agent gate lives there, and on a host without it the classic gate alone
 // would hold every agent's early proposal, which can end an agent's work.
+// DX-5365: whether this host runs `session.compact`, known at the first sync without waiting for a compaction: the event was seen (`sessionCompactSeen`), or the engine's release is one that
+// serves it per agent (SESSION_COMPACT_FLOOR; the runtime has no capability flag). A version reading that throws or names no release is a host that is not known to run it: nothing arms.
+async function hostRunsSessionCompact($: any): Promise<boolean> {
+  if (await read($, sessionCompactSeen)) return true
+  try {
+    return runsSessionCompact((await $.session.version()).base)
+  } catch {
+    return false
+  }
+}
+
 async function armSubAgents($: any, file: ControlFile): Promise<void> {
-  const wanted = (await read($, sessionCompactSeen)) ? armedPercentOf(file) : null
+  const wanted = (await hostRunsSessionCompact($)) ? armedPercentOf(file) : null
   if (wanted === (await read($, armedPercent))) return
   // DX-5222 (comment 15880): the once-per-process clear must never wipe the value armed here, so `leftoverArmingCleared` is already true when this first sets it: syncCompaction runs
   // clearLeftoverArming first, and it raises the flag on the first control file of the session (the one that can arm). compaction-agents.test.tsx pins the order.

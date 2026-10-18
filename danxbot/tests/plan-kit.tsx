@@ -174,6 +174,8 @@ export function dashboard(
     autoCompactWindow?: string
     // DX-5231: a CLAUDE_AUTOCOMPACT_PCT_OVERRIDE an older plugin version left in the process
     autocompactPct?: string
+    // DX-5365: what `$.session.version()` answers: the engine's `base` release (default 2.1.298, one under the floor that runs `session.compact` per agent), no `base` at all, or a call that throws
+    engineVersion?: { base: string | undefined } | 'throws'
     // DX-5231: the reason the host refuses the plugin's own `/compact` run with (a handler that throws)
     compactRunFails?: string
     // ... what the usage route answers a report with: accepted (default), the dashboard's refusal of a session on no plan (409), a server
@@ -946,6 +948,12 @@ export function dashboard(
         <Text key="meta">{`first=${e.props.isFirstOfReply} onScreen=${JSON.stringify(e.props.onScreen ?? null)}`}</Text>
       </Box>
     )
+  })
+  // DX-5365: the engine's version, as the plugin reads it to know the host runs `session.compact` before any event
+  on('session.version', () => {
+    const v = options.engineVersion ?? { base: '2.1.298' }
+    if (v === 'throws') return { deny: 'no version reading' } as any
+    return { value: { version: v.base ?? 'custom-build', ...(v.base === undefined ? {} : { base: v.base }) } } as any
   })
   // DX-4336: what the harness knows of the account's windows
   on('session.usage', () => (options.usageReadFails === undefined ? { value: { startedAt: 0, context: world.context, rateLimits: world.rateLimits } } : { deny: options.usageReadFails }) as any)
