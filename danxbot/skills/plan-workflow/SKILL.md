@@ -232,7 +232,9 @@ each reminder with "still waiting": pause.
 While paused, the dashboard holds its nudges, plan-event digests and agent or machine events for
 you, and the plugin's own ready-cards reminder stays quiet. It ends when a person
 writes to you or acts on a card of yours (that message arrives at once), a critical usage-pacing
-stop, your own next dashboard call (the plugin's background reads do not count) other than the pause
+stop, a usage-pacing change that lets your account start agents again (on pace, with no count cap
+or a budget above the agents running; the message is delivered at once, so a pause taken after a
+pacing refusal needs no manual wake), your own next dashboard call (the plugin's background reads do not count) other than the pause
 calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or your session going
 silent.
 
