@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
+import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, appendRefreshLog, refreshLogFile, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
 import { REFRESH_FLAG, dashboardUrl, launch, runRefresh } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
@@ -153,7 +153,7 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     assert.deepEqual(args, [LAUNCHER, REFRESH_FLAG, A]);
     assert.equal(options.detached, true);
     assert.equal(options.shell, undefined);
-    assert.deepEqual(options.stdio, ["ignore", "ignore", "inherit"], "stdout is the MCP stream; stderr is the log the failure line goes to");
+    assert.equal(options.stdio, "ignore", "it holds none of the launcher's pipes open: its failure line goes to refresh.log");
     assert.equal(options.env.CLAUDE_PLUGIN_DATA, dataDir);
     assert.equal(child.unrefed, true, "the launcher does not wait for it");
   });
@@ -184,6 +184,21 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(h2.errLines.length, 1);
     assert.match(h2.errLines[0], /could not start the refresh: spawn ENOENT/);
+  });
+
+  test("DX-5314: the failure lines an earlier refresh left in refresh.log are printed to this launcher's stderr at its start, once", async () => {
+    recordAt(A);
+    layDown(A);
+    appendRefreshLog("[danxbot dashboard MCP] could not refresh the version (HTTP 500); this session keeps running 0.1.6\n", env);
+    appendRefreshLog("[danxbot dashboard MCP] second\n", env);
+    const h = harness();
+    await launch(h.options);
+    assert.deepEqual(h.errLines, ["[danxbot dashboard MCP] could not refresh the version (HTTP 500); this session keeps running 0.1.6\n[danxbot dashboard MCP] second\n"]);
+    assert.equal(existsSync(refreshLogFile(env)), false, "the log is rotated away, so the lines are not printed twice");
+    assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp")).filter((n) => n.startsWith("refresh.log")), []);
+    const again = harness();
+    await launch(again.options);
+    assert.deepEqual(again.errLines, []);
   });
 
   test("the server gets the dashboard URL and never a dispatch's credential; a missing URL fails before anything runs", async () => {
@@ -414,6 +429,8 @@ describe("the launcher process", () => {
     const gate = path.join(dataDir, "npm-may-finish");
     const launcher = runAsync({ FAKE_NPM_GATE: gate });
     assert.equal(await launcher.exited, 4, "the launcher exits with the server's code, not waiting for the refresh");
+    // the refresh child holds none of the launcher's stdio: the launcher's pipes close at its exit while the child is still installing (a hang guard, not a timing claim)
+    await Promise.race([launcher.closed, new Promise((_, reject) => setTimeout(() => reject(new Error("the launcher's stderr is held open by the refresh child")), 20_000))]);
     // the refresh child is in its install (its own stage exists) after the launcher is gone, and the record has not moved
     await until(() => stages().length === 1, "the refresh child's npm made its stage");
     assert.equal(recordedVersionOrNull(env), A);
@@ -426,21 +443,29 @@ describe("the launcher process", () => {
     await until(() => stages().length === 0 && readdirSync(path.join(dataDir, "dashboard-mcp", A, ".leases")).length === 0, "the stage and the lease are gone");
   });
 
-  test("DX-5314: a refresh that fails after the launcher exited still writes its ONE line to the launcher's stderr", async () => {
+  test("DX-5314: a refresh that fails after the launcher exited writes ONE line to refresh.log, and the NEXT launcher prints it to its stderr", async () => {
     recordAt(A);
     layExiting(A, 4);
     registry.setMode("status-500");
-    const launcher = runAsync();
-    assert.equal(await launcher.exited, 4);
-    await launcher.closed;
-    assert.match(launcher.stderr(), /^\[danxbot dashboard MCP\] could not refresh the @thehammer\/danx-dashboard-mcp version \(.*HTTP 500\); this session keeps running 0\.1\.7\n$/);
+    const first = runAsync();
+    assert.equal(await first.exited, 4);
+    await first.closed;
+    assert.equal(first.stderr(), "", "the first launcher is gone: the line is not in its stderr");
+    await until(() => existsSync(refreshLogFile(env)), "the refresh child logged its failure");
     assert.equal(recordedVersionOrNull(env), A);
+    const second = runAsync();
+    assert.equal(await second.exited, 4);
+    await second.closed;
+    assert.match(second.stderr(), /^\[danxbot dashboard MCP\] could not refresh the @thehammer\/danx-dashboard-mcp version \(.*HTTP 500\); this session keeps running 0\.1\.7\n$/);
+    // the second launcher's own refresh fails the same way and logs it; wait for that so no child writes after the test's directory is removed
+    await until(() => existsSync(refreshLogFile(env)), "the second refresh child logged its failure");
   });
 
-  test("DX-5314: the refresh process refuses to run without the version it was started for, in ONE line", () => {
+  test("DX-5314: the refresh process refuses to run without the version it was started for, in ONE logged line", () => {
     const result = spawnSync(process.execPath, [LAUNCHER, REFRESH_FLAG], { encoding: "utf8", env: { ...process.env, CLAUDE_PLUGIN_DATA: dataDir } });
     assert.equal(result.status, 1);
-    assert.equal(result.stderr, "[danxbot dashboard MCP] the refresh was started without the running version (null)\n");
+    assert.equal(result.stderr, "", "the refresh stderr is never read by anyone: its line goes to refresh.log");
+    assert.equal(readFileSync(refreshLogFile(env), "utf8"), "[danxbot dashboard MCP] the refresh was started without the running version (null)\n");
   });
 
   test("a failure to start exits 1 with ONE stderr line naming the reason and writes nothing to stdout", () => {

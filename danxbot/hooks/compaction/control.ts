@@ -272,12 +272,13 @@ export type AgentGateInput = {
 
 // `told: true` is a refusal the person should hear once (the gate cannot establish something it needs), unlike the ordinary hold.
 export type AgentVerdict =
-  | { pass: true; why: 'no-control' | 'unreadable' | 'valve' }
+  | { pass: true; why: 'no-control' | 'unreadable' | 'valve' | 'subagents-off' }
   | { pass: true; why: 'release'; releaseId: string }
   | { pass: false; reason: string; told: boolean }
 
 // The decision for one AUTOMATIC proposal of the sub-agent `agentId` (a person's own /compact is the main agent's and never reaches this), in order:
 //   a file with no control holds nothing, and neither does one the gate cannot read (fail open, above): there is no handshake to wait for, or none that can be kept;
+//   a control with no sub-agent control (a relay older than the plugin, DX-5314) holds nothing either;
 //   a context size the plugin never saw is refused and told: a size it cannot read is never guessed;
 //   a sub-agent with an entry passes at ITS valve (`passAtTokens`), or once on its own unexpired, unspent release, and is otherwise held;
 //   a sub-agent with no entry (not placed yet, or one the dashboard cannot place) passes at the valve of ITS model's line, read from its own responses; a model in no
@@ -287,9 +288,10 @@ export function agentVerdict(input: AgentGateInput): AgentVerdict {
   if (file.kind === 'bad') return { pass: true, why: 'unreadable' }
   if (file.kind === 'absent' || file.control === null) return { pass: true, why: 'no-control' }
   const refuse = (why: string): AgentVerdict => ({ pass: false, reason: `${AGENT_HELD_REASON} (sub-agent ${agentId}: ${why})`, told: true })
-  // DX-5314: a relay older than the plugin gives no sub-agent control: refused and told, never guessed (as the unknown size is)
+  // DX-5314: a relay older than the plugin gives no sub-agent control. Fail open: the plugin arms nothing then, so the proposal only comes at Claude Code's own threshold
+  // (the behaviour before the handshake), and refusing it would strand the sub-agent at its window. The person was told by RELAY_OLDER_NOTICE.
   const subagents = file.control.subagents
-  if (subagents === null) return refuse('the dashboard MCP relay is older than this plugin, so sub-agent compaction is off')
+  if (subagents === null) return { pass: true, why: 'subagents-off' }
   if (size === null) return refuse('its context size is not known')
   const entry = subagents.agents[agentId]
   if (entry !== undefined) {

@@ -147,6 +147,10 @@ describe('the sub-agent gate (pure)', () => {
     expect(agentVerdict(ask({ file: { kind: 'control', control: null } }))).toEqual({ pass: true, why: 'no-control' })
     expect(agentVerdict(ask({ file: { kind: 'absent' }, size: null }))).toEqual({ pass: true, why: 'no-control' })
     expect(agentVerdict(ask({ file: { kind: 'bad', reason: 'x' }, size: null }))).toEqual({ pass: true, why: 'unreadable' })
+    // DX-5314: a relay older than the plugin gives no sub-agent control: fail open, with or without a size
+    const older: ControlFile = { kind: 'control', control: { ...gateControl(), subagents: null } as any }
+    expect(agentVerdict(ask({ file: older }))).toEqual({ pass: true, why: 'subagents-off' })
+    expect(agentVerdict(ask({ file: older, size: null }))).toEqual({ pass: true, why: 'subagents-off' })
   })
 
   test('a context size the plugin never saw is refused and told, never guessed', () => {
@@ -657,15 +661,20 @@ for (const surface of SURFACES) {
       const { agents: _a, valves: _v, ...MAIN } = gateControl()
       const OLDER = JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: MAIN, askedAt: null })
 
-      test("a sub-agent's proposal is refused and told once, and the main agent keeps its own gate", async ($, on) => {
+      // fail open: nothing is armed, so a sub-agent's proposal only comes at Claude Code's own threshold, and refusing it would strand the agent at its window
+      test("a sub-agent's proposal passes (fail open), with or without a known size, and the main agent keeps its own gate", async ($, on) => {
         const k = await started($, on)
         k.d.world.files[CONTROL_FILE] = OLDER
+        expect(await k.propose('a1')).toEqual(COMPACTED)
         await k.request('a1', AGENT_TURN_USAGE(900_000))
-        const first = await k.propose('a1')
-        expect(first.skip).toContain('the dashboard MCP relay is older than this plugin, so sub-agent compaction is off')
-        expect((await k.propose('a1')).skip).toBe(first.skip)
-        expect(k.d.toasts.filter(t => t === first.skip)).toHaveLength(1)
-        expect(k.core).toEqual([])
+        expect(await k.propose('a1')).toEqual(COMPACTED)
+        expect(await k.propose('a1', 'precompute')).toEqual(COMPACTED)
+        expect(k.core).toEqual([
+          { agentId: 'a1', skipped: undefined },
+          { agentId: 'a1', skipped: undefined },
+          { agentId: 'a1', skipped: undefined },
+        ])
+        expect(k.d.toasts.some(t => t.startsWith(AGENT_HELD_REASON))).toBe(false)
         expect(await k.propose()).toEqual({ skip: HELD_REASON })
         k.d.world.context = { tokens: 907_000, window: WINDOW }
         expect(await k.propose()).toEqual(COMPACTED)

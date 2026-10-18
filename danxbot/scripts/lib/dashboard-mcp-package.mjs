@@ -57,6 +57,40 @@ export const RENAME_RETRYABLE_CODES = ["EPERM", "EBUSY", "EACCES"];
  */
 const LEASES_DIR = ".leases";
 
+/**
+ * DX-5314: the detached refresh child has no stderr of its own to a reader (a pipe it inherited would stay open after the launcher exits, and the MCP
+ * transport may wait for it), so its failure line is appended here, and the NEXT launcher prints what was written since it last read (`drainRefreshLog`).
+ */
+export const REFRESH_LOG = "refresh.log";
+export function refreshLogFile(env = process.env) {
+  return path.join(installRoot(dataDirOf(env)), REFRESH_LOG);
+}
+/** Appends `text` (a whole line, newline included) to the refresh log. */
+export function appendRefreshLog(text, env = process.env) {
+  const file = refreshLogFile(env);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, text);
+}
+/**
+ * The lines written to the refresh log since the last read, or "" for none. The file is renamed away first (atomic), so a line the child appends meanwhile
+ * lands in a fresh file and is read next time, never lost; the renamed copy is read and removed.
+ */
+export function drainRefreshLog(env = process.env) {
+  const file = refreshLogFile(env);
+  const taken = `${file}.${process.pid}.read`;
+  try {
+    fs.renameSync(file, taken);
+  } catch (err) {
+    if (err.code === "ENOENT") return "";
+    throw err;
+  }
+  try {
+    return fs.readFileSync(taken, "utf8");
+  } finally {
+    fs.rmSync(taken, { force: true });
+  }
+}
+
 const STRICT_VERSION = /^\d+\.\d+\.\d+$/;
 /** How much of a damaged record's content its error quotes. */
 const DAMAGED_RECORD_EXCERPT_CHARS = 40;

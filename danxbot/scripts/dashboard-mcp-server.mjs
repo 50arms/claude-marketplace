@@ -13,7 +13,7 @@
 // no added start latency. A launcher that exits early (a probe, a session that ends within seconds) no longer kills a refresh, which
 // needs several seconds: DX-5314 found the record stuck three versions behind because every launcher since the last full refresh was
 // short-lived. The refresh child installs into its own staging directory (installVersion makes a fresh one per install) and leases the
-// version the launcher ran for as long as it runs. A refresh that fails or is stopped writes ONE line to stderr and the record stays
+// version the launcher ran for as long as it runs. A refresh that fails or is stopped appends ONE line to ${CLAUDE_PLUGIN_DATA}/dashboard-mcp/refresh.log (the child holds none of the launcher's stdio) that the next launcher prints to its stderr, and the record stays
 // as it was. Then installs no live process runs are pruned (their own line on failure). The launcher leases the version it runs for
 // as long as it runs, so another session's prune never removes it. The launcher exits when the server does, without waiting for the
 // refresh.
@@ -32,7 +32,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { keptLine, leaseVersion, oneLine, pruneInstalls, refreshInstall, startVersion } from "./lib/dashboard-mcp-package.mjs";
+import { appendRefreshLog, drainRefreshLog, keptLine, leaseVersion, oneLine, pruneInstalls, refreshInstall, startVersion } from "./lib/dashboard-mcp-package.mjs";
 
 const PREFIX = "[danxbot dashboard MCP]";
 
@@ -59,6 +59,13 @@ export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fet
   const url = dashboardUrl(env);
   const options = { env, spawnFn, fetchFn, ...installOptions };
   const { version, bin } = await startVersion(options);
+  // DX-5314: what the detached refresh of an earlier launcher could not say (it holds no stderr of ours) surfaces here, at the next start (after the version is known to start, so a launcher that cannot start says only why), so a failure is never silent.
+  try {
+    const earlier = drainRefreshLog(env);
+    if (earlier !== "") stderr.write(earlier.endsWith("\n") ? earlier : `${earlier}\n`);
+  } catch (err) {
+    stderr.write(`${PREFIX} could not read the earlier refresh's log (${oneLine(err.message)})\n`);
+  }
   const serverEnv = { ...env, DANXBOT_DASHBOARD_URL: url };
   // A dispatch's credential declaration (it often names the LOCAL dev dashboard) must never reach the hosted one (DX-2483).
   delete serverEnv.DANX_DASHBOARD_CREDENTIAL;
@@ -66,10 +73,10 @@ export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fet
   const run = { child: spawnFn(process.execPath, [bin], { env: serverEnv, stdio: "inherit" }), version, release, refreshChild: null };
   onServer(run);
   // DX-4235: the refresh starts only after the server has, so no registry request delays a session start.
-  // DX-5314: detached, so it finishes when this launcher exits first. Its stderr is ours (its one failure line reaches the same log); stdin and stdout are not (stdout is the MCP stream).
+  // DX-5314: detached, so it finishes when this launcher exits first. ALL its stdio is ignored: it holds no pipe of ours open (the MCP transport may wait for stderr to close). Its one failure line goes to refresh.log; the next launcher prints it.
   const refreshFailed = (err) => stderr.write(`${PREFIX} ${keptLine(`could not start the refresh: ${oneLine(err.message)}`, version)}\n`);
   try {
-    run.refreshChild = spawnFn(process.execPath, [SELF, REFRESH_FLAG, version], { env, detached: true, stdio: ["ignore", "ignore", "inherit"], windowsHide: true });
+    run.refreshChild = spawnFn(process.execPath, [SELF, REFRESH_FLAG, version], { env, detached: true, stdio: "ignore", windowsHide: true });
     run.refreshChild.on?.("error", refreshFailed);
     run.refreshChild.unref?.();
   } catch (err) {
@@ -107,15 +114,23 @@ export async function runRefresh(version, { env = process.env, stderr = process.
 
 /** The detached child's whole life: one refresh for `version`, stopped cleanly (npm killed, stage removed, one line) by SIGINT / SIGTERM. */
 async function runRefreshProcess(version) {
-  // the launcher's stderr may be gone by now (its reader closed): a write that cannot land is dropped, never a crash
-  process.stderr.on("error", () => {});
+  // our stderr is ignored: the failure line is appended to refresh.log, and the next launcher prints it
+  const stderr = {
+    write: (text) => {
+      try {
+        appendRefreshLog(text);
+      } catch {
+        // nowhere left to say it
+      }
+    },
+  };
   if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) {
-    console.error(`${PREFIX} ${oneLine(`the refresh was started without the running version (${JSON.stringify(version ?? null)})`)}`);
+    stderr.write(`${PREFIX} ${oneLine(`the refresh was started without the running version (${JSON.stringify(version ?? null)})`)}\n`);
     process.exit(1);
   }
   const stop = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => stop.abort());
-  const latest = await runRefresh(version, { abort: stop.signal });
+  const latest = await runRefresh(version, { abort: stop.signal, stderr });
   process.exit(latest === null ? 1 : 0);
 }
 
