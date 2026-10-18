@@ -30,7 +30,10 @@
    worktree, branch and unpushed SHA is on a card, plan record or comment,
    never only in your conversation, a task list, scratchpad, memory, a plan
    file, repo `.md`, HTML page, `.junk/` or a sub-agent's context, and never
-   "after X". A filed card never readied is unfinished. Every card you file
+   "after X". When a new detail changes a fact a card or plan record states
+   (its description, AC, a problem, a plan record), edit that record in the
+   same turn and delete what is no longer true; a comment alone leaves it
+   stale. A filed card never readied is unfinished. Every card you file
    (Task cards for a person to act on included) gets a priority set against the
    plan's open cards, by what it blocks; re-rank when that changes. Take the
    highest-priority unblocked card, not the newest.
