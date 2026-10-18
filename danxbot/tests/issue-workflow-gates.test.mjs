@@ -98,6 +98,11 @@ test("plan-workflow's Sub-agents section carries the matching rule once", () => 
   assert.match(subAgents, /you run its POST gates as gate workers and say when to land/);
 });
 
-test("the creation guide's parent-child line lists Task under an Epic and a Feature", () => {
-  assert.match(creation, /Epic → Feature\/Story\/Bug\/Chore\/Task; Feature → Story\/Bug\/Chore\/Task;/);
+test("the creation guide points at GET /api/card-types for the parent-child rules", () => {
+  assert.match(creation, /GET \/api\/card-types/);
+});
+
+test("the creation guide carries no hard-coded parent-child list", () => {
+  assert.doesNotMatch(creation, /Epic → Feature\/Story\/Bug\/Chore\/Task/);
+  assert.doesNotMatch(creation, /Feature → Story\/Bug\/Chore\/Task/);
 });

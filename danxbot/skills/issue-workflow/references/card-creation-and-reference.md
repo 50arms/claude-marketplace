@@ -17,6 +17,8 @@ and child types). Choose by that guidance, and create a child only under a paren
 row allows it. A container type holds context and goal only, its status rolled up from its
 children; work written into a container's own body or AC is a defect.
 
+The type names the slicing rules below use (Story, Feature, Epic) stand for the team's seeded work and container types; the team's own rows from `GET /api/card-types` decide what each type may hold.
+
 A card records the docs it changes as a `## Docs impact` comment, never by editing docs pages.
 
 ## The slice gate
