@@ -5,7 +5,7 @@ import type { CompactingState, ConnectedPlan, PacingSnapshot, PlanView, PendingS
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { COMPACTING_NOTE_TTL_MS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
+import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
 import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
@@ -1851,8 +1851,9 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
   return subagentBriefingText({ id: agentId, type: found?.type ?? null, description: found?.description ?? null })
 }
 
-// SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. Nothing else: the session is not bound yet on a
+// SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. The session is not bound yet on a
 // desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see stampEntries).
+// The one exception (DX-5385): a compaction that ends with no turn running detaches the resume prompt, whose reads wait for the session to bind.
 async function onClassicSessionStart($: any, e: any, next: any) {
   const below = await onTitle($, e, next)
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
@@ -1872,18 +1873,19 @@ async function onClassicSessionStart($: any, e: any, next: any) {
 // stamp hook finds none (told once). A turn that began while the reads ran is the person's: the start goes back for that turn's next tool result, as an unprompted
 // compaction's always did, and no prompt queues behind it. A prompt the session refuses puts it back the same way.
 async function resumeAfterCompaction($: any): Promise<void> {
+  // checked before the start is taken: a session that is not on a plan leaves it for the prompt or tool result that tells it (or nothing)
+  const pending = await read($, pendingStart)
+  if (pending === null || !(await isPlanConnected($, pending.sessionId))) return
   const start = await takePendingStart($)
   if (start === null) return
-  if (!(await isPlanConnected($, start.sessionId))) {
-    await update($, pendingStart, cur => cur ?? start)
-    return
-  }
   const text = await renderStart($, start)
   if (text === null || (await read($, turn)).isRunning) {
     await update($, pendingStart, cur => cur ?? start)
     return
   }
-  const failure = await submitEvent($, text)
+  // the procedure needs no dashboard read: a start whose reads failed (only a warning line) still tells the agent how to resume
+  const failure = await submitEvent($, text.includes(RESUME_PROCEDURE) ? text : `${text}
+${RESUME_OPENING}`)
   if (failure === null) return
   // the session did not take the prompt: the briefing is still owed, to the next prompt or tool result
   await update($, pendingStart, cur => cur ?? start)
@@ -1934,8 +1936,10 @@ async function onTurnComplete($: any, e: any, next: any) {
   return r
 }
 
-// DX-4233: the main loop's turn began (turn.start never fires for a sub-agent).
+// DX-4233: the main loop's turn began. DX-5385: turn.start also fires for a sub-agent's turn and an engine fork (they carry an agentId), and only the main loop's
+// turn.complete clears the turn state, so a sub-agent's start is no part of the main loop's state: it would leave isRunning true and the resume prompt unsent.
 async function onTurnStart($: any, e: any, next: any) {
+  if (e.agentId !== undefined) return next(e)
   cancelKeepalive()
   const since = await read($, idleSince)
   const now = await $.clock.now()

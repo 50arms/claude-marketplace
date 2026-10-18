@@ -10,7 +10,7 @@ const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: []
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const AGENT = { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'build the thing', status: 'running' }
 // what the main agent's briefing opens with (the running AGENT is listed in it, so the whole text is not pinned)
-const MAIN = 'Your plan is PLAN-23 Danxbot plugin.'
+const MAIN = '[50 ARMS] Your conversation was just compacted.'
 
 describe('the sub-agent briefing text (pure)', () => {
   test('names the agent and its task, points at its own summary and progress notes, and carries no plan or card', () => {

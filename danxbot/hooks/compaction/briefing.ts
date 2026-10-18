@@ -68,11 +68,14 @@ function gitLine(git: Source<GitState>): string {
 }
 
 // DX-5385: how the main agent picks up after a compaction, in order; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing.
-export const RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check the sub-agents listed below and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress."
+export const RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress."
+
+// the briefing's opening, alone: a resume prompt whose dashboard reads failed still carries it
+export const RESUME_OPENING = `[50 ARMS] Your conversation was just compacted. ${RESUME_PROCEDURE}`
 
 export function briefingText(input: BriefingInput): string {
   const plan = input.plan === null ? 'You are on no plan.' : `Your plan is ${input.plan.ref} ${oneLine(input.plan.name, 80)}.`
-  return `[50 ARMS] Your conversation was just compacted. ${RESUME_PROCEDURE} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
+  return `${RESUME_OPENING} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
 }
 
 // DX-5344: a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes

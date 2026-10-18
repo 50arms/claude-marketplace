@@ -20,8 +20,6 @@ for (const surface of SURFACES) {
       const r = await $.classic.SessionStart({ source, cwd: '/work', session_title: 'PLAN-23', transcript_path: '/work/main.jsonl' })
       d.bind()
       await startSession($, d, surface)
-      // DX-5385: a compaction with no turn running starts one itself (compaction-resume.test.tsx); these tests are about the text a running turn reads
-      if (source === 'compact') await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
       d.contextReads.length = 0
       return { d, r }
     }

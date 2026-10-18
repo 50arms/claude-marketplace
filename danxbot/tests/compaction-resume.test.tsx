@@ -15,7 +15,7 @@ const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('
 
 describe('the resume procedure (pure)', () => {
   test('names the five steps in order, and the briefing carries it', () => {
-    const at = ['re-invoke every skill', 'newest handoff agent note', 're-read each In Progress card', 'sub-agents listed below', 'continue the step that was in progress'].map(s => RESUME_PROCEDURE.indexOf(s))
+    const at = ['re-invoke every skill', 'newest handoff agent note', 're-read each In Progress card', 'check your running sub-agents', 'continue the step that was in progress'].map(s => RESUME_PROCEDURE.indexOf(s))
     expect(at.every(i => i >= 0)).toBe(true)
     expect([...at].sort((a, b) => a - b)).toEqual(at)
     expect(RESUME_PROCEDURE).toContain('without asking the person')
@@ -78,6 +78,53 @@ for (const surface of SURFACES) {
       await $.turn.complete(TURN)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(0)
+    })
+
+    test("a sub-agent's turns are no part of the main loop's: before an idle main compaction, with or without their end, the resume prompt still goes out", async ($, on) => {
+      const d = await started($, on)
+      await $.turn.start({ ...START, agentId: 'a1', turnId: 'sub-1' })
+      await $.turn.complete({ ...TURN, agentId: 'a1', turnId: 'sub-1' })
+      await $.turn.start({ ...START, agentId: 'a2', turnId: 'sub-2' })
+      await $.turn.start({ ...START, agentId: 'a1', turnId: 'sub-3' })
+      await $.classic.SessionStart(COMPACT)
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(1)
+    })
+
+    test('a turn that begins while the reads run owns the briefing: no prompt queues behind it, and the briefing waits for its next tool result', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextDelayMs = 1_000
+      await $.classic.SessionStart(COMPACT)
+      await $.turn.start(START)
+      await d.clock.advance(5_000)
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(0)
+      d.world.contextDelayMs = 0
+      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)
+      expect(told).toHaveLength(1)
+      expect(told[0]).toContain(RESUME_PROCEDURE)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+    })
+
+    test('a session with no connection record on disk gets no prompt and its start is not taken, even when the dashboard says it is on a plan', async ($, on) => {
+      const d = await started($, on)
+      d.world.localRecord = false
+      await $.classic.SessionStart(COMPACT)
+      await d.clock.settle()
+      expect(d.relay.submitted).toEqual([])
+      // not taken: the next prompt still carries the start
+      expect(((await $.prompt.submit({ text: 'next' })).context ?? []).join(' ')).toContain('Your conversation was just compacted')
+    })
+
+    test('when the dashboard reads fail the prompt is the warning line plus the resume procedure', async ($, on) => {
+      const d = await started($, on)
+      d.world.plansStatus = 500
+      await $.classic.SessionStart(COMPACT)
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(1)
+      const [prompt] = resumes(d)
+      expect(prompt).toContain(RESUME_PROCEDURE)
+      expect(prompt).toContain('Could not load the "after_compaction" event text')
     })
 
     test('a session that is not on a plan gets no resume prompt', async ($, on) => {
