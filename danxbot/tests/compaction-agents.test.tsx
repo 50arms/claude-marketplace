@@ -3,7 +3,7 @@
 // delivers each sub-agent's request, and the sub-agents' early-proposal percent is armed after `leftoverArmingCleared`. The main agent's own gate is compaction-control.test.tsx.
 import { describe, expect } from 'claude-code/testing'
 
-import { AGENT_HELD_REASON, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, USED_RELEASE_KEEP, agentVerdict, armedPercentOf, askSentKey, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import { AGENT_HELD_REASON, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, USED_RELEASE_KEEP, agentVerdict, armedPercentOf, askSentKey, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
 import type { AgentControl, AgentGateInput, ControlFile, GateControl, LineValves } from '../hooks/compaction/control'
 import { CLOCK_START, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -679,7 +679,7 @@ for (const surface of SURFACES) {
           await $.turn.start(START)
           await $.turn.complete(TURN)
           expect(k.d.envSets).toEqual([])
-          expect(k.d.toasts.some(t => t.startsWith('The Claude Code release could not be read'))).toBe(false)
+          expect(k.d.toasts.some(t => t === ENGINE_VERSION_NOTICE)).toBe(false)
           await k.see()
           await $.turn.start(START)
           expect(k.d.envSets).toEqual([{ name: PCT, value: '25' }])
@@ -696,16 +696,26 @@ for (const surface of SURFACES) {
           expect(k.d.toasts.some(t => t.startsWith('Compaction handshake could not run'))).toBe(false)
           // the person is told once, however many syncs follow, and it was asked for the version once
           await $.turn.start(START)
-          expect(k.d.toasts.filter(t => t.startsWith('The Claude Code release could not be read'))).toHaveLength(1)
+          expect(k.d.toasts.filter(t => t === ENGINE_VERSION_NOTICE)).toHaveLength(1)
           expect(k.d.versionReads).toBe(1)
         })
       }
+
+      // DX-5365: a session.compact event already proved the host runs it, so an unreadable release is no news to the person
+      test('an unreadable engine release is not told once a session.compact event was seen', async ($, on) => {
+        const k = await started($, on, { engineVersion: 'throws' })
+        await k.see()
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl())
+        await $.turn.start(START)
+        expect(k.d.env(PCT)).toBe('25')
+        expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
+      })
 
       test('an unreadable engine release is not told to a session that is not under the handshake', async ($, on) => {
         const k = await started($, on, { engineVersion: 'throws' })
         await $.turn.start(START)
         await $.turn.complete(TURN)
-        expect(k.d.toasts.some(t => t.startsWith('The Claude Code release could not be read'))).toBe(false)
+        expect(k.d.toasts.some(t => t === ENGINE_VERSION_NOTICE)).toBe(false)
       })
 
       test('a percent an older plugin version left is replaced, after the flag, by the value armed now', async ($, on) => {

@@ -136,8 +136,8 @@ const leftoverArmingCleared = atom({ plugin: 'danxbot', key: 'leftoverArmingClea
 // DX-5222: the percent CLAUDE_AUTOCOMPACT_PCT_OVERRIDE holds because the plugin armed it for the sub-agents (null: the plugin armed none). $.state because the variable lives in the process: a module reload keeps both.
 const armedPercent = atom({ plugin: 'danxbot', key: 'armedPercent' } as const, null as number | null)
 // DX-5222: this host runs `session.compact`: raised by the first such event of the session. $.state, so a module reload keeps it (a reload that forgot it would take the armed percent back
-// until the next compaction event). Two things hang on it: the classic PreCompact gate leaves an automatic proposal to `session.compact` (which judged it per agent), and the sub-agents' percent
-// is armed only then (a host with no `session.compact` has only the classic gate, which cannot tell the agents apart, so an early proposal there would hold every agent).
+// until the next compaction event). It is one of two inputs to `hostRunsSessionCompact` (the other is the engine release from 2.1.299, `engineCompact`); when that holds, the classic PreCompact gate
+// leaves an automatic proposal to `session.compact` (which judged it per agent) and the sub-agents' percent is armed (a host with neither has only the classic gate, which cannot tell the agents apart, so an early proposal there would hold every agent).
 const sessionCompactSeen = atom({ plugin: 'danxbot', key: 'sessionCompactSeen' } as const, false)
 // DX-5365: what the engine's release says about `session.compact`, read once per process (`$.session.version()`), $.state like the flag above: 'unread' until the first question, then 'runs' (a
 // release from SESSION_COMPACT_FLOOR), 'older' (an earlier release), or 'unreadable' (the call threw or named no release: not known to run it, and the person is told once, `engineVersionTold`).
@@ -2347,9 +2347,10 @@ async function hostRunsSessionCompact($: any): Promise<boolean> {
 }
 
 async function armSubAgents($: any, file: ControlFile): Promise<void> {
-  const wanted = (await hostRunsSessionCompact($)) ? armedPercentOf(file) : null
+  const asked = armedPercentOf(file)
+  const wanted = (await hostRunsSessionCompact($)) ? asked : null
   // DX-5365: an engine release that cannot be read is not armed, and the person is told once (the compaction handshake's sub-agent half is off until a compaction event shows the host runs it)
-  if (!engineVersionTold && armedPercentOf(file) !== null && !(await read($, sessionCompactSeen)) && (await engineCompactState($)) === 'unreadable') {
+  if (!engineVersionTold && asked !== null && !(await read($, sessionCompactSeen)) && (await engineCompactState($)) === 'unreadable') {
     engineVersionTold = true
     $.ui.toast(ENGINE_VERSION_NOTICE)
   }
@@ -2466,8 +2467,8 @@ async function* noteAgentStep($: any, e: any, next: any): any {
   }
 }
 
-// Every `session.compact` event, whatever the trigger: this host runs it (`sessionCompactSeen`), which arms the sub-agents' percent and hands the judging of automatic proposals to
-// the per-agent gate below. Observes only.
+// Every `session.compact` event, whatever the trigger: this host runs it (`sessionCompactSeen`, one of the two inputs to `hostRunsSessionCompact`, with the engine release from 2.1.299), which arms
+// the sub-agents' percent and hands the judging of automatic proposals to the per-agent gate below. Observes only.
 async function onSessionCompactSeen($: any, e: any, next: any) {
   if (!(await read($, sessionCompactSeen))) await update($, sessionCompactSeen, () => true)
   // DX-5344: a person's own /compact (or the plugin's) is the main agent's, and replaces the note of a sub-agent proposal that never delivered a start
