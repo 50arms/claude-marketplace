@@ -5,8 +5,8 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
-import { HELD_REASON, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
-import type { ControlFile, GateControl, GateInput } from '../hooks/compaction/control'
+import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import type { AgentControl, ControlFile, GateControl, GateInput, LineValves } from '../hooks/compaction/control'
 import { CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
@@ -17,10 +17,15 @@ const PASS_AT = 907_000
 
 // DX-5222: the dashboard's per-model-line valves (the sub-agent with no entry is measured against its model's line) and the sub-agents' own controls
 const VALVES = { haiku: 180_000, sonnet: 600_000, opus: 907_000 }
-const gateControl = (over: Partial<GateControl> = {}): GateControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
-const fileText = (control: GateControl | null, askedAt: string | null = null, sessionId: string = OWN_SESSION.session_id): string => JSON.stringify({ v: 1, sessionId, control, askedAt })
+// DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
+type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: LineValves }
+const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
+const fileText = (control: WireControl | null, askedAt: string | null = null, sessionId: string = OWN_SESSION.session_id): string => JSON.stringify({ v: 1, sessionId, control, askedAt })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
-const withControl = (over: Partial<GateControl> = {}): ControlFile => ({ kind: 'control', control: gateControl(over) })
+const withControl = (over: Partial<WireControl> = {}): ControlFile => {
+  const { agents, valves, ...main } = gateControl(over)
+  return { kind: 'control', control: { ...main, subagents: { agents: agents!, valves: valves! } } }
+}
 
 describe('the control file (pure)', () => {
   test('is named for the session under the danxbot config, the relay writes it', () => {
@@ -52,6 +57,40 @@ describe('the control file (pure)', () => {
   })
 })
 
+// DX-5314: Claude Code hot-loads a new plugin version into a live session, but the session's MCP relay keeps its version until the server restarts, so the plugin meets files an older
+// relay wrote. These literals are the real shapes: relay 0.1.311 wrote neither `agents` nor `valves`, 0.1.315-0.1.317 only `agents`, 0.1.321 both.
+const RELEASE_MS = 1_800_000_000_000
+const MAIN_0_1_311 = `{"floorTokens":400000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":RELEASE,"releaseId":"r1"`
+const RELAY_SHAPES = {
+  '0.1.311 (no agents, no valves)': (ms: number) => `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
+  '0.1.317 (agents only)': (ms: number) => `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))},"agents":{}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
+  '0.1.321 (agents and valves)': (ms: number) =>
+    `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))},"agents":{},"valves":{"opus":907000}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
+}
+describe('a plugin ahead of its relay (pure, DX-5314)', () => {
+  for (const [relay, text] of Object.entries(RELAY_SHAPES)) {
+    const older = !relay.startsWith('0.1.321')
+    test(`the file of relay ${relay} keeps the main handshake${older ? ' and has no sub-agent control' : ''}`, () => {
+      const file = parse(text(RELEASE_MS))
+      expect(file.kind).toBe('control')
+      const control = (file as any).control as GateControl
+      expect(control).toMatchObject({ floorTokens: 400_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: RELEASE_MS, releaseId: 'r1' })
+      expect(control.subagents === null).toBe(older)
+      expect(readyRelease(file, null, RELEASE_MS - 1)).toBe('r1')
+      expect(readyRelease(file, 'r1', RELEASE_MS - 1)).toBeNull()
+      // the main gate is the same under every relay
+      expect(verdict({ trigger: 'auto', window: WINDOW, file, tokens: 906_999 })).toEqual({ pass: false, reason: HELD_REASON })
+      expect(verdict({ trigger: 'auto', window: WINDOW, file, tokens: 907_000 })).toEqual({ pass: true, why: 'valve' })
+    })
+  }
+
+  test('a present but malformed field is still bad: only an absent one is an older relay', () => {
+    const base = JSON.parse(RELAY_SHAPES['0.1.311 (no agents, no valves)'](RELEASE_MS))
+    expect(parse(JSON.stringify({ ...base, control: { ...base.control, agents: 'x', valves: {} } }))).toEqual({ kind: 'bad', reason: 'agents must be an object keyed by agent id' })
+    expect(parse(JSON.stringify({ ...base, control: { ...base.control, agents: {}, valves: [] } }))).toEqual({ kind: 'bad', reason: 'valves must be an object keyed by model line' })
+  })
+})
+
 // The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
 // builds the same from the dashboard's frame, and danxbot's operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
 describe('the wire shape (pure)', () => {
@@ -67,8 +106,10 @@ describe('the wire shape (pure)', () => {
         windowTokens: 1_000_000,
         releaseUntilMs: 1_800_000_000_000,
         releaseId: '2026-10-14T11:59:00.000Z',
-        agents: { a1: { passAtTokens: 600_000, ask: { seq: 1, at: '2026-10-14T11:58:00.000Z', text: 'Prepare.' }, releaseUntilMs: null, releaseId: null } },
-        valves: VALVES,
+        subagents: {
+          agents: { a1: { passAtTokens: 600_000, ask: { seq: 1, at: '2026-10-14T11:58:00.000Z', text: 'Prepare.' }, releaseUntilMs: null, releaseId: null } },
+          valves: VALVES,
+        },
       },
     })
     const input = { trigger: 'auto', window: WINDOW, file } as const
@@ -259,6 +300,42 @@ for (const surface of SURFACES) {
       await $.turn.complete(TURN)
       await $.turn.start(START)
       expect(d.envSets).toEqual([{ name: 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', value: '25' }])
+    })
+
+    // DX-5314: the plugin is hot-loaded into a live session, its relay is not: a file without `agents` or `valves` keeps the main handshake and names the older relay once
+    for (const [relay, text] of Object.entries(RELAY_SHAPES)) {
+      const older = !relay.startsWith('0.1.321')
+      test(`beside relay ${relay} the ready starts /compact at the turn end${older ? ', nothing is armed, and the person is told once' : ' with no notice'}`, async ($, on) => {
+        const d = await started($, on, { stateSteps: true })
+        d.seedState('sessionCompactSeen', true)
+        d.world.files[CONTROL_FILE] = text(CLOCK_START + 60_000)
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        expect(compactRuns(d)).toHaveLength(1)
+        expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
+        expect(d.toasts.filter(t => t === RELAY_OLDER_NOTICE)).toHaveLength(older ? 1 : 0)
+        expect(d.toasts.some(t => t.startsWith('Compaction control unreadable'))).toBe(false)
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        expect(d.toasts.filter(t => t === RELAY_OLDER_NOTICE)).toHaveLength(older ? 1 : 0)
+        // an older relay leaves the sub-agents' percent unarmed
+        expect(d.envSets.some((s: any) => s.name === 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' && s.value !== undefined)).toBe(!older)
+      })
+    }
+
+    test('the older-relay notice names the fix, and is shown again when the relay changes under the session', async ($, on) => {
+      expect(RELAY_OLDER_NOTICE).toContain('relay')
+      expect(RELAY_OLDER_NOTICE).toContain('/mcp')
+      expect(RELAY_OLDER_NOTICE).toContain('new session')
+      expect(RELAY_OLDER_NOTICE).toContain('sub-agent compaction is off')
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = RELAY_SHAPES['0.1.311 (no agents, no valves)'](CLOCK_START + 60_000)
+      await $.turn.start(START)
+      d.world.files[CONTROL_FILE] = RELAY_SHAPES['0.1.321 (agents and valves)'](CLOCK_START + 60_000)
+      await $.turn.start(START)
+      d.world.files[CONTROL_FILE] = RELAY_SHAPES['0.1.317 (agents only)'](CLOCK_START + 60_000)
+      await $.turn.start(START)
+      expect(d.toasts.filter(t => t === RELAY_OLDER_NOTICE)).toHaveLength(2)
     })
 
     test("the agent's ready starts /compact once, at the main loop's turn end, and not before", async ($, on) => {

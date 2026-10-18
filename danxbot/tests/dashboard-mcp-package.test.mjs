@@ -381,14 +381,14 @@ describe("installVersion", () => {
     assert.deepEqual(readdirSync(installRoot()), [], "no stage and no version directory");
   });
 
-  test("DX-4235: an abort (the server exited mid-refresh) kills npm, waits for it to close, removes the stage and names why", async () => {
+  test("DX-4235: an abort (the refresh was stopped) kills npm, waits for it to close, removes the stage and names why", async () => {
     const npm = fakeNpm("hang");
     const stop = new AbortController();
     const installing = installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM, abort: stop.signal });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(readdirSync(installRoot()).filter((n) => n.startsWith(".stage-")).length, 1, "the stage exists while npm runs");
     stop.abort();
-    await assert.rejects(installing, /^Error: aborted: installing @thehammer\/danx-dashboard-mcp@0\.1\.50 was stopped because the server exited$/);
+    await assert.rejects(installing, /^Error: aborted: installing @thehammer\/danx-dashboard-mcp@0\.1\.50 was stopped$/);
     assert.equal(npm.children[0].killed, true);
     assert.deepEqual(readdirSync(installRoot()), [], "no stage and no version directory");
   });

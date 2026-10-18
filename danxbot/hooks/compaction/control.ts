@@ -46,11 +46,22 @@ export type GateControl = {
   windowTokens: number
   releaseUntilMs: number | null
   releaseId: string | null
+  // DX-5314: null when the relay that wrote the file is older than this plugin and wrote no `agents` or no `valves` (relay 0.1.311 wrote neither, 0.1.315-0.1.317 only `agents`): the
+  // MAIN agent's handshake above is complete without them, and every sub-agent feature (arming, asks, the per-agent gate) is off. Claude Code hot-loads a new plugin version into a
+  // live session but the session's MCP relay keeps its version until the server restarts, so a plugin must work beside an older relay.
+  subagents: SubagentControl | null
+}
+
+export type SubagentControl = {
   // DX-5222: each sub-agent's own control by agent id; `{}` while none has been recommended
   agents: Record<string, AgentControl>
   // DX-5222: the safety-valve size of each model line the board has a window for: the valve of a sub-agent that has no `agents` entry
   valves: LineValves
 }
+
+// DX-5314: the notice for a control whose relay is older than the plugin (`subagents: null`); register.tsx shows it once per session, and again if it changes.
+export const RELAY_OLDER_NOTICE =
+  'The danxbot dashboard MCP relay of this session is older than the danxbot plugin, so sub-agent compaction is off (the main agent still compacts when it says ready). Reconnect the danxbot dashboard MCP server (/mcp) or start a new session to fix it.'
 
 // DX-5222: one sub-agent's control as the relay writes it: its own valve, its request (`at` names it; the plugin delivers each once) and its own single-use release
 export type AgentAsk = { seq: number; at: string; text: string }
@@ -126,9 +137,10 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
   if (c.windowTokens <= c.passAtTokens) return { kind: 'bad', reason: 'windowTokens must be above passAtTokens' }
   const release = releaseProblem(c)
   if (release !== null) return { kind: 'bad', reason: release }
-  const agents = parseAgents(c.agents)
+  // DX-5314: a field that is absent means a relay older than this plugin (the main handshake stays whole); one that is present but malformed is real corruption and stays `bad`
+  const agents = c.agents === undefined ? null : parseAgents(c.agents)
   if (typeof agents === 'string') return { kind: 'bad', reason: agents }
-  const valves = parseValves(c.valves)
+  const valves = c.valves === undefined ? null : parseValves(c.valves)
   if (typeof valves === 'string') return { kind: 'bad', reason: valves }
   return {
     kind: 'control',
@@ -138,8 +150,7 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
       windowTokens: c.windowTokens,
       releaseUntilMs: c.releaseUntilMs as number | null,
       releaseId: c.releaseId as string | null,
-      agents,
-      valves,
+      subagents: agents === null || valves === null ? null : { agents, valves },
     },
   }
 }
@@ -233,7 +244,8 @@ export function verdict(input: GateInput): Verdict {
 export const floorPercent = (floorTokens: number, windowTokens: number): number => Math.floor((floorTokens * 100 * 100) / windowTokens) / 100
 
 // The percent the plugin arms the sub-agents with, null when the session is not under the handshake (nothing is armed, and an armed value is taken back).
-export const armedPercentOf = (file: ControlFile): number | null => (file.kind === 'control' && file.control !== null ? floorPercent(file.control.floorTokens, file.control.windowTokens) : null)
+// DX-5314: also null while sub-agent control is unavailable (an older relay): nothing the plugin arms could be gated.
+export const armedPercentOf = (file: ControlFile): number | null => (file.kind === 'control' && file.control !== null && file.control.subagents !== null ? floorPercent(file.control.floorTokens, file.control.windowTokens) : null)
 
 // A sub-agent's context as its last model response reported it: the whole prompt it was answered over (uncached, cache-read and cache-written input) and the model that answered.
 export type AgentSize = { tokens: number; model: string }
@@ -275,8 +287,11 @@ export function agentVerdict(input: AgentGateInput): AgentVerdict {
   if (file.kind === 'bad') return { pass: true, why: 'unreadable' }
   if (file.kind === 'absent' || file.control === null) return { pass: true, why: 'no-control' }
   const refuse = (why: string): AgentVerdict => ({ pass: false, reason: `${AGENT_HELD_REASON} (sub-agent ${agentId}: ${why})`, told: true })
+  // DX-5314: a relay older than the plugin gives no sub-agent control: refused and told, never guessed (as the unknown size is)
+  const subagents = file.control.subagents
+  if (subagents === null) return refuse('the dashboard MCP relay is older than this plugin, so sub-agent compaction is off')
   if (size === null) return refuse('its context size is not known')
-  const entry = file.control.agents[agentId]
+  const entry = subagents.agents[agentId]
   if (entry !== undefined) {
     if (size.tokens >= entry.passAtTokens) return { pass: true, why: 'valve' }
     if (entry.releaseUntilMs !== null && entry.releaseId !== null && entry.releaseUntilMs > input.nowMs && entry.releaseId !== input.usedReleaseId) return { pass: true, why: 'release', releaseId: entry.releaseId }
@@ -284,7 +299,7 @@ export function agentVerdict(input: AgentGateInput): AgentVerdict {
   }
   const line = modelLineOf(size.model)
   if (line === null) return refuse(`it has no compaction control yet and its model ${JSON.stringify(size.model)} is in no model line`)
-  const valve = file.control.valves[line]
+  const valve = subagents.valves[line]
   if (valve === undefined) return refuse(`it has no compaction control yet and the control has no valve for the ${line} line`)
   if (size.tokens >= valve) return { pass: true, why: 'valve' }
   return { pass: false, reason: AGENT_HELD_REASON, told: false }

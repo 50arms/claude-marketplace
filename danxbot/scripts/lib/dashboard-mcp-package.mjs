@@ -37,6 +37,8 @@ export const DASHBOARD_MCP_PACKAGE_NAME = "@thehammer/danx-dashboard-mcp";
 export const DEFAULT_REGISTRY_BASE_URL = "https://registry.npmjs.org";
 export const REGISTRY_BASE_URL_ENV = "DASHBOARD_MCP_REGISTRY_BASE_URL";
 export const REGISTRY_TIMEOUT_ENV = "DASHBOARD_MCP_REGISTRY_TIMEOUT_MS";
+/** Tests only: a JS file this node runs in place of npm (DX-5314: the detached refresh is a real process, so no spawn seam reaches it). */
+export const NPM_CLI_ENV = "DASHBOARD_MCP_NPM_CLI";
 /** Bounds the one registry request. */
 export const REGISTRY_TIMEOUT_MS = 5_000;
 /** DX-3811: an unreachable registry cannot wedge an install for longer than this. */
@@ -213,7 +215,9 @@ export function noVersionLine(reason) {
  * executable (a link to that same `npm-cli.js`, or a distribution's script) that the OS starts directly.
  * Throws, naming the path, when a Windows node has no npm beside it.
  */
-export function npmCommand(platform = process.platform, execPath = process.execPath, exists = fs.existsSync) {
+export function npmCommand(platform = process.platform, execPath = process.execPath, exists = fs.existsSync, env = process.env) {
+  // the tests' seam (DX-5314): the detached refresh is a real process, so a test names the npm it runs
+  if (env[NPM_CLI_ENV]) return { command: execPath, args: [env[NPM_CLI_ENV]] };
   if (platform !== "win32") return { command: "npm", args: [] };
   const cli = path.win32.join(path.win32.dirname(execPath), "node_modules", "npm", "bin", "npm-cli.js");
   if (!exists(cli)) throw new Error(`npm_not_found: the node running this (${execPath}) has no npm beside it at ${cli}`);
@@ -223,7 +227,7 @@ export function npmCommand(platform = process.platform, execPath = process.execP
 /**
  * `npm <args>`, its output captured (never inherited: the launcher's stdout is the MCP stream). Resolves
  * `{code, signal, output}`; rejects with one line when npm cannot be started, outlives `timeoutMs` or is aborted (`abort`:
- * the server exited mid-refresh). A stopped npm is killed, and the rejection waits for it to close, so the caller's removal of
+ * the refresh was stopped). A stopped npm is killed, and the rejection waits for it to close, so the caller's removal of
  * the stage finds no file npm still holds open.
  */
 function runNpm(npm, args, { env, spawnFn, timeoutMs, label, abort }) {
@@ -246,7 +250,7 @@ function runNpm(npm, args, { env, spawnFn, timeoutMs, label, abort }) {
       child.kill();
     };
     const timer = setTimeout(() => stop(`timeout: ${label} took longer than ${timeoutMs / 1000}s`), timeoutMs);
-    const onAbort = () => stop(`aborted: ${label} was stopped because the server exited`);
+    const onAbort = () => stop(`aborted: ${label} was stopped`);
     if (abort?.aborted) onAbort();
     else abort?.addEventListener("abort", onAbort);
     child.on("error", (err) => settle(reject, new Error(`npm_not_started: could not start npm (${npm.command}) for ${label}: ${err.message}`)));
@@ -270,7 +274,7 @@ export async function installVersion(version, { env = process.env, spawnFn = spa
   const stage = fs.mkdtempSync(path.join(root, STAGE_PREFIX));
   try {
     const result = await runNpm(
-      npm ?? npmCommand(),
+      npm ?? npmCommand(process.platform, process.execPath, fs.existsSync, env),
       ["install", "--prefix", stage, "--no-audit", "--no-fund", "--no-save", "--loglevel=error", spec],
       { env, spawnFn, timeoutMs: installTimeoutMs, label: `installing ${spec}`, abort },
     );
