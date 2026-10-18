@@ -43,6 +43,7 @@ describe('sub-agents in the control file (pure)', () => {
     expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main }, askedAt: null }))).toEqual({ ...main, subagents: null })
     expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main, agents: {} }, askedAt: null })).subagents).toBeNull()
     expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main, valves: VALVES }, askedAt: null })).subagents).toBeNull()
+    bad({ ...main, agents: 'x', valves: {} }, 'agents must be an object keyed by agent id')
     bad({ ...gateControl(), agents: [] }, 'agents must be an object keyed by agent id')
     bad({ ...gateControl(), agents: null }, 'agents must be an object keyed by agent id')
     bad({ ...gateControl(), valves: null }, 'valves must be an object keyed by model line')

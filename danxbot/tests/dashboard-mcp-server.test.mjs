@@ -13,8 +13,8 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, appendRefreshLog, refreshLogFile, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
-import { REFRESH_FLAG, dashboardUrl, launch, runRefresh } from "../scripts/dashboard-mcp-server.mjs";
+import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, appendRefreshLog, drainRefreshLog, refreshLogFile, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
+import { REFRESH_FLAG, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -201,6 +201,30 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     assert.deepEqual(again.errLines, []);
   });
 
+  test("DX-5314: a launcher that cannot start says only why: refresh.log is drained after the version is known to start, so the lines wait for the next start", async () => {
+    appendRefreshLog("[danxbot dashboard MCP] an earlier refresh failed\n", env);
+    registry.setMode("status-500");
+    const h = harness();
+    await assert.rejects(launch(h.options), /HTTP 500/);
+    assert.deepEqual(h.errLines, [], "a launcher that failed to start prints no earlier refresh line");
+    assert.equal(readFileSync(refreshLogFile(env), "utf8"), "[danxbot dashboard MCP] an earlier refresh failed\n", "the log is untouched, so the next start that works prints it");
+  });
+
+  test("DX-5314: a refresh.log.<pid>.read left by a launcher that died mid-read is printed and removed at the next drain; one a live launcher is reading is left alone", () => {
+    const root = path.join(dataDir, "dashboard-mcp");
+    mkdirSync(root, { recursive: true });
+    const orphan = path.join(root, "refresh.log.4242.read");
+    const live = path.join(root, "refresh.log.7777.read");
+    writeFileSync(orphan, "orphaned line\n");
+    writeFileSync(live, "being read by a live launcher\n");
+    appendRefreshLog("fresh line\n", env);
+    assert.equal(drainRefreshLog(env, (pid) => pid === 7777), "orphaned line\nfresh line\n");
+    assert.equal(existsSync(orphan), false, "the crashed read's file is gone");
+    assert.equal(readFileSync(live, "utf8"), "being read by a live launcher\n");
+    assert.equal(drainRefreshLog(env, () => true), "", "nothing is printed twice");
+    assert.equal(drainRefreshLog({ CLAUDE_PLUGIN_DATA: path.join(dataDir, "none") }), "", "no log directory at all is nothing to drain");
+  });
+
   test("the server gets the dashboard URL and never a dispatch's credential; a missing URL fails before anything runs", async () => {
     recordAt(A);
     layDown(A);
@@ -292,6 +316,40 @@ describe("runRefresh: the detached refresh (DX-4235, DX-5314)", () => {
     assert.equal(recordedVersionOrNull(env), A);
     assert.equal(h.errLines.length, 1);
     assert.match(h.errLines[0], /^\[danxbot dashboard MCP\] could not refresh the @thehammer\/danx-dashboard-mcp version \(aborted: installing @thehammer\/danx-dashboard-mcp@0\.1\.8 was stopped\); this session keeps running 0\.1\.7\n$/);
+  });
+
+  for (const sig of ["SIGINT", "SIGTERM"]) {
+    test(`DX-5314: ${sig} stops the refresh process cleanly: npm is killed, the stage removed, ONE line goes to refresh.log, and it exits 1`, async () => {
+      recordAt(A);
+      layDown(A);
+      registry.setVersion(B);
+      const h = harness({ npmMode: "hang" });
+      const proc = new EventEmitter();
+      const exits = [];
+      const running = runRefreshProcess(A, { ...h.options, proc, exit: (code) => exits.push(code) });
+      while (h.npms.length === 0) await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(exits, [], "still installing");
+      proc.emit(sig);
+      await running;
+      assert.equal(h.npms[0].killed, true);
+      assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp")).filter((n) => n.startsWith(".stage-")), []);
+      assert.deepEqual(exits, [1]);
+      assert.equal(recordedVersionOrNull(env), A);
+      assert.deepEqual(h.errLines, [], "its stderr is never read: the line goes to refresh.log");
+      assert.match(readFileSync(refreshLogFile(env), "utf8"), /^\[danxbot dashboard MCP\] could not refresh .*aborted: installing .* was stopped.*; this session keeps running 0\.1\.7\n$/);
+    });
+  }
+
+  test("DX-5314: a refresh process that records the new version exits 0 and logs nothing", async () => {
+    recordAt(A);
+    layDown(A);
+    registry.setVersion(B);
+    const h = harness();
+    const exits = [];
+    await runRefreshProcess(A, { ...h.options, proc: new EventEmitter(), exit: (code) => exits.push(code) });
+    assert.deepEqual(exits, [0]);
+    assert.equal(recordedVersionOrNull(env), B);
+    assert.equal(existsSync(refreshLogFile(env)), false);
   });
 
   test("after the refresh, an old install no live process runs is pruned; one another session still runs is kept", async () => {

@@ -5,8 +5,8 @@
 //
 // WHICH VERSION. The npm registry's `latest` for the package, recorded in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`
 // (temp file + rename, so a reader never sees a partial one). The launcher starts the server from the recorded version at
-// once (`startVersion`: it resolves from the registry only when nothing is recorded), then refreshes the record from the
-// registry while the server runs (`refreshInstall`). A danxbot publish therefore reaches the next session start with no
+// once (`startVersion`: it resolves from the registry only when nothing is recorded), then hands the refresh from the
+// registry (`refreshInstall`) to a detached child that outlives the launcher (DX-5314). A danxbot publish therefore reaches the next session start with no
 // plugin release and no added start latency.
 //
 // WHY EXACT, NOT `latest` AT RUN TIME (DX-3392): `npx -y` never re-checks the registry once a version is cached, so an
@@ -73,19 +73,39 @@ export function appendRefreshLog(text, env = process.env) {
 }
 /**
  * The lines written to the refresh log since the last read, or "" for none. The file is renamed away first (atomic), so a line the child appends meanwhile
- * lands in a fresh file and is read next time, never lost; the renamed copy is read and removed.
+ * lands in a fresh file and is read next time, never lost; the renamed copy is read and removed. A copy left by a launcher that died between the rename
+ * and the removal (`refresh.log.<pid>.read`, its pid gone) is read and removed here too, its lines first, so a crashed read leaves neither a file nor a lost line.
  */
-export function drainRefreshLog(env = process.env) {
+export function drainRefreshLog(env = process.env, alive = isAlive) {
   const file = refreshLogFile(env);
+  const dir = path.dirname(file);
+  let text = "";
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  for (const name of names.sort()) {
+    const m = name.match(/^refresh\.log\.(\d+)\.read$/);
+    if (!m || Number(m[1]) === process.pid || alive(Number(m[1]))) continue;
+    const orphan = path.join(dir, name);
+    try {
+      text += fs.readFileSync(orphan, "utf8");
+      fs.rmSync(orphan, { force: true });
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err; // another launcher took it first
+    }
+  }
   const taken = `${file}.${process.pid}.read`;
   try {
     fs.renameSync(file, taken);
   } catch (err) {
-    if (err.code === "ENOENT") return "";
+    if (err.code === "ENOENT") return text;
     throw err;
   }
   try {
-    return fs.readFileSync(taken, "utf8");
+    return text + fs.readFileSync(taken, "utf8");
   } finally {
     fs.rmSync(taken, { force: true });
   }
@@ -427,10 +447,10 @@ export async function startVersion(options = {}) {
 }
 
 /**
- * The refresh that runs while the server does: the registry's `latest` is installed, THEN recorded (DX-4235: the record
- * only ever names an installed version, so the next start never pays a cold install). Returns the version recorded. The
- * running server is never touched: a new version is adopted at the next session start. Throws (the caller reports one line
- * and keeps running what it runs). `options.abort` stops an install in flight (installVersion). Pruning old installs is the
+ * The refresh the detached refresh child runs (DX-5314; it outlives the launcher): the registry's `latest` is installed, THEN
+ * recorded (DX-4235: the record only ever names an installed version, so the next start never pays a cold install). Returns
+ * the version recorded. The running server is never touched: a new version is adopted at the next session start. Throws (the
+ * child appends one line to refresh.log, which the next launcher prints, and keeps the recorded version). `options.abort` stops an install in flight (installVersion). Pruning old installs is the
  * caller's separate step (pruneInstalls), so a prune failure is never reported as a failed refresh.
  */
 export async function refreshInstall(options = {}) {

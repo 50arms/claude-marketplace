@@ -83,12 +83,6 @@ describe('a plugin ahead of its relay (pure, DX-5314)', () => {
       expect(verdict({ trigger: 'auto', window: WINDOW, file, tokens: 907_000 })).toEqual({ pass: true, why: 'valve' })
     })
   }
-
-  test('a present but malformed field is still bad: only an absent one is an older relay', () => {
-    const base = JSON.parse(RELAY_SHAPES['0.1.311 (no agents, no valves)'](RELEASE_MS))
-    expect(parse(JSON.stringify({ ...base, control: { ...base.control, agents: 'x', valves: {} } }))).toEqual({ kind: 'bad', reason: 'agents must be an object keyed by agent id' })
-    expect(parse(JSON.stringify({ ...base, control: { ...base.control, agents: {}, valves: [] } }))).toEqual({ kind: 'bad', reason: 'valves must be an object keyed by model line' })
-  })
 })
 
 // The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
@@ -320,6 +314,22 @@ for (const surface of SURFACES) {
         expect(d.toasts.filter(t => t === RELAY_OLDER_NOTICE)).toHaveLength(older ? 1 : 0)
         // an older relay leaves the sub-agents' percent unarmed
         expect(d.envSets.some((s: any) => s.name === 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' && s.value !== undefined)).toBe(!older)
+      })
+    }
+
+    // DX-5314: the notice names an OLDER RELAY, which only a readable control without sub-agent control proves; a damaged file and a session with no control say something else, or nothing
+    for (const [name, text, unreadable] of [
+      ['a damaged file', '{"v":1,"sessionId":"x"', true],
+      ['a file written for another session', JSON.stringify({ v: 1, sessionId: 'someone-else', control: null, askedAt: null }), true],
+      ['a file with control: null (the switch is off)', JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: null, askedAt: null }), false],
+    ] as const) {
+      test(`the older-relay notice is not shown for ${name}`, async ($, on) => {
+        const d = await started($, on)
+        d.world.files[CONTROL_FILE] = text
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        expect(d.toasts).not.toContain(RELAY_OLDER_NOTICE)
+        expect(d.toasts.some(t => t.startsWith('Compaction control unreadable'))).toBe(unreadable)
       })
     }
 
@@ -601,6 +611,22 @@ for (const surface of SURFACES) {
       await $.turn.complete(TURN)
       expect(compactRuns(d)).toHaveLength(2)
     })
+
+    // DX-5314: the incident itself: the agent's ready landed after the turn had ended, beside a relay that sends no sub-agent control (`subagents: null`); only the idle check can start it
+    for (const relay of ['0.1.311 (no agents, no valves)', '0.1.317 (agents only)'] as const) {
+      test(`beside relay ${relay} a ready that lands while no turn is running starts the compaction at the next idle check`, async ($, on) => {
+        const d = await started($, on, { stateSteps: true })
+        d.seedState('sessionCompactSeen', true)
+        d.world.files[CONTROL_FILE] = RELAY_SHAPES[relay](CLOCK_START - 1)
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        expect(compactRuns(d)).toHaveLength(0)
+        d.world.files[CONTROL_FILE] = RELAY_SHAPES[relay](CLOCK_START + 120_000)
+        await d.clock.advance(5_000)
+        expect(compactRuns(d)).toHaveLength(1)
+        expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
+      })
+    }
 
     test('a session with no control file keeps a variable it did not set', async ($, on) => {
       const d = await started($, on, { autoCompactWindow: '400000', autocompactPct: '25' })

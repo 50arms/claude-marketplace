@@ -77,8 +77,8 @@ export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fet
   const refreshFailed = (err) => stderr.write(`${PREFIX} ${keptLine(`could not start the refresh: ${oneLine(err.message)}`, version)}\n`);
   try {
     run.refreshChild = spawnFn(process.execPath, [SELF, REFRESH_FLAG, version], { env, detached: true, stdio: "ignore", windowsHide: true });
-    run.refreshChild.on?.("error", refreshFailed);
-    run.refreshChild.unref?.();
+    run.refreshChild.on("error", refreshFailed);
+    run.refreshChild.unref();
   } catch (err) {
     refreshFailed(err);
   }
@@ -112,13 +112,16 @@ export async function runRefresh(version, { env = process.env, stderr = process.
   }
 }
 
-/** The detached child's whole life: one refresh for `version`, stopped cleanly (npm killed, stage removed, one line) by SIGINT / SIGTERM. */
-async function runRefreshProcess(version) {
+/**
+ * The detached child's whole life: one refresh for `version`, stopped cleanly (npm killed, stage removed, one line) by SIGINT / SIGTERM, then
+ * the exit code (0 recorded, 1 failed or stopped). Seams: `proc` (the signal source) and `exit`, plus `runRefresh`'s own.
+ */
+export async function runRefreshProcess(version, { proc = process, exit = (code) => process.exit(code), env = process.env, ...refreshOptions } = {}) {
   // our stderr is ignored: the failure line is appended to refresh.log, and the next launcher prints it
   const stderr = {
     write: (text) => {
       try {
-        appendRefreshLog(text);
+        appendRefreshLog(text, env);
       } catch {
         // nowhere left to say it
       }
@@ -126,12 +129,12 @@ async function runRefreshProcess(version) {
   };
   if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) {
     stderr.write(`${PREFIX} ${oneLine(`the refresh was started without the running version (${JSON.stringify(version ?? null)})`)}\n`);
-    process.exit(1);
+    return exit(1);
   }
   const stop = new AbortController();
-  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => stop.abort());
-  const latest = await runRefresh(version, { abort: stop.signal, stderr });
-  process.exit(latest === null ? 1 : 0);
+  for (const sig of ["SIGINT", "SIGTERM"]) proc.on(sig, () => stop.abort());
+  const latest = await runRefresh(version, { ...refreshOptions, env, abort: stop.signal, stderr });
+  return exit(latest === null ? 1 : 0);
 }
 
 function fail(reason) {

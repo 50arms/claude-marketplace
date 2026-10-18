@@ -16,6 +16,13 @@ function lay() {
 }
 
 if (!gate) lay();
+// A test that fails before it opens the gate must not leave this process polling forever: the wait is bounded and ends non-zero.
+const deadline = Date.now() + 60_000;
 setInterval(() => {
   if (fs.existsSync(gate)) lay();
+  if (Date.now() > deadline) {
+    process.stderr.write(`fake npm: ${gate} never appeared
+`);
+    process.exit(1);
+  }
 }, 25);
