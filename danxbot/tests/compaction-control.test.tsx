@@ -652,6 +652,7 @@ for (const surface of SURFACES) {
       d.world.gitStatus = { exitCode: 0, stdout: '## card/x...origin/card/x [ahead 2]\n M a.ts\n' }
       await startSession($, d, surface)
       await $.prompt.submit({ text: 'go' })
+      await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
       const told = tool.context!.slice(1)
@@ -673,6 +674,8 @@ for (const surface of SURFACES) {
       d.world.gitStatus = { exitCode: 128, stdout: '' }
       await startSession($, d, surface)
       await $.prompt.submit({ text: 'go' })
+      await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
+      await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
       const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
       expect(told).toContain('Work not pushed: not known (git status exited 128).')

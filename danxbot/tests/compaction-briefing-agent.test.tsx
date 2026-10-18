@@ -10,7 +10,7 @@ const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: []
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const AGENT = { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'build the thing', status: 'running' }
 // what the main agent's briefing opens with (the running AGENT is listed in it, so the whole text is not pinned)
-const MAIN = '[50 ARMS] Your conversation was just compacted. Resume from this briefing, then read your cards before acting. Your plan is PLAN-23 Danxbot plugin.'
+const MAIN = 'Your plan is PLAN-23 Danxbot plugin.'
 
 describe('the sub-agent briefing text (pure)', () => {
   test('names the agent and its task, points at its own summary and progress notes, and carries no plan or card', () => {
@@ -46,7 +46,11 @@ for (const surface of SURFACES) {
       d.world.agents = [AGENT, { ...AGENT, id: 'a2', description: 'the other task' }]
       await startSession($, d, surface)
       const propose = (agentId?: string, trigger = 'auto') => $.session.compact({ trigger, messages: TRANSCRIPT, ...(agentId === undefined ? {} : { agentId }) })
-      const compactStart = () => $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'own', transcript_path: '/work/main.jsonl' })
+      // DX-5385: mid-turn: a compaction with no turn running gets a prompt of its own (compaction-resume.test.tsx)
+      const compactStart = async () => {
+        await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
+        return $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'own', transcript_path: '/work/main.jsonl' })
+      }
       const prompt = async () => ((await $.prompt.submit({ text: 'hello' })).context ?? []) as string[]
       const toolResult = async (agentId?: string) => (((await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)).context ?? []) as string[])
       return { d, core, hold, propose, compactStart, prompt, toolResult, stop: (id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: AGENT.type }) }

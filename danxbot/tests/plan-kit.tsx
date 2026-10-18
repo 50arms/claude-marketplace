@@ -6,6 +6,7 @@ import type { On } from 'claude-code'
 
 import { SERVER, toolName } from '../hooks/plan/config'
 import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/relay/config'
+import { RESUME_PROCEDURE } from '../hooks/compaction/briefing'
 
 // DX-4883: the runner's default is 5000 ms of REAL time per test, and a case that drives the mocked clock pays real time to settle every timer
 // it fires (about 1 s to start a session plus about 55 ms per mocked minute: the plugin's pacing and usage tickers run each minute). A
@@ -23,7 +24,7 @@ const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringi
 export const EVENT_TEXT = (event: string) => `The ${event} text.`
 // DX-4993: a connected session's compaction is followed by the resume briefing in the same entry: here for the fixture's plan (PLAN-23 Danxbot plugin), DX-9 in
 // flight, no running sub-agent and a clean checkout of main. `TOLD(event)` is everything a session start of that event adds beside the time stamp.
-export const DEFAULT_BRIEFING = "[50 ARMS] Your conversation was just compacted. Resume from this briefing, then read your cards before acting. Your plan is PLAN-23 Danxbot plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed."
+export const DEFAULT_BRIEFING = `[50 ARMS] Your conversation was just compacted. ${RESUME_PROCEDURE} Your plan is PLAN-23 Danxbot plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed.`
 export const TOLD = (event: string) => (event === 'after_compaction' ? `${EVENT_TEXT(event)}
 ${DEFAULT_BRIEFING}` : EVENT_TEXT(event))
 // DX-4234: where the fixture's machine keeps the MCP server's connection record of a session (what makes a session locally known as plan-connected)
@@ -1071,6 +1072,8 @@ export async function leaveSession($: any, d: Dashboard, surface: string) {
 // DX-4234: a session start reaches the model on the FIRST PROMPT's context, beside its time stamp (SessionStart is recorded only: the engine
 // has not bound the session then). `startLines` is what the start added: the prompt's context after the stamp, or undefined when it added nothing.
 export async function firstPrompt($: any, source: string, input: Record<string, unknown> = {}): Promise<{ startLines: string[] | undefined; context: string[] }> {
+  // DX-5385: a compaction that ends with no turn running starts one itself (compaction-resume.test.tsx); here the compaction happens inside a turn, which the first prompt follows
+  if (source === 'compact') await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
   await $.classic.SessionStart({ source, cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl', ...input })
   const r = await $.prompt.submit({ text: 'hello' })
   const context: string[] = r.context ?? []

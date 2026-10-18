@@ -1862,7 +1862,32 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   if (e.source === 'compact' && !(await restartBriefsMain($))) return below
   const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended }
   await update($, pendingStart, () => start)
+  // DX-5385: a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn
+  if (e.source === 'compact' && !(await read($, turn)).isRunning) detach($, 'Resume after compaction', resumeAfterCompaction($))
   return below
+}
+
+// DX-5385: the main agent's resume prompt, by the relay's one prompt path (submitEvent, DX-4721). Only a session on a plan gets one (its connection record is on disk, as
+// isPlanConnected says; any other session stays quiet, DX-3421). The pending start is TAKEN first, so the briefing it renders is in this prompt and the prompt's own
+// stamp hook finds none (told once). A turn that began while the reads ran is the person's: the start goes back for that turn's next tool result, as an unprompted
+// compaction's always did, and no prompt queues behind it. A prompt the session refuses puts it back the same way.
+async function resumeAfterCompaction($: any): Promise<void> {
+  const start = await takePendingStart($)
+  if (start === null) return
+  if (!(await isPlanConnected($, start.sessionId))) {
+    await update($, pendingStart, cur => cur ?? start)
+    return
+  }
+  const text = await renderStart($, start)
+  if (text === null || (await read($, turn)).isRunning) {
+    await update($, pendingStart, cur => cur ?? start)
+    return
+  }
+  const failure = await submitEvent($, text)
+  if (failure === null) return
+  // the session did not take the prompt: the briefing is still owed, to the next prompt or tool result
+  await update($, pendingStart, cur => cur ?? start)
+  $.ui.toast(`The resume prompt was not taken by the session: ${failure}`.slice(0, TOAST_ERROR_MAX))
 }
 
 // DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
