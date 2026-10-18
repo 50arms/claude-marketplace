@@ -7,7 +7,7 @@ import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { briefingText, parseGitStatus } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
-import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
@@ -2136,6 +2136,8 @@ async function onReportStop($: any, e: any, next: any) {
 
 // The last reason told to the person that the control file is unreadable; the same reason is told once.
 let compactionFaultTold: string | null = null
+// DX-5314: the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
+let relayOlderTold: string | null = null
 // DX-5222: each sub-agent's last model response (its context size and model), noted at `turn.step`: `session.compact` names the proposing sub-agent but not its size, and
 // `$.session.usage()` is the main conversation's. A Map keeps insertion order, so the oldest agent goes first once AGENT_SIZES_KEEP are held; a reload starts empty (the
 // next response of each agent fills it), and an agent whose size is unknown is refused and told, never guessed (agentVerdict).
@@ -2185,6 +2187,9 @@ async function syncCompaction($: any, { start }: { start: boolean }): Promise<vo
       if (compactionFaultTold !== file.reason) $.ui.toast(`Compaction control unreadable (${file.reason}): Claude Code's own automatic compaction applies until it is fixed.`)
       compactionFaultTold = file.reason
     } else compactionFaultTold = null
+    const relayOlder = file.kind === 'control' && file.control !== null && file.control.subagents === null ? RELAY_OLDER_NOTICE : null
+    if (relayOlder !== null && relayOlderTold !== relayOlder) $.ui.toast(relayOlder)
+    relayOlderTold = relayOlder
     syncCompactionTicker($, file)
     await clearLeftoverArming($, file)
     await armSubAgents($, file)
@@ -2388,8 +2393,9 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
 // the main agent's request is the relay's (it shows it as a record). Only a running sub-agent is sent to: a message to a finished one would resume it from its transcript. A failed
 // send (a refusal, a rejection) is not recorded, so the next sync sends it again.
 async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
-  if (file.kind !== 'control' || file.control === null) return
-  const asks = Object.entries(file.control.agents).flatMap(([id, a]) => (a.ask === null ? [] : [{ id, ask: a.ask }]))
+  // DX-5314: no ask is delivered while sub-agent control is unavailable (an older relay)
+  if (file.kind !== 'control' || file.control === null || file.control.subagents === null) return
+  const asks = Object.entries(file.control.subagents.agents).flatMap(([id, a]) => (a.ask === null ? [] : [{ id, ask: a.ask }]))
   if (asks.length === 0) return
   const sessionId = String(await $.session.id())
   const running = new Set<string>(((await $.agent.list()) as { id: string; status: string }[]).filter(a => a.status === 'running').map(a => a.id))

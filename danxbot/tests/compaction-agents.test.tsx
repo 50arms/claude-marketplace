@@ -4,7 +4,7 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { AGENT_HELD_REASON, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, HELD_REASON, USED_RELEASE_KEEP, agentVerdict, armedPercentOf, askSentKey, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
-import type { AgentControl, AgentGateInput, ControlFile, GateControl } from '../hooks/compaction/control'
+import type { AgentControl, AgentGateInput, ControlFile, GateControl, LineValves } from '../hooks/compaction/control'
 import { CLOCK_START, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
@@ -17,10 +17,15 @@ const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: []
 // the transcript a proposal runs over (a compaction needs at least one message)
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const entry = (over: Partial<AgentControl> = {}): AgentControl => ({ passAtTokens: 600_000, ask: null, releaseUntilMs: null, releaseId: null, ...over })
-const gateControl = (over: Partial<GateControl> = {}): GateControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
-const fileText = (control: GateControl | null): string => JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control, askedAt: null })
+// DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
+type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: LineValves }
+const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
+const fileText = (control: WireControl | null): string => JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control, askedAt: null })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
-const withControl = (over: Partial<GateControl> = {}): ControlFile => ({ kind: 'control', control: gateControl(over) })
+const withControl = (over: Partial<WireControl> = {}): ControlFile => {
+  const { agents, valves, ...main } = gateControl(over)
+  return { kind: 'control', control: { ...main, subagents: { agents: agents!, valves: valves! } } }
+}
 
 describe('sub-agents in the control file (pure)', () => {
   const bad = (control: unknown, reason: string) => expect(parse(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control, askedAt: null }))).toEqual({ kind: 'bad', reason })
@@ -31,10 +36,18 @@ describe('sub-agents in the control file (pure)', () => {
     expect(parse(fileText(gateControl({ valves: {} })))).toEqual(withControl({ valves: {} }))
   })
 
-  test('a file with no agents or no valves is bad: the relay always writes both', () => {
-    bad({ ...gateControl(), agents: undefined }, 'agents must be an object keyed by agent id')
-    bad({ ...gateControl(), valves: undefined }, 'valves must be an object keyed by model line')
+  // DX-5314: a field the relay did not write is a relay older than the plugin (main handshake kept, sub-agent control off); a field it wrote wrongly is corruption
+  test('a file with no agents or no valves keeps the main control and has no sub-agent control; a malformed one is bad', () => {
+    const { agents: _a, valves: _v, ...main } = gateControl()
+    const mainControl = (text: string) => (parse(text) as any).control
+    expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main }, askedAt: null }))).toEqual({ ...main, subagents: null })
+    expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main, agents: {} }, askedAt: null })).subagents).toBeNull()
+    expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main, valves: VALVES }, askedAt: null })).subagents).toBeNull()
+    bad({ ...main, agents: 'x', valves: {} }, 'agents must be an object keyed by agent id')
     bad({ ...gateControl(), agents: [] }, 'agents must be an object keyed by agent id')
+    bad({ ...gateControl(), agents: null }, 'agents must be an object keyed by agent id')
+    bad({ ...gateControl(), valves: null }, 'valves must be an object keyed by model line')
+    bad({ ...main, valves: 'x' }, 'valves must be an object keyed by model line')
   })
 
   test('anything the relay would not have written for a sub-agent or a valve is bad, with the reason', () => {
@@ -91,7 +104,7 @@ describe('sub-agents in the control file (pure)', () => {
 // One automatic proposal of a sub-agent. Its valve and its release are its own: a main-agent release never passes a sub-agent and a sub-agent's never passes the main agent.
 describe('the sub-agent gate (pure)', () => {
   const OPUS = { tokens: 300_000, model: 'claude-opus-4-8' }
-  const withAgent = (a: Partial<AgentControl>, over: Partial<GateControl> = {}): ControlFile => withControl({ agents: { a1: entry(a) }, ...over })
+  const withAgent = (a: Partial<AgentControl>, over: Partial<WireControl> = {}): ControlFile => withControl({ agents: { a1: entry(a) }, ...over })
   const ask = (over: Partial<AgentGateInput> = {}): AgentGateInput => ({ agentId: 'a1', file: withAgent({}), size: OPUS, usedReleaseId: null, nowMs: NOW, ...over })
 
   test('a sub-agent under its valve with no release is held, and not told', () => {
@@ -135,6 +148,10 @@ describe('the sub-agent gate (pure)', () => {
     expect(agentVerdict(ask({ file: { kind: 'control', control: null } }))).toEqual({ pass: true, why: 'no-control' })
     expect(agentVerdict(ask({ file: { kind: 'absent' }, size: null }))).toEqual({ pass: true, why: 'no-control' })
     expect(agentVerdict(ask({ file: { kind: 'bad', reason: 'x' }, size: null }))).toEqual({ pass: true, why: 'unreadable' })
+    // DX-5314: a relay older than the plugin gives no sub-agent control: fail open, with or without a size
+    const older: ControlFile = { kind: 'control', control: { ...gateControl(), subagents: null } as any }
+    expect(agentVerdict(ask({ file: older }))).toEqual({ pass: true, why: 'subagents-off' })
+    expect(agentVerdict(ask({ file: older, size: null }))).toEqual({ pass: true, why: 'subagents-off' })
   })
 
   test('a context size the plugin never saw is refused and told, never guessed', () => {
@@ -636,6 +653,55 @@ for (const surface of SURFACES) {
         await $.turn.complete(TURN)
         expect(k.d.envSets).toEqual([])
         expect(k.d.env(PCT)).toBe('25')
+      })
+    })
+
+    // DX-5314: a plugin hot-loaded beside an older relay: the file has no `agents`/`valves`, the sub-agent features are off, and the main handshake is untouched
+    describe('beside a relay older than the plugin', () => {
+      const PCT = 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'
+      const { agents: _a, valves: _v, ...MAIN } = gateControl()
+      const OLDER = JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: MAIN, askedAt: null })
+
+      // fail open: nothing is armed, so a sub-agent's proposal only comes at Claude Code's own threshold, and refusing it would strand the agent at its window
+      test("a sub-agent's proposal passes (fail open), with or without a known size, and the main agent keeps its own gate", async ($, on) => {
+        const k = await started($, on)
+        k.d.world.files[CONTROL_FILE] = OLDER
+        expect(await k.propose('a1')).toEqual(COMPACTED)
+        await k.request('a1', AGENT_TURN_USAGE(900_000))
+        expect(await k.propose('a1')).toEqual(COMPACTED)
+        expect(await k.propose('a1', 'precompute')).toEqual(COMPACTED)
+        expect(k.core).toEqual([
+          { agentId: 'a1', skipped: undefined },
+          { agentId: 'a1', skipped: undefined },
+          { agentId: 'a1', skipped: undefined },
+        ])
+        expect(k.d.toasts.some(t => t.startsWith(AGENT_HELD_REASON))).toBe(false)
+        expect(await k.propose()).toEqual({ skip: HELD_REASON })
+        k.d.world.context = { tokens: 907_000, window: WINDOW }
+        expect(await k.propose()).toEqual(COMPACTED)
+      })
+
+      test('nothing is armed, and a percent armed under a whole file is taken back', async ($, on) => {
+        const k = await started($, on)
+        await k.see()
+        k.d.world.files[CONTROL_FILE] = OLDER
+        await $.turn.start(START)
+        expect(k.d.envSets).toEqual([])
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl())
+        await $.turn.complete(TURN)
+        expect(k.d.env(PCT)).toBe('25')
+        k.d.world.files[CONTROL_FILE] = OLDER
+        await $.turn.start(START)
+        expect(k.d.env(PCT)).toBeUndefined()
+      })
+
+      test('no request is delivered to a running sub-agent', async ($, on) => {
+        const k = await started($, on)
+        running(k.d, 'a1')
+        k.d.world.files[CONTROL_FILE] = OLDER
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        expect(k.d.sends).toEqual([])
       })
     })
   })
