@@ -660,6 +660,7 @@ for (const surface of SURFACES) {
         expect(k.d.envSets).toEqual([{ name: PCT, value: '25' }])
         // the once-per-process clear ran before the first set (DX-5222 comment 15880)
         expect(k.d.envClearedAtSet).toEqual([true])
+        expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
       })
 
       for (const base of ['2.1.300', '2.2.0', '3.0.0', '2.1.299-dev']) {
@@ -668,6 +669,7 @@ for (const surface of SURFACES) {
           k.d.world.files[CONTROL_FILE] = fileText(gateControl())
           await $.turn.start(START)
           expect(k.d.env(PCT)).toBe('25')
+          expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
         })
       }
 
@@ -679,7 +681,7 @@ for (const surface of SURFACES) {
           await $.turn.start(START)
           await $.turn.complete(TURN)
           expect(k.d.envSets).toEqual([])
-          expect(k.d.toasts.some(t => t === ENGINE_VERSION_NOTICE)).toBe(false)
+          expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
           await k.see()
           await $.turn.start(START)
           expect(k.d.envSets).toEqual([{ name: PCT, value: '25' }])
@@ -715,7 +717,7 @@ for (const surface of SURFACES) {
         const k = await started($, on, { engineVersion: 'throws' })
         await $.turn.start(START)
         await $.turn.complete(TURN)
-        expect(k.d.toasts.some(t => t === ENGINE_VERSION_NOTICE)).toBe(false)
+        expect(k.d.toasts).not.toContain(ENGINE_VERSION_NOTICE)
       })
 
       test('a percent an older plugin version left is replaced, after the flag, by the value armed now', async ($, on) => {
