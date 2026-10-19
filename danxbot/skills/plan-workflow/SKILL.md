@@ -304,7 +304,8 @@ time; trust those numbers, never your own estimate. Never retry a refused spawn.
   may be moved to haiku when the budget is nearly full.
 - **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.
   Let running agents finish; do only cheap work yourself (verify landed commits, card writes),
-  and record anything else as paused in an agent note on its card. (This is the account's usage pause, which
+  and record anything else as paused in an agent note on its card. When you have nothing left to do, pause
+  with `waits_on` `pacing`, so the change that frees slots wakes you. (This is the account's usage pause, which
   danxbot manages; it is not the pause you make yourself, described under "Pausing".)
 - **Critical**: every running agent makes a work-in-progress commit, pushes its branch, writes
   an agent note on its card saying where it is, and stops; do the same for your own state,
