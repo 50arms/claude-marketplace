@@ -421,7 +421,7 @@ export function dashboard(
   }
 
   // DX-4233: the danx-dashboard server's `plan_events_wait` as the contract words it (danxbot packages/danx-dashboard-mcp): answers
-  // the records after the call's cursor, RETAINED (an answer is never a drain), or an empty list
+  // the records after the call's cursor (those at or below it are dropped; an answer itself is never a drain), or an empty list
   // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
   const server = {
     calls: [] as { plan_id: number; cursor: string | null; timeout_ms: number; transcript_path?: string }[],
@@ -434,8 +434,21 @@ export function dashboard(
     // (a 30-minute cache, a sub-agent's life) does not also run a 20 s wait per step. A test of the wait itself sets how long it lasts
     // on the fake clock: the call's own `timeout_ms`, or this many ms.
     holdMs: undefined as number | 'timeout_ms' | undefined,
+    // DX-5398: waits in flight now and the most there ever were together (the relay holds exactly one wait loop)
+    inFlight: 0,
+    maxInFlight: 0,
+    dropped: 0,
   }
   async function planEventsWait(args: any) {
+    server.inFlight++
+    server.maxInFlight = Math.max(server.maxInFlight, server.inFlight)
+    try {
+      return await planEventsWaitOnce(args)
+    } finally {
+      server.inFlight--
+    }
+  }
+  async function planEventsWaitOnce(args: any) {
     server.calls.push(args)
     const scripted = server.script.shift()
     if (scripted) return scripted()
@@ -443,13 +456,18 @@ export function dashboard(
     // one plan: a call naming another plan than the last starts clean
     if (server.plan !== args.plan_id) server.buffer = []
     server.plan = args.plan_id
-    // one cursor, opaque: what follows the record that carries it. Records are RETAINED (an answer is never a drain), so a cursor the
-    // buffer does not hold (one the test seeded) leaves every record newer than it
-    const ready = () => {
-      if (args.cursor === null) return server.buffer
+    // one cursor, opaque: what follows the record that carries it. An answer is never a drain (records stay until a LATER call presents their cursor), but
+    // DX-5398: the real server DROPS every record at or below the cursor a call presents (the cursor acknowledges them), so a record the caller took and has
+    // not delivered is gone from the server once the next poll presents its cursor; `dropped` counts them. A cursor the buffer does not hold (one the test
+    // seeded) drops nothing and leaves every record
+    if (args.cursor !== null) {
       const at = server.buffer.findIndex(r => r.cursor === args.cursor)
-      return at === -1 ? server.buffer : server.buffer.slice(at + 1)
+      if (at !== -1) {
+        server.dropped += at + 1
+        server.buffer = server.buffer.slice(at + 1)
+      }
     }
+    const ready = () => server.buffer
     if (ready().length === 0) {
       const woken = new Promise<void>(resolve => (server.wake = resolve))
       await (server.holdMs === undefined ? woken : Promise.race([clock.sleep(server.holdMs === 'timeout_ms' ? args.timeout_ms : server.holdMs), woken]))
@@ -469,6 +487,9 @@ export function dashboard(
     submitRejects: undefined as string | undefined,
     duringPrompt: undefined as undefined | (() => Promise<void>),
     appendRejects: undefined as string | undefined,
+    // DX-5398: while set, a prompt submit settles only when this resolves (see relay.holdPrompts)
+    promptGate: undefined as undefined | Promise<void>,
+    promptsHeld: 0,
   }
   // DX-4793: the row a plugin appends is one user message of text blocks; a test sets appendRejects to make the engine refuse it
   on('session.append', (_$: any, e: any, next: any) => {
@@ -480,6 +501,17 @@ export function dashboard(
   on('turn.start', () => ({ turnId: 't1' }) as any)
   on('prompt.submit', async (_$: any, e: any) => {
     await deliveryFlags.duringPrompt?.()
+    // DX-5398: the engine (claude.exe 2.1.299) settles a plugin's `$.prompt.submit` only when the queued prompt ENTERS the session, which behind a
+    // running turn is when the turn ends. The prompt is then recorded as submitted at that moment, not at the call.
+    const gate = deliveryFlags.promptGate
+    if (gate !== undefined) {
+      deliveryFlags.promptsHeld++
+      try {
+        await gate
+      } finally {
+        deliveryFlags.promptsHeld--
+      }
+    }
     if (deliveryFlags.submitRejects !== undefined) throw new Error(deliveryFlags.submitRejects)
     if (deliveryFlags.submitDrops !== undefined) return { drop: deliveryFlags.submitDrops } as any
     submitted.push(e.text)
@@ -1010,6 +1042,19 @@ export function dashboard(
     // with this reason (the plugin shows its "Could not tell the model" toast)
     told,
     rejectAppends: (reason: string) => void (deliveryFlags.appendRejects = reason),
+    // DX-5398: every prompt submitted from now on is queued behind a running turn: its submit does not settle (and the prompt is not recorded in
+    // `submitted` or `delivered`) until `release()`, which is the turn ending. `held()` counts the submits still queued.
+    holdPrompts: () => {
+      let open!: () => void
+      deliveryFlags.promptGate = new Promise<void>(resolve => (open = resolve))
+      return {
+        release: () => {
+          deliveryFlags.promptGate = undefined
+          open()
+        },
+        held: () => deliveryFlags.promptsHeld,
+      }
+    },
     acceptPrompts: () => {
       deliveryFlags.submitDrops = undefined
       deliveryFlags.submitRejects = undefined
