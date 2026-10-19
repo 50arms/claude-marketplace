@@ -9,8 +9,8 @@ import { SURFACES, dashboard, startSession, test } from './plan-kit'
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const AGENT = { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'build the thing', status: 'running' }
-// what the main agent's briefing opens with (the running AGENT is listed in it, so the whole text is not pinned)
-const MAIN = '[50 ARMS] Your conversation was just compacted. Resume from this briefing, then read your cards before acting. Your plan is PLAN-23 Danxbot plugin.'
+// the line only the main agent's briefing carries (a sub-agent's opens with the same words but names no plan; the running AGENT is listed in the main one, so the whole text is not pinned)
+const MAIN = 'Your plan is PLAN-23 Danxbot plugin.'
 
 describe('the sub-agent briefing text (pure)', () => {
   test('names the agent and its task, points at its own summary and progress notes, and carries no plan or card', () => {

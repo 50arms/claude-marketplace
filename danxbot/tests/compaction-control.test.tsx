@@ -1,7 +1,7 @@
 // DX-4993 (PLAN-42 rule R-4): the plugin's half of an operator session's compaction handshake, as pure rules (hooks/compaction/*) and as the engine runs the
 // hooks: the agent's ready (a release in the control file the relay writes) makes the plugin run /compact itself at the next main-loop turn end, once; an automatic
 // proposal is refused while the session is under the handshake; a manual /compact and the safety valve always pass; nothing is armed for the main agent (DX-5231);
-// and the first turn after a compaction carries the resume briefing.
+// and a compaction in the middle of a turn carries the resume briefing on the next tool result.
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
@@ -641,7 +641,7 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('auto', { agent_id: 'a1' }))).block).toBe(HELD_REASON)
     })
 
-    test('the first turn after a compaction carries the resume briefing beside the registry text', async ($, on) => {
+    test('a compaction in the middle of a turn carries the resume briefing beside the registry text, on the next tool result', async ($, on) => {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       on('classic.SessionStart', () => ({}) as any)
       const d = dashboard(on)

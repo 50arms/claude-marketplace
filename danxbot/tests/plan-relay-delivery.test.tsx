@@ -134,13 +134,13 @@ for (const surface of SURFACES) {
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] after the turn'])
     })
 
-    // The kit cannot take the plugin's own append, so the state a successful note leaves (pending) is seeded on the turn's start.
     test('an urgent note appended after the last tool result is told once as a prompt when the turn ends', async ($, on) => {
       const d = dashboard(on)
       on('turn.complete', () => ({ text: 'done' }) as any)
-      d.seedPending(['critical pacing stop'])
       await startSession($, d, surface)
       await $.turn.start(START)
+      d.relay.push({ cursor: 'c5', text: 'critical pacing stop', urgent: true })
+      await d.clock.settle()
       expect(turnOf(d)).toEqual({ isRunning: true, pending: ['critical pacing stop'] })
       await $.turn.complete(TURN)
       await d.clock.settle()
