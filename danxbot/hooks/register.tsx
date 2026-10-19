@@ -58,13 +58,15 @@ import { disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote
 import { signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
-import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
+import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
 import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
+import { isStalled, onlyPlan, pollCursor } from './relay/outbox'
+import type { Queued } from './relay/outbox'
 import { classifierRefusal, isBackgroundRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
-import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stoppedLine } from './relay/text'
+import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
@@ -173,8 +175,16 @@ const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {
 // can never clear or set what the new run has told.
 // `lacking`: the run's failed waits in a row whose evidence is "the plugin server lists tools but not plan_events_wait" (count, and when the first came).
 // DX-4884: `planId: null` is the relay of a signed-in session on no plan (session records only: pacing, auto-resume).
-type RelayRun = { planId: number | null; dead: boolean; told: string | null; lacking: { count: number; since: number } | null }
+// DX-5398: `beat` is the wall-clock time of the loop's last step (0 before the first), what the stall watch judges.
+type RelayRun = { planId: number | null; dead: boolean; told: string | null; lacking: { count: number; since: number } | null; beat: number }
 let relayRun: RelayRun | null = null
+// DX-5398: the events the poll loop has taken and the pump has not delivered yet (relay/outbox.ts says why they are not delivered by the loop), and the
+// one pump that delivers them. Handles, so module variables: a reload starts with none, and the stored cursor (moved per delivered event) is what survives.
+let outbox: Queued[] = []
+let outboxPumping = false
+// DX-5398: the stall watch, one per process (a handle), and the run it last saw with the time it first saw it.
+let stallTicker: { cancel: () => void } | null = null
+let stallSeen: { run: RelayRun; since: number } | null = null
 // The plan whose relay the server stopped, or that is signed out: it is not started again until something asks (a connect, the
 // model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
 // DX-4884: boxed, because a halt on no plan (`planId: null`) is a halt too.
@@ -856,9 +866,13 @@ function startRelay($: any, planId: number | null): void {
   if (relayHalted !== null && relayHalted.planId !== planId) relayHalted = null
   if (relayHalted !== null) return
   stopRelay()
-  const run: RelayRun = { planId, dead: false, told: null, lacking: null }
+  // DX-5398: what is still waiting for delivery stays for a run of the same plan (it polls on from there); another plan's events are dropped
+  outbox = onlyPlan(outbox, planId)
+  const run: RelayRun = { planId, dead: false, told: null, lacking: null, beat: 0 }
   relayRun = run
+  if (stallTicker === null) stallTicker = $.clock.every(RELAY_STALL_CHECK_MS, () => detach($, 'Plan event relay stall check', checkRelayStall($)))
   detach($, 'Plan event relay', relayLoop($, run))
+  if (outbox.length > 0) detach($, 'Plan event delivery', issueOutbox($))
 }
 
 // DX-4233 / DX-4884: starts the relay (the plan's, or the session's own on no plan) when no loop runs, whatever became of the plan load: from the view when it knows the plan,
@@ -1172,10 +1186,11 @@ async function loadCursor($: any, planId: number | null): Promise<string | null>
 }
 
 // The cursor is stored AFTER the event was delivered, under the session id as it is now (a /clear or a resume changes it).
-// DX-4233: a run that was ended while it delivered (a move to another plan) must not write over the new run's cursor.
-async function saveCursor($: any, run: RelayRun, cursor: string): Promise<void> {
-  if (run.dead) return
-  await $.store.set(cursorKey(await $.session.id()), { planId: run.planId, cursor, at: await $.clock.now() })
+// DX-4233: an event of a plan the session has since left must not write over the new plan's cursor. DX-5398: a delivery outlives the run that polled
+// it (a run replaced while its prompt waited), so the gate is the plan the live run serves, not the run that took the event.
+async function saveCursor($: any, planId: number | null, cursor: string): Promise<void> {
+  if (relayRun === null || relayRun.planId !== planId) return
+  await $.store.set(cursorKey(await $.session.id()), { planId, cursor, at: await $.clock.now() })
 }
 
 // The store keeps one record per session ever held: the oldest past CURSOR_KEEP go.
@@ -1211,15 +1226,17 @@ async function appendNote($: any, line: string): Promise<string | null> {
 }
 
 // One event into the session, the same `[danxbot plan event] ...` text as ever, by the one decision in relay/delivery.ts (DX-4721): a non-urgent
-// event is a prompt (queued behind a running turn, waking an idle session); an urgent one is a note in a running turn. Null when delivered,
-// else the cause.
-async function deliverEvent($: any, text: string, urgent: boolean): Promise<string | null> {
-  if (deliveryMode(urgent, (await read($, turn)).isRunning) === 'prompt') return submitEvent($, relayLine(text))
-  return appendTrackedNote($, text)
+// event is a prompt (queued behind a running turn, waking an idle session); an urgent one is a note in a running turn.
+// DX-5398: resolves as soon as the engine call has been MADE; `done` settles with the outcome, null when delivered, else the cause. A plugin's
+// `$.prompt.submit` settles only when the queued prompt enters the session (after the running turn), so a caller that must not wait for that (the
+// relay's pump, relay/outbox.ts) issues the next event while `done` is still out, and a caller that must (deliverEvent) awaits it.
+async function issueEvent($: any, text: string, urgent: boolean): Promise<{ done: Promise<string | null> }> {
+  if (deliveryMode(urgent, (await read($, turn)).isRunning) === 'prompt') return { done: submitEvent($, relayLine(text)) }
+  return { done: appendTrackedNote($, text) }
 }
 
 // A note into the running turn, and the turn atom told of it (noteAppended): a turn that ends with no tool result after the note tells it once as a prompt
-// (promptNotes), so no note is stranded. The one place a note is appended for an event (deliverEvent, and the resume briefing of a turn that began during its reads).
+// (promptNotes), so no note is stranded. The one place a note is appended for an event (issueEvent, and the resume briefing of a turn that began during its reads).
 async function appendTrackedNote($: any, text: string): Promise<string | null> {
   const failure = await appendNote($, relayLine(text))
   if (failure !== null) return failure
@@ -1234,6 +1251,11 @@ async function appendTrackedNote($: any, text: string): Promise<string | null> {
   return null
 }
 
+// One event delivered, awaited: null when delivered, else the cause.
+async function deliverEvent($: any, text: string, urgent: boolean): Promise<string | null> {
+  return (await issueEvent($, text, urgent)).done
+}
+
 // DX-4721: notes nothing will read (the turn ended after them, with no tool result between), each told once more as a prompt that says it is a
 // repeat, in order; every note is tried even when an earlier one was refused. Detached from the hook or delivery that found them: a prompt
 // the session did not take is a toast.
@@ -1244,23 +1266,94 @@ async function promptNotes($: any, texts: string[]): Promise<void> {
   }
 }
 
-// The records of one answer, in the order the server sent them, each one's cursor stored as the resume cursor once it is delivered (never
-// compared with another: the server decides what comes after a cursor). Stops at the first that cannot be delivered; the server answers
-// everything after the last stored cursor on the next call. A crash between a delivery and its store may repeat that one record, never
-// lose one.
-async function deliverAll($: any, run: RelayRun, events: RelayEvent[], from: string | null): Promise<{ cursor: string | null; delivered: number; failure: string | null }> {
-  let cursor = from
-  let delivered = 0
-  for (const ev of events) {
-    // DX-4233: an ended run delivers nothing more (its events are the new plan's server's to answer)
-    if (run.dead) break
-    const failure = await deliverEvent($, ev.text, ev.urgent)
-    if (failure !== null) return { cursor, delivered, failure }
-    delivered++
-    cursor = ev.cursor
-    await saveCursor($, run, cursor)
+// DX-5398: the outbox (relay/outbox.ts says why the poll loop does not deliver). The records of one answer are queued in the order the server sent them
+// and issued to the session in that order, each as soon as the one before it has been ISSUED (a prompt queued behind a running turn is out, not done, and
+// must not hold the next event: an urgent note behind it is for the running turn). Each one's cursor is stored as the resume cursor once it is DELIVERED,
+// in order (never compared with another: the server decides what comes after a cursor), so a crash or a reload repeats at most the events not delivered
+// yet, never loses one. An event the session refuses is issued again after the backoff, and the band says so.
+// Both functions are idempotent and single-flight: whoever queues, starts a run, or finishes an event calls them.
+let outboxIssuing = false
+let outboxSettling = false
+// the cause of the delivery failure being retried, null when none: the poll's own success must not draw over it (handleAnswer)
+let outboxFailure: string | null = null
+
+function queueEvents($: any, run: RelayRun, events: RelayEvent[]): void {
+  for (const event of events) outbox.push({ planId: run.planId, event, done: null })
+  detach($, 'Plan event delivery', issueOutbox($))
+}
+
+async function issueOutbox($: any): Promise<void> {
+  if (outboxIssuing) return
+  outboxIssuing = true
+  try {
+    for (;;) {
+      const next = outbox.find(q => q.done === null)
+      // no live run on that plan: the events wait for a run that serves it (startRelay starts this again)
+      if (next === undefined || relayRun === null || relayRun.planId !== next.planId) return
+      next.done = (await issueEvent($, next.event.text, next.event.urgent)).done
+      detach($, 'Plan event delivery', settleOutbox($))
+    }
+  } finally {
+    outboxIssuing = false
   }
-  return { cursor, delivered, failure: null }
+}
+
+async function settleOutbox($: any): Promise<void> {
+  if (outboxSettling) return
+  outboxSettling = true
+  let failures = 0
+  try {
+    for (;;) {
+      const head = outbox[0]
+      if (head === undefined || head.done === null) return
+      const failure = await head.done
+      // a move to another plan dropped it while it was out
+      if (outbox[0] !== head) continue
+      const live = relayRun !== null && relayRun.planId === head.planId ? relayRun : null
+      if (failure !== null) {
+        outboxFailure = failure
+        if (live !== null) await relayFailed($, live, 'retrying', failure, delayedLine(failure))
+        failures++
+        await $.clock.sleep(backoffMs(failures))
+        if (outbox[0] === head) head.done = null
+        detach($, 'Plan event delivery', issueOutbox($))
+        continue
+      }
+      outbox.shift()
+      failures = 0
+      outboxFailure = null
+      await saveCursor($, head.planId, head.event.cursor)
+      if (live !== null) {
+        live.told = null
+        await setRelay($, live, 'streaming', null)
+      }
+    }
+  } finally {
+    outboxSettling = false
+  }
+}
+
+// DX-5398: the stall watch, every RELAY_STALL_CHECK_MS. A loop that has made no step for RELAY_STALL_MS is awaiting a call that never settles (the poll,
+// the cursor store, the plan read): nothing it could say reaches anyone, so the watch tells the person (a toast) and the session (a note, detached: the
+// note's own call is one of the things that may be stuck), then starts the relay again. Events in flight are not lost or repeated (the outbox).
+async function checkRelayStall($: any): Promise<void> {
+  const run = relayRun
+  const now = await $.clock.now()
+  if (run === null) {
+    stallSeen = null
+    return
+  }
+  if (stallSeen === null || stallSeen.run !== run) {
+    stallSeen = { run, since: now }
+    return
+  }
+  if (relayRun !== run || !isStalled(now, run.beat, stallSeen.since, RELAY_STALL_MS)) return
+  const seconds = Math.round((now - Math.max(run.beat, stallSeen.since)) / 1000)
+  stallSeen = null
+  $.ui.toast(stalledNotice(seconds).slice(0, TOAST_ERROR_MAX))
+  detach($, 'Telling the session', tellModel($, stalledLine(seconds)))
+  stopRelay()
+  startRelay($, run.planId)
 }
 
 // DX-4233: the engine words a tool the server lacks the same as a server that is not connected ("no connected MCP tool"), so that answer is told
@@ -1318,19 +1411,22 @@ type Handled = { next: 'again' | 'retry' | 'end'; cursor: string | null }
 
 async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: string | null, startedAt: number): Promise<Handled> {
   if (got.kind === 'events') {
-    const out = await deliverAll($, run, got.events, cursor)
+    // DX-4233: an ended run takes nothing (its events are the new run's to ask for)
+    if (run.dead) return { next: 'end', cursor }
+    // DX-5398: the events are queued, never delivered here; the poll goes on at once from the newest cursor taken
+    queueEvents($, run, got.events)
+    const last = got.events[got.events.length - 1]
     // the refresh is detached (DX-4586): the environment going away under it is not a failure
-    if (out.delivered > 0) detach($, 'Plan refresh', refresh($, true))
-    if (out.failure !== null) {
-      await relayFailed($, run, 'retrying', out.failure, delayedLine(out.failure))
-      return { next: 'retry', cursor: out.cursor }
+    if (last !== undefined) detach($, 'Plan refresh', refresh($, true))
+    // a delivery being retried keeps the band's retrying state: a poll that works says nothing about it
+    if (outboxFailure === null) {
+      run.told = null
+      await setRelay($, run, 'streaming', null)
     }
-    run.told = null
-    await setRelay($, run, 'streaming', null)
     // a server that answers an empty list at once is not a wait: sleep the rest of the round
     const took = (await $.clock.now()) - startedAt
-    if (out.delivered === 0 && took < MIN_ROUND_MS) await $.clock.sleep(MIN_ROUND_MS - took)
-    return { next: 'again', cursor: out.cursor }
+    if (last === undefined && took < MIN_ROUND_MS) await $.clock.sleep(MIN_ROUND_MS - took)
+    return { next: 'again', cursor: last === undefined ? cursor : last.cursor }
   }
   if (got.kind === 'signed-out') {
     // the band already says it (and offer Sign in unless a person revoked the key): nothing more is told
@@ -1353,17 +1449,21 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
     // the run's first word comes before any await of its own: until then the band would still show the state the last run of this plan left
     await setRelay($, run, 'streaming', null)
     await pruneCursors($)
-    let cursor = await loadCursor($, run.planId)
+    // DX-5398: on from the newest event still waiting in the outbox (a run replacing a stuck one), else from the stored cursor
+    let cursor = pollCursor(outbox, run.planId, await loadCursor($, run.planId))
     let keyedBy = await $.session.id()
-    // DX-4233: the loop ends with its run; what a late answer would say is gated in setRelay, saveCursor and deliverAll
+    // DX-4233: the loop ends with its run; what a late answer would say is gated in setRelay and handleAnswer
     while (!run.dead) {
       const startedAt = await $.clock.now()
+      run.beat = startedAt
       const got = await waitForEvents($, run, cursor)
-      // a /clear or a resume gives the process another session id: keep the cursor under the one in use now
+      // a /clear or a resume gives the process another session id: the stored cursor (the last DELIVERED event's, not the polled one) moves with it
       const sid = await $.session.id()
       if (sid !== keyedBy) {
+        const stored = await $.store.get(cursorKey(keyedBy))
         keyedBy = sid
-        if (cursor !== null) await saveCursor($, run, cursor)
+        const delivered = cursorFor(stored, run.planId)
+        if (delivered !== null) await saveCursor($, run.planId, delivered)
       }
       const handled = await handleAnswer($, run, got, cursor, startedAt)
       cursor = handled.cursor
@@ -1373,6 +1473,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
         continue
       }
       failures++
+      run.beat = await $.clock.now()
       await $.clock.sleep(backoffMs(failures))
     }
   } catch (err: any) {
@@ -1454,6 +1555,8 @@ async function onSessionEnd($: any, e: any, next: any) {
     pacingTicker = null
     usageTicker?.cancel()
     usageTicker = null
+    stallTicker?.cancel()
+    stallTicker = null
     compactionTicker?.cancel()
     compactionTicker = null
     permissionTicker?.cancel()

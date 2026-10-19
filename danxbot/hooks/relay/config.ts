@@ -38,6 +38,12 @@ export const RELAY_START_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 60_00
 export const OLD_SERVER_AFTER_FAILURES = 3
 export const OLD_SERVER_AFTER_MS = 8_000
 
+// DX-5398: the stall watch. The loop makes a step at least every WAIT_MS + the longest backoff + the server's turnaround; a run that has made none
+// for RELAY_STALL_MS is stuck on a call that never settles, and is told to the person and the session and started again. Checked every
+// RELAY_STALL_CHECK_MS.
+export const RELAY_STALL_MS = 90_000
+export const RELAY_STALL_CHECK_MS = 30_000
+
 // An answer that comes back sooner than this with no events is not a wait: the loop sleeps the rest, so a server that answers an
 // empty list at once cannot make it spin.
 export const MIN_ROUND_MS = 1_000

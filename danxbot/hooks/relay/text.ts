@@ -11,6 +11,12 @@ export const stoppedLine = (detail: string, fix: string) => `${RELAY_MARKER} eve
 // The relay is trying again on its own: a transient failure, with the cause.
 export const delayedLine = (message: string) => `${RELAY_MARKER} events delayed: ${trim(message)}. The relay keeps retrying on its own.`
 
+// DX-5398: the relay's loop made no step for a long time (a call it waits on never settled): events were NOT reaching this session meanwhile. It is
+// started again on its own; the line is for the person (a toast) and the session (a note), never silence.
+export const stalledNotice = (seconds: number) =>
+  `Plan events stalled: the listener made no progress for ${seconds} s, so events were NOT reaching this session. It was started again on its own; if events stay silent, call plan_connect.`
+export const stalledLine = (seconds: number) => `${RELAY_MARKER} ${stalledNotice(seconds)}`
+
 // DX-4233: how a delivery the session refused reads (a dropped or throwing prompt, a refused or throwing row)
 export const notTakenLine = (why: string) => `the session did not take the event: ${why}`
 
