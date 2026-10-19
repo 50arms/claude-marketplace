@@ -220,9 +220,15 @@ each reminder with "still waiting": pause.
 1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block): the
    pause is only the signal, never the record. Waiting on a person is always an open problem
    on a card of this plan, worded for the step left now (no note or comment reaches Needs You).
-2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, ends_when?,
+2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
-   what would end the wait. The pause lasts at most `expires_in_minutes` (default 120, at most
+   what would end the wait. `waits_on` is required, the cause you pick: `pacing` when usage pacing
+   refused your account's agents (no slot to start one, the account over pace or at its agent
+   budget), so you wait for pacing to free slots; `person` for an open problem, an approval or any
+   answer only a person gives; `dependency` for another card, a build, a deploy or any other work
+   you wait on; `other` when none fits. Pick the one you actually wait on, since only a `pacing`
+   pause is woken when pacing frees slots (a pause on anything else holds that message with the
+   rest, costing no turn). The pause lasts at most `expires_in_minutes` (default 120, at most
    720) and ends by itself then; call again to renew it. A usage-limit pause already in force
    refuses it (409): that one ends by itself when the limit resets. `reason` is at most 300
    characters. A dispatched worker cannot pause (409): only a registered non-worker session can.
@@ -233,9 +239,10 @@ each reminder with "still waiting": pause.
 While paused, the dashboard holds its nudges, plan-event digests and agent or machine events for
 you, and the plugin's own ready-cards reminder stays quiet. It ends when a person
 writes to you or acts on a card of yours (that message arrives at once), a critical usage-pacing
-stop, a usage-pacing change that lets your account start agents again (on pace, with no count cap
-or a budget above the agents running; the message is delivered at once, so a pause taken after a
-pacing refusal needs no manual wake), your own next dashboard call (the plugin's background reads do not count) other than the pause
+stop, a usage-pacing change that lets your account start agents again while your pause waits on
+`pacing` (on pace, with no count cap or a budget above the agents running; the message is delivered
+at once, so a pause taken after a pacing refusal needs no manual wake; a pause on any other cause
+holds that message), your own next dashboard call (the plugin's background reads do not count) other than the pause
 calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or your session going
 silent.
 
