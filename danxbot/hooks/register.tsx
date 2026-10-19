@@ -1214,9 +1214,14 @@ async function appendNote($: any, line: string): Promise<string | null> {
 // event is a prompt (queued behind a running turn, waking an idle session); an urgent one is a note in a running turn. Null when delivered,
 // else the cause.
 async function deliverEvent($: any, text: string, urgent: boolean): Promise<string | null> {
-  const line = relayLine(text)
-  if (deliveryMode(urgent, (await read($, turn)).isRunning) === 'prompt') return submitEvent($, line)
-  const failure = await appendNote($, line)
+  if (deliveryMode(urgent, (await read($, turn)).isRunning) === 'prompt') return submitEvent($, relayLine(text))
+  return appendTrackedNote($, text)
+}
+
+// A note into the running turn, and the turn atom told of it (noteAppended): a turn that ends with no tool result after the note tells it once as a prompt
+// (promptNotes), so no note is stranded. The one place a note is appended for an event (deliverEvent, and the resume briefing of a turn that began during its reads).
+async function appendTrackedNote($: any, text: string): Promise<string | null> {
+  const failure = await appendNote($, relayLine(text))
   if (failure !== null) return failure
   // `prompt` is set inside the updater, which sees the turn as it is when the write happens
   let prompt = null as string | null
@@ -1882,23 +1887,25 @@ async function resumeAfterCompaction($: any): Promise<void> {
   if (pending === null || !(await isPlanConnected($, pending.sessionId))) return
   const start = await takePendingStart($)
   if (start === null) return
-  const text = await renderStart($, start)
-  if (text === null) {
-    await update($, pendingStart, cur => cur ?? start)
-    return
-  }
+  // a compact start always renders (it carries the registry event), so there is no null to put back
+  const text = (await renderStart($, start))!
   if ((await read($, turn)).isRunning) {
-    const refused = await appendNote($, relayLine(text))
-    if (refused !== null) await update($, pendingStart, cur => cur ?? start)
+    // by the relay's one note path, so a turn that ends with no tool result after it still tells the briefing as a prompt
+    if ((await appendTrackedNote($, text)) !== null) await restoreStart($, start)
     return
   }
   // the procedure needs no dashboard read: a start whose reads failed (only a warning line) still tells the agent how to resume
-  const failure = await submitEvent($, text.includes(RESUME_PROCEDURE) ? text : `${text}
-${RESUME_OPENING}`)
+  const failure = await submitEvent($, relayLine(text.includes(RESUME_PROCEDURE) ? text : `${text}
+${RESUME_OPENING}`))
   if (failure === null) return
   // the session did not take the prompt: the briefing is still owed, to the next prompt or tool result
-  await update($, pendingStart, cur => cur ?? start)
+  await restoreStart($, start)
   $.ui.toast(`The resume prompt was not taken by the session: ${failure}`.slice(0, TOAST_ERROR_MAX))
+}
+
+// A start taken for a briefing that was not delivered goes back (unless a newer start has arrived meanwhile): the next prompt or tool result tells it.
+async function restoreStart($: any, start: NonNullable<PendingStart>): Promise<void> {
+  await update($, pendingStart, cur => cur ?? start)
 }
 
 // DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session

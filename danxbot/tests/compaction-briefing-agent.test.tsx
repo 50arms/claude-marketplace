@@ -46,9 +46,7 @@ for (const surface of SURFACES) {
       d.world.agents = [AGENT, { ...AGENT, id: 'a2', description: 'the other task' }]
       await startSession($, d, surface)
       const propose = (agentId?: string, trigger = 'auto') => $.session.compact({ trigger, messages: TRANSCRIPT, ...(agentId === undefined ? {} : { agentId }) })
-      const compactStart = async () => {
-        return $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'own', transcript_path: '/work/main.jsonl' })
-      }
+      const compactStart = () => $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'own', transcript_path: '/work/main.jsonl' })
       const prompt = async () => ((await $.prompt.submit({ text: 'hello' })).context ?? []) as string[]
       const toolResult = async (agentId?: string) => (((await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)).context ?? []) as string[])
       return { d, core, hold, propose, compactStart, prompt, toolResult, stop: (id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: AGENT.type }) }

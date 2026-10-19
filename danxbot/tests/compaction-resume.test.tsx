@@ -168,6 +168,21 @@ for (const surface of SURFACES) {
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
     })
 
+    test('a turn that began during the reads and ends with no further tool result tells the briefing once as a prompt, not stranded', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextDelayMs = 1_000
+      await restartMain($)
+      await $.turn.start(START)
+      await d.clock.advance(5_000)
+      await d.clock.settle()
+      expect(d.relay.told.filter((t: string) => t.includes(RESUME_PROCEDURE))).toHaveLength(1)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(1)
+      expect(resumes(d)[0]).toContain('repeat of an urgent note')
+      expect(resumes(d)[0]).toContain(RESUME_PROCEDURE)
+    })
+
     test('a note the running turn refuses puts the start back for its next tool result', async ($, on) => {
       const d = await started($, on)
       d.world.contextDelayMs = 1_000
