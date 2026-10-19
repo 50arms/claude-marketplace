@@ -152,6 +152,10 @@ export type PendingStart = { sessionId: string; source: string; transcriptPath: 
 // latest of them opened, null when nothing is open: a move to another plan closes what was opened under this one first.
 export type ReportState = { agents: Record<string, number>; shells: string[]; planId: number | null }
 
+// DX-5398: a plan event the relay has taken from the server and not yet delivered to the session, kept in $.state so a reload of the hook module (which
+// empties the module's own outbox) finds it again. The server drops every event at or below the cursor a poll presents, so this copy is the only one.
+export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean }
+
 declare module 'claude-code' {
   interface PluginState {
     danxbot: {
@@ -215,6 +219,8 @@ declare module 'claude-code' {
       compacting: CompactingState
       // DX-4235: the reports' memory (see ReportState).
       reports: ReportState
+      // DX-5398: the relay's undelivered events, in the order the server sent them (see PendingEvent).
+      relayOutbox: PendingEvent[]
     }
   }
 }

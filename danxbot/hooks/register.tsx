@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { CompactingState, ConnectedPlan, PacingSnapshot, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
+import type { CompactingState, ConnectedPlan, PacingSnapshot, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -63,7 +63,7 @@ import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanT
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
-import { isStalled, onlyPlan, pollCursor } from './relay/outbox'
+import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
 import { classifierRefusal, isBackgroundRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
@@ -161,6 +161,8 @@ const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as cons
 const compacting = atom({ plugin: 'danxbot', key: 'compacting' } as const, { main: null, agents: {} } as CompactingState)
 // DX-4235: the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
+// DX-5398: the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
+const relayOutbox = atom({ plugin: 'danxbot', key: 'relayOutbox' } as const, [] as PendingEvent[])
 
 // DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -178,13 +180,13 @@ const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {
 // DX-5398: `beat` is the wall-clock time of the loop's last step (0 before the first), what the stall watch judges.
 type RelayRun = { planId: number | null; dead: boolean; told: string | null; lacking: { count: number; since: number } | null; beat: number }
 let relayRun: RelayRun | null = null
-// DX-5398: the events the poll loop has taken and the pump has not delivered yet (relay/outbox.ts says why they are not delivered by the loop), and the
-// one pump that delivers them. Handles, so module variables: a reload starts with none, and the stored cursor (moved per delivered event) is what survives.
+// DX-5398: the events the poll loop has taken and the pump has not delivered yet (relay/outbox.ts says why they are not delivered by the loop). Handles
+// (the delivery promises), so a module variable: a reload starts with none, and `restoreOutbox` rebuilds it from the `relayOutbox` atom, the copy $.state keeps.
 let outbox: Queued[] = []
-let outboxPumping = false
-// DX-5398: the stall watch, one per process (a handle), and the run it last saw with the time it first saw it.
+// DX-5398: the stall watch, one per process (a handle), the run it last saw with the time it first saw it, and when its last tick ran.
 let stallTicker: { cancel: () => void } | null = null
 let stallSeen: { run: RelayRun; since: number } | null = null
+let stallTickAt: number | null = null
 // The plan whose relay the server stopped, or that is signed out: it is not started again until something asks (a connect, the
 // model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
 // DX-4884: boxed, because a halt on no plan (`planId: null`) is a halt too.
@@ -866,13 +868,15 @@ function startRelay($: any, planId: number | null): void {
   if (relayHalted !== null && relayHalted.planId !== planId) relayHalted = null
   if (relayHalted !== null) return
   stopRelay()
-  // DX-5398: what is still waiting for delivery stays for a run of the same plan (it polls on from there); another plan's events are dropped
+  // DX-5398: what is still waiting for delivery stays for a run of the same plan (it polls on from there); another plan's events are dropped, and so is
+  // the failure being retried when its event was one of them (the new plan's band must not keep the old plan's cause)
+  const head = outbox[0]
   outbox = onlyPlan(outbox, planId)
+  if (outbox[0] !== head) outboxFailure = null
   const run: RelayRun = { planId, dead: false, told: null, lacking: null, beat: 0 }
   relayRun = run
   if (stallTicker === null) stallTicker = $.clock.every(RELAY_STALL_CHECK_MS, () => detach($, 'Plan event relay stall check', checkRelayStall($)))
   detach($, 'Plan event relay', relayLoop($, run))
-  if (outbox.length > 0) detach($, 'Plan event delivery', issueOutbox($))
 }
 
 // DX-4233 / DX-4884: starts the relay (the plan's, or the session's own on no plan) when no loop runs, whatever became of the plan load: from the view when it knows the plan,
@@ -1275,17 +1279,37 @@ async function promptNotes($: any, texts: string[]): Promise<void> {
 // DX-5398: the outbox (relay/outbox.ts says why the poll loop does not deliver). The records of one answer are queued in the order the server sent them
 // and issued to the session in that order, each as soon as the one before it has been ISSUED (a prompt queued behind a running turn is out, not done, and
 // must not hold the next event: an urgent note behind it is for the running turn). Each one's cursor is stored as the resume cursor once it is DELIVERED,
-// in order (never compared with another: the server decides what comes after a cursor), so a crash or a reload repeats at most the events not delivered
-// yet, never loses one. An event the session refuses is issued again after the backoff, and the band says so.
+// in order (never compared with another: the server decides what comes after a cursor). An event the session refuses is issued again after the backoff,
+// and the band says so. The poll acknowledges a taken event to the server (which then drops it), so every queued event is also written to the `relayOutbox`
+// atom BEFORE the poll that carries its cursor, and removed from it once delivered: a reload of this module (which empties `outbox`) finds them there and
+// issues them again (`restoreOutbox`). A reload can repeat an event that was issued and not yet delivered (the engine's own queue is not ours to read);
+// it loses none. A NEW process starts with no atom: the stored resume cursor is then what the server resumes from.
 // Both functions are idempotent and single-flight: whoever queues, starts a run, or finishes an event calls them.
 let outboxIssuing = false
 let outboxSettling = false
 // the cause of the delivery failure being retried, null when none: the poll's own success must not draw over it (handleAnswer)
 let outboxFailure: string | null = null
 
-function queueEvents($: any, run: RelayRun, events: RelayEvent[]): void {
+async function queueEvents($: any, run: RelayRun, events: RelayEvent[]): Promise<void> {
   for (const event of events) outbox.push({ planId: run.planId, event, done: null })
+  // the copy first: the next poll presents these cursors, and the server drops what they cover
+  await persistOutbox($)
   detach($, 'Plan event delivery', issueOutbox($))
+}
+
+// The atom holds exactly what `outbox` holds; every change to `outbox` is followed by this write.
+async function persistOutbox($: any): Promise<void> {
+  const pending = toPending(outbox)
+  await update($, relayOutbox, () => pending)
+}
+
+// A run's start: a reloaded module has an empty outbox, so what the atom kept for this plan is the outbox again (another plan's events are dropped, as a
+// move drops them). Then whatever waits is issued: the run that polls on from its newest cursor never asks the server for it again.
+async function restoreOutbox($: any, run: RelayRun): Promise<void> {
+  const saved = fromPending(await read($, relayOutbox), run.planId)
+  if (outbox.length === 0) outbox = saved
+  await persistOutbox($)
+  if (outbox.length > 0) detach($, 'Plan event delivery', issueOutbox($))
 }
 
 async function issueOutbox($: any): Promise<void> {
@@ -1328,7 +1352,9 @@ async function settleOutbox($: any): Promise<void> {
       outbox.shift()
       failures = 0
       outboxFailure = null
+      // the cursor first: a reload between the two repeats this event, where the other order would lose the resume point
       await saveCursor($, head.planId, head.event.cursor)
+      await persistOutbox($)
       if (live !== null) {
         live.told = null
         await setRelay($, live, 'streaming', null)
@@ -1352,11 +1378,15 @@ async function settleOutbox($: any): Promise<void> {
 async function checkRelayStall($: any): Promise<void> {
   const run = relayRun
   const now = await $.clock.now()
+  // the clock is the wall clock, which keeps running while the machine sleeps and the loop's call cannot answer: a tick that is itself far later than its
+  // interval is the machine waking, and judging it would report a stall nobody had. The watch starts counting again from here.
+  const woke = isLateTick(now, stallTickAt, RELAY_STALL_CHECK_MS)
+  stallTickAt = now
   if (run === null) {
     stallSeen = null
     return
   }
-  if (stallSeen === null || stallSeen.run !== run) {
+  if (woke || stallSeen === null || stallSeen.run !== run) {
     stallSeen = { run, since: now }
     return
   }
@@ -1427,7 +1457,7 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
     // DX-4233: an ended run takes nothing (its events are the new run's to ask for)
     if (run.dead) return { next: 'end', cursor }
     // DX-5398: the events are queued, never delivered here; the poll goes on at once from the newest cursor taken
-    queueEvents($, run, got.events)
+    await queueEvents($, run, got.events)
     const last = got.events[got.events.length - 1]
     // the refresh is detached (DX-4586): the environment going away under it is not a failure
     if (last !== undefined) detach($, 'Plan refresh', refresh($, true))
@@ -1462,7 +1492,8 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
     // the run's first word comes before any await of its own: until then the band would still show the state the last run of this plan left
     await setRelay($, run, 'streaming', null)
     await pruneCursors($)
-    // DX-5398: on from the newest event still waiting in the outbox (a run replacing a stuck one), else from the stored cursor
+    await restoreOutbox($, run)
+    // DX-5398: on from the newest event still waiting in the outbox (a run replacing a stuck one, or a reloaded module), else from the stored cursor
     let cursor = pollCursor(outbox, run.planId, await loadCursor($, run.planId))
     let keyedBy = await $.session.id()
     // DX-4233: the loop ends with its run; what a late answer would say is gated in setRelay and handleAnswer
@@ -1569,6 +1600,7 @@ async function onSessionEnd($: any, e: any, next: any) {
     usageTicker = null
     stallTicker?.cancel()
     stallTicker = null
+    stallTickAt = null
     compactionTicker?.cancel()
     compactionTicker = null
     permissionTicker?.cancel()

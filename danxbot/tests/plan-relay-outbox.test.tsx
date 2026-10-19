@@ -5,14 +5,21 @@
 // (a call that never settles) is told to the person and the session and started again.
 import { describe, expect } from 'claude-code/testing'
 
-import { RELAY_STALL_CHECK_MS, RELAY_STALL_MS } from '../hooks/relay/config'
+import { BACKOFF_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS } from '../hooks/relay/config'
 import { stalledNotice } from '../hooks/relay/text'
-import { test, SURFACES, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
 
 const KEY = 'relayCursor:sess-own'
 const START = { turnId: 't1' } as any
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const STALLED = (t: string) => t.startsWith('Plan events stalled')
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
+const bandText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })
+const MCP_PLAN_CONNECT = 'mcp__plugin_danxbot_danx-dashboard__plan_connect'
+// what the plugin keeps in $.state for an event it took and has not delivered (the `relayOutbox` atom)
+const PENDING = { planId: 23, cursor: 'c1', text: 'digest', urgent: false }
+const pendingWrites = (d: any) => d.stateWrites.filter((w: any) => w.key === 'relayOutbox').map((w: any) => w.value)
 
 for (const surface of SURFACES) {
   describe(`the relay outbox on ${surface}`, () => {
@@ -124,6 +131,104 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c1', text: 'after the restart' })
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] after the restart'])
+    })
+
+    // The poll presents the newest TAKEN cursor, and the real server drops every record at or below the cursor a call presents (the kit's server does the
+    // same: `server.dropped`). So an event the session refused, waiting out the backoff, is held nowhere but by the plugin.
+    test('a refused event is kept in $.state while it waits, though the server dropped it at the next poll; it is delivered once, and the copy is cleared', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.rejectPrompts('the session is closing')
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      expect(d.relay.calls.map(c => c.cursor)).toEqual([null, 'c1'])
+      expect(d.relay.server.dropped).toBe(1)
+      expect(d.relay.server.buffer).toEqual([])
+      expect(pendingWrites(d).at(-1)).toEqual([PENDING])
+      d.relay.acceptPrompts()
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] digest'])
+      expect(pendingWrites(d).at(-1)).toEqual([])
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c1' })
+      await d.clock.advance(60_000)
+      expect(d.relay.delivered).toHaveLength(1)
+    })
+
+    // The kit has no second module instance. What it models of a reload: the hook module starts empty (a fresh test) and $.state holds what it held
+    // (`seedState`, the value asserted above), with a server that has dropped the events (its buffer is empty).
+    test('after a reload the events the previous module had taken and not delivered are delivered once, and the first poll goes on from the newest of them', async ($, on) => {
+      const d = dashboard(on)
+      d.seedState('relayOutbox', [PENDING, { ...PENDING, cursor: 'c2', text: 'second digest' }, { ...PENDING, planId: 99, cursor: 'x1', text: 'another plan' }])
+      await startSession($, d, surface)
+      await d.clock.settle()
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] digest', '[danxbot plan event] second digest'])
+      expect(d.relay.calls[0]?.cursor).toBe('c2')
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c2' })
+      expect(pendingWrites(d).at(-1)).toEqual([])
+      await d.clock.advance(60_000)
+      expect(d.relay.delivered).toHaveLength(2)
+    })
+
+    test('a stall restart keeps the events its own module still holds, and the atom still lists them', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      const prompts = d.relay.holdPrompts()
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      d.relay.server.script.push(() => new Promise(() => {}))
+      d.relay.push({ cursor: 'c2', text: 'second digest' })
+      await d.clock.settle()
+      await d.clock.advance(2 * RELAY_STALL_MS)
+      expect(pendingWrites(d).at(-1)).toEqual([PENDING, { ...PENDING, cursor: 'c2', text: 'second digest' }])
+      prompts.release()
+      await d.clock.settle()
+      expect(d.relay.delivered).toHaveLength(2)
+      expect(pendingWrites(d).at(-1)).toEqual([])
+    })
+
+    // The wall clock runs while the machine sleeps and no timer does: the first tick after a wake finds a wait that was started long ago and has not answered.
+    test('a machine that slept is not a stalled loop: the first tick after the wake is not judged', async ($, on) => {
+      const d = dashboard(on)
+      d.relay.server.holdMs = 5 * 60_000
+      await startSession($, d, surface)
+      await d.clock.advance(RELAY_STALL_CHECK_MS)
+      d.suspend(10 * 60_000)
+      await d.clock.advance(RELAY_STALL_CHECK_MS)
+      expect(d.toasts.filter(STALLED)).toEqual([])
+      expect(d.relay.told).toEqual([])
+      expect(d.relay.server.maxInFlight).toBe(1)
+    })
+
+    test('a loop that is stalled after a wake is still reported, counted from the wake', async ($, on) => {
+      const d = dashboard(on)
+      d.relay.server.script.push(() => new Promise(() => {}))
+      await startSession($, d, surface)
+      await d.clock.advance(RELAY_STALL_CHECK_MS)
+      d.suspend(10 * 60_000)
+      await d.clock.advance(RELAY_STALL_CHECK_MS)
+      expect(d.toasts.filter(STALLED)).toEqual([])
+      await d.clock.advance(RELAY_STALL_MS + 2 * RELAY_STALL_CHECK_MS)
+      expect(d.toasts.filter(STALLED)).toHaveLength(1)
+    })
+
+    test('a failing event that a move to another plan drops no longer holds the new plan on retrying', async ($, on) => {
+      const d = dashboard(on)
+      answerPlanConnect(on, d)
+      await startSession($, d, surface)
+      d.relay.rejectPrompts('the session is closing')
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await bandText(band)).toContain('relay retrying')
+      d.relay.acceptPrompts()
+      // the new plan's first wait fails, then answers an empty list: a poll that works says the relay is streaming again
+      d.relay.server.script.push(() => ({ deny: 'request timed out' }) as any, () => answer({ events: [] }))
+      await $.tool.call({ tool: MCP_PLAN_CONNECT, plan_id: 24 } as any)
+      await d.clock.settle()
+      await d.clock.advance(BACKOFF_MS[0] + 60_000)
+      expect(await bandText(band)).not.toContain('relay retrying')
+      expect(d.relay.delivered).toEqual([])
     })
 
     test('a loop that keeps making steps is never reported stalled, however long the session runs', async ($, on) => {
