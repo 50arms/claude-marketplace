@@ -23,7 +23,7 @@
       "type": "string",
       "title": "Dashboard URL",
       "description": "The danxbot dashboard this plugin's danx-dashboard MCP server talks to. Leave the default for the hosted dashboard; set it to run against another dashboard.",
-      "default": "https://danxbot.sageus.ai"
+      "default": "https://app.50arms.ai"
     }
   }
 }

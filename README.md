@@ -24,7 +24,7 @@ claude plugin install danxbot@50arms
 After installing:
 
 1. Restart Claude Code. The plugin's `danx-dashboard` server starts with the session; there is no `.mcp.json` to write.
-2. Claude Code asks for the **Dashboard URL**. Leave it at its default, `https://danxbot.sageus.ai`, unless you run your own dashboard. If you installed from a shell, it prints `1 userConfig option not yet set`: that is this option, and it works unset because the default applies. It is kept in your user settings and editable in `/config`.
+2. Claude Code asks for the **Dashboard URL**. Leave it at its default, `https://app.50arms.ai`, unless you run your own dashboard. If you installed from a shell, it prints `1 userConfig option not yet set`: that is this option, and it works unset because the default applies. It is kept in your user settings and editable in `/config`.
 3. Ask Claude to connect a plan (or call `plan_connect`). The first call opens a sign-in approval; approve it on the dashboard and the session is signed in.
 
 ## The dashboard MCP server
