@@ -1,6 +1,6 @@
 ---
 name: plan-workflow
-description: 'THE planning workflow when a human is in the loop beyond a quick cleanup: multi-step plan or build, a question that affects a plan, monitoring, resuming or handing off work, a pasted plan link. Load before connecting to, creating or writing a plan.'
+description: 'THE planning workflow when a human is in the loop beyond a quick cleanup: multi-step plan or build, a question that affects a plan, monitoring, resuming or handing off work, a pasted plan link. "Make a plan" means a 50 Arms plan, never a task list, plan mode or a question in chat. Load before connecting to, creating or writing a plan.'
 ---
 
 # Plan Workflow
