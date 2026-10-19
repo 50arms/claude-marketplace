@@ -11,6 +11,11 @@ const AGENT = { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'buil
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { prompt: 'go', turnId: 't1' } as any
 const COMPACT = { source: 'compact', cwd: '/work', session_id: 'sess-own', transcript_path: '/work/main.jsonl' }
+// the main agent's own compaction: its manual session.compact enters it, and the restart consumes the entry
+const restartMain = async ($: any) => {
+  await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+  await $.classic.SessionStart(COMPACT)
+}
 const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('Your conversation was just compacted'))
 
 describe('the resume procedure (pure)', () => {
@@ -40,7 +45,7 @@ for (const surface of SURFACES) {
 
     test('a compaction with no turn running starts exactly one turn with the briefing, and the next prompt and result carry no second briefing', async ($, on) => {
       const d = await started($, on)
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)
       const [prompt] = resumes(d)
@@ -57,9 +62,9 @@ for (const surface of SURFACES) {
 
     test('each compaction gets its own single prompt', async ($, on) => {
       const d = await started($, on)
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(2)
     })
@@ -67,7 +72,7 @@ for (const surface of SURFACES) {
     test('a compaction in the middle of a turn starts no prompt: the briefing waits for the next tool result, once', async ($, on) => {
       const d = await started($, on)
       await $.turn.start(START)
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(0)
       const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)
@@ -86,30 +91,15 @@ for (const surface of SURFACES) {
       await $.turn.complete({ ...TURN, agentId: 'a1', turnId: 'sub-1' })
       await $.turn.start({ ...START, agentId: 'a2', turnId: 'sub-2' })
       await $.turn.start({ ...START, agentId: 'a1', turnId: 'sub-3' })
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)
-    })
-
-    test('a turn that begins while the reads run owns the briefing: no prompt queues behind it, and the briefing waits for its next tool result', async ($, on) => {
-      const d = await started($, on)
-      d.world.contextDelayMs = 1_000
-      await $.classic.SessionStart(COMPACT)
-      await $.turn.start(START)
-      await d.clock.advance(5_000)
-      await d.clock.settle()
-      expect(resumes(d)).toHaveLength(0)
-      d.world.contextDelayMs = 0
-      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)
-      expect(told).toHaveLength(1)
-      expect(told[0]).toContain(RESUME_PROCEDURE)
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
     })
 
     test('a session with no connection record on disk gets no prompt and its start is not taken, even when the dashboard says it is on a plan', async ($, on) => {
       const d = await started($, on)
       d.world.localRecord = false
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
       expect(d.relay.submitted).toEqual([])
       // not taken: the next prompt still carries the start
@@ -119,7 +109,7 @@ for (const surface of SURFACES) {
     test('when the dashboard reads fail the prompt is the warning line plus the resume procedure', async ($, on) => {
       const d = await started($, on)
       d.world.plansStatus = 500
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)
       const [prompt] = resumes(d)
@@ -129,7 +119,7 @@ for (const surface of SURFACES) {
 
     test('a session that is not on a plan gets no resume prompt', async ($, on) => {
       const d = await started($, on, { connected: false })
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
       expect(d.relay.submitted).toEqual([])
     })
@@ -146,13 +136,49 @@ for (const surface of SURFACES) {
     test('a prompt the session does not take is a toast, and the briefing is still told once, on the next prompt', async ($, on) => {
       const d = await started($, on)
       d.relay.dropPrompts('busy')
-      await $.classic.SessionStart(COMPACT)
+      await restartMain($)
       await d.clock.settle()
       expect(d.toasts.some((t: string) => t.startsWith('The resume prompt was not taken by the session:'))).toBe(true)
       d.relay.acceptPrompts()
       const next = await $.prompt.submit({ text: 'next' })
       expect(next.context!.slice(1)[0]).toContain(RESUME_PROCEDURE)
       expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
+    })
+
+    test('a compact restart nobody noted (an unattributed sub-agent compaction, a host without session.compact) while idle starts no turn, and the briefing is still told once, passively', async ($, on) => {
+      const d = await started($, on)
+      await $.classic.SessionStart(COMPACT)
+      await d.clock.settle()
+      expect(d.relay.submitted).toEqual([])
+      const next = await $.prompt.submit({ text: 'next' })
+      expect(next.context!.slice(1)[0]).toContain(RESUME_PROCEDURE)
+      expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
+    })
+
+    test('a turn that begins while the reads run gets the built briefing as a note in that turn, with no prompt and no second briefing', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextDelayMs = 1_000
+      await restartMain($)
+      await $.turn.start(START)
+      await d.clock.advance(5_000)
+      await d.clock.settle()
+      expect(d.relay.submitted).toEqual([])
+      expect(d.relay.told.filter((t: string) => t.includes(RESUME_PROCEDURE))).toHaveLength(1)
+      d.world.contextDelayMs = 0
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+    })
+
+    test('a note the running turn refuses puts the start back for its next tool result', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextDelayMs = 1_000
+      d.relay.rejectAppends('closed')
+      await restartMain($)
+      await $.turn.start(START)
+      await d.clock.advance(5_000)
+      await d.clock.settle()
+      expect(d.relay.submitted).toEqual([])
+      d.world.contextDelayMs = 0
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]).toContain(RESUME_PROCEDURE)
     })
 
     test('a startup, resume or clear starts no prompt', async ($, on) => {

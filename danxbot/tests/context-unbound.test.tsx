@@ -86,7 +86,6 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await $.prompt.submit({ text: 'go' })
       // the engine compacts mid-turn (bound): SessionStart records it, no prompt is coming
-      await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
       expect(tool.context!.slice(1)).toEqual([TOLD('after_compaction')])
@@ -99,7 +98,6 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       on('classic.SessionStart', () => ({}) as any)
       await startSession($, d, surface)
-      await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const sub = await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)
       expect(sub.context).toHaveLength(1)
@@ -113,7 +111,6 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       on('classic.SessionStart', () => ({}) as any)
       await startSession($, d, surface)
-      await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       expect((await $.tool.call({ tool: 'Bash', command: 'rm' } as any)).context).toBeUndefined()
       answer = { result: {}, text: 'done' }
@@ -142,7 +139,6 @@ for (const surface of SURFACES) {
       expect(r.context).toHaveLength(2)
       expect(r.context[0]).toMatch(/\d\d:\d\d:\d\d/)
       expect(r.startLines![0]).toMatch(/^⚠ Could not load the "session_start" event text from the danxbot reminder registry \(.*disk gone.*\)/)
-      await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
       expect(tool.text).toBe('done')

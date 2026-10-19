@@ -1787,16 +1787,17 @@ function liveCompacting(cur: CompactingState, now: number): CompactingState {
 }
 
 // A `compact` restart. The main agent is briefed when it has an entry (consumed here), or when no agent has one (a compaction nobody noted, the unattributable kinds); a restart that only
-// sub-agents account for briefs nobody here: each of them is told on its own first tool result, whichever restart came first. Returns whether the main agent is briefed.
-async function restartBriefsMain($: any): Promise<boolean> {
+// sub-agents account for briefs nobody here: each of them is told on its own first tool result, whichever restart came first. `briefsMain` says whether the main agent is briefed;
+// `own` says the main agent's OWN entry was consumed (DX-5385): the only proof the main agent was compacted, since the fallback also fits an unattributed sub-agent compaction.
+async function restartBriefsMain($: any): Promise<{ briefsMain: boolean; own: boolean }> {
   const now = await $.clock.now()
-  let briefsMain = true
+  let result = { briefsMain: true, own: false }
   await update($, compacting, cur => {
     const live = liveCompacting(cur, now)
-    briefsMain = live.main !== null || Object.keys(live.agents).length === 0
+    result = { briefsMain: live.main !== null || Object.keys(live.agents).length === 0, own: live.main !== null }
     return { ...live, main: null }
   })
-  return briefsMain
+  return result
 }
 
 async function noteCompacting($: any, agentId: string | null): Promise<void> {
@@ -1860,18 +1861,21 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   // the ended session is consumed by this start only: a later clear that saw no end must not be asked about this one's
   const ended = await takeEndedSession($)
   // DX-5344: a restart only sub-agents account for is theirs to be briefed about; the main agent's pending start is for its own compaction (and every other start, and a restart nobody noted)
-  if (e.source === 'compact' && !(await restartBriefsMain($))) return below
+  const restart = e.source === 'compact' ? await restartBriefsMain($) : { briefsMain: true, own: false }
+  if (!restart.briefsMain) return below
   const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended }
   await update($, pendingStart, () => start)
-  // DX-5385: a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn
-  if (e.source === 'compact' && !(await read($, turn)).isRunning) detach($, 'Resume after compaction', resumeAfterCompaction($))
+  // DX-5385: a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
+  // the main agent's OWN compaction (`restart.own`). A restart with no entry at all (an unattributed sub-agent compaction, a host without session.compact) is briefed passively and starts no turn.
+  // The isRunning read is a deliberate fast path: a running turn carries the briefing on its next tool result, with no reads or take here.
+  if (restart.own && !(await read($, turn)).isRunning) detach($, 'Resume after compaction', resumeAfterCompaction($))
   return below
 }
 
 // DX-5385: the main agent's resume prompt, by the relay's one prompt path (submitEvent, DX-4721). Only a session on a plan gets one (its connection record is on disk, as
 // isPlanConnected says; any other session stays quiet, DX-3421). The pending start is TAKEN first, so the briefing it renders is in this prompt and the prompt's own
-// stamp hook finds none (told once). A turn that began while the reads ran is the person's: the start goes back for that turn's next tool result, as an unprompted
-// compaction's always did, and no prompt queues behind it. A prompt the session refuses puts it back the same way.
+// stamp hook finds none (told once). A turn that began while the reads ran is the person's: the built briefing goes into that running turn as a note (no prompt queues
+// behind it); a note the session refuses puts the start back for the next tool result. A prompt the session refuses puts it back the same way.
 async function resumeAfterCompaction($: any): Promise<void> {
   // checked before the start is taken: a session that is not on a plan leaves it for the prompt or tool result that tells it (or nothing)
   const pending = await read($, pendingStart)
@@ -1879,8 +1883,13 @@ async function resumeAfterCompaction($: any): Promise<void> {
   const start = await takePendingStart($)
   if (start === null) return
   const text = await renderStart($, start)
-  if (text === null || (await read($, turn)).isRunning) {
+  if (text === null) {
     await update($, pendingStart, cur => cur ?? start)
+    return
+  }
+  if ((await read($, turn)).isRunning) {
+    const refused = await appendNote($, relayLine(text))
+    if (refused !== null) await update($, pendingStart, cur => cur ?? start)
     return
   }
   // the procedure needs no dashboard read: a start whose reads failed (only a warning line) still tells the agent how to resume

@@ -1072,8 +1072,6 @@ export async function leaveSession($: any, d: Dashboard, surface: string) {
 // DX-4234: a session start reaches the model on the FIRST PROMPT's context, beside its time stamp (SessionStart is recorded only: the engine
 // has not bound the session then). `startLines` is what the start added: the prompt's context after the stamp, or undefined when it added nothing.
 export async function firstPrompt($: any, source: string, input: Record<string, unknown> = {}): Promise<{ startLines: string[] | undefined; context: string[] }> {
-  // DX-5385: a compaction that ends with no turn running starts one itself (compaction-resume.test.tsx); here the compaction happens inside a turn, which the first prompt follows
-  if (source === 'compact') await $.turn.start({ prompt: 'go', turnId: 't1' } as any)
   await $.classic.SessionStart({ source, cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl', ...input })
   const r = await $.prompt.submit({ text: 'hello' })
   const context: string[] = r.context ?? []
