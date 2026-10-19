@@ -70,7 +70,7 @@ for (const surface of SURFACES) {
       expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c5' })
     })
 
-    test("a run ended while it delivers (a move to another plan) does not overwrite the new run's cursor", async ($, on) => {
+    test("a run ended while its events are delivered (a move to another plan) does not overwrite the new run's cursor", async ($, on) => {
       const d = dashboard(on)
       answerPlanConnect(on, d)
       await startSession($, d, surface)
@@ -88,8 +88,9 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c9', text: 'delivered as the plan moves' }, { cursor: 'c10', text: 'next in the same batch' })
       await hasMoved
       await d.clock.settle()
-      // the old run stopped at the end of the move: the rest of its batch is not delivered by it, and the new plan starts clean
-      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] delivered as the plan moves'])
+      // DX-5398: both records of the batch were issued while the old run served the plan (the pump never waits for a delivery to finish), so both
+      // arrived; what the move decides is the cursor, and the new plan starts clean
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] next in the same batch', '[danxbot plan event] delivered as the plan moves'])
       expect(d.relay.calls.at(-1)).toMatchObject({ plan_id: 24, cursor: null })
       expect(d.stored.get(KEY)).toBeUndefined()
     })

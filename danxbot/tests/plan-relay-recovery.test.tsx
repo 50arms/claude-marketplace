@@ -22,13 +22,16 @@ for (const surface of SURFACES) {
   describe(`the relay recovers on ${surface}`, () => {
     test('T1: a session start that is not bound, bound a minute later and then idle: exactly one wait loop', async ($, on) => {
       const d = dashboard(on)
+      // DX-5398: waits time out as the server's do (a wait that never answered would be a stalled loop, which the stall watch restarts)
+      d.relay.server.holdMs = 'timeout_ms'
       d.unbind()
       await startSession($, d, surface)
       expect(d.relay.calls).toHaveLength(0)
       await d.clock.advance(60_000)
       d.bind()
       await d.clock.advance(TEN_MINUTES)
-      expect(d.relay.calls).toEqual([FIRST_WAIT])
+      expect(d.relay.server.maxInFlight).toBe(1)
+      expect(d.relay.calls.every(c => c.plan_id === 23 && c.cursor === null)).toBe(true)
       d.relay.push({ cursor: 'c1', text: 'one' })
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] one'])
@@ -46,12 +49,14 @@ for (const surface of SURFACES) {
 
     test("T3: the plugin's server down at session start and up a minute later, nobody asking: the relay starts", async ($, on) => {
       const d = dashboard(on, { mcp: 'down' })
+      d.relay.server.holdMs = 'timeout_ms'
       await startSession($, d, surface)
       await d.clock.advance(60_000)
       expect(d.relay.calls).toHaveLength(0)
       d.setMcp('up')
       await d.clock.advance(TEN_MINUTES)
-      expect(d.relay.calls).toEqual([FIRST_WAIT])
+      expect(d.relay.server.maxInFlight).toBe(1)
+      expect(d.relay.calls.every(c => c.plan_id === 23 && c.cursor === null)).toBe(true)
     })
 
     test('T4: a relay that runs through two minutes of unbound calls keeps delivering once bound', async ($, on) => {

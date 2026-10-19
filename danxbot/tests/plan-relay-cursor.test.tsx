@@ -30,7 +30,7 @@ for (const surface of SURFACES) {
       expect(d.relay.calls.at(-1)?.cursor).toBe('m.5')
     })
 
-    test('a failed delivery does not advance it: the record is asked for again and delivered once', async ($, on) => {
+    test('a failed delivery does not advance it: polling goes on, the record is issued again after the backoff and delivered once', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       d.relay.push({ cursor: 'c5', text: 'one' })
@@ -43,11 +43,11 @@ for (const surface of SURFACES) {
       await d.clock.advance(1_000)
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] one', '[danxbot plan event] two'])
       expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c6' })
-      // the asks after the failure carried the cursor before the undelivered record
-      expect(d.relay.calls.map(c => c.cursor)).toEqual([null, 'c5', 'c5', 'c6'])
+      // DX-5398: the poll never waits on a delivery, so it carried the record's own cursor at once and never asked for the record again
+      expect(d.relay.calls.map(c => c.cursor)).toEqual([null, 'c5', 'c6'])
     })
 
-    test('a failure in the middle of a batch: the first is delivered and stored, the next call carries it, the rest arrive once after', async ($, on) => {
+    test('a failure in the middle of a batch: the first is delivered and stored, the poll carries the newest, the rest arrive once after the backoff', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       let prompts = 0
@@ -59,9 +59,11 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] five'])
       expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c5' })
+      // DX-5398: the batch is queued whole and the poll goes on from its newest record
+      expect(d.relay.calls.at(-1)?.cursor).toBe('c7')
       d.relay.acceptPrompts()
-      await d.clock.advance(1_000)
-      expect(d.relay.calls.at(-2)?.cursor).toBe('c5')
+      await d.clock.advance(2_000)
+      expect(d.relay.calls.map(c => c.cursor)).toEqual([null, 'c7'])
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] five', '[danxbot plan event] six', '[danxbot plan event] seven'])
       expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c7' })
     })

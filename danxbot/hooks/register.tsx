@@ -1181,6 +1181,12 @@ async function relayFailed($: any, run: RelayRun, phase: 'retrying' | 'stopped',
   await tellModel($, line)
 }
 
+// An error nothing anticipated stopped the run (the loop's own, or the pump's cursor store): shown in the band and told once.
+async function haltRelay($: any, run: RelayRun, err: any): Promise<void> {
+  const detail = `the relay hit an error: ${errMessage(err)}`
+  await relayFailed($, run, 'stopped', RELAY_ERROR_FIX, stoppedLine(detail, RELAY_ERROR_FIX))
+}
+
 async function loadCursor($: any, planId: number | null): Promise<string | null> {
   return cursorFor(await $.store.get(cursorKey(await $.session.id())), planId)
 }
@@ -1327,6 +1333,13 @@ async function settleOutbox($: any): Promise<void> {
         live.told = null
         await setRelay($, live, 'streaming', null)
       }
+    }
+  } catch (err: any) {
+    // the cursor store failing is the loop's own kind of error (an unexpected one): the relay stops for the plan, never restarted behind the person's back
+    const run = relayRun
+    if (run !== null) {
+      await haltRelay($, run, err)
+      stopRelay()
     }
   } finally {
     outboxSettling = false
@@ -1480,8 +1493,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
     // An error nothing above anticipated halts the relay for this plan, shown in the band and told once, never restarted by a refresh
     // behind the person's back (an ended run says nothing: relayFailed's gate). When the environment itself is gone the writes below
     // reject, and settleDetached (the loop's caller) is what drops that one rejection.
-    const detail = `the relay hit an error: ${errMessage(err)}`
-    await relayFailed($, run, 'stopped', RELAY_ERROR_FIX, stoppedLine(detail, RELAY_ERROR_FIX))
+    await haltRelay($, run, err)
   } finally {
     if (relayRun === run) relayRun = null
   }

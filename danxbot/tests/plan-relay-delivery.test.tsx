@@ -1,7 +1,7 @@
 // DX-4233 / DX-4721: how a relayed event reaches the session. One decision (relay/delivery.ts), made on the server's `urgent` flag and one turn
 // fact (is a turn running now): a not-urgent event is ALWAYS a submitted prompt (it waits behind a running turn and wakes an idle session); an
 // urgent event is a note ($.session.append) in a running turn and a prompt when none runs. A refused note is a failed delivery (told once, the
-// cursor does not move, the next wait asks again), never a quiet prompt. DX-4793: the kit records each accepted note (d.relay.told). UNVERIFIED on
+// stored cursor does not move, the event is issued again after the backoff while polling goes on, DX-5398), never a quiet prompt. DX-4793: the kit records each accepted note (d.relay.told). UNVERIFIED on
 // Claude Code 2.1.293: that the live engine reads an accepted note with the next main-loop tool result; that is for a live session (the E2E items).
 import { describe, expect } from 'claude-code/testing'
 
@@ -95,7 +95,7 @@ for (const surface of SURFACES) {
       expect(d.stored.get('relayCursor:sess-own')?.cursor).toBe('c5')
     })
 
-    test('a refused note is a failed delivery: told once, the cursor does not move, the next wait asks again', async ($, on) => {
+    test('a refused note is a failed delivery: told once, the stored cursor does not move, and polling goes on', async ($, on) => {
       const d = dashboard(on)
       d.relay.rejectAppends('append refused')
       await startSession($, d, surface)
@@ -108,7 +108,8 @@ for (const surface of SURFACES) {
       expect(toasts[0]).toContain(`${NOTE_MARKER}${relayLine('events delayed: the session did not take the event: append refused')}`)
       expect(d.stored.get('relayCursor:sess-own')).toBeUndefined()
       await d.clock.advance(1_000)
-      expect(d.relay.calls.at(-1)?.cursor).toBeNull()
+      // DX-5398: the poll carries the refused record's cursor (it is queued for a retry, never asked for again)
+      expect(d.relay.calls.at(-1)?.cursor).toBe('c5')
       expect(d.relay.delivered).toEqual([])
     })
 

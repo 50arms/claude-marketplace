@@ -434,8 +434,20 @@ export function dashboard(
     // (a 30-minute cache, a sub-agent's life) does not also run a 20 s wait per step. A test of the wait itself sets how long it lasts
     // on the fake clock: the call's own `timeout_ms`, or this many ms.
     holdMs: undefined as number | 'timeout_ms' | undefined,
+    // DX-5398: waits in flight now and the most there ever were together (the relay holds exactly one wait loop)
+    inFlight: 0,
+    maxInFlight: 0,
   }
   async function planEventsWait(args: any) {
+    server.inFlight++
+    server.maxInFlight = Math.max(server.maxInFlight, server.inFlight)
+    try {
+      return await planEventsWaitOnce(args)
+    } finally {
+      server.inFlight--
+    }
+  }
+  async function planEventsWaitOnce(args: any) {
     server.calls.push(args)
     const scripted = server.script.shift()
     if (scripted) return scripted()
@@ -469,6 +481,9 @@ export function dashboard(
     submitRejects: undefined as string | undefined,
     duringPrompt: undefined as undefined | (() => Promise<void>),
     appendRejects: undefined as string | undefined,
+    // DX-5398: while set, a prompt submit settles only when this resolves (see relay.holdPrompts)
+    promptGate: undefined as undefined | Promise<void>,
+    promptsHeld: 0,
   }
   // DX-4793: the row a plugin appends is one user message of text blocks; a test sets appendRejects to make the engine refuse it
   on('session.append', (_$: any, e: any, next: any) => {
@@ -480,6 +495,17 @@ export function dashboard(
   on('turn.start', () => ({ turnId: 't1' }) as any)
   on('prompt.submit', async (_$: any, e: any) => {
     await deliveryFlags.duringPrompt?.()
+    // DX-5398: the engine (claude.exe 2.1.299) settles a plugin's `$.prompt.submit` only when the queued prompt ENTERS the session, which behind a
+    // running turn is when the turn ends. The prompt is then recorded as submitted at that moment, not at the call.
+    const gate = deliveryFlags.promptGate
+    if (gate !== undefined) {
+      deliveryFlags.promptsHeld++
+      try {
+        await gate
+      } finally {
+        deliveryFlags.promptsHeld--
+      }
+    }
     if (deliveryFlags.submitRejects !== undefined) throw new Error(deliveryFlags.submitRejects)
     if (deliveryFlags.submitDrops !== undefined) return { drop: deliveryFlags.submitDrops } as any
     submitted.push(e.text)
@@ -1010,6 +1036,19 @@ export function dashboard(
     // with this reason (the plugin shows its "Could not tell the model" toast)
     told,
     rejectAppends: (reason: string) => void (deliveryFlags.appendRejects = reason),
+    // DX-5398: every prompt submitted from now on is queued behind a running turn: its submit does not settle (and the prompt is not recorded in
+    // `submitted` or `delivered`) until `release()`, which is the turn ending. `held()` counts the submits still queued.
+    holdPrompts: () => {
+      let open!: () => void
+      deliveryFlags.promptGate = new Promise<void>(resolve => (open = resolve))
+      return {
+        release: () => {
+          deliveryFlags.promptGate = undefined
+          open()
+        },
+        held: () => deliveryFlags.promptsHeld,
+      }
+    },
     acceptPrompts: () => {
       deliveryFlags.submitDrops = undefined
       deliveryFlags.submitRejects = undefined
