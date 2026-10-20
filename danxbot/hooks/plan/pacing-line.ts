@@ -1,4 +1,3 @@
-import { BLOCKED_LINE } from './config'
 import { errText } from './load'
 import type { Api } from './load'
 
@@ -172,8 +171,8 @@ async function fetchPacing(env: PacingEnv, ms: number): Promise<void> {
       return
     }
     lastReadAt = at
-    // DX-4982: a call auto mode refused (or that never reached the server) says its cause and fix, never `answered 0`
-    if (!r.ok) return failRead(env, r.refusal !== undefined ? BLOCKED_LINE : r.status === 0 ? errText(r) : `the pacing line read answered ${r.status}`)
+    // DX-4982: a call auto mode refused (errText: the sentence and fix) or that never reached the server says why, never `answered 0`
+    if (!r.ok) return failRead(env, r.status === 0 ? errText(r) : `the pacing line read answered ${r.status}`)
     const parsed = parsePacing(r.body)
     if (parsed !== null && 'error' in parsed) return failRead(env, parsed.error)
     cache = { pacing: parsed, fetchedAt: at }

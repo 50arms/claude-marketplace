@@ -34,7 +34,7 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // the band says so and offers Sign in, never the server's agent-facing text.
 // `key-revoked` (DX-4418): a person revoked the session's key (`revokedBy`): the band says so and offers NO
 // Sign in, because a revoked agent must stop.
-// `blocked` (DX-4982): auto permission mode's classifier refused the plugin's own dashboard call: the band says so and name the
+// `blocked` (DX-4982): auto permission mode's classifier refused the plugin's own dashboard call: the band says so and names the
 // fix. `connected` is then the plan the model's own successful plan_connect named, when it did one; nothing else of the plan is known.
 // DX-4448: `prefixes` are the issue prefixes (`DX`, `SG`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
 // EVERY card on the connected plan, any status (GET /api/plans/:id/cards, unscoped by board, closed cards included). Empty when not connected.

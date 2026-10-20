@@ -298,8 +298,16 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($)).deny).toBeUndefined()
     const told = d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))
     expect(told).toHaveLength(1)
-    expect(told[0]).toContain(BLOCKED_LINE)
-    expect(told[0]).not.toContain('answered')
+    expect(told[0]).toBe(`Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): ${BLOCKED_LINE}`)
+  })
+
+  test('a read that never reached the server (status 0, no refusal) is told with its own reason, never `answered 0`', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
+    d.setMcp('flaky')
+    await d.clock.advance(PACING_EXPIRY_MS + 1)
+    expect((await spawn($)).deny).toBeUndefined()
+    const told = d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))
+    expect(told).toEqual(['Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): mcp: danxbot: $.mcp.call: request timed out after 60000ms'])
   })
 
   test('a failed read drops the verdict: the spawn is allowed, and the failure is told once however many spawns repeat it', async ($, on) => {

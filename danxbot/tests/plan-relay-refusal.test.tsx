@@ -6,6 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 import { toolName } from '../hooks/plan/config'
 import { ownServerCheck, raisedByPlugin } from '../hooks/relay/refusal'
 import { BACKOFF_MS } from '../hooks/relay/config'
+import { blockedOrigin } from '../hooks/plan/origin'
 import { test, CLASSIFIER_REFUSAL, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, linksOf, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } } as any
@@ -78,32 +79,49 @@ for (const surface of SURFACES) {
       return $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
     }
 
-    test("the model's own successful plan_connect names its plan in the band while the plugin's own reads are refused, and the footer says it", async ($, on) => {
+    // the default install: the engine passes the plugin's `dashboard_url` option (its default, the hosted dashboard) and nothing else is known
+    const OPTION = 'https://app.50arms.ai'
+    const planLink = async (band: any) => (await linksOf(band)).map(l => l.href).filter(h => h.includes('/plans/23'))
+
+    test("the model's own successful plan_connect names its plan in the band while the plugin's own reads are refused, on the plugin's dashboard_url option alone, and the footer says it", async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
-      d.setEnv('DANXBOT_PLUGIN_DASHBOARD_URL', DASHBOARD_URL)
       const band = await modelConnected($, on, d)
       const said = await text(band)
       expect(said).toContain('PLAN-23 · Plan twenty-three')
       expect(said).toContain(SAID)
       expect(said).not.toMatch(RAW)
       expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
-      // the link is built on the configured dashboard, never on a null origin
-      expect((await linksOf(band)).map(l => l.href)).toContain(`${DASHBOARD_URL}/plans/23`)
+      expect(await planLink(band)).toEqual([`${OPTION}/plans/23`])
       expect(d.toasts.join(' | ')).not.toMatch(RAW)
     })
 
-    test('with no dashboard origin known anywhere, the band names the plan but draws no link to it (never null/plans/23)', async ($, on) => {
+    test('DANXBOT_DASHBOARD_URL beats the dashboard_url option', async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
+      d.setEnv('DANXBOT_DASHBOARD_URL', DASHBOARD_URL)
       const band = await modelConnected($, on, d)
-      expect(await text(band)).toContain(SAID)
-      const hrefs = (await linksOf(band)).map(l => l.href)
-      expect(hrefs.filter(h => /null|undefined/.test(h))).toEqual([])
-      expect(hrefs.filter(h => h.includes('/plans/23'))).toEqual([])
+      expect(await planLink(band)).toEqual([`${DASHBOARD_URL}/plans/23`])
+    })
+
+    test('the origin a plan list last answered (kept in the store) beats both', async ($, on) => {
+      const d = dashboard(on, { mcp: 'refused' })
+      d.setEnv('DANXBOT_DASHBOARD_URL', DASHBOARD_URL)
+      d.stored.set('dashboardOrigin', 'https://stored.example')
+      const band = await modelConnected($, on, d)
+      expect(await text(band)).toContain('PLAN-23 · Plan twenty-three')
+      expect(await planLink(band)).toEqual(['https://stored.example/plans/23'])
+    })
+
+    test("a stale plan the model named in an earlier process is not named by a new session's blocked band", async ($, on) => {
+      const d = dashboard(on, { mcp: 'refused' })
+      d.seedState('modelPlan', { id: 99, name: 'Stale plan' })
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await text(band)).toContain('Danxbot: blocked by auto mode')
+      expect(await text(band)).not.toContain('Stale plan')
     })
 
     test("the model's own leave drops the plan it named: the blocked band names no plan afterwards", async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
-      d.setEnv('DANXBOT_PLUGIN_DASHBOARD_URL', DASHBOARD_URL)
       const band = await modelConnected($, on, d)
       expect(await text(band)).toContain('PLAN-23')
       await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any)
@@ -127,7 +145,6 @@ for (const surface of SURFACES) {
 
     test('a loaded view clears the plan the model named: a later block does not name it again', async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
-      d.setEnv('DANXBOT_PLUGIN_DASHBOARD_URL', DASHBOARD_URL)
       const band = await modelConnected($, on, d)
       expect(await text(band)).toContain('Plan twenty-three')
       d.setMcp('up')
@@ -145,7 +162,6 @@ for (const surface of SURFACES) {
 
     test('a /clear drops the plan the model named in the conversation it ended', async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
-      d.setEnv('DANXBOT_PLUGIN_DASHBOARD_URL', DASHBOARD_URL)
       on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
       const band = await modelConnected($, on, d)
       expect(await text(band)).toContain('Plan twenty-three')
@@ -171,6 +187,18 @@ for (const surface of SURFACES) {
     })
   })
 }
+
+describe('the origin a blocked band links to', () => {
+  test('a load or the view first, then DANXBOT_DASHBOARD_URL, then the dashboard_url option; none of them valid is no origin', () => {
+    const none = { loaded: null, view: null, env: undefined, option: undefined }
+    expect(blockedOrigin(none)).toBeNull()
+    expect(blockedOrigin({ ...none, option: 'not a url' })).toBeNull()
+    expect(blockedOrigin({ ...none, option: 'https://opt.example/ignored/path' })).toBe('https://opt.example')
+    expect(blockedOrigin({ ...none, option: 'https://opt.example', env: 'https://env.example' })).toBe('https://env.example')
+    expect(blockedOrigin({ ...none, option: 'https://opt.example', env: 'https://env.example', view: 'https://view.example' })).toBe('https://view.example')
+    expect(blockedOrigin({ loaded: 'https://loaded.example', view: 'https://view.example', env: 'https://env.example', option: 'https://opt.example' })).toBe('https://loaded.example')
+  })
+})
 
 describe('the plugin ships the permission its own calls need', () => {
   const own = toolName('plan_events_wait')

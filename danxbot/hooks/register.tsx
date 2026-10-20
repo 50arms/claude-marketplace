@@ -51,7 +51,8 @@ import {
   busyKey,
   SESSION_PLAN_PROBE,
 } from './plan/config'
-import { errText, loadPlan, readOrigin } from './plan/load'
+import { errText, loadPlan } from './plan/load'
+import { blockedOrigin } from './plan/origin'
 import type { Api } from './plan/load'
 import { connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
@@ -272,7 +273,7 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   // DX-4982: the plan the model's own plan_connect named stands in for what the refused reads could not say
   const named = loaded.phase === 'blocked' ? await read($, modelPlan) : null
   // a link is never built on a null origin: the stored or read one, else the configured dashboard (the MCP launcher's own two variables); with none, the plan is not named
-  const origin = named === null ? null : (loaded.dashboardUrl ?? (await read($, view)).dashboardUrl ?? readOrigin((await $.env.get('DANXBOT_DASHBOARD_URL')) || (await $.env.get('DANXBOT_PLUGIN_DASHBOARD_URL'))))
+  const origin = named === null ? null : blockedOrigin({ loaded: loaded.dashboardUrl, view: (await read($, view)).dashboardUrl, env: await $.env.get('DANXBOT_DASHBOARD_URL'), option: dashboardOption })
   // a loaded view knows the plan itself: what the model named is stale from here
   if (loaded.phase === 'ready') await update($, modelPlan, () => null)
   await update($, view, cur => {
@@ -2851,7 +2852,11 @@ async function compactionBriefing($: any): Promise<string> {
   return briefingText({ plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, cards, agents, git })
 }
 
-export const register: Register = on => {
+// DX-4982: the plugin's `dashboard_url` option, as the engine passed it to register (the last resort of blockedOrigin)
+let dashboardOption: unknown = undefined
+
+export const register: Register = (on, options) => {
+  dashboardOption = (options as { dashboard_url?: unknown } | undefined)?.dashboard_url
   on('session.start', onSessionStart)
   on('session.attach', onSessionAttach)
   on('session.end', onSessionEnd)

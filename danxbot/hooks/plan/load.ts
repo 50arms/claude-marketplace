@@ -24,6 +24,8 @@ export function failureReason(r: Api): string {
 export function errText(r: Api): string {
   if (isOversize(r)) return failureReason(r)
   const b = r.body ?? {}
+  // DX-4982: a refusal's body is already the person's sentence: no `mcp:` prefix before it
+  if (r.refusal !== undefined && typeof b.error === 'string') return b.error
   return `${r.status || 'mcp'}: ${b.message ?? b.error ?? JSON.stringify(b).slice(0, ERROR_BODY_MAX)}`
 }
 
