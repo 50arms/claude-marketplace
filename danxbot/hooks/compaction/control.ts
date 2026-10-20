@@ -275,6 +275,10 @@ export const sizeOfUsage = (usage: { input_tokens: number; cache_read_input_toke
 
 // DX-5222: how many sub-agents' last responses the plugin keeps (the oldest goes first)
 export const AGENT_SIZES_KEEP = 256
+// DX-5562: how many distinct sub-agent faults the told-once memory holds; the oldest is forgotten past it
+export const AGENT_FAULT_TOLD_KEEP = 256
+// DX-5562: the told-once memory keeps this many characters of a fault, since the text can embed an id of any length
+export const AGENT_FAULT_KEY_MAX = 200
 
 export const AGENT_HELD_REASON = '[50 ARMS] automatic compaction is held: this sub-agent compacts when it says ready'
 

@@ -7,7 +7,7 @@ import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
-import { AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
@@ -1831,12 +1831,15 @@ async function sessionPlan($: any): Promise<SessionPlan> {
   return typeof planId === 'number' ? { kind: 'connected', planId } : { kind: 'failed', reason: 'bad_response: GET /api/plans answered a session with no plan_id' }
 }
 
+// DX-5562: guards a session id used as a file name (the connection record's path), not a sub-agent id
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
+
 // Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the danx-dashboard MCP server writes
 // at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, session-connection.ts `sessionConnectionPath`; only its existence is
 // read). It decides who a dashboard fault speaks to (DX-3421): a connected session gets one warning line, any other stays silent.
 async function isPlanConnected($: any, id: string): Promise<boolean> {
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-  if (typeof home !== 'string' || home === '' || !/^[A-Za-z0-9_-]+$/.test(id)) return false
+  if (typeof home !== 'string' || home === '' || !SESSION_ID_PATTERN.test(id)) return false
   return $.fs.exists(`${home}/.config/danxbot/plan-sessions/${id}.json`)
 }
 
@@ -2458,7 +2461,17 @@ let engineVersionTold = false
 // next response of each agent fills it), and an agent whose size is unknown is refused and told, never guessed (agentVerdict).
 const agentSizes = new Map<string, AgentSize>()
 // DX-5222: the sub-agent refusals already told to the person (`agent id: reason`), each once
+// DX-5562: bounded like agentSizes: past AGENT_FAULT_TOLD_KEEP distinct faults the oldest is forgotten, so a long-lived process holds no more than that
 const agentFaultTold = new Set<string>()
+// true the first time `fault` is seen (the caller then tells the person), false after
+function firstTimeAgentFault(fault: string): boolean {
+  // DX-5562: the fault text can embed an id of any length, so the remembered key is cut to a fixed size
+  const memory = fault.slice(0, AGENT_FAULT_KEY_MAX)
+  if (agentFaultTold.has(memory)) return false
+  agentFaultTold.add(memory)
+  if (agentFaultTold.size > AGENT_FAULT_TOLD_KEEP) agentFaultTold.delete(agentFaultTold.values().next().value as string)
+  return true
+}
 // the git read of the resume briefing is a local status: it needs no longer than this
 const GIT_STATUS_TIMEOUT_MS = 5000
 // how often an idle session looks for an agent's ready in the local control file (a file read, no network)
@@ -2480,14 +2493,17 @@ async function contextReading($: any): Promise<{ tokens: number | null; window: 
 }
 
 // The store keeps the spent-release records (DX-4993) and the delivered-request records (DX-5222) of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
-async function pruneSessionRecords($: any, prefix: string, atField: 'at' | 'sentAt'): Promise<void> {
+// DX-5562: it answers the keys it deleted, so a caller that keeps a claim beside a record can drop the claim with it.
+async function pruneSessionRecords($: any, prefix: string, atField: 'at' | 'sentAt'): Promise<string[]> {
   const entries: { key: string; at: number }[] = []
   for (const key of await $.store.keys()) {
     if (!key.startsWith(prefix)) continue
     const rec: any = await $.store.get(key)
     entries.push({ key, at: typeof rec?.[atField] === 'number' ? rec[atField] : 0 })
   }
-  for (const key of staleSessionKeys(entries, prefix)) await $.store.delete(key)
+  const stale = staleSessionKeys(entries, prefix)
+  for (const key of stale) await $.store.delete(key)
+  return stale
 }
 async function pruneUsedReleases($: any): Promise<void> {
   await pruneSessionRecords($, USED_RELEASE_PREFIX, 'at')
@@ -2676,14 +2692,22 @@ async function onPreCompact($: any, e: any, next: any) {
 
 // Every model request of a sub-agent notes its context: `turn.step` (streaming) hands back the response with the usage the API reported and the model that answered. Only a
 // sub-agent's request reaches this hook: the registration matches an `agentId`, and that matcher is the one place that keeps the main loop out (its size is `$.session.usage()`).
-// The bookkeeping is plain arithmetic over a typed usage and a Map; the one thing that can throw is `subagentKey` on an id Claude Code never produces (DX-5328), which fails loud on purpose. It returns nothing, which the typed contract of a streaming hook defines as "its last next(e)'s result
+// The bookkeeping is plain arithmetic over a typed usage and a Map; the one thing that can throw is `subagentKey` on an id Claude Code never produces (DX-5328), which is caught, told once and ends the note without failing the request (DX-5562). It returns nothing, which the typed contract of a streaming hook defines as "its last next(e)'s result
 // stands": the response the model gave passes on untouched (compaction-agents.test.tsx asserts the result a caller reads).
 async function* noteAgentStep($: any, e: any, next: any): any {
   const response = yield* next(e)
   const size = response?.usage === null || response?.usage === undefined ? null : sizeOfUsage(response.usage)
   if (size !== null) {
     // DX-5328: sizes are kept under the canonical key the verdict and the handshake's `agents` map use; the event carries Claude Code's bare id
-    const key = subagentKey(e.agentId)
+    // DX-5562: this is an observer on a model request, so an id of the wrong form is told once and leaves the request alone (the agent then has no known size, which agentVerdict refuses and tells)
+    let key: string
+    try {
+      key = subagentKey(e.agentId)
+    } catch (err: any) {
+      const told = `Compaction could not note the context of sub-agent ${JSON.stringify(e.agentId)}: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
+      if (firstTimeAgentFault(told)) $.ui.toast(told)
+      return
+    }
     agentSizes.delete(key)
     agentSizes.set(key, size)
     if (agentSizes.size > AGENT_SIZES_KEEP) agentSizes.delete(agentSizes.keys().next().value as string)
@@ -2744,10 +2768,7 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
       await pruneUsedReleases($)
       $.ui.toast(`Compacting sub-agent ${agentId} now: it said it is ready.`)
     } else if (v.pass && v.why === 'valve' && spends) $.ui.toast(`Compacting sub-agent ${agentId} now: its context reached the size where holding it would end its work.`)
-    else if (!v.pass && v.told && !agentFaultTold.has(`${agentId}: ${v.reason}`)) {
-      agentFaultTold.add(`${agentId}: ${v.reason}`)
-      $.ui.toast(v.reason)
-    }
+    else if (!v.pass && v.told && firstTimeAgentFault(`${agentId}: ${v.reason}`)) $.ui.toast(v.reason)
     return v
   } catch (err: any) {
     const told = `Compaction gate could not decide for sub-agent ${agentId}, so Claude Code's own automatic compaction applies: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
@@ -2775,10 +2796,7 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
       running.add(subagentKey(a.id))
     } catch (err: any) {
       const told = `Compaction request delivery skips sub-agent ${JSON.stringify(a.id)}: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
-      if (!agentFaultTold.has(told)) {
-        agentFaultTold.add(told)
-        $.ui.toast(told)
-      }
+      if (firstTimeAgentFault(told)) $.ui.toast(told)
     }
   }
   let recorded = false
@@ -2799,16 +2817,17 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
       // the claim goes back, so the next sync sends it again
       await update($, claimedAsks, cur => Object.fromEntries(Object.entries(cur).filter(([k, at]) => !(k === key && at === ask.at))))
       const told = `Compaction request for sub-agent ${id} was not delivered: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
-      if (!agentFaultTold.has(told)) {
-        agentFaultTold.add(told)
-        $.ui.toast(told)
-      }
+      if (firstTimeAgentFault(told)) $.ui.toast(told)
       continue
     }
     await $.store.set(key, { at: ask.at, sentAt: await $.clock.now() })
     recorded = true
   }
-  if (recorded) await pruneSessionRecords($, ASK_SENT_PREFIX, 'sentAt')
+  if (recorded) {
+    // DX-5562: a claim lives as long as its delivered-request record (the claimedAsks keys are the record keys)
+    const pruned = new Set(await pruneSessionRecords($, ASK_SENT_PREFIX, 'sentAt'))
+    if (pruned.size > 0) await update($, claimedAsks, cur => Object.fromEntries(Object.entries(cur).filter(([k]) => !pruned.has(k))))
+  }
 }
 
 // The briefing's sources, each read on its own: one that cannot be read says so in the briefing and does not take the others with it.

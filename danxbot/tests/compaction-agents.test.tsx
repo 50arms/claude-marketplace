@@ -3,7 +3,7 @@
 // delivers each sub-agent's request, and the sub-agents' early-proposal percent is armed after `leftoverArmingCleared`. The main agent's own gate is compaction-control.test.tsx.
 import { describe, expect } from 'claude-code/testing'
 
-import { AGENT_HELD_REASON, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, USED_RELEASE_KEEP, agentVerdict, armedPercentOf, askSentKey, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import { AGENT_FAULT_TOLD_KEEP, AGENT_HELD_REASON, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, USED_RELEASE_KEEP, agentVerdict, armedPercentOf, askSentKey, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
 import type { AgentControl, AgentGateInput, ControlFile, GateControl, LineValves } from '../hooks/compaction/control'
 import { CLOCK_START, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -232,6 +232,19 @@ for (const surface of SURFACES) {
       }
     }
     const running = (d: any, ...ids: string[]) => void (d.world.agents = ids.map(id => ({ id, type: 'danxbot:worker-sonnet-high', description: `agent ${id}`, status: 'running' })))
+
+    // DX-5562: `noteAgentStep` is an observer on every sub-agent model request; an id Claude Code never produces must not fail the request
+    describe('noting a sub-agent request', () => {
+      test('an id of the wrong form does not fail the request: the response stands and the id is told once', async ($, on) => {
+        const k = await started($, on)
+        const usage = AGENT_TURN_USAGE(700_000)
+        for (const id of ['agent-bad', 'agent-bad']) {
+          const response = await k.request(id, usage)
+          expect(response).toMatchObject({ stopReason: 'end_turn' })
+        }
+        expect(k.d.toasts.filter(t => t.startsWith('Compaction could not note the context of sub-agent "agent-bad"'))).toHaveLength(1)
+      })
+    })
 
     describe('the gate on session.compact', () => {
       test('the main agent keeps its own verdict: held under its valve, through at it; the proposal never reaches core while held', async ($, on) => {
@@ -614,6 +627,39 @@ for (const surface of SURFACES) {
         expect(kept).toContain(askSentKey(OWN_SESSION.session_id, 'agent-a1'))
         expect(kept).not.toContain(`${ASK_SENT_PREFIX}old-0:a1`)
         expect(k.d.stored.has('relayCursor:not-ours')).toBe(true)
+      })
+
+      // DX-5562: the claim of a delivered request lives exactly as long as its delivered-request record; an unpruned claim would be one more key per sub-agent for the life of the process
+      test("a pruned session's delivered-request record takes its claim with it, and the newest sessions' claims stay", async ($, on) => {
+        const k = await started($, on, { stateSteps: true })
+        running(k.d, 'a1')
+        const oldKey = (i: number) => `${ASK_SENT_PREFIX}old-${i}:agent-a1`
+        for (let i = 0; i < USED_RELEASE_KEEP + 5; i++) k.d.stored.set(oldKey(i), { at: 'x', sentAt: 100 + i })
+        k.d.seedState('claimedAsks', Object.fromEntries(Array.from({ length: USED_RELEASE_KEEP + 5 }, (_, i) => [oldKey(i), 'x'])))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
+        await $.turn.start(START)
+        const claims = k.d.stateWrites.filter(w => w.key === 'claimedAsks').at(-1)!.value as Record<string, string>
+        expect(Object.keys(claims)).toHaveLength(USED_RELEASE_KEEP)
+        expect(claims[askSentKey(OWN_SESSION.session_id, 'agent-a1')]).toBe(ASK.at)
+        expect(claims[oldKey(0)]).toBeUndefined()
+        expect(claims[oldKey(USED_RELEASE_KEEP + 4)]).toBe('x')
+      })
+
+      // DX-5562: the told-once memory is bounded; past AGENT_FAULT_TOLD_KEEP distinct faults the oldest is forgotten (and would be told again)
+      test('the told-once memory of sub-agent faults is bounded: the oldest fault, forgotten, is told again', async ($, on) => {
+        const k = await started($, on)
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
+        const toldOf = (id: string) => k.d.toasts.filter(t => t.startsWith(`Compaction request delivery skips sub-agent ${JSON.stringify(id)}`)).length
+        running(k.d, 'agent-bad-0')
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        await $.turn.start(START)
+        expect(toldOf('agent-bad-0')).toBe(1)
+        running(k.d, ...Array.from({ length: AGENT_FAULT_TOLD_KEEP }, (_, i) => `agent-bad-${i + 1}`))
+        await $.turn.complete(TURN)
+        running(k.d, 'agent-bad-0')
+        await $.turn.start(START)
+        expect(toldOf('agent-bad-0')).toBe(2)
       })
 
       test('a session with no handshake, or an unreadable file, sends nothing', async ($, on) => {

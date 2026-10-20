@@ -12,5 +12,4 @@ describe('sub-agent key conversion (pure)', () => {
     expect(() => bareSubagentId('abc')).toThrow('agent-<id>')
     expect(() => bareSubagentId('agent-')).toThrow('agent-<id>')
   })
-
 })
