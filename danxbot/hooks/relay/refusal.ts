@@ -33,11 +33,14 @@ export function classifierRefusal(message: string): Refusal | null {
   return CLASSIFIER_MARK.test(message) ? { detail: message, fix: CLASSIFIER_FIX } : null
 }
 
-// DX-5066: what a danxbot MCP older than 0.1.300 answers to the `background` key of a danxbot_api call (its strict schema: MCP error -32602,
-// `unrecognized_keys`, `keys: ["background"]`), as the engine words it in the rejection.
+// DX-5062: a danxbot MCP from before the DX-5033 release refuses the `background` key the hooks send with each danxbot_api call (a strict schema:
+// MCP error -32602, `unrecognized_keys`, `keys: ["background"]`). The call is not retried without the key (one path); the failure is STALE_MCP_LINE,
+// short enough to stay whole in every toast this failure reaches. Both marks are needed: an unrecognized key that is not `background`, or a `background` that
+// is not an unrecognized key, is some other failure.
 const UNRECOGNIZED_KEYS = /unrecognized[_ ]keys?/i
+export const STALE_MCP_LINE = `Danxbot's MCP is older than the plugin: restart this session to update it.`
 
-export function isBackgroundRefusal(message: string): boolean {
+export function isStaleMcpRefusal(message: string): boolean {
   return UNRECOGNIZED_KEYS.test(message) && /\bbackground\b/.test(message)
 }
 

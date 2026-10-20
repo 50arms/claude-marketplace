@@ -67,7 +67,7 @@ import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
-import { classifierRefusal, isBackgroundRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
+import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
@@ -208,23 +208,6 @@ let permissionTicker: { cancel: () => void } | null = null
 // module variable: a reload starts with no claim of its own in flight.
 let permissionTickBusy = false
 
-// DX-5066: a session that started on a danxbot MCP older than 0.1.300 keeps that server through a plugin update, and its strict schema refuses the
-// `background` key ("unrecognized_keys"). The first such refusal is retried at once without the key, and the session sends no more of it, so no
-// report is dropped; a current server never refuses, and every call keeps `background: true`. Reset at session start (a new process starts true).
-let backgroundRefused = false
-
-async function callDashboard($: any, args: { method: string; path: string; query?: object; body?: object; board?: string }): Promise<any> {
-  if (!backgroundRefused) {
-    try {
-      return await $.mcp.call(SERVER, 'danxbot_api', { ...args, background: true })
-    } catch (err: any) {
-      if (!isBackgroundRefusal(String(err?.message ?? err))) throw err
-      backgroundRefused = true
-    }
-  }
-  return $.mcp.call(SERVER, 'danxbot_api', args)
-}
-
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. DX-4997 / DX-5033: EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
@@ -232,7 +215,7 @@ async function callDashboard($: any, args: { method: string; path: string; query
 async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}): Promise<Api> {
   let res
   try {
-    res = await callDashboard($, { method, path, ...extra })
+    res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra, background: true })
   } catch (err: any) {
     const message = String(err?.message ?? err)
     // DX-4578: `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
@@ -241,8 +224,11 @@ async function api($: any, method: string, path: string, extra: { query?: object
     const notConnected = isServerNotConnected(message)
     // DX-4805 / DX-4982: a classifier refusal shows the person's sentence and fix wherever the error is shown (toasts, lines), never the engine's raw words; those are kept whole on `refusal` for the relay's start and the load's blocked view
     const refusal = classifierRefusal(message)
-    const shown = message.slice(0, CALL_ERROR_MAX)
-    const failed: Api = refusal === null ? { ok: false, status: 0, body: { error: shown } } : { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal }
+    // DX-5062: a danxbot MCP older than the plugin refuses a key the hooks send; its failure is one whole sentence naming the fix (`sentence`, so errText adds no prefix)
+    const failed: Api =
+      refusal !== null ? { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal, sentence: true }
+      : isStaleMcpRefusal(message) ? { ok: false, status: 0, body: { error: STALE_MCP_LINE }, sentence: true }
+      : { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
     if (!notConnected) return failed
     failed.unreachable = true
     return failed
@@ -1574,7 +1560,6 @@ async function onSessionAttach($: any, e: any, next: any) {
 }
 
 async function onSessionStart($: any, e: any, next: any) {
-  backgroundRefused = false
   // DX-3900 / DX-4806: only ever raised here, never cleared. A reload of this module (the app's reload_plugins, paced to when the session is hidden) fires
   // session.start with the desktop detached (surfaces() is []); a flag set from that would forget the desktop hosts the session. `desktopHosted` is
   // $.state, which a reload keeps and a new process starts without.
