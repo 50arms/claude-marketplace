@@ -131,6 +131,13 @@ test("step 5 reuses a board the repo already has, else creates one with {repo, n
   assert.match(s, /two to four capital letters/i);
 });
 
+// PLAN-50 X01 (DX-5515): the board is named by its numeric id, never a `<repo>:<slug>` text.
+test("step 5 says the board's id is a bare number and that every call naming the board takes it", () => {
+  const s = step(5);
+  assert.match(s, /The answer's `id` is the board's numeric id, a bare number such as `12`/);
+  assert.match(s, /every call that names the board takes that number/);
+});
+
 test("a refusal naming boards.view or boards.manage goes through ONE request_permission naming both keys", () => {
   const section = flat(body.slice(body.indexOf("## When a call is refused"), body.indexOf("## Steps")));
   assert.match(section, /`403` naming `boards\.view` or `boards\.manage`/);

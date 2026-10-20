@@ -79,9 +79,10 @@ export function isReadyCard(card: CardRow): boolean {
 
 export type Read<T> = { ok: true; value: T } | { ok: false; reason: string }
 
-// `GET /api/plans/mine`'s body: the plan id and the numeric ids of the boards its cards live on.
+// A board id is a positive integer: the dashboard names every board by its numeric id.
 const isBoardId = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x) && x > 0
 
+// `GET /api/plans/mine`'s body: the plan id and the numeric ids of the boards its cards live on.
 export function planOf(body: unknown): Read<{ planId: number; boards: number[] }> {
   const b = body as { id?: unknown; boards?: unknown } | null
   if (b === null || typeof b !== 'object' || typeof b.id !== 'number' || !Array.isArray(b.boards) || !b.boards.every(isBoardId)) {
