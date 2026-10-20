@@ -60,6 +60,11 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.sequence.slice(1, 3)).toEqual([CLOSE, 'tool plan_connect'])
       expect(finishes(d).map(r => r.activityId)).toEqual(['agent-a1', 'b1'])
+      // DX-4982: the move happened (the answer's session is on plan 24): no "did not happen" toast, and nothing owed again
+      expect(d.toasts.filter(t => /did not happen/.test(t))).toEqual([])
+      await $.turn.complete({ ...TURN, agentId: 'a1' })
+      await d.clock.settle()
+      expect(finishes(d)).toHaveLength(2)
     })
 
     test("the model's plan_connect disconnect posts the closes before the call", async ($, on) => {

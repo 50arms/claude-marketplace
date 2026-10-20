@@ -297,6 +297,15 @@ describe('the cadence is danxbot\'s', () => {
 })
 
 describe('a report that fails', () => {
+  test("a call auto mode refused is toasted as the person's sentence (api() reports it as the error), never the engine's words", async ($, on) => {
+    const d = await measuredSession($, on)
+    d.setMcp('refused')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(usageToasts(d)).toHaveLength(1)
+    expect(usageToasts(d)[0]).toContain("Auto mode is blocking Danxbot's calls")
+    expect(usageToasts(d)[0]).not.toMatch(/\$\.mcp\.call|refused:|gave no verdict/)
+  })
+
   test('is toasted once, however many ticks repeat it', async ($, on) => {
     const d = await measuredSession($, on, { usageReply: 'boom' })
     await d.clock.advance(USAGE_TICK_MS * 3)

@@ -176,7 +176,7 @@ function readLinks(boards: Api, read: AllCards, planCardCount: unknown): CardLin
 }
 
 // The origin of an http(s) URL string, or null: a trailing slash or path is dropped, a non-URL is refused.
-function readOrigin(raw: unknown): string | null {
+export function readOrigin(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   try {
     const url = new URL(raw)

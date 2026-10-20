@@ -17,11 +17,7 @@ export function mcpText(r: any): string {
 
 // DX-4233: the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {planId}}}` envelope (the tool's session is danxbot's PlanSession, camelCase: issues/db/plan-sessions.ts PlanSession; GET /api/plans's own `session` is snake_case and is read in load.ts). Null for anything
 // else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
-export function connectedPlanId(text: unknown): number | null {
-  return connectedPlanOf(text)?.id ?? null
-}
-
-// DX-4982: the same answer's plan with its name (`session.planName`, '' when the answer has none): what the band names while the plugin's own
+// DX-4982: the plan with its name (`session.planName`, '' when the answer has none): what the band names while the plugin's own
 // reads are refused by auto mode's classifier and the model's own successful plan_connect is all that is known of the plan.
 export function connectedPlanOf(text: unknown): { id: number; name: string } | null {
   if (typeof text !== 'string') return null
@@ -42,7 +38,7 @@ export function toolOutcome(r: any): ToolOutcome {
   return textOutcome(mcpText(r), r.isError === true)
 }
 
-// THE one parser of that envelope, from a result's text (`isError`: the call threw): toolOutcome, connectedPlanId, and the model's own
+// THE one parser of that envelope, from a result's text (`isError`: the call threw): toolOutcome, connectedPlanOf, and the model's own
 // plan_connect result as its tool.call hook sees it (DX-4235: whether its leave or move happened) all read it here.
 export function textOutcome(text: string, isError: boolean): ToolOutcome {
   if (isError) return { ok: false, status: 0, body: { error: text } }

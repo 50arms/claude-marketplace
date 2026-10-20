@@ -51,9 +51,9 @@ import {
   busyKey,
   SESSION_PLAN_PROBE,
 } from './plan/config'
-import { errText, loadPlan } from './plan/load'
+import { errText, loadPlan, readOrigin } from './plan/load'
 import type { Api } from './plan/load'
-import { connectedPlanId, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
+import { connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
 import type { ToolOutcome } from './plan/mcp'
 import { disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { signInStep } from './plan/sign-in'
@@ -91,12 +91,12 @@ const gate = atom({ plugin: 'danxbot', key: 'gate' } as const, { inFlight: false
 const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string | null)
+// DX-4982: the plan the model's own successful plan_connect named, kept for the `blocked` view (the plugin's own reads are refused by auto mode's
+// classifier, so nothing else names the plan); null after any leave, a /clear or a resume, a session start, and every loaded view.
+const modelPlan = atom({ plugin: 'danxbot', key: 'modelPlan' } as const, null as { id: number; name: string } | null)
 // DX-4630: the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
 // ends (approved, denied, expired and renewed, or the conversation ended). The band draws it as a Markdown link and the
 // code the moment it exists. Also what tells a watch is running.
-// DX-4982: the plan the model's own successful plan_connect named, kept for the `blocked` view (the plugin's own reads are refused by auto mode's
-// classifier, so nothing else names the plan); null after a leave.
-const modelPlan = atom({ plugin: 'danxbot', key: 'modelPlan' } as const, null as { id: number; name: string } | null)
 const signInRequest = atom({ plugin: 'danxbot', key: 'signInRequest' } as const, null as ApprovalRequest | null)
 // DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
@@ -271,6 +271,10 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   let told: string[] = []
   // DX-4982: the plan the model's own plan_connect named stands in for what the refused reads could not say
   const named = loaded.phase === 'blocked' ? await read($, modelPlan) : null
+  // a link is never built on a null origin: the stored or read one, else the configured dashboard (the MCP launcher's own two variables); with none, the plan is not named
+  const origin = named === null ? null : (loaded.dashboardUrl ?? (await read($, view)).dashboardUrl ?? readOrigin((await $.env.get('DANXBOT_DASHBOARD_URL')) || (await $.env.get('DANXBOT_PLUGIN_DASHBOARD_URL'))))
+  // a loaded view knows the plan itself: what the model named is stale from here
+  if (loaded.phase === 'ready') await update($, modelPlan, () => null)
   await update($, view, cur => {
     told = []
     if (loaded.phase === 'error' && cur.phase !== 'error' && !loaded.serverNotConnected) told.push(`Plan load failed: ${loaded.error}`)
@@ -280,7 +284,7 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
     if (loaded.links?.state === 'error' && cur.links?.state !== 'error' && !loaded.openProblemsError) told.push(`Card links unavailable: ${loaded.links.message}`)
     if (loaded.phase === 'ready') return loaded
     const base = { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }
-    return named === null ? base : { ...base, connected: { id: named.id, ref: `PLAN-${named.id}`, name: named.name, dashboardUrl: loaded.dashboardUrl ?? cur.dashboardUrl } }
+    return named === null || origin === null ? base : { ...base, dashboardUrl: origin, connected: { id: named.id, ref: `PLAN-${named.id}`, name: named.name, dashboardUrl: origin } }
   })
   for (const t of told) $.ui.toast(t.slice(0, TOAST_ERROR_MAX))
   // DX-5232: a write path, never the draw: the events warning's reason is told on the change into it
@@ -497,7 +501,7 @@ function detach($: any, what: string, task: Promise<unknown>): void {
 
 // DX-4982: a call the plugin raised itself failed: a classifier refusal is told in the person's words (cause and fix) and the view reloads to
 // show the same state; any other failure keeps its own words.
-function toastCallFailed($: any, what: string, err: any): void {
+function toastCallFailedAndReload($: any, what: string, err: any): void {
   const message = String(err?.message ?? err)
   if (classifierRefusal(message) === null) {
     $.ui.toast(`${what}: ${message.slice(0, FAILURE_TOAST_MAX)}`)
@@ -530,7 +534,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
       r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
     } catch (err: any) {
       await settleLeave($, closes, false, why)
-      toastCallFailed($, 'Disconnect failed', err)
+      toastCallFailedAndReload($, 'Disconnect failed', err)
       return
     }
     const outcome = toolOutcome(r)
@@ -597,7 +601,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         try {
           r = await $.mcp.call(SERVER, 'plan_connect', watch.args)
         } catch (err: any) {
-          if (!ended()) toastCallFailed($, 'Sign in failed', err)
+          if (!ended()) toastCallFailedAndReload($, 'Sign in failed', err)
           return
         }
         if (ended()) return
@@ -658,7 +662,7 @@ async function startSignIn($: any): Promise<void> {
     return
   }
   const args = await signInArgs($)
-  void watchSignIn($, { args, byPress: true }).catch(err => toastCallFailed($, 'Sign in failed', err))
+  void watchSignIn($, { args, byPress: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
 }
 
 // The sign-in's own `plan_connect` arguments: the session's title, and the plan it was on.
@@ -1115,6 +1119,8 @@ async function browserCall($: any, tool: BrowserTool, args: Record<string, unkno
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (/no connected MCP tool/.test(message)) return null
+    // DX-4982: auto mode refusing the pane's tool is told in a sentence, not the engine's raw text
+    if (classifierRefusal(message) !== null) throw new Error(`${tool}: auto mode refused the call to the Browser pane; allow its tools in /permissions`)
     throw new Error(`${tool}: ${message}`)
   }
 }
@@ -1580,6 +1586,7 @@ async function onSessionStart($: any, e: any, next: any) {
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan band (connection + open problems)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
+  await update($, modelPlan, () => null)
   // DX-4630: nor a sign-in request: its watch died with the old process
   await update($, signInRequest, () => null)
   // DX-4233: no plan polling timer (the relay's events, the turns and the sub-agents refresh the view). DX-4339: the pacing has no
@@ -1638,6 +1645,8 @@ async function onSessionEnd($: any, e: any, next: any) {
   } else if (e.reason === 'clear' || e.reason === 'resume') {
     // DX-4508: another conversation: its sub-agents and transcript are not this one's
     await update($, liveAgents, () => [])
+    // DX-4982: nor is the plan its model named
+    await update($, modelPlan, () => null)
     await update($, transcript, () => null)
     // a fresh conversation (or another session taking this one's place) in the same process: what
     // the dashboard shows may have moved while they were in the old one
@@ -1675,10 +1684,9 @@ async function onPlanConnect($: any, e: any, next: any) {
   // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
   relayHalted = null
-  const connectedTo = connectedPlanId(ran.text)
-  if (connectedTo !== null) startRelay($, connectedTo)
-  // DX-4982: what the blocked view names when the plugin's own reads are refused
+  // DX-4982: parsed once; what the blocked view names when the plugin's own reads are refused
   const modelConnected = connectedPlanOf(ran.text)
+  if (modelConnected !== null) startRelay($, modelConnected.id)
   if (modelConnected !== null) await update($, modelPlan, () => modelConnected)
   else if (leaving && answer.ok) await update($, modelPlan, () => null)
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)))
@@ -1697,7 +1705,7 @@ async function onPlanConnect($: any, e: any, next: any) {
   // the model started this sign-in, so the plugin waits on it and tells the model how it ended
   if (waiting === null) {
     const args = { ...(typeof e.plan_id === 'number' ? { plan_id: e.plan_id } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
-    void watchSignIn($, { args, byPress: false, known: approval }).catch(err => toastCallFailed($, 'Sign in failed', err))
+    void watchSignIn($, { args, byPress: false, known: approval }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
   }
   return withSignInNote(ran, approval)
 }
