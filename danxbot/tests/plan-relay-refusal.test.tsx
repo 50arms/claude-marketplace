@@ -28,7 +28,11 @@ for (const surface of SURFACES) {
       d.relay.server.script.push(() => ({ deny: ENGINE_WORDS }) as any)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain(SAID)
+      // DX-5232: the band says the relay is retrying; the reason (the sentence and fix) is toasted on the change into that state
+      expect(await text(band)).toContain('relay retrying')
+      // the toast is cut at TOAST_ERROR_MAX, so the cause and the fix (the sentence's start) are what it carries
+      expect(d.toasts.join(' | ')).toContain(SAID.slice(0, 100))
+      expect(d.toasts.join(' | ')).not.toMatch(RAW)
       expect(d.relay.told).toHaveLength(1)
       expect(d.relay.told[0]).toMatch(LOUD)
       expect(d.relay.told[0]).not.toMatch(NOT_THE_FIX)
