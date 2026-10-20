@@ -41,7 +41,7 @@ const UNRECOGNIZED_KEYS = /unrecognized[_ ]keys?/i
 export const STALE_MCP_LINE = `Danxbot's MCP is older than the plugin: restart this session to update it.`
 
 export function isStaleMcpRefusal(message: string): boolean {
-  return UNRECOGNIZED_KEYS.test(message) && /background/.test(message)
+  return UNRECOGNIZED_KEYS.test(message) && /\bbackground\b/.test(message)
 }
 
 // DX-4805: the plugin ships the permission its own hooks need. Auto permission mode puts a hook-initiated `$.mcp.call` to its classifier like any
