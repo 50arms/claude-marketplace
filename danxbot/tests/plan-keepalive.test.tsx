@@ -8,7 +8,7 @@ import { describe, expect } from 'claude-code/testing'
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from '../hooks/relay/keepalive'
 import { createdTab, failureOf, holdsPlanTab, isBrowserKeepaliveTool, paneState } from '../hooks/relay/browser'
 import { PAUSE_PATH } from '../hooks/reports/pause'
-import { test, CLOCK_START, DASHBOARD_URL, answerPlanConnect, dashboard, forceRefresh, leaveSession, startSession, viewSession } from './plan-kit'
+import { test, CLASSIFIER_REFUSAL, CLOCK_START, DASHBOARD_URL, answerPlanConnect, dashboard, forceRefresh, leaveSession, startSession, viewSession } from './plan-kit'
 
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { turnId: 't1' } as any
@@ -319,6 +319,16 @@ describe('a failed attempt on the desktop', () => {
     await d.clock.advance(KEEPALIVE_RETRY_MS)
     expect(looks(d)).toBe(2)
     expect(failures(d)).toHaveLength(1)
+  })
+
+  test("a pane call auto mode's classifier refuses is toasted as a plain sentence, not the engine's words", async ($, on) => {
+    const d = dashboard(on)
+    d.world.browser.rejects = CLASSIFIER_REFUSAL
+    await startSession($, d, 'desktop')
+    await d.clock.advance(KEEPALIVE_IDLE_MS)
+    expect(failures(d)).toHaveLength(1)
+    expect(failures(d)[0]).toContain('auto mode refused the call to the Browser pane')
+    expect(failures(d)[0]).not.toContain('gave no verdict')
   })
 
   test('a plan page that cannot be opened is the same, and says why', async ($, on) => {

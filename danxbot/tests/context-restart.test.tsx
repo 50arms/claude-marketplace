@@ -4,7 +4,8 @@
 import { describe, expect } from 'claude-code/testing'
 
 import { CONTEXT_DEADLINE_MS, restartFailureLine } from '../hooks/context/events'
-import { test, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { BLOCKED_LINE } from '../hooks/plan/config'
+import { test, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call plan_connect' } })
@@ -104,6 +105,16 @@ for (const surface of SURFACES) {
       const r = await firstPrompt($, 'startup')
       expect(r.startLines![0]).toContain('Could not load the restart notice (error: ')
       expect(r.startLines![0]).toContain('boom')
+    })
+
+    test("a call auto mode's classifier refuses is the warning line with the person's sentence and the fix, never the engine's raw words", async ($, on) => {
+      const d = await started($, on)
+      d.world.restart.deny = CLASSIFIER_REFUSAL
+      const line = (await firstPrompt($, 'startup')).startLines![0]!
+      expect(line).toContain(BLOCKED_LINE)
+      expect(line).toContain('mcp__plugin_danxbot_danx-dashboard__*')
+      expect(line).not.toContain('error: ')
+      expect(line).not.toContain('gave no verdict')
     })
 
     test('an error result is the warning line with its text', async ($, on) => {

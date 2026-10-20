@@ -163,11 +163,11 @@ From the plugin's relay (delivery itself):
 - `events stopped:` → events are NOT reaching this session: do the fix it names (usually
   `plan_connect` again; for a server too old to mark events urgent, restart the session). Read
   the card by hand until it is done.
-- `events stopped:` naming the auto mode classifier → in auto permission mode the engine refused the
+- `events delayed:` naming the auto mode classifier → in auto permission mode the engine refused the
   plugin's own call; updating the plugin does not help. Run `/danxbot:start`: with the person's OK it adds
   the allow rule `mcp__plugin_danxbot_danx-dashboard__*` in one step. Or add that rule to `permissions.allow` in
-  `~/.claude/settings.json` yourself (or allow it in `/permissions`). Either way restart the session, and read the
-  card by hand until then.
+  `~/.claude/settings.json` yourself (or allow it in `/permissions`). Either way the relay resumes on its own within a few
+  minutes (restart the session only if it does not), and read the card by hand until then.
 - `events delayed:` → the relay is retrying on its own; act only if it never clears.
 
 ## Records

@@ -4,7 +4,7 @@
 // failure is toasted once per distinct text; the cadence is danxbot's.
 import { describe, expect } from 'claude-code/testing'
 
-import { USAGE_PATH, USAGE_TICK_MS } from '../hooks/plan/config'
+import { BLOCKED_LINE, USAGE_PATH, USAGE_TICK_MS } from '../hooks/plan/config'
 import { SUBAGENT_LIVE_MAX_MS, liveAgentsAt, usageBody } from '../hooks/plan/usage'
 import { test, CLOCK_START, dashboard, startSession } from './plan-kit'
 
@@ -297,6 +297,14 @@ describe('the cadence is danxbot\'s', () => {
 })
 
 describe('a report that fails', () => {
+  test("a call auto mode refused is toasted as the person's sentence (api() reports it as the error), never the engine's words", async ($, on) => {
+    const d = await measuredSession($, on)
+    d.setMcp('refused')
+    await d.clock.advance(USAGE_TICK_MS)
+    expect(usageToasts(d)).toHaveLength(1)
+    expect(usageToasts(d)[0]).toBe(`Usage not reported to danxbot: ${BLOCKED_LINE}`)
+  })
+
   test('is toasted once, however many ticks repeat it', async ($, on) => {
     const d = await measuredSession($, on, { usageReply: 'boom' })
     await d.clock.advance(USAGE_TICK_MS * 3)

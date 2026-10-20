@@ -205,10 +205,10 @@ test("step 2 adds only that one entry on a clear yes, keeps every other setting,
   assert.match(s, /on a no or no reply, change nothing and give the manual instruction/);
 });
 
-test("step 2 is safe to re-run and says a session restart applies the rule", () => {
+test("step 2 is safe to re-run and says the plugin picks the rule up on its own", () => {
   const s = step(2);
   assert.match(s, /already allowed and change nothing/);
-  assert.match(s, /a session restart applies it/);
+  assert.match(s, /picks the rule up on its own within a few minutes/);
 });
 
 test("plan-workflow's Live events bullet names /danxbot:start as the one-step way to add the rule", () => {
