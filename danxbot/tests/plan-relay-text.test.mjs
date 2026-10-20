@@ -41,8 +41,9 @@ test("Live events names what the relay says when it cannot deliver", () => {
 
 test("the relay's lines are the ones the skill names", () => {
   const text = read("../hooks/relay/text.ts");
-  assert.match(text, /events stopped: /);
-  assert.match(text, /events delayed: /);
+  assert.match(text, /events \$\{state\}: events are NOT reaching this session/);
+  assert.match(text, /eventsLine\('stopped', /);
+  assert.match(text, /eventsLine\('delayed', /);
 });
 
 test("CLAUDE.md and hooks.json name no bridge or watchdog", () => {

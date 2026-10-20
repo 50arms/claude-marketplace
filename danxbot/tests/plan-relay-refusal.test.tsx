@@ -6,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 import { toolName } from '../hooks/plan/config'
 import { ownServerCheck, raisedByPlugin } from '../hooks/relay/refusal'
 import { BACKOFF_MS } from '../hooks/relay/config'
-import { blockedOrigin } from '../hooks/plan/origin'
+import { blockedOrigin, optionDashboardUrl } from '../hooks/plan/origin'
 import { test, CLASSIFIER_REFUSAL, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, linksOf, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } } as any
@@ -190,13 +190,15 @@ for (const surface of SURFACES) {
 
 describe('the origin a blocked band links to', () => {
   test('a load or the view first, then DANXBOT_DASHBOARD_URL, then the dashboard_url option; none of them valid is no origin', () => {
-    const none = { loaded: null, view: null, env: undefined, option: undefined }
+    const none = { loaded: null, env: undefined, option: undefined }
     expect(blockedOrigin(none)).toBeNull()
     expect(blockedOrigin({ ...none, option: 'not a url' })).toBeNull()
     expect(blockedOrigin({ ...none, option: 'https://opt.example/ignored/path' })).toBe('https://opt.example')
+    expect(optionDashboardUrl({ dashboard_url: 'https://opt.example' })).toBe('https://opt.example')
+    expect(optionDashboardUrl({ dashboard_url: 3 })).toBeUndefined()
+    expect(optionDashboardUrl(undefined)).toBeUndefined()
     expect(blockedOrigin({ ...none, option: 'https://opt.example', env: 'https://env.example' })).toBe('https://env.example')
-    expect(blockedOrigin({ ...none, option: 'https://opt.example', env: 'https://env.example', view: 'https://view.example' })).toBe('https://view.example')
-    expect(blockedOrigin({ loaded: 'https://loaded.example', view: 'https://view.example', env: 'https://env.example', option: 'https://opt.example' })).toBe('https://loaded.example')
+    expect(blockedOrigin({ loaded: 'https://loaded.example', env: 'https://env.example', option: 'https://opt.example' })).toBe('https://loaded.example')
   })
 })
 
