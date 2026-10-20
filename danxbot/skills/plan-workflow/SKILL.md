@@ -197,8 +197,13 @@ card held in Review for a "go" (a point still open is a problem on that card).
 
 ## Closing a plan
 
-Every plan card Done or Cancelled → verify each goal, rule and caveat end to end against the
-running system and the shipped code (the mantra's evidence rule):
+A person's sign-off is the final one. The plan is complete once the person has signed off and
+every plan card is Done or Cancelled. Your record verifications and your own sign-off are advice
+to the person: the app warns them and asks them to confirm when they were not done.
+
+Before the person signs off (the `plan_connect` briefing has no `signOffs.human`), every plan card
+Done or Cancelled → verify each goal, rule and caveat end to end against the running system and
+the shipped code (the mantra's evidence rule), so the person gets that advice before they sign:
 
 - Holds → `PUT /api/plans/mine/records/:recordId/agent-verification` `{verdict, note,
   content_hash}`: `implemented` (as designed) or `accepted` (a deviation we live with), the
@@ -209,7 +214,13 @@ running system and the shipped code (the mantra's evidence rule):
 - Then tell the user in ONE chat line that the plan is ready for their sign-off (its page
   shows it pending). No card, no problem. Never tick or clear their sign-off: the server
   refuses it.
-- A plan is done only with both sign-offs; never report it done on card count alone.
+
+When the person has already signed off (the `plan_connect` briefing shows `signOffs.human`), the
+plan is complete: skip the record verifications and your own sign-off, say so in one line, and
+never start them after the fact.
+
+Never report a plan done on card count alone: it is complete only once the person has signed off
+and every card is Done or Cancelled.
 
 ## Pausing
 
