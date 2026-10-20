@@ -156,7 +156,7 @@ test("step 6 asks what to build first, creates the plan, and hands over to plan-
 
 test("the session names its board on every card call and relearns it from its plan after a restart", () => {
   const s = step(6);
-  assert.match(s, /every call that works on a card or a plan's cards names the board, the\s+`board` argument of `danxbot_api` set to the board id from step 5 \(`<repo>:<slug>`\)/);
+  assert.match(s, /every call that works on a card or a plan's cards names the board, the\s+`board` argument of `danxbot_api` set to the board id from step 5 \(the bare number\)/);
   assert.match(s, /`POST \/api\/issues` carries it as `board` in its body/);
   assert.match(s, /After a restart or a compaction the session relearns its board from the plan it reconnects to: `GET \/api\/plans\/mine` answers the plan's `boards`, which come from the plan's cards, so that list is empty until the plan has a card\. Until then, running `\/danxbot:start` again finds the board \(step 5\)\./);
 });

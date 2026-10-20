@@ -113,8 +113,9 @@ None: `POST /api/boards` with `{repo, name, issue_prefix}`.
   give one: use the owner's first letters, and when that gives fewer than two, ask the
   person for a prefix. Tell the person the prefix and change it if they prefer another.
 
-The answer's `id` is the board id, `<repo>:<slug>`. Tell the person the repo, the board id
-and the prefix, flagging each that was already there.
+The answer's `id` is the board's numeric id, a bare number such as `12`; every call that names
+the board takes that number. Tell the person the repo, the board id and the prefix, flagging
+each that was already there.
 
 ### 6. Start the first plan
 
@@ -128,7 +129,7 @@ work one.
 Then load `danxbot:plan-workflow` and follow its Start steps with that plan: name the
 session, connect with `plan_connect`, and orient from the briefing. This session has no
 default board: every call that works on a card or a plan's cards names the board, the
-`board` argument of `danxbot_api` set to the board id from step 5 (`<repo>:<slug>`), and
+`board` argument of `danxbot_api` set to the board id from step 5 (the bare number), and
 `POST /api/issues` carries it as `board` in its body. After a restart or a compaction
 the session relearns its board from the plan it reconnects to: `GET /api/plans/mine`
 answers the plan's `boards`, which come from the plan's cards, so that list is empty until

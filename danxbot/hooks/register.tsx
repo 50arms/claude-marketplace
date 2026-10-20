@@ -212,7 +212,7 @@ let permissionTickBusy = false
 // x-danx-session-id header. DX-4997 / DX-5033: EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
 // the agent acting, which would end the agent's pause. The agent's own danxbot_api calls never pass through here. Any rejection (including the engine's "no such server") is an error shown as one.
-async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}): Promise<Api> {
+async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: number } = {}): Promise<Api> {
   let res
   try {
     res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra, background: true })

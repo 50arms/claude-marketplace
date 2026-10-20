@@ -63,7 +63,7 @@ for an architecture gate, `danxbot:worker-sonnet-high` for the rest), relays the
 and says when to land. Whoever runs a gate:
 
 1. Fetch the board's gate text through `danxbot_api`:
-   `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
+   `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, by its numeric id>`.
 2. Do what that text says for the card, including any card writes it asks for (checklists,
    dependency edges), and nothing else.
 3. Record the verdict through `danxbot_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`

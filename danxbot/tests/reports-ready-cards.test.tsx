@@ -49,9 +49,9 @@ describe('ready (pure)', () => {
     expect(readyCardsOf({ issues: [card(), noDispatch], total: 2 })).toEqual({ ok: false, reason: 'bad_response: a card row lacks a field the check judges' })
   })
 
-  test("the plan read needs a numeric id and a list of board ids", () => {
-    expect(planOf({ id: 23, boards: ['danxbot:danxbot-main'] })).toEqual({ ok: true, value: { planId: 23, boards: ['danxbot:danxbot-main'] } })
-    expect(planOf({ id: 23, boards: [7] }).ok).toBe(false)
+  test("the plan read needs a numeric id and a list of numeric board ids", () => {
+    expect(planOf({ id: 23, boards: [7, 9] })).toEqual({ ok: true, value: { planId: 23, boards: [7, 9] } })
+    expect(planOf({ id: 23, boards: ['danxbot:danxbot-main'] }).ok).toBe(false)
     expect(planOf({ id: '23', boards: [] }).ok).toBe(false)
     expect(planOf({ id: 23 }).ok).toBe(false)
   })
