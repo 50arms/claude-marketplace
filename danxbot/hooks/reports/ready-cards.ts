@@ -80,9 +80,11 @@ export function isReadyCard(card: CardRow): boolean {
 export type Read<T> = { ok: true; value: T } | { ok: false; reason: string }
 
 // `GET /api/plans/mine`'s body: the plan id and the numeric ids of the boards its cards live on.
+const isBoardId = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x) && x > 0
+
 export function planOf(body: unknown): Read<{ planId: number; boards: number[] }> {
   const b = body as { id?: unknown; boards?: unknown } | null
-  if (b === null || typeof b !== 'object' || typeof b.id !== 'number' || !Array.isArray(b.boards) || !b.boards.every(x => typeof x === 'number' && Number.isInteger(x) && x > 0)) {
+  if (b === null || typeof b !== 'object' || typeof b.id !== 'number' || !Array.isArray(b.boards) || !b.boards.every(isBoardId)) {
     return { ok: false, reason: 'bad_response: GET /api/plans/mine answered no plan id and boards' }
   }
   return { ok: true, value: { planId: b.id, boards: b.boards as number[] } }

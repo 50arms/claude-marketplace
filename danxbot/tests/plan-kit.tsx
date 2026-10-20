@@ -277,7 +277,7 @@ export function dashboard(
     // DX-4235: the boards GET /api/plans/mine names for the session's plan, each board's ToDo card rows as GET /api/issues answers them
     // (the ready-cards check), and a per-route override of a report or ready-cards answer (`<METHOD> <path>`): an error status (with
     // its body), the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock
-    planBoards: ['danxbot:danxbot-main'] as string[],
+    planBoards: [7] as number[],
     readyRows: {} as Record<string, unknown[]>,
     // DX-4997: what GET /api/plan-sessions/me/pause answers as `pause` (null, an agent pause, a usage pause)
     pause: null as unknown,
@@ -356,8 +356,8 @@ export function dashboard(
       if (options.boardsShape === 'badPrefix') return reply({ boards: [{ id: 'x', issue_prefix: 'dx-1' }] })
       return reply({
         boards: [
-          { id: 'danxbot:danxbot-main', issue_prefix: 'DX' },
-          { id: 'gpt-manager:gpt-manager-main', issue_prefix: 'SG' },
+          { id: 7, issue_prefix: 'DX' },
+          { id: 9, issue_prefix: 'SG' },
         ],
       })
     }
@@ -389,7 +389,7 @@ export function dashboard(
       if (options.planCardsShape === 'noList') return reply({ total: 0 })
       const rows = planCardIds.map(id => {
         const openProblemCount = world.cards.find(c => c.id === id)?.problems.filter(p => p.open).length ?? 0
-        return options.planCardsShape === 'noId' ? { title: id, openProblemCount } : { id, openProblemCount, boardId: id.startsWith('SG') ? 'gpt-manager:gpt-manager-main' : 'danxbot:danxbot-main' }
+        return options.planCardsShape === 'noId' ? { title: id, openProblemCount } : { id, openProblemCount, boardId: id.startsWith('SG') ? 9 : 7 }
       })
       return reply({ cards: rows, ...(options.planCardsShape === 'noTotal' ? {} : { total: options.planCardsTotal ?? rows.length }) })
     }

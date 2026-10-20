@@ -9,8 +9,8 @@ import { READY_CARDS_DEADLINE_MS, blockReason, isReadyCard, parseCardRow, planOf
 import type { CardRow } from '../hooks/reports/ready-cards'
 import { test, CLOCK_START, SURFACES, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
 
-const BOARD = 'danxbot:danxbot-main'
-const GPT_BOARD = 'gpt-manager:gpt-manager-main'
+const BOARD = 7
+const GPT_BOARD = 9
 const INSTRUCTION = 'Dispatch each now, or record on the card why it cannot run (dependency, problem, block).'
 
 function card(over: Partial<CardRow> = {}): CardRow {
@@ -51,8 +51,9 @@ describe('ready (pure)', () => {
 
   test("the plan read needs a numeric id and a list of numeric board ids", () => {
     expect(planOf({ id: 23, boards: [7, 9] })).toEqual({ ok: true, value: { planId: 23, boards: [7, 9] } })
-    expect(planOf({ id: 23, boards: ['danxbot:danxbot-main'] }).ok).toBe(false)
+    expect(planOf({ id: 23, boards: ['7'] }).ok).toBe(false)
     expect(planOf({ id: '23', boards: [] }).ok).toBe(false)
+    for (const bad of [0, -1, 1.5, '7', null, NaN]) expect(planOf({ id: 23, boards: [7, bad] }).ok).toBe(false)
     expect(planOf({ id: 23 }).ok).toBe(false)
   })
 
