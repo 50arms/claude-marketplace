@@ -46,7 +46,10 @@ They read cards, not chat. A chat reply is at most 3 lines, no headings, tables,
 fences: an answer to their question, a one-line start of a deploy, dispatch or publish, a
 real failure or correction, card ids, or a 50 Arms feedback offer or its `FB-` ref (see
 "Feedback to 50 Arms"). Findings, options and status go on the card;
-already there → give the id. Every card id in chat is a markdown link to that card
+already there → give the id. A decision a card's open problem holds is never asked again in
+chat or in the app's end-of-turn next-step or question box: the turn's wrap-up only names the
+card id, and the problem itself stands alone, with plain background and a concrete example a
+newcomer to the subject can follow. Every card id in chat is a markdown link to that card
 (`[<card id>](<dashboard>/plans/<plan id>/cards/<card id>)`), never a plan or board page.
 
 A question is not a stop or a command. "Why X?" gets an answer: running work keeps running
