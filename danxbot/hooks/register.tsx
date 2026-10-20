@@ -67,7 +67,7 @@ import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
-import { classifierRefusal, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
+import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
@@ -224,8 +224,11 @@ async function api($: any, method: string, path: string, extra: { query?: object
     const notConnected = isServerNotConnected(message)
     // DX-4805 / DX-4982: a classifier refusal shows the person's sentence and fix wherever the error is shown (toasts, lines), never the engine's raw words; those are kept whole on `refusal` for the relay's start and the load's blocked view
     const refusal = classifierRefusal(message)
-    const shown = message.slice(0, CALL_ERROR_MAX)
-    const failed: Api = refusal === null ? { ok: false, status: 0, body: { error: shown } } : { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal }
+    // DX-5062: a danxbot MCP older than the plugin refuses a key the hooks send; its failure is one whole sentence naming the fix (`sentence`, so errText adds no prefix)
+    const failed: Api =
+      refusal !== null ? { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal, sentence: true }
+      : isStaleMcpRefusal(message) ? { ok: false, status: 0, body: { error: STALE_MCP_LINE }, sentence: true }
+      : { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
     if (!notConnected) return failed
     failed.unreachable = true
     return failed

@@ -33,6 +33,17 @@ export function classifierRefusal(message: string): Refusal | null {
   return CLASSIFIER_MARK.test(message) ? { detail: message, fix: CLASSIFIER_FIX } : null
 }
 
+// DX-5062: a danxbot MCP from before the DX-5033 release refuses the `background` key the hooks send with each danxbot_api call (a strict schema:
+// MCP error -32602, `unrecognized_keys`, `keys: ["background"]`). The call is not retried without the key (one path); the failure is STALE_MCP_LINE,
+// short enough to stay whole behind any toast's prefix. Both marks are needed: an unrecognized key that is not `background`, or a `background` that
+// is not an unrecognized key, is some other failure.
+const UNRECOGNIZED_KEYS = /unrecognized[_ ]keys?/i
+export const STALE_MCP_LINE = `Danxbot's MCP is older than the plugin: restart this session to update it.`
+
+export function isStaleMcpRefusal(message: string): boolean {
+  return UNRECOGNIZED_KEYS.test(message) && /background/.test(message)
+}
+
 // DX-4805: the plugin ships the permission its own hooks need. Auto permission mode puts a hook-initiated `$.mcp.call` to its classifier like any
 // tool call, and a call the classifier gave no verdict on is refused, which left the relay dead. `tool.check` is the engine's permission decision,
 // asked before the mode's decider (the classifier) and last-word-wins, so an `allow` here settles a call THIS plugin raised on its OWN server's

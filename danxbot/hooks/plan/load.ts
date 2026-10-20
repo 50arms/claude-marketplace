@@ -6,7 +6,8 @@ import type { Refusal } from '../relay/refusal'
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
 // DX-4805: `refusal`: the call was refused by auto mode's classifier (its words and the fix); `body.error` carries both.
-export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean; refusal?: Refusal }
+// `sentence`: `body.error` is already one whole sentence for a person (a classifier refusal, DX-4982; an MCP older than the plugin, DX-5062)
+export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean; refusal?: Refusal; sentence?: true }
 export type Call = (method: string, path: string, extra?: { query?: object; body?: object }) => Promise<Api>
 
 // DX-4458: the host's notice for a result over its size limit (written for the model, never shown to a person).
@@ -24,8 +25,8 @@ export function failureReason(r: Api): string {
 export function errText(r: Api): string {
   if (isOversize(r)) return failureReason(r)
   const b = r.body ?? {}
-  // DX-4982: a refusal's body is already the person's sentence: no `mcp:` prefix before it
-  if (r.refusal !== undefined && typeof b.error === 'string') return b.error
+  // DX-4982 / DX-5062: a body that is already the person's sentence gets no `mcp:` prefix before it
+  if (r.sentence === true && typeof b.error === 'string') return b.error
   return `${r.status || 'mcp'}: ${b.message ?? b.error ?? JSON.stringify(b).slice(0, ERROR_BODY_MAX)}`
 }
 
