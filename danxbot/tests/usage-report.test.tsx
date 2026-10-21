@@ -52,7 +52,7 @@ describe('usageBody (the report as danxbot takes it)', () => {
     expect(usageBody(WINDOWS, NOW, null, undefined)).toBeNull()
   })
 
-  test('carries no agent count: danxbot derives the account's running agents itself (DX-5593)', () => {
+  test("carries no agent count: danxbot derives the account's running agents itself (DX-5593)", () => {
     expect(usageBody(WINDOWS, NOW, MEASURED, undefined)).not.toHaveProperty('runningAgents')
   })
 
