@@ -19,7 +19,13 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       const band = await mounted($, d, surface)
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
-      expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+      expect((await band.find({ key: 'disconnect' }))?.text).toBe((surface === 'desktop' ? '⏏' : 'Disconnect'))
+      // DX-5605: a red control whose label names the plan it leaves, last but for the close x
+      expect((await band.find({ key: 'disconnect' }))?.props.label).toBe('Disconnect from PLAN-23')
+      expect((await band.find({ key: 'disconnect' }))?.props.plain).toBe(true)
+      expect((await band.find({ type: 'Text', text: (surface === 'desktop' ? '⏏' : 'Disconnect') }))?.props.color).toBe('red')
+      const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
+      expect(keys.slice(-2)).toEqual(['disconnect', 'band-close'])
       expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
 
       await band.press({ key: 'disconnect' })
@@ -86,7 +92,7 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toHaveLength(0)
       expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
       // the key was released: the button is back
-      expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+      expect((await band.find({ key: 'disconnect' }))?.text).toBe((surface === 'desktop' ? '⏏' : 'Disconnect'))
       expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
     })
 

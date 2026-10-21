@@ -16,9 +16,9 @@ for (const surface of SURFACES) {
       const footer = await mountIndicator($, surface, ['focus & memory paused'])
       expect((await footer.findAll({ type: 'Button' })).map((b: any) => [b.key, b.text.replace(FOOTER_PAD, '')])).toEqual([['footer-plan', 'Danxbot · PLAN-23']])
       expect((await footer.find({ key: 'footer-plan' }))?.props.plain).toBe(true)
-      // DX-4420: the desktop's native chip takes no padding prop, so its label carries one non-breaking space each side
+      // DX-5605: plain text, no chip: the label is the bare text on both surfaces (the nbsp padding that insetted it in the desktop chip is gone)
       const raw = (await footer.find({ key: 'footer-plan' }))?.text
-      expect(raw).toBe(surface === 'desktop' ? ' Danxbot · PLAN-23 ' : 'Danxbot · PLAN-23')
+      expect(raw).toBe('Danxbot · PLAN-23')
       expect(await footer.find({ type: 'Svg' })).toBeUndefined()
       // the only Text is the engine's own mode label, which survives beside the button
       expect(await text(footer)).toBe('focus & memory paused')

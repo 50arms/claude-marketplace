@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { CompactingState, ConnectedPlan, PacingSnapshot, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
+import type { CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -30,7 +30,6 @@ import {
   MIN_GAP_MS,
   PERMISSION_POLL_MS,
   PERMISSION_TOLD_MAX,
-  PACING_POLL_MS,
   SIGNED_IN_TOAST,
   keyRevokedLabel,
   SIGN_IN_DENIED_TOAST,
@@ -72,9 +71,7 @@ import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTak
 import { liveAgentsAt, usageBody } from './plan/usage'
 import type { LiveAgent } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
-import { pacingLine, peekPacing, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
-import { EMPTY_PACING_STATE, buildPacing } from './plan/pacing-model'
-import { readTeamSettings } from './plan/pacing-settings'
+import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
 import { bareSubagentId, subagentKey } from './compaction/subagent-key'
 import type { ActivityChange } from './reports/activity'
@@ -113,8 +110,6 @@ const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null 
 // that was never counted (a reload lost the start, a duplicate stop) changes nothing, so the count cannot go negative; an entry older than
 // SUBAGENT_LIVE_MAX_MS (an agent that died with no stop) is no longer counted.
 const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
-// DX-4339: what the usage pacing draws from: the session's own windows, the team's settings and the account verdict as last read.
-const pacingState = atom({ plugin: 'danxbot', key: 'pacingState' } as const, EMPTY_PACING_STATE as PacingSnapshot)
 // DX-4233: the plan event relay's state (the band's events warning). DX-4721: and the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
 // DX-5232: the events warning the band last showed (null: none), so its reason is told once on the transition into it.
@@ -197,8 +192,6 @@ let stallTickAt: number | null = null
 // model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
 // DX-4884: boxed, because a halt on no plan (`planId: null`) is a halt too.
 let relayHalted: { planId: number | null } | null = null
-// DX-4339: the usage pacing poll, one per session.
-let pacingTicker: { cancel: () => void } | null = null
 // DX-4336: the usage report's timer, one per session.
 let usageTicker: { cancel: () => void } | null = null
 // DX-5231: the idle check for an agent's ready that lands while no main turn is running (see idleCompactionCheck).
@@ -769,11 +762,6 @@ async function reportUsage($: any, reading: UsageReading): Promise<void> {
             const every = r.body?.report_every_ms
             if (!Number.isInteger(every) || every < MIN_USAGE_TICK_MS) failure = `the answer named no usable report_every_ms (${JSON.stringify(every)})`
             else if (every !== usageEveryMs) startUsageTicker($, every)
-            // DX-4854: danxbot places a session on its account from this very report, so until the first one is taken the pacing line answers
-            // unknown (`no_usage_account`) and the band has no verdict. Ask again now instead of leaving the account's readings to the next poll.
-            // This runs after every accepted report (each session.measure, whenever a window moves, and the usage tick), so a session whose account
-            // still has no verdict re-reads the line each time, until the pacing holds a readout; once it does the poll alone keeps it fresh.
-            if ((await read($, pacingState)).readout === null) detach($, 'Usage pacing', refreshPacingView($))
           }
         }
       }
@@ -790,14 +778,8 @@ async function reportUsage($: any, reading: UsageReading): Promise<void> {
   }
 }
 
-// DX-4339: the pacing draws the session's own windows whether or not the session is connected to a plan, so they are kept here, apart from
-// the report (which only a signed-in session makes). An unreadable usage clears them: a frozen figure must not stand as current.
-async function noteLimits($: any, limits: readonly SessionRateLimit[]): Promise<void> {
-  await update($, pacingState, cur => ({ ...cur, limits: limits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })) }))
-}
-
-// The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure. A reading that fails clears the
-// usage pacing windows (a frozen figure must not stand as current) and, for a signed-in session, is toasted by the report.
+// The clock tick's (and the first) report: what `$.session.usage()` says now, never an earlier event's figure. A reading that fails is
+// toasted by the report for a signed-in session.
 async function reportUsageNow($: any): Promise<void> {
   let reading: UsageReading
   try {
@@ -805,35 +787,14 @@ async function reportUsageNow($: any): Promise<void> {
   } catch (err: any) {
     reading = { error: errMessage(err) }
   }
-  try {
-    await noteLimits($, 'error' in reading ? [] : reading.limits)
-  } catch (err: any) {
-    // a tick runs with nobody awaiting it: writing the plugin's own state can only fail into the toast, never a rejection
-    $.ui.toast(`Usage not reported to danxbot: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
-    return
-  }
   return reportUsage($, reading)
 }
 
-// DX-4339: the team's pacing settings (GET /api/team/pacing) and the account verdict (the DX-4340 cache) into the usage pacing state. The settings
-// read's outcome is kept (`settingsRead`) so the band tells a quiet start or a session with no danxbot from a real error; a failed read keeps
-// the last settings and toasts nothing (DX-4340's decision). The verdict is re-read every poll (danxbot itself changes it every 10 minutes, so
-// a change shows within a poll or two). Run at session start and on the poll; a throw here is toasted, never an unhandled rejection.
-async function refreshPacingView($: any): Promise<void> {
+// DX-4340: reads the account verdict into the pacing cache at session start (the spawn guard and the sub-agent line read it); a throw here is
+// toasted, never an unhandled rejection.
+async function primePacing($: any): Promise<void> {
   try {
-    const env = pacingEnv($)
-    const fetched = await readTeamSettings(env.call)
-    await refreshPacing(env, true)
-    const now = await $.clock.now()
-    const pacing = peekPacing(now)
-    const verdict = pacing?.verdict ?? null
-    const spend = pacing?.spend ?? null
-    const readout = pacing?.readout ?? null
-    await update($, pacingState, cur =>
-      'settings' in fetched
-        ? { ...cur, settings: fetched.settings, settingsRead: { state: 'ok' }, verdict, spend, readout }
-        : { ...cur, settingsRead: fetched.read, verdict: null, spend: null, readout: null },
-    )
+    await refreshPacing(pacingEnv($), true)
   } catch (err: any) {
     $.ui.toast(`Usage pacing could not refresh: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
   }
@@ -861,7 +822,6 @@ async function onMeasure($: any, e: any, next: any) {
   // a measure that does not carry `rateLimits` says nothing about the windows: the last values stand (an empty array is the harness saying
   // there are none, and clears them)
   if (Array.isArray(e.rateLimits)) {
-    await noteLimits($, e.rateLimits)
     void reportUsage($, { limits: e.rateLimits })
   }
   return next(e)
@@ -1598,10 +1558,7 @@ async function onSessionStart($: any, e: any, next: any) {
   await update($, modelPlan, () => null)
   // DX-4630: nor a sign-in request: its watch died with the old process
   await update($, signInRequest, () => null)
-  // DX-4233: no plan polling timer (the relay's events, the turns and the sub-agents refresh the view). DX-4339: the pacing has no
-  // event to ride, so only it is read on the poll
-  pacingTicker?.cancel()
-  pacingTicker = $.clock.every(PACING_POLL_MS, () => refreshPacingView($))
+  // DX-4233: no plan polling timer (the relay's events, the turns and the sub-agents refresh the view).
   startUsageTicker($, USAGE_TICK_MS)
   // DX-5231: a reload starts with no compaction check: the sync below arms it again when the session is under the handshake (syncCompactionTicker)
   compactionTicker?.cancel()
@@ -1611,9 +1568,9 @@ async function onSessionStart($: any, e: any, next: any) {
   permissionTicker?.cancel()
   permissionTicker = null
   await syncPermissionPoll($)
-  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are the usage pacing poll, a sub-agent start when the cache is a minute old, and every spawn
+  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are a sub-agent start when the cache is a minute old, and every spawn
   resetPacing()
-  detach($, 'Usage pacing', refreshPacingView($))
+  detach($, 'Usage pacing', primePacing($))
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
   // DX-4233: the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
   detach($, 'Plan event relay start', startRelayWhenKnown($))
@@ -1640,8 +1597,6 @@ async function onSessionEnd($: any, e: any, next: any) {
     // restarts it only if the new conversation is on another plan)
     stopRelay()
     await stopKeepalive($)
-    pacingTicker?.cancel()
-    pacingTicker = null
     usageTicker?.cancel()
     usageTicker = null
     stallTicker?.cancel()
@@ -2213,7 +2168,6 @@ async function drawBand($: any, e: any, next: any) {
     newestPermission === undefined ? null : { count: permissions.length, newest: asApproval(newestPermission) },
     await read($, signInRequest),
     e.props.bodyColumns,
-    buildPacing(await read($, pacingState)),
     await read($, relay),
   )
 }
@@ -2223,7 +2177,7 @@ async function drawBand($: any, e: any, next: any) {
 async function drawSessionMode($: any, e: any, next: any) {
   const label = footerLabel(await read($, view))
   if (label === null) return next(e)
-  return renderFooter($.ui.resolve(e), handlers($), label, await next(e), e.surface === 'desktop')
+  return renderFooter($.ui.resolve(e), handlers($), label, await next(e))
 }
 
 // DX-4448: card ids in an assistant reply drawn as links. Reads only the `view` atom (filled at refresh): no network in the draw.

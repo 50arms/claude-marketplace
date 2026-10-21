@@ -79,14 +79,7 @@ export type RefreshGate = {
   at: number | null
 }
 
-// DX-4339: the usage pacing state (see hooks/plan/pacing-model.ts).
-export type PacingMode = 'fast_then_hold' | 'spread_evenly'
-export type LimitSettings = { enabled: boolean; targetPercent: number; mode: PacingMode; criticalPercent: number }
-// DX-4595 (PLAN-29 G-5): spend is the third limit. Its settings carry the money budget and the period it is spent over; its figure is never computed here
-// (the plugin cannot price tokens) but read from the line answer (`SpendFigure`).
-export type SpendSettings = LimitSettings & { budgetUsd: number | null; period: { kind: 'hours' | 'days'; count: number } }
-export type TeamSettings = { five_hour: LimitSettings; weekly: LimitSettings; spend: SpendSettings }
-export type PacingLimit = { kind: string; percentUsed: number; resetsAt?: string }
+// DX-4339: the pacing line's wire shapes (hooks/plan/pacing-line.ts).
 export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
 // The account's verdict for this session (DX-4340's cache): `budget` null = no cap, 0 = start nothing new, n = most agents at once.
 // DX-4595: the account's spend limit as the server priced it (GET /api/pacing/line `spend`): percent of the account's budget spent in the current period, the period end as `resetsAt`.
@@ -107,22 +100,6 @@ export type LimitReadout = {
 }
 export type PacingReadout = { limits: LimitReadout[]; worst: PacingLimitKey }
 export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number }
-// How the last read of the team's settings went. `pending`: none yet (session start), quiet. `silent`: no danx-dashboard MCP, no danxbot or no key
-// (DX-3421 / DX-4340: said nowhere but the band's `local`). `error`: danxbot answered and the answer was unusable (the band says `local`).
-export type SettingsRead = { state: 'pending' | 'ok' | 'silent' } | { state: 'error'; message: string }
-export type PacingSnapshot = {
-  // the last settings read; kept through a failed read so the pacing can still show them, marked local
-  settings: TeamSettings | null
-  settingsRead: SettingsRead
-  // the account verdict as of the last refresh (null: none, or not trusted while the settings read is failing)
-  verdict: PacingVerdict | null
-  // DX-4595: the account's spend figure from the same line answer (null: none, or not trusted while the settings read is failing)
-  spend: SpendFigure | null
-  // DX-4656: each enabled limit's state and headroom and the worst one, from the same line answer (null: none, or not trusted while the settings read is failing)
-  readout: PacingReadout | null
-  // the session's own windows, as the harness last reported them (empty when its usage could not be read)
-  limits: PacingLimit[]
-}
 
 // DX-4435: a `request_permission` request the band counts until it is decided. DX-4530: no expiry clock (the claim decides it).
 export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[] }
@@ -184,8 +161,6 @@ declare module 'claude-code' {
       measuredAt: number | null
       // DX-4336: the sub-agents running now, by id and start time (the report's runningAgents is this plus the main thread).
       liveAgents: { id: string; since: number }[]
-      // DX-4339: what the usage pacing draws: the session's own windows, the team's pacing settings and the account verdict as last read.
-      pacingState: PacingSnapshot
       // DX-4233: the event relay's state (see RelayState): the band's events warning says it when it is not streaming.
       relay: RelayState
       // DX-5232: the events warning last toasted (null: none), so its reason is told once per transition

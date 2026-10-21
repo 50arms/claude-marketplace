@@ -34,7 +34,7 @@ describe('plan band', () => {
     const label = await narrow.find({ type: 'Text', text: /PLAN-23/ })
     expect(label?.text).toBe('PLAN-23 · A very long plan name that goes on and on and on')
     expect(label?.props.wrap).toBe('truncate-end')
-    expect((await narrow.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+    expect((await narrow.find({ key: 'disconnect' }))?.text).toBe('⏏')
   })
 
 

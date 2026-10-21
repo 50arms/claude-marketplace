@@ -2,7 +2,7 @@
 // connects, and what one load reports.
 import { describe, expect } from 'claude-code/testing'
 
-import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
+import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
 import { test, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -17,33 +17,6 @@ const loadsOf = (d: any) => d.api.filter((a: any) => a.path === '/api/plans').le
 
 describe('session.end by reason', () => {
   // DX-4233: what the process's end does to the plan event relay is in plan-relay-lifecycle.test.tsx
-  for (const reason of ['prompt_input_exit', 'logout', 'other']) {
-    test(`${reason} ends the process: the pacing poll stops`, async ($, on) => {
-      const d = dashboard(on)
-      on('session.end', () => ({ sessionId: 's1' }) as any)
-      await startSession($, d, 'desktop')
-      await $.session.end({ reason } as any)
-      await d.clock.settle()
-      const reads = d.teamPacingReads.length
-      await d.clock.advance(PACING_POLL_MS * 2 + 1)
-      expect(d.teamPacingReads).toHaveLength(reads)
-    })
-  }
-
-  // a reason not listed keeps the timers: stopping one in a live process is the harm, a timer left in a dying one is not
-  for (const reason of ['clear', 'resume', 'some_future_reason']) {
-    test(`${reason} leaves the process running: the pacing poll goes on`, async ($, on) => {
-      const d = dashboard(on)
-      on('session.end', () => ({ sessionId: 's1' }) as any)
-      await startSession($, d, 'desktop')
-      await $.session.end({ reason } as any)
-      await d.clock.settle()
-      const reads = d.teamPacingReads.length
-      await d.clock.advance(PACING_POLL_MS + 1)
-      expect(d.teamPacingReads.length).toBeGreaterThan(reads)
-    })
-  }
-
   for (const reason of ['clear', 'resume']) {
   test(`a ${reason} refreshes at once: what the dashboard shows may have moved`, async ($, on) => {
     const d = dashboard(on)
@@ -225,7 +198,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // the new start frees the key
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+    expect((await band.find({ key: 'disconnect' }))?.text).toBe('⏏')
     expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
     await d.clock.advance(60_000)
     await leaving

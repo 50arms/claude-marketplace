@@ -11,10 +11,8 @@ export const COMMAND = 'danx-plan'
 // declares a `danx-dashboard` server of its own any more, so there is no second name to try.
 export const SERVER = 'plugin:danxbot:danx-dashboard'
 export const toolName = (tool: string) => `mcp__${SERVER.replace(/:/g, '_')}__${tool}`
-// DX-4339: how often the usage pacing is read (it has no event to ride). The plan view is never polled (DX-4233).
-export const PACING_POLL_MS = 60_000
 export const MIN_GAP_MS = 10_000
-// DX-4530: while a permission request is open its claim is polled this often (the usage pacing poll otherwise), so the model hears the
+// DX-4530: while a permission request is open its claim is polled this often (otherwise never), so the model hears the
 // decision within seconds. The server's per-key claim limit (danxbot permission-request-routes.ts: twice one 3 s poll, about
 // 0.67 claims a second) fits the MCP's own 3 s poll plus this one for ONE open request; with more open at once the MCP's poll
 // alone passes it, and this poll's 429 only keeps the request for the next tick.
@@ -84,8 +82,6 @@ export const NOTE_MARKER = ' | It was to read: '
 export const SUCCESS = 'green'
 export const DANGER = 'red'
 export const WARNING = 'yellow'
-// DX-4656: the pacing band's `hold` (over pace, nothing new starts until the reset): no named terminal colour is orange, so a hex that the terminal rounds to its nearest.
-export const ORANGE = '#ff8700'
 
 export const EMPTY: PlanView = {
   phase: 'loading',
@@ -142,8 +138,10 @@ export function boardCardUrl(plan: ConnectedPlan, cardId: string): string {
   return `${plan.dashboardUrl}/board/${cardId}`
 }
 
-export const DISCONNECT_TIP = 'Disconnect'
-export const DISCONNECTING_TIP = 'Disconnecting…'
+export const DISCONNECT_WORD = 'Disconnect'
+export const DISCONNECTING_LABEL = 'Disconnecting…'
+// DX-5605: the desktop's one-glyph Disconnect (eject: leave the plan); the terminal draws DISCONNECT_WORD.
+export const DISCONNECT_GLYPH = '⏏'
 
 // The donut's size in px (Svg takes CSS pixels): the band line's.
 export const DONUT_BAND_PX = 16

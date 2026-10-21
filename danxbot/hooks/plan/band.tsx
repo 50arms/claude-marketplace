@@ -1,22 +1,19 @@
 import type { PlanView, RelayState } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
-import { BLOCKED_LINE, DANGER, DISCONNECTING_TIP, DISCONNECT_TIP, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
+import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DISCONNECT_WORD, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
-import { bandText } from './pacing-format'
-import type { PacingModel } from './pacing-model'
-import { pacingBand } from './pacing-view'
 import { bandLabel, bandLabelCols, eventsWarning, problemBadge, viewPercent } from './words'
 
 // The controls' labels the width budget counts.
 const OPEN_PLAN_LABEL = 'Open plan'
 const CLOSE_LABEL = '×'
 
-// The band above the prompt: the plan line (indicator, label, then the events warning / Disconnect / the open-problem count (DX-4420) / the permission
-// request / Open plan and a close control hugging the right edge, the label truncating first). DX-4630: every control that
+// The band above the prompt: the plan line (indicator, label, then the events warning / the open-problem count (DX-4420) / the permission
+// request / Open plan, Disconnect (DX-5605) and a close control hugging the right edge, the label truncating first). DX-4630: every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text).
 export function renderBand(
@@ -32,8 +29,6 @@ export function renderBand(
   // The band's width in columns (`bodyColumns`); undefined in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns: number | undefined,
-  // DX-4339: the pacing entries beside the controls: each enabled limit's usage against its target, coloured by level.
-  pacing: PacingModel | undefined,
   // DX-5232: the plan event relay's state, for the events warning (its reason is toasted by the caller, once).
   relay: RelayState,
 ): any {
@@ -59,21 +54,24 @@ export function renderBand(
   // DX-4521: both links are in every state: the plan's page when connected, else the dashboard's plans list. Only an origin never
   // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
   const linkUrl = plan !== null ? planUrl(plan) : v.dashboardUrl !== null ? plansUrl(v.dashboardUrl) : null
-  const pacingLabel = pacing === undefined ? '' : bandText(pacing)
   // DX-5232: Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`); the events warning shows only while the events are not flowing.
   const disconnecting = busyKey.isDisconnecting(busy)
-  const disconnectLabel = disconnecting ? DISCONNECTING_TIP : DISCONNECT_TIP
+  // DX-5605: Disconnect is a red control beside the close x. The plugin UI API has no icon or tooltip prop on a Button (ButtonProps: key, label,
+  // hotkey, action, plain, dimColor, variant primary|secondary, role, autoFocus, hover; children only strings and Text), and a hover card
+  // is clipped by the band's region, so: the desktop draws one red glyph and the Button's `label` is its accessible name ("Disconnect from
+  // PLAN-46"); the terminal, which cannot tell what a lone glyph means, draws the red word.
+  const disconnectName = plan === null ? '' : disconnecting ? DISCONNECTING_LABEL : `${DISCONNECT_WORD} from ${plan.ref}`
+  const disconnectShown = disconnecting ? DISCONNECTING_LABEL : hasSvg ? DISCONNECT_GLYPH : DISCONNECT_WORD
   const warning = eventsWarning(v, relay)
   const controls = [
-    ...(pacingLabel !== '' ? [{ label: pacingLabel, isButton: false }] : []),
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
     ...(warning !== null ? [{ label: warning, isButton: false }] : []),
-    ...(plan !== null ? [{ label: disconnectLabel, isButton: true }] : []),
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
     ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
     ...(linkUrl !== null ? [{ label: OPEN_PLAN_LABEL, isButton: false }] : []),
+    ...(plan !== null ? [{ label: disconnectShown, isButton: true }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
   // DX-4626: the column model is the terminal's (a cell per character, `[ label ]` button chrome). The desktop draws proportional text
@@ -106,7 +104,6 @@ export function renderBand(
       </Box>
       <Box flexGrow={1} />
       <Box flexDirection="row" gap={1} flexShrink={0}>
-        {pacingBand(E, pacing)}
         {signedOut && (
           <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
             {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
@@ -119,17 +116,17 @@ export function renderBand(
             {warning}
           </Text>
         )}
-        {plan !== null && (
-          <Button key="disconnect" dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
-            {disconnectLabel}
-          </Button>
-        )}
         {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab. */}
         {showBadge && plan !== null && mdLink(E, 'open-problems', badge, needsYouUrl(plan))}
         {/* DX-4435: the newest open permission request: its approval page, with the code to check against the page. */}
         {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
         {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
         {linkUrl !== null && mdLink(E, 'open-tab', OPEN_PLAN_LABEL, linkUrl)}
+        {plan !== null && (
+          <Button key="disconnect" plain label={disconnectName} dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
+            <Text color={DANGER}>{disconnectShown}</Text>
+          </Button>
+        )}
         {close}
       </Box>
     </Box>
