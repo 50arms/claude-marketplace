@@ -146,7 +146,9 @@ export type ReportState = { agents: Record<string, number>; shells: string[]; pl
 
 // a plan event the relay has taken from the server and not yet delivered to the session, kept in $.state so a reload of the hook module (which
 // empties the module's own outbox) finds it again. The server drops every event at or below the cursor a poll presents, so this copy is the only one.
-export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean }
+// It is listed only while it is NOT delivered: from being taken until `$.prompt.submit` (or the note append) is called for it, and again when the
+// session refused it. `again`: it was delivered once at its call (its cursor is stored, maybe behind later ones), so issuing it again stores no cursor.
+export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; again?: true }
 
 declare module 'claude-code' {
   interface PluginState {

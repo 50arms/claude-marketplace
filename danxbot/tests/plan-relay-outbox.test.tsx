@@ -2,7 +2,9 @@ import "./run-tests-with-npm-test.generated"
 // DX-5398: the relay's poll loop never waits on a delivery. A plugin's `$.prompt.submit` settles only when the queued prompt ENTERS the session
 // (claude.exe 2.1.299), so behind a running turn (a main agent blocked in a foreground sub-agent) it settled when that turn ended, and the loop
 // that awaited it made no poll, no heartbeat and no sub-agent stats for the rest of the turn. The kit's `holdPrompts()` models that engine. The
-// events are queued in an outbox and delivered in order; the stored resume cursor moves per DELIVERED event; a loop that makes no step at all
+// events are queued in an outbox and issued in order; the stored resume cursor moves per event the moment `$.prompt.submit` is CALLED for it (DX-5602:
+// the engine owns a queued prompt, and the promise that waited on it is lost with a reloaded module, so waiting for the promise re-sent every queued
+// event at each reload); a refusal the same module instance sees puts the event back; a loop that makes no step at all
 // (a call that never settles) is told to the person and the session and started again.
 import { describe, expect } from 'claude-code/testing'
 
@@ -20,6 +22,8 @@ const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JS
 const MCP_PLAN_CONNECT = 'mcp__plugin_danxbot_danx-dashboard__plan_connect'
 // what the plugin keeps in $.state for an event it took and has not delivered (the `relayOutbox` atom)
 const PENDING = { planId: 23, cursor: 'c1', text: 'digest', urgent: false }
+// DX-5602: an event put back after the session refused it was delivered once at its call, so it carries `again` (issuing it again stores no cursor)
+const PUT_BACK = { ...PENDING, again: true }
 const pendingWrites = (d: any) => d.stateWrites.filter((w: any) => w.key === 'relayOutbox').map((w: any) => w.value)
 
 for (const surface of SURFACES) {
@@ -67,11 +71,11 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.relay.told).toEqual(['[danxbot plan event] critical pacing stop'])
       expect(d.relay.delivered).toEqual([])
-      // the note is out; the prompt before it is not delivered, so the stored cursor has not moved past the prompt
-      expect(d.stored.get(KEY)).toBeUndefined()
+      // both are out (the prompt is queued in the engine, the note is appended): the stored cursor is at the note
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c2' })
     })
 
-    test('the waiting prompts are delivered exactly once when the turn ends, and the cursor moves then, in order', async ($, on) => {
+    test('the waiting prompts are delivered exactly once when the turn ends; the cursor moved at each call, in order, and nothing moves at the turn end', async ($, on) => {
       const d = dashboard(on)
       on('turn.complete', () => ({ text: 'done' }) as any)
       await startSession($, d, surface)
@@ -79,9 +83,10 @@ for (const surface of SURFACES) {
       const prompts = d.relay.holdPrompts()
       d.relay.push({ cursor: 'c1', text: 'digest' })
       await d.clock.settle()
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c1' })
       d.relay.push({ cursor: 'c2', text: 'second digest' })
       await d.clock.settle()
-      expect(d.stored.get(KEY)).toBeUndefined()
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c2' })
       await $.turn.complete(TURN)
       prompts.release()
       await d.clock.settle()
@@ -92,26 +97,56 @@ for (const surface of SURFACES) {
       expect(d.relay.calls.map(c => c.cursor)).toEqual([null, 'c1', 'c2'])
     })
 
-    // the cursor first, then the atom: a reload between the two repeats the event, where the other order would lose the resume point
-    test('a delivered event stores its cursor before the atom drops it', async ($, on) => {
+    // DX-5602: the second submit's promise never settles (a prompt merged into a queued turn, or one whose module reloaded), yet the event is delivered:
+    // the engine owns the queued prompt (measured: it survives a hook-module reload), so the cursor and the atom follow the CALL.
+    test('two events queued behind a running turn: the stored cursor reaches the second event and the atom is empty while neither promise has settled', async ($, on) => {
       const d = dashboard(on)
-      on('turn.complete', () => ({ text: 'done' }) as any)
       await startSession($, d, surface)
       await $.turn.start(START)
       const prompts = d.relay.holdPrompts()
       d.relay.push({ cursor: 'c1', text: 'digest' })
       await d.clock.settle()
+      d.relay.push({ cursor: 'c2', text: 'second digest' })
+      await d.clock.settle()
+      expect(prompts.held()).toBe(2)
+      expect(d.relay.delivered).toEqual([])
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c2' })
+      expect(pendingWrites(d).at(-1)).toEqual([])
+    })
+
+    // The kit has no second module instance. A reload is modelled as the previous test's end state: $.state holds what that test asserts (an empty atom) and
+    // the store holds the cursor it asserts (c2), with a fresh module and a server that has dropped both events. Nothing may be submitted again.
+    test('after a reload that followed two events queued behind a running turn, nothing is submitted again and the first poll goes on from the second event', async ($, on) => {
+      const d = dashboard(on)
+      d.stored.set(KEY, { planId: 23, cursor: 'c2', at: 1 })
+      d.seedState('relayOutbox', [])
+      await startSession($, d, surface)
+      await d.clock.settle()
+      expect(d.relay.calls[0]?.cursor).toBe('c2')
+      expect(d.relay.delivered).toEqual([])
+      await d.clock.advance(60_000)
+      expect(d.relay.delivered).toEqual([])
+    })
+
+    // the cursor first, then the atom: a reload between the two repeats the event, where the other order would lose the resume point
+    test('a delivered event stores its cursor before the atom drops it', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      d.relay.holdPrompts()
       let storedAtAtomWrite: unknown = 'not written'
+      // the first atom write is the copy taken before the poll that acknowledges the event; the second is the drop once the event is delivered
       d.beforeNextWrite('relayOutbox', async () => {
-        storedAtAtomWrite = d.stored.get(KEY)
+        d.beforeNextWrite('relayOutbox', async () => {
+          storedAtAtomWrite = d.stored.get(KEY)
+        })
       })
-      await $.turn.complete(TURN)
-      prompts.release()
+      d.relay.push({ cursor: 'c1', text: 'digest' })
       await d.clock.settle()
       expect(storedAtAtomWrite).toMatchObject({ planId: 23, cursor: 'c1' })
     })
 
-    test('a run that replaces a stalled one while a prompt still waits polls on from the waiting event: the server does not send it again, nothing is delivered twice, and the atom still lists what waits', async ($, on) => {
+    test('a run that replaces a stalled one while prompts still wait in the engine polls on from the stored cursor: the server does not send them again and nothing is delivered twice', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       await $.turn.start(START)
@@ -125,12 +160,13 @@ for (const surface of SURFACES) {
       const callsBeforeStall = d.relay.calls.length
       await d.clock.advance(2 * RELAY_STALL_MS)
       expect(d.toasts.filter(STALLED)).toHaveLength(1)
-      // the replacing run made its own wait (the stuck one never answers), asking after the newest waiting event, not after the stored cursor (still unset, which would hand c1 and c2 over again)
+      // the replacing run made its own wait (the stuck one never answers), asking after the newest event issued (the stored cursor), which would hand c1 and c2 over again if it were unset
       expect(d.relay.calls.length).toBeGreaterThan(callsBeforeStall)
       expect(d.relay.calls.at(-1)?.cursor).toBe('c2')
       expect(prompts.held()).toBe(2)
-      // the restart keeps what its own module still holds, and the atom still lists it
-      expect(pendingWrites(d).at(-1)).toEqual([PENDING, { ...PENDING, cursor: 'c2', text: 'second digest' }])
+      // both were issued, so the atom lists nothing and the store holds c2
+      expect(pendingWrites(d).at(-1)).toEqual([])
+      expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c2' })
       prompts.release()
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] digest', '[danxbot plan event] second digest'])
@@ -169,7 +205,27 @@ for (const surface of SURFACES) {
       expect(d.relay.calls.map(c => c.cursor)).toEqual([null, 'c1'])
       expect(d.relay.server.dropped).toBe(1)
       expect(d.relay.server.buffer).toEqual([])
-      expect(pendingWrites(d).at(-1)).toEqual([PENDING])
+      expect(pendingWrites(d).at(-1)).toEqual([PUT_BACK])
+      d.relay.acceptPrompts()
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] digest'])
+      expect(pendingWrites(d).at(-1)).toEqual([])
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c1' })
+      await d.clock.advance(60_000)
+      expect(d.relay.delivered).toHaveLength(1)
+    })
+
+    // DX-5602: delivered at the call, but the instance that made the call still sees how it ends: a `drop` puts the event back and issues it again.
+    test('a prompt the engine drops is put back and issued again by the same module: the cursor stays where it is, and the event is delivered once', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.dropPrompts('busy')
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      // delivered at the call (cursor moved), then the drop put it back in the atom
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c1' })
+      expect(pendingWrites(d).at(-1)).toEqual([PUT_BACK])
+      expect(d.relay.delivered).toEqual([])
       d.relay.acceptPrompts()
       await d.clock.advance(BACKOFF_MS[0])
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] digest'])
