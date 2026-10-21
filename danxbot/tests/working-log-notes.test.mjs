@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-5324 (follows DX-5323) — a card's comments are the conversation between people and
 // agents; an agent's working log (progress, evidence, handoffs, blockers, gate notes) is an
 // agent note, written through `POST /api/issues/:id/notes`. Every plugin text that tells an

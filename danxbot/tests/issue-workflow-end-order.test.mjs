@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4014 (DX-3678 comment 8974, W-14/W-15) — a canary `work` dispatch
 // transitioned `complete` and wrote the retro BEFORE `agent-finalize.sh`, so
 // `retro.commits[]` cited a pre-squash sha that never reached `origin/main`.

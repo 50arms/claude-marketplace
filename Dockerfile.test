@@ -1,0 +1,39 @@
+# DX-5648 - the ONE environment this repo's tests run in: Linux, in a container
+# started from this image by scripts/test-in-container.mjs (`npm test`). A test file
+# run anywhere else refuses before any test runs (scripts/designated-test-container.mjs).
+#
+# The image holds the installed dependencies and the `claude` CLI that runs the
+# plugin's function-hook tests (`claude plugin test`) and validates its module, and
+# nothing from this machine: the build context is the two manifests (.dockerignore),
+# and the source arrives later as a tar stream copied into a container, so a
+# container-side write can never reach a host node_modules.
+FROM node:22-bookworm-slim
+
+# git: scripts/tests/publish.test.mjs and the delivery tests drive real scratch repositories; bash runs scripts/publish.sh;
+# chromium: danxbot/tests/capture-screenshot.test.mjs drives a real browser and skips every capture case when none is installed.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git bash ca-certificates chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+# Chromium's own sandbox needs kernel features an unprivileged container does not grant; the container is the sandbox here, so the browser
+# the capture tests find first on PATH (/usr/local/bin precedes /usr/bin) starts without its own.
+RUN echo '#!/bin/sh' > /usr/local/bin/chromium \
+    && echo 'exec /usr/bin/chromium --no-sandbox "$@"' >> /usr/local/bin/chromium \
+    && chmod 0755 /usr/local/bin/chromium
+
+# The CLI version is the one `.claude-code-version` pins (CLAUDE.md: function hooks are an early-access API that changes between releases).
+ARG CLAUDE_CODE_VERSION
+RUN npm install -g --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+# The admitting proof for the guard. It is written as root and the tests run as the
+# non-root `node` user, which cannot create a root-owned file, so no process inside a
+# run can admit itself the way an environment variable could be set. No other image carries it.
+RUN mkdir -p /etc/claude-plugins \
+    && echo "claude-plugins designated test container (DX-5648)" > /etc/claude-plugins/test-environment \
+    && chmod 0644 /etc/claude-plugins/test-environment
+
+RUN mkdir /app && chown node:node /app
+USER node
+WORKDIR /app
+COPY --chown=node:node package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund

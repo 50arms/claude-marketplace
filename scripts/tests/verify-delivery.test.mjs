@@ -1,3 +1,4 @@
+import "../../danxbot/tests/designated-test-container.mjs";
 // scripts/tests/verify-delivery.test.mjs — post-delivery check for
 // scripts/publish.sh (DX-3057). Runs scripts/verify-delivery.mjs for real
 // via execFileSync against fs.mkdtempSync fixtures holding a fake

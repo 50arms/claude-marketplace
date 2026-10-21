@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4340: the text prefixes the plan-workflow skill quotes ("Usage pacing: ..." on a refused spawn, "Usage pacing for your Claude account
 // changed: ..." on a pacing message). The guard's refusal prefix lives once, as REFUSAL_PREFIX in hooks/plan/pacing-guard.ts, and
 // pacing-guard.test.tsx proves a refusal starts with it; this proves the skill quotes both. A change to either text must update

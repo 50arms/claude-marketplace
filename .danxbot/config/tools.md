@@ -31,8 +31,9 @@ server or long-running process for this repo.
 
 ## Repo-native tooling
 
-- `test` / `lint` / `type_check` are all empty in `config.yml` — nothing to
-  run. Do not invent an `npm test` step.
+- `test` / `lint` / `type_check` are all empty in `config.yml`. The repo's tests
+  (DX-5648) run through `npm test` only, which starts the suite in a Linux Docker
+  container; never run a test file any other way (it refuses).
 - `package.json` only exposes publish wrappers:
   - `npm run publish:patch|minor|major` → `./scripts/publish.sh <bump>`
 - `./scripts/publish.sh <patch|minor|major> [plugin ...]` — bumps the

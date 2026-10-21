@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4233 (R-1, R-2): the plan event relay is the module's own loop on the session's danx-dashboard MCP server. It spawns nothing
 // and writes no state file, and no trace of the deleted bridge / watchdog process design is left in the plugin's code.
 

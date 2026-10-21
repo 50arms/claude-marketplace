@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4144 (DX-4066 operator decisions) — ONE mantra for every agent: danxbot
 // seeds the `mantra` reminder row from this file and every reader (operator
 // session, sub-agent, dispatched worker) receives it. The operator-only rules

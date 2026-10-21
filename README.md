@@ -37,6 +37,10 @@ To use another dashboard, set `DANXBOT_DASHBOARD_URL` (your shell, or the `env` 
 
 This is the session's one dashboard server: a connected repo declares no `danx-dashboard` server of its own, and a repo's own `.mcp.json` entry would run beside it as a second set of tools under another name (`mcp__danx-dashboard__*`) that the plugin's band, hooks and listeners never use.
 
+## Tests
+
+`npm test` runs the whole suite inside a Linux Docker container (it needs Docker): the node suites, then the plugin's function-hook tests (`claude plugin test danxbot`). `npm test -- danxbot/tests/mantra.test.mjs danxbot/tests/plan-band.test.tsx` runs named files. A test file run any other way refuses and names this command. `scripts/publish.sh` runs the same command before it bumps.
+
 ## Editing a plugin — MANDATORY version bump
 
 **Every edit to `<plugin>/skills/**/SKILL.md`, `<plugin>/skills/**/*` resources, or any plugin asset MUST bump `<plugin>/.claude-plugin/plugin.json` `version` in the SAME commit.** autoUpdate keys its on-disk cache by version directory (`~/.claude/plugins/cache/50arms/<plugin>/<version>/`); if version stays static, every consumer (host sessions, container workers, dispatched agents) keeps reading the stale cached copy forever — the push went through, the live world did not move. Patch-bump (`0.3.0` → `0.3.1`) is the right size for skill text edits; minor for new skills; major for breaking schema changes. No exemption for "small" edits — small edits are exactly when this gets skipped. Commit message names the bump (`<plugin>: <change> (0.3.0 → 0.3.1)`).

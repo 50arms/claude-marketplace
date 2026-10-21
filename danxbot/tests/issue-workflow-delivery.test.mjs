@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4560 — a session building a card in a repo that needs review (a team's own repo) must end
 // with an open pull request, never a push to the target branch, while danxbot's own boards keep
 // pushing. The skill's "Delivery" section reads the card's resolved controls

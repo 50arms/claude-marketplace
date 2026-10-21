@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4321 / DX-3811 / DX-4235 — scripts/lib/dashboard-mcp-package.mjs: the ONE module that says which version of
 // `@thehammer/danx-dashboard-mcp` runs and installs it. The plugin carries no version literal: the registry's `latest` is
 // recorded under the plugin data dir and read back with no network. A fake registry (fixtures/fake-registry.mjs) stands

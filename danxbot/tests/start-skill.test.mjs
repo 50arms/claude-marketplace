@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4556 - `/danxbot:start` connects the repo a person is standing in: sign in, register
 // the repo, create its board, then the first plan. These tests pin the skill's contract with
 // the dashboard (the routes, the bodies, the order) and that its text names nothing that

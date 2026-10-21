@@ -196,9 +196,9 @@ fi
 # A plugin whose hooks.json declares "modules" ships native function hooks. The engine loads a
 # module whole or not at all, and in the desktop app a module that fails to load says nothing
 # visible, so a broken one would reach every session silently. `claude plugin validate` (reads
-# the module's source the way the engine will) and `claude plugin test` (runs its *.test.ts[x]
-# against the engine) both run BEFORE anything is bumped; either failing refuses the publish with
-# the tree untouched. CLAUDE_BIN names the CLI when `claude` is not on PATH.
+# the module's source the way the engine will) runs BEFORE anything is bumped; failing refuses the
+# publish with the tree untouched. CLAUDE_BIN names the CLI when `claude` is not on PATH. The
+# module's tests (`claude plugin test`) run in the test container with every other suite (below).
 
 plugin_has_modules() {
   node -e '
@@ -214,7 +214,7 @@ CLAUDE_CMD="${CLAUDE_BIN:-claude}"
 for plugin in "${TARGETS[@]}"; do
   if plugin_has_modules "$plugin"; then
     if ! command -v "$CLAUDE_CMD" >/dev/null 2>&1; then
-      err "${plugin} declares hooks modules, so publishing needs the claude CLI to validate and test them, and '${CLAUDE_CMD}' is not on PATH."
+      err "${plugin} declares hooks modules, so publishing needs the claude CLI to validate them, and '${CLAUDE_CMD}' is not on PATH."
       err "Set CLAUDE_BIN to the claude executable, then re-run. Nothing was bumped or pushed."
       exit 1
     fi
@@ -223,21 +223,18 @@ for plugin in "${TARGETS[@]}"; do
       err "claude plugin validate ${plugin} failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
       exit 1
     fi
-    info "Testing ${plugin}'s hooks modules..."
-    if ! "$CLAUDE_CMD" plugin test "$plugin"; then
-      err "claude plugin test ${plugin} failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
-      exit 1
-    fi
   fi
 done
 
 # --- Pre-flight: the repo-wide scans and node tests ----------------------
 #
 # DX-5201 — the .mjs suites (plan-relay-scan, own-server-check-scan, ...) are
-# the plugin's rule scans; `claude plugin test` runs only the tsx cases, so a
-# scan failure used to reach main unnoticed. Run them before any bump.
+# the plugin's rule scans, and `claude plugin test` runs the tsx cases; a scan
+# failure used to reach main unnoticed. DX-5648 — both run through the repo's one
+# test command, `npm test`, which runs them in the designated Linux test container
+# (never on this host). Run them before any bump.
 
-info "Running the node test suites (npm test)..."
+info "Running the test suites in the test container (npm test)..."
 if ! (cd "${REPO_ROOT}" && npm test --silent); then
   err "npm test failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
   exit 1

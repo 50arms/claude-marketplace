@@ -6,7 +6,7 @@
     "publish:patch": "./scripts/publish.sh patch",
     "publish:minor": "./scripts/publish.sh minor",
     "publish:major": "./scripts/publish.sh major",
-    "test": "node --test \"danxbot/tests/*.test.mjs\" \"scripts/tests/*.test.mjs\""
+    "test": "node scripts/test-in-container.mjs"
   },
   "devDependencies": {
     "js-yaml": "^5.4.2"

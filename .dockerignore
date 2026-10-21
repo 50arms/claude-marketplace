@@ -1,0 +1,6 @@
+# DX-5648: the test image's build context is the dependency manifests and nothing
+# else. The source never enters an image (scripts/test-in-container.mjs streams it
+# into a container), and a host node_modules must never be sent to the daemon.
+*
+!package.json
+!package-lock.json
