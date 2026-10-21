@@ -132,6 +132,25 @@ describe('the agent.spawn hook', () => {
     expect(d.claimsAllowed).toEqual([])
   })
 
+  // DX-5593 (N2): the first usage report is fire-and-forget, so the claim carries the session's latest reading and danxbot places the session on its account itself
+  test("the claim carries the session's latest usage reading, the body the usage report sends", async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 5, running_agents: 1 }) } })
+    d.world.rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-20T20:00:00.000Z' }, { kind: 'seven_day', percentUsed: 10, resetsAt: '2026-10-25T00:00:00.000Z' }]
+    await spawn($)
+    const sent = d.claimBodies.at(-1)
+    expect(Object.keys(sent)).toEqual(['usage'])
+    expect(sent.usage).toMatchObject({ fiveHour: { percentUsed: 42, resetsAt: '2026-10-20T20:00:00.000Z' }, sevenDay: { percentUsed: 10, resetsAt: '2026-10-25T00:00:00.000Z' } })
+    expect(Date.parse(sent.usage.measuredAt)).toBeLessThanOrEqual(Date.parse(sent.usage.reportedAt))
+  })
+
+  test('a session with no reading to give claims without one', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 5, running_agents: 1 }) } })
+    d.world.rateLimits = []
+    await spawn($)
+    expect(d.claimBodies.at(-1)).toBeUndefined()
+    expect(d.claimsAllowed).toHaveLength(1)
+  })
+
   // DX-5593: the budget is a STRICT cap and the one count lives in danxbot: the plugin keeps no reservation and no count of its own
   test("a burst of spawns is held to the budget: each claim takes a slot of danxbot's count, the one past the budget is refused, however long after", async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 0 }) } })
@@ -320,7 +339,7 @@ describe('failures of the guard itself', () => {
   test('a hook error (a rejecting clock) is told once per text, never a toast per spawn, and the spawn is refused: it could not claim its slot', async () => {
     resetPacing()
     const toasts: string[] = []
-    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), toast: t => void toasts.push(t) }
+    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), toast: t => void toasts.push(t) }
     const started = { model: 'm', agentId: 'a' }
     const guard = spawnGuard(env)
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any

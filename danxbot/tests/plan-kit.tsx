@@ -533,6 +533,8 @@ export function dashboard(
   const claimAttempts = { n: 0 }
   const claimsAllowed: string[] = []
   const claimsReleased: string[] = []
+  // DX-5593 (N2): the body of every claim POST, to see what reading it carried
+  const claimBodies: any[] = []
   const heldClaims = new Set<string>()
   // DX-4234: the paths of the context reads (see isContextRead), in order
   const contextReads: string[] = []
@@ -638,7 +640,10 @@ export function dashboard(
     // DX-5593: the spawn claim, decided like danxbot does under its lock: refuse when the level is not on pace or the live count (the line's
     // `running_agents` plus the claims held) has reached the budget; unknown (a `reason`, no level) claims nothing. The answer is the line plus {claimed, claim_id}.
     if (e.server === 'plugin:danxbot:danx-dashboard' && e.tool === 'danxbot_api' && typeof e.args.path === 'string' && e.args.path.startsWith('/api/pacing/agents/claim')) {
-      if (e.args.method === 'POST') claimAttempts.n++
+      if (e.args.method === 'POST') {
+        claimAttempts.n++
+        claimBodies.push(e.args.body)
+      }
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
@@ -1104,7 +1109,7 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, pacingReads, claimAttempts, claimsAllowed, claimsReleased, heldClaims, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an
