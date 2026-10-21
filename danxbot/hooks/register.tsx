@@ -198,6 +198,9 @@ let permissionTicker: { cancel: () => void } | null = null
 // module variable: a reload starts with no claim of its own in flight.
 let permissionTickBusy = false
 
+// DX-5593 (B1): a dashboard call has succeeded in this session. Module state, cleared at every session start.
+let dashboardAnswered = false
+
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. DX-4997 / DX-5033: EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
@@ -223,7 +226,10 @@ async function api($: any, method: string, path: string, extra: { query?: object
     failed.unreachable = true
     return failed
   }
-  return toolOutcome(res)
+  const outcome = toolOutcome(res)
+  // DX-5593 (B1): a dashboard call that succeeded proves the session signed in; the spawn claim then refuses when the server is later unreachable
+  if (outcome.ok) dashboardAnswered = true
+  return outcome
 }
 
 const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
@@ -1566,6 +1572,7 @@ async function onSessionStart($: any, e: any, next: any) {
   await syncPermissionPoll($)
   // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are a sub-agent start when the cache is a minute old, and every spawn
   resetPacing()
+  dashboardAnswered = false
   detach($, 'Usage pacing', primePacing($))
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
   // DX-4233: the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
@@ -2189,6 +2196,8 @@ function pacingEnv($: any) {
     within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
     call: (method: string, path: string, body?: object) => api($, method, path, body === undefined ? {} : { body }),
     reading: () => currentUsageBody($),
+    signedIn: async () => dashboardAnswered || isSignedIn(await read($, view)),
+    sleep: (ms: number) => $.clock.sleep(ms),
     toast: (text: string) => $.ui.toast(text),
   }
 }

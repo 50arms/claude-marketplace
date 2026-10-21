@@ -97,7 +97,7 @@ describe('the agent.spawn hook', () => {
     return d
   }
   // the toasts about pacing since `from` (a session start that reads a failing line toasts its own failure first)
-  const claimToasts = (d: any, from = 0) => d.toasts.slice(from).filter((t: string) => t.startsWith('Usage pacing could not be read'))
+  const claimToasts = (d: any, from = 0) => d.toasts.slice(from).filter((t: string) => t.startsWith('Usage pacing could not claim a slot'))
 
   test('denies on an over-pace verdict with the reason as the error, and starts nothing', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ level: 'over_pace', budget: 0 }) } })
@@ -285,7 +285,7 @@ describe('the agent.spawn hook', () => {
       const d = await session($, on, { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } })
       d.setMcp('refused')
       expect((await spawn($)).deny).toContain(BLOCKED_LINE)
-      expect(claimToasts(d)).toEqual([`Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): ${BLOCKED_LINE}`])
+      expect(claimToasts(d)).toEqual([`Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap): ${BLOCKED_LINE}`])
     })
 
     test('a call that never reached the server (status 0, no refusal) is told with its own reason', async ($, on) => {
@@ -294,6 +294,29 @@ describe('the agent.spawn hook', () => {
       expect((await spawn($)).deny).toContain('request timed out after 60000ms')
       expect(claimToasts(d)).toHaveLength(1)
       expect(claimToasts(d)[0]).toContain('mcp: danxbot: $.mcp.call: request timed out after 60000ms')
+    })
+  })
+
+  // DX-5593 (B1): whether a session is outside pacing is a fact about the session, never about the connection
+  describe('a session known to be signed in whose server cannot be reached is refused', () => {
+    test('the server drops after a good claim: the spawn is refused, one toast that says it was refused', async ($, on) => {
+      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+      const d = await session($, on, options)
+      expect((await spawn($)).deny).toBeUndefined()
+      options.mcp = 'down'
+      const r = await spawn($)
+      expect(r.deny).toMatch(/^Usage pacing: the spawn could not claim its slot/)
+      expect(r.deny).toContain('not reachable')
+      expect(claimToasts(d)).toHaveLength(1)
+      expect(claimToasts(d)[0]).not.toContain('not paced')
+      expect(d.claimsAllowed).toHaveLength(1)
+    })
+
+    test('the server drops before any claim, with the plan view loaded: refused', async ($, on) => {
+      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+      await session($, on, options)
+      options.mcp = 'down'
+      expect((await spawn($)).deny).toMatch(/^Usage pacing:/)
     })
   })
 
@@ -311,15 +334,20 @@ describe('the agent.spawn hook', () => {
       expect((await spawn($)).deny).toMatch(/critical/)
     })
 
-    test('the server going away after a good claim is still outside pacing, not a failure', async ($, on) => {
-      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
-      const d = await session($, on, options)
+    test('a server that never connects in the claim deadline: allowed, outside pacing (DX-5593 problem 2503, the operator has not decided)', async ($, on) => {
+      const d = await session($, on, { mcp: 'down' })
       expect((await spawn($)).deny).toBeUndefined()
-      options.mcp = 'down'
-      expect((await spawn($)).deny).toBeUndefined()
-      expect(claimToasts(d)).toEqual([])
+      expect(d.claimsAllowed).toEqual([])
+      expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
     })
 
+    test('a server that connects within the claim deadline is claimed against, not skipped', async ($, on) => {
+      const options: Parameters<typeof dashboard>[1] = { mcp: 'down', pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+      await session($, on, options)
+      const spawning = spawn($)
+      options.mcp = 'up'
+      expect((await spawning).deny).toMatch(/critical/)
+    })
     test('a signed-out session (never signed in, lapsed, revoked): allowed, nothing told', async ($, on) => {
       const d = await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
       d.world.signedOut = 'lapsed'
