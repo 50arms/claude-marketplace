@@ -367,6 +367,15 @@ describe('the agent.spawn hook', () => {
       expect(toasts).toEqual([])
     })
 
+    test('an error answer is told even before the session is known to be signed in: the server answered', async () => {
+      resetPacing()
+      const toasts: string[] = []
+      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: false, status: 500, body: { error: 'boom' } }), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+      await releaseClaim(env, 'c1')
+      expect(toasts).toHaveLength(1)
+      expect(toasts[0]).toContain('answered 500')
+    })
+
     test('a good give-back tells nothing', async ($, on) => {
       const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) } })
       await spawn($, { prompt: 'refuse' })
