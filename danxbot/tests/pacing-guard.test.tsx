@@ -6,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
-import { PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, resetPacing } from '../hooks/plan/pacing-line'
+import { PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
 import type { PacingVerdict } from '../types'
 import { BLOCKED_LINE } from '../hooks/plan/config'
@@ -338,6 +338,34 @@ describe('the agent.spawn hook', () => {
       expect((await spawn($, { prompt: 'refuse-and-drop' })).deny).toBe('host refused')
       expect(giveBackToasts(d)).toHaveLength(1)
       expect(giveBackToasts(d)[0]).toContain('not reachable')
+    })
+
+    test('a give-back that throws or times out, for a signed-in session, is told once per text', async () => {
+      for (const mode of ['throws', 'times out'] as const) {
+        resetPacing()
+        const toasts: string[] = []
+        const env: PacingEnv = {
+          now: () => Promise.resolve(0),
+          within: mode === 'times out' ? (_ms, _work, onTimeout) => onTimeout() : (_ms, work) => work,
+          call: mode === 'times out' ? () => new Promise<never>(() => {}) : () => Promise.reject(new Error('boom')),
+          reading: () => Promise.resolve(null),
+          signedIn: () => Promise.resolve(true),
+          sleep: () => Promise.resolve(),
+          toast: t => void toasts.push(t),
+        }
+        await releaseClaim(env, 'c1')
+        await releaseClaim(env, 'c1')
+        expect(toasts).toHaveLength(1)
+        expect(toasts[0]).toContain('until it lapses')
+      }
+    })
+
+    test('a give-back that throws for a signed-out session stays silent', async () => {
+      resetPacing()
+      const toasts: string[] = []
+      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.reject(new Error('boom')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+      await releaseClaim(env, 'c1')
+      expect(toasts).toEqual([])
     })
 
     test('a good give-back tells nothing', async ($, on) => {
