@@ -7,17 +7,23 @@ import type { RelayEvent } from './answer'
 // foreground turn used to hold the whole loop (polls, heartbeats, the sub-agents' stats that ride them) until that turn ended (live evidence: DX-5398
 // notes). Delivery being slow is normal while a turn runs; polling stopping is never.
 //
-// An event leaves the outbox when it is delivered, and only then does the stored resume cursor move to its cursor. The outbox is a module variable shared
-// by successive runs of one plan: a run that replaces a stuck one (the model's plan_connect, the stall watch) polls from the newest cursor still waiting
-// here, so an event in flight is neither asked for again nor delivered twice.
+// DX-5602: an event is DELIVERED the moment the engine call for it is made (`$.prompt.submit` / the note append): it leaves the outbox and the stored resume
+// cursor moves to its cursor then, not when the call's promise settles. The engine owns a queued prompt (measured, DX-5602 note 18703: it survives a reload of
+// the hook module and enters as its own turn later); only the promise the old module instance awaited is lost, and a prompt merged into a queued turn never
+// settles it. Waiting for the promise kept every event in the outbox for hours and sent the whole backlog again at each reload. The module instance that made
+// the call still watches its outcome: a refusal (`drop`, or a throw) puts the event back and issues it again (`again`, so its older cursor never moves the
+// stored one back). The outbox is a module variable shared by successive runs of one plan: a run that replaces a stuck one (the model's plan_connect, the
+// stall watch) polls from the newest cursor still waiting here, else from the stored one, so a delivered event is neither asked for again nor delivered twice.
 //
 // The poll's cursor ACKNOWLEDGES: the server (danxbot plan-events-relay.ts) drops every record at or below the cursor a call presents, so an event taken
 // and not yet delivered exists nowhere else once the next poll is made. A reload of the hook module empties the module variable, so each queued event is
-// also kept in the `relayOutbox` atom ($.state outlives a reload), written before the poll that acknowledges it and cleared when it is delivered
-// (`toPending`, `fromPending`). A reload therefore loses no event; it can issue again any event still in the atom (one issued and not yet delivered, including a note already appended behind a waiting prompt): a duplicate, never a loss. A new process has no
-// atom, and the server then resumes from the stored (delivered) cursor.
-// `done`: null until the event has been issued to the session, then the pending outcome of its delivery (null inside when delivered, else the cause).
-export type Queued = { planId: number | null; event: RelayEvent; done: Promise<string | null> | null }
+// also kept in the `relayOutbox` atom ($.state outlives a reload), written before the poll that acknowledges it and cleared when it is delivered, i.e. when
+// its engine call is made (`toPending`, `fromPending`). A reload therefore loses no event that was taken and not yet called for, and re-sends none that was:
+// the only window is the instant between the call and the write that records it (a duplicate there, never a loss). A new process has no atom, and the server
+// then resumes from the stored (delivered) cursor.
+// `done`: null while the event waits to be issued; on an event put back after a refusal, a placeholder held until the backoff has passed (it is not issued before).
+// `again`: it was delivered once and put back; its cursor is stored already, so issuing it again stores none.
+export type Queued = { planId: number | null; event: RelayEvent; done: Promise<string | null> | null; again?: true }
 
 // What a run on `planId` polls from: the cursor of the newest event of that plan still waiting for delivery, else the stored one.
 export function pollCursor(outbox: readonly Queued[], planId: number | null, stored: string | null): string | null {
@@ -34,11 +40,11 @@ export const isStalled = (now: number, beat: number, since: number, limitMs: num
 
 // The part of the outbox that survives a reload (the delivery promise does not).
 export const toPending = (outbox: readonly Queued[]): PendingEvent[] =>
-  outbox.map(q => ({ planId: q.planId, cursor: q.event.cursor, text: q.event.text, urgent: q.event.urgent }))
+  outbox.map(q => ({ planId: q.planId, cursor: q.event.cursor, text: q.event.text, urgent: q.event.urgent, ...(q.again === true ? { again: true as const } : {}) }))
 
 // The outbox of a run on `planId`, from what a reload found: nothing is issued yet, and another plan's events are not this run's.
 export const fromPending = (pending: readonly PendingEvent[], planId: number | null): Queued[] =>
-  pending.filter(p => p.planId === planId).map(p => ({ planId: p.planId, event: { cursor: p.cursor, text: p.text, urgent: p.urgent }, done: null }))
+  pending.filter(p => p.planId === planId).map(p => ({ planId: p.planId, event: { cursor: p.cursor, text: p.text, urgent: p.urgent }, done: null, ...(p.again === true ? { again: true as const } : {}) }))
 
 // A watch tick that ran more than twice its interval after the last one: the machine slept, and the wall clock moved while no timer did.
 export const isLateTick = (now: number, lastTickAt: number | null, intervalMs: number): boolean => lastTickAt !== null && now - lastTickAt > 2 * intervalMs

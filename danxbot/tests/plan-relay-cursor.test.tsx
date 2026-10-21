@@ -30,7 +30,7 @@ for (const surface of SURFACES) {
       expect(d.relay.calls.at(-1)?.cursor).toBe('m.5')
     })
 
-    test('a failed delivery does not advance it: polling goes on, the record is issued again after the backoff and delivered once', async ($, on) => {
+    test('a refused delivery is put back and the cursor stays where the call put it: polling goes on, the record is issued again after the backoff and delivered once', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       d.relay.push({ cursor: 'c5', text: 'one' })
@@ -38,7 +38,8 @@ for (const surface of SURFACES) {
       d.relay.rejectPrompts('the session is busy')
       d.relay.push({ cursor: 'c6', text: 'two' })
       await d.clock.settle()
-      expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c5' })
+      // DX-5602: delivered at the call, so the cursor moved though the session refused it; the refused record waits in $.state for its retry
+      expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c6' })
       d.relay.acceptPrompts()
       await d.clock.advance(1_000)
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] one', '[danxbot plan event] two'])
@@ -58,7 +59,8 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c5', text: 'five' }, { cursor: 'c6', text: 'six' }, { cursor: 'c7', text: 'seven' })
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] five'])
-      expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c5' })
+      // DX-5602: the cursor follows each call, in order (six and seven were called for and refused; they wait in $.state for the retry)
+      expect(d.stored.get(KEY)).toMatchObject({ cursor: 'c7' })
       // DX-5398: the batch is queued whole and the poll goes on from its newest record
       expect(d.relay.calls.at(-1)?.cursor).toBe('c7')
       d.relay.acceptPrompts()
