@@ -202,10 +202,10 @@ for (const surface of SURFACES) {
   })
 
   describe(`silence and failures on ${surface}`, () => {
-    test('a session not on a plan makes no report call on any activity event, and its tool results still carry the time stamp', async ($, on) => {
+    test('a session that is not signed in makes no report call on any activity event, and its tool results still carry the time stamp', async ($, on) => {
       on('tool.call', () => BACKGROUNDED as any)
       answerReportEvents(on)
-      const d = dashboard(on, { connected: false })
+      const d = dashboard(on, { signedOut: 'signed-out' })
       await startSession($, d, surface)
       await $.classic.SubagentStart(START)
       const r = await $.tool.call({ tool: 'Bash', command: 'sleep 9', run_in_background: true, agentId: 'a1b2c3' } as any)
@@ -216,6 +216,17 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.reports).toEqual([])
       expect(r.context).toHaveLength(1)
+    })
+
+    test("a signed-in session on no plan reports its sub-agents too: they are rows of the account's running-agent count (DX-5593)", async ($, on) => {
+      answerReportEvents(on)
+      const d = dashboard(on, { connected: false })
+      await startSession($, d, surface)
+      await d.clock.advance(3_000)
+      const now = d.clock.now()
+      await $.classic.SubagentStart(START)
+      await d.clock.settle()
+      expect(activityRows(d)).toEqual([agentRow('agent-a1b2c3', 'danxbot:worker-sonnet-high', now, null)])
     })
 
     test('a report the dashboard refuses, or one the engine cannot send, is one toast each, never swallowed', async ($, on) => {
@@ -273,7 +284,7 @@ for (const surface of SURFACES) {
       expect(activityRows(d).filter(r => r.finishedAt !== null).map(r => r.activityId)).toEqual(['agent-a1b2c3', 'bjlibh54w'])
     })
 
-    test('a revoked key is a session known to be off its plan: what it owed is dropped, nothing is posted, nothing toasts', async ($, on) => {
+    test('a revoked key is a session known to be off: what it owed is dropped, nothing is posted, nothing toasts', async ($, on) => {
       answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
@@ -288,7 +299,7 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter(t => t.includes('report failed'))).toEqual([])
     })
 
-    test("a sub-agent's end seen while off its plan forgets everything owed: back on the plan, the shell it had opened is never closed from here", async ($, on) => {
+    test("a sub-agent's end seen while its key is revoked forgets everything owed: back with a key, the shell it had opened is never closed from here", async ($, on) => {
       on('tool.call', () => BACKGROUNDED as any)
       answerReportEvents(on)
       const d = dashboard(on)
@@ -296,43 +307,43 @@ for (const surface of SURFACES) {
       await $.classic.SubagentStart(START)
       await $.tool.call({ tool: 'Bash', command: 'sleep 9', run_in_background: true } as any)
       await d.clock.settle()
-      d.world.planId = null
+      d.world.signedOut = 'revoked'
       await forceRefresh($, d)
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
-      d.world.planId = 23
+      d.world.signedOut = null
       await forceRefresh($, d)
       await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
       await d.clock.settle()
       expect(finishes(d)).toEqual([])
     })
 
-    test("a stop seen while off its plan forgets everything owed: back on the plan, the sub-agent's end posts nothing", async ($, on) => {
+    test("a stop seen while its key is revoked forgets everything owed: back with a key, the sub-agent's end posts nothing", async ($, on) => {
       on('tool.call', () => BACKGROUNDED as any)
       answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
       await $.classic.SubagentStart(START)
       await d.clock.settle()
-      d.world.planId = null
+      d.world.signedOut = 'revoked'
       await forceRefresh($, d)
       await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
-      d.world.planId = 23
+      d.world.signedOut = null
       await forceRefresh($, d)
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
       await d.clock.settle()
       expect(finishes(d)).toEqual([])
     })
 
-    test("a main-session Stop seen while off its plan forgets everything owed: back on the plan, the sub-agent's end posts nothing", async ($, on) => {
+    test("a main-session Stop seen while its key is revoked forgets everything owed: back with a key, the sub-agent's end posts nothing", async ($, on) => {
       answerReportEvents(on)
       const d = dashboard(on)
       await startSession($, d, surface)
       await $.classic.SubagentStart(START)
       await d.clock.settle()
-      d.world.planId = null
+      d.world.signedOut = 'revoked'
       await forceRefresh($, d)
       await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
-      d.world.planId = 23
+      d.world.signedOut = null
       await forceRefresh($, d)
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
       await d.clock.settle()
@@ -355,7 +366,7 @@ for (const surface of SURFACES) {
       expect(activityRows(d).map(r => r.activityId)).toEqual(['agent-a1b2c3'])
     })
 
-    test('a session that leaves its plan while a sub-agent runs drops what it owed: the dashboard takes no report from a session on no plan, so nothing is posted and nothing toasts', async ($, on) => {
+    test('a session whose key is revoked while a sub-agent runs drops what it owed: the dashboard takes no report from it, so nothing is posted and nothing toasts', async ($, on) => {
       on('tool.call', () => BACKGROUNDED as any)
       answerReportEvents(on)
       const d = dashboard(on)
@@ -363,7 +374,7 @@ for (const surface of SURFACES) {
       await $.classic.SubagentStart(START)
       await $.tool.call({ tool: 'Bash', command: 'sleep 9', run_in_background: true } as any)
       await d.clock.settle()
-      d.world.planId = null
+      d.world.signedOut = 'revoked'
       await forceRefresh($, d)
       const before = d.reports.length
       await $.turn.complete({ ...TURN, agentId: 'a1b2c3' })
