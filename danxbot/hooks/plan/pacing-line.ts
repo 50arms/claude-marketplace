@@ -116,16 +116,6 @@ let inflight: Promise<void> | null = null
 // bumped by every reset: a read that was in flight across one must not write the new session's state
 let generation = 0
 
-// RESERVATIONS: danxbot's running count is as of its last tick, so a spawn the guard let through is held as a reservation that adds one to
-// the count a later spawn is judged against, which holds a burst (inside one turn, or across a refresh) to the budget. A refresh does NOT
-// clear them: it cannot tell which spawns its count already includes. Each lives RESERVATION_TTL_MS, the time the engine needs to report a
-// started sub-agent (the usage report cadence, up to ~60 s) plus one cache refresh (60 s) plus slack, after which the live count is the
-// truth. Until then a read may count a started sub-agent twice (its own and its reservation): that errs towards refusing, for at most the TTL.
-// Each reservation has its own id, so a host-refused spawn gives back only ITS slot.
-export const RESERVATION_TTL_MS = 3 * 60_000
-const reservations = new Map<number, number>()
-let nextReservation = 1
-
 export function resetPacing(): void {
   generation++
   cache = null
@@ -133,7 +123,6 @@ export function resetPacing(): void {
   hasSucceeded = false
   lastError = null
   inflight = null
-  reservations.clear()
 }
 
 // One toast per distinct failure text, for every failure pacing has (a read, the clock, a hook error).
@@ -205,29 +194,61 @@ export async function refreshPacing(env: PacingEnv, force = false): Promise<void
   }
 }
 
-function liveReservations(nowMs: number): number {
-  for (const [id, at] of reservations) if (nowMs - at >= RESERVATION_TTL_MS) reservations.delete(id)
-  return reservations.size
-}
-
-// SYNCHRONOUS: the session's pacing at `nowMs` (null when unknown or expired), its running count raised by the live reservations. A failed
-// read dropped the answer (no verdict). No await: a caller that reads this and then calls reserveSlot with no await
-// between them reserves atomically, whatever the host's concurrency.
+// SYNCHRONOUS: the session's pacing at `nowMs` (null when unknown or expired), as last read. A failed read dropped the answer (no verdict).
+// DX-5593: the count in it is danxbot's live count; the plugin keeps no count of its own (no reservations, no local agent list).
 export function peekPacing(nowMs: number): Pacing | null {
   if (cache === null || cache.pacing === null || nowMs - cache.fetchedAt > PACING_EXPIRY_MS) return null
-  return { ...cache.pacing, verdict: { ...cache.pacing.verdict, runningAgents: cache.pacing.verdict.runningAgents + liveReservations(nowMs) } }
+  return cache.pacing
 }
 
-// Hold a slot for a spawn the guard is letting through; the id gives back exactly this slot (releaseSlot).
-export function reserveSlot(nowMs: number): number {
-  const id = nextReservation++
-  reservations.set(id, nowMs)
-  return id
+// DX-5593: the spawn claim. The budget is a STRICT cap and the one count lives in danxbot, so a spawn takes its slot there, atomically
+// (POST /api/pacing/agents/claim: the same body as the line plus {claimed, claim_id}); the plugin decides nothing from a count it holds.
+// `unknown`: danxbot sees no account to cap (allow, nothing claimed). `failed`: the claim could not be made (unreachable server, deadline,
+// error answer, malformed answer) and the spawn is REFUSED: an allowed spawn there would be an agent nobody counted.
+export const CLAIM_PATH = '/api/pacing/agents/claim'
+export type Claim =
+  | { kind: 'claimed'; pacing: Pacing; claimId: string }
+  | { kind: 'refused'; pacing: Pacing }
+  | { kind: 'unknown' }
+  | { kind: 'failed'; failure: string }
+
+export function parseClaim(body: any): Claim {
+  const pacing = parsePacing(body)
+  if (pacing === null) return body.claimed === false && body.claim_id === null ? { kind: 'unknown' } : { kind: 'failed', failure: 'the claim answer has no valid outcome' }
+  if ('error' in pacing) return { kind: 'failed', failure: pacing.error }
+  if (body.claimed === true && typeof body.claim_id === 'string' && body.claim_id !== '') return { kind: 'claimed', pacing, claimId: body.claim_id }
+  if (body.claimed === false && body.claim_id === null) return { kind: 'refused', pacing }
+  return { kind: 'failed', failure: 'the claim answer has no valid outcome' }
 }
 
-// The spawn did not start after all: give back its own slot, and nobody else's (a no-op once it has expired).
-export function releaseSlot(id: number): void {
-  reservations.delete(id)
+// One deadline-bound claim. Never rejects. A good answer also replaces the cache, so the sub-agent's pacing line is the one the claim saw.
+export async function claimSlot(env: PacingEnv): Promise<Claim> {
+  try {
+    const at = await env.now()
+    const r = await env.within<Api | typeof TIMED_OUT>(PACING_READ_DEADLINE_MS, env.call('POST', CLAIM_PATH), () => TIMED_OUT)
+    if (r === TIMED_OUT) return { kind: 'failed', failure: `the spawn claim took longer than its ${PACING_READ_DEADLINE_MS} ms deadline` }
+    if (r.unreachable) return { kind: 'failed', failure: 'the danx-dashboard MCP server is not reachable from this session' }
+    if (!r.ok) return { kind: 'failed', failure: r.status === 0 ? errText(r) : `the spawn claim answered ${r.status}` }
+    const claim = parseClaim(r.body)
+    if (claim.kind === 'claimed' || claim.kind === 'refused') {
+      cache = { pacing: claim.pacing, fetchedAt: at }
+      hasSucceeded = true
+      lastError = null
+    }
+    return claim
+  } catch (err: any) {
+    return { kind: 'failed', failure: String(err?.message ?? err) }
+  }
+}
+
+// The claim given back: the host refused the spawn after the slot was taken. Best effort and never rejects (a claim not given back lapses
+// in danxbot within the minute).
+export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
+  try {
+    await env.within(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
+  } catch {
+    /* the claim lapses in danxbot */
+  }
 }
 
 // The sub-agent's pacing line, null when danxbot has none for this session. Never rejects.
