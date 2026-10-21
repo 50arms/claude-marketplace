@@ -1,5 +1,6 @@
 import { errText } from './load'
 import type { Api } from './load'
+import { isSignedOut } from './mcp'
 
 // DX-4340 (PLAN-29 section 3): the ONE pacing cache. danxbot serves the calling session's own account's verdict, and the one-sentence line
 // a new sub-agent is handed, at GET /api/pacing/line (the account is placed server-side from the x-danx-session-id header the dashboard
@@ -203,8 +204,9 @@ export function peekPacing(nowMs: number): Pacing | null {
 
 // DX-5593: the spawn claim. The budget is a STRICT cap and the one count lives in danxbot, so a spawn takes its slot there, atomically
 // (POST /api/pacing/agents/claim: the same body as the line plus {claimed, claim_id}); the plugin decides nothing from a count it holds.
-// `unknown`: danxbot sees no account to cap (allow, nothing claimed). `failed`: the claim could not be made (unreachable server, deadline,
-// error answer, malformed answer) and the spawn is REFUSED: an allowed spawn there would be an agent nobody counted.
+// `unknown`: danxbot sees no account to cap, or the session is outside pacing altogether (no danx-dashboard MCP server, or signed out): allow,
+// nothing claimed, because danxbot counts no agent of a session it does not know. `failed`: a SIGNED-IN session's claim could not be made
+// (deadline, error answer, malformed answer) and the spawn is REFUSED: an allowed spawn there would be an agent nobody counted (DX-5593 note 18330).
 export const CLAIM_PATH = '/api/pacing/agents/claim'
 export type Claim =
   | { kind: 'claimed'; pacing: Pacing; claimId: string }
@@ -227,7 +229,8 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
     const at = await env.now()
     const r = await env.within<Api | typeof TIMED_OUT>(PACING_READ_DEADLINE_MS, env.call('POST', CLAIM_PATH), () => TIMED_OUT)
     if (r === TIMED_OUT) return { kind: 'failed', failure: `the spawn claim took longer than its ${PACING_READ_DEADLINE_MS} ms deadline` }
-    if (r.unreachable) return { kind: 'failed', failure: 'the danx-dashboard MCP server is not reachable from this session' }
+    // outside pacing: danxbot counts none of this session's agents, so there is no cap to hold its spawns to
+    if (r.unreachable || isSignedOut(r)) return { kind: 'unknown' }
     if (!r.ok) return { kind: 'failed', failure: r.status === 0 ? errText(r) : `the spawn claim answered ${r.status}` }
     const claim = parseClaim(r.body)
     if (claim.kind === 'claimed' || claim.kind === 'refused') {

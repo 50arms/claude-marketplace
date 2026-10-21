@@ -268,12 +268,14 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter(t => t === OLDER_DASHBOARD_LINE)).toEqual([])
     })
 
-    test('a session not on a plan reads nothing and its stop is never blocked', async ($, on) => {
+    test('a session not on a plan finds no plan to read cards of, and its stop is never blocked', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.readyRows[BOARD] = [card()]
       expect((await $.classic.Stop(STOP)).block).toBeUndefined()
       await d.clock.settle()
-      expect(d.reports).toEqual([])
+      // DX-5593: a signed-in session on no plan is reported on like any other, so the check runs: it asks for the pause and the plan, is told there is none,
+      // and reads no card
+      expect(d.reports.map(r => `${r.method} ${r.path}`)).toEqual(['GET /api/plan-sessions/me/pause', 'GET /api/plans/mine'])
     })
   })
 }
