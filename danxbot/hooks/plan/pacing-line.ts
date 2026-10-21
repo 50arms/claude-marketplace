@@ -1,6 +1,7 @@
 import { errText } from './load'
 import type { Api } from './load'
 import { isSignedOut } from './mcp'
+import type { UsageBody } from './usage'
 
 // DX-4340 (PLAN-29 section 3): the ONE pacing cache. danxbot serves the calling session's own account's verdict, and the one-sentence line
 // a new sub-agent is handed, at GET /api/pacing/line (the account is placed server-side from the x-danx-session-id header the dashboard
@@ -27,13 +28,16 @@ const LIMIT_KEYS: readonly PacingLimitKey[] = ['five_hour', 'weekly', 'spend']
 // `readout` (DX-4656) is the server's per-limit state and headroom with its worst limit, exactly as answered.
 export type Pacing = { verdict: PacingVerdict; line: string; spend: SpendFigure | null; readout: PacingReadout }
 
-export type PacingCall = (method: string, path: string) => Promise<Api>
+export type PacingCall = (method: string, path: string, body?: object) => Promise<Api>
 // The engine calls pacing makes, as closures built in register.tsx (the engine follows `$` only into a function in that file).
 // `within` is the plugin's one deadline helper (register.tsx `withinDeadline`): `work`'s answer, or `late()` when `ms` pass first.
 export type PacingEnv = {
   now: () => Promise<number>
   within: <T>(ms: number, work: Promise<T>, late: () => T) => Promise<T>
   call: PacingCall
+  // DX-5593: the session's latest usage reading as the usage report's body, or null when it has none (a session off a subscription, a reading that
+  // fails). The spawn claim carries it. Never rejects.
+  reading: () => Promise<UsageBody | null>
   toast: (text: string) => void
 }
 
@@ -227,7 +231,16 @@ export function parseClaim(body: any): Claim {
 export async function claimSlot(env: PacingEnv): Promise<Claim> {
   try {
     const at = await env.now()
-    const r = await env.within<Api | typeof TIMED_OUT>(PACING_READ_DEADLINE_MS, env.call('POST', CLAIM_PATH), () => TIMED_OUT)
+    // DX-5593 (N2): the claim carries the session's latest reading, the body of the usage report, and danxbot stores it under the claim's own lock before
+    // judging the claim. The first report goes out fire-and-forget (and not at all while the plan view loads), so a new session's first spawns would
+    // otherwise meet a session danxbot has not placed on its account: unknown, allowed, nothing claimed. One request, no ordering against the report.
+    let usage: UsageBody | null = null
+    try {
+      usage = await env.reading()
+    } catch {
+      /* a reading that cannot be taken is sent without: the claim is judged on what danxbot already holds */
+    }
+    const r = await env.within<Api | typeof TIMED_OUT>(PACING_READ_DEADLINE_MS, env.call('POST', CLAIM_PATH, usage === null ? undefined : { usage }), () => TIMED_OUT)
     if (r === TIMED_OUT) return { kind: 'failed', failure: `the spawn claim took longer than its ${PACING_READ_DEADLINE_MS} ms deadline` }
     // outside pacing: danxbot counts none of this session's agents, so there is no cap to hold its spawns to
     if (r.unreachable || isSignedOut(r)) return { kind: 'unknown' }

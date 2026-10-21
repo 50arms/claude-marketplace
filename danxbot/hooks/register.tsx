@@ -69,6 +69,7 @@ import type { Queued } from './relay/outbox'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
+import type { UsageBody } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
@@ -2186,8 +2187,22 @@ function pacingEnv($: any) {
   return {
     now: () => $.clock.now(),
     within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
-    call: (method: string, path: string) => api($, method, path),
+    call: (method: string, path: string, body?: object) => api($, method, path, body === undefined ? {} : { body }),
+    reading: () => currentUsageBody($),
     toast: (text: string) => $.ui.toast(text),
+  }
+}
+
+// DX-5593 (N2): the session's usage reading right now, as the usage report's body, for the spawn claim to carry. A spawn is a model tool call, so the
+// harness holds windows from an API response by then; `measuredAt` (the last response the main thread's measure event saw) may not be set yet in a
+// session's very first turn, and the reading is then measured now. Null when the reading fails or has no window; never rejects.
+async function currentUsageBody($: any): Promise<UsageBody | null> {
+  try {
+    const now = await $.clock.now()
+    const limits = (await $.session.usage()).rateLimits
+    return usageBody(limits, now, (await read($, measuredAt)) ?? now, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+  } catch {
+    return null
   }
 }
 
