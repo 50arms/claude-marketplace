@@ -37,8 +37,10 @@ handoffs, blockers; card comment = talking with a person (a reply to what they w
 asked); problem on the card it concerns = user question; steps a person must perform (a
 live check, a manual task) = an `action` problem whose solution steps are the procedure,
 each with a short title and a description saying where (exact link), what to do and what to
-look for, never an AC checklist; plan note = real milestone; remove a wrong-plan card from
-the plan; rename a stale plan.
+look for, never an AC checklist, and opened only once the step is safe to do now (people act
+on a problem the moment they see it, so a step that must wait on other work is opened when
+that work is done, never early with "once X" in its text); plan note = real milestone; remove
+a wrong-plan card from the plan; rename a stale plan.
 
 ## The user
 
