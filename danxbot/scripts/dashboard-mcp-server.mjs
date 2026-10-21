@@ -6,17 +6,21 @@
 // process, into the plugin data dir; the package's own `dist/index.js` is then run with plain `node`, never a cold
 // `npx -y`). Nothing here runs bash or any shell (DX-4235).
 //
-// WHICH VERSION (DX-4235, DX-5314). The server starts at once from the RECORDED version (installed first if it is not; resolved
-// from the registry and recorded only when nothing is recorded). Right after, the launcher starts the REFRESH as a DETACHED child
-// (`node dashboard-mcp-server.mjs --run-refresh <version>`, node only, no shell) that outlives the launcher: it records the registry's
-// `latest` and installs that version, never restarting the running server, so a publish is adopted at the next session start with
-// no added start latency. A launcher that exits early (a probe, a session that ends within seconds) no longer kills a refresh, which
-// needs several seconds: DX-5314 found the record stuck three versions behind because every launcher since the last full refresh was
-// short-lived. The refresh child installs into its own staging directory (installVersion makes a fresh one per install) and leases the
-// version the launcher ran for as long as it runs. A refresh that fails or is stopped appends ONE line to ${CLAUDE_PLUGIN_DATA}/dashboard-mcp/refresh.log (the child holds none of the launcher's stdio) that the next launcher prints to its stderr, and the record stays
-// as it was. Then installs no live process runs are pruned (their own line on failure). The launcher leases the version it runs for
-// as long as it runs, so another session's prune never removes it. The launcher exits when the server does, without waiting for the
-// refresh.
+// WHICH VERSION (DX-4235, DX-5075, DX-5314). Before the server starts, the launcher starts the REFRESH as a DETACHED child
+// (`node dashboard-mcp-server.mjs --run-refresh <recorded version>`, node only, no shell) and waits for it up to START_WAIT_MS
+// (22 s, under Claude Code's 30 s MCP start limit). The refresh records the registry's `latest` and installs it (an install that
+// is already there is skipped), so a session started after a danxbot publish runs that publish. DX-5075: the refresh used to start
+// only after the server, so the first session after a publish ran the version the previous refresh had recorded, one release
+// behind; 0.1.300 predates the advisory dedupe by id and repeated a stored pacing message three times. When the refresh settles in
+// time with a new version, that version runs; when it fails, or is not done in time, the RECORDED version runs. A refresh still
+// running at that point goes on in the background: it outlives this launcher (DX-5314: a launcher that exits early no longer kills a
+// refresh, which needs several seconds; the record was stuck three versions behind while only short launchers ran), and the running
+// server is never restarted. The refresh child installs into its own staging directory and leases the version the launcher ran for as
+// long as it runs. A refresh that fails or is stopped appends ONE line to ${CLAUDE_PLUGIN_DATA}/dashboard-mcp/refresh.log (the child holds
+// none of the launcher's stdio); the launcher prints that log to its stderr once the start's wait is over, so a failure is never silent.
+// Then installs no live process runs are pruned (their own line on failure). The launcher leases the version it runs for as long as
+// it runs, so another session's prune never removes it. The launcher exits when the server does, without waiting for a refresh still
+// running in the background.
 //
 // WHICH DASHBOARD. `dashboardUrl(env)`: DANXBOT_DASHBOARD_URL when set (the user's shell, or an `env`
 // block in a repo's committed `.claude/settings.json`, which is the per-repo or per-company override),
@@ -32,13 +36,34 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendRefreshLog, drainRefreshLog, keptLine, leaseVersion, oneLine, pruneInstalls, refreshInstall, startVersion } from "./lib/dashboard-mcp-package.mjs";
+import {
+  dataDirOf,
+  drainRefreshLog,
+  installedBin,
+  keptLine,
+  leaseVersion,
+  oneLine,
+  pruneInstalls,
+  recordedVersionOrNull,
+  refreshInstall,
+  startVersion,
+  appendRefreshLog,
+} from "./lib/dashboard-mcp-package.mjs";
 
 const PREFIX = "[danxbot dashboard MCP]";
 
 /** DX-5314: the argument that makes this script the detached refresh child instead of the server launcher. */
 export const REFRESH_FLAG = "--run-refresh";
 const SELF = fileURLToPath(import.meta.url);
+
+/**
+ * DX-5075: how long a start waits for the refresh (the registry check and the install of a newer version) before it starts the recorded
+ * one. Under Claude Code's 30 s MCP start limit; a first install after a publish took ~18 s on this machine with three sessions installing
+ * at once, so a slower one is finished by the background refresh and adopted at the next start.
+ */
+export const START_WAIT_MS = 22_000;
+/** The tests' seam, like `DASHBOARD_MCP_REGISTRY_TIMEOUT_MS`: bounds the start's wait so a hang test does not wait START_WAIT_MS out. */
+export const START_WAIT_ENV = "DASHBOARD_MCP_START_WAIT_MS";
 
 /** The dashboard this session talks to: an explicit DANXBOT_DASHBOARD_URL, else the plugin's configured value. */
 export function dashboardUrl(env) {
@@ -48,40 +73,69 @@ export function dashboardUrl(env) {
 }
 
 /**
- * Starts the server and, once it is running, the detached refresh child. `onServer(run)` is called as soon as the server process is
- * spawned, before anything else can happen to it. Returns `run`: `{child, version, release, refreshChild}`. `release` ends the lease
- * on `version` (the exit calls it). `refreshChild` is the detached refresh process (`unref`ed: it outlives this one); a refresh that
- * cannot even start writes its one line to `stderr`. Throws when the server cannot start (no dashboard URL, no version, a failed
- * install). Seams: `spawnFn` (npm, the server and the refresh child), `fetchFn` (the registry, for a start with no record), and
- * `installVersion`'s `npm` / `installTimeoutMs`.
+ * DX-5075 + DX-5314: the refresh, run as a detached child started with the recorded version, waited for up to `waitMs`. Resolves `true`
+ * when the child recorded a version (exit 0), `false` when it failed, could not start, or was not done in time (it then goes on in the
+ * background: unref'd, never stopped here). A failure to start writes its one line to `stderr` now; any other failure's line is in
+ * refresh.log, which the caller drains once this has settled.
  */
-export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fetch, stderr = process.stderr, onServer = () => {}, ...installOptions } = {}) {
+async function refreshBeforeStart(recorded, { env, spawnFn, stderr, waitMs, timers }) {
+  const refreshFailed = (err) => stderr.write(`${PREFIX} ${keptLine(`could not start the refresh: ${oneLine(err.message)}`, recorded)}\n`);
+  let child;
+  try {
+    // ALL its stdio is ignored: it holds no pipe of ours open (the MCP transport may wait for stderr to close).
+    child = spawnFn(process.execPath, [SELF, REFRESH_FLAG, recorded], { env, detached: true, stdio: "ignore", windowsHide: true });
+  } catch (err) {
+    refreshFailed(err);
+    return { child: undefined, ok: false };
+  }
+  const outcome = await new Promise((resolve) => {
+    const timer = timers.setTimeout(() => resolve(false), waitMs);
+    const settle = (value) => {
+      timers.clearTimeout(timer);
+      resolve(value);
+    };
+    child.on("exit", (code) => settle(code === 0));
+    child.on("error", (err) => {
+      refreshFailed(err);
+      settle(false);
+    });
+  });
+  child.unref?.();
+  return { child, ok: outcome };
+}
+
+/**
+ * Starts the server on the registry's `latest` when the refresh settles in time (DX-5075), else on the recorded version. `onServer(run)`
+ * is called as soon as the server process is spawned, before anything else can happen to it. Returns `run`: `{child, version, release,
+ * refreshChild}`. `release` ends the lease on `version` (the exit calls it). `refreshChild` is the detached refresh process (`unref`ed:
+ * it outlives this launcher). Throws when the server cannot start (no dashboard URL, no version, a failed install). Seams: `spawnFn`
+ * (npm, the server and the refresh child), `fetchFn` (the registry), `stderr`, `startWaitMs` (else START_WAIT_ENV), `timers` ({setTimeout, clearTimeout}: the start's wait, so a test fires it at a chosen moment), and `installVersion`'s
+ * `npm` / `installTimeoutMs`.
+ */
+export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fetch, stderr = process.stderr, onServer = () => {}, startWaitMs, timers = { setTimeout, clearTimeout }, ...installOptions } = {}) {
   const url = dashboardUrl(env);
+  const waitMs = startWaitMs ?? (Number(env[START_WAIT_ENV]) > 0 ? Number(env[START_WAIT_ENV]) : START_WAIT_MS);
   const options = { env, spawnFn, fetchFn, ...installOptions };
-  const { version, bin } = await startVersion(options);
-  // DX-5314: what the detached refresh of an earlier launcher could not say (it holds no stderr of ours) surfaces here, at the next start (after the version is known to start, so a launcher that cannot start says only why), so a failure is never silent.
+  // the recorded version, installed (or, with no record, resolved from the registry and recorded): what a start falls back to
+  const started = await startVersion(options);
+  const { child: refreshChild, ok: refreshed } = await refreshBeforeStart(started.version, { env, spawnFn, stderr, waitMs, timers });
+  // DX-5314: what a refresh could not say itself (it holds no stderr of ours) is printed here, after the version is known to start, so a
+  // failure is never silent. A refresh still running in the background writes its line later, and the next start prints it.
   try {
     const earlier = drainRefreshLog(env);
     if (earlier !== "") stderr.write(earlier.endsWith("\n") ? earlier : `${earlier}\n`);
   } catch (err) {
-    stderr.write(`${PREFIX} could not read the earlier refresh's log (${oneLine(err.message)})\n`);
+    stderr.write(`${PREFIX} could not read the refresh's log (${oneLine(err.message)})\n`);
   }
+  // the refresh installs the newer version before it records it, so a recorded version other than the one started is installed
+  const latest = refreshed ? recordedVersionOrNull(env) : null;
+  const { version, bin } = latest !== null && latest !== started.version ? { version: latest, bin: installedBin(dataDirOf(env), latest) } : started;
   const serverEnv = { ...env, DANXBOT_DASHBOARD_URL: url };
   // A dispatch's credential declaration (it often names the LOCAL dev dashboard) must never reach the hosted one (DX-2483).
   delete serverEnv.DANX_DASHBOARD_CREDENTIAL;
   const release = leaseVersion(version, { env });
-  const run = { child: spawnFn(process.execPath, [bin], { env: serverEnv, stdio: "inherit" }), version, release, refreshChild: null };
+  const run = { child: spawnFn(process.execPath, [bin], { env: serverEnv, stdio: "inherit" }), version, release, refreshChild: refreshChild ?? null };
   onServer(run);
-  // DX-4235: the refresh starts only after the server has, so no registry request delays a session start.
-  // DX-5314: detached, so it finishes when this launcher exits first. ALL its stdio is ignored: it holds no pipe of ours open (the MCP transport may wait for stderr to close). Its one failure line goes to refresh.log; the next launcher prints it.
-  const refreshFailed = (err) => stderr.write(`${PREFIX} ${keptLine(`could not start the refresh: ${oneLine(err.message)}`, version)}\n`);
-  try {
-    run.refreshChild = spawnFn(process.execPath, [SELF, REFRESH_FLAG, version], { env, detached: true, stdio: "ignore", windowsHide: true });
-    run.refreshChild.on("error", refreshFailed);
-    run.refreshChild.unref();
-  } catch (err) {
-    refreshFailed(err);
-  }
   return run;
 }
 
@@ -143,8 +197,8 @@ function fail(reason) {
 }
 
 /**
- * The server's exit is the launcher's: its code, or 1 when it was killed. The lease is released and the launcher exits at once; the
- * detached refresh child is not waited for and not stopped (DX-5314).
+ * The server's exit is the launcher's: its code, or 1 when it was killed. The lease is released and the launcher exits at once; a refresh
+ * still running in the background is not waited for and not stopped (DX-5314).
  */
 function wireServer(run) {
   const { child } = run;

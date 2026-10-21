@@ -11,7 +11,8 @@ const gate = process.env.FAKE_NPM_GATE;
 function lay() {
   const bin = path.join(stage, "node_modules", "@thehammer", "danx-dashboard-mcp", "dist", "index.js");
   fs.mkdirSync(path.dirname(bin), { recursive: true });
-  fs.writeFileSync(bin, `installed ${args.at(-1)}`);
+  // a runnable stand-in server that reports the version it is (the spec is <package>@<version>)
+  fs.writeFileSync(bin, `process.stdout.write("ran ${args.at(-1).split("@").at(-1)}"); process.exit(3);`);
   process.exit(0);
 }
 
