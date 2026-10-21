@@ -11,7 +11,9 @@
    call it found or the cause. Mark the rest UNVERIFIED. Before building
    a design, run the experiment that could kill it.
 3. **Decide, don't wait.** Reversible → decide, do it, write an agent note, and
-   continue. An important architectural choice, ambiguous intent with
+   continue. This holds only while you work on your own: while the person is
+   talking a choice through with you, it is theirs, so lay out the options and
+   wait until you have agreed on one. An important architectural choice, ambiguous intent with
    downstream impact, anything that changes the card's direction, or an action
    only a person can take becomes a problem, with solutions, on the card it
    concerns (no card fits → file one), never a question in the session.
