@@ -89,7 +89,11 @@ describe('the agent.spawn hook', () => {
   async function session($: any, on: any, options: Parameters<typeof dashboard>[1] = {}) {
     resetPacing()
     // the engine's own answer beneath the guard: a started sub-agent, or the host refusing (prompt 'refuse')
-    on('agent.spawn', async (_$: any, e: any) => (e.prompt === 'refuse' ? { deny: 'host refused' } : { model: e.model ?? 'parent-model', agentId: 'new' }) as any)
+    // (prompt 'refuse-and-drop': the host refuses and the danx-dashboard server drops before the claim is given back)
+    on('agent.spawn', async (_$: any, e: any) => {
+      if (e.prompt === 'refuse-and-drop') options.mcp = 'down'
+      return (e.prompt === 'refuse' || e.prompt === 'refuse-and-drop' ? { deny: 'host refused' } : { model: e.model ?? 'parent-model', agentId: 'new' }) as any
+    })
     on('tool.call', () => ({ result: {}, text: 'ran', isError: false }) as any)
     on('classic.SubagentStart', () => ({}) as any)
     const d = dashboard(on, options)
@@ -98,6 +102,7 @@ describe('the agent.spawn hook', () => {
   }
   // the toasts about pacing since `from` (a session start that reads a failing line toasts its own failure first)
   const claimToasts = (d: any, from = 0) => d.toasts.slice(from).filter((t: string) => t.startsWith('Usage pacing could not claim a slot'))
+  const giveBackToasts = (d: any) => d.toasts.filter((t: string) => t.startsWith('Usage pacing could not give back a claimed slot'))
 
   test('denies on an over-pace verdict with the reason as the error, and starts nothing', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ level: 'over_pace', budget: 0 }) } })
@@ -297,6 +302,66 @@ describe('the agent.spawn hook', () => {
     })
   })
 
+  // DX-5593 (C1): a claim the host's refusal gives back is told when the give-back fails; the 60 s lapse in danxbot stays the recovery
+  describe('a claim that cannot be given back is told once per text, never silently', () => {
+    test('an error answer (400): the host refusal still stands, told once however many repeat it', async ($, on) => {
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) }, claimRelease: { status: 400 } })
+      expect((await spawn($, { prompt: 'refuse' })).deny).toBe('host refused')
+      expect((await spawn($, { prompt: 'refuse' })).deny).toBe('host refused')
+      expect(giveBackToasts(d)).toHaveLength(1)
+      expect(giveBackToasts(d)[0]).toContain('answered 400')
+      expect(claimToasts(d)).toEqual([])
+    })
+
+    test('an error answer (500) is told once too, and a different text is told again', async ($, on) => {
+      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) }, claimRelease: { status: 500 } }
+      const d = await session($, on, options)
+      await spawn($, { prompt: 'refuse' })
+      await spawn($, { prompt: 'refuse' })
+      expect(giveBackToasts(d)).toHaveLength(1)
+      expect(giveBackToasts(d)[0]).toContain('answered 500')
+      options.claimRelease = { status: 400 }
+      await spawn($, { prompt: 'refuse' })
+      expect(giveBackToasts(d)).toHaveLength(2)
+    })
+
+    test('{released:false} (a claim danxbot no longer holds) is normal: nothing is told', async ($, on) => {
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) }, claimRelease: { body: { released: false } } })
+      expect((await spawn($, { prompt: 'refuse' })).deny).toBe('host refused')
+      expect(d.claimsReleased).toHaveLength(1)
+      expect(giveBackToasts(d)).toEqual([])
+    })
+
+    test('an unreachable server of a signed-in session is told once', async ($, on) => {
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) } })
+      expect((await spawn($, { prompt: 'refuse-and-drop' })).deny).toBe('host refused')
+      expect(giveBackToasts(d)).toHaveLength(1)
+      expect(giveBackToasts(d)[0]).toContain('not reachable')
+    })
+
+    test('a good give-back tells nothing', async ($, on) => {
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) } })
+      await spawn($, { prompt: 'refuse' })
+      expect(d.claimsReleased).toHaveLength(1)
+      expect(giveBackToasts(d)).toEqual([])
+    })
+  })
+
+  // a refusal told once is told again when it comes back after a good claim
+  test('a good claim resets the once-per-text rule of the claim toasts', async ($, on) => {
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+    const d = await session($, on, options)
+    options.pacingLine = { status: 500 }
+    expect((await spawn($)).deny).toMatch(/answered 500/)
+    expect((await spawn($)).deny).toMatch(/answered 500/)
+    expect(claimToasts(d)).toHaveLength(1)
+    options.pacingLine = { body: wire({ budget: 12, running_agents: 5 }) }
+    expect((await spawn($)).deny).toBeUndefined()
+    options.pacingLine = { status: 500 }
+    expect((await spawn($)).deny).toMatch(/answered 500/)
+    expect(claimToasts(d)).toHaveLength(2)
+  })
+
   // DX-5593 (B1): whether a session is outside pacing is a fact about the session, never about the connection
   describe('a session known to be signed in whose server cannot be reached is refused', () => {
     test('the server drops after a good claim: the spawn is refused, one toast that says it was refused', async ($, on) => {
@@ -312,6 +377,19 @@ describe('the agent.spawn hook', () => {
       expect(d.claimsAllowed).toHaveLength(1)
     })
 
+    // the session-start read failed, so no read or claim has succeeded: only the plan view says the session is signed in (`env.signedIn()`)
+    test('the session-start pacing read failed, the session is signed in, and the server then drops: refused, not looked for again', async ($, on) => {
+      const options: Parameters<typeof dashboard>[1] = { pacingLine: { status: 500 } }
+      const d = await session($, on, options)
+      options.mcp = 'down'
+      const pending = spawn($)
+      await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
+      const r = await pending
+      expect(r.deny).toMatch(/^Usage pacing: the spawn could not claim its slot/)
+      expect(r.deny).toContain('not reachable')
+      expect(d.claimsAllowed).toEqual([])
+    })
+
     test('the server drops before any claim, with the plan view loaded: refused', async ($, on) => {
       const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
       await session($, on, options)
@@ -322,13 +400,18 @@ describe('the agent.spawn hook', () => {
 
   // outside pacing: danxbot counts none of the agents of a session it does not know, so it holds none of its spawns
   describe('a session outside pacing is allowed, silently, with nothing claimed', () => {
-    test('no danx-dashboard MCP server (a repo with no danxbot): every spawn looks again, none is told', async ($, on) => {
+    test('no danx-dashboard MCP server connected: every spawn looks again until the claim's own deadline, none is told', async ($, on) => {
       const options: Parameters<typeof dashboard>[1] = { mcp: 'down' }
       const d = await session($, on, options)
-      expect((await spawn($)).deny).toBeUndefined()
-      expect((await spawn($)).deny).toBeUndefined()
+      // the fake clock runs past the plugin's own deadline, so it is that deadline that ends each spawn's wait, not the engine's hook budget
+      for (let i = 0; i < 2; i++) {
+        const pending = spawn($)
+        await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
+        expect((await pending).deny).toBeUndefined()
+      }
       expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
-      expect(d.claimAttempts.n).toBe(2)
+      // each spawn looked again more than once inside its deadline
+      expect(d.claimAttempts.n).toBeGreaterThanOrEqual(4)
       options.mcp = 'up'
       options.pacingLine = { body: wire({ level: 'critical', budget: 0 }) }
       expect((await spawn($)).deny).toMatch(/critical/)
@@ -336,16 +419,22 @@ describe('the agent.spawn hook', () => {
 
     test('a server that never connects in the claim deadline: allowed, outside pacing (DX-5593 problem 2503, the operator has not decided)', async ($, on) => {
       const d = await session($, on, { mcp: 'down' })
-      expect((await spawn($)).deny).toBeUndefined()
+      const pending = spawn($)
+      await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
+      expect((await pending).deny).toBeUndefined()
       expect(d.claimsAllowed).toEqual([])
       expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
     })
 
     test('a server that connects within the claim deadline is claimed against, not skipped', async ($, on) => {
       const options: Parameters<typeof dashboard>[1] = { mcp: 'down', pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
-      await session($, on, options)
+      const d = await session($, on, options)
       const spawning = spawn($)
+      // the server is not up at the first look: it comes up between looks, and only the poll loop finds it
+      await d.clock.settle()
+      await d.clock.advance(1_000)
       options.mcp = 'up'
+      await d.clock.advance(1_000)
       expect((await spawning).deny).toMatch(/critical/)
     })
     test('a signed-out session (never signed in, lapsed, revoked): allowed, nothing told', async ($, on) => {
@@ -380,7 +469,7 @@ describe('failures of the guard itself', () => {
   test('a hook error (a rejecting clock) is told once per text, never a toast per spawn, and the spawn is refused: it could not claim its slot', async () => {
     resetPacing()
     const toasts: string[] = []
-    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), toast: t => void toasts.push(t) }
+    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
     const started = { model: 'm', agentId: 'a' }
     const guard = spawnGuard(env)
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
