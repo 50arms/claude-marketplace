@@ -1,24 +1,22 @@
 import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
 import type { PacingVerdict } from '../../types'
-import { peekPacing, refreshPacing, releaseSlot, report, reserveSlot } from './pacing-line'
+import { claimSlot, releaseClaim, report } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
-// DX-4340 (PLAN-29 R-10): the usage-pacing guard on sub-agent spawns. danxbot serves the calling session's own account's verdict at
-// GET /api/pacing/line (it places the session on its account itself: no account matching here), which `pacing-line.ts` caches; this
-// module reads it afresh before every `agent.spawn` (one deadline-bound read, DX-4631) and answers from that cache. A pure decision
-// (`decideSpawn`) plus a thin handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
+// DX-4340 (PLAN-29 R-10), DX-5593: the usage-pacing guard on sub-agent spawns. The budget is a STRICT cap: N means exactly N agents at all times.
+// So a spawn does not read a count and decide for itself: it CLAIMS its slot from danxbot (POST /api/pacing/agents/claim, which places the
+// session on its account itself and, under one lock, reads the live count and budget and takes the slot or refuses), and the plugin acts on the
+// answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module decides what the answer means (`decideSpawn`, pure) and wires
+// the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
 //
-// BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits,
-// pushes, card writes) however tight the budget. It also never blocks work it cannot see: no verdict (the line's `reason` set: no usage
-// report, no verdict, pacing off; the dashboard unreachable or signed out; a malformed answer; nothing cached) ALLOWS the spawn.
+// BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
+// writes) however tight the budget. It FAILS CLOSED: a claim that cannot be made (the dashboard unreachable, the deadline passed, an error or
+// malformed answer) REFUSES the spawn, because an allowed spawn there would be an agent nobody counted (the failure is toasted once per text).
+// The one allow without a claim is danxbot's own answer that it sees no account to cap (no usage report, no verdict, pacing off).
 //
 // These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.
-//
-// A failed or timed-out read is never silent: toasted once per distinct text and drops the verdict (no verdict allows), except that an
-// unreachable dashboard is silent until a read has succeeded (see pacing-line.ts). A burst of spawns inside one turn is held to the budget:
-// the spawns this guard allowed are held as reservations that raise danxbot's running count until they lapse (pacing-line.ts).
 
 export type SpawnDecision = { kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'downgrade'; model: 'haiku' }
 
@@ -54,9 +52,10 @@ function denyReason(v: PacingVerdict, why: 'level' | 'budget'): string {
   )
 }
 
-// The budget's unit is the ACCOUNT's running agents (its sessions' main threads, live sub-agents and running worker dispatches), which
-// the verdict carries as `runningAgents`; the plugin's own count would only be a lower bound and is not used. `requested` is the model
-// the spawn would run on if left alone: the call's `model`, else the parent's (a fork always inherits the parent's).
+// The budget's unit is the ACCOUNT's running agents (its sessions' main threads, live sub-agents and running worker dispatches), which the claim's
+// answer carries as `runningAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone: the call's
+// `model`, else the parent's (a fork always inherits the parent's). The deny cases here only word a refusal danxbot already made; the allow case
+// picks the haiku downgrade for a spawn taking the last free slot.
 export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined): SpawnDecision {
   if (verdict === null) return { kind: 'allow' }
   if (verdict.level !== 'on_pace') return { kind: 'deny', reason: denyReason(verdict, 'level') }
@@ -70,42 +69,36 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
   return { kind: 'allow' }
 }
 
-// Decide AND reserve, atomically: every await comes first (the refresh, the clock), then the cache is read, the decision made and the
-// slot reserved with NO await between them, so parallel spawns each see the others' reservations whatever the host's concurrency.
-// `slot` is the reservation to give back if the spawn does not start; null when nothing was reserved.
-async function reserve(env: PacingEnv, e: AgentSpawnInput): Promise<{ decision: SpawnDecision; slot: number | null }> {
-  // DX-4631: its own read every time (spawns are rare, a read is cheap, and the read has a deadline): the spawn is decided on the verdict as it
-  // is now, never on one a message or a tick has since replaced.
-  await refreshPacing(env, true)
-  const now = await env.now()
-  const pacing = peekPacing(now)
-  // a fork always inherits the parent's model, so the model it would run on is the parent's
-  const decision = decideSpawn(pacing?.verdict ?? null, e.fork ? e.parentModel : (e.model ?? e.parentModel))
-  if (decision.kind === 'deny' || pacing === null) return { decision, slot: null }
-  return { decision, slot: reserveSlot(now) }
+// Why a spawn is refused when its claim could not be made (fail closed).
+export function claimFailedReason(failure: string): string {
+  return (
+    `${REFUSAL_PREFIX} the spawn could not claim its slot from danxbot (${failure}). The budget is a strict cap, so no sub-agent starts until the ` +
+    'claim can be made. Do the work yourself, cheaply, in this session, or try again later.'
+  )
 }
 
-// The `agent.spawn` hook. Pacing's own failures never stop a spawn: any failure to LOOK means allow (see the header), and it is told
-// through the same once-per-text report as a failed read.
+// The `agent.spawn` hook.
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
-    let decision: SpawnDecision = { kind: 'allow' }
-    let slot: number | null = null
-    try {
-      const reserved = await reserve(env, e)
-      decision = reserved.decision
-      slot = reserved.slot
-    } catch (err: any) {
-      report(env, String(err?.message ?? err))
+    const claim = await claimSlot(env)
+    if (claim.kind === 'failed') {
+      report(env, claim.failure)
+      return { deny: claimFailedReason(claim.failure) }
     }
-    if (decision.kind === 'deny') return { deny: decision.reason }
+    if (claim.kind === 'refused') {
+      const decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
+      // danxbot refused the claim, so the spawn is refused whatever the plugin's own reading of the verdict says
+      return { deny: decision.kind === 'deny' ? decision.reason : denyReason(claim.pacing.verdict, 'budget') }
+    }
+    let decision: SpawnDecision = { kind: 'allow' }
+    if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
     try {
       // a fork ignores `model`, so there is nothing to rewrite
       const started = await next(decision.kind === 'downgrade' && !e.fork ? { ...e, model: decision.model } : e)
-      if (slot !== null && started.deny !== undefined) releaseSlot(slot)
+      if (claim.kind === 'claimed' && started.deny !== undefined) await releaseClaim(env, claim.claimId)
       return started
     } catch (err) {
-      if (slot !== null) releaseSlot(slot)
+      if (claim.kind === 'claimed') await releaseClaim(env, claim.claimId)
       throw err
     }
   }
