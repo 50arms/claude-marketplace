@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4880: the model sits idle while the person decides, so each outcome reaches it as a prompt that wakes it (`woken`), never as an
 // appended row (`relay.told`) only a later turn would read.
 // DX-4548: a sign-in the MODEL started (its plan_connect answered approval_required) is watched by the plugin, which tells the

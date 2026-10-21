@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4630: across a whole session (connect, sign-in, a permission request, a refresh) the band draws its page controls as
 // Markdown links and the plugin makes no Claude_Browser call and draws no Link element, on both surfaces.
 import { describe, expect } from 'claude-code/testing'

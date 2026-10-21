@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-5577: every `$.store` call is made in register.tsx's `storeIo` (reached by `storeOp`, which runs hooks/store/recover.ts) so a zeroed store file is recovered.
 import { test } from "node:test";
 import assert from "node:assert/strict";

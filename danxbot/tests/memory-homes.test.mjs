@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4319 — the operator's project memory directory had grown 16 files, each
 // written when an agent was corrected. A memory file reaches one project on one
 // machine, so a correction saved there never reaches a dispatched worker,

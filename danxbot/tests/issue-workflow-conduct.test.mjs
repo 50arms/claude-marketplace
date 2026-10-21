@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4305 — PLAN-2 was cut back to its three goals and 51 of its working rules
 // were retired. Four were still true and written nowhere an agent meets them;
 // each now lives once, as one sentence in the skill that owns the subject. The

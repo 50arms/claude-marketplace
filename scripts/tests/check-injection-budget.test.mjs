@@ -1,3 +1,4 @@
+import "../../danxbot/tests/designated-test-container.mjs";
 // scripts/check-injection-budget.mjs — publish-time injection budget gate.
 // DX-3053 AC 32512-32514.
 import { test } from "node:test";

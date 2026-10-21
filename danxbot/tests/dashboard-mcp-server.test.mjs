@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // dashboard-mcp-server.mjs (DX-4555, DX-4578, DX-4235): the MCP server the plugin ships, the one dashboard server of every
 // session. It refreshes the record before it starts the server (DX-5075), waiting a bounded time, and falls back to the recorded version. A fake
 // registry (fixtures/fake-registry.mjs) stands in for npm's registry and an injected spawn for npm and the server; the

@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-5328: the one conversion between Claude Code's bare sub-agent id and the canonical `agent-<id>` key.
 import { describe, expect, test } from 'claude-code/testing'
 

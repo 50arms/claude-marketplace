@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4993 (PLAN-42 rule R-4): the plugin's half of an operator session's compaction handshake, as pure rules (hooks/compaction/*) and as the engine runs the
 // hooks: the agent's ready (a release in the control file the relay writes) makes the plugin run /compact itself at the next main-loop turn end, once; an automatic
 // proposal is refused while the session is under the handshake; a manual /compact and the safety valve always pass; nothing is armed for the main agent (DX-5231);

@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4340 (PLAN-29 R-10): the usage-pacing guard on `agent.spawn`. The decision table is pure; the handler answers from the session's
 // pacing cache (GET /api/pacing/line, the account placed by danxbot), and denies, downgrades or lets the spawn through. It hooks
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.

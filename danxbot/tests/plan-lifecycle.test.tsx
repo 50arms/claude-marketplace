@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // Session lifecycle and re-entry: what session.end does by reason, the retry while the MCP server
 // connects, and what one load reports.
 import { describe, expect } from 'claude-code/testing'

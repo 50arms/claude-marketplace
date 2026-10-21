@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4423: a session with no dashboard key (lapsed, never approved; a key a person revoked is its own view, DX-4418). The danx-dashboard MCP answers every tool but
 // plan_connect with an error result written for the agent; the band and footer must say "Danxbot: signed out" in the
 // person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.

@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-5222 (PLAN-42 section 141): an operator session's compaction handshake per SUB-AGENT. The pure rules (control.ts: the agents and valves of the control file, the percent,
 // the per-agent verdict) and the engine wiring (register.tsx): `session.compact` names the proposing `agentId`, `turn.step` tells the plugin each sub-agent's context, `$.session.send`
 // delivers each sub-agent's request, and the sub-agents' early-proposal percent is armed after `leftoverArmingCleared`. The main agent's own gate is compaction-control.test.tsx.

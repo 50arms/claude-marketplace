@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4630: the plugin opens no page itself and draws no `Link` element. A `Link` opens the external browser, a Markdown link the app's
 // in-app browser (proven live), and the `Claude_Browser` tool flow it replaced cost 6.3 s a press. The source holds neither.
 // DX-5093: the one exception is the plan-tab keepalive's own look at the pane (hooks/relay/browser.ts), run by a timer and never by a press.

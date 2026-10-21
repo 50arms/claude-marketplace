@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4234: the model's time stamp, on each prompt and after each tool call (PBLM-1915: both, as the bash hook did). The text is pure
 // (hooks/context/stamp.ts, exact here with an explicit UTC offset); the hooks are checked as the engine runs them, on both surfaces.
 import { describe, expect } from 'claude-code/testing'

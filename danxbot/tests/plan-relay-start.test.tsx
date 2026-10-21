@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4233: when the plan event relay (the module's loop on the danx-dashboard server's plan_events_wait tool) starts, and when it does not.
 import { describe, expect } from 'claude-code/testing'
 

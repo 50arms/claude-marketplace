@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'

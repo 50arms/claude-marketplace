@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4239 — the Gates section briefed every gate sub-agent to "review the card
 // against that text alone". A board's gate text can tell its reviewer to WRITE
 // to the card (the test checklists, the dependency edges), so a reviewer

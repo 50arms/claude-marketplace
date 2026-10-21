@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4233: the relay comes back whatever happened to the first plan load. It starts from the plan the session is on (the connect answer's
 // plan id, a light plan read at session.start that is retried while the read fails), never only from a successful full view load; the
 // "not connected yet" and unbound errors are transient; a watchdog on a turn's end and a sub-agent's start or stop starts a relay that is

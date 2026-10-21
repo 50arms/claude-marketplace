@@ -1,3 +1,4 @@
+import "../../danxbot/tests/designated-test-container.mjs";
 // scripts/lint-frontmatter.js — frontmatter validity lint for SKILL.md /
 // agent .md files. DX-2986. Run with `npm test` (node --test).
 //

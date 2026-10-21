@@ -1,3 +1,4 @@
+import "../../danxbot/tests/designated-test-container.mjs";
 // scripts/check-general-audience.mjs — DX-4551 AC 44348: the publish-time scan that shipped plugin text
 // names nothing specific to the author's own setup.
 import { test } from "node:test";

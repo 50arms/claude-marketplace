@@ -1,3 +1,6 @@
 .junk/
 .claude/worktrees/
 node_modules/
+
+# DX-5648: written by scripts/test-container-entry.sh inside the test container only
+*.generated.ts

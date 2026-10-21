@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4233: the resume cursor. One rule: after a record is delivered, its cursor (an opaque string the server minted) is stored in $.store
 // verbatim, and the next wait carries it, so a restart or a reload asks for what follows the last record delivered. The plugin never
 // compares or orders cursors: the server decides what comes after one (ids can become visible out of order).

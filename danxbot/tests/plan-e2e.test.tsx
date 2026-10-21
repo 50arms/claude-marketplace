@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4232 E2E: one whole operator session per surface through the real hooks module with a
 // stand-in danx-dashboard MCP server: the band at session start counts the open problems as links and writes nothing to a card.
 import { describe, expect } from 'claude-code/testing'

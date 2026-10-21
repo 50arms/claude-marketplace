@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4233: the words that describe the relay. danxbot:plan-workflow "Live events" keeps the `[danxbot plan event]` tag and names the
 // relay's own states; the cross-session inbox note and the `bridge down:` text are gone, and neither CLAUDE.md nor hooks.json names a
 // bridge or a watchdog.

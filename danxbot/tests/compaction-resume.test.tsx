@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-5385: a compaction that ends while no turn runs (the plugin's own after the agent's ready, or a typed /compact) leaves the agent idle: nothing is coming to carry
 // the briefing. The plugin starts the turn itself with ONE resume prompt (the relay's prompt path), only for the main agent of a plan-connected session.
 import { describe, expect } from 'claude-code/testing'
