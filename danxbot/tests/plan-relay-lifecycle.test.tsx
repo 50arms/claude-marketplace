@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4233: the relay's life: one loop at a time, a move to another plan restarts it, the end of the process stops it, /clear and
 // resume do not.
 import { describe, expect } from 'claude-code/testing'

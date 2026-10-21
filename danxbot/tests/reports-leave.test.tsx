@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4235 (comment 12426): before the session leaves its plan or moves to another, every close the reports owe (a running sub-agent's
 // finish, an open background shell's end) is posted first: after the leave the dashboard takes no report from the session, and a row left
 // running is the stuck-row bug of comment 10065. Every leave the module takes part in: the band's Disconnect and the model's plan_connect leave or move. Bounded so a dead dashboard never holds the leave; a failure is one toast.

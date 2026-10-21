@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4346: the plan-progress figure. DX-4374: the footer is one `PLAN-NN` button with no figure (plan-footer.test.tsx);
 // the Svg donut lives in the band line.
 import { describe, expect } from 'claude-code/testing'

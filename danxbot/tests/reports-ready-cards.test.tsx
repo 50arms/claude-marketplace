@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4534 / DX-4235: the ready-cards Stop check, as a function hook. A plan-connected main session's stop is blocked once while its plan has
 // ready cards nobody holds (GET /api/plans/mine, then GET /api/issues on each board the plan spans); with none, on a stop the hook already
 // forced, for a sub-agent, or when the read fails, the stop goes on. Checked as the engine runs the hook, on both surfaces, plus the

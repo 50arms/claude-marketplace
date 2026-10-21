@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4997 / DX-5033: the plugin's own dashboard reads are background work. The dashboard ends an agent pause on any UNMARKED request carrying the
 // session header (the agent acting) and not on one marked `background: true`; the stand-in dashboard models that rule (`serverPauseRule` in the kit).
 import { describe, expect } from 'claude-code/testing'

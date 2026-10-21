@@ -52,23 +52,40 @@ test("DX-5648: a test file run outside the container refuses before any test run
   }
 });
 
-/** Every test file of the repo, both kinds: the node suites (*.test.mjs) and the plugin's function-hook tests (*.test.tsx). */
+/**
+ * The plugins whose tests the entry script runs: those whose hooks.json declares modules (the same set scripts/test-container-entry.sh
+ * loops over). Each one's tests live in <plugin>/tests, which must exist.
+ */
+function testPluginDirs() {
+  const marketplace = JSON.parse(read(".claude-plugin/marketplace.json"));
+  return marketplace.plugins
+    .map((p) => p.source.replace(/^\.\//, ""))
+    .filter((dir) => {
+      const hooks = path.join(REPO_ROOT, dir, "hooks", "hooks.json");
+      if (!fs.existsSync(hooks)) return false;
+      const modules = JSON.parse(fs.readFileSync(hooks, "utf8")).modules;
+      return Array.isArray(modules) && modules.length > 0;
+    });
+}
+
+/** Every test file of the repo, both kinds: the node suites (*.test.mjs) and the plugin's function-hook tests (*.test.tsx). A missing directory throws. */
 function testFiles(pattern) {
   const out = [];
-  for (const dir of ["danxbot/tests", "scripts/tests"]) {
-    const abs = path.join(REPO_ROOT, dir);
-    if (!fs.existsSync(abs)) continue;
-    for (const f of fs.readdirSync(abs)) if (pattern.test(f)) out.push(`${dir}/${f}`);
+  for (const dir of [...testPluginDirs().map((d) => `${d}/tests`), "scripts/tests"]) {
+    for (const f of fs.readdirSync(path.join(REPO_ROOT, dir))) if (pattern.test(f)) out.push(`${dir}/${f}`);
   }
   return out;
 }
+
+test("DX-5648: the scanned plugin set is not empty", () => {
+  assert.ok(testPluginDirs().length > 0, "no plugin declares hook modules");
+});
 
 test("DX-5648: every node test file imports the guard first", () => {
   const files = testFiles(/\.test\.mjs$/);
   assert.ok(files.length > 20, `only ${files.length} test files found`);
   const unguarded = files.filter((rel) => {
-    const first = read(rel).split("
-")[0];
+    const first = read(rel).split("\n")[0];
     return first !== 'import "./designated-test-container.mjs";' && first !== 'import "../../danxbot/tests/designated-test-container.mjs";';
   });
   assert.deepEqual(unguarded, [], "node test files whose first line is not the guard import");
@@ -79,11 +96,10 @@ test("DX-5648: every node test file imports the guard first", () => {
 test("DX-5648: every plugin function-hook test imports the container-only module first, and it is never committed", () => {
   const files = testFiles(/\.test\.tsx$/);
   assert.ok(files.length > 20, `only ${files.length} test files found`);
-  const unguarded = files.filter((rel) => read(rel).split("
-")[0] !== 'import "./designated-test-container.generated"');
+  const unguarded = files.filter((rel) => read(rel).split("\n")[0] !== 'import "./run-tests-with-npm-test.generated"');
   assert.deepEqual(unguarded, [], "plugin test files whose first line is not the generated-module import");
   assert.match(read(".gitignore"), /^\*\.generated\.ts$/m, "the generated module must be gitignored so a host's copy never carries it");
-  assert.match(read("scripts/test-container-entry.sh"), /designated-test-container\.generated\.ts/);
+  assert.match(read("scripts/test-container-entry.sh"), /run-tests-with-npm-test\.generated\.ts/);
 });
 
 test("DX-5648: readTestHost reads a missing marker as not-the-container but rethrows any other failure", () => {

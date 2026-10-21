@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4340 (PLAN-29 section 3): a new sub-agent is handed danxbot's pacing line (GET /api/pacing/line) as SubagentStart additionalContext,
 // from the same cache the spawn guard reads. Unknown is explicit on the wire (reason set, line null): then it is told nothing. A failed
 // read starts the sub-agent without a line and toasts once.

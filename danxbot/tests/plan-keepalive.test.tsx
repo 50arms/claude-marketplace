@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-3900 / DX-5093: the plan-tab keepalive. The desktop app disconnects a session's preview 1800 s after its last turn ended; a plan-connected DESKTOP
 // session idle for KEEPALIVE_IDLE_MS is looked at by the module itself: it asks the Browser pane's server which tabs the pane holds and opens the plan
 // page again when its tab is missing, with no model turn (no prompt is ever submitted). The next look is an idle period on, the cadence the keepalive always had. A failed

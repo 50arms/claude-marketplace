@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4233 / DX-4721: how a relayed event reaches the session. One decision (relay/delivery.ts), made on the server's `urgent` flag and one turn
 // fact (is a turn running now): a not-urgent event is ALWAYS a submitted prompt (it waits behind a running turn and wakes an idle session); an
 // urgent event is a note ($.session.append) in a running turn and a prompt when none runs. A refused note is a failed delivery (told once, the

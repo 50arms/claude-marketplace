@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4235: the activity report, as function hooks. A plan-connected session tells the dashboard (POST /api/plan-sessions/me/activity)
 // when a sub-agent starts and ends and when a background shell starts and ends, so its running count opens and closes with them; a
 // working sub-agent re-posts its row so it never reads as silent (comment 10017). Checked as the engine runs the hooks, on both surfaces.

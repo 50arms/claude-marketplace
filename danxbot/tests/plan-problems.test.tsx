@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4609 (PLAN-23 G-1): the band counts the plan's open problems and links the count to the plan's Needs You tab. Every interaction
 // with a problem is in the browser, so the band never writes to a card.
 import { describe, expect } from 'claude-code/testing'

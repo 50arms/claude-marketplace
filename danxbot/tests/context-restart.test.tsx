@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4234 (DX-3928, DX-4632): a session that is not on a plan but replaced one that was is told which plan it was on and how many events wait.
 // The session's own danx-dashboard server finds the earlier session and answers through its `restart_notice` tool (no arguments); this hook
 // tells the model that answer and surfaces a stop. Both surfaces: the model's context and the failure line.

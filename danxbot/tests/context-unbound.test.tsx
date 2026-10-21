@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4234: on a desktop or headless startup, resume and fork the engine has not bound the session when SessionStart runs, so `$.mcp.call` and
 // `$.tool.list` throw there ("no session is bound in this process"). SessionStart therefore only records the start; the first prompt (bound)
 // tells the model the restart notice and the start-up text, once. The kit models the unbound session (`d.unbind()`), which the always-bound

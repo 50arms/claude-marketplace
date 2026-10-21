@@ -6,7 +6,7 @@ set -euo pipefail
 cd /app
 
 # The .tsx tests cannot check where they run (the plugin test runner gives a test no process and no filesystem), so each imports
-# <plugin>/tests/designated-test-container.generated.ts first, a module that exists ONLY here: written below, after the root-owned marker
+# <plugin>/tests/run-tests-with-npm-test.generated.ts first, a module that exists ONLY here: written below, after the root-owned marker
 # is checked, for every plugin whose hooks.json declares modules (the set publish.sh validates). It is gitignored, so the tar copy a host
 # streams in never carries it, and a .tsx test run on a host fails to resolve that import before any test runs.
 MARKER=/etc/claude-plugins/test-environment
@@ -27,7 +27,7 @@ mapfile -t plugins < <(node -e '
 for plugin in "${plugins[@]}"; do
   mkdir -p "$plugin/tests"
   printf '%s\n%s\n' "// DX-5648: written by scripts/test-container-entry.sh inside the designated test container only; gitignored." \
-    "export const inDesignatedTestContainer = true" > "$plugin/tests/designated-test-container.generated.ts"
+    "export const inDesignatedTestContainer = true" > "$plugin/tests/run-tests-with-npm-test.generated.ts"
 done
 
 # The delivery and publish suites clone this checkout, so it needs a repository whose HEAD is exactly the copied tree.

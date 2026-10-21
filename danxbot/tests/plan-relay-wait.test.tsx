@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-4233: the wait loop itself: the arguments of a call, the empty answer of a wait that timed out, the guard against a server that
 // answers an empty list at once, the cursor's key following the session id, and a run that ends while it is delivering.
 import { describe, expect } from 'claude-code/testing'

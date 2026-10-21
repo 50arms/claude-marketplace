@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // DX-5062: every danxbot_api call a hook makes carries `background: true` (the current MCP accepts it) and there is no retry without it:
 // an MCP that refuses the key fails the call once, and the failure is told with its fix.
 import { describe, expect } from 'claude-code/testing'

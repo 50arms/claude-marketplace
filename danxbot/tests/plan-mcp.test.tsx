@@ -1,4 +1,4 @@
-import "./designated-test-container.generated"
+import "./run-tests-with-npm-test.generated"
 // The one parser of a tool's {ok, status, body} result, and the refusal sentence built from it.
 import { expect, test } from 'claude-code/testing'
 
