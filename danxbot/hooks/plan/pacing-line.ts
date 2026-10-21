@@ -5,11 +5,12 @@ import type { UsageBody } from './usage'
 
 // DX-4340 (PLAN-29 section 3): the ONE pacing cache. danxbot serves the calling session's own account's verdict, and the one-sentence line
 // a new sub-agent is handed, at GET /api/pacing/line (the account is placed server-side from the x-danx-session-id header the dashboard
-// MCP sends; src/team-pacing/session-pacing.ts). Both consumers read this cache: the `agent.spawn` guard (pacing-guard.ts) and the
-// SubagentStart pacing line (register.tsx). No account matching happens in the plugin.
+// MCP sends; src/team-pacing/session-pacing.ts). The SubagentStart pacing line (register.tsx) reads this cache; the `agent.spawn` guard
+// (pacing-guard.ts) reads nothing from it: it claims a slot (claimSlot below, DX-5593), and that claim's answer writes the cache. No account
+// matching happens in the plugin.
 //
 // Unknown is explicit on the wire (`reason` set, every other field null: no session, no usage report, no verdict, pacing off) and means
-// the guard allows and no line is handed.
+// no line is handed.
 //
 // A failed read is never silent: one toast per distinct text. It DROPS the cached verdict (DX-4631: an answer whose freshness is unknown is
 // no answer, so the sub-agent line is withheld), and the unforced reads (the sub-agent line) do not retry it for PACING_REFRESH_MS, so each
@@ -208,7 +209,7 @@ export async function refreshPacing(env: PacingEnv, force = false): Promise<void
 
 // SYNCHRONOUS: the session's pacing at `nowMs` (null when unknown or expired), as last read. A failed read dropped the answer (no verdict).
 // DX-5593: the count in it is danxbot's live count; the plugin keeps no count of its own (no reservations, no local agent list).
-export function peekPacing(nowMs: number): Pacing | null {
+function peekPacing(nowMs: number): Pacing | null {
   if (cache === null || cache.pacing === null || nowMs - cache.fetchedAt > PACING_EXPIRY_MS) return null
   return cache.pacing
 }
