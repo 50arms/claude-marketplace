@@ -35,7 +35,7 @@ server or long-running process for this repo.
   Docker test image, copies the checkout in, and runs the node suites
   (`node --test`) then each plugin's function-hook tests (`claude plugin test`) in
   that container (DX-5648). Never run a test file any other way (it refuses).
-- `package.json` only exposes publish wrappers:
+- `package.json` exposes `npm test [-- <test files>]` (above) and the publish wrappers:
   - `npm run publish:patch|minor|major` → `./scripts/publish.sh <bump>`
 - `./scripts/publish.sh <patch|minor|major> [plugin ...]` — bumps the
   `version` field in each edited plugin's `.claude-plugin/plugin.json`,
