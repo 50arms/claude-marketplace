@@ -14,7 +14,7 @@ import type { UsageBody } from './usage'
 // A failed read is never silent: one toast per distinct text. It DROPS the cached verdict (DX-4631: an answer whose freshness is unknown is
 // no answer, so the sub-agent line is withheld), and the unforced reads (the sub-agent line) do not retry it for PACING_REFRESH_MS, so each
 // sub-agent start does not re-hit a dead route. A read decides no spawn (DX-5593: the spawn claim below does). The one exception is an unreachable
-// danx-dashboard MCP server (a session on a repo with no danxbot, as in reportUsage and DX-3421): that is silent and not backed off,
+// danx-dashboard MCP server (a session whose danx-dashboard server has not connected, as in reportUsage and DX-3421): that is silent and not backed off,
 // the next read simply looks again, until a read has succeeded in this session. After a success it is a failure like any other.
 
 import type { LimitReadout, PacingLevel, PacingLimitKey, PacingReadout, PacingState, PacingVerdict, SpendFigure } from '../../types'
@@ -298,11 +298,24 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
   env.toast(`Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap): ${failure}`)
 }
 
-// The claim given back: the host refused the spawn after the slot was taken. Best effort and never rejects (a claim not given back lapses
-// in danxbot within the minute).
+// The claim given back: the host refused the spawn after the slot was taken. Never rejects; a claim not given back lapses in danxbot within the
+// minute, which stays the recovery. DX-5593 (C1): a give-back that fails is told once per distinct text (the same rule as reportClaimFailure),
+// never silently: an error answer, or an unreachable server of a session known to be signed in. `{released:false}` (a 200) is normal and silent.
 export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
   try {
-    await env.within(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
+    const r = await env.within<Api | undefined>(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
+    if (r === undefined) return
+    let failure: string | null = null
+    if (r.unreachable) {
+      if (hasSucceeded || (await env.signedIn())) failure = 'the danx-dashboard MCP server is not reachable from this session'
+    } else if (!r.ok && !isSignedOut(r)) {
+      failure = r.status === 0 ? errText(r) : `the claim give-back answered ${r.status}`
+    }
+    if (failure === null) return
+    failure = failure.slice(0, ERROR_MAX)
+    if (failure === lastClaimError) return
+    lastClaimError = failure
+    env.toast(`Usage pacing could not give back a claimed slot (it lapses within a minute): ${failure}`)
   } catch {
     /* the claim lapses in danxbot */
   }
