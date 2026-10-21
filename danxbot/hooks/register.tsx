@@ -2241,16 +2241,16 @@ function pacingEnv($: any) {
 // its stop checked for ready cards (DX-4534). Every call goes through the session's own server (`api`) and runs detached, so no event
 // waits on it; a report the dashboard does not take is one toast, never swallowed (`report`).
 //
-// What each needs of the plan state the module holds (`reportingState`):
-// - OPENING something (a sub-agent's row, a shell's row, a liveness post) needs the session known to be on a plan (`on`): the silence rule.
+// What each needs of the state the module holds (`reportingState`):
+// - OPENING something (a sub-agent's row, a shell's row, a liveness post) needs the session known to be signed in (`on`): on a plan or not
+//   (DX-5593: a sub-agent is a row of the account's running-agent count, plan or not; the dashboard opens the session's dispatch for it).
 // - CLOSING what was opened (a sub-agent's finish, a shell's end) is owed because its start was posted, so it is posted whatever the view
 //   says, while it is `unknown` too (a failed refresh empties the view's plan for a moment; comment 10065's stuck row was exactly a close
-//   that never went out). Only `off` drops it: the dashboard has the session on no plan and refuses every report from it
-//   (danxbot plan-sessions-routes.ts handleActivity: no dispatch to write to, 409).
+//   that never went out). Only `off` drops it: the key was revoked, and the dashboard refuses every report from it.
 // - The ready-cards check runs unless `off`: its own read asks the dashboard which plan the session is on.
 
-// `on`: the view holds the plan the session is on. `off`: the dashboard said the session is on no plan (a loaded view with none), or a
-// person revoked its key. `unknown`: nothing is known (loading, a failed load, a session signed out with its key lapsed).
+// `on`: the view holds the plan the session is on, or the session is signed in on no plan. `off`: a person revoked its key. `unknown`:
+// nothing is known (loading, a failed load, a session signed out with its key lapsed).
 type ReportingState = 'on' | 'off' | 'unknown'
 async function reportingState($: any): Promise<ReportingState> {
   const v = await read($, view)
