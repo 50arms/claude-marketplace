@@ -1,7 +1,7 @@
 import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
 import type { PacingVerdict } from '../../types'
-import { claimSlot, releaseClaim, report } from './pacing-line'
+import { claimSlot, releaseClaim, reportClaimFailure } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
 // DX-4340 (PLAN-29 R-10), DX-5593: the usage-pacing guard on sub-agent spawns. The budget is a STRICT cap: N means exactly N agents at all times.
@@ -14,7 +14,7 @@ import type { PacingEnv } from './pacing-line'
 // writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
 // answer) REFUSES the spawn, because an allowed spawn there would be an agent nobody counted (the failure is toasted once per text). The allows
 // without a claim are danxbot's own answer that it sees no account to cap (no usage report, no verdict, pacing off) and a session outside pacing
-// (no danx-dashboard MCP server, or signed out): danxbot counts none of its agents, so refusing them would only break plain plugin use.
+// (signed out, or a danx-dashboard MCP server that never connected: DX-5593 problem 2503): danxbot counts none of its agents, so refusing them would only break plain plugin use.
 //
 // These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.
@@ -83,7 +83,7 @@ export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
     const claim = await claimSlot(env)
     if (claim.kind === 'failed') {
-      report(env, claim.failure)
+      reportClaimFailure(env, claim.failure)
       return { deny: claimFailedReason(claim.failure) }
     }
     if (claim.kind === 'refused') {

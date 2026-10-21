@@ -361,7 +361,7 @@ for (const surface of SURFACES)
       // the pacing itself toasts nothing: the one toast is DX-4340's own pacing-line read, told once, now that a read had succeeded
       expect(d.toasts.filter(t => /Usage pacing could not refresh|settings/i.test(t))).toEqual([])
       expect(d.toasts.filter(t => t.startsWith('Usage pacing could not be read'))).toEqual([
-        'Usage pacing could not be read (spawns are not paced, sub-agents get no pacing line, until it can): the danx-dashboard MCP server is not reachable from this session',
+        'Usage pacing could not be read (sub-agents get no pacing line until it can): the danx-dashboard MCP server is not reachable from this session',
       ])
       // the MCP is back: the marker clears
       d.setMcp('up')
