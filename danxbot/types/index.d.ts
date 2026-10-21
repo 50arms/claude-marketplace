@@ -182,8 +182,6 @@ declare module 'claude-code' {
       usageError: string | null
       // DX-4336: when the last API response arrived (epoch ms): the age of the usage figure. null until one has.
       measuredAt: number | null
-      // DX-4336: the sub-agents running now, by id and start time (the report's runningAgents is this plus the main thread).
-      liveAgents: { id: string; since: number }[]
       // DX-4339: what the usage pacing draws: the session's own windows, the team's pacing settings and the account verdict as last read.
       pacingState: PacingSnapshot
       // DX-4233: the event relay's state (see RelayState): the band's events warning says it when it is not streaming.
