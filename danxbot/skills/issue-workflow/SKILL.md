@@ -301,6 +301,9 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 - Never read or edit `dist/`/build output; `node_modules/` is read-only.
 - Browser checks: the in-app browser tool only, never a headed browser on the desktop. Open
   your own tab and pass its `tabId` on every call (none acts on the tab the user has
-  fronted); close the tabs you opened.
+  fronted); close the tabs you opened. Make it with `tabs_create`, which opens it in the
+  background so the person's tab and typing keep focus, then `navigate` it by `tabId`; front it
+  only when they asked to watch. A tab that `preview_start` or `navigate` hands back as already
+  open (`reused: true`) is the person's, never yours.
 - Signal only a PID you spawned and captured at spawn — never `pkill -f`, `killall` or a
   pattern lookup. A dev server someone may be using is not yours to restart without asking.
