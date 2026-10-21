@@ -203,6 +203,8 @@ describe('the agents', () => {
     await d.clock.advance(USAGE_TICK_MS)
     await stop($, 'a1')
     await d.clock.advance(USAGE_TICK_MS)
+    // the first report, then one per tick: a loop over none would pass whatever the body carries
+    expect(reports(d)).toHaveLength(3)
     for (const r of reports(d)) expect(r.body).not.toHaveProperty('runningAgents')
   })
 })
