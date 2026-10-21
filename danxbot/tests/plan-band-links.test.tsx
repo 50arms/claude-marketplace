@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4521 / DX-4630: the band's page link (Open plan) goes to the plan's page when connected, else the dashboard's plans list. It is
 // a Markdown link on every surface, so the app opens it in the in-app browser as it opens a link in the thread; the plugin makes no
 // browser tool call. The open-problem count's link is separate (its own Needs You URL).

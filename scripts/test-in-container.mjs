@@ -1,7 +1,7 @@
 /**
  * DX-5648 - the ONE way this repo's tests run: Linux, inside a container started from Dockerfile.test. `npm test` and
  * scripts/publish.sh both come through here; a test file run anywhere else refuses before any test runs
- * (scripts/designated-test-container.mjs).
+ * (danxbot/tests/designated-test-container.mjs).
  *
  *   npm test                                       the whole suite: the node suites, then `claude plugin test danxbot`
  *   npm test -- danxbot/tests/mantra.test.mjs      named files: .mjs files run under `node --test`, .tsx files under `claude plugin test`
@@ -21,6 +21,8 @@ import { buildUstar } from "./lib/ustar.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const APP = "/app";
+/** The most `git ls-files` output the collector accepts: a checkout lists far fewer paths than this. */
+const GIT_OUTPUT_MAX_BYTES = 256 * 1024 * 1024;
 /** The `node` user of the official node image, which Dockerfile.test runs the suite as. */
 const TEST_USER = { uid: 1000, gid: 1000 };
 /** Git for Windows rewrites arguments that look like POSIX paths; every path handed to docker here is a container path. */
@@ -44,7 +46,7 @@ function docker(dockerArgs, options = {}) {
 }
 
 function git(gitArgs) {
-  const r = spawnSync("git", gitArgs, { cwd: ROOT, encoding: "buffer", maxBuffer: 256 * 1024 * 1024 });
+  const r = spawnSync("git", gitArgs, { cwd: ROOT, encoding: "buffer", maxBuffer: GIT_OUTPUT_MAX_BYTES });
   if (r.error || r.status !== 0) die(`git ${gitArgs.join(" ")} failed: ${r.error?.message ?? r.stderr.toString()}`);
   return r.stdout.toString("utf8");
 }
@@ -98,12 +100,25 @@ function buildImage() {
   return image;
 }
 
+/**
+ * The test files named on the command line, as repo-relative POSIX paths: backslashes become slashes and a leading `./` goes, so a path
+ * pasted from Windows names the same file the container copy holds. An absolute path or one that climbs out of the repo names nothing there.
+ */
+function normalizeTestPaths(args) {
+  return args.map((arg) => {
+    const path = arg.replaceAll("\\", "/").replace(/^(\.\/)+/, "");
+    if (path.startsWith("/") || /^[A-Za-z]:/.test(path) || path.split("/").includes("..")) die(`${arg} is not a path inside this repo; name test files relative to the repo root`);
+    return path;
+  });
+}
+
 function main() {
+  const testFiles = normalizeTestPaths(process.argv.slice(2));
   const image = buildImage();
   // The archive is built BEFORE the container exists, so a failure collecting it has no container to leak.
   const archive = buildUstar(collectSource(), TEST_USER);
   const name = `claude-plugins-test-${process.pid}-${Date.now()}`;
-  const created = docker(["create", "--name", name, "--label", "claude-plugins.test-container=1", image, "bash", "scripts/test-container-entry.sh", ...process.argv.slice(2)]);
+  const created = docker(["create", "--name", name, "--label", "claude-plugins.test-container=1", image, "bash", "scripts/test-container-entry.sh", ...testFiles]);
   if (created.status !== 0) die(`docker create failed: ${created.stderr}`);
   createdContainer = name; // removed by the exit handler on every path from here
   process.on("SIGINT", () => process.exit(130));

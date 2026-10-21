@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4458: a card with dozens of problems (DX-4443: 49 questions) is never read for its rows: the count comes from the every-card list.
 import { describe, expect } from 'claude-code/testing'
 

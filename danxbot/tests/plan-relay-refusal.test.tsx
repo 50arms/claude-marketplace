@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4805: in auto mode the engine's classifier can refuse the plugin's own hook-initiated `$.mcp.call` ("gave no verdict"), which leaves the
 // relay dead. The plugin ships the permission its own calls need (a `tool.check` allow for calls IT raised) and, when a refusal still happens,
 // says so loudly with the engine's real words and the real fix, never "update the plugin".

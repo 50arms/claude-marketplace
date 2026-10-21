@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4630: a link's markdown. Labels carry problem statements and plan names, so Markdown's own characters in them must read as written
 // and never end or alter the link.
 import { expect, test } from 'claude-code/testing'

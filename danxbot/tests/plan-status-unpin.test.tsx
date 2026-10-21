@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4374: v0.10.0 pinned a status line (`$.ui.status`); a session hot-reloaded from it keeps the pin unless the
 // plugin clears it. The plugin never pins a status line and clears one at session start.
 import { describe, expect } from 'claude-code/testing'

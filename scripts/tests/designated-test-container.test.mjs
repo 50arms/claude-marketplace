@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TEST_CONTAINER_COMMAND, TEST_ENVIRONMENT_MARKER, designatedTestContainerRefusal } from "../../danxbot/tests/designated-test-container.mjs";
+import { TEST_CONTAINER_COMMAND, TEST_ENVIRONMENT_MARKER, designatedTestContainerRefusal, readTestHost } from "../../danxbot/tests/designated-test-container.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
@@ -52,23 +52,44 @@ test("DX-5648: a test file run outside the container refuses before any test run
   }
 });
 
-/** The node test files of the repo. The plugin's function-hook tests (*.test.tsx) cannot carry the guard: the plugin test runner gives a test no process, no filesystem and no import outside the plugin's folder, so nothing in a .tsx file can tell where it runs. */
-function nodeTestFiles() {
+/** Every test file of the repo, both kinds: the node suites (*.test.mjs) and the plugin's function-hook tests (*.test.tsx). */
+function testFiles(pattern) {
   const out = [];
   for (const dir of ["danxbot/tests", "scripts/tests"]) {
-    for (const f of fs.readdirSync(path.join(REPO_ROOT, dir))) if (/\.test\.mjs$/.test(f)) out.push(`${dir}/${f}`);
+    const abs = path.join(REPO_ROOT, dir);
+    if (!fs.existsSync(abs)) continue;
+    for (const f of fs.readdirSync(abs)) if (pattern.test(f)) out.push(`${dir}/${f}`);
   }
   return out;
 }
 
 test("DX-5648: every node test file imports the guard first", () => {
-  const files = nodeTestFiles();
+  const files = testFiles(/\.test\.mjs$/);
   assert.ok(files.length > 20, `only ${files.length} test files found`);
   const unguarded = files.filter((rel) => {
-    const first = read(rel).split("\n")[0];
+    const first = read(rel).split("
+")[0];
     return first !== 'import "./designated-test-container.mjs";' && first !== 'import "../../danxbot/tests/designated-test-container.mjs";';
   });
   assert.deepEqual(unguarded, [], "node test files whose first line is not the guard import");
+});
+
+// A .tsx test cannot check where it runs, so its guard is an import that only resolves in the container: the gitignored module the entry
+// script writes after it checks the root-owned marker.
+test("DX-5648: every plugin function-hook test imports the container-only module first, and it is never committed", () => {
+  const files = testFiles(/\.test\.tsx$/);
+  assert.ok(files.length > 20, `only ${files.length} test files found`);
+  const unguarded = files.filter((rel) => read(rel).split("
+")[0] !== 'import "./designated-test-container.generated"');
+  assert.deepEqual(unguarded, [], "plugin test files whose first line is not the generated-module import");
+  assert.match(read(".gitignore"), /^\*\.generated\.ts$/m, "the generated module must be gitignored so a host's copy never carries it");
+  assert.match(read("scripts/test-container-entry.sh"), /designated-test-container\.generated\.ts/);
+});
+
+test("DX-5648: readTestHost reads a missing marker as not-the-container but rethrows any other failure", () => {
+  assert.equal(readTestHost(path.join(REPO_ROOT, "no-such-marker")).markerOwnerUid, null);
+  // A marker path beneath a regular file fails with ENOTDIR: that must stop the run, not look like a missing marker.
+  assert.throws(() => readTestHost(path.join(REPO_ROOT, "package.json", "marker")), { code: "ENOTDIR" });
 });
 
 test("DX-5648: the image writes the marker the guard reads, root-owned, and installs the pinned claude CLI", () => {
@@ -85,5 +106,5 @@ test("DX-5648: npm test is the container command, and the entry runs both suites
   assert.equal(JSON.parse(read("package.json")).scripts.test, "node scripts/test-in-container.mjs");
   const entry = read("scripts/test-container-entry.sh");
   assert.match(entry, /node --test "\$\{mjs\[@\]\}"/);
-  assert.match(entry, /claude plugin test danxbot/);
+  assert.match(entry, /claude plugin test "\$plugin"/);
 });

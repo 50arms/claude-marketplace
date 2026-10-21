@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4374: the band's events warning, beside the plan label: nothing while the listener is `healthy`, the server's state in the warning
 // colour otherwise, never silent without a listener (DX-5232: the green `events` line is gone, only the warning remains).
 import { describe, expect } from 'claude-code/testing'

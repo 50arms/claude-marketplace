@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4233: a relay that cannot deliver says so: the band's events warning and ONE transcript line (the server's own words), never silence;
 // it retries on one bounded backoff, and stops only when the server says it cannot go on. A malformed answer is a failure, not an
 // empty list.

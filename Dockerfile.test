@@ -1,6 +1,6 @@
 # DX-5648 - the ONE environment this repo's tests run in: Linux, in a container
 # started from this image by scripts/test-in-container.mjs (`npm test`). A test file
-# run anywhere else refuses before any test runs (scripts/designated-test-container.mjs).
+# run anywhere else refuses before any test runs (danxbot/tests/designated-test-container.mjs).
 #
 # The image holds the installed dependencies and the `claude` CLI that runs the
 # plugin's function-hook tests (`claude plugin test`) and validates its module, and

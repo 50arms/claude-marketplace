@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4448: card ids in an assistant reply are drawn as links to the card. The stored message is never touched (a rewrite
 // changes the drawing), and the draw reads only the `view` atom, so it makes no call.
 import { describe, expect } from 'claude-code/testing'

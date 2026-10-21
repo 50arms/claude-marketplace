@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-5398: the relay's poll loop never waits on a delivery. A plugin's `$.prompt.submit` settles only when the queued prompt ENTERS the session
 // (claude.exe 2.1.299), so behind a running turn (a main agent blocked in a foreground sub-agent) it settled when that turn ended, and the loop
 // that awaited it made no poll, no heartbeat and no sub-agent stats for the rest of the turn. The kit's `holdPrompts()` models that engine. The

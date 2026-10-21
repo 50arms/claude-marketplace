@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-5577: a plugin store file left all NUL bytes by a cut-off write makes every `$.store` call reject with `<plugin>@<marketplace>: store file <path> is malformed (...)`.
 // The plugin keeps a base64 copy of the file beside it, writes an empty valid store, tells the person once, and carries on; any other store error is still thrown.
 //

@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4374: the footer is ONE button: `PLAN-NN` when a plan is known, `Plan` otherwise, and one press (the same
 // function as /danx-plan) brings a dismissed band back (nothing is opened).
 import { describe, expect } from 'claude-code/testing'

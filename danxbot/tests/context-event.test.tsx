@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4234: the registry's event text for a plan-connected session (SessionStart startup / resume / compact, and every sub-agent's start),
 // fetched through the session's own danx-dashboard server (R-2: `danxbot_api`, never the package's CLI), and the silence rules: nothing for
 // a session that is not on a plan, one warning line for a fetch that failed, quiet for a session with no usable key.

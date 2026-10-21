@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4336 (PLAN-29 R-1, CAV-4, CAV-6, R-9): the session reports its account's 5-hour and weekly windows to danxbot: on session.measure, on a
 // clock tick (an idle session's figure freezes, so a tick re-sends it), and with the time the figure was MEASURED (the last API response:
 // session.measure, a main-thread turn, a sub-agent finishing), which the tick never advances. Every signed-in session reports, on a plan or not (DX-4884); a

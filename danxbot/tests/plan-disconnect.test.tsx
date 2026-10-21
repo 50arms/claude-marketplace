@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-2985: the band's Disconnect button. plan_connect {plan_id, disconnect: true} takes the
 // session off its plan; the model is told in the same step; every refusal is shown, never swallowed.
 import { describe, expect } from 'claude-code/testing'

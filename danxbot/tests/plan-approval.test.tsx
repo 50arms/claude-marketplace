@@ -1,3 +1,4 @@
+import "./designated-test-container.generated"
 // DX-4391: a signed-out session's plan_connect answers `approval_required` (the MCP server,
 // DX-4390). The plugin draws the approval link and confirm code at once (DX-4630, no browser call); every other
 // answer (a normal connect, a refusal, a denied call) shows nothing.
