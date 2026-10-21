@@ -128,6 +128,10 @@ From the dashboard:
   A new build card alone records nothing.
 - `commented on problem` → a follow-up: reply with a comment on that problem. A comment that
   decides the question (for example "do it this other way") is an answer: handle it as one.
+  One that asks, thinks aloud or says it is unsure decides nothing, however concrete its idea:
+  answer what it asks in full (the exact calculation, a worked example) and leave the problem
+  open. An option you write from it names every point you added and is never marked
+  recommended until they confirm it.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
   read it for the full text.
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
