@@ -264,7 +264,7 @@ holds that message), your own next dashboard call (the plugin's background reads
 calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or your session going
 silent.
 
-The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message.
+The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message. A pause that runs out with nothing held still ends in one message (`Your pause ended (your stated wait ran out). Nothing was held…`): take that turn to re-check your cards, and pause again if there is still nothing to do.
 It arrives like a card comment from 50 Arms, attached to the card of the person's event that ended
 the pause, otherwise to the plan, otherwise to `SESSION`, but it is a notice (its text begins "This
 is a notice, not a card comment"), not a card comment. Over 30
