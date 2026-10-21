@@ -5,6 +5,19 @@
 set -euo pipefail
 cd /app
 
+# Named files are validated first, before anything is written or deleted.
+mjs=()
+tsx=()
+for file in "$@"; do
+  case "$file" in
+    *.test.mjs) mjs+=("$file") ;;
+    *.test.tsx) tsx+=("$file") ;;
+    *) echo "test-container-entry: $file is not a test file (*.test.mjs or *.test.tsx)" >&2; exit 2 ;;
+  esac
+  # A named file that matches nothing must stop the run: deleting every other .tsx test for it would end green with nothing run.
+  [ -f "$file" ] || { echo "test-container-entry: $file does not exist in the test copy" >&2; exit 2; }
+done
+
 # The .tsx tests cannot check where they run (the plugin test runner gives a test no process and no filesystem), so each imports
 # <plugin>/tests/run-tests-with-npm-test.generated.ts first, a module that exists ONLY here: written below, after the root-owned marker
 # is checked, for every plugin whose hooks.json declares modules (the set publish.sh validates). It is gitignored, so the tar copy a host
@@ -14,16 +27,7 @@ if [ "$(uname -s)" != "Linux" ] || [ "$(stat -c %u "$MARKER" 2>/dev/null || echo
   echo "test-container-entry: this is not the designated test container (no root-owned $MARKER)" >&2
   exit 2
 fi
-mapfile -t plugins < <(node -e '
-  const fs = require("fs");
-  for (const p of require("./.claude-plugin/marketplace.json").plugins) {
-    const dir = p.source.replace(/^\.\//, "");
-    const f = dir + "/hooks/hooks.json";
-    if (!fs.existsSync(f)) continue;
-    const m = JSON.parse(fs.readFileSync(f, "utf8")).modules;
-    if (Array.isArray(m) && m.length > 0) console.log(dir);
-  }
-')
+mapfile -t plugins < <(node scripts/lib/plugins-with-modules.mjs .)
 for plugin in "${plugins[@]}"; do
   mkdir -p "$plugin/tests"
   printf '%s\n%s\n' "// DX-5648: written by scripts/test-container-entry.sh inside the designated test container only; gitignored." \
@@ -35,22 +39,11 @@ git init -q -b main
 git add -A
 git -c user.name=claude-plugins-test -c user.email=test@localhost -c commit.gpgsign=false commit -q --no-verify -m "DX-5648 test snapshot of the copied checkout"
 
-mjs=()
-tsx=()
-for file in "$@"; do
-  case "$file" in
-    *.mjs) mjs+=("$file") ;;
-    *.tsx) tsx+=("$file") ;;
-    *) echo "test-container-entry: $file is neither a .mjs nor a .tsx test file" >&2; exit 2 ;;
-  esac
-  # A named file that matches nothing must stop the run: deleting every other .tsx test for it would end green with nothing run.
-  [ -f "$file" ] || { echo "test-container-entry: $file does not exist in the test copy" >&2; exit 2; }
-done
-
 whole=0
 if [ $# -eq 0 ]; then
   whole=1
-  mjs=("danxbot/tests/*.test.mjs" "scripts/tests/*.test.mjs")
+  mjs=("scripts/tests/*.test.mjs")
+  for plugin in "${plugins[@]}"; do mjs+=("$plugin/tests/*.test.mjs"); done
 fi
 
 status=0

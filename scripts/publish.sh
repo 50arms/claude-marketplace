@@ -201,13 +201,8 @@ fi
 # module's tests (`claude plugin test`) run in the test container with every other suite (below).
 
 plugin_has_modules() {
-  node -e '
-    const fs = require("fs");
-    const f = process.argv[1] + "/hooks/hooks.json";
-    if (!fs.existsSync(f)) process.exit(1);
-    const m = JSON.parse(fs.readFileSync(f, "utf8")).modules;
-    process.exit(Array.isArray(m) && m.length > 0 ? 0 : 1);
-  ' "$1"
+  # DX-5648: the one definition lives in scripts/lib/plugins-with-modules.mjs.
+  node scripts/lib/plugins-with-modules.mjs . | grep -qxF "$1"
 }
 
 CLAUDE_CMD="${CLAUDE_BIN:-claude}"

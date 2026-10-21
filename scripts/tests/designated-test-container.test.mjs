@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pluginsWithModules } from "../lib/plugins-with-modules.mjs";
 import { TEST_CONTAINER_COMMAND, TEST_ENVIRONMENT_MARKER, designatedTestContainerRefusal, readTestHost } from "../../danxbot/tests/designated-test-container.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -57,15 +58,7 @@ test("DX-5648: a test file run outside the container refuses before any test run
  * loops over). Each one's tests live in <plugin>/tests, which must exist.
  */
 function testPluginDirs() {
-  const marketplace = JSON.parse(read(".claude-plugin/marketplace.json"));
-  return marketplace.plugins
-    .map((p) => p.source.replace(/^\.\//, ""))
-    .filter((dir) => {
-      const hooks = path.join(REPO_ROOT, dir, "hooks", "hooks.json");
-      if (!fs.existsSync(hooks)) return false;
-      const modules = JSON.parse(fs.readFileSync(hooks, "utf8")).modules;
-      return Array.isArray(modules) && modules.length > 0;
-    });
+  return pluginsWithModules(REPO_ROOT);
 }
 
 /** Every test file of the repo, both kinds: the node suites (*.test.mjs) and the plugin's function-hook tests (*.test.tsx). A missing directory throws. */
@@ -123,4 +116,13 @@ test("DX-5648: npm test is the container command, and the entry runs both suites
   const entry = read("scripts/test-container-entry.sh");
   assert.match(entry, /node --test "\$\{mjs\[@\]\}"/);
   assert.match(entry, /claude plugin test "\$plugin"/);
+});
+
+// DX-5648: a named file that is not a test stops the run before anything is deleted (a helper such as plan-kit.tsx once deleted every
+// .test.tsx and ran zero tests). Inside the container the entry's argument check runs first, so this changes nothing in the copy.
+test("DX-5648: the entry refuses a named file that is not a test", () => {
+  const entry = path.join(REPO_ROOT, "scripts", "test-container-entry.sh");
+  const r = spawnSync("bash", [entry, "danxbot/tests/plan-kit.tsx"], { encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /danxbot\/tests\/plan-kit\.tsx is not a test file/);
 });
