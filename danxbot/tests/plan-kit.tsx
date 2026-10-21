@@ -188,6 +188,8 @@ export function dashboard(
     pacingLine?: { body: unknown } | { status: number }
     // DX-4631: each pacing line read answers only after this long on the harness clock (a slow or hung dashboard); the read is counted when it starts
     pacingHoldMs?: number
+    // DX-5593 (C1): what DELETE /api/pacing/agents/claim (the claim given back) answers instead of the real release: an error status, or any body (a 200)
+    claimRelease?: { status: number } | { body: unknown }
     // DX-4339: what GET /api/team/pacing answers (the team's pacing settings): a body (any shape) or an error status; unreachable by default (the usage pacing's silent, local state)
     teamPacing?: { body: unknown } | { status: number }
     // DX-4952: the test puts steps before reads of $.state (`beforeNextRead`), which needs the `state.get` hook from the start
@@ -651,6 +653,7 @@ export function dashboard(
       if (e.args.method === 'DELETE') {
         const id = new URL(e.args.path, 'http://dashboard.local').searchParams.get('claim_id') as string
         claimsReleased.push(id)
+        if (options.claimRelease !== undefined) return { value: 'status' in options.claimRelease ? reply({ error: 'release boom' }, options.claimRelease.status) : reply(options.claimRelease.body) }
         return { value: reply({ released: heldClaims.delete(id) }) }
       }
       const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
