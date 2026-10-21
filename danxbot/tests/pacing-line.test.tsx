@@ -83,7 +83,7 @@ describe('the SubagentStart pacing line', () => {
 })
 
 describe('a clock that rejects', () => {
-  const env = (toasts: string[]): PacingEnv => ({ now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), toast: t => void toasts.push(t) })
+  const env = (toasts: string[]): PacingEnv => ({ now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) })
 
   test('is a failed read, told once: neither the line nor a forced session-start read rejects', async () => {
     resetPacing()
