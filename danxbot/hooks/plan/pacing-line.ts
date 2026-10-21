@@ -290,32 +290,38 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
   }
 }
 
-// DX-5593 (B2): a refused spawn's toast, once per distinct text. It says the spawn was refused, never that spawns are not paced.
-export function reportClaimFailure(env: PacingEnv, failure: string): void {
-  failure = failure.slice(0, ERROR_MAX)
-  if (failure === lastClaimError) return
-  lastClaimError = failure
-  env.toast(`Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap): ${failure}`)
+// DX-5593: one toast per distinct text, shared by the refused-spawn and the give-back toasts through the one lastClaimError slot.
+function toastClaimOnce(env: PacingEnv, prefix: string, text: string): void {
+  text = text.slice(0, ERROR_MAX)
+  if (text === lastClaimError) return
+  lastClaimError = text
+  env.toast(`${prefix}: ${text}`)
 }
 
-// The claim given back: the host refused the spawn after the slot was taken. Never rejects; a claim not given back lapses in danxbot within the
-// minute, which stays the recovery. DX-5593 (C1): a give-back that fails is told once per distinct text (the same rule as reportClaimFailure),
-// never silently: an error answer, or an unreachable server of a session known to be signed in. `{released:false}` (a 200) is normal and silent.
+// DX-5593 (B2): a refused spawn's toast, once per distinct text. It says the spawn was refused, never that spawns are not paced.
+export function reportClaimFailure(env: PacingEnv, failure: string): void {
+  toastClaimOnce(env, 'Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap)', failure)
+}
+
+// The claim given back: the host refused the spawn after the slot was taken. Never rejects; a claim not given back lapses in danxbot
+// (AGENT_CLAIM_LAPSE_MS, 60 s), which stays the recovery. DX-5593 (C1): a give-back that fails is told once per distinct text (the same rule as
+// reportClaimFailure), never silently for a session known to be signed in: an error answer, an unreachable server, a timeout or a throw.
+// A signed-out session and `{released:false}` (a 200, normal) stay silent.
 export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
+  const prefix = 'Usage pacing could not give back a claimed slot'
   try {
-    const r = await env.within<Api | undefined>(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
-    if (r === undefined) return
     let failure: string | null = null
-    if (r.unreachable) {
-      if (hasSucceeded || (await env.signedIn())) failure = 'the danx-dashboard MCP server is not reachable from this session'
-    } else if (!r.ok && !isSignedOut(r)) {
-      failure = r.status === 0 ? errText(r) : `the claim give-back answered ${r.status}`
+    try {
+      const r = await env.within<Api | undefined>(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
+      if (r === undefined) failure = `the give-back timed out after ${PACING_READ_DEADLINE_MS}ms, so the slot stays held until it lapses (60 s)`
+      else if (r.unreachable) failure = 'the danx-dashboard MCP server is not reachable from this session'
+      else if (!r.ok && !isSignedOut(r)) failure = r.status === 0 ? errText(r) : `the claim give-back answered ${r.status}`
+    } catch (err: any) {
+      failure = `the give-back failed (${String(err?.message ?? err)}), so the slot stays held until it lapses (60 s)`
     }
     if (failure === null) return
-    failure = failure.slice(0, ERROR_MAX)
-    if (failure === lastClaimError) return
-    lastClaimError = failure
-    env.toast(`Usage pacing could not give back a claimed slot (it lapses within a minute): ${failure}`)
+    if (!hasSucceeded && !(await env.signedIn())) return
+    toastClaimOnce(env, `${prefix} (it lapses within a minute)`, failure)
   } catch {
     /* the claim lapses in danxbot */
   }
