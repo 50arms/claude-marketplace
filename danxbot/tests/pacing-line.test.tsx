@@ -94,3 +94,27 @@ describe('a clock that rejects', () => {
     expect(toasts[0]).toContain('clock down')
   })
 })
+
+describe('a session whose MCP server becomes unreachable', () => {
+  test('toasts that the pacing read failed, once for a repeat of the same failure, and never says spawns are not paced', async () => {
+    resetPacing()
+    const toasts: string[] = []
+    // DX-5593: the first read succeeds (an unreachable server is silent until one has), every later one finds the server gone
+    const answers = [{ ok: true, status: 200, body: known }, { ok: false, status: 0, body: null, unreachable: true }]
+    const env: PacingEnv = {
+      now: () => Promise.resolve(0),
+      within: (_ms, work) => work,
+      call: () => Promise.resolve(answers.length > 1 ? answers.shift()! : answers[0]),
+      reading: () => Promise.resolve(null),
+      signedIn: () => Promise.resolve(true),
+      sleep: () => Promise.resolve(),
+      toast: t => void toasts.push(t),
+    }
+    await refreshPacing(env, true)
+    expect(toasts).toEqual([])
+    await refreshPacing(env, true)
+    await refreshPacing(env, true)
+    expect(toasts).toEqual(['Usage pacing could not be read (sub-agents get no pacing line until it can): the danx-dashboard MCP server is not reachable from this session'])
+    expect(toasts[0]).not.toMatch(/not paced/i)
+  })
+})
