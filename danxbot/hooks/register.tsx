@@ -83,6 +83,7 @@ import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf
 import type { ReadyCard } from './reports/ready-cards'
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
 import type { PauseRead } from './reports/pause'
+import { storeDoor, type StoreCall, type StoreIo } from './store/recover'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
 // uses it (DX-4232), so they are declared here, not in ./plan/config.
@@ -238,16 +239,38 @@ async function api($: any, method: string, path: string, extra: { query?: object
 
 const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
 
+// DX-5577: the one door to $.store (hooks/store/recover.ts holds the recovery of a zeroed store file; this is its only wiring to the engine's `$`). Every `$.store`
+// call of the plugin is made here, in `storeIo`, and reached through `storeOp`.
+function storeIo($: any): StoreIo {
+  return {
+    run: async call => {
+      if (call.op === 'get') return $.store.get(call.key)
+      if (call.op === 'set') return $.store.set(call.key, call.value)
+      if (call.op === 'delete') return $.store.delete(call.key)
+      return $.store.keys()
+    },
+    probe: async () => void (await $.store.keys()),
+    readBase64: async path => ((await $.fs.read(path, { as: 'bytes' })) as { base64: string }).base64,
+    write: (path, text) => $.fs.write(path, text),
+    now: async () => $.clock.now(),
+    toast: text => void $.ui.toast(text),
+  }
+}
+
+async function storeOp($: any, call: StoreCall): Promise<any> {
+  return storeDoor(storeIo($), call)
+}
+
 async function loadView($: any) {
   const refreshedAt = await isoNow($)
   const loaded = await loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt)
   // DX-4521: the band's links need the dashboard origin even when this load could not read it (signed out, a failed call, a
   // session just started): the last origin a plan list answered is kept in $.store (across sessions) and stands in for it.
   if (loaded.dashboardUrl !== null) {
-    await $.store.set(DASHBOARD_ORIGIN_KEY, loaded.dashboardUrl)
+    await storeOp($, { op: 'set', key: DASHBOARD_ORIGIN_KEY, value: loaded.dashboardUrl })
     return loaded
   }
-  const seen = await $.store.get(DASHBOARD_ORIGIN_KEY)
+  const seen = await storeOp($, { op: 'get', key: DASHBOARD_ORIGIN_KEY })
   return typeof seen === 'string' ? { ...loaded, dashboardUrl: seen } : loaded
 }
 
@@ -384,10 +407,10 @@ async function permissionTick($: any): Promise<void> {
 const PERMISSION_TOLD_KEY = 'permissionTold'
 
 async function markToldOnce($: any, publicId: string): Promise<boolean> {
-  const seen = await $.store.get(PERMISSION_TOLD_KEY)
+  const seen = await storeOp($, { op: 'get', key: PERMISSION_TOLD_KEY })
   const told: string[] = Array.isArray(seen) ? seen.filter((id: unknown): id is string => typeof id === 'string') : []
   if (told.includes(publicId)) return false
-  await $.store.set(PERMISSION_TOLD_KEY, [...told, publicId].slice(-PERMISSION_TOLD_MAX))
+  await storeOp($, { op: 'set', key: PERMISSION_TOLD_KEY, value: [...told, publicId].slice(-PERMISSION_TOLD_MAX) })
   return true
 }
 
@@ -1208,7 +1231,7 @@ async function haltRelay($: any, run: RelayRun, err: any): Promise<void> {
 }
 
 async function loadCursor($: any, planId: number | null): Promise<string | null> {
-  return cursorFor(await $.store.get(cursorKey(await $.session.id())), planId)
+  return cursorFor(await storeOp($, { op: 'get', key: cursorKey(await $.session.id()) }), planId)
 }
 
 // The cursor is stored AFTER the event was delivered, under the session id as it is now (a /clear or a resume changes it).
@@ -1216,18 +1239,18 @@ async function loadCursor($: any, planId: number | null): Promise<string | null>
 // it (a run replaced while its prompt waited), so the gate is the plan the live run serves, not the run that took the event.
 async function saveCursor($: any, planId: number | null, cursor: string): Promise<void> {
   if (relayRun === null || relayRun.planId !== planId) return
-  await $.store.set(cursorKey(await $.session.id()), { planId, cursor, at: await $.clock.now() })
+  await storeOp($, { op: 'set', key: cursorKey(await $.session.id()), value: { planId, cursor, at: await $.clock.now() } })
 }
 
 // The store keeps one record per session ever held: the oldest past CURSOR_KEEP go.
 async function pruneCursors($: any): Promise<void> {
   const entries: { key: string; at: number }[] = []
-  for (const key of await $.store.keys()) {
+  for (const key of await storeOp($, { op: 'keys' })) {
     if (!key.startsWith(CURSOR_PREFIX)) continue
-    const rec: any = await $.store.get(key)
+    const rec: any = await storeOp($, { op: 'get', key })
     entries.push({ key, at: typeof rec?.at === 'number' ? rec.at : 0 })
   }
-  for (const key of staleCursorKeys(entries)) await $.store.delete(key)
+  for (const key of staleCursorKeys(entries)) await storeOp($, { op: 'delete', key })
 }
 
 // A prompt that wakes an idle session (or queues behind the running turn). Null when it entered, else why it did not.
@@ -1527,7 +1550,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
       // a /clear or a resume gives the process another session id: the stored cursor (the last DELIVERED event's, not the polled one) moves with it
       const sid = await $.session.id()
       if (sid !== keyedBy) {
-        const stored = await $.store.get(cursorKey(keyedBy))
+        const stored = await storeOp($, { op: 'get', key: cursorKey(keyedBy) })
         keyedBy = sid
         const delivered = cursorFor(stored, run.planId)
         if (delivered !== null) await saveCursor($, run.planId, delivered)
@@ -2496,13 +2519,13 @@ async function contextReading($: any): Promise<{ tokens: number | null; window: 
 // DX-5562: it answers the keys it deleted, so a caller that keeps a claim beside a record can drop the claim with it.
 async function pruneSessionRecords($: any, prefix: string, atField: 'at' | 'sentAt'): Promise<string[]> {
   const entries: { key: string; at: number }[] = []
-  for (const key of await $.store.keys()) {
+  for (const key of await storeOp($, { op: 'keys' })) {
     if (!key.startsWith(prefix)) continue
-    const rec: any = await $.store.get(key)
+    const rec: any = await storeOp($, { op: 'get', key })
     entries.push({ key, at: typeof rec?.[atField] === 'number' ? rec[atField] : 0 })
   }
   const stale = staleSessionKeys(entries, prefix)
-  for (const key of stale) await $.store.delete(key)
+  for (const key of stale) await storeOp($, { op: 'delete', key })
   return stale
 }
 async function pruneUsedReleases($: any): Promise<void> {
@@ -2605,7 +2628,7 @@ async function armSubAgents($: any, file: ControlFile): Promise<void> {
 async function spendReadyRelease($: any, file: ControlFile): Promise<string | null> {
   const key = usedReleaseKey(String(await $.session.id()))
   const now = await $.clock.now()
-  const releaseId = readyRelease(file, spentReleaseId(await $.store.get(key)), now)
+  const releaseId = readyRelease(file, spentReleaseId(await storeOp($, { op: 'get', key })), now)
   if (releaseId === null) return null
   // the store record outlives this process (claimedRelease below does not): a new process must not start the same release again
   // DX-5231: the claim, one compare-and-set before any further await: of every caller that read the release as waiting, exactly one gets it
@@ -2615,7 +2638,7 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
     return won ? releaseId : cur
   })
   if (!won) return null
-  await $.store.set(key, { releaseId, at: now })
+  await storeOp($, { op: 'set', key, value: { releaseId, at: now } })
   await pruneUsedReleases($)
   return releaseId
 }
@@ -2761,10 +2784,10 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
     const sessionId = String(await $.session.id())
     const key = usedReleaseKey(sessionId, agentId)
     const now = await $.clock.now()
-    const v = agentVerdict({ agentId, file: await compactionControl($), size: agentSizes.get(agentId) ?? null, usedReleaseId: spentReleaseId(await $.store.get(key)), nowMs: now })
+    const v = agentVerdict({ agentId, file: await compactionControl($), size: agentSizes.get(agentId) ?? null, usedReleaseId: spentReleaseId(await storeOp($, { op: 'get', key })), nowMs: now })
     if (v.pass && v.why === 'release' && spends) {
       // spent before the compaction runs: this agent's release passes once, however many proposals follow
-      await $.store.set(key, { releaseId: v.releaseId, at: now })
+      await storeOp($, { op: 'set', key, value: { releaseId: v.releaseId, at: now } })
       await pruneUsedReleases($)
       $.ui.toast(`Compacting sub-agent ${agentId} now: it said it is ready.`)
     } else if (v.pass && v.why === 'valve' && spends) $.ui.toast(`Compacting sub-agent ${agentId} now: its context reached the size where holding it would end its work.`)
@@ -2802,7 +2825,7 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
   let recorded = false
   for (const { id, ask } of asks) {
     const key = askSentKey(sessionId, id)
-    if (!running.has(id) || sentAskAt(await $.store.get(key)) === ask.at) continue
+    if (!running.has(id) || sentAskAt(await storeOp($, { op: 'get', key })) === ask.at) continue
     // DX-5222: the claim, one compare-and-set before the send: of every sync that read this request as unsent, exactly one sends it
     let won = false
     await update($, claimedAsks, cur => {
@@ -2820,7 +2843,7 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
       if (firstTimeAgentFault(told)) $.ui.toast(told)
       continue
     }
-    await $.store.set(key, { at: ask.at, sentAt: await $.clock.now() })
+    await storeOp($, { op: 'set', key, value: { at: ask.at, sentAt: await $.clock.now() } })
     recorded = true
   }
   if (recorded) {

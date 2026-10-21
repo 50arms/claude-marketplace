@@ -90,6 +90,13 @@ The reports themselves:
 
 Dispatches (containerised `claude -p`, no plugin) keep the percent variable and their own gate (DX-5230).
 
+## A zeroed store file is recovered, never left to break every hook (DX-5577)
+
+Claude Code keeps `$.store` as one JSON file per plugin (`~/.claude/plugins/store/danxbot_50arms-<hash>.json`) and writes it by temp file and rename. A write cut off before its data reached disk has twice left that file all NUL bytes. Measured on claude.exe 2.1.304: from then on EVERY `$.store` call (get, set, delete, keys) rejects with `HooksError: <plugin>@<marketplace>: store file <path> is malformed (JSON Parse error: ...)`, and the store API cannot repair it.
+
+- Every `$.store` call in `danxbot/hooks/register.tsx` is made in `storeIo` and reached through `storeOp` (never a bare `$.store.x`). `storeOp` runs `danxbot/hooks/store/recover.ts`, which recovers that one error only: `$.fs.read` the file as bytes, keep it as base64 in `<name>.malformed-<ISO time, colons as dashes>.bak` beside it, write `{}`, one toast naming the backup, then run the call once more. State the plugin lost is rebuilt as on a fresh install. Any other store error, and a recovery that cannot keep the copy, is thrown to the caller. The match is on the host's own message, `<plugin>@<marketplace>: store file <path> is malformed (...)`, from the start of the message (`danxbot/hooks/store/malformed.ts`); bytes that already hold a JSON object are another process's reset and are left alone.
+- The plugin test runner prefixes every refusal a fake hands to the plugin with `<plugin>: $.store.<op>: `, which the real program never does (the round-2 match anchored to that prefix passed its tests and never fired in a real session). So `danxbot/tests/store-malformed.test.tsx` drives `recover.ts` through its `StoreIo` with the host's message as measured, and the runner-level cases only pin that the wrapped form and other errors are not recovered. Never anchor the match to the runner's shape.
+
 ## The danxbot plugin carries no `@thehammer/danx-dashboard-mcp` version (DX-4321)
 
 The version is the npm registry's `latest`, recorded in `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/current`. The MCP server launcher (`danxbot/scripts/dashboard-mcp-server.mjs`, through `danxbot/scripts/lib/dashboard-mcp-package.mjs`) is the one thing that refreshes and installs it:

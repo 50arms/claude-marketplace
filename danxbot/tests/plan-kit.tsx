@@ -874,8 +874,13 @@ export function dashboard(
   const stored = new Map<string, unknown>()
   let storeSetFails: string | undefined
   const storeSets: string[] = []
-  on('store.get', (_$: any, e: any) => ({ value: stored.get(e.key) }) as any)
+  // DX-5577: a broken store: every store call is refused with this reason. The runner hands the plugin a fake's refusal as `<plugin>: $.store.<op>: <reason>`, never the bare
+  // message the real program throws, so this kit can only stand in for store errors the plugin must NOT recover; the recovery itself is tested through hooks/store/recover.ts
+  let storeBroken: string | undefined
+  const storeRefusal = () => (storeBroken === undefined ? undefined : ({ deny: storeBroken } as any))
+  on('store.get', (_$: any, e: any) => storeRefusal() ?? ({ value: stored.get(e.key) }) as any)
   on('store.set', (_$: any, e: any) => {
+    if (storeBroken !== undefined) return storeRefusal()
     if (storeSetFails !== undefined && String(e.key).startsWith(RELAY_CURSOR_PREFIX)) return { deny: storeSetFails } as any
     storeSets.push(String(e.key))
     return (stored.set(e.key, e.value), { value: undefined }) as any
@@ -884,9 +889,9 @@ export function dashboard(
   let storeKeysHold: Promise<void> | undefined
   on('store.keys', async () => {
     await storeKeysHold
-    return { value: [...stored.keys()] } as any
+    return storeRefusal() ?? ({ value: [...stored.keys()] }) as any
   })
-  on('store.delete', (_$: any, e: any) => (stored.delete(e.key), { value: undefined }) as any)
+  on('store.delete', (_$: any, e: any) => storeRefusal() ?? (stored.delete(e.key), { value: undefined }) as any)
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   // the tools the session lists: the plugin's when its server is connected
   // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
@@ -1032,6 +1037,8 @@ export function dashboard(
     },
     // the relay's cursor writes to $.store are refused with this reason (a failure that is none of the relay's own)
     failCursorWrites: (reason: string) => void (storeSetFails = reason),
+    // DX-5577: every store call is refused with `reason` (see storeBroken)
+    breakStore: (reason: string) => void (storeBroken = reason),
     // runs inside the next prompt submit, before it answers: a plan move at the very moment an event is delivered
     duringPrompt: (fn: () => Promise<void>) => void (deliveryFlags.duringPrompt = fn),
     dropPrompts: (reason: string) => void (deliveryFlags.submitDrops = reason),
