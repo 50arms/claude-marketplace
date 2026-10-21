@@ -93,7 +93,9 @@ for (const surface of SURFACES) {
       // arrived; what the move decides is the cursor, and the new plan starts clean
       expect(d.relay.delivered.map(x => x.text).sort()).toEqual(['[danxbot plan event] delivered as the plan moves', '[danxbot plan event] next in the same batch'])
       expect(d.relay.calls.at(-1)).toMatchObject({ plan_id: 24, cursor: null })
-      expect(d.stored.get(KEY)).toBeUndefined()
+      // DX-5602: both were delivered at their calls, while the old run still served plan 23, so plan 23's own record holds c10; the new plan's first wait
+      // above carried no cursor (a record of another plan is not its cursor)
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c10' })
     })
 
     test("a stopped answer that arrives AFTER a move to another plan halts nothing, writes no state and tells nothing: a return to the first plan restarts the relay", async ($, on) => {
