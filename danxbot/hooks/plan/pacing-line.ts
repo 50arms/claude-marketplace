@@ -310,7 +310,9 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
 export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
   try {
     let failure: string | null = null
-    // no answer at all (a timeout, a throw, an unreachable server) is told only for a session known to be signed in; an error answer always is
+    // no answer at all (a timeout, a throw, an unreachable server) is told only for a session known to be signed in; an error answer always is.
+    // The signedIn() check below is reached only when resetPacing ran between the claim and its give-back (a new session start): a `claimed`
+    // claim has already set hasSucceeded, so in every other case a give-back of a live claim is known signed in.
     let answered = false
     try {
       const r = await env.within<Api | undefined>(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
