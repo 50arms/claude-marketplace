@@ -308,20 +308,24 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
 // reportClaimFailure), never silently for a session known to be signed in: an error answer, an unreachable server, a timeout or a throw.
 // A signed-out session and `{released:false}` (a 200, normal) stay silent.
 export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
-  const prefix = 'Usage pacing could not give back a claimed slot'
   try {
     let failure: string | null = null
+    // no answer at all (a timeout, a throw, an unreachable server) is told only for a session known to be signed in; an error answer always is
+    let answered = false
     try {
       const r = await env.within<Api | undefined>(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
-      if (r === undefined) failure = `the give-back timed out after ${PACING_READ_DEADLINE_MS}ms, so the slot stays held until it lapses (60 s)`
+      if (r === undefined) failure = `the give-back timed out after ${PACING_READ_DEADLINE_MS}ms`
       else if (r.unreachable) failure = 'the danx-dashboard MCP server is not reachable from this session'
-      else if (!r.ok && !isSignedOut(r)) failure = r.status === 0 ? errText(r) : `the claim give-back answered ${r.status}`
+      else if (!r.ok && !isSignedOut(r)) {
+        answered = true
+        failure = r.status === 0 ? errText(r) : `the claim give-back answered ${r.status}`
+      }
     } catch (err: any) {
-      failure = `the give-back failed (${String(err?.message ?? err)}), so the slot stays held until it lapses (60 s)`
+      failure = `the give-back failed (${String(err?.message ?? err)})`
     }
     if (failure === null) return
-    if (!hasSucceeded && !(await env.signedIn())) return
-    toastClaimOnce(env, `${prefix} (it lapses within a minute)`, failure)
+    if (!answered && !hasSucceeded && !(await env.signedIn())) return
+    toastClaimOnce(env, 'Usage pacing could not give back a claimed slot, so it stays held until it lapses (60 s)', failure)
   } catch {
     /* the claim lapses in danxbot */
   }
