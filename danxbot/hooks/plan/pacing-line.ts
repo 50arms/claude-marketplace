@@ -124,6 +124,8 @@ let hasSucceeded = false
 let lastError: string | null = null
 // the same for the spawn claim's refusals, told in their own words (B2)
 let lastClaimError: string | null = null
+// DX-5593: and for the give-back's failures, in a slot of their own: a successful claim clears lastClaimError, and every give-back follows one
+let lastReleaseError: string | null = null
 let inflight: Promise<void> | null = null
 // bumped by every reset: a read that was in flight across one must not write the new session's state
 let generation = 0
@@ -135,6 +137,7 @@ export function resetPacing(): void {
   hasSucceeded = false
   lastError = null
   lastClaimError = null
+  lastReleaseError = null
   inflight = null
 }
 
@@ -291,17 +294,18 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
   }
 }
 
-// DX-5593: one toast per distinct text, shared by the refused-spawn and the give-back toasts through the one lastClaimError slot.
-function toastClaimOnce(env: PacingEnv, prefix: string, text: string): void {
+// DX-5593: one toast per distinct text in `slot` (the refused spawn's or the give-back's), the refused-spawn and the give-back toasts' one rule.
+function toastOnce(env: PacingEnv, slot: 'claim' | 'release', prefix: string, text: string): void {
   text = text.slice(0, ERROR_MAX)
-  if (text === lastClaimError) return
-  lastClaimError = text
+  if (text === (slot === 'claim' ? lastClaimError : lastReleaseError)) return
+  if (slot === 'claim') lastClaimError = text
+  else lastReleaseError = text
   env.toast(`${prefix}: ${text}`)
 }
 
 // DX-5593 (B2): a refused spawn's toast, once per distinct text. It says the spawn was refused, never that spawns are not paced.
 export function reportClaimFailure(env: PacingEnv, failure: string): void {
-  toastClaimOnce(env, 'Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap)', failure)
+  toastOnce(env, 'claim', 'Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap)', failure)
 }
 
 // The claim given back: the host refused the spawn after the slot was taken. Never rejects; a claim not given back lapses in danxbot
@@ -326,9 +330,12 @@ export async function releaseClaim(env: PacingEnv, claimId: string): Promise<voi
     } catch (err: any) {
       failure = `the give-back failed (${String(err?.message ?? err)})`
     }
-    if (failure === null) return
+    if (failure === null) {
+      lastReleaseError = null
+      return
+    }
     if (!answered && !hasSucceeded && !(await env.signedIn())) return
-    toastClaimOnce(env, 'Usage pacing could not give back a claimed slot, so it stays held until it lapses (60 s)', failure)
+    toastOnce(env, 'release', 'Usage pacing could not give back a claimed slot, so it stays held until it lapses (60 s)', failure)
   } catch {
     /* the claim lapses in danxbot */
   }
