@@ -66,7 +66,7 @@ export function linkCardIds(text: string, prefixes: string[], plan: ConnectedPla
           // the named group is the last argument; it is set only when the id alternative matched (a protected construct is kept)
           const card: string | undefined = rest[rest.length - 1].card
           if (card === undefined) return hit
-          return `[${card}](${planCardIds.has(card) ? cardUrl(plan, card) : boardCardUrl(plan.dashboardUrl, card)})`
+          return `[${card}](${planCardIds.has(card) ? cardUrl(plan, card) : boardCardUrl(plan, card)})`
         })
       : seg.text
   }

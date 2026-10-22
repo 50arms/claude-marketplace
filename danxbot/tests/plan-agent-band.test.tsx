@@ -92,7 +92,7 @@ for (const surface of SURFACES) {
       expect(await openLinks(band)).toEqual([{ key: 'open-tab', label: 'Open plan', href: `${DASHBOARD_URL}/plans` }])
     })
 
-    test('a resumed session whose agent was released reads that it holds none (never Disconnected) from the dashboard's own 403', async ($, on) => {
+    test('a resumed session whose agent was released reads that it holds none (never Disconnected) from the dashboard own 403 refusal', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
