@@ -233,7 +233,8 @@ and every card is Done or Cancelled.
 
 Every message from the dashboard starts a paid turn at your whole context size. When you have
 nothing you can do (waiting on a person's answer, a long build, a dependency), do not answer
-each reminder with "still waiting": pause.
+each reminder with "still waiting": pause. A session with nothing to do right now pauses; it
+never stays active just to wait.
 
 1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block): the
    pause is only the signal, never the record. Waiting on a person is always an open problem
@@ -274,6 +275,13 @@ paused, continued"): read them all before acting. Act on it once, as on the
 messages themselves (a held nudge still means the cards it names are workable now). A pause that
 ended on your own call needs no reply. Read the plan before resuming, since the cause names what
 changed.
+
+A pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
+on Team > Agents) gives your session's team agent back to the pool. The pause-ended notice then says
+`Your agent <name> went back to the pool after <N> minutes paused. Call plan_connect to take an agent
+again.` On waking, call `plan_connect` before any other dashboard work: it takes the same agent again
+when it is free, otherwise the next free one, otherwise answers `agent_limit_reached`. Until then work
+calls are refused with `agent_not_held` or `agent_needed`.
 
 ## Stopping
 
