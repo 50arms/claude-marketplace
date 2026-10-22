@@ -219,9 +219,9 @@ function peekPacing(nowMs: number): Pacing | null {
 
 // DX-5593: the spawn claim. The budget is a STRICT cap and the one count lives in danxbot, so a spawn takes its slot there, atomically
 // (POST /api/pacing/agents/claim: the same body as the line plus {claimed, claim_id}); the plugin decides nothing from a count it holds.
-// `unknown`: danxbot sees no account to cap, or the session is outside pacing altogether (signed out, or its danx-dashboard MCP server NEVER
-// connected): allow, nothing claimed, because danxbot counts no agent of a session it does not know. `failed`: the claim could not be made
-// (deadline, error answer, malformed answer, or the server of a session KNOWN to be signed in is unreachable) and the spawn is REFUSED: an allowed
+// `unknown`: danxbot sees no account to cap, or the session is signed out: allow, nothing claimed, because danxbot counts no agent of a session
+// it does not know. `failed`: the claim could not be made (deadline, error answer, malformed answer, a server of a session KNOWN to be signed in
+// that is unreachable, or a server that never connected at all: DX-5593 problem 2503) and the spawn is REFUSED: an allowed
 // spawn there would be an agent nobody counted (DX-5593 notes 18330, 18725). Whether a session is outside pacing is a fact about the session, never
 // about the connection: a session that was signed in stays inside pacing when its server drops.
 export const CLAIM_PATH = '/api/pacing/agents/claim'
@@ -268,9 +268,9 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
         if (hasSucceeded || (await env.signedIn())) return { kind: 'failed', failure: 'the danx-dashboard MCP server is not reachable from this session' }
         // not known to be signed in yet: the server may still be connecting, so it is looked for again until the claim's deadline
         if (PACING_READ_DEADLINE_MS - ((await env.now()) - startedAt) <= CONNECT_POLL_MS) {
-          // DX-5593 problem 2503 (open, the operator's call): a session whose server NEVER connected within the deadline is allowed, outside pacing, as before:
-          // danxbot cannot count it. Whether it should be refused instead is not decided here.
-          return { kind: 'unknown' }
+          // DX-5593 problem 2503 (operator, 2026-10-22: refuse it): no connection means no claim, and no claim means no spawn, whether or not the
+          // session was ever signed in. A spawn allowed here would be an agent the strict cap never counted.
+          return { kind: 'failed', failure: 'the danx-dashboard MCP server never connected in this session' }
         }
         try {
           await env.sleep(CONNECT_POLL_MS)

@@ -13,8 +13,8 @@ import type { PacingEnv } from './pacing-line'
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
 // writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
 // answer) REFUSES the spawn, because an allowed spawn there would be an agent nobody counted (the failure is toasted once per text). The allows
-// without a claim are danxbot's own answer that it sees no account to cap (no usage report, no verdict, pacing off) and a session outside pacing
-// (signed out, or a danx-dashboard MCP server that never connected: DX-5593 problem 2503): danxbot counts none of its agents, so refusing them would only break plain plugin use.
+// without a claim are danxbot's own answer that it sees no account to cap (no usage report, no verdict, pacing off) and a signed-out session:
+// danxbot counts none of its agents. A danx-dashboard MCP server that never connected is refused like any failed claim (DX-5593 problem 2503).
 //
 // These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.

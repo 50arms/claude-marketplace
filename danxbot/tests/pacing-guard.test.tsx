@@ -482,16 +482,16 @@ describe('the agent.spawn hook', () => {
 
   // outside pacing: danxbot counts none of the agents of a session it does not know, so it holds none of its spawns
   describe('a session outside pacing is allowed, silently, with nothing claimed', () => {
-    test("no danx-dashboard MCP server connected: every spawn looks again until the claim's own deadline, none is told", async ($, on) => {
+    test("no danx-dashboard MCP server connected: every spawn looks again until the claim's own deadline, then is refused, told once", async ($, on) => {
       const options: Parameters<typeof dashboard>[1] = { mcp: 'down' }
       const d = await session($, on, options)
       // the fake clock runs past the plugin's own deadline, so it is that deadline that ends each spawn's wait, not the engine's hook budget
       for (let i = 0; i < 2; i++) {
         const pending = spawn($)
         await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
-        expect((await pending).deny).toBeUndefined()
+        expect((await pending).deny).toMatch(/never connected/)
       }
-      expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
+      expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toHaveLength(1)
       // each spawn looked again more than once inside its deadline
       expect(d.claimAttempts.n).toBeGreaterThanOrEqual(4)
       options.mcp = 'up'
@@ -499,13 +499,13 @@ describe('the agent.spawn hook', () => {
       expect((await spawn($)).deny).toMatch(/critical/)
     })
 
-    test('a server that never connects in the claim deadline: allowed, outside pacing (DX-5593 problem 2503, the operator has not decided)', async ($, on) => {
+    test('a server that never connects in the claim deadline: refused, nothing claimed (DX-5593 problem 2503: refuse it)', async ($, on) => {
       const d = await session($, on, { mcp: 'down' })
       const pending = spawn($)
       await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
-      expect((await pending).deny).toBeUndefined()
+      expect((await pending).deny).toMatch(/^Usage pacing: the spawn could not claim its slot from danxbot \(the danx-dashboard MCP server never connected in this session\)/)
       expect(d.claimsAllowed).toEqual([])
-      expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
+      expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([expect.stringContaining('never connected')])
     })
 
     test('a server that connects within the claim deadline is claimed against, not skipped', async ($, on) => {
