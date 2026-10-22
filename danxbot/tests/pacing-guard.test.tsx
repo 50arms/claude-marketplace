@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, isTight, refusalWhy, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -69,6 +69,15 @@ describe('decideSpawn (the decision table)', () => {
     expect(decideSpawn(v({ budget: 3, runningAgents: 3, reservedAgents: 0 }), 'haiku')).toMatchObject({ reason: expect.stringContaining('already run') })
   })
 
+  test('DX-5595: refusalWhy gives the danxbot refusal order once: the level, then the budget against the running count, then against running plus held; null when nothing refuses', () => {
+    expect(refusalWhy(v({ level: 'over_pace', budget: 9, runningAgents: 0, reservedAgents: 0 }))).toBe('level')
+    expect(refusalWhy(v({ level: 'over_pace', budget: 3, runningAgents: 3, reservedAgents: 1 }))).toBe('level')
+    expect(refusalWhy(v({ budget: 3, runningAgents: 3, reservedAgents: 1 }))).toBe('budget')
+    expect(refusalWhy(v({ budget: 3, runningAgents: 2, reservedAgents: 1 }))).toBe('reserved')
+    expect(refusalWhy(v({ budget: 3, runningAgents: 1, reservedAgents: 1 }))).toBeNull()
+    expect(refusalWhy(v({ budget: null, runningAgents: 40, reservedAgents: 5 }))).toBeNull()
+  })
+
   test('a held slot counts toward tight: one free slot left after the hold downgrades', () => {
     expect(isTight(5, 2, 2)).toBe(true)
     expect(isTight(5, 2, 1)).toBe(false)
@@ -77,9 +86,9 @@ describe('decideSpawn (the decision table)', () => {
 
   test('tight (budget - running <= 1) downgrades to haiku, never upward and never an unknown model', () => {
     expect(TIGHT_FREE_SLOTS).toBe(1)
-    expect(isTight(3, 2)).toBe(true)
-    expect(isTight(3, 1)).toBe(false)
-    expect(isTight(null, 99)).toBe(false)
+    expect(isTight(3, 2, 0)).toBe(true)
+    expect(isTight(3, 1, 0)).toBe(false)
+    expect(isTight(null, 99, 0)).toBe(false)
     for (const model of ['opus', 'sonnet', 'claude-opus-4-8', 'fable']) {
       expect(decideSpawn(v({ budget: 3, runningAgents: 2 }), model)).toEqual({ kind: 'downgrade', model: 'haiku' })
     }
