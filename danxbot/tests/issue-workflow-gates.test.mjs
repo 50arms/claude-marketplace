@@ -107,3 +107,21 @@ test("the creation guide carries no hard-coded parent-child list", () => {
   assert.doesNotMatch(creation, /Epic → Feature\/Story\/Bug\/Chore\/Task/);
   assert.doesNotMatch(creation, /Feature → Story\/Bug\/Chore\/Task/);
 });
+
+// A gate that only a person's answer passes (the design gate) takes no recorded verdict: the server refuses its
+// PATCH for every caller, and the person's choice passes it. The section says so without naming the gate.
+test("a gate only a person's answer passes is never recorded by the agent, and the section still names no gate", () => {
+  assert.match(gates, /A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused for every caller\./);
+  assert.match(gates, /then stop; the person's choice passes it\./);
+  assert.ok(!gates.includes("plan-design"), "the design gate's name belongs to the board's gate text and the creation guide");
+});
+
+test("the creation guide lists both design gates with when to add each, and builds no designer of its own", () => {
+  assert.match(creation, /\| `plan-design` \| PRE \| changes what a person sees or does in a UI and its look is not settled/);
+  assert.match(creation, /\| `code-design` \| POST \| is a complex UI build .* that must match its approved design closely \|/);
+  assert.match(creation, /`plan-design` builds the card's designs with the repo's own mini app, and only a person choosing one passes it\./);
+  assert.match(creation, /A repo whose designs are off refuses the gate: raise that as an `action` problem/);
+  for (const gone of ["danxbot:design", "worker-designer"]) {
+    assert.ok(!creation.includes(gone), `${gone} was planned once and is not built: the board's gate text is the designer's procedure`);
+  }
+});
