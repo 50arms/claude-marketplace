@@ -150,7 +150,7 @@ export const NO_EVENT_STATUS = 'the dashboard sent no event status for this sess
 
 // a session with no dashboard key. The danx-dashboard MCP answers every tool but `plan_connect` with an error
 // result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key lapsed (KEY_LAPSED_HALT
-// ends with it): the sign-in a person sees. A key a PERSON revoked is not this: it is the stop halt below.
+// ends with it): the dashboard's answer when the session has no usable key. A key a PERSON revoked is not this: it is the stop halt below.
 // The text is for the agent: the person only ever reads the words below.
 export const SIGNED_OUT_MARK = 'Not signed in to the danxbot dashboard'
 export const SIGNED_OUT_LABEL = `${BRAND}: signed out`

@@ -72,6 +72,8 @@ test("a source file name is foreign unless the plugin ships it, one extension at
   assert.deepEqual(foreignSourceFiles("see band.tsx and x.ts", shipped), []);
   assert.deepEqual(foreignSourceFiles("runs on Node.js, built with Next.js", shipped), [], "capitalised product names are not file names");
   assert.deepEqual(foreignSourceFiles("the user's own index.ts", shipped), ["index.ts"], "a lowercase file name the plugin does not ship fails");
+  assert.deepEqual(foreignSourceFiles("see Button.tsx and AgentWorkerStatus.tsx", shipped), ["Button.tsx", "AgentWorkerStatus.tsx"], "a capitalised .tsx name is a source file");
+  assert.deepEqual(foreignSourceFiles("see Foo.ts and Bar.mjs", shipped), ["Foo.ts", "Bar.mjs"], "capitalisation exempts only .js");
   assert.deepEqual(foreignSourceFiles("see a note.md and a config.json", shipped), []);
 });
 
@@ -81,10 +83,11 @@ test("commentOnly keeps just the comments of code, and nothing for a file type w
   assert.match(out, /z\.ts/);
   assert.doesNotMatch(out, /x\.ts/);
   assert.match(commentOnly("a.sh", 'echo "x.ts" # y.ts'), /y\.ts/);
-  const withEmoji = 'const s = "\u{1F600} x.ts"; // y.ts\nconst t = "z.ts"; // w.ts';
+  const withEmoji = 'const e = "\u{1F600}"; const z = "x.ts"; // fine\nconst t = "z.ts"; // w.ts';
   const emoji = commentOnly("e.mjs", withEmoji);
   assert.doesNotMatch(emoji, /x\.ts|z\.ts/, "an emoji before a string does not misalign what is blanked");
-  assert.match(emoji, /y\.ts/);
+  assert.match(emoji, /fine/);
+  assert.doesNotMatch(emoji, /x\.ts/, "a source name in a string after an emoji is not read as comment");
   assert.match(emoji, /w\.ts/);
   assert.equal(emoji.length, withEmoji.length);
   assert.equal(commentOnly("a.md", "x.ts"), null);

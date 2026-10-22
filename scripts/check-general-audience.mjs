@@ -22,9 +22,9 @@
 // spot is JSX text (plain words between tags): an apostrophe there is not a string, and a `//`
 // there reads as a comment start, which can hide the rest of that line from the scan.
 //
-// SOURCE FILES IN COMMENTS. Any lowercase file name ending .ts .tsx .mjs or .js that a comment names must be a file the plugin
-// ships. A user's own file names, such as `index.ts`, are meant to fail too: describe them in words. Capitalised product names
-// (Node.js, Next.js) are not file names and pass.
+// SOURCE FILES IN COMMENTS. Any file name ending .ts .tsx or .mjs (any case), or .js (starting lowercase), that a comment names must be a file
+// the plugin ships. A user's own file names, such as `index.ts`, are meant to fail too: describe them in words. Only capitalised
+// product names ending .js (Node.js, Next.js) are not file names and pass; Button.tsx does not.
 //
 // USAGE node scripts/check-general-audience.mjs [plugin ...]   (default: every marketplace plugin)
 
@@ -73,8 +73,9 @@ export const BANNED = [
 /** Names of the comment-applicable banned things `text` mentions (one entry per kind). */
 export const commentHits = (text) => BANNED.filter((b) => b.comments).flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
 
-// Source file names are lowercase and product names are capitalised (Node.js, Next.js), so only a lowercase-first name counts.
-const SOURCE_FILE_NAME = /\b[a-z][\w.-]*\.(?:tsx|ts|mjs|js)\b/g;
+// Product names are capitalised and end in .js (Node.js, Next.js), so only a .js name starting lowercase counts; a .ts .tsx or .mjs name
+// counts whatever its case (Button.tsx is a source file, not a product).
+const SOURCE_FILE_NAME = /\b(?:[a-z][\w.-]*\.js|[A-Za-z][\w.-]*\.(?:tsx|ts|mjs))\b/g;
 export const FOREIGN_SOURCE_FILE = "a source file the plugin does not ship";
 
 /** Source file names `commentText` mentions that are not in `shippedBasenames`: a comment may name the plugin's own files, never outside sources. */

@@ -2253,7 +2253,8 @@ type LeaveCloses = { owed: ReportState; rows: number; posted: boolean }
 const activities = (n: number) => `${n} running activit${n === 1 ? 'y' : 'ies'}`
 
 // before the session leaves its plan or moves to another, every close it owes (a running sub-agent's finish, an
-// open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running would stay stuck. Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds
+// open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running would stay stuck.
+// Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds
 // the leave; a failure is one toast naming what may stay running, and the leave goes on. The memory is cleared first, so a sub-agent's turn.complete racing the leave
 // posts nothing twice. `why` names the leave in the toast. The caller hands the answer to `leaveDidNotHappen` when the leave failed.
 async function closeOwedBeforeLeave($: any, why: string): Promise<LeaveCloses> {
