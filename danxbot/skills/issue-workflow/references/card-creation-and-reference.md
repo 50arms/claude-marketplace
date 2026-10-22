@@ -83,9 +83,15 @@ A card carries its board's default gates for its type; `quality_gates` adds more
 | Gate | Phase | …when the card |
 |---|---|---|
 | `plan-dependency` | PRE | likely overlaps in-flight work on the same surface |
+| `plan-design` | PRE | changes what a person sees or does in a UI and its look is not settled (a new screen, panel, dialog or flow; a changed layout); not when an approved design or an existing screen already shows it |
 | `plan-architecture` | PRE | is non-trivial design: new module boundaries, core invariants |
 | `plan-tdd` | PRE | has behaviour to pin test-first |
 | `code-architecture` / `code-quality` / `code-test-quality` | POST | needs that review of the finished diff before completion |
+| `code-design` | POST | is a complex UI build (a screen, panel or flow with many states) that must match its approved design closely |
+
+`plan-design` builds the card's designs with the repo's own mini app, and only a person
+choosing one passes it. A repo whose designs are off refuses the gate: raise that as an
+`action` problem for a person to turn designs on, never drop the UI work.
 
 ## Triage opt-in
 

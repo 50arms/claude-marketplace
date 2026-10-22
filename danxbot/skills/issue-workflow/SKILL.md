@@ -75,6 +75,10 @@ and says when to land. Whoever runs a gate:
    replaced only by one naming a different ref, so a re-run after the work or the card changed
    records normally, and a second verdict on the same ref is refused.
 
+A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused
+for every caller. Do what its text says (it may have you publish work for the person to
+choose from on the card), then stop; the person's choice passes it.
+
 Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
 that doesn't apply to the card is removed (`POST` the same card route with
 `{action: "remove"}`) with an agent note saying why —

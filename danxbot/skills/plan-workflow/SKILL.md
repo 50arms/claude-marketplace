@@ -133,7 +133,18 @@ From the dashboard:
   open. An option you write from it names every point you added and is never marked
   recommended until they confirm it.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
-  read it for the full text.
+  read it for the full text. A card's design problem (the one listing its designs to choose
+  from) is the person's alone: nothing to do but tell them it waits in Needs You.
+- `APPROVED revision N of design M` (then `answered` on the design problem) → a person chose
+  that design, which passes the card's design gate: the card builds from the design it holds
+  now. Nothing to record.
+- `requested changes on revision …`, a `REJECTED revision …` that closed the card's last live
+  design, or a comment starting `**Asked for another design:**` → the designer owes a turn: run
+  the card's design gate again through a sub-agent at the gate's effort tier, unless one you
+  started is still on it. It works from the board's gate text, builds with the repo's own mini
+  app (the repo's mini-app usage instructions first), and publishes a new revision or design.
+- `retracted the answer to` the design problem → the choice was withdrawn and the gate waits on
+  the person again: build nothing from that design.
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
