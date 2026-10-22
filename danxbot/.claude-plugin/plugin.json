@@ -4,7 +4,7 @@
   "version": "0.16.0",
   "author": {
     "name": "Dan Newman",
-    "email": "newms87@gmail.com"
+    "email": "dan@sagesweeper.com"
   },
   "types": "./types/index.d.ts",
   "mcpServers": {

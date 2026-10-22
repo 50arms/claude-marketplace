@@ -22,7 +22,11 @@
 // spot is JSX text (plain words between tags): an apostrophe there is not a string, and a `//`
 // there reads as a comment start, which can hide the rest of that line from the scan.
 //
-// USAGE  node scripts/check-general-audience.mjs [plugin ...]   (default: every marketplace plugin)
+// SOURCE FILES IN COMMENTS. Any lowercase file name ending .ts .tsx .mjs or .js that a comment names must be a file the plugin
+// ships. A user's own file names, such as `index.ts`, are meant to fail too: describe them in words. Capitalised product names
+// (Node.js, Next.js) are not file names and pass.
+//
+// USAGE node scripts/check-general-audience.mjs [plugin ...]   (default: every marketplace plugin)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -69,7 +73,8 @@ export const BANNED = [
 /** Names of the comment-applicable banned things `text` mentions (one entry per kind). */
 export const commentHits = (text) => BANNED.filter((b) => b.comments).flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
 
-const SOURCE_FILE_NAME = /[\w.-]+\.(?:tsx|ts|mjs|js)\b/g;
+// Source file names are lowercase and product names are capitalised (Node.js, Next.js), so only a lowercase-first name counts.
+const SOURCE_FILE_NAME = /\b[a-z][\w.-]*\.(?:tsx|ts|mjs|js)\b/g;
 export const FOREIGN_SOURCE_FILE = "a source file the plugin does not ship";
 
 /** Source file names `commentText` mentions that are not in `shippedBasenames`: a comment may name the plugin's own files, never outside sources. */
@@ -81,7 +86,10 @@ export function commentOnly(rel, raw) {
   const ext = path.extname(rel).toLowerCase();
   const stripped = JS_LIKE.has(ext) ? stripJsComments(raw) : ext === ".sh" ? stripShellComments(raw) : null;
   if (stripped === null) return null;
-  return [...raw].map((c, i) => (c === "\n" || stripped[i] !== c ? c : " ")).join("");
+  // By UTF-16 unit, like `stripped` (the strippers keep every unit in place), so an emoji earlier in the file cannot shift the comparison.
+  let out = "";
+  for (let i = 0; i < raw.length; i++) out += raw[i] === "\n" || stripped[i] !== raw[i] ? raw[i] : " ";
+  return out;
 }
 
 /** Names of the banned things `text` mentions (one entry per kind). */

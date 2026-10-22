@@ -150,7 +150,7 @@ export const NO_EVENT_STATUS = 'the dashboard sent no event status for this sess
 
 // a session with no dashboard key. The danx-dashboard MCP answers every tool but `plan_connect` with an error
 // result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key lapsed (KEY_LAPSED_HALT
-// ends with it): the MCP server's own session-access check. A key a PERSON revoked is not this: it is the stop halt below.
+// ends with it): the sign-in a person sees. A key a PERSON revoked is not this: it is the stop halt below.
 // The text is for the agent: the person only ever reads the words below.
 export const SIGNED_OUT_MARK = 'Not signed in to the danxbot dashboard'
 export const SIGNED_OUT_LABEL = `${BRAND}: signed out`
@@ -171,7 +171,7 @@ export const BLOCKED_LABEL = `${BRAND}: blocked by auto mode`
 export const BLOCKED_LINE = "Auto mode is blocking Danxbot's calls. Run /danxbot:start to allow them; this clears by itself, or restart the session if it does not."
 
 // a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
-// makes no access request: the MCP server's key-revoked halt, which begins
+// makes no access request, only a revoked-access halt that begins
 // `STOP ALL WORK NOW. <revokedBy> revoked your access to the danxbot dashboard at <revokedAt>.` followed by a blank line. The
 // text is for the agent (it tells it to commit and stop); the person reads the words below, and there is no Sign in: a
 // revoked agent must stop.
