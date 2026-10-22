@@ -662,11 +662,13 @@ export function dashboard(
       const live = known && Number.isInteger(line.running_agents) ? line.running_agents + heldClaims.size : line.running_agents
       // DX-5595: the slots held for woken sessions (`reserved_agents`) count as taken, as danxbot's claim counts them
       const room = known && line.level === 'on_pace' && (line.budget === null || live + (line.reserved_agents ?? 0) < line.budget)
-      if (!room) return { value: reply({ ...line, running_agents: live, claimed: false, claim_id: null }) }
+      // DX-5595: the cause danxbot's `refusalOf` names, in its order: the level, the budget against the live count, then the budget against the count plus the held slots
+      const refusal = !known ? null : line.level !== 'on_pace' ? 'level' : line.budget !== null && live >= line.budget ? 'budget' : 'reserved'
+      if (!room) return { value: reply({ ...line, running_agents: live, claimed: false, claim_id: null, refusal }) }
       const id = `claim-${claimsAllowed.length + 1}`
       claimsAllowed.push(id)
       heldClaims.add(id)
-      return { value: reply({ ...line, running_agents: live, claimed: true, claim_id: id }) }
+      return { value: reply({ ...line, running_agents: live, claimed: true, claim_id: id, refusal: null }) }
     }
     // DX-4234 / DX-4632: the restart notice is the server's own tool, named without arguments; kept out of `calls` like the context reads
     if (e.server === SERVER && e.tool === 'restart_notice') {

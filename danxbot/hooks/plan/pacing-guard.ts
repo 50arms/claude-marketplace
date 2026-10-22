@@ -105,11 +105,8 @@ export function spawnGuard(env: PacingEnv) {
       reportClaimFailure(env, claim.failure)
       return { deny: claimFailedReason(claim.failure) }
     }
-    if (claim.kind === 'refused') {
-      const decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
-      // danxbot refused the claim, so the spawn is refused whatever the plugin's own reading of the verdict says
-      return { deny: decision.kind === 'deny' ? decision.reason : denyReason(claim.pacing.verdict, refusalWhy(claim.pacing.verdict) ?? 'reserved') }
-    }
+    // danxbot refused the claim, so the spawn is refused, worded from danxbot's own cause whatever the plugin's reading of the verdict says
+    if (claim.kind === 'refused') return { deny: denyReason(claim.pacing.verdict, claim.why) }
     let decision: SpawnDecision = { kind: 'allow' }
     if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
     try {

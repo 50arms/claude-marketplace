@@ -229,9 +229,12 @@ function peekPacing(nowMs: number): Pacing | null {
 export const CLAIM_PATH = '/api/pacing/agents/claim'
 // how often a server that has not connected yet is looked for again, inside the claim's one PACING_READ_DEADLINE_MS
 export const CONNECT_POLL_MS = 500
+// DX-5595: why danxbot refused the claim (its `refusalOf`): the server's judgment, worded as it is, never re-derived from figures that may have moved since
+export type RefusalCause = 'level' | 'budget' | 'reserved'
+const REFUSAL_CAUSES: readonly string[] = ['level', 'budget', 'reserved']
 export type Claim =
   | { kind: 'claimed'; pacing: Pacing; claimId: string }
-  | { kind: 'refused'; pacing: Pacing }
+  | { kind: 'refused'; pacing: Pacing; why: RefusalCause }
   | { kind: 'unknown' }
   | { kind: 'failed'; failure: string }
 
@@ -240,7 +243,9 @@ export function parseClaim(body: any): Claim {
   if (pacing === null) return body.claimed === false && body.claim_id === null ? { kind: 'unknown' } : { kind: 'failed', failure: 'the claim answer has no valid outcome' }
   if ('error' in pacing) return { kind: 'failed', failure: pacing.error }
   if (body.claimed === true && typeof body.claim_id === 'string' && body.claim_id !== '') return { kind: 'claimed', pacing, claimId: body.claim_id }
-  if (body.claimed === false && body.claim_id === null) return { kind: 'refused', pacing }
+  if (body.claimed === false && body.claim_id === null) {
+    return REFUSAL_CAUSES.includes(body.refusal) ? { kind: 'refused', pacing, why: body.refusal } : { kind: 'failed', failure: 'the claim answer refuses without naming a valid cause' }
+  }
   return { kind: 'failed', failure: 'the claim answer has no valid outcome' }
 }
 

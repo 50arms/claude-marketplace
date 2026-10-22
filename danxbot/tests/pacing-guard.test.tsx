@@ -601,7 +601,7 @@ describe('failures of the guard itself', () => {
   // judgment and the answer): the refusal still stands, worded as held slots, never as a full budget or a level
   test('a claim danxbot refused whose verdict the plugin would allow is still refused, worded as held slots', async () => {
     resetPacing()
-    const refused = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null }
+    const refused = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal: 'reserved' }
     const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: refused } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
     let started = false
@@ -609,6 +609,31 @@ describe('failures of the guard itself', () => {
     expect(started).toBe(false)
     expect(r.deny).toMatch(/1 agent\(s\) run on this account and 1 slot\(s\) are held for sessions that waited longer/)
     expect(r.deny).not.toMatch(/already run/)
+  })
+
+  // DX-5595: the refusal is worded from the cause danxbot names, not from the plugin's own reading of the figures it came with
+  test('the wording follows the cause danxbot names, even when the figures read otherwise', async () => {
+    resetPacing()
+    const answer = (refusal: unknown) => ({ account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal })
+    const deny = async (refusal: unknown) => {
+      resetPacing()
+      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: answer(refusal) } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+      const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
+      return (await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny
+    }
+    expect(await deny('budget')).toMatch(/1 agent\(s\) already run on this account against budget 3/)
+    expect(await deny('level')).toMatch(/this account is on pace/)
+    expect(await deny('reserved')).toMatch(/slot\(s\) are held for sessions that waited longer/)
+  })
+
+  test('a refused claim that names no valid cause fails closed as a failed claim', async () => {
+    for (const refusal of [undefined, null, 'full']) {
+      resetPacing()
+      const body = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal }
+      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+      const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
+      expect((await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny).toMatch(/could not claim its slot.*without naming a valid cause/)
+    }
   })
 
   test('a refusal starts with the prefix the skill quotes', () => {
