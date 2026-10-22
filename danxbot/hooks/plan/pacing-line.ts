@@ -244,6 +244,8 @@ export function parseClaim(body: any): Claim {
 
 // One deadline-bound claim. Never rejects. A good answer also replaces the cache, so the sub-agent's pacing line is the one the claim saw.
 export async function claimSlot(env: PacingEnv): Promise<Claim> {
+  // DX-5593: a claim still in flight across resetPacing (a new session start) must not write the new session's state
+  const gen = generation
   try {
     const startedAt = await env.now()
     // DX-5593 (N2): the claim carries the session's latest reading, the body of the usage report, and danxbot stores it under the claim's own lock before
@@ -281,7 +283,7 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
       if (isSignedOut(r)) return { kind: 'unknown' }
       if (!r.ok) return { kind: 'failed', failure: r.status === 0 ? errText(r) : `the spawn claim answered ${r.status}` }
       const claim = parseClaim(r.body)
-      if (claim.kind === 'claimed' || claim.kind === 'refused') {
+      if ((claim.kind === 'claimed' || claim.kind === 'refused') && gen === generation) {
         cache = { pacing: claim.pacing, fetchedAt: startedAt }
         hasSucceeded = true
         lastError = null
@@ -310,31 +312,27 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
 
 // The claim given back: the host refused the spawn after the slot was taken. Never rejects; a claim not given back lapses in danxbot
 // (AGENT_CLAIM_LAPSE_MS, 60 s), which stays the recovery. DX-5593 (C1): a give-back that fails is told once per distinct text (the same rule as
-// reportClaimFailure), never silently for a session known to be signed in: an error answer, an unreachable server, a timeout or a throw.
-// A signed-out session and `{released:false}` (a 200, normal) stay silent.
+// reportClaimFailure), never silently: an error answer, an unreachable server, a timeout or a throw. A signed-out answer and `{released:false}`
+// (a 200, normal) stay silent; a good give-back clears the slot, so the same failure after it is told again.
 export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
+  // DX-5593: a give-back is only ever of a `claimed` claim, made by a session known to be signed in (claimSlot set hasSucceeded). One that crossed
+  // resetPacing (a new session start) belongs to the old session: it writes and tells nothing, and its claim lapses in danxbot.
+  const gen = generation
   try {
     let failure: string | null = null
-    // no answer at all (a timeout, a throw, an unreachable server) is told only for a session known to be signed in; an error answer always is.
-    // The signedIn() check below is reached only when resetPacing ran between the claim and its give-back (a new session start): a `claimed`
-    // claim has already set hasSucceeded, so in every other case a give-back of a live claim is known signed in.
-    let answered = false
     try {
       const r = await env.within<Api | undefined>(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
       if (r === undefined) failure = `the give-back timed out after ${PACING_READ_DEADLINE_MS}ms`
       else if (r.unreachable) failure = 'the danx-dashboard MCP server is not reachable from this session'
-      else if (!r.ok && !isSignedOut(r)) {
-        answered = true
-        failure = r.status === 0 ? errText(r) : `the claim give-back answered ${r.status}`
-      }
+      else if (!r.ok && !isSignedOut(r)) failure = r.status === 0 ? errText(r) : `the claim give-back answered ${r.status}`
     } catch (err: any) {
       failure = `the give-back failed (${String(err?.message ?? err)})`
     }
+    if (gen !== generation) return
     if (failure === null) {
       lastReleaseError = null
       return
     }
-    if (!answered && !hasSucceeded && !(await env.signedIn())) return
     toastOnce(env, 'release', 'Usage pacing could not give back a claimed slot, so it stays held until it lapses (60 s)', failure)
   } catch {
     /* the claim lapses in danxbot */

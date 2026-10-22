@@ -360,20 +360,25 @@ describe('the agent.spawn hook', () => {
       }
     })
 
-    test('a give-back that throws for a signed-out session stays silent', async () => {
+    // DX-5593: a give-back that crossed resetPacing (a new session start) is the old session's: it writes and tells nothing
+    test('a give-back still in flight across a new session start tells nothing', async () => {
       resetPacing()
       const toasts: string[] = []
-      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.reject(new Error('boom')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => { resetPacing(); return Promise.reject(new Error('boom')) }, reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
       await releaseClaim(env, 'c1')
       expect(toasts).toEqual([])
     })
 
-    test('an error answer is told even before the session is known to be signed in: the server answered', async () => {
+    test('a good give-back clears its slot: the same failure after it is told again', async () => {
       resetPacing()
       const toasts: string[] = []
-      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: false, status: 500, body: { error: 'boom' } }), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+      const answers = [{ ok: false, status: 500, body: { error: 'boom' } }, { ok: true, status: 200, body: { released: true } }, { ok: false, status: 500, body: { error: 'boom' } }]
+      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve(answers.shift()!), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
       await releaseClaim(env, 'c1')
-      expect(toasts).toHaveLength(1)
+      await releaseClaim(env, 'c2')
+      await releaseClaim(env, 'c3')
+      expect(toasts).toHaveLength(2)
+      expect(toasts[0]).toBe(toasts[1])
       expect(toasts[0]).toContain('answered 500')
     })
 
