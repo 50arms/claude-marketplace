@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, isTight, refusalWhy, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -35,47 +35,29 @@ describe('decideSpawn (the decision table)', () => {
     expect(decideSpawn(null, 'opus')).toEqual({ kind: 'allow' })
   })
 
-  test('over pace and critical deny whatever the budget, naming level, budget and reset', () => {
+  test('the refusal names level, budget and reset, and says not to retry', () => {
     for (const level of ['over_pace', 'critical'] as const) {
-      const d = decideSpawn(v({ level, budget: 0 }), 'sonnet')
-      expect(d.kind).toBe('deny')
-      const reason = (d as { reason: string }).reason
+      const reason = denyReason(v({ level, budget: 0 }), 'level')
       expect(reason).toContain(level.replace('_', ' '))
       expect(reason).toContain('budget 0')
       expect(reason).toContain(RESET)
       expect(reason).toMatch(/do not retry/i)
     }
-    expect(decideSpawn(v({ level: 'over_pace', budget: null }), 'sonnet').kind).toBe('deny')
-  })
-
-  test('on pace with the account at or over its budget denies; under it, or no cap, allows', () => {
-    expect(decideSpawn(v({ budget: 3, runningAgents: 3 }), 'haiku').kind).toBe('deny')
-    expect(decideSpawn(v({ budget: 3, runningAgents: 5 }), 'haiku').kind).toBe('deny')
-    expect(decideSpawn(v({ budget: 0, runningAgents: 0 }), 'haiku').kind).toBe('deny')
-    expect(decideSpawn(v({ budget: 3, runningAgents: 1 }), 'haiku')).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: null, runningAgents: 40 }), 'opus')).toEqual({ kind: 'allow' })
+    expect(denyReason(v({ budget: 3, runningAgents: 3 }), 'budget')).toContain('3 agent(s) already run')
   })
 
   // DX-5595: slots held for woken sessions count as taken, and the refusal says so (not "already run")
-  test('on pace with every free slot held for a woken session denies, in words that say the slot frees within 60 seconds', () => {
-    const d = decideSpawn(v({ budget: 3, runningAgents: 2, reservedAgents: 1 }), 'haiku')
-    expect(d.kind).toBe('deny')
-    if (d.kind !== 'deny') return
-    expect(d.reason).toContain('2 agent(s) run on this account and 1 slot(s) are held')
-    expect(d.reason).toContain('frees within 60 seconds')
-    expect(d.reason).toContain('waits_on')
-    expect(d.reason).not.toContain('already run')
-    expect(decideSpawn(v({ budget: 3, runningAgents: 1, reservedAgents: 1 }), 'haiku').kind).not.toBe('deny')
-    expect(decideSpawn(v({ budget: 3, runningAgents: 3, reservedAgents: 0 }), 'haiku')).toMatchObject({ reason: expect.stringContaining('already run') })
+  test('the held-slot refusal says the slot frees within 60 seconds', () => {
+    const reason = denyReason(v({ budget: 3, runningAgents: 2, reservedAgents: 1 }), 'reserved')
+    expect(reason).toContain('2 agent(s) run on this account and 1 slot(s) are held')
+    expect(reason).toContain('frees within 60 seconds')
+    expect(reason).toContain('waits_on')
+    expect(reason).not.toContain('already run')
   })
 
-  test('DX-5595: refusalWhy gives the danxbot refusal order once: the level, then the budget against the running count, then against running plus held; null when nothing refuses', () => {
-    expect(refusalWhy(v({ level: 'over_pace', budget: 9, runningAgents: 0, reservedAgents: 0 }))).toBe('level')
-    expect(refusalWhy(v({ level: 'over_pace', budget: 3, runningAgents: 3, reservedAgents: 1 }))).toBe('level')
-    expect(refusalWhy(v({ budget: 3, runningAgents: 3, reservedAgents: 1 }))).toBe('budget')
-    expect(refusalWhy(v({ budget: 3, runningAgents: 2, reservedAgents: 1 }))).toBe('reserved')
-    expect(refusalWhy(v({ budget: 3, runningAgents: 1, reservedAgents: 1 }))).toBeNull()
-    expect(refusalWhy(v({ budget: null, runningAgents: 40, reservedAgents: 5 }))).toBeNull()
+  test('a claimed verdict with room, or no cap, allows', () => {
+    expect(decideSpawn(v({ budget: 3, runningAgents: 1 }), 'haiku')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: null, runningAgents: 40 }), 'opus')).toEqual({ kind: 'allow' })
   })
 
   test('a held slot counts toward tight: one free slot left after the hold downgrades', () => {
@@ -637,7 +619,7 @@ describe('failures of the guard itself', () => {
   })
 
   test('a refusal starts with the prefix the skill quotes', () => {
-    expect((decideSpawn(v({ level: 'critical', budget: 0 }), 'opus') as { reason: string }).reason.startsWith(REFUSAL_PREFIX)).toBe(true)
+    expect(denyReason(v({ level: 'critical', budget: 0 }), 'level').startsWith(REFUSAL_PREFIX)).toBe(true)
     expect(REFUSAL_PREFIX).toBe('Usage pacing:')
   })
 })

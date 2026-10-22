@@ -7,7 +7,7 @@ import type { PacingEnv } from './pacing-line'
 // DX-4340 (PLAN-29 R-10), DX-5593: the usage-pacing guard on sub-agent spawns. The budget is a STRICT cap: N means exactly N agents at all times.
 // So a spawn does not read a count and decide for itself: it CLAIMS its slot from danxbot (POST /api/pacing/agents/claim, which places the
 // session on its account itself and, under one lock, reads the live count and budget and takes the slot or refuses), and the plugin acts on the
-// answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module decides what the answer means (`decideSpawn`, pure) and wires
+// answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn (`decideSpawn`, pure) and wires
 // the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
 //
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
@@ -19,7 +19,7 @@ import type { PacingEnv } from './pacing-line'
 // These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.
 
-export type SpawnDecision = { kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'downgrade'; model: 'haiku' }
+export type SpawnDecision = { kind: 'allow' } | { kind: 'downgrade'; model: 'haiku' }
 
 // ---- the decision ---------------------------------------------------------------------------------------------------------------
 
@@ -43,17 +43,8 @@ export function isTight(budget: number | null, running: number, reserved: number
 // What the plan-workflow skill quotes (see the header): the refusal the model reads starts with this.
 export const REFUSAL_PREFIX = 'Usage pacing:'
 
-// DX-5595: why a known verdict refuses a new agent, in danxbot's own order (`refusalOf`, agent-claim.ts) and the ONE place that order is written: the level, then the
-// budget against the running count, then the budget against the running count plus the slots held for woken sessions (`reserved`: every slot is spoken for, one frees
-// within 60 s). null: nothing refuses (a null budget imposes no count cap; the level above still applies).
-export function refusalWhy(v: PacingVerdict): 'level' | 'budget' | 'reserved' | null {
-  if (v.level !== 'on_pace') return 'level'
-  if (v.budget === null) return null
-  if (v.runningAgents >= v.budget) return 'budget'
-  return v.runningAgents + v.reservedAgents >= v.budget ? 'reserved' : null
-}
-
-function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
+// DX-5595: the refusal the model reads, worded from the cause danxbot's own claim answer names (`refusal`, from its `refusalOf`), never re-derived here.
+export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
   const level = v.level.replace('_', ' ')
   const budget = v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start nothing new)' : `budget ${v.budget} at once`
   const reset = v.resetsAt === null ? 'its reset time is unknown' : `usage resets at ${v.resetsAt}`
@@ -74,13 +65,10 @@ function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): str
 
 // The budget's unit is the ACCOUNT's running agents (its sessions' main threads, live sub-agents and running worker dispatches), which the claim's
 // answer carries as `runningAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone: the call's
-// `model`, else the parent's (a fork always inherits the parent's). The deny cases here only word a refusal danxbot already made; the allow case
-// picks the haiku downgrade for a spawn taking the last free slot.
+// `model`, else the parent's (a fork always inherits the parent's). A refusal never reaches here (danxbot refuses the claim itself); this picks the haiku
+// downgrade for a claimed spawn taking the last free slot.
 export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined): SpawnDecision {
   if (verdict === null) return { kind: 'allow' }
-  // DX-5595: the same order as the refusal wording (`refusalWhy`), the slots held for woken sessions counted as taken
-  const why = refusalWhy(verdict)
-  if (why !== null) return { kind: 'deny', reason: denyReason(verdict, why) }
   if (isTight(verdict.budget, verdict.runningAgents, verdict.reservedAgents)) {
     const tier = tierOf(requested)
     // an unknown model name is left alone: it cannot be placed on the tier list, so "below it" is not knowable
