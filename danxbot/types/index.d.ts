@@ -9,6 +9,12 @@ export type ConnectedPlan = {
   dashboardUrl: string
 }
 
+// the team agent the session signs in as (GET /api/plans `session.agent`): its name.
+export type SessionAgent = { name: string }
+
+// the stand-alone card the session holds instead of a plan (`session.card_id` / `card_title`).
+export type HeldCard = { id: string; title: string }
+
 // The dashboard's card counts by status for one plan (`status_breakdown`); all six keys are required.
 export type StatusBreakdown = {
   'In Progress': number
@@ -50,6 +56,12 @@ export type PlanView = {
   // last one this machine saw answered; null only while none has ever been seen.
   dashboardUrl: string | null
   connected: ConnectedPlan | null
+  // the session's team agent, and the stand-alone card it holds (a session holds a plan or a card, never both); null when it holds none.
+  agent: SessionAgent | null
+  card: HeldCard | null
+  // the session signed in but holds no team agent, and the MCP's agent gate refuses its dashboard reads until one is held:
+  // `agent_needed` (it proposes one), `agent_limit_reached` (the member's or team's cap on sessions signed in as an agent is full: the person ends another or raises the cap), `agent_not_held` (the agent was released; `plan_connect` claims one again); null otherwise. The view is then `ready`.
+  agentBlock: 'agent_needed' | 'agent_limit_reached' | 'agent_not_held' | null
   // Card counts by status of the connected plan; null when not connected.
   statusBreakdown: StatusBreakdown | null
   // The in-progress bucket's rows (a card in progress with an open problem sits in needs-you, not here).

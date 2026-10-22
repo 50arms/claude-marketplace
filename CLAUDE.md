@@ -9,17 +9,20 @@ registry row `mantra` from it, and every agent receives that row's effective tex
 board's override of it, DX-4144), never a copy:
 
 - the main session: the module's `classic.SessionStart` hook (`danxbot/hooks/register.tsx`, source
-  `startup|resume|compact`), ONLY once a plan is connected — DX-3421 (PLN-11 R-12/R-22): an
-  unconnected session gets no danxbot text at all, at session start, resume or compaction,
-  not even a one-line nudge; the trigger to connect a plan is `danxbot:plan-workflow`'s own
-  skill description, not a hook line. Connected, the hook asks danxbot (`danxbot_api` on the session's own server) for the
+  `startup|resume|compact`), ONLY once the session is signed in (DX-5554; before it, DX-3421
+  gated it on a connected plan): a session with no dashboard key gets no danxbot text at all, at
+  session start, resume or compaction, not even a one-line nudge; the trigger to sign in is
+  `danxbot:plan-workflow`'s own skill description, not a hook line. Signed in, on a plan or not,
+  the hook asks danxbot (`danxbot_api` on the session's own server) for the
   EFFECTIVE text of one of four events (`session_start` | `session_resume` |
   `after_compaction` | `sub_agent_start`, `GET /api/reminders/event/:event`) — the mantra
   (plan override, else the session's board override, else the row) followed by that event's
-  own short lines, never a hand-typed duplicate of the mantra body;
-- every sub-agent, any type or plugin, of a plan-CONNECTED session (DX-3384 final sweep
-  widened this from `danxbot:worker-*` only; DX-3421 added the "connected" gate — a sub-agent
-  of an unconnected session gets nothing either): the module's `classic.SubagentStart` hook
+  own short lines, never a hand-typed duplicate of the mantra body. The dashboard decides the lines
+  (DX-5554): a plan-connected session's text ends with the plan-only line, a session on no plan's
+  carries the agent-scoped lines alone;
+- every sub-agent, any type or plugin, of a signed-in session (DX-3384 final sweep widened this
+  from `danxbot:worker-*` only; DX-5554 widened DX-3421's "plan-connected" gate to "signed in" —
+  a sub-agent of a session with no key gets nothing): the module's `classic.SubagentStart` hook
   (additionalContext), event `sub_agent_start`;
 - every dispatched worker: its profile's `{{reminder:mantra}}`, resolved by danxbot per
   dispatch against the card's board (DX-4144: one mantra; the dispatch fork is gone).
@@ -38,10 +41,16 @@ prose states how many sub-agents to run (R-23).
 `danxbot/hooks/register.tsx` hands the model three things, each a hook of the module and none a script. The pure parts are `danxbot/hooks/context/*`; every `$` call stays in `register.tsx`.
 
 - **Time stamp** (`context/stamp.ts`): `prompt.submit` and `tool.call` (every call that is not denied) add `MM/DD/YYYY HH:MM:SS ±HH:MM +Δ` to `context`; the date only on the first stamp or a new local day. The last stamp is `$.state` `lastStamp`. Operator decision PBLM-1915: both on every prompt and after every tool call.
-- **Event text** (`context/events.ts`): a session start (`startup`, `resume`, `compact`) and `classic.SubagentStart` add the registry's `GET /api/reminders/event/:event` text, only when `GET /api/plans` says the session is on a plan. A failed fetch is ONE warning line naming the event and the reason; a signed-out or revoked session and a plugin server that never connects are quiet. A session start first polls `$.tool.list()` for the plugin's own `danxbot_api` (up to `STALE_GRACE_MS`; the old standby server never waits), then ONE deadline (`CONTEXT_DEADLINE_MS`, 8 s) covers all the reads of the start or of a sub-agent start together and answers a timeout line when it passes.
+- **Event text** (`context/events.ts`): a session start (`startup`, `resume`, `compact`) and `classic.SubagentStart` add the registry's `GET /api/reminders/event/:event` text for every session `GET /api/plans` finds signed in, on a plan or not (DX-5554; a registered session on no plan is a `session` row whose `plan_id` is null). A session on no plan's start or resume then also asks the restart notice, told after its event text. The compaction briefing follows only a plan-connected session's text. A failed fetch is ONE warning line naming the event and the reason; a signed-out or revoked session, one the MCP's agent gate holds (no team agent yet, or released at a resume: the dashboard's 403 `{state, instruction}` on the model's first dashboard call tells the model, since no `plan_connect` ran in the new process), and a plugin server that never connects are quiet; a failed plan read is a line only for a session whose connection record is on disk. A session start first polls `$.tool.list()` for the plugin's own `danxbot_api` (up to `STALE_GRACE_MS`; the old standby server never waits), then ONE deadline (`CONTEXT_DEADLINE_MS`, 8 s) covers all the reads of the start or of a sub-agent start together and answers a timeout line when it passes.
 - **When a session start is told**: the engine has not bound the session when `classic.SessionStart` runs (desktop/headless startup, resume, fork), so `$.mcp.call` and `$.tool.list` throw there. That hook records `{sessionId, source, transcriptPath, predecessorId}` in `$.state` `pendingStart` (and, for a `compact` start while no main turn runs, detaches the resume prompt, below); the next `prompt.submit` or main-loop `tool.call` result (never a sub-agent's) takes it once and adds the event text and restart notice to `context`. `classic.SubagentStart` runs bound and adds its text to `additionalContext`.
 - **Restart notice**: a session that is not on a plan (or has no key yet), on `startup`, `resume` or `clear`, calls the danx-dashboard server's `restart_notice` tool (it works before sign-in and runs its own 8 s deadline) and says its `{notice}`. Arguments by source (`restartAsk`): `startup` none (the server scans the project); `resume`, which a desktop fork reports too, `transcript_path` (the server finds the ancestor in the transcript's copied prefix); `clear` `predecessor_id`, the session id the `session.end` hook saw end (`$.state` `endedSession`), and only when that session held a connection record (it was on a plan; any other `/clear` is quiet and asks nothing). A resume missing its transcript path is a warning line, never a project scan. `{notice: null}` is quiet; a `{stopped: {reason, detail, fix}}` answer, an error result, a rejected call or a malformed answer is ONE warning line, never quiet. The server finds the earlier session; the plugin reads no connection record.
 - Every dashboard call goes through the session's own server (`$.mcp.call`), never a spawn of the `danx-dashboard-mcp` CLI. `scripts/measure-injection.mjs` measures the stamp by running its pure `stamp`; the event text is the registry's and has no offline text to count.
+
+## The session's team agent (DX-5554)
+
+- **The band** names the team agent the session signs in as and what it holds, read from the `GET /api/plans` answer's `session` row (`agent` {id, name} or null, `card_id` / `card_title`; a row that has neither shape fails the load, `hooks/plan/agent.ts`): `Tendai · PLAN-23 · name` on a plan, `Tendai · DX-77 · title` holding a stand-alone card (its Open link goes to the card's `/board/<id>` page and the footer reads `Danxbot · DX-77`), `Danxbot · Tendai: not connected to a plan or card` on neither. The avatar is neither read nor drawn: the terminal's `Image` takes bytes the module cannot fetch, and the desktop has no image element for a URL.
+- **The agent gate** (danxbot `packages/danx-dashboard-mcp/src/agent-gate.ts`): after `plan_connect` answered `agent_needed` or `agent_limit_reached`, the MCP answers every other dashboard call with that block as an error result. The plan load reads it as a ready view with `agentBlock` set (`Danxbot: waiting for a team agent`), never Disconnected, so the relay keeps running on no plan: the dashboard's wake once a person created the agent arrives through it.
+- **Release at session end:** `session.end` calls `DELETE /api/plan-sessions/me/agent` through `api()` only when the process really ends (`prompt_input_exit`, `logout`, `other`); a `/clear` or `/resume` keeps the agent, since the MCP carries on with the same session id. So the agent is free for the team at once instead of after the dashboard's 30-minute dead-session window. Bounded by `AGENT_RELEASE_DEADLINE_MS` (3 s); a failure is one toast; a signed-out or revoked session, or one the agent gate holds, asks nothing. Which session id the MCP sends on a `/clear`'s end is UNVERIFIED live. Tests: `danxbot/tests/agent-release.test.tsx`, `danxbot/tests/plan-agent-band.test.tsx`.
 
 ## The reports are function hooks (DX-4235)
 

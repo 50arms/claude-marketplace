@@ -89,6 +89,9 @@ export const EMPTY: PlanView = {
   serverNotConnected: false,
   dashboardUrl: null,
   connected: null,
+  agent: null,
+  card: null,
+  agentBlock: null,
   statusBreakdown: null,
   inProgress: [],
   openProblems: 0,
@@ -132,7 +135,8 @@ export function cardUrl(plan: ConnectedPlan, cardId: string): string {
 }
 
 // a card on a board of its own, outside the connected plan: the dashboard's plan-free card route (`board/:id`). Plan cards go through cardUrl.
-export function boardCardUrl(plan: ConnectedPlan, cardId: string): string {
+// The band also links the stand-alone card a session holds, which has no plan: only the dashboard origin is needed.
+export function boardCardUrl(plan: { dashboardUrl: string }, cardId: string): string {
   return `${plan.dashboardUrl}/board/${cardId}`
 }
 

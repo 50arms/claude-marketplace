@@ -70,6 +70,32 @@ export function isSignedOut(o: ToolOutcome): boolean {
   return !o.ok && o.status === 0 && typeof o.body?.error === 'string' && o.body.error.includes(SIGNED_OUT_MARK)
 }
 
+// The agent gate. A session must hold a team agent before it reads a plan or a card, and two things say it holds none.
+// The MCP's own halt: once `plan_connect` answered that no agent can be signed in as, every other dashboard call answers that block as an
+// error result (`{state, instruction, ...}` as JSON, status 0) until a `plan_connect` holds one. And the dashboard's own 403 for a
+// session whose agent was released (the session ended and came back): the envelope's body is `{error, state, instruction}`.
+// The state when the outcome is either, else null.
+export type AgentBlock = 'agent_needed' | 'agent_limit_reached' | 'agent_not_held'
+const AGENT_BLOCKS: readonly string[] = ['agent_needed', 'agent_limit_reached', 'agent_not_held']
+export function agentBlockOf(o: ToolOutcome): AgentBlock | null {
+  if (o.ok) return null
+  let refusal: any
+  if (o.status === 0) {
+    if (typeof o.body?.error !== 'string') return null
+    try {
+      refusal = JSON.parse(o.body.error)
+    } catch {
+      return null
+    }
+  } else if (o.status === 403) {
+    refusal = o.body
+  } else {
+    return null
+  }
+  if (refusal === null || typeof refusal !== 'object' || typeof refusal.instruction !== 'string') return null
+  return AGENT_BLOCKS.includes(refusal.state) ? (refusal.state as AgentBlock) : null
+}
+
 // who revoked the key, when the text is the MCP's stop halt for a key a person revoked (see KEY_REVOKED_HALT); null for
 // any other text. Anchored at the start: nothing that merely quotes the sentence counts.
 export function keyRevokedBy(text: string): string | null {

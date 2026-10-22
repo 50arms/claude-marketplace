@@ -14,6 +14,14 @@ export function ellipsize(text: string, max: number): string {
 }
 
 const NAME_SEP = ' · '
+// a signed-in session that holds neither a plan nor a card
+// what the band says of each agent-gate state: at a cap the member's or team's sessions signed in as an agent are full (agent_limit_reached), which is not the same as no agent being free
+const AGENT_BLOCK_LABEL: Record<NonNullable<PlanView['agentBlock']>, string> = {
+  agent_needed: 'waiting for a team agent',
+  agent_limit_reached: 'agent session limit reached',
+  agent_not_held: 'no team agent held (plan_connect claims one)',
+}
+const NOTHING_HELD = 'not connected to a plan or card'
 
 // the columns the band's label may take: its width less the indicator and each control. A Button draws `[ label ]`
 // chrome on the terminal; a Markdown link none. The terminal's widths are the model (UNVERIFIED on the desktop's native buttons and 16px donut): the spare columns
@@ -25,7 +33,9 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
 }
 
 // The band's label for a view. `maxCols`: the columns the label may take (absent:
-// no limit, the layout truncates); a connected plan's name is cut to what `PLAN-NN · ` leaves, with an ellipsis.
+// no limit, the layout truncates); a connected plan's name (or a held card's title) is cut to what `PLAN-NN · ` leaves, with an ellipsis.
+// the team agent the session signs in as leads (`Tendai · PLAN-NN · name`), and a session holding a stand-alone card names the card
+// where a plan would be (`Tendai · ABC-77 · title`).
 export function bandLabel(v: PlanView, maxCols?: number): string {
   // a session with no key reads signed out, in the operator's words, whatever it was connected to before.
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
@@ -36,12 +46,16 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
   // the operator's wording for ANY failed load, even one that kept the connected plan.
   if (v.phase === 'error') return `${BRAND}: Disconnected`
   if (v.phase === 'loading' && !v.refreshedAt) return `${BRAND}: loading…`
-  if (!v.connected) return `${BRAND}: not connected to a plan`
+  // a signed-in session the agent gate holds: no plan or card can be read until it holds a team agent
+  if (v.agentBlock !== null) return `${BRAND}: ${AGENT_BLOCK_LABEL[v.agentBlock]}`
+  const held = v.connected !== null ? { ref: v.connected.ref, name: v.connected.name } : v.card !== null ? { ref: v.card.id, name: v.card.title } : null
+  if (held === null) return v.agent === null ? `${BRAND}: ${NOTHING_HELD}` : `${BRAND}${NAME_SEP}${v.agent.name}: ${NOTHING_HELD}`
   // a connected band reads `PLAN-NN · name`; the Danxbot prefix stays on the states with no plan.
-  const { ref, name } = v.connected
+  const lead = v.agent === null ? '' : `${v.agent.name}${NAME_SEP}`
+  const { ref, name } = held
   const sepCols = ref ? NAME_SEP.length : 0
-  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - ref.length - sepCols)
-  return [ref, ellipsize(name, nameCols)].filter(Boolean).join(NAME_SEP)
+  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - lead.length - ref.length - sepCols)
+  return lead + [ref, ellipsize(name, nameCols)].filter(Boolean).join(NAME_SEP)
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula the dashboard's plan page uses:
@@ -77,7 +91,8 @@ export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   if (v.phase === 'key-revoked') return KEY_REVOKED_FOOTER
   if (v.phase === 'blocked' && !v.connected) return BLOCKED_LABEL
-  return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND
+  if (v.connected) return `${BRAND} · ${v.connected.ref}`
+  return v.card ? `${BRAND} · ${v.card.id}` : BRAND
 }
 
 // the band's events warning: why the plan's events are not flowing, or null while they are.

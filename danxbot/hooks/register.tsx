@@ -53,7 +53,8 @@ import {
 import { errText, loadPlan } from './plan/load'
 import { blockedOrigin, optionDashboardUrl } from './plan/origin'
 import type { Api } from './plan/load'
-import { connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
+import { agentBlockOf, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
+import { AGENT_RELEASE_DEADLINE_MS, AGENT_RELEASE_PATH, AGENT_RELEASE_TIMEOUT_REASON, releaseFailureToast } from './plan/agent'
 import type { ToolOutcome } from './plan/mcp'
 import { disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { signInStep } from './plan/sign-in'
@@ -1586,7 +1587,19 @@ async function onSessionStart($: any, e: any, next: any) {
 // too: stopping a timer in a live process is the harm, a timer left in a dying one is not.
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
+// the session that ends frees the team agent it signed in as at once, instead of the dashboard's 30-minute dead-session window. Only when the
+// process really ends (PROCESS_ENDS): a /clear or a /resume ends this session but the MCP carries on with the same session id and still needs its agent. Best effort and bounded (AGENT_RELEASE_DEADLINE_MS): a failure is one toast, never a held end. A
+// session with no key (signed out, revoked) or none to free (the agent gate holds it: it never got one) asks nothing.
+async function releaseAgent($: any): Promise<void> {
+  const v: PlanView = await read($, view)
+  if (v.phase === 'signed-out' || v.phase === 'key-revoked' || v.agentBlock !== null) return
+  const r = await withinDeadline($, AGENT_RELEASE_DEADLINE_MS, api($, 'DELETE', AGENT_RELEASE_PATH), (): Api => ({ ok: false, status: 0, body: { error: AGENT_RELEASE_TIMEOUT_REASON }, sentence: true }))
+  if (r.ok || isSignedOut(r) || outcomeRevokedBy(r) !== null || agentBlockOf(r) !== null) return
+  $.ui.toast(releaseFailureToast(errText(r)))
+}
+
 async function onSessionEnd($: any, e: any, next: any) {
+  if (PROCESS_ENDS.includes(e.reason)) await releaseAgent($)
   if (e.reason === 'clear' && typeof e.sessionId === 'string') await update($, endedSession, () => e.sessionId)
   // the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
@@ -1794,12 +1807,15 @@ type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connecte
 async function sessionPlan($: any): Promise<SessionPlan> {
   const r = await api($, 'GET', '/api/plans', { query: SESSION_PLAN_PROBE })
   if (r.unreachable === true) return { kind: 'unreachable' }
-  if (isSignedOut(r) || outcomeRevokedBy(r) !== null) return { kind: 'silent' }
+  // the agent gate holds the session (no team agent yet, or a resume after the agent was released): quiet here, because the dashboard's 403 {state, instruction} on the model's first dashboard call is what tells the model what to do
+  if (isSignedOut(r) || outcomeRevokedBy(r) !== null || agentBlockOf(r) !== null) return { kind: 'silent' }
   if (!r.ok) return { kind: 'failed', reason: errText(r), refusal: r.refusal }
   if (!('session' in (r.body ?? {}))) return { kind: 'failed', reason: 'bad_response: GET /api/plans answered no session field' }
   if (r.body.session === null) return { kind: 'not-connected' }
   const planId = r.body.session.plan_id
-  return typeof planId === 'number' ? { kind: 'connected', planId } : { kind: 'failed', reason: 'bad_response: GET /api/plans answered a session with no plan_id' }
+  // a registered session on no plan (it holds a team agent, a stand-alone card, or neither yet) is a row whose plan_id is null
+  if (planId === null) return { kind: 'not-connected' }
+  return typeof planId === 'number' ? { kind: 'connected', planId } : { kind: 'failed', reason: 'bad_response: GET /api/plans answered a session whose plan_id is neither a plan id nor null' }
 }
 
 // guards a session id used as a file name (the connection record's path), not a sub-agent id
@@ -1863,7 +1879,8 @@ const toldLine = (t: Told, failure: (reason: string) => string): string | null =
   return t.kind === 'failed' ? failure(t.reason) : null
 }
 
-// The registry's text for `event`, only for a session on a plan. A read that broke: one line naming the event and why.
+// The registry's text for `event`, for every signed-in session (the dashboard leaves the plan-only line out for a session on no plan). A read
+// that broke: one line naming the event and why.
 async function eventContext($: any, event: DanxEvent): Promise<string | null> {
   return toldLine(eventText(await api($, 'GET', eventPath(event))), reason => eventFailureLine(event, reason))
 }
@@ -1903,9 +1920,10 @@ async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<st
   return restartNotice($, { kind: 'ask', args: { predecessor_id: ended } })
 }
 
-// The reads a pending start asks of the dashboard: the wait for the plugin's server, the plan read and the event text read share ONE deadline. Whatever fails, a session KNOWN to be
-// on a plan (its record on disk) is told in one warning line; any other stays silent and, on a start or resume, still asks the
-// restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
+// The reads a pending start asks of the dashboard: the wait for the plugin's server, the plan read and the event text read share ONE deadline. A session
+// the plan read finds signed in is told the event text, on a plan or not; one on no plan then also asks the restart notice. Whatever fails before
+// the plan read answers, a session KNOWN to be on a plan (its record on disk) is told in one warning line; any other stays silent and, on a start
+// or resume, still asks the restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
   const event = sessionEvent(start.source)
   if (event === null) return start.source === 'clear' ? clearNotice($, start) : null
@@ -1924,16 +1942,21 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
       return { line: start.source === 'compact' ? [line, await compactionBriefing($)].filter(x => x !== null).join('\n') : line, askRestart: false }
     }
     if (plan.kind === 'failed') return fault(plan.reason)
+    // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
+    if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
     return { line: null, askRestart }
   }
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
-  return done.askRestart ? restartNotice($, restartAsk(start)) : done.line
+  if (!done.askRestart) return done.line
+  const notice = await restartNotice($, restartAsk(start))
+  return done.line === null ? notice : notice === null ? done.line : [done.line, notice].join('\n')
 }
 
 async function readSubagentContext($: any): Promise<string | null> {
   const plan = await sessionPlan($)
-  if (plan.kind === 'connected') return eventContext($, 'sub_agent_start')
+  // every signed-in session's sub-agent, on a plan or not
+  if (plan.kind === 'connected' || plan.kind === 'not-connected') return eventContext($, 'sub_agent_start')
   return plan.kind === 'failed' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine('sub_agent_start', plan.reason) : null
 }
 

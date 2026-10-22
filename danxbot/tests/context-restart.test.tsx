@@ -84,10 +84,11 @@ for (const surface of SURFACES) {
       expect(d.restartCalls).toEqual([])
     })
 
-    test('a session that holds a key but is on no plan (a person who signed in and has not connected) is told the notice too', async ($, on) => {
+    test('a session that holds a key but is on no plan (a person who signed in and has not connected) is told the notice too, after its event text (DX-5554)', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'resume')).startLines).toEqual([NOTICE])
+      expect((await firstPrompt($, 'resume')).startLines).toEqual([`The session_resume text.
+${NOTICE}`])
     })
 
     for (const reason of ['no_session_id', 'lookup_failed', 'lookup_timeout'] as const) {
