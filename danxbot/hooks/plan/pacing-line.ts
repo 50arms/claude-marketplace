@@ -315,8 +315,9 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
 // reportClaimFailure), never silently: an error answer, an unreachable server, a timeout or a throw. A signed-out answer and `{released:false}`
 // (a 200, normal) stay silent; a good give-back clears the slot, so the same failure after it is told again.
 export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
-  // DX-5593: a give-back is only ever of a `claimed` claim, made by a session known to be signed in (claimSlot set hasSucceeded). One that crossed
-  // resetPacing (a new session start) belongs to the old session: it writes and tells nothing, and its claim lapses in danxbot.
+  // DX-5593: a give-back is only ever of a `claimed` claim, but not always one that set hasSucceeded: a claim in flight across a session start
+  // (resetPacing) comes back `claimed` without writing the new session's state. Its give-back is harmless (danxbot scopes deleteAgentClaim to the
+  // session and answers released:false). One that crosses resetPacing itself writes and tells nothing, and its claim lapses in danxbot.
   const gen = generation
   try {
     let failure: string | null = null
