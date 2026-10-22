@@ -632,7 +632,7 @@ export function dashboard(
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       pacingReads.push(pacingReads.length + 1)
       // the answer is fixed when the read starts: a dashboard change during the hold belongs to the next read
-      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
+      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, reserved_agents: null, line: null, reason: 'no_usage_account' } }
       if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
     }
@@ -653,14 +653,15 @@ export function dashboard(
         if (options.claimRelease !== undefined) return { value: 'status' in options.claimRelease ? reply({ error: 'release boom' }, options.claimRelease.status) : reply(options.claimRelease.body) }
         return { value: reply({ released: heldClaims.delete(id) }) }
       }
-      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
+      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, reserved_agents: null, line: null, reason: 'no_usage_account' } }
       if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       if ('status' in given) return { value: reply({ error: 'claim boom' }, given.status) }
       const line = given.body as any
       if (line === null || typeof line !== 'object') return { value: reply(line) }
       const known = line.level !== null && line.level !== undefined
       const live = known && Number.isInteger(line.running_agents) ? line.running_agents + heldClaims.size : line.running_agents
-      const room = known && line.level === 'on_pace' && (line.budget === null || live < line.budget)
+      // DX-5595: the slots held for woken sessions (`reserved_agents`) count as taken, as danxbot's claim counts them
+      const room = known && line.level === 'on_pace' && (line.budget === null || live + (line.reserved_agents ?? 0) < line.budget)
       if (!room) return { value: reply({ ...line, running_agents: live, claimed: false, claim_id: null }) }
       const id = `claim-${claimsAllowed.length + 1}`
       claimsAllowed.push(id)

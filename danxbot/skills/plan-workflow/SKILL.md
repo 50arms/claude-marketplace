@@ -326,7 +326,10 @@ cannot be taken (danxbot could not be reached or did not answer) is refused too,
 `Usage pacing:` words, naming the failure.
 
 - **On pace**: carry on. A spawn is still refused while the account's budget is full, and
-  may be moved to haiku when the budget is nearly full.
+  may be moved to haiku when the budget is nearly full. A slot danxbot offered to a session it
+  woke is held for that session for 60 seconds and counts as taken: a spawn refused for it says
+  the slot is held and frees within 60 seconds, and pausing with `waits_on` `pacing` gets you
+  offered one.
 - **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.
   Let running agents finish; do only cheap work yourself (verify landed commits, card writes),
   and record anything else as paused in an agent note on its card. (This is the account's usage pause, which

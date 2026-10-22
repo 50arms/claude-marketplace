@@ -101,6 +101,8 @@ export function parsePacing(body: any): Pacing | null | { error: string } {
   if (!LEVELS.includes(body.level)) return { error: 'the pacing line answer has no valid level' }
   if (body.budget !== null && !(Number.isInteger(body.budget) && body.budget >= 0)) return { error: 'the pacing line answer has no valid budget' }
   if (!Number.isInteger(body.running_agents) || body.running_agents < 0) return { error: 'the pacing line answer has no running_agents' }
+  // DX-5595: the slots held for sessions that waited longer (their offers), other sessions' only: part of the one canonical shape, so absent is an error
+  if (!Number.isInteger(body.reserved_agents) || body.reserved_agents < 0) return { error: 'the pacing line answer has no reserved_agents' }
   if (typeof body.line !== 'string' || body.line.trim() === '') return { error: 'the pacing line answer has no readable line' }
   const spend = parseSpendFigure(body.spend)
   if (spend !== null && 'error' in spend) return spend
@@ -109,7 +111,7 @@ export function parsePacing(body: any): Pacing | null | { error: string } {
   return {
     spend,
     readout,
-    verdict: { level: body.level, budget: body.budget, resetsAt: typeof body.resets_at === 'string' ? body.resets_at : null, runningAgents: body.running_agents },
+    verdict: { level: body.level, budget: body.budget, resetsAt: typeof body.resets_at === 'string' ? body.resets_at : null, runningAgents: body.running_agents, reservedAgents: body.reserved_agents },
     line: body.line,
   }
 }

@@ -35,17 +35,34 @@ export function tierOf(model: string | undefined): Tier | null {
 
 // "Tight": the spawn would take the last free slot under a budget (at most TIGHT_FREE_SLOTS slots free). One rule, documented here and tested.
 export const TIGHT_FREE_SLOTS = 1
-export function isTight(budget: number | null, running: number): boolean {
-  return budget !== null && budget - running <= TIGHT_FREE_SLOTS
+// DX-5595: a slot held for a woken session is not free (`reserved`).
+export function isTight(budget: number | null, running: number, reserved = 0): boolean {
+  return budget !== null && budget - running - reserved <= TIGHT_FREE_SLOTS
 }
 
 // What the plan-workflow skill quotes (see the header): the refusal the model reads starts with this.
 export const REFUSAL_PREFIX = 'Usage pacing:'
 
-function denyReason(v: PacingVerdict, why: 'level' | 'budget'): string {
+// DX-5595: why a known verdict refuses a new agent, in danxbot's own order (`refusalOf`, agent-claim.ts): the level, then the budget against the running
+// count, then the budget against the running count plus the slots held for woken sessions (`reserved`: every slot is spoken for, one frees within 60 s).
+export function refusalWhy(v: PacingVerdict): 'level' | 'budget' | 'reserved' {
+  if (v.level !== 'on_pace') return 'level'
+  if (v.budget !== null && v.runningAgents >= v.budget) return 'budget'
+  return 'reserved'
+}
+
+function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
   const level = v.level.replace('_', ' ')
   const budget = v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start nothing new)' : `budget ${v.budget} at once`
   const reset = v.resetsAt === null ? 'its reset time is unknown' : `usage resets at ${v.resetsAt}`
+  if (why === 'reserved') {
+    // DX-5595: not full of running agents: the free slots are held for sessions that were woken after waiting longer. They free within 60 seconds if unused.
+    return (
+      `${REFUSAL_PREFIX} ${v.runningAgents} agent(s) run on this account and ${v.reservedAgents} slot(s) are held for sessions that waited longer, against ${budget} ` +
+      `(level ${level}; ${reset}). A held slot frees within 60 seconds if its session does not use it. Do the work yourself, cheaply, in this session, or pause ` +
+      'with `waits_on` `pacing` and you will be woken when a slot is offered to you. Do not retry this spawn now: it will be refused until a held slot frees.'
+    )
+  }
   const cause = why === 'level' ? `this account is ${level}` : `${v.runningAgents} agent(s) already run on this account against ${budget}`
   return (
     `${REFUSAL_PREFIX} ${cause} (level ${level}, ${budget}; ${reset}). Do the work yourself, cheaply, in this session, or wait until the ` +
@@ -62,7 +79,9 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
   if (verdict.level !== 'on_pace') return { kind: 'deny', reason: denyReason(verdict, 'level') }
   // a null budget imposes no count cap; the level above still applies
   if (verdict.budget !== null && verdict.runningAgents >= verdict.budget) return { kind: 'deny', reason: denyReason(verdict, 'budget') }
-  if (isTight(verdict.budget, verdict.runningAgents)) {
+  // DX-5595: the slots held for woken sessions count as taken
+  if (verdict.budget !== null && verdict.runningAgents + verdict.reservedAgents >= verdict.budget) return { kind: 'deny', reason: denyReason(verdict, 'reserved') }
+  if (isTight(verdict.budget, verdict.runningAgents, verdict.reservedAgents)) {
     const tier = tierOf(requested)
     // an unknown model name is left alone: it cannot be placed on the tier list, so "below it" is not knowable
     if (tier !== null && tier !== 'haiku') return { kind: 'downgrade', model: 'haiku' }
@@ -89,7 +108,7 @@ export function spawnGuard(env: PacingEnv) {
     if (claim.kind === 'refused') {
       const decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
       // danxbot refused the claim, so the spawn is refused whatever the plugin's own reading of the verdict says
-      return { deny: decision.kind === 'deny' ? decision.reason : denyReason(claim.pacing.verdict, 'budget') }
+      return { deny: decision.kind === 'deny' ? decision.reason : denyReason(claim.pacing.verdict, refusalWhy(claim.pacing.verdict)) }
     }
     let decision: SpawnDecision = { kind: 'allow' }
     if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
