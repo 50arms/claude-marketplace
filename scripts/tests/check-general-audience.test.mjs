@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { bannedHits, stripJsComments, stripShellComments, userFacingText, scanFiles, scanPlugin, listPluginFiles } from "../check-general-audience.mjs";
+import { bannedHits, commentHits, foreignSourceFiles, commentOnly, FOREIGN_SOURCE_FILE, stripJsComments, stripShellComments, userFacingText, scanFiles, scanPlugin, listPluginFiles } from "../check-general-audience.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -19,15 +19,83 @@ test("the matcher catches each banned token and passes general text", () => {
   assert.equal(bannedHits("the gpt-manager app").length, 1);
   assert.equal(bannedHits("Flytedesk org").length, 1);
   assert.equal(bannedHits("use @danxbot/ui").length, 1);
-  assert.equal(bannedHits("see `src/issues/x.ts`").length, 1);
   assert.equal(bannedHits("see DX-4556").length, 1);
-  assert.equal(bannedHits("problem PBLM-1915 and caveat CAV-2").length, 1);
-  assert.equal(bannedHits("see packages/danx-dashboard-mcp and mcp-servers/x/src").length, 1);
-  assert.equal(bannedHits("see docs/pages/x.md").length, 1);
   assert.equal(bannedHits("PLAN-17 Closed beta").length, 1);
   assert.deepEqual(bannedHits("run `claude plugin install danxbot`; card id `<card id>`; PLAN-NNN"), []);
   assert.equal(bannedHits("owner newms87 / NEWMS").length, 1);
   assert.deepEqual(bannedHits("const newMsgs = []; newMsg(x)"), [], "a code identifier is not the author's account name");
+});
+
+const PATH_KIND = "a path in the author's repo";
+const ID_KIND = "an internal card, plan or plan-record id";
+const NUMBER_KIND = "an internal card comment, note or problem number";
+
+test("each source-path alternative is caught by its own single token", () => {
+  for (const dir of ["src", "packages", "mcp-servers", "frontend", "docs/pages"]) {
+    assert.deepEqual(bannedHits(`see ${dir}/x`), [PATH_KIND], dir);
+    assert.deepEqual(commentHits(`see ${dir}/x`), [PATH_KIND], dir);
+  }
+  assert.deepEqual(bannedHits("a plain/path and x-src/y and the docs page"), []);
+});
+
+test("each internal-id prefix is caught by its own single token", () => {
+  for (const prefix of ["DX", "PLAN", "PLN", "SG", "PBLM", "CAV", "R"]) {
+    assert.deepEqual(bannedHits(`${prefix}-4556`), [ID_KIND], prefix);
+    assert.deepEqual(commentHits(`${prefix}-4556`), [ID_KIND], prefix);
+  }
+});
+
+test("a card comment, note or problem number is caught per word, and a short number or no number is not", () => {
+  for (const word of ["comment", "note", "problem"]) {
+    assert.deepEqual(commentHits(`${word} 12391`), [NUMBER_KIND], word);
+    assert.deepEqual(commentHits(`${word}s 2543`), [NUMBER_KIND], word + "s");
+  }
+  assert.deepEqual(commentHits("comment 12, note 7 and problem 99"), []);
+  assert.deepEqual(commentHits("a comment about the note and problem"), []);
+});
+
+test("a source file name is foreign unless the plugin ships it, one extension at a time", () => {
+  const shipped = new Set(["band.tsx", "x.ts"]);
+  for (const ext of ["ts", "tsx", "mjs", "js"]) {
+    assert.deepEqual(foreignSourceFiles(`see other-file.${ext}`, shipped), [`other-file.${ext}`], ext);
+  }
+  assert.deepEqual(foreignSourceFiles("see band.tsx and x.ts", shipped), []);
+  assert.deepEqual(foreignSourceFiles("see a note.md and a config.json", shipped), []);
+});
+
+test("commentOnly keeps just the comments of code, and nothing for a file type with none", () => {
+  const out = commentOnly("a.mjs", 'const f = "x.ts"; // y.ts\n/* z.ts */ const g = 1;');
+  assert.match(out, /y\.ts/);
+  assert.match(out, /z\.ts/);
+  assert.doesNotMatch(out, /x\.ts/);
+  assert.match(commentOnly("a.sh", 'echo "x.ts" # y.ts'), /y\.ts/);
+  assert.equal(commentOnly("a.md", "x.ts"), null);
+});
+
+test("every comment style is scanned for each comment-applicable kind, and a string is not a comment", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "general-audience-"));
+  fs.mkdirSync(path.join(dir, "scripts"));
+  fs.writeFileSync(path.join(dir, "scripts", "own.mjs"), "// fine\n");
+  const cases = [
+    ["a.mjs", "// DX-1\n", ID_KIND],
+    ["b.mjs", "/* DX-1 */\n", ID_KIND],
+    ["c.mjs", "/*\n * see src/x\n */\n", PATH_KIND],
+    ["d.sh", "echo hi # DX-1\n", ID_KIND],
+    ["e.sh", "# see packages/x\n", PATH_KIND],
+    ["f.mjs", "// the comment 12391 says\n", NUMBER_KIND],
+    ["g.sh", "# problem 2543\n", NUMBER_KIND],
+    ["h.mjs", "// see outside.ts\n", FOREIGN_SOURCE_FILE],
+    ["i.sh", "# see outside.js\n", FOREIGN_SOURCE_FILE],
+    ["j.mjs", "/* see outside.tsx */\n", FOREIGN_SOURCE_FILE],
+  ];
+  for (const [name, body] of cases) fs.writeFileSync(path.join(dir, "scripts", name), body);
+  const hits = scanFiles(dir, ["scripts/own.mjs", ...cases.map(([n]) => "scripts/" + n)]);
+  for (const [name, , what] of cases) {
+    assert.deepEqual(hits.filter((h) => h.file === "scripts/" + name).map((h) => h.what), [what], name);
+  }
+  assert.equal(hits.filter((h) => h.file === "scripts/own.mjs").length, 0);
+  fs.writeFileSync(path.join(dir, "scripts", "k.mjs"), 'const s = "outside.ts";\n');
+  assert.deepEqual(scanFiles(dir, ["scripts/k.mjs"]), []);
 });
 
 test("JS comments are stripped, strings, templates and regexes holding // or /* are not, line numbers hold", () => {
@@ -76,6 +144,7 @@ test("scanFiles reports file, line and what for each hit in a scanned surface, a
   assert.deepEqual(hits, [
     { file: "scripts/a.mjs", line: 1, what: "an internal card, plan or plan-record id" },
     { file: "scripts/a.mjs", line: 3, what: "a path in the author's repo" },
+    { file: "scripts/a.mjs", line: 3, what: "a source file the plugin does not ship" },
     { file: "scripts/a.mjs", line: 4, what: "a personal shell alias" },
     { file: "skills/S.md", line: 2, what: "an internal card, plan or plan-record id" },
   ]);

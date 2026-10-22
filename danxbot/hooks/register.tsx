@@ -1770,7 +1770,7 @@ async function onToolStamp($: any, e: any, next: any) {
   // a plugin's own `$.mcp.call` (this one's dashboard reads) is raised as a `tool.call` too, with no agentId. Its result goes to the plugin,
   // never the model, so a stamp or the start text put beside it is lost, and the stamp would move the clock the model reads. The signal is the
   // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (probed against the real engine). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
-  // Returning here also skips the lastStamp bookkeeping. Seated by tests/on-tool-stamp-origin-scan.test.mjs.
+  // Returning here also skips the lastStamp bookkeeping. A test pins that it is seated.
   if (raisedByPlugin(next.origin)) return r
   // the main loop's result carries the notes appended so far: they are read (a sub-agent's or a fork's result is not the main loop's)
   if (e.agentId === undefined && (await read($, turn)).pending.length > 0) await update($, turn, cur => toolResultSent(cur))
@@ -1806,7 +1806,7 @@ async function sessionPlan($: any): Promise<SessionPlan> {
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
 
 // Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the danx-dashboard MCP server writes
-// at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, session-connection.ts `sessionConnectionPath`; only its existence is
+// at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, only its existence is
 // read). It decides who a dashboard fault speaks to: a connected session gets one warning line, any other stays silent.
 async function isPlanConnected($: any, id: string): Promise<boolean> {
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
@@ -2174,12 +2174,12 @@ async function drawSessionMode($: any, e: any, next: any) {
 }
 
 // card ids in an assistant reply drawn as links. Reads only the `view` atom (filled at refresh): no network in the draw.
-// The text is rewritten in the props and handed on (claude-code.d.ts, ui.render: "rewrite `props`"), so the engine's own drawing
+// The text is rewritten in the props and handed on (the engine's type declarations, ui.render: "rewrite `props`"), so the engine's own drawing
 // and any hook below stay in effect; the stored message is untouched, and `onScreen` rides along as received. Nothing to link
 // (not connected, no prefixes known, no card id in the text) leaves the event as it is.
 async function drawAssistantMessage($: any, e: any, next: any) {
   const v = await read($, view)
-  // links in error or nothing known: the reply is drawn as written. So is a text that is not a string (the d.ts types it `string`;
+  // links in error or nothing known: the reply is drawn as written. So is a text that is not a string (the engine's declarations type it `string`;
   // this only guards the engine one day sending a block with none, which `linkCardIds` would throw on)
   if (v.phase !== 'ready' || v.connected === null || v.links.state !== 'ready' || v.links.prefixes.length === 0 || typeof e.props.text !== 'string') {
     return next(e)
@@ -2222,7 +2222,7 @@ async function currentUsageBody($: any): Promise<UsageBody | null> {
 // - OPENING something (a sub-agent's row, a shell's row, a liveness post) needs the session known to be signed in (`on`): on a plan or not
 //   (a sub-agent is a row of the account's running-agent count, plan or not; the dashboard opens the session's dispatch for it).
 // - CLOSING what was opened (a sub-agent's finish, a shell's end) is owed because its start was posted, so it is posted whatever the view
-//   says, while it is `unknown` too (a failed refresh empties the view's plan for a moment; comment 10065's stuck row was exactly a close
+//   says, while it is `unknown` too (a failed refresh empties the view's plan for a moment; a stuck row would be exactly a close
 //   that never went out). Only `off` drops it: the key was revoked, and the dashboard refuses every report from it.
 // - The ready-cards check runs unless `off`: its own read asks the dashboard which plan the session is on.
 
@@ -2253,8 +2253,7 @@ type LeaveCloses = { owed: ReportState; rows: number; posted: boolean }
 const activities = (n: number) => `${n} running activit${n === 1 ? 'y' : 'ies'}`
 
 // before the session leaves its plan or moves to another, every close it owes (a running sub-agent's finish, an
-// open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running are the
-// stuck-row bug of comment 10065. Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds the leave; a failure is one toast
+// open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running would stay stuck. Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds the leave; a failure is one toast
 // naming what may stay running, and the leave goes on. The memory is cleared first, so a sub-agent's turn.complete racing the leave
 // posts nothing twice. `why` names the leave in the toast. The caller hands the answer to `leaveDidNotHappen` when the leave failed.
 async function closeOwedBeforeLeave($: any, why: string): Promise<LeaveCloses> {
@@ -2337,7 +2336,7 @@ async function reportSubagentEnd($: any, agentId: string): Promise<void> {
 }
 
 // a tool call whose result names a background task (a `run_in_background` shell, or one the person backgrounded) opens that
-// shell's row, keyed by its task id (the id the engine's `background_tasks` lists it under, comment 12391), labelled by the call's own
+// shell's row, keyed by its task id (the id the engine's `background_tasks` lists it under), labelled by the call's own
 // `description`, redacted (never its command).
 async function reportShellStart($: any, e: any, r: any): Promise<void> {
   const taskId = r.deny === undefined ? r.result?.backgroundTaskId : undefined
@@ -2350,7 +2349,7 @@ async function reportShellStart($: any, e: any, r: any): Promise<void> {
 }
 
 // a running sub-agent's own tool call re-posts its row with a fresh lastActivityAt, at most once a LIVENESS_MS, so a sub-agent
-// working for minutes never reads as silent (comment 10017).
+// working for minutes never reads as silent.
 async function reportSubagentAlive($: any, agentId: string): Promise<void> {
   const id = subagentKey(agentId)
   const now = await $.clock.now()
@@ -2362,7 +2361,7 @@ async function reportSubagentAlive($: any, agentId: string): Promise<void> {
 }
 
 // a Stop or SubagentStop carries the engine's list of the background work in flight. It finishes the row of every shell this
-// session opened that the list no longer shows running (comment 10065: every start the reports open gets its end). A snapshot that is not
+// session opened that the list no longer shows running (every start the reports open gets its end). A snapshot that is not
 // a list is one toast.
 async function reportShellEnds($: any, event: 'Stop' | 'SubagentStop', e: any): Promise<void> {
   const state = await reportingState($)
@@ -2582,7 +2581,7 @@ async function armSubAgents($: any, file: ControlFile): Promise<void> {
   }
   if (wanted === (await read($, armedPercent))) return
   // the once-per-process clear must never wipe the value armed here, so `leftoverArmingCleared` is already true when this first sets it: syncCompaction runs
-  // clearLeftoverArming first, and it raises the flag on the first control file of the session (the one that can arm). compaction-agents.test.tsx pins the order.
+  // clearLeftoverArming first, and it raises the flag on the first control file of the session (the one that can arm). a test pins the order.
   if (wanted === null) await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
   else await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', String(wanted))
   await update($, armedPercent, () => wanted)
@@ -2680,7 +2679,7 @@ async function onPreCompact($: any, e: any, next: any) {
 // Every model request of a sub-agent notes its context: `turn.step` (streaming) hands back the response with the usage the API reported and the model that answered. Only a
 // sub-agent's request reaches this hook: the registration matches an `agentId`, and that matcher is the one place that keeps the main loop out (its size is `$.session.usage()`).
 // The bookkeeping is plain arithmetic over a typed usage and a Map; the one thing that can throw is `subagentKey` on an id Claude Code never produces, which is caught, told once and ends the note without failing the request. It returns nothing, which the typed contract of a streaming hook defines as "its last next(e)'s result
-// stands": the response the model gave passes on untouched (compaction-agents.test.tsx asserts the result a caller reads).
+// stands": the response the model gave passes on untouched (a test asserts the result a caller reads).
 async function* noteAgentStep($: any, e: any, next: any): any {
   const response = yield* next(e)
   const size = response?.usage === null || response?.usage === undefined ? null : sizeOfUsage(response.usage)

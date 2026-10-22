@@ -13,7 +13,7 @@ export const SERVER = 'plugin:danxbot:danx-dashboard'
 export const toolName = (tool: string) => `mcp__${SERVER.replace(/:/g, '_')}__${tool}`
 export const MIN_GAP_MS = 10_000
 // while a permission request is open its claim is polled this often (otherwise never), so the model hears the
-// decision within seconds. The server's per-key claim limit (danxbot permission-request-routes.ts: twice one 3 s poll, about
+// decision within seconds. The server's per-key claim limit (twice one 3 s poll, about
 // 0.67 claims a second) fits the MCP's own 3 s poll plus this one for ONE open request; with more open at once the MCP's poll
 // alone passes it, and this poll's 429 only keeps the request for the next tick.
 export const PERMISSION_POLL_MS = 10_000
@@ -27,7 +27,7 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 export const IN_PROGRESS_LIMIT = 15
 // `GET /api/plans` is asked for one row only because only its `session`, `dashboard_url` and listener fields are read (never the whole list).
 export const SESSION_PLAN_PROBE = { limit: 1 }
-// an issue prefix as a board names it (`DX`, `SSL`): capital letters, at most this many. Anything else in a boards
+// an issue prefix as a board names it (`ABC`, `XYZ`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10
 export const PREFIX_PATTERN = new RegExp(`^[A-Z]{1,${PREFIX_MAX}}$`)

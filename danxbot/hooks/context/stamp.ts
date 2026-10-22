@@ -5,7 +5,7 @@ import type { StampState } from '../../types'
 //   09/28/2026 01:12:03 -06:00 +0      first stamp, or the first of a new day: the full date
 //   01:12:08 -06:00 +5s                the same day: time only
 // Pure: the clock, the offset and the last stamp arrive as arguments (register.tsx holds the `$` calls), so a test and the injection
-// measure (scripts/measure-injection.mjs) run exactly the text a session gets.
+// measure (the injection measurement script) run exactly the text a session gets.
 const two = (n: number) => String(n).padStart(2, '0')
 
 // `+5s`, `+3m 7s`, `+3m`, `+2h 0m 5s`, `+2h 0m`: seconds are dropped only when zero past a minute, minutes never past an hour, as the bash hook this replaced printed them

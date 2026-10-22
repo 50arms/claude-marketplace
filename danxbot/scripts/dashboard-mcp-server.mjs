@@ -3,7 +3,7 @@
 // tester who installs the plugin never writes a `.mcp.json`.
 //
 // WHAT IT RUNS. The installed `@thehammer/danx-dashboard-mcp` (lib/dashboard-mcp-package.mjs installs it, in this
-// process, into the plugin data dir; the package's own `dist/index.js` is then run with plain `node`, never a cold
+// process, into the plugin data dir; the package's own built entry point is then run with plain `node`, never a cold
 // `npx -y`). Nothing here runs bash or any shell.
 //
 // WHICH VERSION. Before the server starts, the launcher starts the REFRESH as a DETACHED child

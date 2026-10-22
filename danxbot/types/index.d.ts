@@ -36,7 +36,7 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // Sign in, because a revoked agent must stop.
 // `blocked`: auto permission mode's classifier refused the plugin's own dashboard call: the band says so and names the
 // fix. `connected` is then the plan the model's own successful plan_connect named, when it did one; nothing else of the plan is known.
-// `prefixes` are the issue prefixes (`DX`, `SG`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
+// `prefixes` are the issue prefixes (`ABC`, `XYZ`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
 // EVERY card on the connected plan, any status (GET /api/plans/:id/cards, unscoped by board, closed cards included). Empty when not connected.
 export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: string[] } | { state: 'error'; message: string }
 

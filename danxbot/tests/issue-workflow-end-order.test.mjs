@@ -19,12 +19,12 @@ const flow = skill.slice(skill.indexOf("## Flow"), skill.indexOf("## Gates"));
 const step6 = flow.slice(flow.indexOf("\n6. "));
 
 test("the completion step merges before it completes and writes the retro", () => {
-  const finalize = step6.indexOf("follows the end order its dispatch instructions give");
+  const mergeFirst = step6.indexOf("Merge first:");
   const push = step6.indexOf("pushes to the target");
-  const complete = step6.indexOf("`complete`");
+  const complete = step6.indexOf("Only then transition `complete`");
   const retro = step6.indexOf("write the retro");
-  assert.ok(finalize > -1 && push > -1 && complete > -1 && retro > -1, step6);
-  assert.ok(finalize < complete && push < complete, "the merge comes before `complete`");
+  assert.ok(mergeFirst > -1 && push > -1 && complete > -1 && retro > -1, step6);
+  assert.ok(mergeFirst < push && push < complete, "the merge comes before `complete`");
   assert.ok(complete < retro, "`complete` comes before the retro");
   assert.match(step6, /citing the sha now on the target branch/);
 });

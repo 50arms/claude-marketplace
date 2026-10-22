@@ -1,5 +1,5 @@
-// The ONE module that owns `@thehammer/danx-dashboard-mcp` for this plugin: which version runs and installing it
-//. Its callers: the plugin's MCP server launcher (dashboard-mcp-server.mjs), which starts the server
+// The ONE module that owns `@thehammer/danx-dashboard-mcp` for this plugin: which version runs and installing it.
+// Its callers: the plugin's MCP server launcher (dashboard-mcp-server.mjs), which starts the server
 // from the recorded version and refreshes the record.
 // This file carries NO version literal.
 //
@@ -15,7 +15,7 @@
 // unpinned spec would keep serving whatever this machine cached first. The plugin runs an exact version; it reads which
 // one instead of having it typed in.
 //
-// WHERE. `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/<version>/node_modules/@thehammer/danx-dashboard-mcp/dist/index.js`,
+// WHERE. `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/<version>/node_modules/@thehammer/danx-dashboard-mcp/dist/` (the package's built entry point)
 // one directory per version, run with plain `node`, never through a cold `npx -y` (measured 2026-10-01: npx paid ~1.6 s
 // warm and ~4 s cold before the package started; the installed copy ran end to end in 0.6 s).
 //
@@ -266,9 +266,9 @@ export function noVersionLine(reason) {
 /**
  * How npm is started, with NO shell. Since Node 18.20.2 / 20.12.2 spawning a `.cmd` without `shell: true`
  * throws EINVAL, and a bare `npm` is not found at all (Windows' npm is `npm.cmd`; no PATHEXT lookup without a shell), so
- * on Windows the node running this runs npm's own `npm-cli.js`, which every Windows node install (the official installer,
- * nvm-windows, a zip) keeps beside `node.exe` at `node_modules/npm/bin/npm-cli.js`. Elsewhere `npm` on PATH is an
- * executable (a link to that same `npm-cli.js`, or a distribution's script) that the OS starts directly.
+ * on Windows the node running this runs npm's own CLI script, which every Windows node install (the official installer,
+ * nvm-windows, a zip) keeps beside `node.exe` at `node_modules/npm/bin/`. Elsewhere `npm` on PATH is an
+ * executable (a link to that same CLI script, or a distribution's script) that the OS starts directly.
  * Throws, naming the path, when a Windows node has no npm beside it.
  */
 export function npmCommand(platform = process.platform, execPath = process.execPath, exists = fs.existsSync, env = process.env) {

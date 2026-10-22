@@ -3,7 +3,7 @@
 // byte for byte, so the dashboard's plan page keeps naming a background shell by what the agent said it does.
 //
 // PORTED, not imported: the plugin's hooks module cannot load the npm package (no Node, no package resolution), so this is a copy of
-// `redactLabel` / `labelOf` from the session-telemetry package. `danxbot/tests/reports-label.test.tsx` carries that package's own test cases so
+// `redactLabel` / `labelOf` from the session-telemetry package. The plugin's own tests carry that package's own test cases so
 // the two cannot drift apart unnoticed. A label is free text an agent wrote and it reaches every reader of the team, so every
 // path-shaped token reads `[path]` and every secret-shaped token `[redacted]`; a command is never read at all. The row's
 // `description` has no length cap of its own (the old hook sent none, and the wire sets none): the package's 120-character cap belongs

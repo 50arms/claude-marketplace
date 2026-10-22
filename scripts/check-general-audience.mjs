@@ -59,16 +59,30 @@ export const BANNED = [
   { name: "another of the author's products", pattern: /gpt-manager/i },
   { name: "another of the author's organizations", pattern: /flytedesk/i },
   { name: "the author's own UI library", pattern: /@danxbot\/ui/i },
-  { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages|mcp-servers|frontend|docs\/pages)\/[\w.-]/ },
-  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|PBLM|CAV|R)-\d+/ },
+  // `comments: true` kinds also apply inside code comments. A comment is read by anyone who opens the installed plugin, so it may
+  // name none of our cards, card comments or source paths; it states the reason itself. (The other kinds are about text a user is shown.)
+  { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages|mcp-servers|frontend|docs\/pages)\/[\w.-]/, comments: true },
+  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|PBLM|CAV|R)-\d+/, comments: true },
+  { name: "an internal card comment, note or problem number", pattern: /\b(?:comment|note|problem)s? #?\d{3,}\b/i, comments: true },
 ];
 
-/**
- * The kinds that also apply inside code comments. A comment is read by anyone who opens the installed plugin, so it may name
- * neither our card ids nor a path in our source; it states the reason itself. (The other kinds are about text the user is shown.)
- */
-const COMMENT_KINDS = new Set(["a path in the author's repo", "an internal card, plan or plan-record id"]);
-export const commentHits = (text) => BANNED.filter((b) => COMMENT_KINDS.has(b.name)).flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
+/** Names of the comment-applicable banned things `text` mentions (one entry per kind). */
+export const commentHits = (text) => BANNED.filter((b) => b.comments).flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
+
+const SOURCE_FILE_NAME = /[\w.-]+\.(?:tsx|ts|mjs|js)\b/g;
+export const FOREIGN_SOURCE_FILE = "a source file the plugin does not ship";
+
+/** Source file names `commentText` mentions that are not in `shippedBasenames`: a comment may name the plugin's own files, never outside sources. */
+export const foreignSourceFiles = (commentText, shippedBasenames) =>
+  (commentText.match(SOURCE_FILE_NAME) ?? []).filter((name) => !shippedBasenames.has(name));
+
+/** `raw` keeping only its comments (everything else blanked to spaces, newlines kept), or null for a file type with no comments to read. */
+export function commentOnly(rel, raw) {
+  const ext = path.extname(rel).toLowerCase();
+  const stripped = JS_LIKE.has(ext) ? stripJsComments(raw) : ext === ".sh" ? stripShellComments(raw) : null;
+  if (stripped === null) return null;
+  return [...raw].map((c, i) => (c === "\n" || stripped[i] !== c ? c : " ")).join("");
+}
 
 /** Names of the banned things `text` mentions (one entry per kind). */
 export const bannedHits = (text) => BANNED.flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
@@ -180,12 +194,17 @@ export function userFacingText(rel, raw) {
 /** Violations `{file, line, what}` over `relFiles` of `pluginDir`. */
 export function scanFiles(pluginDir, relFiles) {
   const violations = [];
+  const shippedBasenames = new Set(relFiles.map((rel) => path.basename(rel)));
   for (const rel of relFiles) {
-    const text = userFacingText(rel, fs.readFileSync(path.join(pluginDir, rel), "utf8"));
+    const source = fs.readFileSync(path.join(pluginDir, rel), "utf8");
+    const text = userFacingText(rel, source);
     if (text === null) continue;
-    const raw = fs.readFileSync(path.join(pluginDir, rel), "utf8").split("\n");
+    const rawLines = source.split("\n");
+    const comments = (commentOnly(rel, source) ?? "").split("\n");
     text.split("\n").forEach((line, idx) => {
-      for (const what of new Set([...bannedHits(line), ...commentHits(raw[idx])])) violations.push({ file: rel, line: idx + 1, what });
+      const what = new Set([...bannedHits(line), ...commentHits(rawLines[idx])]);
+      if (foreignSourceFiles(comments[idx] ?? "", shippedBasenames).length > 0) what.add(FOREIGN_SOURCE_FILE);
+      for (const w of what) violations.push({ file: rel, line: idx + 1, what: w });
     });
   }
   return violations;

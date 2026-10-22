@@ -51,7 +51,7 @@ export function shellRow(taskId: string, label: string | null, at: number, finis
 }
 
 // The shells this session opened that the snapshot no longer lists as running: they ended (the engine's list holds only work in flight).
-// Replaces the old "no event ends a background shell" rule (comment 10065: every start must get its end).
+// Replaces the old "no event ends a background shell" rule (every start must get its end).
 export function endedShells(opened: readonly string[], tasks: readonly { id: string; status: string }[]): string[] {
   const running = new Set(tasks.filter(t => t.status === 'running').map(t => t.id))
   return opened.filter(id => !running.has(id))

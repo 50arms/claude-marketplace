@@ -5,7 +5,7 @@ import { keyRevokedBy, mcpText, refusalText, toolOutcome } from './mcp'
 // what one `plan_connect` answer means to the Sign in button, and what the person is told. The server's own
 // words are written for the agent (it says "Do not retry unless they ask"), so nothing here passes them on: every
 // message below is the person's. The answers are the danx-dashboard MCP's: `{ state, ... }` while the session holds no
-// key (session-access.ts), the `{ ok, status, body }` envelope once it connects.
+// key, the `{ ok, status, body }` envelope once it connects.
 export type SignInStep =
   // a request is waiting for the person's approval (`request`: its page and code): show it, then call again (the call waits
   // for it). An answer that names no usable request is a `stop`, never a wait: the wait has no round limit, so a

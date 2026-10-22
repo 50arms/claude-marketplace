@@ -10,7 +10,7 @@ import type { RelayEvent } from './answer'
 // by successive runs of one plan: a run that replaces a stuck one (the model's plan_connect, the stall watch) polls from the newest cursor still waiting
 // here, so an event in flight is neither asked for again nor delivered twice.
 //
-// The poll's cursor ACKNOWLEDGES: the server (danxbot plan-events-relay.ts) drops every record at or below the cursor a call presents, so an event taken
+// The poll's cursor ACKNOWLEDGES: the dashboard server drops every record at or below the cursor a call presents, so an event taken
 // and not yet delivered exists nowhere else once the next poll is made. A reload of the hook module empties the module variable, so each queued event is
 // also kept in the `relayOutbox` atom ($.state outlives a reload), written before the poll that acknowledges it and cleared when it is delivered
 // (`toPending`, `fromPending`). A reload therefore loses no event; it can issue again any event still in the atom (one issued and not yet delivered, including a note already appended behind a waiting prompt): a duplicate, never a loss. A new process has no

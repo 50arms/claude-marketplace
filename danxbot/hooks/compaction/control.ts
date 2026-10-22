@@ -83,8 +83,8 @@ export const modelLineOf = (model: unknown): ModelLine | null => {
 // `absent`: no file (the relay has not written one yet). `control: null`: the session is not under the handshake.
 export type ControlFile = { kind: 'absent' } | { kind: 'control'; control: GateControl | null } | { kind: 'bad'; reason: string }
 
-// The spent releases are kept in $.store, one record per session (the main agent's release) and one per sub-agent (its own), so one agent's release never spends another's
-//. The newest USED_RELEASE_KEEP SESSIONS' records stay (a session's records go or stay together), so the store does not grow with every session ever held and a
+// The spent releases are kept in $.store, one record per session (the main agent's release) and one per sub-agent (its own), so one agent's release never spends another's.
+// The newest USED_RELEASE_KEEP SESSIONS' records stay (a session's records go or stay together), so the store does not grow with every session ever held and a
 // session's own main record is never evicted by its sub-agents' newer ones.
 export const USED_RELEASE_PREFIX = 'compaction-used-release:'
 export const USED_RELEASE_KEEP = 40
@@ -248,7 +248,7 @@ export const floorPercent = (floorTokens: number, windowTokens: number): number 
 
 // the engine release whose `session.compact` is known to judge each sub-agent's automatic proposal by agent (verified live, Claude Code 2.1.299). The types of every
 // release from 2.1.286 declare the event, but none tells whether an engine serves it per agent, and the runtime exposes no capability flag, so this floor is a verified fact, not a
-// guess: a later card can lower it once an older engine is tried. `base` is `$.session.version()`'s release (`2.1.299`, or `2.1.299-dev` for a development build of it); no `base` is no release.
+// guess: a later release can lower it once an older engine is tried. `base` is `$.session.version()`'s release (`2.1.299`, or `2.1.299-dev` for a development build of it); no `base` is no release.
 export const SESSION_COMPACT_FLOOR = [2, 1, 299] as const
 export function runsSessionCompact(base: string | undefined): boolean {
   const m = base === undefined ? null : /^(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(base)
