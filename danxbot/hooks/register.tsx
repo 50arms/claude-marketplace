@@ -68,8 +68,8 @@ import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, toPending } f
 import type { Queued } from './relay/outbox'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
-import { liveAgentsAt, usageBody } from './plan/usage'
-import type { LiveAgent } from './plan/usage'
+import { usageBody } from './plan/usage'
+import type { UsageBody } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
@@ -106,10 +106,6 @@ const transcript = atom({ plugin: 'danxbot', key: 'transcript' } as const, null 
 const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null as string | null)
 // DX-4336: when the last API response arrived (epoch ms), the age of the usage figure; null until the session has seen one.
 const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null as number | null)
-// DX-4336: the sub-agents running now (id and start time), from SubagentStart / SubagentStop. Keyed by id, not a counter: a stop for an agent
-// that was never counted (a reload lost the start, a duplicate stop) changes nothing, so the count cannot go negative; an entry older than
-// SUBAGENT_LIVE_MAX_MS (an agent that died with no stop) is no longer counted.
-const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
 // DX-4233: the plan event relay's state (the band's events warning). DX-4721: and the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
 // DX-5232: the events warning the band last showed (null: none), so its reason is told once on the transition into it.
@@ -202,6 +198,9 @@ let permissionTicker: { cancel: () => void } | null = null
 // module variable: a reload starts with no claim of its own in flight.
 let permissionTickBusy = false
 
+// DX-5593 (B1): a dashboard call has succeeded in this session. Module state, cleared at every session start.
+let dashboardAnswered = false
+
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
 // x-danx-session-id header. DX-4997 / DX-5033: EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
@@ -227,7 +226,10 @@ async function api($: any, method: string, path: string, extra: { query?: object
     failed.unreachable = true
     return failed
   }
-  return toolOutcome(res)
+  const outcome = toolOutcome(res)
+  // DX-5593 (B1): a dashboard call that succeeded proves the session signed in; the spawn claim then refuses when the server is later unreachable
+  if (outcome.ok) dashboardAnswered = true
+  return outcome
 }
 
 const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
@@ -753,7 +755,7 @@ async function reportUsage($: any, reading: UsageReading): Promise<void> {
       if ('error' in reading) failure = reading.error
       else {
         const now = await $.clock.now()
-        const body = usageBody(reading.limits, now, await read($, measuredAt), liveAgentsAt(await read($, liveAgents), now).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+        const body = usageBody(reading.limits, now, await read($, measuredAt), await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
         if (body !== null) {
           const r = await api($, 'PUT', USAGE_PATH, { body })
           if (r.unreachable) return
@@ -1570,6 +1572,7 @@ async function onSessionStart($: any, e: any, next: any) {
   await syncPermissionPoll($)
   // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are a sub-agent start when the cache is a minute old, and every spawn
   resetPacing()
+  dashboardAnswered = false
   detach($, 'Usage pacing', primePacing($))
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
   // DX-4233: the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
@@ -1608,7 +1611,6 @@ async function onSessionEnd($: any, e: any, next: any) {
     permissionTicker = null
   } else if (e.reason === 'clear' || e.reason === 'resume') {
     // DX-4508: another conversation: its sub-agents and transcript are not this one's
-    await update($, liveAgents, () => [])
     // DX-4982: nor is the plan its model named
     await update($, modelPlan, () => null)
     await update($, transcript, () => null)
@@ -1687,17 +1689,9 @@ async function onRequestPermission($: any, e: any, next: any) {
   return withPermissionNote(ran, approval)
 }
 
-async function trackAgent($: any, agentId: unknown, isStart: boolean): Promise<void> {
-  if (typeof agentId !== 'string' || agentId === '') return
-  const now = await $.clock.now()
-  await update($, liveAgents, cur => (isStart ? [...liveAgentsAt(cur, now).filter(a => a.id !== agentId), { id: agentId, since: now }] : cur.filter(a => a.id !== agentId)))
-}
-
 async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   await noteTranscript($, e)
   const r = await next(e)
-  // DX-4336: the running-agent count follows the sub-agents' starts and stops; a finished one's last response also moved the parent's figure
-  await trackAgent($, e.agent_id, isStart)
   // DX-5344: a sub-agent that stopped owes no briefing, and must not make a later restart read as its own
   if (!isStart) await forgetCompactingAgent($, e.agent_id)
   if (!isStart) await markMeasured($)
@@ -2200,8 +2194,24 @@ function pacingEnv($: any) {
   return {
     now: () => $.clock.now(),
     within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
-    call: (method: string, path: string) => api($, method, path),
+    call: (method: string, path: string, body?: object) => api($, method, path, body === undefined ? {} : { body }),
+    reading: () => currentUsageBody($),
+    signedIn: async () => dashboardAnswered || isSignedIn(await read($, view)),
+    sleep: (ms: number) => $.clock.sleep(ms),
     toast: (text: string) => $.ui.toast(text),
+  }
+}
+
+// DX-5593 (N2): the session's usage reading right now, as the usage report's body, for the spawn claim to carry. A spawn is a model tool call, so the
+// harness holds windows from an API response by then; `measuredAt` (the last response the main thread's measure event saw) may not be set yet in a
+// session's very first turn, and the reading is then measured now. Null when the reading fails or has no window; never rejects.
+async function currentUsageBody($: any): Promise<UsageBody | null> {
+  try {
+    const now = await $.clock.now()
+    const limits = (await $.session.usage()).rateLimits
+    return usageBody(limits, now, (await read($, measuredAt)) ?? now, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+  } catch {
+    return null
   }
 }
 
@@ -2209,21 +2219,23 @@ function pacingEnv($: any) {
 // its stop checked for ready cards (DX-4534). Every call goes through the session's own server (`api`) and runs detached, so no event
 // waits on it; a report the dashboard does not take is one toast, never swallowed (`report`).
 //
-// What each needs of the plan state the module holds (`reportingState`):
-// - OPENING something (a sub-agent's row, a shell's row, a liveness post) needs the session known to be on a plan (`on`): the silence rule.
+// What each needs of the state the module holds (`reportingState`):
+// - OPENING something (a sub-agent's row, a shell's row, a liveness post) needs the session known to be signed in (`on`): on a plan or not
+//   (DX-5593: a sub-agent is a row of the account's running-agent count, plan or not; the dashboard opens the session's dispatch for it).
 // - CLOSING what was opened (a sub-agent's finish, a shell's end) is owed because its start was posted, so it is posted whatever the view
 //   says, while it is `unknown` too (a failed refresh empties the view's plan for a moment; comment 10065's stuck row was exactly a close
-//   that never went out). Only `off` drops it: the dashboard has the session on no plan and refuses every report from it
-//   (danxbot plan-sessions-routes.ts handleActivity: no dispatch to write to, 409).
+//   that never went out). Only `off` drops it: the key was revoked, and the dashboard refuses every report from it.
 // - The ready-cards check runs unless `off`: its own read asks the dashboard which plan the session is on.
 
-// `on`: the view holds the plan the session is on. `off`: the dashboard said the session is on no plan (a loaded view with none), or a
-// person revoked its key. `unknown`: nothing is known (loading, a failed load, a session signed out with its key lapsed).
+// `on`: the view holds the plan the session is on, or the session is signed in on no plan. `off`: a person revoked its key. `unknown`:
+// nothing is known (loading, a failed load, a session signed out with its key lapsed).
 type ReportingState = 'on' | 'off' | 'unknown'
 async function reportingState($: any): Promise<ReportingState> {
   const v = await read($, view)
   if (v.connected !== null) return 'on'
-  return v.phase === 'ready' || v.phase === 'key-revoked' ? 'off' : 'unknown'
+  // DX-5593: a signed-in session on no plan reports its sub-agents too: they are rows of the account's running-agent count, plan or not
+  if (isSignedIn(v)) return 'on'
+  return v.phase === 'key-revoked' ? 'off' : 'unknown'
 }
 
 // A plan state that is `off` takes the reports' memory with it: nothing opened under the plan can be closed from here any more.
@@ -2302,11 +2314,11 @@ function postActivity($: any, rows: ActivityChange[]): void {
 // DX-4235: a sub-agent started: its row opens and it is remembered as running, its liveness clock starting now.
 async function reportSubagentStart($: any, e: any): Promise<void> {
   if (typeof e.agent_id !== 'string' || e.agent_id === '') return
+  if ((await reportingState($)) !== 'on') return
   const planId = await openingPlan($)
-  if (planId === null) return
   const id = subagentKey(e.agent_id)
   const now = await $.clock.now()
-  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: now }, planId }))
+  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: now }, planId: planId ?? cur.planId }))
   postActivity($, [agentRow(id, typeof e.agent_type === 'string' && e.agent_type !== '' ? e.agent_type : null, now, null)])
 }
 
