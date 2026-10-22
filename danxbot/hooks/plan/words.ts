@@ -14,6 +14,8 @@ export function ellipsize(text: string, max: number): string {
 }
 
 const NAME_SEP = ' · '
+// DX-5554: a signed-in session that holds neither a plan nor a card
+const NOTHING_HELD = 'not connected to a plan or card'
 
 // DX-4420: the columns the band's label may take: its width less the indicator and each control. A Button draws `[ label ]`
 // chrome on the terminal; a Markdown link none. The terminal's widths are the model (UNVERIFIED on the desktop's native buttons and 16px donut): the spare columns
@@ -49,9 +51,6 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
   const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - lead.length - ref.length - sepCols)
   return lead + [ref, ellipsize(name, nameCols)].filter(Boolean).join(NAME_SEP)
 }
-
-// DX-5554: a signed-in session that holds neither a plan nor a card
-const NOTHING_HELD = 'not connected to a plan or card'
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at
 // danxbot's frontend/src/routes/plans/PlanStatusSummary.tsx:202 (the total) and :218 (the percent) (DX-3766):

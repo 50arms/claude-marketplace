@@ -8,8 +8,9 @@ import { AGENT_RELEASE_DEADLINE_MS, AGENT_RELEASE_PATH, releaseFailureToast } fr
 import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 const AGENT = { id: 6, name: 'Tendai', avatar_url: null }
-// every reason the engine ends a session with: the process ends, a /clear or a /resume moves the process on to another session
-const REASONS = ['prompt_input_exit', 'logout', 'other', 'clear', 'resume'] as const
+// the reasons after which the Claude process is gone, and the two after which it carries on (same MCP, same session id)
+const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other'] as const
+const PROCESS_CONTINUES = ['clear', 'resume'] as const
 
 for (const surface of SURFACES) {
   describe(`the team agent is freed when the session ends, on ${surface}`, () => {
@@ -21,7 +22,17 @@ for (const surface of SURFACES) {
       return d
     }
 
-    for (const reason of REASONS) {
+    for (const reason of PROCESS_CONTINUES) {
+      test(`a session ending (${reason}) keeps its agent: the process and its MCP carry on with the same session id`, async ($, on) => {
+        const d = await started($, on)
+        await $.session.end({ reason, sessionId: 'sess-own' } as any)
+        expect(d.releaseCalls).toEqual([])
+        expect(d.world.agent).toEqual(AGENT)
+        expect(d.toasts).toEqual([])
+      })
+    }
+
+    for (const reason of PROCESS_ENDS) {
       test(`a session ending (${reason}) releases its agent once, as the plugin's background call`, async ($, on) => {
         const d = await started($, on)
         await $.session.end({ reason, sessionId: 'sess-own' } as any)

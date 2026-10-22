@@ -1584,8 +1584,8 @@ async function onSessionStart($: any, e: any, next: any) {
 // too: stopping a timer in a live process is the harm, a timer left in a dying one is not.
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
-// DX-5554: the session that ends frees the team agent it signed in as at once, instead of the dashboard's 30-minute dead-session window. Every reason:
-// a /clear or a /resume ends this session too. Best effort and bounded (AGENT_RELEASE_DEADLINE_MS): a failure is one toast, never a held end. A
+// DX-5554: the session that ends frees the team agent it signed in as at once, instead of the dashboard's 30-minute dead-session window. Only when the
+// process really ends (PROCESS_ENDS): a /clear or a /resume ends this session but the MCP carries on with the same session id and still needs its agent. Best effort and bounded (AGENT_RELEASE_DEADLINE_MS): a failure is one toast, never a held end. A
 // session with no key (signed out, revoked) or none to free (the agent gate holds it: it never got one) asks nothing.
 async function releaseAgent($: any): Promise<void> {
   const v: PlanView = await read($, view)
@@ -1596,7 +1596,7 @@ async function releaseAgent($: any): Promise<void> {
 }
 
 async function onSessionEnd($: any, e: any, next: any) {
-  await releaseAgent($)
+  if (PROCESS_ENDS.includes(e.reason)) await releaseAgent($)
   if (e.reason === 'clear' && typeof e.sessionId === 'string') await update($, endedSession, () => e.sessionId)
   // DX-4548: the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
@@ -1957,8 +1957,7 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
   if (!done.askRestart) return done.line
   const notice = await restartNotice($, restartAsk(start))
-  return done.line === null ? notice : notice === null ? done.line : `${done.line}
-${notice}`
+  return done.line === null ? notice : notice === null ? done.line : [done.line, notice].join('\n')
 }
 
 async function readSubagentContext($: any): Promise<string | null> {

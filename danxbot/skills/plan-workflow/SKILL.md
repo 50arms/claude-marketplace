@@ -24,7 +24,7 @@ throughout; this skill is the plan mechanics.
    - `agent_needed` → propose one at once, without asking in chat: `danxbot_api`
      `POST /api/team/agent-proposals` with `{name, bio}` (a first name not taken in the team, a
      short bio of the personality you want) answers `{public_id, url, expires_at}`. With an
-     avatar image you made (png, jpeg or webp, under 1 MB), `POST
+     avatar image you made (png, jpeg, webp or svg, under 1 MB), `POST
      /api/team/agent-proposals/<public_id>/avatar` with `body_file` set to its absolute path.
      Give the person the `url`: they review the proposal and press Create, and you are woken
      with an event saying the agent was created. Then call `plan_connect` again to take it.
@@ -40,9 +40,10 @@ throughout; this skill is the plan mechanics.
    other. Neither → stay signed in, on no plan.
 4. Your session title follows what you hold, `{Name}` being your agent's name: on a plan
    `{Name}: PLAN-NNN {short title}`, on a card `{Name}: {CARD-ID} {card title}`, on neither
-   `{Name}`. A connect reply's `naming` block (status `needed`) gives the exact title: rename
-   the thread to it (desktop `set_session_title`; terminal: ask the person to `/rename`), then
-   connect again with that `title`.
+   `{Name}`. The sign-in reply on no plan gives that title in `title` with `titleInstruction`; a
+   plan connect's `naming` block (status `needed`) gives the exact title. Rename the thread to it
+   (desktop `set_session_title`; terminal: ask the person to `/rename`); after a plan connect
+   asked for it, connect again with that `title`.
 5. Orient from the connect briefing, else read the plan's records, architecture and cards,
    plus one batch read of its In-Progress/open-problem cards and the newest handoff agent note
    (`agent_notes` on the card read).

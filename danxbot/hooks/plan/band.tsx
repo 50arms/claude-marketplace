@@ -14,6 +14,13 @@ const OPEN_PLAN_LABEL = 'Open plan'
 const OPEN_CARD_LABEL = 'Open card'
 const CLOSE_LABEL = '×'
 
+// Where the band's Open link goes: the plan's page, else the held card's page, else the plans list; null while no dashboard origin is known.
+function openUrl(plan: PlanView['connected'], card: PlanView['card'], dashboardUrl: string | null): string | null {
+  if (plan !== null) return planUrl(plan)
+  if (dashboardUrl === null) return null
+  return card !== null ? boardCardUrl(dashboardUrl, card.id) : plansUrl(dashboardUrl)
+}
+
 // The band above the prompt: the plan line (indicator, label, then the events warning / the open-problem count (DX-4420) / the permission
 // request / Open plan, Disconnect (DX-5605) and a close control hugging the right edge, the label truncating first). DX-4630: every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
@@ -56,7 +63,7 @@ export function renderBand(
   // DX-4521: both links are in every state: the plan's page when connected, the held card's page (DX-5554) when it holds one, else the dashboard's plans list. Only an origin never
   // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
   const card = plan === null && v.dashboardUrl !== null ? v.card : null
-  const linkUrl = plan !== null ? planUrl(plan) : v.dashboardUrl === null ? null : card !== null ? boardCardUrl(v.dashboardUrl, card.id) : plansUrl(v.dashboardUrl)
+  const linkUrl = openUrl(plan, card, v.dashboardUrl)
   const openLabel = card !== null ? OPEN_CARD_LABEL : OPEN_PLAN_LABEL
   // DX-5232: Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`); the events warning shows only while the events are not flowing.
   const disconnecting = busyKey.isDisconnecting(busy)

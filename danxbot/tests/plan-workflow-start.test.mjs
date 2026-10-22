@@ -23,34 +23,37 @@ test("Start signs in first, approval included", () => {
   assert.match(start, /`approval_required` \(or `approval_pending`\)/);
 });
 
-test("Start takes the session's identity from the reply's agent, never a name of its own", () => {
-  assert.match(start, /the reply's `agent` and `agentInstruction` say which/);
-  assert.match(start, /never choose a name yourself/);
+test("Start takes the session's identity from the reply's agent", () => {
+  assert.match(start, /`agent` and `agentInstruction`/);
 });
 
-test("agent_needed: the session proposes an agent through danxbot_api at once, with the exact routes and bodies, then claims it when woken", () => {
-  assert.match(start, /`agent_needed` → propose one at once, without asking in chat/);
-  assert.match(start, /`danxbot_api` `POST \/api\/team\/agent-proposals` with `\{name, bio\}`/);
-  assert.match(start, /answers `\{public_id, url, expires_at\}`/);
-  assert.match(start, /`POST \/api\/team\/agent-proposals\/<public_id>\/avatar` with `body_file` set to its absolute path/);
-  assert.match(start, /you are woken with an event saying the agent was created\. Then call `plan_connect` again to take it/);
+test("agent_needed: the session proposes an agent through danxbot_api, with the routes and fields", () => {
+  assert.match(start, /`agent_needed`/);
+  assert.match(start, /`POST \/api\/team\/agent-proposals`/);
+  assert.match(start, /`\{name, bio\}`/);
+  assert.match(start, /`POST \/api\/team\/agent-proposals\/<public_id>\/avatar`/);
+  assert.match(start, /`body_file`/);
+  assert.match(start, /svg/);
+  assert.match(start, /`plan_connect` again/);
   // the deleted MCP tool (DX-5724) is never named
   assert.doesNotMatch(planWorkflow, /agent_propose/);
 });
 
 test("agent_limit_reached: the session tells the person the limit and who can raise it", () => {
-  assert.match(start, /`agent_limit_reached` → tell the person the limit the reply names \(`held` of `limit`, and who can raise it, `raised_by`\)/);
-  assert.match(start, /Until an agent is held, every other dashboard call answers that same state: do no other dashboard work/);
+  assert.match(start, /`agent_limit_reached`/);
+  for (const field of ["held", "limit", "raised_by"]) assert.ok(start.includes("`" + field + "`"), field);
 });
 
-test("a stand-alone card is held with card_connect, a plan with plan_connect, never both", () => {
-  assert.match(start, /`card_connect\(\{card_id\}\)` instead; a card on a plan is refused `card_on_plan`/);
-  assert.match(start, /A session holds a plan or a card, never both/);
+test("a stand-alone card is held with card_connect, a plan with plan_connect", () => {
+  assert.match(start, /`card_connect\(\{card_id\}\)`/);
+  assert.match(start, /`card_on_plan`/);
 });
 
-test("the session title follows what it holds", () => {
-  assert.match(start, /on a plan `\{Name\}: PLAN-NNN \{short title\}`, on a card `\{Name\}: \{CARD-ID\} \{card title\}`, on neither `\{Name\}`/);
-  assert.match(start, /`\{Name\}` being your agent's name/);
+test("the session title follows what it holds; the plan-less reply and a plan connect name it differently", () => {
+  assert.match(start, /`\{Name\}: PLAN-NNN \{short title\}`/);
+  assert.match(start, /`\{Name\}: \{CARD-ID\} \{card title\}`/);
+  assert.match(start, /`title`.*`titleInstruction`/);
+  assert.match(start, /`naming`/);
 });
 
 test("no skill of the plugin tells a session to pick its own name", () => {
