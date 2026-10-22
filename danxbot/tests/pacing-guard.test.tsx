@@ -438,7 +438,7 @@ describe('the agent.spawn hook', () => {
 
   // outside pacing: danxbot counts none of the agents of a session it does not know, so it holds none of its spawns
   describe('a session outside pacing is allowed, silently, with nothing claimed', () => {
-    test('no danx-dashboard MCP server connected: every spawn looks again until the claim's own deadline, none is told', async ($, on) => {
+    test("no danx-dashboard MCP server connected: every spawn looks again until the claim's own deadline, none is told", async ($, on) => {
       const options: Parameters<typeof dashboard>[1] = { mcp: 'down' }
       const d = await session($, on, options)
       // the fake clock runs past the plugin's own deadline, so it is that deadline that ends each spawn's wait, not the engine's hook budget
