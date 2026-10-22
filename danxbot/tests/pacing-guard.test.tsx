@@ -6,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
-import { PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
+import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
 import type { PacingVerdict } from '../types'
 import { BLOCKED_LINE } from '../hooks/plan/config'
@@ -93,6 +93,8 @@ describe('the agent.spawn hook', () => {
     // (prompt 'refuse-and-drop': the host refuses and the danx-dashboard server drops before the claim is given back)
     on('agent.spawn', async (_$: any, e: any) => {
       if (e.prompt === 'refuse-and-drop') options.mcp = 'down'
+      // DX-5593: the host throws while starting the spawn (after danxbot took the slot)
+      if (e.prompt === 'throw') throw new Error('host crashed')
       return (e.prompt === 'refuse' || e.prompt === 'refuse-and-drop' ? { deny: 'host refused' } : { model: e.model ?? 'parent-model', agentId: 'new' }) as any
     })
     on('tool.call', () => ({ result: {}, text: 'ran', isError: false }) as any)
@@ -190,6 +192,14 @@ describe('the agent.spawn hook', () => {
     // the slot the refused spawn gave back is free again: one more fits, and then it is full
     expect((await spawn($, { model: 'haiku' })).deny).toBeUndefined()
     expect((await spawn($, { model: 'haiku' })).deny).toMatch(/already run/)
+  })
+
+  // DX-5593: a spawn the host throws on (not refuses) has also taken a slot; the claim is given back, and the throw still reaches the caller
+  test('a spawn that throws while starting gives its own claim back, and the failure still propagates (the harness reports a throwing host as HooksError)', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 2, running_agents: 0 }) } })
+    await expect(spawn($, { prompt: 'throw', model: 'haiku' })).rejects.toThrow(/agent.spawn/)
+    expect(d.claimsReleased).toEqual(['claim-1'])
+    expect([...d.heldClaims]).toEqual([])
   })
 
   test("parallel spawns each make their own claim, and exactly the ones danxbot allowed start", async ($, on) => {
@@ -358,6 +368,35 @@ describe('the agent.spawn hook', () => {
         expect(toasts).toHaveLength(1)
         expect(toasts[0]).toContain('until it lapses')
       }
+    })
+
+    // DX-5593: a claim that crossed resetPacing (a new session start) is the old session's: it writes nothing into the new session's state. What it would
+    // have written is observable on the next claim: hasSucceeded makes an unreachable server "known to be signed in", so that claim fails at once as unreachable.
+    test('a claim still in flight across a new session start leaves the new session unmarked', async () => {
+      resetPacing()
+      const claimed = { account: 'uuid:u1', level: 'on_pace', budget: 5, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 0, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 30, resets_in_minutes: 100, used_percent: 10, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null, claimed: true, claim_id: 'claim-1' }
+      let clock = 0
+      let n = 0
+      const env: PacingEnv = {
+        now: () => Promise.resolve(clock),
+        within: (_ms, work) => work,
+        call: () => {
+          n++
+          if (n === 1) {
+            resetPacing()
+            return Promise.resolve({ ok: true, status: 200, body: claimed } as any)
+          }
+          return Promise.resolve({ unreachable: true } as any)
+        },
+        reading: () => Promise.resolve(null),
+        signedIn: () => Promise.resolve(false),
+        sleep: () => { clock += PACING_READ_DEADLINE_MS; return Promise.resolve() },
+        toast: () => {},
+      }
+      expect((await claimSlot(env)).kind).toBe('claimed')
+      const next = await claimSlot(env)
+      expect(next.kind).toBe('failed')
+      expect(next.kind === 'failed' && next.failure).not.toContain('not reachable')
     })
 
     // DX-5593: a give-back that crossed resetPacing (a new session start) is the old session's: it writes and tells nothing
