@@ -326,6 +326,13 @@ A pacing message (`Usage pacing for your Claude account changed: …`) or a spaw
 `Usage pacing: …` states the level, the agent budget of the whole account and the reset
 time; trust those numbers, never your own estimate. Never retry a refused spawn.
 
+The budget is a strict cap: exactly that many agents run on the account at once, never one
+more. The count is danxbot's own and is live, one for the whole account (every session's
+main thread and sub-agents, and the running worker dispatches). Each spawn takes its slot from
+danxbot before it starts, so there is nothing for you to count or reserve. A spawn whose slot
+cannot be taken (danxbot could not be reached or did not answer) is refused too, in the same
+`Usage pacing:` words, naming the failure.
+
 - **On pace**: carry on. A spawn is still refused while the account's budget is full, and
   may be moved to haiku when the budget is nearly full.
 - **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.

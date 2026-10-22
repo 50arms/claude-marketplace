@@ -188,6 +188,8 @@ export function dashboard(
     pacingLine?: { body: unknown } | { status: number }
     // DX-4631: each pacing line read answers only after this long on the harness clock (a slow or hung dashboard); the read is counted when it starts
     pacingHoldMs?: number
+    // DX-5593 (C1): what DELETE /api/pacing/agents/claim (the claim given back) answers instead of the real release: an error status, or any body (a 200)
+    claimRelease?: { status: number } | { body: unknown }
     // DX-4952: the test puts steps before reads of $.state (`beforeNextRead`), which needs the `state.get` hook from the start
     stateSteps?: boolean
   } = {},
@@ -527,6 +529,13 @@ export function dashboard(
   }
   const notConnected = () => options.mcp === 'down'
   const pacingReads: number[] = []
+  // DX-5593: the spawn claim (POST /api/pacing/agents/claim) and its give-back (DELETE ...?claim_id=): every attempt, the ids danxbot allowed, the ids given back
+  const claimAttempts = { n: 0 }
+  const claimsAllowed: string[] = []
+  const claimsReleased: string[] = []
+  // DX-5593 (N2): the body of every claim POST, to see what reading it carried
+  const claimBodies: any[] = []
+  const heldClaims = new Set<string>()
   // DX-4234: the paths of the context reads (see isContextRead), in order
   const contextReads: string[] = []
   // DX-4632: the arguments of each `restart_notice` call
@@ -626,6 +635,37 @@ export function dashboard(
       const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
       if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
+    }
+    // DX-5593: the spawn claim, decided like danxbot does under its lock: refuse when the level is not on pace or the live count (the line's
+    // `running_agents` plus the claims held) has reached the budget; unknown (a `reason`, no level) claims nothing. The answer is the line plus {claimed, claim_id}.
+    if (e.server === 'plugin:danxbot:danx-dashboard' && e.tool === 'danxbot_api' && typeof e.args.path === 'string' && e.args.path.startsWith('/api/pacing/agents/claim')) {
+      if (e.args.method === 'POST') {
+        claimAttempts.n++
+        claimBodies.push(e.args.body)
+      }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
+      if (e.args.method === 'DELETE') {
+        const id = new URL(e.args.path, 'http://dashboard.local').searchParams.get('claim_id') as string
+        claimsReleased.push(id)
+        if (options.claimRelease !== undefined) return { value: 'status' in options.claimRelease ? reply({ error: 'release boom' }, options.claimRelease.status) : reply(options.claimRelease.body) }
+        return { value: reply({ released: heldClaims.delete(id) }) }
+      }
+      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
+      if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
+      if ('status' in given) return { value: reply({ error: 'claim boom' }, given.status) }
+      const line = given.body as any
+      if (line === null || typeof line !== 'object') return { value: reply(line) }
+      const known = line.level !== null && line.level !== undefined
+      const live = known && Number.isInteger(line.running_agents) ? line.running_agents + heldClaims.size : line.running_agents
+      const room = known && line.level === 'on_pace' && (line.budget === null || live < line.budget)
+      if (!room) return { value: reply({ ...line, running_agents: live, claimed: false, claim_id: null }) }
+      const id = `claim-${claimsAllowed.length + 1}`
+      claimsAllowed.push(id)
+      heldClaims.add(id)
+      return { value: reply({ ...line, running_agents: live, claimed: true, claim_id: id }) }
     }
     // DX-4234 / DX-4632: the restart notice is the server's own tool, named without arguments; kept out of `calls` like the context reads
     if (e.server === SERVER && e.tool === 'restart_notice') {
@@ -797,8 +837,6 @@ export function dashboard(
   // what the plugin keeps in $.state (a test has no `$.state` of its own to read back)
   const flags = { viewWriteFails: false, refusedViewWrites: 0, apiHoldMs: 0 }
   const issueReads = { active: 0, max: 0 }
-  // DX-4586: a sub-agent whose stored start time is made older by the given ms as it is written, so a test reaches the 3 h bound with no 3 h of clock
-  const aged = new Map<string, number>()
   let seededPending: string[] | undefined
   let seededRelay: { phase: string; planId: number | null; detail: string | null } | undefined
   // DX-4952: a step of the test that runs exactly between two steps of the plugin, once, before the next host read / write of a $.state key
@@ -829,7 +867,6 @@ export function dashboard(
       e = { ...e, value: seededRelay }
       seededRelay = undefined
     }
-    if (e.key === 'liveAgents' && Array.isArray(e.value)) e = { ...e, value: e.value.map((a: any) => (aged.has(a.id) ? { ...a, since: a.since - aged.get(a.id)! } : a)) }
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
     return next(e)
   })
@@ -1059,7 +1096,7 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an

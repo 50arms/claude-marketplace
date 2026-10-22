@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { BLOCKED_LINE, USAGE_PATH, USAGE_TICK_MS } from '../hooks/plan/config'
-import { SUBAGENT_LIVE_MAX_MS, liveAgentsAt, usageBody } from '../hooks/plan/usage'
+import { usageBody } from '../hooks/plan/usage'
 import { test, CLOCK_START, dashboard, startSession } from './plan-kit'
 
 const FIVE = '2026-10-03T11:10:00.000Z'
@@ -36,57 +36,46 @@ async function measuredSession($: any, on: any, options: Parameters<typeof dashb
   return d
 }
 
-describe('liveAgentsAt', () => {
-  test('keeps a sub-agent started less than the bound ago and drops one at or past it', () => {
-    const agents = [{ id: 'old', since: 0 }, { id: 'new', since: 1_000 }]
-    expect(liveAgentsAt(agents, SUBAGENT_LIVE_MAX_MS - 1).map(a => a.id)).toEqual(['old', 'new'])
-    expect(liveAgentsAt(agents, SUBAGENT_LIVE_MAX_MS).map(a => a.id)).toEqual(['new'])
-    expect(liveAgentsAt(agents, SUBAGENT_LIVE_MAX_MS + 1_000)).toEqual([])
-  })
-})
-
 describe('usageBody (the report as danxbot takes it)', () => {
   const NOW = CLOCK_START
   const MEASURED = CLOCK_START - 90_000
 
   test('carries each window with its reset time, when it was sent and when the figure was measured', () => {
-    expect(usageBody(WINDOWS, NOW, MEASURED, 0, undefined)).toEqual({
+    expect(usageBody(WINDOWS, NOW, MEASURED, undefined)).toEqual({
       reportedAt: iso(NOW),
       measuredAt: iso(MEASURED),
-      runningAgents: 1,
       fiveHour: { percentUsed: 22, resetsAt: FIVE },
       sevenDay: { percentUsed: 61, resetsAt: WEEK },
     })
   })
 
   test('reports nothing until a response has been seen: a figure with no age cannot be ranked', () => {
-    expect(usageBody(WINDOWS, NOW, null, 0, undefined)).toBeNull()
+    expect(usageBody(WINDOWS, NOW, null, undefined)).toBeNull()
   })
 
-  test('counts the main thread and every live sub-agent as the agents running', () => {
-    expect(usageBody(WINDOWS, NOW, MEASURED, 0, undefined)?.runningAgents).toBe(1)
-    expect(usageBody(WINDOWS, NOW, MEASURED, 3, undefined)?.runningAgents).toBe(4)
+  test("carries no agent count: danxbot derives the account's running agents itself (DX-5593)", () => {
+    expect(usageBody(WINDOWS, NOW, MEASURED, undefined)).not.toHaveProperty('runningAgents')
   })
 
   test('never claims a measurement after the send', () => {
-    expect(usageBody(WINDOWS, NOW, NOW + 5_000, 0, undefined)?.measuredAt).toBe(iso(NOW))
+    expect(usageBody(WINDOWS, NOW, NOW + 5_000, undefined)?.measuredAt).toBe(iso(NOW))
   })
 
   test('normalizes a reset time the harness wrote with an offset to UTC', () => {
-    expect(usageBody([{ kind: 'five_hour', percentUsed: 5, resetsAt: '2026-10-03T13:10:00+02:00' }], NOW, MEASURED, 0, undefined)?.fiveHour?.resetsAt).toBe(FIVE)
+    expect(usageBody([{ kind: 'five_hour', percentUsed: 5, resetsAt: '2026-10-03T13:10:00+02:00' }], NOW, MEASURED, undefined)?.fiveHour?.resetsAt).toBe(FIVE)
   })
 
   test('adds the account uuid only when the host set one', () => {
-    expect(usageBody(WINDOWS, NOW, MEASURED, 0, 'ab12-cd34')?.accountUuid).toBe('ab12-cd34')
-    expect(usageBody(WINDOWS, NOW, MEASURED, 0, '')).not.toHaveProperty('accountUuid')
-    expect(usageBody(WINDOWS, NOW, MEASURED, 0, undefined)).not.toHaveProperty('accountUuid')
+    expect(usageBody(WINDOWS, NOW, MEASURED, 'ab12-cd34')?.accountUuid).toBe('ab12-cd34')
+    expect(usageBody(WINDOWS, NOW, MEASURED, '')).not.toHaveProperty('accountUuid')
+    expect(usageBody(WINDOWS, NOW, MEASURED, undefined)).not.toHaveProperty('accountUuid')
   })
 
   test('leaves out a window with no reset time, a spend limit and an unreadable time; reports nothing when none is left', () => {
-    expect(usageBody([{ kind: 'five_hour', percentUsed: 5 }, WINDOWS[1]!], NOW, MEASURED, 0, undefined)).not.toHaveProperty('fiveHour')
-    expect(usageBody([{ kind: 'spend_limit', percentUsed: 120, resetsAt: FIVE }], NOW, MEASURED, 0, undefined)).toBeNull()
-    expect(usageBody([{ kind: 'five_hour', percentUsed: 5, resetsAt: 'tomorrow' }], NOW, MEASURED, 0, undefined)).toBeNull()
-    expect(usageBody([], NOW, MEASURED, 0, undefined)).toBeNull()
+    expect(usageBody([{ kind: 'five_hour', percentUsed: 5 }, WINDOWS[1]!], NOW, MEASURED, undefined)).not.toHaveProperty('fiveHour')
+    expect(usageBody([{ kind: 'spend_limit', percentUsed: 120, resetsAt: FIVE }], NOW, MEASURED, undefined)).toBeNull()
+    expect(usageBody([{ kind: 'five_hour', percentUsed: 5, resetsAt: 'tomorrow' }], NOW, MEASURED, undefined)).toBeNull()
+    expect(usageBody([], NOW, MEASURED, undefined)).toBeNull()
   })
 })
 
@@ -97,7 +86,6 @@ describe('the report', () => {
     expect(reports(d)[0].body).toEqual({
       reportedAt: iso(CLOCK_START),
       measuredAt: iso(CLOCK_START),
-      runningAgents: 1,
       fiveHour: { percentUsed: 22, resetsAt: FIVE },
       sevenDay: { percentUsed: 61, resetsAt: WEEK },
     })
@@ -208,74 +196,16 @@ describe('the report', () => {
 const start = ($: any, id: string) => $.classic.SubagentStart({ agent_id: id, agent_type: 'danxbot:worker-sonnet-high' })
 const stop = ($: any, id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: 'danxbot:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
 
-describe('the running agents', () => {
-  async function session($: any, on: any) {
-    return measuredSession($, on)
-  }
-
-  test('are the main thread plus the live sub-agents, following their starts and stops', async ($, on) => {
-    const d = await session($, on)
-    expect(reports(d).at(-1).body.runningAgents).toBe(1)
+describe('the agents', () => {
+  test('are not counted by the plugin: the report carries none, and a start or stop changes nothing in it (DX-5593)', async ($, on) => {
+    const d = await measuredSession($, on)
     await start($, 'a1')
-    await start($, 'a2')
     await d.clock.advance(USAGE_TICK_MS)
-    expect(reports(d).at(-1).body.runningAgents).toBe(3)
     await stop($, 'a1')
     await d.clock.advance(USAGE_TICK_MS)
-    expect(reports(d).at(-1).body.runningAgents).toBe(2)
-    await stop($, 'a2')
-    await d.clock.advance(USAGE_TICK_MS)
-    expect(reports(d).at(-1).body.runningAgents).toBe(1)
-  })
-
-  test('a stop with no matching start, or a second stop, never takes the count below the main thread', async ($, on) => {
-    const d = await session($, on)
-    await stop($, 'never-started')
-    await start($, 'a1')
-    await stop($, 'a1')
-    await stop($, 'a1')
-    await d.clock.advance(USAGE_TICK_MS)
-    expect(reports(d).at(-1).body.runningAgents).toBe(1)
-  })
-
-  test('a start heard twice counts once', async ($, on) => {
-    const d = await session($, on)
-    await start($, 'a1')
-    await start($, 'a1')
-    await d.clock.advance(USAGE_TICK_MS)
-    expect(reports(d).at(-1).body.runningAgents).toBe(2)
-  })
-
-  for (const reason of ['clear', 'resume']) {
-    test(`a ${reason} starts the count again: the old conversation's sub-agents are not this one's`, async ($, on) => {
-      const d = await session($, on)
-      await start($, 'a1')
-      await $.session.end({ reason } as any)
-      await d.clock.advance(USAGE_TICK_MS)
-      expect(reports(d).at(-1).body.runningAgents).toBe(1)
-    })
-  }
-
-  test('a start after a stop counts again', async ($, on) => {
-    const d = await session($, on)
-    await start($, 'a1')
-    await stop($, 'a1')
-    await start($, 'a1')
-    await d.clock.advance(USAGE_TICK_MS)
-    expect(reports(d).at(-1).body.runningAgents).toBe(2)
-  })
-
-  // DX-4586: a sub-agent that died with no stop is dropped by the count AND by the next start's rewrite of the stored list; the stored start time
-  // is aged past the bound through the kit, so no 3 h of fake clock passes
-  test('a sub-agent that died without a stop is dropped from the count after the bound, and from the stored list at the next start', async ($, on) => {
-    const d = await session($, on)
-    d.ageLiveAgent('dead', SUBAGENT_LIVE_MAX_MS)
-    await start($, 'dead')
-    await d.clock.advance(USAGE_TICK_MS)
-    expect(reports(d).at(-1).body.runningAgents).toBe(1)
-    await start($, 'alive')
-    const stored = d.stateWrites.filter(w => w.key === 'liveAgents').at(-1)!.value as { id: string }[]
-    expect(stored.map(a => a.id)).toEqual(['alive'])
+    // the first report, then one per tick: a loop over none would pass whatever the body carries
+    expect(reports(d)).toHaveLength(3)
+    for (const r of reports(d)) expect(r.body).not.toHaveProperty('runningAgents')
   })
 })
 
