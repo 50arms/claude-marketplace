@@ -16,7 +16,7 @@ const woken = (d: any): string[] => d.relay.delivered.map((x: any) => x.text)
 const openLinks = async (ui: any) => (await linksOf(ui)).filter(l => l.key === 'open-tab')
 
 describe('the agent and its association in the band label', () => {
-  const agent = { name: 'Tendai', avatarUrl: null }
+  const agent = { name: 'Tendai' }
   const ready = { ...EMPTY, phase: 'ready' as const, dashboardUrl: DASHBOARD_URL }
   test('on a plan: the agent, then the plan', () => {
     const v = { ...ready, agent, connected: { id: 23, ref: 'PLAN-23', name: 'Danxbot plugin', dashboardUrl: DASHBOARD_URL } }
@@ -101,16 +101,7 @@ for (const surface of SURFACES) {
       expect(await labelOf(band)).toBe('Danxbot: no team agent held (plan_connect claims one)')
     })
 
-    test('an agent whose avatar_url is unreadable still loads: the band never draws it', async ($, on) => {
-      const d = dashboard(on)
-      await startSession($, d, surface)
-      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      d.world.agent = { id: 6, name: 'Tendai', avatar_url: 42 } as any
-      await forceRefresh($, d)
-      expect(await labelOf(band)).toMatch(/^Tendai · PLAN-23/)
-    })
-
-    test('a session row whose agent is not {id, name, avatar_url} fails the load, never a guessed name', async ($, on) => {
+    test('a session row whose agent is not {id, name} fails the load, never a guessed name', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })

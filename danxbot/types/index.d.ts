@@ -9,8 +9,8 @@ export type ConnectedPlan = {
   dashboardUrl: string
 }
 
-// the team agent the session signs in as (GET /api/plans `session.agent`): its name and avatar.
-export type SessionAgent = { name: string; avatarUrl: string | null }
+// the team agent the session signs in as (GET /api/plans `session.agent`): its name.
+export type SessionAgent = { name: string }
 
 // the stand-alone card the session holds instead of a plan (`session.card_id` / `card_title`).
 export type HeldCard = { id: string; title: string }

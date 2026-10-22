@@ -1807,7 +1807,7 @@ type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connecte
 async function sessionPlan($: any): Promise<SessionPlan> {
   const r = await api($, 'GET', '/api/plans', { query: SESSION_PLAN_PROBE })
   if (r.unreachable === true) return { kind: 'unreachable' }
-  // the MCP's agent gate holds the session (no team agent yet): its plan_connect answer already told the model what to do
+  // the agent gate holds the session (no team agent yet, or a resume after the agent was released): quiet here, because the dashboard's 403 {state, instruction} on the model's first dashboard call is what tells the model what to do
   if (isSignedOut(r) || outcomeRevokedBy(r) !== null || agentBlockOf(r) !== null) return { kind: 'silent' }
   if (!r.ok) return { kind: 'failed', reason: errText(r), refusal: r.refusal }
   if (!('session' in (r.body ?? {}))) return { kind: 'failed', reason: 'bad_response: GET /api/plans answered no session field' }
