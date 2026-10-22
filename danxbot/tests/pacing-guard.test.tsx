@@ -13,13 +13,14 @@ import { BLOCKED_LINE } from '../hooks/plan/config'
 import { test, dashboard, startSession } from './plan-kit'
 
 const RESET = '2026-10-08T12:00:00.000Z'
-const v = (over: Partial<PacingVerdict> = {}): PacingVerdict => ({ level: 'on_pace', budget: null, resetsAt: RESET, runningAgents: 0, ...over })
+const v = (over: Partial<PacingVerdict> = {}): PacingVerdict => ({ level: 'on_pace', budget: null, resetsAt: RESET, runningAgents: 0, reservedAgents: 0, ...over })
 const wire = (over: Record<string, unknown> = {}) => ({
   account: 'uuid:u1',
   level: 'on_pace',
   budget: null,
   resets_at: RESET,
   running_agents: 1,
+  reserved_agents: 0,
   line: 'Pacing line.',
   spend: null,
   limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }],
@@ -27,7 +28,7 @@ const wire = (over: Record<string, unknown> = {}) => ({
   reason: null,
   ...over,
 })
-const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
+const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, running_agents: null, reserved_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
 
 describe('decideSpawn (the decision table)', () => {
   test('no verdict allows: pacing never blocks work it cannot see', () => {
@@ -53,6 +54,25 @@ describe('decideSpawn (the decision table)', () => {
     expect(decideSpawn(v({ budget: 0, runningAgents: 0 }), 'haiku').kind).toBe('deny')
     expect(decideSpawn(v({ budget: 3, runningAgents: 1 }), 'haiku')).toEqual({ kind: 'allow' })
     expect(decideSpawn(v({ budget: null, runningAgents: 40 }), 'opus')).toEqual({ kind: 'allow' })
+  })
+
+  // DX-5595: slots held for woken sessions count as taken, and the refusal says so (not "already run")
+  test('on pace with every free slot held for a woken session denies, in words that say the slot frees within 60 seconds', () => {
+    const d = decideSpawn(v({ budget: 3, runningAgents: 2, reservedAgents: 1 }), 'haiku')
+    expect(d.kind).toBe('deny')
+    if (d.kind !== 'deny') return
+    expect(d.reason).toContain('2 agent(s) run on this account and 1 slot(s) are held')
+    expect(d.reason).toContain('frees within 60 seconds')
+    expect(d.reason).toContain('waits_on')
+    expect(d.reason).not.toContain('already run')
+    expect(decideSpawn(v({ budget: 3, runningAgents: 1, reservedAgents: 1 }), 'haiku').kind).not.toBe('deny')
+    expect(decideSpawn(v({ budget: 3, runningAgents: 3, reservedAgents: 0 }), 'haiku')).toMatchObject({ reason: expect.stringContaining('already run') })
+  })
+
+  test('a held slot counts toward tight: one free slot left after the hold downgrades', () => {
+    expect(isTight(5, 2, 2)).toBe(true)
+    expect(isTight(5, 2, 1)).toBe(false)
+    expect(decideSpawn(v({ budget: 5, runningAgents: 2, reservedAgents: 2 }), 'opus')).toEqual({ kind: 'downgrade', model: 'haiku' })
   })
 
   test('tight (budget - running <= 1) downgrades to haiku, never upward and never an unknown model', () => {
@@ -118,6 +138,14 @@ describe('the agent.spawn hook', () => {
   test('denies when the account is at its budget, by the live account count the claim carries', async ($, on) => {
     await session($, on, { pacingLine: { body: wire({ budget: 2, running_agents: 2 }) } })
     expect((await spawn($)).deny).toMatch(/2 agent\(s\) already run/)
+  })
+
+  test('a claim danxbot refused for held slots is worded as held slots, not as a full budget', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 2, reserved_agents: 1 }) } })
+    const r = await spawn($)
+    expect(r.deny).toMatch(/1 slot\(s\) are held for sessions that waited longer/)
+    expect(r.deny).not.toMatch(/already run/)
+    expect(d.claimsAllowed).toEqual([])
   })
 
   test('allows with no cap, and leaves the model alone', async ($, on) => {
@@ -374,7 +402,7 @@ describe('the agent.spawn hook', () => {
     // have written is observable on the next claim: hasSucceeded makes an unreachable server "known to be signed in", so that claim fails at once as unreachable.
     test('a claim still in flight across a new session start leaves the new session unmarked', async () => {
       resetPacing()
-      const claimed = { account: 'uuid:u1', level: 'on_pace', budget: 5, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 0, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 30, resets_in_minutes: 100, used_percent: 10, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null, claimed: true, claim_id: 'claim-1' }
+      const claimed = { account: 'uuid:u1', level: 'on_pace', budget: 5, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 0, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 30, resets_in_minutes: 100, used_percent: 10, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null, claimed: true, claim_id: 'claim-1' }
       let clock = 0
       let n = 0
       const env: PacingEnv = {
