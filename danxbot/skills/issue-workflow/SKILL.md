@@ -45,7 +45,7 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    Phase N` as an agent note on the next phase card.
    A card with an open problem never becomes Done: `complete`, a board drop or move to Done
    and a container roll-up are refused (409 `open_problems_block_completion`).
-   Answer or remove each open problem first.
+   Get each open problem answered by a person first; remove one only when it has become irrelevant, never because it was answered.
 
 ## Gates
 
@@ -86,8 +86,8 @@ never passed to get it out of the way.
 
 Genuinely need a human → open a problem on the card: an `action` when only a person can do
 it (access, credentials, hardware, authority), else a `question`. Never `AskUserQuestion` or
-a plan-mode pause. A card needs a human exactly while it has an open problem; removing its
-last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
+a plan-mode pause. A card needs a human exactly while it has an open problem; a person
+answering its last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
 
 A call refused 403 for a missing permission → `request_permission` with a reason (show the person its code) and keep working; blocked without it, open an action problem.
 
