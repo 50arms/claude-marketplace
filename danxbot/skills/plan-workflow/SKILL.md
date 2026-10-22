@@ -124,10 +124,18 @@ From the dashboard:
 - `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
   record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
   Recording the outcome means, in that same turn, editing every plan record, architecture
-  section and card it changes, and removing (with a note) each problem it settles or moots.
-  A new build card alone records nothing.
+  section and card it changes. A problem stays on the card as the record of what was asked and
+  decided: delete one only when it has become irrelevant (a change of direction made the question
+  pointless), with a note saying why; never because it was answered or because another answer
+  settled it. A new build card alone records nothing.
 - `commented on problem` → a follow-up: reply with a comment on that problem. A comment that
-  decides the question (for example "do it this other way") is an answer: handle it as one.
+  decides the question (for example "do it this other way") is not yet an answer: only a
+  person's accepted solution answers. Edit the problem's solutions to state what they said (change
+  one, or add one), mark that solution recommended, then tell them to accept it. Never delete the
+  problem. If they tell you to accept it for them, call `request_permission` for `cards.answer`
+  with that reason and answer the problem with that solution only once it is granted; never ask
+  them to click it when they have already told you to do it. A design problem is the person's
+  alone and no permission lets you answer it.
   One that asks, thinks aloud or says it is unsure decides nothing, however concrete its idea:
   answer what it asks in full (the exact calculation, a worked example) and leave the problem
   open. An option you write from it names every point you added and is never marked

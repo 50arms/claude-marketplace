@@ -47,7 +47,7 @@ worktree, DB resets) live only in danxbot's `work` profile.
    Phase N` as an agent note on the next phase card.
    A card with an open problem never becomes Done: `complete`, a board drop or move to Done
    and a container roll-up are refused (409 `open_problems_block_completion`).
-   Answer or remove each open problem first.
+   Get each open problem answered by a person first; remove one only when it has become irrelevant, never because it was answered.
 
 ## Gates
 
