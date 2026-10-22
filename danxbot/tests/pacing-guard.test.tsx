@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -13,13 +13,14 @@ import { BLOCKED_LINE } from '../hooks/plan/config'
 import { test, dashboard, startSession } from './plan-kit'
 
 const RESET = '2026-10-08T12:00:00.000Z'
-const v = (over: Partial<PacingVerdict> = {}): PacingVerdict => ({ level: 'on_pace', budget: null, resetsAt: RESET, runningAgents: 0, ...over })
+const v = (over: Partial<PacingVerdict> = {}): PacingVerdict => ({ level: 'on_pace', budget: null, resetsAt: RESET, runningAgents: 0, reservedAgents: 0, ...over })
 const wire = (over: Record<string, unknown> = {}) => ({
   account: 'uuid:u1',
   level: 'on_pace',
   budget: null,
   resets_at: RESET,
   running_agents: 1,
+  reserved_agents: 0,
   line: 'Pacing line.',
   spend: null,
   limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }],
@@ -27,39 +28,49 @@ const wire = (over: Record<string, unknown> = {}) => ({
   reason: null,
   ...over,
 })
-const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
+const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, running_agents: null, reserved_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
 
 describe('decideSpawn (the decision table)', () => {
   test('no verdict allows: pacing never blocks work it cannot see', () => {
     expect(decideSpawn(null, 'opus')).toEqual({ kind: 'allow' })
   })
 
-  test('over pace and critical deny whatever the budget, naming level, budget and reset', () => {
+  test('the refusal names level, budget and reset, and says not to retry', () => {
     for (const level of ['over_pace', 'critical'] as const) {
-      const d = decideSpawn(v({ level, budget: 0 }), 'sonnet')
-      expect(d.kind).toBe('deny')
-      const reason = (d as { reason: string }).reason
+      const reason = denyReason(v({ level, budget: 0 }), 'level')
       expect(reason).toContain(level.replace('_', ' '))
       expect(reason).toContain('budget 0')
       expect(reason).toContain(RESET)
       expect(reason).toMatch(/do not retry/i)
     }
-    expect(decideSpawn(v({ level: 'over_pace', budget: null }), 'sonnet').kind).toBe('deny')
+    expect(denyReason(v({ budget: 3, runningAgents: 3 }), 'budget')).toContain('3 agent(s) already run')
   })
 
-  test('on pace with the account at or over its budget denies; under it, or no cap, allows', () => {
-    expect(decideSpawn(v({ budget: 3, runningAgents: 3 }), 'haiku').kind).toBe('deny')
-    expect(decideSpawn(v({ budget: 3, runningAgents: 5 }), 'haiku').kind).toBe('deny')
-    expect(decideSpawn(v({ budget: 0, runningAgents: 0 }), 'haiku').kind).toBe('deny')
+  // DX-5595: slots held for woken sessions count as taken, and the refusal says so (not "already run")
+  test('the held-slot refusal says the slot frees within 60 seconds', () => {
+    const reason = denyReason(v({ budget: 3, runningAgents: 2, reservedAgents: 1 }), 'reserved')
+    expect(reason).toContain('2 agent(s) run on this account and 1 slot(s) are held')
+    expect(reason).toContain('frees within 60 seconds')
+    expect(reason).toContain('waits_on')
+    expect(reason).not.toContain('already run')
+  })
+
+  test('a claimed verdict with room, or no cap, allows', () => {
     expect(decideSpawn(v({ budget: 3, runningAgents: 1 }), 'haiku')).toEqual({ kind: 'allow' })
     expect(decideSpawn(v({ budget: null, runningAgents: 40 }), 'opus')).toEqual({ kind: 'allow' })
   })
 
+  test('a held slot counts toward tight: one free slot left after the hold downgrades', () => {
+    expect(isTight(5, 2, 2)).toBe(true)
+    expect(isTight(5, 2, 1)).toBe(false)
+    expect(decideSpawn(v({ budget: 5, runningAgents: 2, reservedAgents: 2 }), 'opus')).toEqual({ kind: 'downgrade', model: 'haiku' })
+  })
+
   test('tight (budget - running <= 1) downgrades to haiku, never upward and never an unknown model', () => {
     expect(TIGHT_FREE_SLOTS).toBe(1)
-    expect(isTight(3, 2)).toBe(true)
-    expect(isTight(3, 1)).toBe(false)
-    expect(isTight(null, 99)).toBe(false)
+    expect(isTight(3, 2, 0)).toBe(true)
+    expect(isTight(3, 1, 0)).toBe(false)
+    expect(isTight(null, 99, 0)).toBe(false)
     for (const model of ['opus', 'sonnet', 'claude-opus-4-8', 'fable']) {
       expect(decideSpawn(v({ budget: 3, runningAgents: 2 }), model)).toEqual({ kind: 'downgrade', model: 'haiku' })
     }
@@ -118,6 +129,14 @@ describe('the agent.spawn hook', () => {
   test('denies when the account is at its budget, by the live account count the claim carries', async ($, on) => {
     await session($, on, { pacingLine: { body: wire({ budget: 2, running_agents: 2 }) } })
     expect((await spawn($)).deny).toMatch(/2 agent\(s\) already run/)
+  })
+
+  test('a claim danxbot refused for held slots is worded as held slots, not as a full budget', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 2, reserved_agents: 1 }) } })
+    const r = await spawn($)
+    expect(r.deny).toMatch(/1 slot\(s\) are held for sessions that waited longer/)
+    expect(r.deny).not.toMatch(/already run/)
+    expect(d.claimsAllowed).toEqual([])
   })
 
   test('allows with no cap, and leaves the model alone', async ($, on) => {
@@ -374,7 +393,7 @@ describe('the agent.spawn hook', () => {
     // have written is observable on the next claim: hasSucceeded makes an unreachable server "known to be signed in", so that claim fails at once as unreachable.
     test('a claim still in flight across a new session start leaves the new session unmarked', async () => {
       resetPacing()
-      const claimed = { account: 'uuid:u1', level: 'on_pace', budget: 5, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 0, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 30, resets_in_minutes: 100, used_percent: 10, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null, claimed: true, claim_id: 'claim-1' }
+      const claimed = { account: 'uuid:u1', level: 'on_pace', budget: 5, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 0, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 30, resets_in_minutes: 100, used_percent: 10, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null, claimed: true, claim_id: 'claim-1' }
       let clock = 0
       let n = 0
       const env: PacingEnv = {
@@ -560,8 +579,47 @@ describe('failures of the guard itself', () => {
     expect(toasts[0]).toContain('clock down')
   })
 
+  // DX-5595: danxbot refused the claim for held slots, but the verdict it answered with reads as room to the plugin's own order (the figures moved between the
+  // judgment and the answer): the refusal still stands, worded as held slots, never as a full budget or a level
+  test('a claim danxbot refused whose verdict the plugin would allow is still refused, worded as held slots', async () => {
+    resetPacing()
+    const refused = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal: 'reserved' }
+    const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: refused } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+    const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
+    let started = false
+    const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
+    expect(started).toBe(false)
+    expect(r.deny).toMatch(/1 agent\(s\) run on this account and 1 slot\(s\) are held for sessions that waited longer/)
+    expect(r.deny).not.toMatch(/already run/)
+  })
+
+  // DX-5595: the refusal is worded from the cause danxbot names, not from the plugin's own reading of the figures it came with
+  test('the wording follows the cause danxbot names, even when the figures read otherwise', async () => {
+    resetPacing()
+    const answer = (refusal: unknown) => ({ account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal })
+    const deny = async (refusal: unknown) => {
+      resetPacing()
+      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: answer(refusal) } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+      const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
+      return (await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny
+    }
+    expect(await deny('budget')).toMatch(/1 agent\(s\) already run on this account against budget 3/)
+    expect(await deny('level')).toMatch(/this account is on pace/)
+    expect(await deny('reserved')).toMatch(/slot\(s\) are held for sessions that waited longer/)
+  })
+
+  test('a refused claim that names no valid cause fails closed as a failed claim', async () => {
+    for (const refusal of [undefined, null, 'full']) {
+      resetPacing()
+      const body = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal }
+      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+      const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
+      expect((await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny).toMatch(/could not claim its slot.*without naming a valid cause/)
+    }
+  })
+
   test('a refusal starts with the prefix the skill quotes', () => {
-    expect((decideSpawn(v({ level: 'critical', budget: 0 }), 'opus') as { reason: string }).reason.startsWith(REFUSAL_PREFIX)).toBe(true)
+    expect(denyReason(v({ level: 'critical', budget: 0 }), 'level').startsWith(REFUSAL_PREFIX)).toBe(true)
     expect(REFUSAL_PREFIX).toBe('Usage pacing:')
   })
 })

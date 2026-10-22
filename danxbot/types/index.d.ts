@@ -99,7 +99,8 @@ export type LimitReadout = {
   resetsAt: string
 }
 export type PacingReadout = { limits: LimitReadout[]; worst: PacingLimitKey }
-export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number }
+// `reservedAgents` is the slots held for sessions danxbot woke (an offer, for 60 s), taken by no running agent yet; a claim from another session counts them as taken.
+export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number; reservedAgents: number }
 
 // a `request_permission` request the band counts until it is decided. No expiry clock (the claim decides it).
 export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[] }
