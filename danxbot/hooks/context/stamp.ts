@@ -1,6 +1,6 @@
 import type { StampState } from '../../types'
 
-// DX-4234: the model's only clock. One line per prompt and per finished tool call: wall-clock time with its UTC offset, then the time
+// the model's only clock. One line per prompt and per finished tool call: wall-clock time with its UTC offset, then the time
 // since the previous stamp.
 //   09/28/2026 01:12:03 -06:00 +0      first stamp, or the first of a new day: the full date
 //   01:12:08 -06:00 +5s                the same day: time only

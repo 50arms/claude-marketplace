@@ -13,13 +13,12 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 
 | | Dispatched worker | Operator-session sub-agent |
 |---|---|---|
-| Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
+| Worktree | prepared before you start | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
-| Gates | the profile instruction carries them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
-| Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to the target branch (or open a pull request when "Delivery" below says so), `complete` + retro, report |
+| Gates | your dispatch instructions carry them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
+| Merge + end | your dispatch instructions | push the card branch, report its tip SHA, stop; when told to land: push to the target branch (or open a pull request when "Delivery" below says so), `complete` + retro, report |
 
-Dispatched-only mechanics (the dispatch-complete call, halt, `agent-finalize.sh`, the pre-synced
-worktree, DB resets) live only in danxbot's `work` profile.
+The dispatched worker's own mechanics (how it ends, halts and merges) are in the instructions its dispatch gave it.
 
 ## Flow
 
@@ -38,8 +37,7 @@ worktree, DB resets) live only in danxbot's `work` profile.
    "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Pass its POST gates ("Gates" below).
-6. Merge first: a dispatched worker runs its profile's end order, `agent-finalize.sh`
-   first; an operator-session sub-agent, once told to land, commits and pushes to the target
+6. Merge first: a dispatched worker follows the end order its dispatch instructions give; an operator-session sub-agent, once told to land, commits and pushes to the target
    branch, or opens a pull request when the card's controls require one ("Delivery" below).
    Only then transition `complete` with a summary and write the retro (last — it 409s
    until terminal), citing the sha now on the target branch (on a pull request: the pull
@@ -95,7 +93,7 @@ A call refused 403 for a missing permission → `request_permission` with a reas
 
 ## Claiming (operator-session sub-agents only)
 
-A dispatched worker never claims: danxbot picked the card up before spawning it
+A dispatched worker never claims: the dashboard picked the card up before spawning it
 (`In Progress`, `dispatch_id` set), so a `pickup` from it is refused 409
 `dispatch_id (already dispatched)`.
 
@@ -224,8 +222,8 @@ Every user-facing bug report, one block per bug:
 ## Delivery: push or pull request
 
 Applies to a session that lands its own work (an operator-session sub-agent, or any session
-building a card in a repo danxbot does not run a worker for). A dispatched worker ends as its
-`work` profile says.
+building a card in a repo no dashboard worker serves). A dispatched worker ends as its dispatch
+instructions say.
 
 Read the card's resolved controls: `GET /api/issues/<id>` with `fields {"controls":true}`, then
 take the value of each key from the entry with that `key`:

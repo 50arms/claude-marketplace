@@ -19,7 +19,7 @@ const flow = skill.slice(skill.indexOf("## Flow"), skill.indexOf("## Gates"));
 const step6 = flow.slice(flow.indexOf("\n6. "));
 
 test("the completion step merges before it completes and writes the retro", () => {
-  const finalize = step6.indexOf("`agent-finalize.sh`");
+  const finalize = step6.indexOf("follows the end order its dispatch instructions give");
   const push = step6.indexOf("pushes to the target");
   const complete = step6.indexOf("`complete`");
   const retro = step6.indexOf("write the retro");

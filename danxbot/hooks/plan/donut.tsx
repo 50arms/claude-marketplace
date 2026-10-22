@@ -3,7 +3,7 @@ import { donutGlyph } from './words'
 
 // The plan-progress donut as an SVG document (desktop only: the terminal has no Svg and shows
 // the text glyph). A ring of circumference 100 so the arc length is the percent itself; a complete
-// plan (100) draws the done mark (a filled disc with a tick) instead (DX-4257).
+// plan (100) draws the done mark (a filled disc with a tick) instead.
 // A ring of circumference 100 has radius 100 / (2 * PI) = 15.9155, so a dash of `percent` is exactly
 // that percent of the way round. Strokes start at 3 o'clock; the offset of 25 (a quarter of the 100
 // circumference) turns the start to 12 o'clock.
@@ -34,7 +34,7 @@ export function donutAlt(percent: number): string {
   return `${percent}% complete`
 }
 
-// DX-4374: the one donut mark: a real Svg of `px` CSS pixels where the surface draws one (the desktop), the
+// the one donut mark: a real Svg of `px` CSS pixels where the surface draws one (the desktop), the
 // glyph as text elsewhere. The band line draws it.
 export function donutMark(E: any, percent: number, hasSvg: boolean, px: number): any {
   const { Text, Svg } = E

@@ -1,5 +1,5 @@
-// The ONE module that owns `@thehammer/danx-dashboard-mcp` for this plugin: which version runs (DX-4321) and installing it
-// (DX-3811, DX-4235). Its callers: the plugin's MCP server launcher (dashboard-mcp-server.mjs), which starts the server
+// The ONE module that owns `@thehammer/danx-dashboard-mcp` for this plugin: which version runs and installing it
+//. Its callers: the plugin's MCP server launcher (dashboard-mcp-server.mjs), which starts the server
 // from the recorded version and refreshes the record.
 // This file carries NO version literal.
 //
@@ -7,19 +7,19 @@
 // (temp file + rename, so a reader never sees a partial one). The launcher starts the server from the recorded version at
 // first (`startVersion`: the recorded one, or, with none recorded, the registry's answer, installed and recorded). Before the
 // server starts, the launcher runs the refresh from the registry (`refreshInstall`) in a detached child and waits for it a
-// bounded time (DX-5075: a session started after a publish runs that publish); a refresh still running then goes on in the
-// background, outliving the launcher (DX-5314), and the recorded version runs instead. A danxbot publish therefore reaches the
+// bounded time (a session started after a publish runs that publish); a refresh still running then goes on in the
+// background, outliving the launcher, and the recorded version runs instead. A danxbot publish therefore reaches the
 // first session start after it, with no plugin release.
 //
-// WHY EXACT, NOT `latest` AT RUN TIME (DX-3392): `npx -y` never re-checks the registry once a version is cached, so an
+// WHY EXACT, NOT `latest` AT RUN TIME: `npx -y` never re-checks the registry once a version is cached, so an
 // unpinned spec would keep serving whatever this machine cached first. The plugin runs an exact version; it reads which
 // one instead of having it typed in.
 //
-// WHERE (DX-3811). `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/<version>/node_modules/@thehammer/danx-dashboard-mcp/dist/index.js`,
+// WHERE. `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/<version>/node_modules/@thehammer/danx-dashboard-mcp/dist/index.js`,
 // one directory per version, run with plain `node`, never through a cold `npx -y` (measured 2026-10-01: npx paid ~1.6 s
 // warm and ~4 s cold before the package started; the installed copy ran end to end in 0.6 s).
 //
-// HOW IT INSTALLS (DX-4235: node, no bash, no shell). npm installs into its own staging directory and only a complete,
+// HOW IT INSTALLS (node, no bash, no shell). npm installs into its own staging directory and only a complete,
 // verified install is renamed into place, so no reader ever sees a half-written one. `renameSync` refuses a destination
 // that already holds an install, so the loser of two sessions installing at once discards its copy and uses the winner's.
 // The install is bounded (INSTALL_TIMEOUT_MS). How npm is started without a shell: `npmCommand`.
@@ -39,11 +39,11 @@ export const DASHBOARD_MCP_PACKAGE_NAME = "@thehammer/danx-dashboard-mcp";
 export const DEFAULT_REGISTRY_BASE_URL = "https://registry.npmjs.org";
 export const REGISTRY_BASE_URL_ENV = "DASHBOARD_MCP_REGISTRY_BASE_URL";
 export const REGISTRY_TIMEOUT_ENV = "DASHBOARD_MCP_REGISTRY_TIMEOUT_MS";
-/** Tests only: a JS file this node runs in place of npm (DX-5314: the detached refresh is a real process, so no spawn seam reaches it). */
+/** Tests only: a JS file this node runs in place of npm (the detached refresh is a real process, so no spawn seam reaches it). */
 export const NPM_CLI_ENV = "DASHBOARD_MCP_NPM_CLI";
 /** Bounds the one registry request. */
 export const REGISTRY_TIMEOUT_MS = 5_000;
-/** DX-3811: an unreachable registry cannot wedge an install for longer than this. */
+/** an unreachable registry cannot wedge an install for longer than this. */
 export const INSTALL_TIMEOUT_MS = 60_000;
 /** A staging directory or an unused version directory older than this is removed (a younger stage is a concurrent install's). */
 export const STALE_INSTALL_MS = 60 * 60 * 1000;
@@ -54,13 +54,13 @@ export const RENAME_RETRY_ATTEMPTS = 8;
 export const RENAME_RETRY_BASE_MS = 25;
 export const RENAME_RETRYABLE_CODES = ["EPERM", "EBUSY", "EACCES"];
 /**
- * DX-4235: each process that runs an installed version (the server launcher, and since DX-5314 the detached refresh child) leaves a lease file named by its
+ * each process that runs an installed version (the server launcher, and, since the refresh became a separate process, the detached refresh child) leaves a lease file named by its
  * pid in `<version>/.leases/` while it runs, so a refresh in ANOTHER session never prunes a version a live session still runs.
  */
 const LEASES_DIR = ".leases";
 
 /**
- * DX-5314: the detached refresh child has no stderr of its own to a reader (a pipe it inherited would stay open after the launcher exits, and the MCP
+ * the detached refresh child has no stderr of its own to a reader (a pipe it inherited would stay open after the launcher exits, and the MCP
  * transport may wait for it), so its failure line is appended here, and the NEXT launcher prints what was written since it last read (`drainRefreshLog`).
  */
 export const REFRESH_LOG = "refresh.log";
@@ -90,7 +90,7 @@ export function drainRefreshLog(env = process.env, alive = isAlive) {
   }
   for (const name of names.sort()) {
     const m = name.match(/^refresh\.log\.(\d+)\.read$/);
-    if (!m || (Number(m[1]) !== process.pid && alive(Number(m[1])))) continue; // DX-5314: a file named by OUR pid is a dead launcher's, the pid reused (this read has not made one yet)
+    if (!m || (Number(m[1]) !== process.pid && alive(Number(m[1])))) continue; // a file named by OUR pid is a dead launcher's, the pid reused (this read has not made one yet)
     const orphan = path.join(dir, name);
     try {
       text += fs.readFileSync(orphan, "utf8");
@@ -240,7 +240,7 @@ export function writeRecordedVersion(version, env = process.env, fsApi = fs) {
   try {
     fsApi.mkdirSync(path.dirname(file), { recursive: true });
   } catch (err) {
-    // DX-4235: before the temp file's cleanup, which on Linux throws ENOTDIR (hiding this reason) when the directory is a file.
+    // before the temp file's cleanup, which on Linux throws ENOTDIR (hiding this reason) when the directory is a file.
     throw fail(err);
   }
   try {
@@ -264,7 +264,7 @@ export function noVersionLine(reason) {
 }
 
 /**
- * How npm is started, with NO shell (DX-4235). Since Node 18.20.2 / 20.12.2 spawning a `.cmd` without `shell: true`
+ * How npm is started, with NO shell. Since Node 18.20.2 / 20.12.2 spawning a `.cmd` without `shell: true`
  * throws EINVAL, and a bare `npm` is not found at all (Windows' npm is `npm.cmd`; no PATHEXT lookup without a shell), so
  * on Windows the node running this runs npm's own `npm-cli.js`, which every Windows node install (the official installer,
  * nvm-windows, a zip) keeps beside `node.exe` at `node_modules/npm/bin/npm-cli.js`. Elsewhere `npm` on PATH is an
@@ -272,7 +272,7 @@ export function noVersionLine(reason) {
  * Throws, naming the path, when a Windows node has no npm beside it.
  */
 export function npmCommand(platform = process.platform, execPath = process.execPath, exists = fs.existsSync, env = process.env) {
-  // the tests' seam (DX-5314): the detached refresh is a real process, so a test names the npm it runs
+  // the tests' seam: the detached refresh is a real process, so a test names the npm it runs
   if (env[NPM_CLI_ENV]) return { command: execPath, args: [env[NPM_CLI_ENV]] };
   if (platform !== "win32") return { command: "npm", args: [] };
   const cli = path.win32.join(path.win32.dirname(execPath), "node_modules", "npm", "bin", "npm-cli.js");
@@ -342,7 +342,7 @@ export async function installVersion(version, { env = process.env, spawnFn = spa
       throw new Error(`install_incomplete: npm install ${spec} succeeded but left no ${BIN_REL.join("/")}`);
     }
     try {
-      // DX-3811: the rename refuses a destination that already holds an install (where `mv` would nest the stage inside
+      // the rename refuses a destination that already holds an install (where `mv` would nest the stage inside
       // it), so the loser of a concurrent install keeps the winner's; ours is removed below.
       renameRetrying(stage, versionDir(dataDir, version), fs, () => fs.existsSync(bin));
     } catch (err) {
@@ -365,7 +365,7 @@ export function isAlive(pid, kill = process.kill) {
 }
 
 /**
- * DX-4235: marks `version` as run by process `pid` until the returned release is called (its caller calls it at exit). A
+ * marks `version` as run by process `pid` until the returned release is called (its caller calls it at exit). A
  * process that dies without releasing leaves a lease whose pid is gone, which `pruneInstalls` reads as released.
  */
 export function leaseVersion(version, { env = process.env, pid = process.pid } = {}) {
@@ -379,7 +379,7 @@ export function leaseVersion(version, { env = process.env, pid = process.pid } =
 const PID_NAME = /^\d+$/;
 
 /**
- * Whether a live process holds a lease on the version directory `dir`. DX-4235: a lease whose process is gone (one that crashed before
+ * Whether a live process holds a lease on the version directory `dir`. A lease whose process is gone (one that crashed before
  * releasing it) is deleted as it is read, so dead leases never pile up.
  */
 function isLeased(dir, alive) {
@@ -401,10 +401,10 @@ function isLeased(dir, alive) {
 
 /**
  * Removes, under the plugin data dir, every staging directory and every version directory not named in `keep` that is
- * older than STALE_INSTALL_MS at `now` (DX-4321) and that no live process leases (DX-4235: another session's server or live
+ * older than STALE_INSTALL_MS at `now` and that no live process leases (another session's server or live
  * reader may still run it, and its directory's age says nothing about that). A younger stage is a concurrent install's. Every
  * version directory's leases are read, kept and young ones included, so a lease left by a crashed process is deleted wherever it
- * is. An entry another session removed first is skipped (DX-4235: two sessions may prune at once). The record and anything not
+ * is. An entry another session removed first is skipped (two sessions may prune at once). The record and anything not
  * shaped like a version or a stage are never touched. Seam: `alive` (pid liveness).
  */
 export function pruneInstalls(keep, { env = process.env, now = Date.now(), alive = isAlive } = {}) {
@@ -449,8 +449,8 @@ export async function startVersion(options = {}) {
 }
 
 /**
- * The refresh the detached refresh child runs (DX-5314; it outlives the launcher): the registry's `latest` is installed, THEN
- * recorded (DX-4235: the record only ever names an installed version, so the next start never pays a cold install). Returns
+ * The refresh the detached refresh child runs (it outlives the launcher): the registry's `latest` is installed, THEN
+ * recorded (the record only ever names an installed version, so the next start never pays a cold install). Returns
  * the version recorded. The running server is never touched: a new version is adopted at the next session start. Throws (the
  * child appends one line to refresh.log, which the next launcher prints, and keeps the recorded version). `options.abort` stops an install in flight (installVersion). Pruning old installs is the
  * caller's separate step (pruneInstalls), so a prune failure is never reported as a failed refresh.

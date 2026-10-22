@@ -1,4 +1,4 @@
-// DX-5577: a plugin's store file (one JSON file per plugin, written by the host) can be left all NUL bytes by a write cut off before its data reached disk. Every `$.store`
+// a plugin's store file (one JSON file per plugin, written by the host) can be left all NUL bytes by a write cut off before its data reached disk. Every `$.store`
 // call then rejects and the store API cannot repair it. This is the recovery, with every engine call behind `StoreIo` (register.tsx's `storeIo` is the only wiring to
 // `$`), so the tests can hand it the host's error exactly as the host throws it: the plugin test runner prefixes every refusal a fake hands to the plugin, so a fake
 // store cannot produce the real, unprefixed message through `$`.
@@ -29,7 +29,7 @@ export function recoverMalformedStore(io: StoreIo, path: string): Promise<void> 
         if (malformedStorePath(err) === null) throw err
       }
       const base64 = await io.readBase64(path)
-      // DX-5577: every Claude process shares this file; if another one already reset it, the bytes now hold a JSON object and nothing is wiped (the caller just retries)
+      // every Claude process shares this file; if another one already reset it, the bytes now hold a JSON object and nothing is wiped (the caller just retries)
       if (storeBytesParse(base64)) return
       const backup = malformedBackupPath(path, await io.now())
       await io.write(backup, base64)

@@ -3,19 +3,19 @@ import type { Api } from './load'
 import { isSignedOut } from './mcp'
 import type { UsageBody } from './usage'
 
-// DX-4340 (PLAN-29 section 3): the ONE pacing cache. danxbot serves the calling session's own account's verdict, and the one-sentence line
+// the ONE pacing cache. danxbot serves the calling session's own account's verdict, and the one-sentence line
 // a new sub-agent is handed, at GET /api/pacing/line (the account is placed server-side from the x-danx-session-id header the dashboard
-// MCP sends; src/team-pacing/session-pacing.ts). The SubagentStart pacing line (register.tsx) reads this cache; the `agent.spawn` guard
-// (pacing-guard.ts) reads nothing from it: it claims a slot (claimSlot below, DX-5593), and that claim's answer writes the cache. No account
+// MCP sends). The SubagentStart pacing line (register.tsx) reads this cache; the `agent.spawn` guard
+// (pacing-guard.ts) reads nothing from it: it claims a slot (claimSlot below), and that claim's answer writes the cache. No account
 // matching happens in the plugin.
 //
 // Unknown is explicit on the wire (`reason` set, every other field null: no session, no usage report, no verdict, pacing off) and means
 // no line is handed.
 //
-// A failed read is never silent: one toast per distinct text. It DROPS the cached verdict (DX-4631: an answer whose freshness is unknown is
+// A failed read is never silent: one toast per distinct text. It DROPS the cached verdict (an answer whose freshness is unknown is
 // no answer, so the sub-agent line is withheld), and the unforced reads (the sub-agent line) do not retry it for PACING_REFRESH_MS, so each
-// sub-agent start does not re-hit a dead route. A read decides no spawn (DX-5593: the spawn claim below does). The one exception is an unreachable
-// danx-dashboard MCP server (a session whose danx-dashboard server has not connected, as in reportUsage and DX-3421): that is silent and not backed off,
+// sub-agent start does not re-hit a dead route. A read decides no spawn (the spawn claim below does). The one exception is an unreachable
+// danx-dashboard MCP server (a session whose danx-dashboard server has not connected, as in reportUsage): that is silent and not backed off,
 // the next read simply looks again, until a read has succeeded in this session. After a success it is a failure like any other.
 
 import type { LimitReadout, PacingLevel, PacingLimitKey, PacingReadout, PacingState, PacingVerdict, SpendFigure } from '../../types'
@@ -25,8 +25,8 @@ const STATES: readonly PacingState[] = ['spare', 'short', 'hold', 'stop']
 const LIMIT_KEYS: readonly PacingLimitKey[] = ['five_hour', 'weekly', 'spend']
 
 // The verdict as the guard reads it (`PacingVerdict`, types/index.d.ts, shared with the usage pacing) and danxbot's one-sentence line.
-// `spend` (DX-4595) is the server's own pricing of the account's spend limit, or null when it has none; the plugin never computes one.
-// `readout` (DX-4656) is the server's per-limit state and headroom with its worst limit, exactly as answered.
+// `spend` is the server's own pricing of the account's spend limit, or null when it has none; the plugin never computes one.
+// `readout` is the server's per-limit state and headroom with its worst limit, exactly as answered.
 export type Pacing = { verdict: PacingVerdict; line: string; spend: SpendFigure | null; readout: PacingReadout }
 
 export type PacingCall = (method: string, path: string, body?: object) => Promise<Api>
@@ -36,10 +36,10 @@ export type PacingEnv = {
   now: () => Promise<number>
   within: <T>(ms: number, work: Promise<T>, late: () => T) => Promise<T>
   call: PacingCall
-  // DX-5593: the session's latest usage reading as the usage report's body, or null when it has none (a session off a subscription, a reading that
+  // the session's latest usage reading as the usage report's body, or null when it has none (a session off a subscription, a reading that
   // fails). The spawn claim carries it. Never rejects.
   reading: () => Promise<UsageBody | null>
-  // DX-5593 (B1): whether this session is KNOWN to be signed in: a loaded plan view, or any dashboard call that succeeded in this session. Never rejects.
+  // whether this session is KNOWN to be signed in: a loaded plan view, or any dashboard call that succeeded in this session. Never rejects.
   signedIn: () => Promise<boolean>
   // the wait between looks for a server that has not connected yet; rejects when the plugin is unloaded
   sleep: (ms: number) => Promise<void>
@@ -52,7 +52,7 @@ export const LINE_PATH = '/api/pacing/line'
 // old, and by the spawn guard before every decision (`refreshPacing`).
 export const PACING_REFRESH_MS = 60_000
 export const PACING_EXPIRY_MS = 30 * 60_000
-// DX-4631: every `refreshPacing` has ONE deadline, covering its wait for a read already out AND its own read (two sequential bounds could
+// every `refreshPacing` has ONE deadline, covering its wait for a read already out AND its own read (two sequential bounds could
 // outrun the engine's hook budget). A read that has not answered by then is a failed read (toasted, the cached verdict dropped) and frees
 // the next read: a hung dashboard call can neither hold `inflight` for ever nor stall the spawn that is waiting on it.
 export const PACING_READ_DEADLINE_MS = 5_000
@@ -60,7 +60,7 @@ const ERROR_MAX = 200
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0
 
-// DX-4595: `spend` of a known answer: null, or the server's figure. Absent is an error (one canonical shape).
+// `spend` of a known answer: null, or the server's figure. Absent is an error (one canonical shape).
 function parseSpendFigure(raw: any): SpendFigure | null | { error: string } {
   if (raw === null) return null
   if (raw === undefined || typeof raw !== 'object') return { error: 'the pacing line answer has no valid spend' }
@@ -68,7 +68,7 @@ function parseSpendFigure(raw: any): SpendFigure | null | { error: string } {
   return { usedPercent: raw.used_percent, level: raw.level, resetsAt: raw.resets_at, spentUsd: raw.spent_usd, budgetUsd: raw.budget_usd }
 }
 
-// DX-4656: `limits` and `worst_limit` of a known answer. Absent or malformed is an error (one canonical shape), never a made-up readout.
+// `limits` and `worst_limit` of a known answer. Absent or malformed is an error (one canonical shape), never a made-up readout.
 function parseReadout(body: any): PacingReadout | { error: string } {
   const bad = { error: 'the pacing line answer has no valid limits' }
   if (!Array.isArray(body.limits) || body.limits.length === 0 || !LIMIT_KEYS.includes(body.worst_limit)) return bad
@@ -124,7 +124,7 @@ let hasSucceeded = false
 let lastError: string | null = null
 // the same for the spawn claim's refusals, told in their own words (B2)
 let lastClaimError: string | null = null
-// DX-5593: and for the give-back's failures, in a slot of their own: a successful claim clears lastClaimError, and every give-back follows one
+// and for the give-back's failures, in a slot of their own: a successful claim clears lastClaimError, and every give-back follows one
 let lastReleaseError: string | null = null
 let inflight: Promise<void> | null = null
 // bumped by every reset: a read that was in flight across one must not write the new session's state
@@ -176,7 +176,7 @@ async function fetchPacing(env: PacingEnv, ms: number): Promise<void> {
       return
     }
     lastReadAt = at
-    // DX-4982: a call auto mode refused (errText: the sentence and fix) or that never reached the server says why, never `answered 0`
+    // a call auto mode refused (errText: the sentence and fix) or that never reached the server says why, never `answered 0`
     if (!r.ok) return failRead(env, r.status === 0 ? errText(r) : `the pacing line read answered ${r.status}`)
     const parsed = parsePacing(r.body)
     if (parsed !== null && 'error' in parsed) return failRead(env, parsed.error)
@@ -211,18 +211,18 @@ export async function refreshPacing(env: PacingEnv, force = false): Promise<void
 }
 
 // SYNCHRONOUS: the session's pacing at `nowMs` (null when unknown or expired), as last read. A failed read dropped the answer (no verdict).
-// DX-5593: the count in it is danxbot's live count; the plugin keeps no count of its own (no reservations, no local agent list).
+// the count in it is danxbot's live count; the plugin keeps no count of its own (no reservations, no local agent list).
 function peekPacing(nowMs: number): Pacing | null {
   if (cache === null || cache.pacing === null || nowMs - cache.fetchedAt > PACING_EXPIRY_MS) return null
   return cache.pacing
 }
 
-// DX-5593: the spawn claim. The budget is a STRICT cap and the one count lives in danxbot, so a spawn takes its slot there, atomically
+// the spawn claim. The budget is a STRICT cap and the one count lives in danxbot, so a spawn takes its slot there, atomically
 // (POST /api/pacing/agents/claim: the same body as the line plus {claimed, claim_id}); the plugin decides nothing from a count it holds.
 // `unknown`: danxbot sees no account to cap, or the session is signed out: allow, nothing claimed, because danxbot counts no agent of a session
 // it does not know. `failed`: the claim could not be made (deadline, error answer, malformed answer, a server of a session KNOWN to be signed in
-// that is unreachable, or a server that never connected at all: DX-5593 problem 2503) and the spawn is REFUSED: an allowed
-// spawn there would be an agent nobody counted (DX-5593 notes 18330, 18725). Whether a session is outside pacing is a fact about the session, never
+// that is unreachable, or a server that never connected at all) and the spawn is REFUSED: an allowed
+// spawn there would be an agent nobody counted. Whether a session is outside pacing is a fact about the session, never
 // about the connection: a session that was signed in stays inside pacing when its server drops.
 export const CLAIM_PATH = '/api/pacing/agents/claim'
 // how often a server that has not connected yet is looked for again, inside the claim's one PACING_READ_DEADLINE_MS
@@ -244,11 +244,11 @@ export function parseClaim(body: any): Claim {
 
 // One deadline-bound claim. Never rejects. A good answer also replaces the cache, so the sub-agent's pacing line is the one the claim saw.
 export async function claimSlot(env: PacingEnv): Promise<Claim> {
-  // DX-5593: a claim still in flight across resetPacing (a new session start) must not write the new session's state
+  // a claim still in flight across resetPacing (a new session start) must not write the new session's state
   const gen = generation
   try {
     const startedAt = await env.now()
-    // DX-5593 (N2): the claim carries the session's latest reading, the body of the usage report, and danxbot stores it under the claim's own lock before
+    // the claim carries the session's latest reading, the body of the usage report, and danxbot stores it under the claim's own lock before
     // judging the claim. The first report goes out fire-and-forget (and not at all while the plan view loads), so a new session's first spawns would
     // otherwise meet a session danxbot has not placed on its account: unknown, allowed, nothing claimed. One request, no ordering against the report.
     let usage: UsageBody | null = null
@@ -264,11 +264,11 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
       const r = await env.within<Api | typeof TIMED_OUT>(left, env.call('POST', CLAIM_PATH, usage === null ? undefined : { usage }), () => TIMED_OUT)
       if (r === TIMED_OUT) return { kind: 'failed', failure: late }
       if (r.unreachable) {
-        // DX-5593 (B1): a session KNOWN to be signed in whose server cannot be reached is inside pacing and its spawn is refused (strict cap)
+        // a session KNOWN to be signed in whose server cannot be reached is inside pacing and its spawn is refused (strict cap)
         if (hasSucceeded || (await env.signedIn())) return { kind: 'failed', failure: 'the danx-dashboard MCP server is not reachable from this session' }
         // not known to be signed in yet: the server may still be connecting, so it is looked for again until the claim's deadline
         if (PACING_READ_DEADLINE_MS - ((await env.now()) - startedAt) <= CONNECT_POLL_MS) {
-          // DX-5593 problem 2503 (operator, 2026-10-22: refuse it): no connection means no claim, and no claim means no spawn, whether or not the
+          // no connection means no claim, and no claim means no spawn, whether or not the
           // session was ever signed in. A spawn allowed here would be an agent the strict cap never counted.
           return { kind: 'failed', failure: 'the danx-dashboard MCP server never connected in this session' }
         }
@@ -296,7 +296,7 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
   }
 }
 
-// DX-5593: one toast per distinct text in `slot` (the refused spawn's or the give-back's), the refused-spawn and the give-back toasts' one rule.
+// one toast per distinct text in `slot` (the refused spawn's or the give-back's), the refused-spawn and the give-back toasts' one rule.
 function toastOnce(env: PacingEnv, slot: 'claim' | 'release', prefix: string, text: string): void {
   text = text.slice(0, ERROR_MAX)
   if (text === (slot === 'claim' ? lastClaimError : lastReleaseError)) return
@@ -305,17 +305,17 @@ function toastOnce(env: PacingEnv, slot: 'claim' | 'release', prefix: string, te
   env.toast(`${prefix}: ${text}`)
 }
 
-// DX-5593 (B2): a refused spawn's toast, once per distinct text. It says the spawn was refused, never that spawns are not paced.
+// a refused spawn's toast, once per distinct text. It says the spawn was refused, never that spawns are not paced.
 export function reportClaimFailure(env: PacingEnv, failure: string): void {
   toastOnce(env, 'claim', 'Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap)', failure)
 }
 
 // The claim given back: the host refused the spawn after the slot was taken. Never rejects; a claim not given back lapses in danxbot
-// (AGENT_CLAIM_LAPSE_MS, 60 s), which stays the recovery. DX-5593 (C1): a give-back that fails is told once per distinct text (the same rule as
+// (AGENT_CLAIM_LAPSE_MS, 60 s), which stays the recovery. a give-back that fails is told once per distinct text (the same rule as
 // reportClaimFailure), never silently: an error answer, an unreachable server, a timeout or a throw. A signed-out answer and `{released:false}`
 // (a 200, normal) stay silent; a good give-back clears the slot, so the same failure after it is told again.
 export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
-  // DX-5593: a give-back is only ever of a `claimed` claim, but not always one that set hasSucceeded: a claim in flight across a session start
+  // a give-back is only ever of a `claimed` claim, but not always one that set hasSucceeded: a claim in flight across a session start
   // (resetPacing) comes back `claimed` without writing the new session's state. Its give-back is harmless (danxbot scopes deleteAgentClaim to the
   // session and answers released:false). One that crosses resetPacing itself writes and tells nothing, and its claim lapses in danxbot.
   const gen = generation

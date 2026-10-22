@@ -12,8 +12,9 @@
 // shipped, so test files that hold the banned tokens as matcher proof are exempt by construction),
 // except `.claude-plugin/plugin.json`, the plugin manifest, whose `dashboard_url` default is the
 // product's own public address. Markdown and JSON are scanned whole; code (.mjs .js .ts .tsx .sh)
-// is scanned with its comments stripped, because a comment is read only by a maintainer and never
-// reaches a user. A file type the scan does not know throws (binary assets are an explicit list),
+// is scanned with its comments stripped for the author-setup tokens (a comment is read by a maintainer, not shown
+// to a user), but its comments are still scanned for internal card ids and source paths: anyone who installs the
+// plugin can open its files, and cannot see our cards or our source. A file type the scan does not know throws (binary assets are an explicit list),
 // so a new type can never ship unscanned.
 //
 // COMMENT STRIPPING is a small state machine, not a parser. It follows strings, template
@@ -58,9 +59,16 @@ export const BANNED = [
   { name: "another of the author's products", pattern: /gpt-manager/i },
   { name: "another of the author's organizations", pattern: /flytedesk/i },
   { name: "the author's own UI library", pattern: /@danxbot\/ui/i },
-  { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages)\/[\w.-]/ },
-  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|R)-\d+/ },
+  { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages|mcp-servers|frontend|docs\/pages)\/[\w.-]/ },
+  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|PBLM|CAV|R)-\d+/ },
 ];
+
+/**
+ * The kinds that also apply inside code comments. A comment is read by anyone who opens the installed plugin, so it may name
+ * neither our card ids nor a path in our source; it states the reason itself. (The other kinds are about text the user is shown.)
+ */
+const COMMENT_KINDS = new Set(["a path in the author's repo", "an internal card, plan or plan-record id"]);
+export const commentHits = (text) => BANNED.filter((b) => COMMENT_KINDS.has(b.name)).flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
 
 /** Names of the banned things `text` mentions (one entry per kind). */
 export const bannedHits = (text) => BANNED.flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
@@ -175,8 +183,9 @@ export function scanFiles(pluginDir, relFiles) {
   for (const rel of relFiles) {
     const text = userFacingText(rel, fs.readFileSync(path.join(pluginDir, rel), "utf8"));
     if (text === null) continue;
+    const raw = fs.readFileSync(path.join(pluginDir, rel), "utf8").split("\n");
     text.split("\n").forEach((line, idx) => {
-      for (const what of bannedHits(line)) violations.push({ file: rel, line: idx + 1, what });
+      for (const what of new Set([...bannedHits(line), ...commentHits(raw[idx])])) violations.push({ file: rel, line: idx + 1, what });
     });
   }
   return violations;

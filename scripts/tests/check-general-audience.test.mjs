@@ -21,6 +21,9 @@ test("the matcher catches each banned token and passes general text", () => {
   assert.equal(bannedHits("use @danxbot/ui").length, 1);
   assert.equal(bannedHits("see `src/issues/x.ts`").length, 1);
   assert.equal(bannedHits("see DX-4556").length, 1);
+  assert.equal(bannedHits("problem PBLM-1915 and caveat CAV-2").length, 1);
+  assert.equal(bannedHits("see packages/danx-dashboard-mcp and mcp-servers/x/src").length, 1);
+  assert.equal(bannedHits("see docs/pages/x.md").length, 1);
   assert.equal(bannedHits("PLAN-17 Closed beta").length, 1);
   assert.deepEqual(bannedHits("run `claude plugin install danxbot`; card id `<card id>`; PLAN-NNN"), []);
   assert.equal(bannedHits("owner newms87 / NEWMS").length, 1);
@@ -63,15 +66,17 @@ test("each file type is read the way a user meets it; plugin.json and binary ass
   }
 });
 
-test("scanFiles reports file, line and what for each hit in a scanned surface, and nothing for a comment", () => {
+test("scanFiles reports file, line and what for each hit in a scanned surface, and a comment only for a card id or source path", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "general-audience-"));
   fs.mkdirSync(path.join(dir, "scripts"));
   fs.mkdirSync(path.join(dir, "skills"));
-  fs.writeFileSync(path.join(dir, "scripts", "a.mjs"), '// DX-1 only a comment\nconsole.log("run update-claude-plugins");\n');
+  fs.writeFileSync(path.join(dir, "scripts", "a.mjs"), '// DX-1 a card id in a comment\n// update-claude-plugins in a comment\n// see src/agent/x.ts\nconsole.log("run update-claude-plugins");\n');
   fs.writeFileSync(path.join(dir, "skills", "S.md"), "fine\nsee PLAN-17\n");
   const hits = scanFiles(dir, ["scripts/a.mjs", "skills/S.md"]);
   assert.deepEqual(hits, [
-    { file: "scripts/a.mjs", line: 2, what: "a personal shell alias" },
+    { file: "scripts/a.mjs", line: 1, what: "an internal card, plan or plan-record id" },
+    { file: "scripts/a.mjs", line: 3, what: "a path in the author's repo" },
+    { file: "scripts/a.mjs", line: 4, what: "a personal shell alias" },
     { file: "skills/S.md", line: 2, what: "an internal card, plan or plan-record id" },
   ]);
 });

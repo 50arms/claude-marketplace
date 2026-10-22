@@ -1,4 +1,4 @@
-// DX-5328: the one canonical key for a sub-agent is its transcript file's basename, `agent-<id>` (the key the dashboard's ledger, the compaction handshake's `agents` map
+// the one canonical key for a sub-agent is its transcript file's basename, `agent-<id>` (the key the dashboard's ledger, the compaction handshake's `agents` map
 // and the activity reports all use). Claude Code names a sub-agent by the BARE `<id>` everywhere it hands one to this plugin (a hook's `agent_id`, a `session.compact` /
 // `turn.step` event's `agentId`, `$.agent.list()` ids, and the target of `$.session.send`). Each place that receives a bare id converts it once, here; each place that
 // hands one back converts the other way. Neither direction accepts the other form: a wrong-form id is a bug, so it throws instead of passing through.

@@ -1,4 +1,4 @@
-// DX-5577: a plugin's store file (one JSON file per plugin, written by the host) can be left all NUL bytes by a write cut off before its data reached disk.
+// a plugin's store file (one JSON file per plugin, written by the host) can be left all NUL bytes by a write cut off before its data reached disk.
 // Every `$.store` call then rejects with a HooksError naming the file, and the store API has no way to repair it. These are the pure parts of the recovery
 // (the `$` calls are in register.tsx `storeIo`, the flow is recover.ts): spotting that one error, and naming the backup.
 

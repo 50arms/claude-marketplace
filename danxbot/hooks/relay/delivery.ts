@@ -1,8 +1,8 @@
 import type { TurnState } from '../../types'
 import { RELAY_MARKER } from './config'
 
-// DX-4721: how one relayed event reaches the session, decided here and nowhere else. The server decides urgency, by the record's kind
-// (danxbot packages/danx-dashboard-mcp urgent-records.ts); the plugin only follows it:
+// how one relayed event reaches the session, decided here and nowhere else. The server decides urgency, by the record's kind
+// (the MCP server's urgent-records rule); the plugin only follows it:
 //   not urgent -> a submitted prompt ($.prompt.submit): it waits behind a running turn and wakes an idle session, so it is read as the
 //                 next prompt, after the turn
 //   urgent, a turn running -> a note ($.session.append) the model reads with the next main-loop tool result

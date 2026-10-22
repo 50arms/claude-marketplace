@@ -2,16 +2,16 @@ import { approvalRequestOf } from './approval'
 import type { ApprovalRequest } from './approval'
 import { keyRevokedBy, mcpText, refusalText, toolOutcome } from './mcp'
 
-// DX-4423: what one `plan_connect` answer means to the Sign in button, and what the person is told. The server's own
+// what one `plan_connect` answer means to the Sign in button, and what the person is told. The server's own
 // words are written for the agent (it says "Do not retry unless they ask"), so nothing here passes them on: every
 // message below is the person's. The answers are the danx-dashboard MCP's: `{ state, ... }` while the session holds no
 // key (session-access.ts), the `{ ok, status, body }` envelope once it connects.
 export type SignInStep =
   // a request is waiting for the person's approval (`request`: its page and code): show it, then call again (the call waits
-  // for it). DX-4548: an answer that names no usable request is a `stop`, never a wait: the wait has no round limit, so a
+  // for it). An answer that names no usable request is a `stop`, never a wait: the wait has no round limit, so a
   // call that answered at once with nothing to wait on must not be repeated.
   | { kind: 'waiting'; request: ApprovalRequest }
-  // DX-4548: the person denied the request (the model is told, the others are not)
+  // the person denied the request (the model is told, the others are not)
   | { kind: 'denied' }
   // signed in (and on its plan again when one was asked for)
   | { kind: 'done' }

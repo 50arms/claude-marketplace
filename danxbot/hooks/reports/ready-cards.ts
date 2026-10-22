@@ -1,4 +1,4 @@
-// DX-4534 / DX-4235: the ready-cards Stop check. An orchestrating plan session must keep every unblocked card moving; nothing enforced it
+// the ready-cards Stop check. An orchestrating plan session must keep every unblocked card moving; nothing enforced it
 // (on 2026-10-04 one builder ran while two readied, unblocked cards sat untouched). So a plan-connected session's stop is blocked once
 // while its plan has ready cards nobody holds. Pure: register.tsx reads `GET /api/plans/mine`, then `GET /api/issues` on each board the
 // plan spans, and asks these functions what the answers mean. This file is the plugin's ONE definition of "ready".

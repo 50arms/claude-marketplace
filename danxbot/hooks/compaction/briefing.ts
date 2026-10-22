@@ -1,4 +1,4 @@
-// DX-4993 (PLAN-42 rule R-4): the resume briefing an operator session reads in its first turn after a compaction. A compaction replaces the
+// the resume briefing an operator session reads in its first turn after a compaction. A compaction replaces the
 // conversation with a summary; this hands back what the summary tends to lose and what only the machine knows: the plan, the cards in flight, the
 // sub-agents still running (they carry on through a compaction) and the work not yet pushed. Pure: register.tsx reads each source (the plan view, the
 // engine's agent list, git) and hands them here; a source that could not be read arrives as `unavailable` with its reason, never as an empty one.
@@ -67,7 +67,7 @@ function gitLine(git: Source<GitState>): string {
   return `Work not pushed, in the session's own checkout (${where}): ${parts.join(', ')}.`
 }
 
-// DX-5385: how the main agent picks up after a compaction, in order; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing.
+// how the main agent picks up after a compaction, in order; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing.
 export const RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress."
 
 // the briefing's opening, alone: a resume prompt whose dashboard reads failed still carries it
@@ -78,7 +78,7 @@ export function briefingText(input: BriefingInput): string {
   return `${RESUME_OPENING} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
 }
 
-// DX-5344: a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
+// a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
 // from its summary and the progress notes it kept before compacting, so the briefing names who it is and points at them. `type` and `description` are null when the engine no longer lists the agent.
 export type SubagentBriefingInput = { id: string; type: string | null; description: string | null }
 

@@ -1,7 +1,7 @@
-// DX-4235: the activity rows a plan-connected session reports (`POST /api/plan-sessions/me/activity`), so the dashboard's running set
+// the activity rows a plan-connected session reports (`POST /api/plan-sessions/me/activity`), so the dashboard's running set
 // opens and closes with the session's sub-agents and background shells. Pure: register.tsx decides when and calls the dashboard.
 //
-// The row is the stats wire's `ActivityChange` (danxbot packages/danx-session-telemetry stats-wire.ts): the server parses it strictly
+// The row is the stats wire's `ActivityChange` (the session-telemetry wire): the server parses it strictly
 // (every one of these keys, no other) and merges it into the stored row: `startedAt` keeps the earliest, `lastActivityAt` the latest,
 // and the FIRST `finishedAt` wins, so a running report sent after a finish never re-opens the row.
 
@@ -22,12 +22,11 @@ export type ActivityChange = {
   briefIssueId: string | null
 }
 
-// DX-4235: the closes owed before the session leaves its plan or moves to another are posted within this, so a dead dashboard never holds
+// the closes owed before the session leaves its plan or moves to another are posted within this, so a dead dashboard never holds
 // the leave; past it the leave goes on and the failure is one toast.
 export const LEAVE_CLOSE_DEADLINE_MS = 3_000
 
 // A running sub-agent re-posts its row at most this often from its own tool calls, so one working for minutes never reads as silent
-// (comment 10017 on DX-4235).
 export const LIVENESS_MS = 60_000
 
 // The facts only a transcript knows (who spawned it, effort, its current tool call, how it ended, its card) are sent unknown; the server
@@ -45,8 +44,8 @@ export function agentRow(activityId: string, agentType: string | null, at: numbe
 }
 
 // One background shell, keyed by its background task id: the id the Bash result names (`backgroundTaskId`) is the id the engine's
-// `background_tasks` snapshot lists it under (observed live, DX-4235 comment 12391), which is what lets a Stop close it. `label`: the
-// shell call's redacted description (label.ts `labelOf`, PBLM-2121) on its start; null on its end, which keeps the start's.
+// `background_tasks` snapshot lists it under (observed live), which is what lets a Stop close it. `label`: the
+// shell call's redacted description (label.ts `labelOf`) on its start; null on its end, which keeps the start's.
 export function shellRow(taskId: string, label: string | null, at: number, finishedAt: number | null): ActivityChange {
   return row('bash', taskId, null, label, at, finishedAt)
 }

@@ -1,6 +1,6 @@
-// DX-4997 / DX-4951: the agent pause, as the plugin's hooks read it. A session with nothing it can do tells 50 Arms so (`PUT` this path); while the pause
+// the agent pause, as the plugin's hooks read it. A session with nothing it can do tells 50 Arms so (`PUT` this path); while the pause
 // stands, the dashboard holds the machine's messages, so a hook that would cost the session a paid turn (the ready-cards Stop reminder) stays quiet.
-// (DX-5093: the plan-tab keepalive costs no turn any more, so it ignores the pause.) Pure: register.tsx makes the read and asks these functions what the answer means.
+// (the plan-tab keepalive costs no turn any more, so it ignores the pause.) Pure: register.tsx makes the read and asks these functions what the answer means.
 
 // `GET` answers `{pause}`: null, the session's agent pause, or a usage-limit pause. The read stamps nothing and ends nothing: it is the ONE
 // pause-neutral read (every other call carrying the session header to a card or plan route is the agent's own call and ends its pause).

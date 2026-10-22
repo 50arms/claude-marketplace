@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DX-4538: full-resolution PNG evidence for a card, from any repo. A browser-pane screenshot is a
+// full-resolution PNG evidence for a card, from any repo. A browser-pane screenshot is a
 // downscaled 800px-wide JPEG (region zoom is unsupported), so it is for your own viewing only;
 // attach THIS capture instead. Drives the machine's own Chrome/Edge over the DevTools Protocol with
 // no dependencies (the plugin ships no node_modules). Fails loudly (non-zero) rather than capturing
@@ -56,7 +56,7 @@ async function main() {
   const args = parseCaptureArgs(process.argv.slice(2));
   const loadTimeout = CAPTURE_DEFAULTS.loadTimeoutMs;
   const { session, close } = await launchPage(findBrowser(), loadTimeout);
-  // DX-4539: uncaught page errors, kept to name the cause when the page never renders or never becomes ready.
+  // uncaught page errors, kept to name the cause when the page never renders or never becomes ready.
   const pageErrors = new PageErrors();
   session.on((method, p) => {
     if (method === "Runtime.exceptionThrown") pageErrors.record(p.exceptionDetails);

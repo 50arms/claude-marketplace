@@ -4,7 +4,7 @@ import type { PacingVerdict } from '../../types'
 import { claimSlot, releaseClaim, reportClaimFailure } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
-// DX-4340 (PLAN-29 R-10), DX-5593: the usage-pacing guard on sub-agent spawns. The budget is a STRICT cap: N means exactly N agents at all times.
+// The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap: N means exactly N agents at all times.
 // So a spawn does not read a count and decide for itself: it CLAIMS its slot from danxbot (POST /api/pacing/agents/claim, which places the
 // session on its account itself and, under one lock, reads the live count and budget and takes the slot or refuses), and the plugin acts on the
 // answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module decides what the answer means (`decideSpawn`, pure) and wires
@@ -14,7 +14,7 @@ import type { PacingEnv } from './pacing-line'
 // writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
 // answer) REFUSES the spawn, because an allowed spawn there would be an agent nobody counted (the failure is toasted once per text). The allows
 // without a claim are danxbot's own answer that it sees no account to cap (no usage report, no verdict, pacing off) and a signed-out session:
-// danxbot counts none of its agents. A danx-dashboard MCP server that never connected is refused like any failed claim (DX-5593 problem 2503).
+// danxbot counts none of its agents. A danx-dashboard MCP server that never connected is refused like any failed claim.
 //
 // These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.

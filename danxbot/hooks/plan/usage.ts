@@ -1,10 +1,10 @@
 import type { SessionRateLimit } from 'claude-code'
 
-// DX-4336 (PLAN-29 R-1): what the session reports of its account's rate-limit windows. Pure (no `$`): register.tsx reads
+// what the session reports of its account's rate-limit windows. Pure (no `$`): register.tsx reads
 // `$.session.usage().rateLimits`, hands them here and sends the result to danxbot (PUT /api/plan-sessions/me/usage).
 
 export type UsageWindowBody = { percentUsed: number; resetsAt: string }
-// The report's body: danxbot's parseSessionUsage (src/issues/db/plan-session-usage.ts) refuses any other key.
+// The report's body: the dashboard refuses any other key.
 export type UsageBody = { reportedAt: string; measuredAt: string; accountUuid?: string; fiveHour?: UsageWindowBody; sevenDay?: UsageWindowBody }
 
 // The windows the harness names `five_hour` and `seven_day`; a gateway's `spend_limit` is not a rate-limit window and is left out.
@@ -21,9 +21,9 @@ function windowOf(limits: readonly SessionRateLimit[], kind: WindowKind): UsageW
 
 // The report for `limits`, sent at `nowMs`, or null when there is nothing to report: off a subscription the harness has no windows, and
 // until a response has been seen (`measuredAtMs` null) there is no figure whose age could be told. `measuredAtMs` is when the last API
-// response the figure came from arrived (CAV-6): only a response advances it, never the tick that re-sends an idle session's frozen
+// response the figure came from arrived: only a response advances it, never the tick that re-sends an idle session's frozen
 // figure, so danxbot can tell the session that is working from the one that is only ticking. `accountUuid` is
-// CLAUDE_CODE_ACCOUNT_UUID, set only by a desktop-hosted session. The report carries no agent count (DX-5593): danxbot derives the account's
+// CLAUDE_CODE_ACCOUNT_UUID, set only by a desktop-hosted session. The report carries no agent count: danxbot derives the account's
 // running agents itself from the sessions' main threads, their sub-agent rows and its worker dispatches.
 export function usageBody(limits: readonly SessionRateLimit[], nowMs: number, measuredAtMs: number | null, accountUuid: string | undefined): UsageBody | null {
   if (measuredAtMs === null) return null
