@@ -45,7 +45,7 @@ describe('classification: the signed-out answer is its own state, not an error',
   })
 
   test('the first call, a later call, and the revoked wording each end the load as signed-out', async () => {
-    const list = { ok: true, status: 200, body: { plans: [], total: 0, session: { plan_id: 23, plan_name: 'x' }, dashboard_url: 'http://localhost:5555' } }
+    const list = { ok: true, status: 200, body: { plans: [], total: 0, session: { plan_id: 23, plan_name: 'x', card_id: null, card_title: null, agent: null }, dashboard_url: 'http://localhost:5555' } }
     expect(await loadPlan(async () => halt(SIGN_IN_HALT), 't', null)).toMatchObject({ phase: 'signed-out', error: null, connected: null, refreshedAt: 't' })
     expect(await loadPlan(async () => halt(KEY_LAPSED_HALT), 't', null)).toMatchObject({ phase: 'signed-out' })
     // the key dropped between the plan list and the plan's own read
@@ -97,7 +97,7 @@ describe('a key a person revoked (DX-4418): the stop halt of MCP 0.1.225', () =>
   })
 
   test('the first call and a later call each end the load as key-revoked, naming who', async () => {
-    const list = { ok: true, status: 200, body: { plans: [], total: 0, session: { plan_id: 23, plan_name: 'x' }, dashboard_url: 'http://localhost:5555' } }
+    const list = { ok: true, status: 200, body: { plans: [], total: 0, session: { plan_id: 23, plan_name: 'x', card_id: null, card_title: null, agent: null }, dashboard_url: 'http://localhost:5555' } }
     expect(await loadPlan(async () => halt(KEY_REVOKED_HALT), 't', null)).toMatchObject({ phase: 'key-revoked', revokedBy: REVOKER, error: null, connected: null, refreshedAt: 't' })
     const later = await loadPlan(async (_m, path) => (path === '/api/plans' ? list : halt(KEY_REVOKED_HALT)), 't', null)
     expect(later).toMatchObject({ phase: 'key-revoked', revokedBy: REVOKER })

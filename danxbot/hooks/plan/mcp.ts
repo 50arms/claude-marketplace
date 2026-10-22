@@ -70,6 +70,22 @@ export function isSignedOut(o: ToolOutcome): boolean {
   return !o.ok && o.status === 0 && typeof o.body?.error === 'string' && o.body.error.includes(SIGNED_OUT_MARK)
 }
 
+// DX-5549 / DX-5554: the MCP's agent gate. Once `plan_connect` answered that no team agent is free, every other dashboard call of the session answers
+// that same block (packages/danx-dashboard-mcp agent-gate.ts: `{state, instruction, ...}` as JSON, an error result) until a plan_connect holds an agent.
+// The state when the outcome is that halt, else null.
+export type AgentBlock = 'agent_needed' | 'agent_limit_reached'
+export function agentBlockOf(o: ToolOutcome): AgentBlock | null {
+  if (o.ok || o.status !== 0 || typeof o.body?.error !== 'string') return null
+  let parsed: any
+  try {
+    parsed = JSON.parse(o.body.error)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object' || typeof parsed.instruction !== 'string') return null
+  return parsed.state === 'agent_needed' || parsed.state === 'agent_limit_reached' ? parsed.state : null
+}
+
 // DX-4418: who revoked the key, when the text is the MCP's stop halt for a key a person revoked (see KEY_REVOKED_HALT); null for
 // any other text. Anchored at the start: nothing that merely quotes the sentence counts.
 export function keyRevokedBy(text: string): string | null {

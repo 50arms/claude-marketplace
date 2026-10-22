@@ -10,22 +10,43 @@ throughout; this skill is the plan mechanics.
 
 ## Start (every new, resumed or compacted session)
 
-1. Plan link in the prompt → that plan. Else list plans; your session's plan right → step 3.
-   Else find it in the list; none → create one.
-2. Your session title is `{Name}: {plan id} {short title}` (`{Name}` your own short given name).
-   `plan_connect({plan_id})` answers `naming` with the exact title and a free name: rename the
-   thread to it (desktop `set_session_title`; terminal: ask the person to `/rename`), then
-   `plan_connect({plan_id, title})` again — the server refuses a wrong format or a name another live session holds.
-3. A session holds no dashboard key until its user approves it. `plan_connect` answering
-   `approval_required` (or `approval_pending`) is not a failure: show the user the confirm code
-   and the approval URL, and once they approve call `plan_connect` again. The plugin shows the
-   link and code at once and opens nothing: the person clicks the link, so never open the URL
-   yourself (two tabs). The same holds for `request_permission`. Every other dashboard tool
-   answers "not signed in" until then.
-4. Orient from the connect briefing, else read the plan's records, architecture and cards,
+1. Sign in: `plan_connect`, with the plan's `plan_id` when you know it (a plan link in the
+   prompt, or your session's plan in `GET /api/plans`), else with no `plan_id`. A session holds
+   no dashboard key until its user approves it: `approval_required` (or `approval_pending`) is
+   not a failure. Show the user the confirm code and the approval URL, and once they approve
+   call `plan_connect` again. The plugin shows the link and code at once and opens nothing: the
+   person clicks the link, so never open the URL yourself (two tabs). The same holds for
+   `request_permission`. Every other dashboard tool answers "not signed in" until then.
+2. Take your identity from the reply: signing in makes you one of the team's agents, and the
+   reply's `agent` and `agentInstruction` say which. Use that agent's name and personality for
+   the whole session and sign every note, comment and message with its name; never choose a
+   name yourself. No agent is free:
+   - `agent_needed` → propose one at once, without asking in chat: `danxbot_api`
+     `POST /api/team/agent-proposals` with `{name, bio}` (a first name not taken in the team, a
+     short bio of the personality you want) answers `{public_id, url, expires_at}`. With an
+     avatar image you made (png, jpeg or webp, under 1 MB), `POST
+     /api/team/agent-proposals/<public_id>/avatar` with `body_file` set to its absolute path.
+     Give the person the `url`: they review the proposal and press Create, and you are woken
+     with an event saying the agent was created. Then call `plan_connect` again to take it.
+   - `agent_limit_reached` → tell the person the limit the reply names (`held` of `limit`, and
+     who can raise it, `raised_by`), or that ending another session frees its agent; call
+     `plan_connect` again once they say one is free.
+   Until an agent is held, every other dashboard call answers that same state: do no other
+   dashboard work.
+3. What you work on: a plan → `plan_connect({plan_id})`; none in the list fits → create one.
+   One card on no plan (a one-off, a quick fix, an epic that is not a plan) →
+   `card_connect({card_id})` instead; a card on a plan is refused `card_on_plan` (connect to
+   that plan). A session holds a plan or a card, never both: connecting to one lets go of the
+   other. Neither → stay signed in, on no plan.
+4. Your session title follows what you hold, `{Name}` being your agent's name: on a plan
+   `{Name}: PLAN-NNN {short title}`, on a card `{Name}: {CARD-ID} {card title}`, on neither
+   `{Name}`. A connect reply's `naming` block (status `needed`) gives the exact title: rename
+   the thread to it (desktop `set_session_title`; terminal: ask the person to `/rename`), then
+   connect again with that `title`.
+5. Orient from the connect briefing, else read the plan's records, architecture and cards,
    plus one batch read of its In-Progress/open-problem cards and the newest handoff agent note
    (`agent_notes` on the card read).
-5. Follow `plan_connect`'s browser instruction as written.
+6. Follow `plan_connect`'s browser instruction as written.
 
 ## Where things go
 

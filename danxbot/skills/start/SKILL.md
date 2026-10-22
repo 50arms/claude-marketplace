@@ -33,7 +33,9 @@ the call that was refused. Ask for nothing else.
 
 Call `plan_connect` with no plan. If it answers `approval_required` or `approval_pending`,
 show the person the confirm code and the approval URL (the plugin shows the link and code at once and opens nothing: the person clicks the link, so never open the URL yourself),
-and call `plan_connect` again once they approve.
+and call `plan_connect` again once they approve. Signing in also makes this session one of the
+team's agents: an `agent_needed` or `agent_limit_reached` answer is handled as
+`danxbot:plan-workflow`'s Start step 2 says, before any other step here.
 
 ### 2. Allow the plugin's own calls in auto permission mode
 
@@ -125,8 +127,8 @@ work one.
 2. Otherwise ask what they want to build first, in their own words. Name the plan after
    it and `POST /api/plans` with `{name}`. The answer carries the plan's id.
 
-Then load `danxbot:plan-workflow` and follow its Start steps with that plan: name the
-session, connect with `plan_connect`, and orient from the briefing. This session has no
+Then load `danxbot:plan-workflow` and follow its Start steps with that plan: connect with
+`plan_connect`, title the session as its `naming` block says, and orient from the briefing. This session has no
 default board: every call that works on a card or a plan's cards names the board, the
 `board` argument of `danxbot_api` set to the board id from step 5 (`<repo>:<slug>`), and
 `POST /api/issues` carries it as `board` in its body. After a restart or a compaction

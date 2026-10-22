@@ -1,7 +1,7 @@
 import type { PlanView, RelayState } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
-import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DISCONNECT_WORD, DONUT_BAND_PX, SIGNING_IN_LABEL, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
+import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DISCONNECT_WORD, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
@@ -10,6 +10,8 @@ import { bandLabel, bandLabelCols, eventsWarning, problemBadge, viewPercent } fr
 
 // The controls' labels the width budget counts.
 const OPEN_PLAN_LABEL = 'Open plan'
+// DX-5554: a session holding a stand-alone card opens the card's own page
+const OPEN_CARD_LABEL = 'Open card'
 const CLOSE_LABEL = '×'
 
 // The band above the prompt: the plan line (indicator, label, then the events warning / the open-problem count (DX-4420) / the permission
@@ -51,9 +53,11 @@ export function renderBand(
   const approve = signedOut ? signIn : null
   // DX-4418: a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
-  // DX-4521: both links are in every state: the plan's page when connected, else the dashboard's plans list. Only an origin never
+  // DX-4521: both links are in every state: the plan's page when connected, the held card's page (DX-5554) when it holds one, else the dashboard's plans list. Only an origin never
   // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
-  const linkUrl = plan !== null ? planUrl(plan) : v.dashboardUrl !== null ? plansUrl(v.dashboardUrl) : null
+  const card = plan === null && v.dashboardUrl !== null ? v.card : null
+  const linkUrl = plan !== null ? planUrl(plan) : v.dashboardUrl === null ? null : card !== null ? boardCardUrl(v.dashboardUrl, card.id) : plansUrl(v.dashboardUrl)
+  const openLabel = card !== null ? OPEN_CARD_LABEL : OPEN_PLAN_LABEL
   // DX-5232: Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`); the events warning shows only while the events are not flowing.
   const disconnecting = busyKey.isDisconnecting(busy)
   // DX-5605: Disconnect is a red control beside the close x. The plugin UI API has no icon or tooltip prop on a Button (ButtonProps: key, label,
@@ -70,7 +74,7 @@ export function renderBand(
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
     ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
-    ...(linkUrl !== null ? [{ label: OPEN_PLAN_LABEL, isButton: false }] : []),
+    ...(linkUrl !== null ? [{ label: openLabel, isButton: false }] : []),
     ...(plan !== null ? [{ label: disconnectShown, isButton: true }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
@@ -121,7 +125,7 @@ export function renderBand(
         {/* DX-4435: the newest open permission request: its approval page, with the code to check against the page. */}
         {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
         {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
-        {linkUrl !== null && mdLink(E, 'open-tab', OPEN_PLAN_LABEL, linkUrl)}
+        {linkUrl !== null && mdLink(E, 'open-tab', openLabel, linkUrl)}
         {plan !== null && (
           <Button key="disconnect" plain label={disconnectName} dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
             <Text color={DANGER}>{disconnectShown}</Text>

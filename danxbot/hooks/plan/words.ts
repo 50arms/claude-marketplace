@@ -25,7 +25,9 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
 }
 
 // The band's label for a view. `maxCols`: the columns the label may take (absent:
-// no limit, the layout truncates); a connected plan's name is cut to what `PLAN-NN · ` leaves, with an ellipsis.
+// no limit, the layout truncates); a connected plan's name (or a held card's title) is cut to what `PLAN-NN · ` leaves, with an ellipsis.
+// DX-5554: the team agent the session signs in as leads (`Tendai · PLAN-NN · name`), and a session holding a stand-alone card names the card
+// where a plan would be (`Tendai · DX-77 · title`).
 export function bandLabel(v: PlanView, maxCols?: number): string {
   // DX-4423: a session with no key reads signed out, in the operator's words, whatever it was connected to before.
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
@@ -36,13 +38,20 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
   // DX-4419: the operator's wording for ANY failed load, even one that kept the connected plan.
   if (v.phase === 'error') return `${BRAND}: Disconnected`
   if (v.phase === 'loading' && !v.refreshedAt) return `${BRAND}: loading…`
-  if (!v.connected) return `${BRAND}: not connected to a plan`
+  // DX-5549: a signed-in session the agent gate holds: no plan or card can be read until it holds a team agent
+  if (v.agentBlock !== null) return `${BRAND}: ${v.agentBlock === 'agent_needed' ? 'waiting for a team agent' : 'no team agent free (limit reached)'}`
+  const held = v.connected !== null ? { ref: v.connected.ref, name: v.connected.name } : v.card !== null ? { ref: v.card.id, name: v.card.title } : null
+  if (held === null) return v.agent === null ? `${BRAND}: ${NOTHING_HELD}` : `${BRAND}${NAME_SEP}${v.agent.name}: ${NOTHING_HELD}`
   // DX-4420: a connected band reads `PLAN-NN · name`; the Danxbot prefix stays on the states with no plan.
-  const { ref, name } = v.connected
+  const lead = v.agent === null ? '' : `${v.agent.name}${NAME_SEP}`
+  const { ref, name } = held
   const sepCols = ref ? NAME_SEP.length : 0
-  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - ref.length - sepCols)
-  return [ref, ellipsize(name, nameCols)].filter(Boolean).join(NAME_SEP)
+  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - lead.length - ref.length - sepCols)
+  return lead + [ref, ellipsize(name, nameCols)].filter(Boolean).join(NAME_SEP)
 }
+
+// DX-5554: a signed-in session that holds neither a plan nor a card
+const NOTHING_HELD = 'not connected to a plan or card'
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula written inline at
 // danxbot's frontend/src/routes/plans/PlanStatusSummary.tsx:202 (the total) and :218 (the percent) (DX-3766):
@@ -78,7 +87,8 @@ export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   if (v.phase === 'key-revoked') return KEY_REVOKED_FOOTER
   if (v.phase === 'blocked' && !v.connected) return BLOCKED_LABEL
-  return v.connected ? `${BRAND} · ${v.connected.ref}` : BRAND
+  if (v.connected) return `${BRAND} · ${v.connected.ref}`
+  return v.card ? `${BRAND} · ${v.card.id}` : BRAND
 }
 
 // DX-5232: the band's events warning: why the plan's events are not flowing, or null while they are.

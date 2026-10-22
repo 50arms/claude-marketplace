@@ -89,6 +89,9 @@ export const EMPTY: PlanView = {
   serverNotConnected: false,
   dashboardUrl: null,
   connected: null,
+  agent: null,
+  card: null,
+  agentBlock: null,
   statusBreakdown: null,
   inProgress: [],
   openProblems: 0,
@@ -134,8 +137,9 @@ export function cardUrl(plan: ConnectedPlan, cardId: string): string {
 
 // DX-4448: a card on a board of its own, outside the connected plan: the plan-free card route (danxbot
 // frontend/src/app/routes.tsx `board/:id`). Plan cards go through cardUrl.
-export function boardCardUrl(plan: ConnectedPlan, cardId: string): string {
-  return `${plan.dashboardUrl}/board/${cardId}`
+// DX-5554: also the band's link to the stand-alone card a session holds.
+export function boardCardUrl(dashboardUrl: string, cardId: string): string {
+  return `${dashboardUrl}/board/${cardId}`
 }
 
 export const DISCONNECT_WORD = 'Disconnect'

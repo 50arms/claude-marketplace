@@ -45,6 +45,11 @@ export const KEY_LAPSED_HALT = `The dashboard no longer accepts this session's k
 export const REVOKER = 'dana'
 export const REVOKED_AT = '2026-10-04T07:00:00.000Z'
 export const KEY_REVOKED_HALT = `STOP ALL WORK NOW. ${REVOKER} revoked your access to the danxbot dashboard at ${REVOKED_AT}.\n\nCommit your work in progress now (commit what you have; do not run agent-finalize.sh and do not merge). Then end this session: tell the person what you committed and stop.\n\nDo not call plan_connect or any other danxbot dashboard tool again, do not request access again and do not look for another route.`
+// DX-5549: the MCP agent gate's answer to a dashboard call while the session holds no team agent: the sign-in's own block, as JSON
+export const AGENT_GATE_HALT = (state: 'agent_needed' | 'agent_limit_reached') =>
+  state === 'agent_needed'
+    ? { state, instruction: 'You have no team agent to sign in as: none is free for this person. Propose one yourself.' }
+    : { state, cap: 'member', limit: 1, held: 1, raised_by: 'a team owner or admin', instruction: 'No team agent is free. Tell the person.' }
 export const APPROVAL_URL = 'http://localhost:5555/connect/abc123'
 export const CONFIRM_CODE = 'WXYZ2345'
 // the approval request plan_connect answers while signed out, and what its next calls answer meanwhile (instruction text as the server words it)
@@ -232,6 +237,16 @@ export function dashboard(
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card' }] as { id: string; title: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
+    // DX-5554: the team agent the session signs in as (GET /api/plans `session.agent`), and the stand-alone card it holds instead of a plan
+    // (`session.card_id` / `card_title`); neither by default. A session with none of a plan, a card and an agent has no session row (`session: null`).
+    agent: null as { id: number; name: string; avatar_url: string | null } | null,
+    card: null as { id: string; title: string } | null,
+    // DX-5554: what DELETE /api/plan-sessions/me/agent (the release at session exit) answers: `{released}` by default (true while an agent is held), an
+    // error status, the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock / never (`hangs`)
+    release: {} as { status?: number; deny?: string; delayMs?: number; hangs?: boolean },
+    // DX-5549 / DX-5554: the MCP's agent gate. After a plan_connect answered that no team agent is free, every danxbot_api call but the two
+    // proposal routes answers that same block (AGENT_GATE_HALT) as an error result, until a plan_connect holds an agent
+    agentGate: null as 'agent_needed' | 'agent_limit_reached' | null,
     // DX-4234: the context reads never answer (a hung dashboard), or answer after this many ms of the fake clock
     contextHangs: false,
     contextDelayMs: 0,
@@ -333,14 +348,23 @@ export function dashboard(
       return reply({
         plans: options.emptyPlanListOf ? [] : options.planOutsideList ? plans.filter(p => p.id !== world.planId) : plans,
         ...(options.noTotal ? {} : { total: options.emptyPlanListOf ?? options.plansTotal ?? plans.length }),
+        // DX-5551 / DX-5553: the session row as the plan_session resource projects it, for any registered session (on a plan, holding a card, or
+        // on neither); null only for a session with no row
         session:
-          world.planId === null
+          world.planId === null && world.card === null && world.agent === null
             ? null
-            : { plan_id: world.planId, plan_name: plans.find(p => p.id === world.planId)?.name ?? 'Far plan' },
+            : {
+                plan_id: world.planId,
+                plan_name: world.planId === null ? null : (plans.find(p => p.id === world.planId)?.name ?? 'Far plan'),
+                card_id: world.card?.id ?? null,
+                card_title: world.card?.title ?? null,
+                agent: world.agent,
+              },
+        // DX-5553: a session holding a card is bound to work and keeps its health, as one on a plan does
         sessionListenerAttached:
           options.rawListener !== undefined
             ? options.rawListener
-            : world.planId === null || world.listener === null
+            : (world.planId === null && world.card === null) || world.listener === null
             ? null
             : { attached: options.attached ?? world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
@@ -531,6 +555,8 @@ export function dashboard(
   const contextReads: string[] = []
   // DX-4632: the arguments of each `restart_notice` call
   const restartCalls: unknown[] = []
+  // DX-5554: each release of the session's team agent (DELETE /api/plan-sessions/me/agent), kept out of `calls` and `api` like the context reads
+  const releaseCalls: { method: string; path: string; background: unknown }[] = []
   // DX-4997 / DX-5033: the dashboard's rule for the agent pause. A `danxbot_api` call marked `background: true` (the plugin's own work) never ends it;
   // an unmarked one (the agent's own call) does, except the route that manages the pause itself.
   const serverPauseRule = (args: any) => {
@@ -627,6 +653,14 @@ export function dashboard(
       if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
     }
+    // DX-5549: the agent gate closes every danxbot_api call but the proposal routes (packages/danx-dashboard-mcp agent-gate.ts); each refused call is still
+    // recorded where its suite counts it
+    if (e.server === SERVER && e.tool === 'danxbot_api' && world.agentGate !== null && !(e.args.method === 'POST' && e.args.path.startsWith('/api/team/agent-proposals'))) {
+      if (isContextRead(e.args)) contextReads.push(e.args.path)
+      else if (e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
+      else calls.push({ server: e.server, tool: e.tool, args: e.args })
+      return { value: { content: [{ type: 'text', text: JSON.stringify(AGENT_GATE_HALT(world.agentGate)) }], isError: true } }
+    }
     // DX-4234 / DX-4632: the restart notice is the server's own tool, named without arguments; kept out of `calls` like the context reads
     if (e.server === SERVER && e.tool === 'restart_notice') {
       restartCalls.push(e.args)
@@ -635,6 +669,19 @@ export function dashboard(
       if (world.restart.deny !== undefined) return { deny: world.restart.deny }
       if (world.restart.raw !== undefined) return { value: world.restart.raw }
       return { value: text(world.restart.json ?? { notice: null }) }
+    }
+    // DX-5554: the release of the session's team agent at session exit, answered as the real route answers (`{released}`)
+    if (e.server === SERVER && e.tool === 'danxbot_api' && e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') {
+      releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
+      if (world.release.hangs) await hung.promise
+      if (world.release.delayMs !== undefined) await clock.sleep(world.release.delayMs)
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (world.release.deny !== undefined) return { deny: world.release.deny }
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
+      if (world.release.status !== undefined) return { value: reply({ error: 'release boom' }, world.release.status) }
+      const released = world.agent !== null
+      world.agent = null
+      return { value: reply({ released }) }
     }
     // DX-4234: the reads the context hooks make (is the session on a plan, the registry's event text, an earlier session's restart notice) are
     // kept out of `calls` and `api` like the pacing reads, so the suites that count a load's reads stay about their own subject
@@ -1059,7 +1106,7 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an

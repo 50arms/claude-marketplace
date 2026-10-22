@@ -6,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { parsePacing, pacingLine, refreshPacing, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
-import { test, dashboard, startSession } from './plan-kit'
+import { test, EVENT_TEXT, dashboard, startSession } from './plan-kit'
 
 const LINE = 'Pacing: this account is over pace; 0 agents may run on the account until 2026-10-08 12:00 UTC. Do the work yourself, cheaply.'
 const known = { account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 2, line: LINE, spend: null, limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroom_minutes: -30, resets_in_minutes: 100, used_percent: 96, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null }
@@ -54,7 +54,7 @@ describe('the SubagentStart pacing line', () => {
   async function started($: any, on: any, options: Parameters<typeof dashboard>[1]) {
     resetPacing()
     on('classic.SubagentStart', () => ({}) as any)
-    // DX-4234: a session on no plan, so the sub-agent gets no registry event text beside the line (context-event.test.tsx has that one)
+    // DX-5554: a signed-in session on no plan: the sub-agent gets the registry's event text first (context-event.test.tsx has that one), then the line
     const d = dashboard(on, { connected: false, ...options })
     await startSession($, d, 'desktop')
     const r = await $.classic.SubagentStart(START)
@@ -65,20 +65,20 @@ describe('the SubagentStart pacing line', () => {
 
   test('hands the line to the new sub-agent as additionalContext', async ($, on) => {
     const { d, r } = await started($, on, { pacingLine: { body: known } })
-    expect(r.additionalContext).toEqual([LINE])
+    expect(r.additionalContext).toEqual([EVENT_TEXT('sub_agent_start'), LINE])
     // one read at session start serves the sub-agent start too
     expect(d.pacingReads).toHaveLength(1)
   })
 
   test('says nothing when danxbot has no line for this session', async ($, on) => {
     const { d, r } = await started($, on, { pacingLine: { body: unknown } })
-    expect(r.additionalContext).toBeUndefined()
+    expect(r.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])
     expect(d.toasts.filter(t => t.startsWith('Usage pacing'))).toEqual([])
   })
 
   test('a failed read starts the sub-agent without a line', async ($, on) => {
     const { r } = await started($, on, { pacingLine: { status: 500 } })
-    expect(r.additionalContext).toBeUndefined()
+    expect(r.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])
   })
 })
 

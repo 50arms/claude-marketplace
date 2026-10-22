@@ -1,6 +1,7 @@
 import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
 import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, PREFIX_PATTERN, SESSION_PLAN_PROBE, STATUS_KEYS } from './config'
-import { isSignedOut, outcomeRevokedBy } from './mcp'
+import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './mcp'
+import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
@@ -34,6 +35,12 @@ export function errText(r: Api): string {
 class SignedOut extends Error {}
 // DX-4982: auto mode's classifier refused the plugin's own call (`Api.refusal`)
 class ClassifierBlocked extends Error {}
+// DX-5549: the MCP's agent gate answered for the call (the session holds no team agent yet)
+class AgentBlocked extends Error {
+  constructor(readonly state: AgentBlock) {
+    super(state)
+  }
+}
 class KeyRevoked extends Error {
   constructor(readonly by: string) {
     super(by)
@@ -51,6 +58,8 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
     const by = outcomeRevokedBy(r)
     if (by !== null) throw new KeyRevoked(by)
     if (isSignedOut(r)) throw new SignedOut()
+    const blocked = agentBlockOf(r)
+    if (blocked !== null) throw new AgentBlocked(blocked)
     return r
   }
   try {
@@ -59,6 +68,8 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
     if (err instanceof KeyRevoked) return { ...EMPTY, phase: 'key-revoked', revokedBy: err.by, refreshedAt }
     if (err instanceof ClassifierBlocked) return { ...EMPTY, phase: 'blocked', refreshedAt }
     if (err instanceof SignedOut) return { ...EMPTY, phase: 'signed-out', refreshedAt }
+    // DX-5549: signed in, on no plan and no card, waiting for an agent: a ready view, so the relay runs (the session's wake comes through it)
+    if (err instanceof AgentBlocked) return { ...EMPTY, phase: 'ready', agentBlock: err.state, refreshedAt }
     throw err
   }
 }
@@ -82,7 +93,10 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   if (listener === MALFORMED_LISTENER) {
     return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
   }
-  const noPlan = { dashboardUrl, connected: null, listener }
+  // DX-5554: the agent the session signs in as and the card it holds, from the same session row
+  const holds = readSessionHolds(session)
+  if ('error' in holds) return { ...EMPTY, phase: 'error', error: holds.error }
+  const noPlan = { dashboardUrl, connected: null, listener, ...holds }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
   // One load of everything about the connected plan: the plan itself (its status counts),
@@ -111,7 +125,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     dashboardUrl,
   }
   const read = readAllCards(allCards, connectedId)
-  const base = { dashboardUrl, connected, listener, statusBreakdown: breakdown, links: readLinks(boards, read, planR.body.card_count) }
+  const base = { dashboardUrl, connected, listener, ...holds, statusBreakdown: breakdown, links: readLinks(boards, read, planR.body.card_count) }
 
   // The in-progress bucket: the same completeness rule.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
