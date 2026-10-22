@@ -69,8 +69,8 @@ import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, toPending } f
 import type { Queued } from './relay/outbox'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
-import { liveAgentsAt, usageBody } from './plan/usage'
-import type { LiveAgent } from './plan/usage'
+import { usageBody } from './plan/usage'
+import type { UsageBody } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
@@ -84,75 +84,71 @@ import type { PauseRead } from './reports/pause'
 import { storeDoor, type StoreCall, type StoreIo } from './store/recover'
 
 // $.state atoms: the engine's scan reads an atom's plugin and key only from a const in the file that
-// uses it (DX-4232), so they are declared here, not in ./plan/config.
+// uses it, so they are declared here, not in ./plan/config.
 const view = atom({ plugin: 'danxbot', key: 'view' } as const, EMPTY)
 const gate = atom({ plugin: 'danxbot', key: 'gate' } as const, { inFlight: false, again: false, at: null } as RefreshGate)
 // the band is hidden for the session: its own atom, since refresh replaces `view` whole
 const dismissed = atom({ plugin: 'danxbot', key: 'dismissed' } as const, false)
 const busy = atom({ plugin: 'danxbot', key: 'busy' } as const, [] as string[])
 const title = atom({ plugin: 'danxbot', key: 'title' } as const, null as string | null)
-// DX-4982: the plan the model's own successful plan_connect named, kept for the `blocked` view (the plugin's own reads are refused by auto mode's
+// the plan the model's own successful plan_connect named, kept for the `blocked` view (the plugin's own reads are refused by auto mode's
 // classifier, so nothing else names the plan); null after any leave, a /clear or a resume, a session start, and every loaded view.
 const modelPlan = atom({ plugin: 'danxbot', key: 'modelPlan' } as const, null as { id: number; name: string } | null)
-// DX-4630: the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
+// the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
 // ends (approved, denied, expired and renewed, or the conversation ended). The band draws it as a Markdown link and the
 // code the moment it exists. Also what tells a watch is running.
 const signInRequest = atom({ plugin: 'danxbot', key: 'signInRequest' } as const, null as ApprovalRequest | null)
-// DX-4435: the model's `request_permission` requests not yet decided, oldest first; the band counts them.
+// the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: 'danxbot', key: 'permissionRequests' } as const, [] as PermissionRequest[])
-// DX-4508: the main session's transcript path (the classic events carry it).
+// the main session's transcript path (the classic events carry it).
 const transcript = atom({ plugin: 'danxbot', key: 'transcript' } as const, null as string | null)
-// DX-4336: the text of the last usage report's failure (null while the reports are accepted), so a failure that repeats every tick is
+// the text of the last usage report's failure (null while the reports are accepted), so a failure that repeats every tick is
 // shown once, not every minute.
 const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null as string | null)
-// DX-4336: when the last API response arrived (epoch ms), the age of the usage figure; null until the session has seen one.
+// when the last API response arrived (epoch ms), the age of the usage figure; null until the session has seen one.
 const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null as number | null)
-// DX-4336: the sub-agents running now (id and start time), from SubagentStart / SubagentStop. Keyed by id, not a counter: a stop for an agent
-// that was never counted (a reload lost the start, a duplicate stop) changes nothing, so the count cannot go negative; an entry older than
-// SUBAGENT_LIVE_MAX_MS (an agent that died with no stop) is no longer counted.
-const liveAgents = atom({ plugin: 'danxbot', key: 'liveAgents' } as const, [] as LiveAgent[])
-// DX-4233: the plan event relay's state (the band's events warning). DX-4721: and the main loop's turn (TurnState).
+// the plan event relay's state (the band's events warning). And the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
-// DX-5232: the events warning the band last showed (null: none), so its reason is told once on the transition into it.
+// the events warning the band last showed (null: none), so its reason is told once on the transition into it.
 const eventsWarned = atom({ plugin: 'danxbot', key: 'eventsWarned' } as const, null as string | null)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
-// DX-4234: the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
+// the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
 const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
-// DX-4234: a session start the model has not been told about. On a desktop or headless startup, resume and fork the engine has not bound the
+// a session start the model has not been told about. On a desktop or headless startup, resume and fork the engine has not bound the
 // session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
 // prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
 const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, null as PendingStart)
-// DX-4234: the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
+// the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
 const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, null as string | null)
-// DX-3900 / DX-4806: the desktop app hosts this session (see the keepalive); sticky for the session, raised by CLAUDE_CODE_ENTRYPOINT=claude-desktop or
+// the desktop app hosts this session (see the keepalive); sticky for the session, raised by CLAUDE_CODE_ENTRYPOINT=claude-desktop or
 // surfaces() at session.start, or by session.attach.
 const desktopHosted = atom({ plugin: 'danxbot', key: 'desktopHosted' } as const, false)
-// DX-4806: when the current keepalive idle period began (epoch ms): the last main-loop turn end, or the start of the plan connection. A reload
+// when the current keepalive idle period began (epoch ms): the last main-loop turn end, or the start of the plan connection. A reload
 // of the module arms from it, so the period is not restarted by the reload; null while no plan is followed.
 const idleSince = atom({ plugin: 'danxbot', key: 'idleSince' } as const, null as number | null)
-// DX-4997: the person was told once that this dashboard has no agent-pause route (a plugin newer than the dashboard).
+// the person was told once that this dashboard has no agent-pause route (a plugin newer than the dashboard).
 const olderDashboardTold = atom({ plugin: 'danxbot', key: 'olderDashboardTold' } as const, false)
-// DX-5093: the person was told once that the Browser pane is not reachable from the plugin, so the plan tab is not kept open (a reload keeps it).
+// the person was told once that the Browser pane is not reachable from the plugin, so the plan tab is not kept open (a reload keeps it).
 const browserMissingTold = atom({ plugin: 'danxbot', key: 'browserMissingTold' } as const, false)
-// DX-5231: the leftover compaction-trigger variables an older plugin version armed were cleared in this process. $.state because the variables live in the process: a module reload keeps both.
+// the leftover compaction-trigger variables an older plugin version armed were cleared in this process. $.state because the variables live in the process: a module reload keeps both.
 const leftoverArmingCleared = atom({ plugin: 'danxbot', key: 'leftoverArmingCleared' } as const, false)
-// DX-5222: the percent CLAUDE_AUTOCOMPACT_PCT_OVERRIDE holds because the plugin armed it for the sub-agents (null: the plugin armed none). $.state because the variable lives in the process: a module reload keeps both.
+// the percent CLAUDE_AUTOCOMPACT_PCT_OVERRIDE holds because the plugin armed it for the sub-agents (null: the plugin armed none). $.state because the variable lives in the process: a module reload keeps both.
 const armedPercent = atom({ plugin: 'danxbot', key: 'armedPercent' } as const, null as number | null)
-// DX-5222: this host runs `session.compact`: raised by the first such event of the session. $.state, so a module reload keeps it (a reload that forgot it would take the armed percent back
+// this host runs `session.compact`: raised by the first such event of the session. $.state, so a module reload keeps it (a reload that forgot it would take the armed percent back
 // until the next compaction event). It is one of two inputs to `hostRunsSessionCompact` (the other is the engine release from 2.1.299, `engineCompact`); when that holds, the classic PreCompact gate
 // leaves an automatic proposal to `session.compact` (which judged it per agent) and the sub-agents' percent is armed (a host with neither has only the classic gate, which cannot tell the agents apart, so an early proposal there would hold every agent).
 const sessionCompactSeen = atom({ plugin: 'danxbot', key: 'sessionCompactSeen' } as const, false)
-// DX-5365: what the engine's release says about `session.compact`, read once per process (`$.session.version()`), $.state like the flag above: 'unread' until the first question, then 'runs' (a
+// what the engine's release says about `session.compact`, read once per process (`$.session.version()`), $.state like the flag above: 'unread' until the first question, then 'runs' (a
 // release from SESSION_COMPACT_FLOOR), 'older' (an earlier release), or 'unreadable' (the call threw or named no release: not known to run it, and the person is told once, `engineVersionTold`).
 const engineCompact = atom({ plugin: 'danxbot', key: 'engineCompact' } as const, 'unread' as 'unread' | 'runs' | 'older' | 'unreadable')
-// DX-5222: the sub-agent requests the plugin has claimed to send (`<session>:<agent>` to the request's `at`). One compare-and-set before `$.session.send`, like claimedRelease, so the 5 s check and
+// the sub-agent requests the plugin has claimed to send (`<session>:<agent>` to the request's `at`). One compare-and-set before `$.session.send`, like claimedRelease, so the 5 s check and
 // a turn's sync never both send it; a send that fails gives the claim back.
 const claimedAsks = atom({ plugin: 'danxbot', key: 'claimedAsks' } as const, {} as Record<string, string>)
-// DX-5231: the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
+// the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
 // check and a person's own /compact racing each other start (or spend) a ready exactly once.
 const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as const, null as string | null)
-// DX-5344: who is compacting, one entry per agent so overlapping compactions (parallel sub-agents crossing the one process-wide threshold together, or a main-agent compaction among them) never
+// who is compacting, one entry per agent so overlapping compactions (parallel sub-agents crossing the one process-wide threshold together, or a main-agent compaction among them) never
 // overwrite each other. Claude Code's classic SessionStart input names no agent (2.1.299), so a `session.compact` proposal that passed enters its agent here and the `compact` restart reads the
 // entries to decide whether the MAIN agent is briefed. `main` is the main agent's entry (epoch ms of its proposal) or null. An agent's entry is `done` once core finished its compaction (the
 // `session.compact` result), and its own briefing is then told on its first tool result; a proposal that was skipped or failed removes its entry. An entry older than COMPACTING_NOTE_TTL_MS, or of
@@ -161,50 +157,53 @@ const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as cons
 // tool call (its entry stays until that call). Rare case: when the main agent and a sub-agent compact together, the sub-agent's restart can use up the main entry; if the main compaction then fails,
 // the main agent gets a stray briefing.
 const compacting = atom({ plugin: 'danxbot', key: 'compacting' } as const, { main: null, agents: {} } as CompactingState)
-// DX-4235: the reports' memory between events (see ReportState).
+// the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
-// DX-5398: the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
+// the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
 const relayOutbox = atom({ plugin: 'danxbot', key: 'relayOutbox' } as const, [] as PendingEvent[])
 
-// DX-4232: the engine follows `$` only into a function declared in the SAME file (`claude plugin
+// the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
 // inside `register`. So every function that takes `$` is a top-level declaration here; the
 // drawing, shaping and constants live in ./plan/* as pure code, and this file hands the
 // drawings their handlers (handlers()).
 
-// DX-4233: the plan event relay's loop, at most one (a handle, so a module variable: a reload cancels the old environment's
+// the plan event relay's loop, at most one (a handle, so a module variable: a reload cancels the old environment's
 // waits, ends its loop, and session.start starts the new one). `dead` ends a loop at its next step and makes whatever its pending
 // call answers late be ignored.
 // `told`: the last failure line told to the session by this run (the same text is told once until a wait succeeds): per run, so an ended run
 // can never clear or set what the new run has told.
 // `lacking`: the run's failed waits in a row whose evidence is "the plugin server lists tools but not plan_events_wait" (count, and when the first came).
-// DX-4884: `planId: null` is the relay of a signed-in session on no plan (session records only: pacing, auto-resume).
-// DX-5398: `beat` is the wall-clock time of the loop's last step (0 before the first), what the stall watch judges.
+// `planId: null` is the relay of a signed-in session on no plan (session records only: pacing, auto-resume).
+// `beat` is the wall-clock time of the loop's last step (0 before the first), what the stall watch judges.
 type RelayRun = { planId: number | null; dead: boolean; told: string | null; lacking: { count: number; since: number } | null; beat: number }
 let relayRun: RelayRun | null = null
-// DX-5398: the events the poll loop has taken and the pump has not delivered yet (relay/outbox.ts says why they are not delivered by the loop). Handles
+// the events the poll loop has taken and the pump has not delivered yet (relay/outbox.ts says why they are not delivered by the loop). Handles
 // (the delivery promises), so a module variable: a reload starts with none, and `restoreOutbox` rebuilds it from the `relayOutbox` atom, the copy $.state keeps.
 let outbox: Queued[] = []
-// DX-5398: the stall watch, one per process (a handle), the run it last saw with the time it first saw it, and when its last tick ran.
+// the stall watch, one per process (a handle), the run it last saw with the time it first saw it, and when its last tick ran.
 let stallTicker: { cancel: () => void } | null = null
 let stallSeen: { run: RelayRun; since: number } | null = null
 let stallTickAt: number | null = null
 // The plan whose relay the server stopped, or that is signed out: it is not started again until something asks (a connect, the
 // model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
-// DX-4884: boxed, because a halt on no plan (`planId: null`) is a halt too.
+// boxed, because a halt on no plan (`planId: null`) is a halt too.
 let relayHalted: { planId: number | null } | null = null
-// DX-4336: the usage report's timer, one per session.
+// the usage report's timer, one per session.
 let usageTicker: { cancel: () => void } | null = null
-// DX-5231: the idle check for an agent's ready that lands while no main turn is running (see idleCompactionCheck).
+// the idle check for an agent's ready that lands while no main turn is running (see idleCompactionCheck).
 let compactionTicker: { cancel: () => void } | null = null
-// DX-4530: the fast claim poll, running only while a permission request is open (syncPermissionPoll).
+// the fast claim poll, running only while a permission request is open (syncPermissionPoll).
 let permissionTicker: { cancel: () => void } | null = null
-// DX-4530: a fast tick is skipped while the last one's claims are still out (slow answers must not stack claim traffic). A
+// a fast tick is skipped while the last one's claims are still out (slow answers must not stack claim traffic). A
 // module variable: a reload starts with no claim of its own in flight.
 let permissionTickBusy = false
 
+// a dashboard call has succeeded in this session. Module state, cleared at every session start.
+let dashboardAnswered = false
+
 // One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
-// x-danx-session-id header. DX-4997 / DX-5033: EVERY call here is the plugin's background work, never the agent's own, so it carries
+// x-danx-session-id header. EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
 // the agent acting, which would end the agent's pause. The agent's own danxbot_api calls never pass through here. Any rejection (including the engine's "no such server") is an error shown as one.
 async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}): Promise<Api> {
@@ -213,13 +212,13 @@ async function api($: any, method: string, path: string, extra: { query?: object
     res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra, background: true })
   } catch (err: any) {
     const message = String(err?.message ?? err)
-    // DX-4578: `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
+    // `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
     // load carries it on its error view (`serverNotConnected`, which the session-start retry waits out); the pacing and usage readers
     // stay quiet about it until a read has succeeded.
     const notConnected = isServerNotConnected(message)
-    // DX-4805 / DX-4982: a classifier refusal shows the person's sentence and fix wherever the error is shown (toasts, lines), never the engine's raw words; those are kept whole on `refusal` for the relay's start and the load's blocked view
+    // a classifier refusal shows the person's sentence and fix wherever the error is shown (toasts, lines), never the engine's raw words; those are kept whole on `refusal` for the relay's start and the load's blocked view
     const refusal = classifierRefusal(message)
-    // DX-5062: a danxbot MCP older than the plugin refuses a key the hooks send; its failure is one whole sentence naming the fix (`sentence`, so errText adds no prefix)
+    // a danxbot MCP older than the plugin refuses a key the hooks send; its failure is one whole sentence naming the fix (`sentence`, so errText adds no prefix)
     const failed: Api =
       refusal !== null ? { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal, sentence: true }
       : isStaleMcpRefusal(message) ? { ok: false, status: 0, body: { error: STALE_MCP_LINE }, sentence: true }
@@ -228,12 +227,15 @@ async function api($: any, method: string, path: string, extra: { query?: object
     failed.unreachable = true
     return failed
   }
-  return toolOutcome(res)
+  const outcome = toolOutcome(res)
+  // a dashboard call that succeeded proves the session signed in; the spawn claim then refuses when the server is later unreachable
+  if (outcome.ok) dashboardAnswered = true
+  return outcome
 }
 
 const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
 
-// DX-5577: the one door to $.store (hooks/store/recover.ts holds the recovery of a zeroed store file; this is its only wiring to the engine's `$`). Every `$.store`
+// the one door to $.store (hooks/store/recover.ts holds the recovery of a zeroed store file; this is its only wiring to the engine's `$`). Every `$.store`
 // call of the plugin is made here, in `storeIo`, and reached through `storeOp`.
 function storeIo($: any): StoreIo {
   return {
@@ -258,7 +260,7 @@ async function storeOp($: any, call: StoreCall): Promise<any> {
 async function loadView($: any) {
   const refreshedAt = await isoNow($)
   const loaded = await loadPlan((method, path, extra) => api($, method, path, extra), refreshedAt)
-  // DX-4521: the band's links need the dashboard origin even when this load could not read it (signed out, a failed call, a
+  // the band's links need the dashboard origin even when this load could not read it (signed out, a failed call, a
   // session just started): the last origin a plan list answered is kept in $.store (across sessions) and stands in for it.
   if (loaded.dashboardUrl !== null) {
     await storeOp($, { op: 'set', key: DASHBOARD_ORIGIN_KEY, value: loaded.dashboardUrl })
@@ -268,12 +270,12 @@ async function loadView($: any) {
   return typeof seen === 'string' ? { ...loaded, dashboardUrl: seen } : loaded
 }
 
-// DX-4423: the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one) for Sign in to ask
+// the plan the session was on is kept through every view that does not know it (a failed load, a signed-out one) for Sign in to ask
 // for again; a loaded view knows its own.
 async function applyLoaded($: any, loaded: any): Promise<void> {
-  // DX-5232: each failure is told once, on the load that makes it appear; the change is decided inside the update, so overlapping loads toast once
+  // each failure is told once, on the load that makes it appear; the change is decided inside the update, so overlapping loads toast once
   let told: string[] = []
-  // DX-4982: the plan the model's own plan_connect named stands in for what the refused reads could not say
+  // the plan the model's own plan_connect named stands in for what the refused reads could not say
   const named = loaded.phase === 'blocked' ? await read($, modelPlan) : null
   // a link is never built on a null origin: the load's (or the stored) one, else DANXBOT_DASHBOARD_URL, else the plugin's dashboard_url option; with none, the plan is not named
   const origin = named === null ? null : blockedOrigin({ loaded: loaded.dashboardUrl, env: await $.env.get('DANXBOT_DASHBOARD_URL'), option: dashboardOption })
@@ -291,13 +293,13 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
     return named === null || origin === null ? base : { ...base, dashboardUrl: origin, connected: { id: named.id, ref: `PLAN-${named.id}`, name: named.name, dashboardUrl: origin } }
   })
   for (const t of told) $.ui.toast(t.slice(0, TOAST_ERROR_MAX))
-  // DX-5232: a write path, never the draw: the events warning's reason is told on the change into it
+  // a write path, never the draw: the events warning's reason is told on the change into it
   await noteEventsWarning($)
-  // DX-4233: the view says which plan this session is on, so it says whether a relay runs and for which
+  // the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
 }
 
-// DX-5232: a load that failed outside the load itself (its deadline, a throw): the view goes to the error phase, told once on the change into it.
+// a load that failed outside the load itself (its deadline, a throw): the view goes to the error phase, told once on the change into it.
 async function failView($: any, error: string): Promise<void> {
   let first = false
   await update($, view, cur => {
@@ -330,7 +332,7 @@ async function refresh($: any, force = false): Promise<void> {
     let again = true
     while (again) {
       try {
-        // DX-4233: EVERY load (not only the first) is an error shown at LOAD_DEADLINE_MS, so a hung call does not hold the view's state or the relay's
+        // EVERY load (not only the first) is an error shown at LOAD_DEADLINE_MS, so a hung call does not hold the view's state or the relay's
         // start. The call itself is not abandoned to run beside the next load: this refresh keeps the lock for up to LOAD_ORPHAN_WAIT_MS more and
         // applies its answer if it comes then, so at most one load runs (through that wait; past it the call is given up).
         const load = loadView($)
@@ -359,7 +361,7 @@ async function refresh($: any, force = false): Promise<void> {
   }
 }
 
-// DX-4435 / DX-4530: a request leaves the list once its claim (the key's own route) decides it (settle): granted, denied,
+// a request leaves the list once its claim (the key's own route) decides it (settle): granted, denied,
 // expired, unknown to the dashboard, or the session lost its key. A claim that fails for any other reason keeps it for the next
 // poll: a request has no expiry clock of its own. The model is told each decision once, waking it when it is idle (tellModelAwake).
 async function settlePermissionRequests($: any): Promise<void> {
@@ -382,7 +384,7 @@ async function settlePermissionRequests($: any): Promise<void> {
   await syncPermissionPoll($)
 }
 
-// DX-4530: one fast-poll tick; skipped while the last one is still out (permissionTickBusy).
+// one fast-poll tick; skipped while the last one is still out (permissionTickBusy).
 async function permissionTick($: any): Promise<void> {
   if (permissionTickBusy) return
   permissionTickBusy = true
@@ -393,7 +395,7 @@ async function permissionTick($: any): Promise<void> {
   }
 }
 
-// DX-4530: the told-once guard, in $.store so it outlives a reload and a restart (the request list itself may come back, or the
+// the told-once guard, in $.store so it outlives a reload and a restart (the request list itself may come back, or the
 // model may be answered the same request again): true the first time a request's decision is to be told, false ever after.
 // Marked before the telling, so a telling that fails is toasted (notToldToast) and never repeated. The read-then-write is not atomic:
 // two settles marking different ids at once can lose one id, which only matters if that request comes back into the list later.
@@ -408,7 +410,7 @@ async function markToldOnce($: any, publicId: string): Promise<boolean> {
   return true
 }
 
-// DX-4530: the claim is polled every PERMISSION_POLL_MS while a request is open, so the model hears the decision within
+// the claim is polled every PERMISSION_POLL_MS while a request is open, so the model hears the decision within
 // seconds; the timer stops once none is (the refresh tick's own settle is all that runs then, and it claims nothing).
 async function syncPermissionPoll($: any): Promise<void> {
   const open = (await read($, permissionRequests)).length > 0
@@ -422,7 +424,7 @@ async function syncPermissionPoll($: any): Promise<void> {
 // A user-role row the model reads and the person does not see typed ($.session.append's argument).
 const modelRow = (text: string) => ({ message: { type: 'user' as const, content: [{ type: 'text' as const, text }] } })
 
-// The model did not make this call, so tell it (it reads this, the person does not). R-4.
+// The model did not make this call, so tell it (it reads this, the person does not).
 async function tellModel($: any, text: string): Promise<void> {
   try {
     const r = await $.session.append(modelRow(text))
@@ -432,8 +434,8 @@ async function tellModel($: any, text: string): Promise<void> {
   }
 }
 
-// DX-4625: tell the model something it must ACT on while the person types nothing (a permission decision, DX-4880 a sign-in's outcome): by the plan event
-// bridge's own delivery (deliverEvent), not urgent (DX-4721): a prompt, which wakes an idle session and queues behind a running turn.
+// tell the model something it must ACT on while the person types nothing (a permission decision, a sign-in's outcome): by the plan event
+// bridge's own delivery (deliverEvent), not urgent: a prompt, which wakes an idle session and queues behind a running turn.
 // `tellModel`'s append is only read on the session's next turn, which an idle agent waiting on the person never starts.
 async function tellModelAwake($: any, text: string): Promise<void> {
   const failure = await deliverEvent($, text, false)
@@ -446,29 +448,29 @@ function notToldToast($: any, cause: unknown, text: string): void {
   $.ui.toast(`Could not tell the model: ${String(cause).slice(0, TOAST_ERROR_MAX)}${NOTE_MARKER}${text}`)
 }
 
-// DX-4630: a permission request's toast: link and code together, for the longest the host allows. The band draws the same link and
+// a permission request's toast: link and code together, for the longest the host allows. The band draws the same link and
 // code from `permissionRequests`; no page is opened by the plugin, the person follows the link.
 const toastPermission = ($: any, approval: ApprovalRequest) => $.ui.toast(permissionToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
 
-// DX-4630: the tool answer, with the note that the person already has the link and code, as context the model reads after the result.
+// the tool answer, with the note that the person already has the link and code, as context the model reads after the result.
 const withPermissionNote = (ran: any, approval: ApprovalRequest) => ({ ...ran, context: [...(ran.context ?? []), permissionShownNote(approval)] })
 
-// DX-4630: the sign-in request's toast: link and code together, for the longest the host allows.
+// the sign-in request's toast: link and code together, for the longest the host allows.
 const toastSignIn = ($: any, approval: ApprovalRequest) => $.ui.toast(signInToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
 
-// DX-4630: a sign-in request, drawn the moment it exists: the band reads it from $.state and draws its link and confirm
+// a sign-in request, drawn the moment it exists: the band reads it from $.state and draws its link and confirm
 // code, and the toast carries both. The plugin opens no page: the person follows the link.
 async function showSignInRequest($: any, approval: ApprovalRequest): Promise<void> {
   await update($, signInRequest, () => approval)
   toastSignIn($, approval)
 }
 
-// DX-4630: the tool answer, with the note that the person already has the link and code, as context the model reads after the result.
+// the tool answer, with the note that the person already has the link and code, as context the model reads after the result.
 const withSignInNote = (ran: any, approval: ApprovalRequest) => ({ ...ran, context: [...(ran.context ?? []), signInShownNote(approval)] })
 
 // One write per key at a time: the claim is a compare-and-set on $.state, so two presses landing
 // together (a double click, a key repeat) cannot both win. The loser does nothing.
-// `release` (DX-4548): false when something else already freed the key and a newer holder may own it now (an aborted sign-in watch)
+// `release`: false when something else already freed the key and a newer holder may own it now (an aborted sign-in watch)
 async function withBusy($: any, key: string, work: () => Promise<void>, release: () => boolean = () => true): Promise<void> {
   let won = false
   await update($, busy, cur => {
@@ -483,7 +485,7 @@ async function withBusy($: any, key: string, work: () => Promise<void>, release:
   }
 }
 
-// DX-4423 / DX-4418: a leave pressed on a band that went stale: the key is gone since the band drew. The person is told
+// a leave pressed on a band that went stale: the key is gone since the band drew. The person is told
 // in the view's words, never the server's (a revoked key's answer is the agent's stop order), and the view reloads to say so.
 // True when that was the answer.
 async function accessEnded($: any, outcome: ToolOutcome): Promise<boolean> {
@@ -494,7 +496,7 @@ async function accessEnded($: any, outcome: ToolOutcome): Promise<boolean> {
   return true
 }
 
-// DX-4635: the one way to run a task apart from the event that started it (a press, a hook, a tick). A press ends as soon as its own
+// the one way to run a task apart from the event that started it (a press, a hook, a tick). A press ends as soon as its own
 // outcome is known and shown; what follows (the model's note, the full refresh with its relay and live syncs, a second forced pass)
 // runs here, so the busy label never waits on reads that are not the action's own. The task's failures are shown, never swallowed: a
 // refresh reports its own load failures in the view, and anything it throws past that is a toast. Only the environment ending under
@@ -503,7 +505,7 @@ function detach($: any, what: string, task: Promise<unknown>): void {
   void settleDetached(task).catch(err => $.ui.toast(`${what} failed: ${String(err?.message ?? err).slice(0, FAILURE_TOAST_MAX)}`))
 }
 
-// DX-4982: a call the plugin raised itself failed: a classifier refusal is told in the person's words (cause and fix) and the view reloads to
+// a call the plugin raised itself failed: a classifier refusal is told in the person's words (cause and fix) and the view reloads to
 // show the same state; any other failure keeps its own words.
 function toastCallFailedAndReload($: any, what: string, err: any): void {
   const message = String(err?.message ?? err)
@@ -517,7 +519,7 @@ function toastCallFailedAndReload($: any, what: string, err: any): void {
 
 const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
 
-// DX-4635: what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards,
+// what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards,
 // listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin). A leave puts the session on no plan.
 const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl })
 function leftView(cur: any): any {
@@ -530,7 +532,7 @@ function leftView(cur: any): any {
 // failure carries its status and message. No confirm: the model can ask plan_connect for the plan again to undo it.
 function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
-    // DX-4235: the leave closes what the session opened under the plan first; a leave that does not happen takes that back
+    // the leave closes what the session opened under the plan first; a leave that does not happen takes that back
     const why = `leaving ${plan.ref}`
     const closes = await closeOwedBeforeLeave($, why)
     let r
@@ -562,10 +564,10 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   })
 }
 
-// DX-4423 / DX-4548: the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
+// the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
 // `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's link and code). Each call waits
 // there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
-// request stays open for as long as its session lives (DX-4530). The status of the request cannot be read any other way: its
+// request stays open for as long as its session lives. The status of the request cannot be read any other way: its
 // claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
 // person's login. A call that answers a DIFFERENT request than the one watched means the first expired while it waited: the
 // model is told, and the renewed request is shown and watched in its place, so nobody has to relay it.
@@ -574,7 +576,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
 // signed in), and the model's own `plan_connect` answering `approval_required` (`known`: the request already shown; the model is
 // told the outcome once, approved, denied or expired, so the person never has to type "approved"). The whole watch holds the
 // sign-in busy key (the buttons read "Signing in…", a second start does nothing).
-// DX-4548: bumped when the conversation (or the process) ends; a watch of an older generation stops at its next step, so it
+// bumped when the conversation (or the process) ends; a watch of an older generation stops at its next step, so it
 // never calls plan_connect with the old conversation's arguments or tells the new conversation about a request it never made
 let signInGeneration = 0
 
@@ -586,9 +588,9 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
     const ended = () => generation !== signInGeneration
     let shown: ApprovalRequest | null = watch.byPress ? null : watch.known
     await update($, signInRequest, () => shown)
-    // DX-4530: each outcome is told once (the told-once guard, keyed by the request). The model's request always has an id
+    // each outcome is told once (the told-once guard, keyed by the request). The model's request always has an id
     // (onPlanConnect and the renewal below refuse one without); only the press may see one with none, and it tells once per watch.
-    // DX-4880: told as a waking prompt (tellModelAwake), on both paths: the session sits idle while the person approves, and an
+    // told as a waking prompt (tellModelAwake), on both paths: the session sits idle while the person approves, and an
     // appended row is read only on a turn nobody starts, so the person had to type "approved" for the model to go on.
     const tell = async (request: ApprovalRequest | null, text: string) => {
       const key = request === null ? undefined : publicIdOf(request.url)
@@ -622,7 +624,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
           }
           if (shown === null || step.request.url !== shown.url) await showSignInRequest($, step.request)
           shown = step.request
-          // DX-4548: an answer that came back sooner than the MCP's own wait must not turn this into a tight loop
+          // an answer that came back sooner than the MCP's own wait must not turn this into a tight loop
           const took = (await $.clock.now()) - startedAt
           if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
           if (ended()) return
@@ -644,7 +646,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         }
         // signed in (even if the plan was refused): the view reads the truth
         $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
-        // DX-4530: the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
+        // the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
         const planId = typeof (watch.args as any).plan_id === 'number' ? (watch.args as any).plan_id : null
         await tell(shown, watch.byPress ? signInNote(planId, step.kind === 'done') : signInApprovedNote(shownRequest().code, planId))
         await refresh($, true)
@@ -653,7 +655,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
     } finally {
       if (!ended()) await update($, signInRequest, () => null)
     }
-    // DX-4548: an aborted watch's key was freed at the abort (onSessionEnd); a new watch may hold it by now, so this one never frees it
+    // an aborted watch's key was freed at the abort (onSessionEnd); a new watch may hold it by now, so this one never frees it
   }, () => generation === signInGeneration)
 }
 
@@ -676,8 +678,8 @@ async function signInArgs($: any): Promise<object> {
   return { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
 }
 
-// DX-4374 / DX-5232: the one way back to the plan UI, for the footer button and /danx-plan alike: bring the band back (clear
-// `dismissed`). It tells the model nothing (R-4 covers actions that change plan state; this changes none).
+// the one way back to the plan UI, for the footer button and /danx-plan alike: bring the band back (clear
+// `dismissed`). It tells the model nothing (only actions that change plan state tell it something; this changes none).
 async function showPlan($: any): Promise<void> {
   await update($, dismissed, () => false)
 }
@@ -717,7 +719,7 @@ async function retryWhileNotConnected($: any): Promise<void> {
   if (last.phase === 'error' && last.serverNotConnected) $.ui.toast(`Plan load failed: ${last.error}`.slice(0, TOAST_ERROR_MAX))
 }
 
-// DX-4374: v0.10.0 pinned a status line; the footer is the PLAN-NN button alone, so unpin anything an older loaded version left.
+// v0.10.0 pinned a status line; the footer is the PLAN-NN button alone, so unpin anything an older loaded version left.
 async function unpinStatus($: any): Promise<void> {
   await $.ui.status(undefined)
 }
@@ -731,30 +733,30 @@ async function noteTranscript($: any, e: any): Promise<void> {
   if (path !== '') await update($, transcript, cur => (cur === path ? cur : path))
 }
 
-// What the session's usage reading came to: its windows, or why they could not be read (DX-4339: the tick reads them itself).
+// What the session's usage reading came to: its windows, or why they could not be read (the tick reads them itself).
 type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
 
-// DX-4884: THE signed-in test for the relay and the usage report: a loaded view (ready), or a refresh of a connected session (loading with the
+// THE signed-in test for the relay and the usage report: a loaded view (ready), or a refresh of a connected session (loading with the
 // plan still set: a refresh runs at every turn end, as session.measure fires). Signed-out and revoked views, an unloaded one and an error say no.
 const isSignedIn = (v: any): boolean => v.phase === 'ready' || (v.phase === 'loading' && v.connected !== null)
 
-// DX-4336 (PLAN-29 R-1, CAV-6): send this session's rate-limit windows to danxbot. DX-4884: every signed-in session reports, on a plan or not
+// send this session's rate-limit windows to danxbot. Every signed-in session reports, on a plan or not
 // (danxbot places the session on an account from this report, then paces and resumes it); a session that is not signed in reports nothing and
-// toasts nothing. The whole agent tree's burn is in the session's own figure (R-9), so there is one report per session and none per sub-agent. The
+// toasts nothing. The whole agent tree's burn is in the session's own figure, so there is one report per session and none per sub-agent. The
 // report says when the figure was MEASURED (the last API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and danxbot must tell it from one that is working.
 // A failed reading, a failed report or a failure of the plugin's own state is a toast, never a hook that threw and was skipped silently: toasted
 // once per distinct text (`usageError`), cleared when a report is accepted again or there is nothing to report.
 async function reportUsage($: any, reading: UsageReading): Promise<void> {
   try {
-    // DX-4884: only a signed-in session (isSignedIn) reports; a signed-out, revoked, lapsed or unloaded view sends and says nothing
+    // only a signed-in session (isSignedIn) reports; a signed-out, revoked, lapsed or unloaded view sends and says nothing
     if (!isSignedIn(await read($, view))) return
     let failure: string | null = null
     try {
-      // DX-4339: `{error}` is the session's own usage reading failing (the tick read it): the failure is toasted like any other
+      // `{error}` is the session's own usage reading failing (the tick read it): the failure is toasted like any other
       if ('error' in reading) failure = reading.error
       else {
         const now = await $.clock.now()
-        const body = usageBody(reading.limits, now, await read($, measuredAt), liveAgentsAt(await read($, liveAgents), now).length, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+        const body = usageBody(reading.limits, now, await read($, measuredAt), await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
         if (body !== null) {
           const r = await api($, 'PUT', USAGE_PATH, { body })
           if (r.unreachable) return
@@ -791,7 +793,7 @@ async function reportUsageNow($: any): Promise<void> {
   return reportUsage($, reading)
 }
 
-// DX-4340: reads the account verdict into the pacing cache at session start (the spawn guard and the sub-agent line read it); a throw here is
+// reads the account verdict into the pacing cache at session start (the spawn guard and the sub-agent line read it); a throw here is
 // toasted, never an unhandled rejection.
 async function primePacing($: any): Promise<void> {
   try {
@@ -811,7 +813,7 @@ function startUsageTicker($: any, everyMs: number): void {
 }
 
 // An API response arrived: the figure the harness holds is current as of now. Called when `session.measure` fires (after every main-thread
-// turn and whenever a window moves) and when a sub-agent finishes (its burn moves the parent's figure, R-9), never from the tick.
+// turn and whenever a window moves) and when a sub-agent finishes (its burn moves the parent's figure), never from the tick.
 async function markMeasured($: any): Promise<void> {
   const now = await $.clock.now()
   await update($, measuredAt, cur => (cur === null || now > cur ? now : cur))
@@ -828,8 +830,8 @@ async function onMeasure($: any, e: any, next: any) {
   return next(e)
 }
 
-// ---- DX-4233: the plan event relay -------------------------------------------------------------------------------------------------
-// The module's own loop on the session's danx-dashboard MCP server's `plan_events_wait` tool (PLAN-23 "Event relay in-process"): the
+// ---- the plan event relay -------------------------------------------------------------------------------------------------
+// The module's own loop on the session's danx-dashboard MCP server's `plan_events_wait` tool (the in-process event relay): the
 // server keeps the dashboard's stream open and answers each call with the events after the cursor (or none, when the wait ends);
 // each event is handed to the session and the cursor of each delivered record stored. Nothing is spawned and no file is written: the
 // loop is this module's code, so it lives as long as the process, through /clear and compaction, and ends with it. The server
@@ -840,9 +842,9 @@ async function onMeasure($: any, e: any, next: any) {
 // A view that failed to load (`error`, `loading`) changes nothing: a read blip must not stop a working relay.
 async function syncRelay($: any): Promise<void> {
   const v = await read($, view)
-  // DX-4982: a blocked load says nothing of the key: the relay runs on, or is started by the watch, never stopped by it
+  // a blocked load says nothing of the key: the relay runs on, or is started by the watch, never stopped by it
   if (v.phase === 'error' || v.phase === 'blocked' || (v.phase === 'loading' && v.connected === null)) return
-  // DX-4884: a ready view on no plan runs the relay for the session's own records (plan_id null); any other view (signed out, revoked) runs none
+  // a ready view on no plan runs the relay for the session's own records (plan_id null); any other view (signed out, revoked) runs none
   if (!isSignedIn(v)) {
     relayHalted = null
     stopRelay()
@@ -852,11 +854,11 @@ async function syncRelay($: any): Promise<void> {
   startRelay($, v.connected?.id ?? null)
 }
 
-// DX-4233: THE start of the relay, from a plan id however it was learned (the view, a plan_connect answer, the light plan read). Never async:
+// THE start of the relay, from a plan id however it was learned (the view, a plan_connect answer, the light plan read). Never async:
 // the check that no loop runs for this plan and the registration of the new one are one step, so two starts landing together make one loop.
 function startRelay($: any, planId: number | null): void {
-  // DX-3900: the keepalive follows the plan connection, not the relay's health: a halted or ended relay does not end it.
-  // DX-4884: it stays plan-only; a move to no plan ends it.
+  // the keepalive follows the plan connection, not the relay's health: a halted or ended relay does not end it.
+  // it stays plan-only; a move to no plan ends it.
   if (planId === null) detach($, 'Plan tab keepalive stop', stopKeepalive($))
   else followPlan($, planId)
   if (relayRun !== null && relayRun.planId === planId) return
@@ -864,7 +866,7 @@ function startRelay($: any, planId: number | null): void {
   if (relayHalted !== null && relayHalted.planId !== planId) relayHalted = null
   if (relayHalted !== null) return
   stopRelay()
-  // DX-5398: what is still waiting for delivery stays for a run of the same plan (it polls on from there); another plan's events are dropped, and so is
+  // what is still waiting for delivery stays for a run of the same plan (it polls on from there); another plan's events are dropped, and so is
   // the failure being retried when its event was one of them (the new plan's band must not keep the old plan's cause)
   const head = outbox[0]
   outbox = onlyPlan(outbox, planId)
@@ -875,12 +877,12 @@ function startRelay($: any, planId: number | null): void {
   detach($, 'Plan event relay', relayLoop($, run))
 }
 
-// DX-4233 / DX-4884: starts the relay (the plan's, or the session's own on no plan) when no loop runs, whatever became of the plan load: from the view when it knows the plan,
+// starts the relay (the plan's, or the session's own on no plan) when no loop runs, whatever became of the plan load: from the view when it knows the plan,
 // else from a light read of the session's own plan binding (the view is an error or still loading, and its error is not a reason for no relay).
 // `retry`: the read itself failed (the server not connected yet, a session not bound, a dashboard fault), so the plan is not known yet.
 type RelayWatch = 'done' | 'retry'
 
-// DX-4233: at most one watch runs; a burst of triggers (sub-agent events while the dashboard is down) shares its answer instead of each issuing a
+// at most one watch runs; a burst of triggers (sub-agent events while the dashboard is down) shares its answer instead of each issuing a
 // plan read. A handle, so a module variable.
 let relayWatching: Promise<RelayWatch> | null = null
 // A failure of the watch itself is toasted ONCE here (detach), however many callers share it, and answers `retry` to all of them.
@@ -904,7 +906,7 @@ async function watchRelayOnce($: any): Promise<RelayWatch> {
     startRelay($, v.connected.id)
     return 'done'
   }
-  // DX-4884: a loaded view on no plan runs the session's own relay; the signed-out ones say what the read would
+  // a loaded view on no plan runs the session's own relay; the signed-out ones say what the read would
   if (v.phase === 'ready') {
     startRelay($, null)
     return 'done'
@@ -915,7 +917,7 @@ async function watchRelayOnce($: any): Promise<RelayWatch> {
   if (relayRun !== null) return 'done'
   if (plan.kind === 'connected') {
     startRelay($, plan.planId)
-    // DX-4982: the read that was refused now succeeds: the blocked view is replaced by a real load, never left standing
+    // the read that was refused now succeeds: the blocked view is replaced by a real load, never left standing
     if (v.phase === 'blocked') detach($, 'Plan refresh', refresh($, true))
     return 'done'
   }
@@ -923,7 +925,7 @@ async function watchRelayOnce($: any): Promise<RelayWatch> {
   return plan.kind === 'failed' || plan.kind === 'unreachable' ? 'retry' : 'done'
 }
 
-// DX-4805 / DX-4982: the relay cannot start yet because the engine's auto mode classifier refused the plugin's own read: told to the session ONCE (the same
+// the relay cannot start yet because the engine's auto mode classifier refused the plugin's own read: told to the session ONCE (the same
 // words are not told again while the watch keeps retrying, as the refusal may clear), with the engine's words and the fix that works. A module
 // variable: the text is per process, and a reload starts with nothing told.
 let refusalTold: string | null = null
@@ -934,7 +936,7 @@ async function tellRefusal($: any, refusal: Refusal): Promise<void> {
   await tellModel($, line)
 }
 
-// DX-4233: the session start's watch: the read is retried after each wait of RELAY_START_RETRY_MS while it fails; what is left after that is the
+// the session start's watch: the read is retried after each wait of RELAY_START_RETRY_MS while it fails; what is left after that is the
 // watchdog (a turn's end, a sub-agent's start or stop) and the views' own loads.
 async function startRelayWhenKnown($: any): Promise<void> {
   for (const wait of [0, ...RELAY_START_RETRY_MS]) {
@@ -957,18 +959,18 @@ function stopRelay(): void {
   relayRun = null
 }
 
-// DX-3900: the plan-tab keepalive (relay/keepalive.ts says why), for desktop sessions only: the 1800 s timeout is the desktop app's preview pane and
+// the plan-tab keepalive (relay/keepalive.ts says why), for desktop sessions only: the 1800 s timeout is the desktop app's preview pane and
 // a terminal session has no plan tab. "The desktop hosts this session" is sticky (`desktopHosted`): the app starts the session itself (surfaces() has
 // 'desktop' at session.start, whose own `surface` is null), detaches about 5 s later and attaches again only while the person views it, so the
 // surfaces at fire time say nothing. Raised at session.start by CLAUDE_CODE_ENTRYPOINT=claude-desktop (covers a resumed session nobody has
 // viewed, whose surfaces() is []) or by surfaces() having 'desktop', and by any session.attach of the desktop; kept by a reload of the module
-// (DX-4806: $.state, not a module variable). It follows the plan CONNECTION (`keepalivePlan`),
+// ($.state, not a module variable). It follows the plan CONNECTION (`keepalivePlan`),
 // set by startRelay and cleared when the plan is disconnected or the process ends, not the relay loop's health.
 // One pending `$.clock.after` timer at a time, a slice of the wait (a handle, so module variables). An idle period starts at relay start and at every main-loop turn end
 // (armKeepalive), and is recorded in `idleSince` ($.state) so a reload resumes it instead of restarting it; a turn start (which also clears
 // `idleSince`), a plan move or the plan's end cancels it (cancelKeepalive). `keepaliveEpoch` makes a cancel reach an attempt already running:
 // whatever it finds afterwards is dropped, nothing is sent or scheduled for a period that is over.
-// DX-4952: the timer is never the whole wait. `$.clock.after` is a relative setTimeout, which does not count the time the computer sleeps, while
+// the timer is never the whole wait. `$.clock.after` is a relative setTimeout, which does not count the time the computer sleeps, while
 // `$.clock.now()` is the wall clock, which does (relay/keepalive.ts). Every wait is a slice of at most KEEPALIVE_WAKE_CHECK_MS, and the wall
 // clock decides whether the attempt is due (`dueAt`, epoch ms), so a wake is noticed within a slice. A turn that starts after the wake finds
 // the period stale (`idleSince` is a wall-clock time too) and has the session re-check the tab (recheckTab).
@@ -1001,7 +1003,7 @@ async function armKeepalive($: any, resume: boolean): Promise<void> {
   cancelKeepalive()
   if (keepalivePlan === null) return
   const epoch = keepaliveEpoch
-  // DX-4806: a turn running now (a reload found it) arms nothing: its end does
+  // a turn running now (a reload found it) arms nothing: its end does
   if ((await read($, turn)).isRunning) return
   const now = await $.clock.now()
   const since = (resume ? await read($, idleSince) : null) ?? now
@@ -1032,12 +1034,12 @@ async function keepaliveWake($: any, wait: KeepaliveWait): Promise<void> {
   if (wait.epoch !== keepaliveEpoch) return
   if (now < wait.dueAt) return waitSlice($, wait, now)
   // an attempt that is long overdue (the computer slept through its time) has the retry window of its own, from when it starts: the network is
-  // often still down just after a wake, and a window measured from the period's start would have closed hours ago (DX-4952)
+  // often still down just after a wake, and a window measured from the period's start would have closed hours ago
   const deadline = wait.deadline ?? (now - wait.dueAt > KEEPALIVE_WAKE_CHECK_MS ? now : wait.dueAt) + KEEPALIVE_RETRY_WINDOW_MS
   await keepaliveAttempt($, wait.epoch, deadline)
 }
 
-// DX-4997: whether the session is in an unexpired agent pause (reports/pause.ts), by the one read that does not end it. Signed out, revoked, or
+// whether the session is in an unexpired agent pause (reports/pause.ts), by the one read that does not end it. Signed out, revoked, or
 // on no plan: `nothing` (the caller has nothing to check either). A dashboard without the route (404) is free too, told once, never silently. Any other
 // failure is returned, and the Stop check allows the stop.
 async function readAgentPause($: any): Promise<PauseRead> {
@@ -1064,7 +1066,7 @@ type Fired = { kind: 'checked' } | { kind: 'not-desktop' } | { kind: 'no-browser
 
 // One attempt: look at the pane, then decide what comes next. A failure is toasted and retried KEEPALIVE_RETRY_MS later until `deadline`
 // (KEEPALIVE_GIVE_UP_MS after the period began, or the end of the retry window of an attempt that woke late), then it gives up, loudly, and starts the next period.
-// DX-5093: a look costs no model turn. A session whose tab is held (or opened again) is looked at again an idle period on, the cadence the keepalive
+// a look costs no model turn. A session whose tab is held (or opened again) is looked at again an idle period on, the cadence the keepalive
 // always had, so a tab the person closes on purpose is not reopened more often than it was; so is a session that is not on the desktop at this
 // moment (it may attach later; the surface is read now, not at session start) or has no Browser pane server (the app may add it later; it was told once).
 async function keepaliveAttempt($: any, epoch: number, deadline: number): Promise<void> {
@@ -1075,14 +1077,14 @@ async function keepaliveAttempt($: any, epoch: number, deadline: number): Promis
   if (fired.kind === 'checked' || fired.kind === 'not-desktop' || fired.kind === 'no-browser') return startPeriod($, epoch, endedAt, endedAt)
   if (endedAt + KEEPALIVE_RETRY_MS > deadline) {
     $.ui.toast(`Plan tab keepalive gave up: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
-    // DX-4806: a give-up ends this period only; the next is started here, not left to a turn end that an idle session never has
+    // a give-up ends this period only; the next is started here, not left to a turn end that an idle session never has
     return startPeriod($, epoch, endedAt, endedAt)
   }
   $.ui.toast(`Plan tab keepalive failed, trying again: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
   waitSlice($, { epoch, dueAt: endedAt + KEEPALIVE_RETRY_MS, deadline }, endedAt)
 }
 
-// DX-5093: one call to the Browser pane's server, through the engine's own connection (relay/browser.ts says why a hook can). null: the session has no
+// one call to the Browser pane's server, through the engine's own connection (relay/browser.ts says why a hook can). null: the session has no
 // such server (the engine's own words); a rejection otherwise (a refused or timed-out call) is the caller's failure.
 async function browserCall($: any, tool: BrowserTool, args: Record<string, unknown>): Promise<BrowserResult | null> {
   try {
@@ -1090,13 +1092,13 @@ async function browserCall($: any, tool: BrowserTool, args: Record<string, unkno
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (/no connected MCP tool/.test(message)) return null
-    // DX-4982: auto mode refusing the pane's tool is told in a sentence, not the engine's raw text
+    // auto mode refusing the pane's tool is told in a sentence, not the engine's raw text
     if (classifierRefusal(message) !== null) throw new Error(`${tool}: auto mode refused the call to the Browser pane; allow its tools in /permissions`)
     throw new Error(`${tool}: ${message}`)
   }
 }
 
-// DX-5093: a desktop-hosted, plan-connected session whose tool list has no callable Browser pane is never kept alive, and nothing else would say so:
+// a desktop-hosted, plan-connected session whose tool list has no callable Browser pane is never kept alive, and nothing else would say so:
 // told once per session, in words that name the consequence. No prompt stands in for the pane (it could not tell whether the tab is missing, so it
 // would ask every idle period again).
 async function noBrowser($: any): Promise<Fired> {
@@ -1109,7 +1111,7 @@ async function noBrowser($: any): Promise<Fired> {
   return { kind: 'no-browser' }
 }
 
-// Looks at the Browser pane and opens the plan page's tab again when it is missing, with no model turn (DX-5093). `isLive` is checked again before
+// Looks at the Browser pane and opens the plan page's tab again when it is missing, with no model turn. `isLive` is checked again before
 // the pane is changed. A closed pane is opened by `navigate` itself; an open pane without the tab gets a background tab of its own, so a page the
 // person is reading is never navigated away.
 async function fireKeepalive($: any, isLive: () => boolean): Promise<Fired> {
@@ -1154,7 +1156,7 @@ async function lookAtPane($: any, isLive: () => boolean): Promise<Fired> {
   }
 }
 
-// DX-4952: a turn began after the app has closed the tab (an idle period older than the app's timeout that no attempt answered: the computer
+// a turn began after the app has closed the tab (an idle period older than the app's timeout that no attempt answered: the computer
 // slept through it and the wake check did not run first). The turn's own end starts the next period, 25 minutes on, so the pane is looked at now
 // and the plan page opened again if its tab is missing (no prompt). It follows the plan connection, not the keepalive epoch: the turn's own end
 // restarts the period (bumping the epoch) and must not drop it.
@@ -1165,12 +1167,12 @@ async function recheckTab($: any): Promise<void> {
   $.ui.toast(`Plan tab re-check failed: ${fired.why}`.slice(0, TOAST_ERROR_MAX))
 }
 
-// DX-4233: THE gate for what an ended run (a move to another plan, the process's end) may say: its relay state, the halt that follows from
+// THE gate for what an ended run (a move to another plan, the process's end) may say: its relay state, the halt that follows from
 // it and the line told to the model all come after this write, which does not happen for a dead run (false). The new run owns the state.
 async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detail: string | null): Promise<boolean> {
   if (run.dead) return false
   await update($, relay, cur => (cur.phase === phase && cur.detail === detail && cur.planId === run.planId ? cur : { phase, planId: run.planId, detail }))
-  // DX-5232: the events warning follows the relay's state (a write path, never the draw)
+  // the events warning follows the relay's state (a write path, never the draw)
   await noteEventsWarning($)
   return true
 }
@@ -1196,7 +1198,7 @@ async function loadCursor($: any, planId: number | null): Promise<string | null>
 }
 
 // The cursor is stored AFTER the event was delivered, under the session id as it is now (a /clear or a resume changes it).
-// DX-4233: an event of a plan the session has since left must not write over the new plan's cursor. DX-5398: a delivery outlives the run that polled
+// an event of a plan the session has since left must not write over the new plan's cursor. A delivery outlives the run that polled
 // it (a run replaced while its prompt waited), so the gate is the plan the live run serves, not the run that took the event.
 async function saveCursor($: any, planId: number | null, cursor: string): Promise<void> {
   if (relayRun === null || relayRun.planId !== planId) return
@@ -1235,9 +1237,9 @@ async function appendNote($: any, line: string): Promise<string | null> {
   }
 }
 
-// One event into the session, the same `[danxbot plan event] ...` text as ever, by the one decision in relay/delivery.ts (DX-4721): a non-urgent
+// One event into the session, the same `[danxbot plan event] ...` text as ever, by the one decision in relay/delivery.ts: a non-urgent
 // event is a prompt (queued behind a running turn, waking an idle session); an urgent one is a note in a running turn.
-// DX-5398: resolves as soon as the engine call has been MADE; `done` settles with the outcome, null when delivered, else the cause. A plugin's
+// resolves as soon as the engine call has been MADE; `done` settles with the outcome, null when delivered, else the cause. A plugin's
 // `$.prompt.submit` settles only when the queued prompt enters the session (after the running turn), so a caller that must not wait for that (the
 // relay's pump, relay/outbox.ts) issues the next event while `done` is still out, and a caller that must (deliverEvent) awaits it.
 async function issueEvent($: any, text: string, urgent: boolean): Promise<{ done: Promise<string | null> }> {
@@ -1266,7 +1268,7 @@ async function deliverEvent($: any, text: string, urgent: boolean): Promise<stri
   return (await issueEvent($, text, urgent)).done
 }
 
-// DX-4721: notes nothing will read (the turn ended after them, with no tool result between), each told once more as a prompt that says it is a
+// notes nothing will read (the turn ended after them, with no tool result between), each told once more as a prompt that says it is a
 // repeat, in order; every note is tried even when an earlier one was refused. Detached from the hook or delivery that found them: a prompt
 // the session did not take is a toast.
 async function promptNotes($: any, texts: string[]): Promise<void> {
@@ -1276,7 +1278,7 @@ async function promptNotes($: any, texts: string[]): Promise<void> {
   }
 }
 
-// DX-5398: the outbox (relay/outbox.ts says why the poll loop does not deliver). The records of one answer are queued in the order the server sent them
+// the outbox (relay/outbox.ts says why the poll loop does not deliver). The records of one answer are queued in the order the server sent them
 // and issued to the session in that order, each as soon as the one before it has been ISSUED (a prompt queued behind a running turn is out, not done, and
 // must not hold the next event: an urgent note behind it is for the running turn). Each one's cursor is stored as the resume cursor once it is DELIVERED,
 // in order (never compared with another: the server decides what comes after a cursor). An event the session refuses is issued again after the backoff,
@@ -1372,7 +1374,7 @@ async function settleOutbox($: any): Promise<void> {
   }
 }
 
-// DX-5398: the stall watch, every RELAY_STALL_CHECK_MS. A loop that has made no step for RELAY_STALL_MS is awaiting a call that never settles (the poll,
+// the stall watch, every RELAY_STALL_CHECK_MS. A loop that has made no step for RELAY_STALL_MS is awaiting a call that never settles (the poll,
 // the cursor store, the plan read): nothing it could say reaches anyone, so the watch tells the person (a toast) and the session (a note, detached: the
 // note's own call is one of the things that may be stuck), then starts the relay again. Events in flight are not lost or repeated (the outbox).
 async function checkRelayStall($: any): Promise<void> {
@@ -1399,7 +1401,7 @@ async function checkRelayStall($: any): Promise<void> {
   startRelay($, run.planId)
 }
 
-// DX-4233: the engine words a tool the server lacks the same as a server that is not connected ("no connected MCP tool"), so that answer is told
+// the engine words a tool the server lacks the same as a server that is not connected ("no connected MCP tool"), so that answer is told
 // apart by the session's tool list: the plugin server's tools listed without the relay's is evidence of an old pinned server; none listed (the
 // server is not connected yet or has gone), or a list that cannot be read (not bound), is none.
 async function serverLacksRelayTool($: any): Promise<boolean> {
@@ -1413,7 +1415,7 @@ async function serverLacksRelayTool($: any): Promise<boolean> {
   return ownTools.length > 0 && !ownTools.includes(toolName(RELAY_TOOL))
 }
 
-// DX-4233: what the evidence (a failed wait with the plugin server's tools listed but not the relay's) comes to. It is proof only after
+// what the evidence (a failed wait with the plugin server's tools listed but not the relay's) comes to. It is proof only after
 // OLD_SERVER_AFTER_FAILURES of them in a row spanning OLD_SERVER_AFTER_MS: with the backoff that is the 4th failure (3 counted, the 8 s passed). Then the
 // dashboard is asked afresh, because the list is dynamic: it lags a sign-in or a grant, and shrinks to the bootstrap tools at a key loss.
 //   null: no proof yet (too early, or the dashboard could not say): the run retries.
@@ -1426,7 +1428,7 @@ async function oldServerVerdict($: any, run: RelayRun): Promise<WaitAnswer | nul
   if (run.lacking.count < OLD_SERVER_AFTER_FAILURES || now - run.lacking.since < OLD_SERVER_AFTER_MS) return null
   const plan = await sessionPlan($)
   if (plan.kind === 'failed' || plan.kind === 'unreachable') return null
-  // DX-4884: a run on no plan is still this run's while the session is on no plan
+  // a run on no plan is still this run's while the session is on no plan
   const same = run.planId === null ? plan.kind === 'not-connected' : plan.kind === 'connected' && plan.planId === run.planId
   return same ? { kind: 'old-server' } : { kind: 'signed-out' }
 }
@@ -1454,14 +1456,14 @@ type Handled = { next: 'again' | 'retry' | 'end'; cursor: string | null }
 
 async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: string | null, startedAt: number): Promise<Handled> {
   if (got.kind === 'events') {
-    // DX-4233: an ended run takes nothing (its events are the new run's to ask for)
+    // an ended run takes nothing (its events are the new run's to ask for)
     if (run.dead) return { next: 'end', cursor }
-    // DX-5398: the events are queued, never delivered here; the poll goes on at once from the newest cursor taken
-    // DX-4982: a wait answered, so the calls are allowed again: a blocked view is replaced by a real load
+    // the events are queued, never delivered here; the poll goes on at once from the newest cursor taken
+    // a wait answered, so the calls are allowed again: a blocked view is replaced by a real load
     if ((await read($, view)).phase === 'blocked') detach($, 'Plan refresh', refresh($, true))
     await queueEvents($, run, got.events)
     const last = got.events[got.events.length - 1]
-    // the refresh is detached (DX-4586): the environment going away under it is not a failure
+    // the refresh is detached: the environment going away under it is not a failure
     if (last !== undefined) detach($, 'Plan refresh', refresh($, true))
     // a delivery being retried keeps the band's retrying state: a poll that works says nothing about it
     if (outboxFailure === null) {
@@ -1479,7 +1481,7 @@ async function handleAnswer($: any, run: RelayRun, got: WaitAnswer, cursor: stri
     return { next: 'end', cursor }
   }
   if (got.kind === 'refused') {
-    // DX-4982: the person sees the sentence and fix; the session is told once with the engine's words. Retried on the backoff: it resumes once the calls are allowed.
+    // the person sees the sentence and fix; the session is told once with the engine's words. Retried on the backoff: it resumes once the calls are allowed.
     await relayFailed($, run, 'retrying', BLOCKED_LINE, refusedLine(got.detail, got.fix))
     return { next: 'retry', cursor }
   }
@@ -1500,10 +1502,10 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
     await setRelay($, run, 'streaming', null)
     await pruneCursors($)
     await restoreOutbox($, run)
-    // DX-5398: on from the newest event still waiting in the outbox (a run replacing a stuck one, or a reloaded module), else from the stored cursor
+    // on from the newest event still waiting in the outbox (a run replacing a stuck one, or a reloaded module), else from the stored cursor
     let cursor = pollCursor(outbox, run.planId, await loadCursor($, run.planId))
     let keyedBy = await $.session.id()
-    // DX-4233: the loop ends with its run; what a late answer would say is gated in setRelay and handleAnswer
+    // the loop ends with its run; what a late answer would say is gated in setRelay and handleAnswer
     while (!run.dead) {
       const startedAt = await $.clock.now()
       run.beat = startedAt
@@ -1537,17 +1539,17 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
   }
 }
 
-// DX-3900: the desktop attached (it does so again each time the person views the session): it hosts this one from now on
+// the desktop attached (it does so again each time the person views the session): it hosts this one from now on
 async function onSessionAttach($: any, e: any, next: any) {
   if (e.surface === 'desktop') await update($, desktopHosted, () => true)
   return next(e)
 }
 
 async function onSessionStart($: any, e: any, next: any) {
-  // DX-3900 / DX-4806: only ever raised here, never cleared. A reload of this module (the app's reload_plugins, paced to when the session is hidden) fires
+  // only ever raised here, never cleared. A reload of this module (the app's reload_plugins, paced to when the session is hidden) fires
   // session.start with the desktop detached (surfaces() is []); a flag set from that would forget the desktop hosts the session. `desktopHosted` is
   // $.state, which a reload keeps and a new process starts without.
-  // DX-4806: the desktop app sets CLAUDE_CODE_ENTRYPOINT=claude-desktop on every process it spawns (fresh or resumed; a reload keeps the process and the atom); a terminal reads `cli`. A resumed
+  // the desktop app sets CLAUDE_CODE_ENTRYPOINT=claude-desktop on every process it spawns (fresh or resumed; a reload keeps the process and the atom); a terminal reads `cli`. A resumed
   // session nobody has viewed yet has no attach and a detached roster, so the environment is the source that names its host.
   if ((await $.session.surfaces()).includes('desktop') || (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) === 'claude-desktop') {
     await update($, desktopHosted, () => true)
@@ -1557,23 +1559,24 @@ async function onSessionStart($: any, e: any, next: any) {
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
   await update($, modelPlan, () => null)
-  // DX-4630: nor a sign-in request: its watch died with the old process
+  // nor a sign-in request: its watch died with the old process
   await update($, signInRequest, () => null)
-  // DX-4233: no plan polling timer (the relay's events, the turns and the sub-agents refresh the view).
+  // no plan polling timer (the relay's events, the turns and the sub-agents refresh the view).
   startUsageTicker($, USAGE_TICK_MS)
-  // DX-5231: a reload starts with no compaction check: the sync below arms it again when the session is under the handshake (syncCompactionTicker)
+  // a reload starts with no compaction check: the sync below arms it again when the session is under the handshake (syncCompactionTicker)
   compactionTicker?.cancel()
   compactionTicker = null
   await syncCompaction($, { start: false })
-  // DX-4530: a reload starts with no fast poll; requests still open in $.state need it again
+  // a reload starts with no fast poll; requests still open in $.state need it again
   permissionTicker?.cancel()
   permissionTicker = null
   await syncPermissionPoll($)
-  // DX-4340: a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are a sub-agent start when the cache is a minute old, and every spawn
+  // a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are a sub-agent start when the cache is a minute old, and every spawn
   resetPacing()
+  dashboardAnswered = false
   detach($, 'Usage pacing', primePacing($))
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
-  // DX-4233: the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
+  // the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
   detach($, 'Plan event relay start', startRelayWhenKnown($))
   return next(e)
 }
@@ -1584,7 +1587,7 @@ async function onSessionStart($: any, e: any, next: any) {
 // too: stopping a timer in a live process is the harm, a timer left in a dying one is not.
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
-// DX-5554: the session that ends frees the team agent it signed in as at once, instead of the dashboard's 30-minute dead-session window. Only when the
+// the session that ends frees the team agent it signed in as at once, instead of the dashboard's 30-minute dead-session window. Only when the
 // process really ends (PROCESS_ENDS): a /clear or a /resume ends this session but the MCP carries on with the same session id and still needs its agent. Best effort and bounded (AGENT_RELEASE_DEADLINE_MS): a failure is one toast, never a held end. A
 // session with no key (signed out, revoked) or none to free (the agent gate holds it: it never got one) asks nothing.
 async function releaseAgent($: any): Promise<void> {
@@ -1598,15 +1601,15 @@ async function releaseAgent($: any): Promise<void> {
 async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason)) await releaseAgent($)
   if (e.reason === 'clear' && typeof e.sessionId === 'string') await update($, endedSession, () => e.sessionId)
-  // DX-4548: the sign-in watch belongs to the conversation that started it
+  // the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
     signInGeneration++
     await update($, signInRequest, () => null)
-    // DX-4548: free the sign-in key at once; the aborted watch's in-flight plan_connect (up to ~45s) must not hold it
+    // free the sign-in key at once; the aborted watch's in-flight plan_connect (up to ~45s) must not hold it
     await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
   }
   if (PROCESS_ENDS.includes(e.reason)) {
-    // DX-4233: the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh below
+    // the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh below
     // restarts it only if the new conversation is on another plan)
     stopRelay()
     await stopKeepalive($)
@@ -1620,9 +1623,8 @@ async function onSessionEnd($: any, e: any, next: any) {
     permissionTicker?.cancel()
     permissionTicker = null
   } else if (e.reason === 'clear' || e.reason === 'resume') {
-    // DX-4508: another conversation: its sub-agents and transcript are not this one's
-    await update($, liveAgents, () => [])
-    // DX-4982: nor is the plan its model named
+    // another conversation: its sub-agents and transcript are not this one's
+    // nor is the plan its model named
     await update($, modelPlan, () => null)
     await update($, transcript, () => null)
     // a fresh conversation (or another session taking this one's place) in the same process: what
@@ -1642,7 +1644,7 @@ async function onCommand($: any) {
 // answer draws the approval link and the code in the band; the plan page is not opened (there is
 // no connection to show yet).
 async function onPlanConnect($: any, e: any, next: any) {
-  // DX-4235: the model's leave, or its move to another plan, closes what the session opened under the plan it is on first; a leave or move
+  // the model's leave, or its move to another plan, closes what the session opened under the plan it is on first; a leave or move
   // its answer says did not happen takes that back
   const leaving = e.disconnect === true
   const why = leaving ? 'leaving the plan' : `moving to plan ${e.plan_id}`
@@ -1658,10 +1660,10 @@ async function onPlanConnect($: any, e: any, next: any) {
   }
   const answer = textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
   await settleLeave($, closes, leaving ? answer.ok : answer.ok && answer.body?.session?.planId === e.plan_id, why)
-  // DX-4233: the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
+  // the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
   relayHalted = null
-  // DX-4982: parsed once; what the blocked view names when the plugin's own reads are refused
+  // parsed once; what the blocked view names when the plugin's own reads are refused
   const modelConnected = connectedPlanOf(ran.text)
   if (modelConnected !== null) startRelay($, modelConnected.id)
   if (modelConnected !== null) await update($, modelPlan, () => modelConnected)
@@ -1676,7 +1678,7 @@ async function onPlanConnect($: any, e: any, next: any) {
     $.ui.toast(signInFailedToast('the approval request had no id'))
     return withSignInNote(ran, approval)
   }
-  // DX-4548: a request is shown by its URL, never by the answer's state: a request renewed after an expiry answers
+  // a request is shown by its URL, never by the answer's state: a request renewed after an expiry answers
   // `approval_pending` to the model's next call and must still reach the person
   if (waiting?.url !== approval.url) await showSignInRequest($, approval)
   // the model started this sign-in, so the plugin waits on it and tells the model how it ended
@@ -1687,8 +1689,8 @@ async function onPlanConnect($: any, e: any, next: any) {
   return withSignInNote(ran, approval)
 }
 
-// DX-4435: the model asked for a permission: keep the request for the band, which draws its approval link and code at once
-// (DX-4630: no page is opened by the plugin), and toast both.
+// the model asked for a permission: keep the request for the band, which draws its approval link and code at once
+// (no page is opened by the plugin), and toast both.
 async function onRequestPermission($: any, e: any, next: any) {
   const ran = await next(e)
   const request = permissionRequestOf(ran.text, e.permissions)
@@ -1700,18 +1702,10 @@ async function onRequestPermission($: any, e: any, next: any) {
   return withPermissionNote(ran, approval)
 }
 
-async function trackAgent($: any, agentId: unknown, isStart: boolean): Promise<void> {
-  if (typeof agentId !== 'string' || agentId === '') return
-  const now = await $.clock.now()
-  await update($, liveAgents, cur => (isStart ? [...liveAgentsAt(cur, now).filter(a => a.id !== agentId), { id: agentId, since: now }] : cur.filter(a => a.id !== agentId)))
-}
-
 async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   await noteTranscript($, e)
   const r = await next(e)
-  // DX-4336: the running-agent count follows the sub-agents' starts and stops; a finished one's last response also moved the parent's figure
-  await trackAgent($, e.agent_id, isStart)
-  // DX-5344: a sub-agent that stopped owes no briefing, and must not make a later restart read as its own
+  // a sub-agent that stopped owes no briefing, and must not make a later restart read as its own
   if (!isStart) await forgetCompactingAgent($, e.agent_id)
   if (!isStart) await markMeasured($)
   detach($, 'Plan refresh', refresh($))
@@ -1719,7 +1713,7 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   return r
 }
 
-// DX-4234: the time line. One stamp per prompt and per tool call, counted from the last one (any hook, any agent: one session, one clock).
+// the time line. One stamp per prompt and per tool call, counted from the last one (any hook, any agent: one session, one clock).
 async function timeLine($: any): Promise<string> {
   const now = await $.clock.now()
   const offsetMinutes = -new Date(now).getTimezoneOffset()
@@ -1766,7 +1760,7 @@ async function renderStart($: any, start: NonNullable<PendingStart>): Promise<st
 }
 
 // the stamp and, when there is one, the session start line: the entries a hook adds to the model's context.
-// DX-4736: the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
+// the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
 // (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
 // the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
 async function stampEntries($: any, takeStart: boolean): Promise<string[]> {
@@ -1786,26 +1780,25 @@ async function onPromptStamp($: any, e: any, next: any) {
 // result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
-  // DX-4857: a plugin's own `$.mcp.call` (this one's dashboard reads) is raised as a `tool.call` too, with no agentId. Its result goes to the plugin,
+  // a plugin's own `$.mcp.call` (this one's dashboard reads) is raised as a `tool.call` too, with no agentId. Its result goes to the plugin,
   // never the model, so a stamp or the start text put beside it is lost, and the stamp would move the clock the model reads. The signal is the
-  // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (DX-4857
-  // comment 13414 and the code-quality gate's real-engine probe). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
-  // Returning here also skips the lastStamp bookkeeping. Seated by tests/on-tool-stamp-origin-scan.test.mjs.
+  // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (probed against the real engine). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
+  // Returning here also skips the lastStamp bookkeeping. A test pins that it is seated.
   if (raisedByPlugin(next.origin)) return r
-  // DX-4721: the main loop's result carries the notes appended so far: they are read (a sub-agent's or a fork's result is not the main loop's)
+  // the main loop's result carries the notes appended so far: they are read (a sub-agent's or a fork's result is not the main loop's)
   if (e.agentId === undefined && (await read($, turn)).pending.length > 0) await update($, turn, cur => toolResultSent(cur))
-  // DX-4235: a background shell's start, and a working sub-agent's liveness
+  // a background shell's start, and a working sub-agent's liveness
   detach($, 'danxbot activity report', reportShellStart($, e, r))
   if (e.agentId !== undefined) detach($, 'danxbot activity report', reportSubagentAlive($, e.agentId))
   if (r.deny !== undefined) return r
-  // DX-5344: a sub-agent's compaction briefs that sub-agent, in its own tool result
+  // a sub-agent's compaction briefs that sub-agent, in its own tool result
   const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
   return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined)), ...(briefing === null ? [] : [briefing])] }
 }
 
-// DX-4234: what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
+// what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
 // the session holds no key or a person revoked it (its own tools already tell the model). `failed`: the read itself broke (a dashboard fault).
-// DX-4233: `connected` carries the plan the session is on (the relay starts from it); `unreachable` is the plugin's server not connected yet (quiet to
+// `connected` carries the plan the session is on (the relay starts from it); `unreachable` is the plugin's server not connected yet (quiet to
 // the model, retried by the relay's start).
 type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connected' } | { kind: 'silent' } | { kind: 'unreachable' } | { kind: 'failed'; reason: string; refusal?: Refusal }
 
@@ -1814,23 +1807,23 @@ type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connecte
 async function sessionPlan($: any): Promise<SessionPlan> {
   const r = await api($, 'GET', '/api/plans', { query: SESSION_PLAN_PROBE })
   if (r.unreachable === true) return { kind: 'unreachable' }
-  // DX-5549: the MCP's agent gate holds the session (no team agent yet): its plan_connect answer already told the model what to do
+  // the MCP's agent gate holds the session (no team agent yet): its plan_connect answer already told the model what to do
   if (isSignedOut(r) || outcomeRevokedBy(r) !== null || agentBlockOf(r) !== null) return { kind: 'silent' }
   if (!r.ok) return { kind: 'failed', reason: errText(r), refusal: r.refusal }
   if (!('session' in (r.body ?? {}))) return { kind: 'failed', reason: 'bad_response: GET /api/plans answered no session field' }
   if (r.body.session === null) return { kind: 'not-connected' }
   const planId = r.body.session.plan_id
-  // DX-5551 / DX-5553: a registered session on no plan (it holds a team agent, a stand-alone card, or neither yet) is a row whose plan_id is null
+  // a registered session on no plan (it holds a team agent, a stand-alone card, or neither yet) is a row whose plan_id is null
   if (planId === null) return { kind: 'not-connected' }
   return typeof planId === 'number' ? { kind: 'connected', planId } : { kind: 'failed', reason: 'bad_response: GET /api/plans answered a session whose plan_id is neither a plan id nor null' }
 }
 
-// DX-5562: guards a session id used as a file name (the connection record's path), not a sub-agent id
+// guards a session id used as a file name (the connection record's path), not a sub-agent id
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
 
 // Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the danx-dashboard MCP server writes
-// at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, session-connection.ts `sessionConnectionPath`; only its existence is
-// read). It decides who a dashboard fault speaks to (DX-3421): a connected session gets one warning line, any other stays silent.
+// at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, only its existence is
+// read). It decides who a dashboard fault speaks to: a connected session gets one warning line, any other stays silent.
 async function isPlanConnected($: any, id: string): Promise<boolean> {
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
   if (typeof home !== 'string' || home === '' || !SESSION_ID_PATTERN.test(id)) return false
@@ -1840,7 +1833,7 @@ async function isPlanConnected($: any, id: string): Promise<boolean> {
 // What a session start's wait for the plugin's server came to: it is there, its environment was unloaded, or the deadline came first.
 type ServerState = 'ready' | 'unloaded' | 'not-yet'
 
-// A session START may reach its hook before the plugin's own server has connected (DX-4578): the server's `danxbot_api` shows in the
+// A session START may reach its hook before the plugin's own server has connected: the server's `danxbot_api` shows in the
 // session's tool list once it has. Polled until `deadlineAt`, the start's one deadline (CONTEXT_DEADLINE_MS from its beginning), and not a tick
 // after. A
 // sub-agent's start is mid-session and does not call this.
@@ -1886,13 +1879,13 @@ const toldLine = (t: Told, failure: (reason: string) => string): string | null =
   return t.kind === 'failed' ? failure(t.reason) : null
 }
 
-// The registry's text for `event`, for every signed-in session (DX-5554: the dashboard leaves the plan-only line out for a session on no plan). A read
+// The registry's text for `event`, for every signed-in session (the dashboard leaves the plan-only line out for a session on no plan). A read
 // that broke: one line naming the event and why.
 async function eventContext($: any, event: DanxEvent): Promise<string | null> {
   return toldLine(eventText(await api($, 'GET', eventPath(event))), reason => eventFailureLine(event, reason))
 }
 
-// DX-3928: a session that is not on a plan (or has no key yet) but replaced one that was is told which plan and what waits there. The
+// a session that is not on a plan (or has no key yet) but replaced one that was is told which plan and what waits there. The
 // session's own danx-dashboard server finds the earlier session and answers; its `restart_notice` tool works before sign-in and owns its
 // lookup's 8 s deadline (a `lookup_timeout` stop carries the server's fix text), so the plugin sets no deadline of its own around the call. A stop
 // it answers, or a call that fails, is one warning line, never quiet. The arguments depend on how the session started (restartAsk).
@@ -1906,7 +1899,7 @@ async function restartNotice($: any, asked: RestartAsk): Promise<string | null> 
     } catch (err: any) {
       const message = String(err?.message ?? err)
       const refusal = classifierRefusal(message)
-      // DX-4982: a refused call says the person's sentence, the session's line carries the fix
+      // a refused call says the person's sentence, the session's line carries the fix
       told = { kind: 'failed', reason: refusal === null ? `error: ${message.slice(0, CALL_ERROR_MAX)}` : `${BLOCKED_LINE} ${refusal.fix}` }
     }
   }
@@ -1917,7 +1910,7 @@ async function restartNotice($: any, asked: RestartAsk): Promise<string | null> 
 type StartReads = { line: string | null; askRestart: boolean }
 
 // A /clear: it has no event text, and it is a restart only when the session it ended was on a plan (that session's connection record is on disk),
-// which is also what names the predecessor to the server. Any other clear is quiet (DX-3421), the server is never asked.
+// which is also what names the predecessor to the server. Any other clear is quiet, the server is never asked.
 async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<string | null> {
   const ended = start.predecessorId
   if (ended === null || !(await isPlanConnected($, ended)) || (await isPlanConnected($, start.sessionId))) return null
@@ -1928,8 +1921,8 @@ async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<st
 }
 
 // The reads a pending start asks of the dashboard: the wait for the plugin's server, the plan read and the event text read share ONE deadline. A session
-// the plan read finds signed in is told the event text (DX-5554: on a plan or not); one on no plan then also asks the restart notice. Whatever fails before
-// the plan read answers, a session KNOWN to be on a plan (its record on disk) is told in one warning line; any other stays silent (DX-3421) and, on a start
+// the plan read finds signed in is told the event text, on a plan or not; one on no plan then also asks the restart notice. Whatever fails before
+// the plan read answers, a session KNOWN to be on a plan (its record on disk) is told in one warning line; any other stays silent and, on a start
 // or resume, still asks the restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
   const event = sessionEvent(start.source)
@@ -1945,11 +1938,11 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
     const plan = await sessionPlan($)
     if (plan.kind === 'connected') {
       const line = await eventContext($, event)
-      // DX-4993: a compaction is followed by the resume briefing, in the same first turn as the registry's text
+      // a compaction is followed by the resume briefing, in the same first turn as the registry's text
       return { line: start.source === 'compact' ? [line, await compactionBriefing($)].filter(x => x !== null).join('\n') : line, askRestart: false }
     }
     if (plan.kind === 'failed') return fault(plan.reason)
-    // DX-5554: signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
+    // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
     if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
     return { line: null, askRestart }
@@ -1962,12 +1955,12 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
 
 async function readSubagentContext($: any): Promise<string | null> {
   const plan = await sessionPlan($)
-  // DX-5554: every signed-in session's sub-agent, on a plan or not
+  // every signed-in session's sub-agent, on a plan or not
   if (plan.kind === 'connected' || plan.kind === 'not-connected') return eventContext($, 'sub_agent_start')
   return plan.kind === 'failed' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine('sub_agent_start', plan.reason) : null
 }
 
-// DX-5344: the entries still within COMPACTING_NOTE_TTL_MS
+// the entries still within COMPACTING_NOTE_TTL_MS
 function liveCompacting(cur: CompactingState, now: number): CompactingState {
   const fresh = (at: number) => now - at <= COMPACTING_NOTE_TTL_MS
   return { main: cur.main !== null && fresh(cur.main) ? cur.main : null, agents: Object.fromEntries(Object.entries(cur.agents).filter(([, a]) => fresh(a.at))) }
@@ -1975,7 +1968,7 @@ function liveCompacting(cur: CompactingState, now: number): CompactingState {
 
 // A `compact` restart. The main agent is briefed when it has an entry (consumed here), or when no agent has one (a compaction nobody noted, the unattributable kinds); a restart that only
 // sub-agents account for briefs nobody here: each of them is told on its own first tool result, whichever restart came first. `briefsMain` says whether the main agent is briefed;
-// `own` says the main agent's OWN entry was consumed (DX-5385): the only proof the main agent was compacted, since the fallback also fits an unattributed sub-agent compaction.
+// `own` says the main agent's OWN entry was consumed: the only proof the main agent was compacted, since the fallback also fits an unattributed sub-agent compaction.
 async function restartBriefsMain($: any): Promise<{ briefsMain: boolean; own: boolean }> {
   const now = await $.clock.now()
   let result = { briefsMain: true, own: false }
@@ -2016,8 +2009,8 @@ async function forgetCompactingAgent($: any, agentId: unknown): Promise<void> {
   })
 }
 
-// DX-5344: the briefing of the sub-agent whose tool result this is, once its own compaction finished: once, to that sub-agent only, and only when the session is on a plan (an unconnected
-// session gets no danxbot text at all, DX-3421). The engine's list names its type and task; a list that fails is toasted and the briefing names the id alone.
+// the briefing of the sub-agent whose tool result this is, once its own compaction finished: once, to that sub-agent only, and only when the session is on a plan (an unconnected
+// session gets no danxbot text at all). The engine's list names its type and task; a list that fails is toasted and the briefing names the id alone.
 async function takeAgentBriefing($: any, agentId: string): Promise<string | null> {
   const now = await $.clock.now()
   let waiting = false
@@ -2041,26 +2034,26 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
 
 // SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. The session is not bound yet on a
 // desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see stampEntries).
-// The one exception (DX-5385): a compaction that ends with no turn running detaches the resume prompt, whose reads wait for the session to bind.
+// The one exception: a compaction that ends with no turn running detaches the resume prompt, whose reads wait for the session to bind.
 async function onClassicSessionStart($: any, e: any, next: any) {
   const below = await onTitle($, e, next)
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
   // the ended session is consumed by this start only: a later clear that saw no end must not be asked about this one's
   const ended = await takeEndedSession($)
-  // DX-5344: a restart only sub-agents account for is theirs to be briefed about; the main agent's pending start is for its own compaction (and every other start, and a restart nobody noted)
+  // a restart only sub-agents account for is theirs to be briefed about; the main agent's pending start is for its own compaction (and every other start, and a restart nobody noted)
   const restart = e.source === 'compact' ? await restartBriefsMain($) : { briefsMain: true, own: false }
   if (!restart.briefsMain) return below
   const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended }
   await update($, pendingStart, () => start)
-  // DX-5385: a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
+  // a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
   // the main agent's OWN compaction (`restart.own`). A restart with no entry at all (an unattributed sub-agent compaction, a host without session.compact) is briefed passively and starts no turn.
   // The isRunning read is a deliberate fast path: a running turn carries the briefing on its next tool result, with no reads or take here.
   if (restart.own && !(await read($, turn)).isRunning) detach($, 'Resume after compaction', resumeAfterCompaction($))
   return below
 }
 
-// DX-5385: the main agent's resume prompt, by the relay's one prompt path (submitEvent, DX-4721). Only a session on a plan gets one (its connection record is on disk, as
-// isPlanConnected says; any other session stays quiet, DX-3421). The pending start is TAKEN first, so the briefing it renders is in this prompt and the prompt's own
+// the main agent's resume prompt, by the relay's one prompt path (submitEvent). Only a session on a plan gets one (its connection record is on disk, as
+// isPlanConnected says; any other session stays quiet). The pending start is TAKEN first, so the briefing it renders is in this prompt and the prompt's own
 // stamp hook finds none (told once). A turn that began while the reads ran is the person's: the built briefing goes into that running turn as a note (no prompt queues
 // behind it); a note the session refuses puts the start back for the next tool result. A prompt the session refuses puts it back the same way.
 async function resumeAfterCompaction($: any): Promise<void> {
@@ -2090,11 +2083,11 @@ async function restoreStart($: any, start: NonNullable<PendingStart>): Promise<v
   await update($, pendingStart, cur => cur ?? start)
 }
 
-// DX-4340: the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
-// DX-4234: and, first, the registry's sub_agent_start text when its parent session is on a plan
+// the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
+// and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
-  // DX-4235: its activity row opens
+  // its activity row opens
   detach($, 'danxbot activity report', reportSubagentStart($, e))
   const eventLine = await withinDeadline($, CONTEXT_DEADLINE_MS, readSubagentContext($), () => eventFailureLine('sub_agent_start', DEADLINE_REASON))
   const pacing = await pacingLine(pacingEnv($))
@@ -2103,12 +2096,12 @@ async function onSubagentStart($: any, e: any, next: any) {
 
 async function onSubagentStop($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, false)
-  // DX-4235: the shells' ends (its own row closes at its turn.complete)
+  // the shells' ends (its own row closes at its turn.complete)
   detach($, 'danxbot shell-end report', reportShellEnds($, 'SubagentStop', e))
   return r
 }
 
-// DX-4233: the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this).
+// the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this).
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
   if (e.agentId === undefined) {
@@ -2121,12 +2114,12 @@ async function onTurnComplete($: any, e: any, next: any) {
     })
     // detached: the turn.complete hook does not wait on the session taking a prompt
     if (prompts.length > 0) detach($, 'Telling the session', promptNotes($, prompts))
-    // DX-3900: a sub-agent's end is not the session going idle
+    // a sub-agent's end is not the session going idle
     await armKeepalive($, false)
-    // DX-5231: the agent's ready, said during this turn, starts the compaction now that the turn is over
+    // the agent's ready, said during this turn, starts the compaction now that the turn is over
     await syncCompaction($, { start: true })
   } else {
-    // DX-4235: a sub-agent's turn ended, cleanly or not: its activity row closes
+    // a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
   }
   detach($, 'Plan refresh', refresh($))
@@ -2134,14 +2127,14 @@ async function onTurnComplete($: any, e: any, next: any) {
   return r
 }
 
-// DX-4233: the main loop's turn began. DX-5385: turn.start also fires for a sub-agent's turn and an engine fork (they carry an agentId), and only the main loop's
+// the main loop's turn began. Turn.start also fires for a sub-agent's turn and an engine fork (they carry an agentId), and only the main loop's
 // turn.complete clears the turn state, so a sub-agent's start is no part of the main loop's state: it would leave isRunning true and the resume prompt unsent.
 async function onTurnStart($: any, e: any, next: any) {
   if (e.agentId !== undefined) return next(e)
   cancelKeepalive()
   const since = await read($, idleSince)
   const now = await $.clock.now()
-  // DX-4806: a running turn is no idle period; a reload that finds one running resumes from nothing (armKeepalive), never from the last turn's end
+  // a running turn is no idle period; a reload that finds one running resumes from nothing (armKeepalive), never from the last turn's end
   await update($, idleSince, () => null)
   if (keepalivePlan !== null && since !== null && now >= since + KEEPALIVE_GIVE_UP_MS) detach($, 'Plan tab re-check', recheckTab($))
   await update($, turn, () => turnStarted())
@@ -2149,7 +2142,7 @@ async function onTurnStart($: any, e: any, next: any) {
   return next(e)
 }
 
-// The app's session title, handed to `plan_connect`; and (DX-4508) the main transcript's path.
+// The app's session title, handed to `plan_connect`; and the main transcript's path.
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
   const t = typeof e.session_title === 'string' ? e.session_title.trim() : ''
@@ -2157,7 +2150,7 @@ async function onTitle($: any, e: any, next: any) {
   return next(e)
 }
 
-// DX-5232: the events warning's reason, toasted once on the transition into the warning (a redraw that shows the same warning says nothing).
+// the events warning's reason, toasted once on the transition into the warning (a redraw that shows the same warning says nothing).
 // One pass: read the view and relay, compute the warning, store it atomically, toast if the update changed it. The update cannot read those two
 // atoms itself, so a snapshot that went stale between the read and the update can only repeat one toast or miss one, never store a wrong warning
 // for long: the next write path (a load or a relay state change) computes it again from the latest state.
@@ -2203,13 +2196,13 @@ async function drawSessionMode($: any, e: any, next: any) {
   return renderFooter($.ui.resolve(e), handlers($), label, await next(e))
 }
 
-// DX-4448: card ids in an assistant reply drawn as links. Reads only the `view` atom (filled at refresh): no network in the draw.
-// The text is rewritten in the props and handed on (claude-code.d.ts, ui.render: "rewrite `props`"), so the engine's own drawing
+// card ids in an assistant reply drawn as links. Reads only the `view` atom (filled at refresh): no network in the draw.
+// The text is rewritten in the props and handed on (the engine's type declarations, ui.render: "rewrite `props`"), so the engine's own drawing
 // and any hook below stay in effect; the stored message is untouched, and `onScreen` rides along as received. Nothing to link
 // (not connected, no prefixes known, no card id in the text) leaves the event as it is.
 async function drawAssistantMessage($: any, e: any, next: any) {
   const v = await read($, view)
-  // links in error or nothing known: the reply is drawn as written. So is a text that is not a string (the d.ts types it `string`;
+  // links in error or nothing known: the reply is drawn as written. So is a text that is not a string (the engine's declarations type it `string`;
   // this only guards the engine one day sending a block with none, which `linkCardIds` would throw on)
   if (v.phase !== 'ready' || v.connected === null || v.links.state !== 'ready' || v.links.prefixes.length === 0 || typeof e.props.text !== 'string') {
     return next(e)
@@ -2218,35 +2211,53 @@ async function drawAssistantMessage($: any, e: any, next: any) {
   return next(text === e.props.text ? e : { ...e, props: { ...e.props, text } })
 }
 
-// DX-4340: the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
+// the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
 function pacingEnv($: any) {
   return {
     now: () => $.clock.now(),
     within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
-    call: (method: string, path: string) => api($, method, path),
+    call: (method: string, path: string, body?: object) => api($, method, path, body === undefined ? {} : { body }),
+    reading: () => currentUsageBody($),
+    signedIn: async () => dashboardAnswered || isSignedIn(await read($, view)),
+    sleep: (ms: number) => $.clock.sleep(ms),
     toast: (text: string) => $.ui.toast(text),
   }
 }
 
-// DX-4235: the reports. A plan session tells the dashboard what it is running (activity rows) and has
-// its stop checked for ready cards (DX-4534). Every call goes through the session's own server (`api`) and runs detached, so no event
+// the session's usage reading right now, as the usage report's body, for the spawn claim to carry. A spawn is a model tool call, so the
+// harness holds windows from an API response by then; `measuredAt` (the last response the main thread's measure event saw) may not be set yet in a
+// session's very first turn, and the reading is then measured now. Null when the reading fails or has no window; never rejects.
+async function currentUsageBody($: any): Promise<UsageBody | null> {
+  try {
+    const now = await $.clock.now()
+    const limits = (await $.session.usage()).rateLimits
+    return usageBody(limits, now, (await read($, measuredAt)) ?? now, await $.env.get('CLAUDE_CODE_ACCOUNT_UUID'))
+  } catch {
+    return null
+  }
+}
+
+// the reports. A plan session tells the dashboard what it is running (activity rows) and has
+// its stop checked for ready cards. Every call goes through the session's own server (`api`) and runs detached, so no event
 // waits on it; a report the dashboard does not take is one toast, never swallowed (`report`).
 //
-// What each needs of the plan state the module holds (`reportingState`):
-// - OPENING something (a sub-agent's row, a shell's row, a liveness post) needs the session known to be on a plan (`on`): the silence rule.
+// What each needs of the state the module holds (`reportingState`):
+// - OPENING something (a sub-agent's row, a shell's row, a liveness post) needs the session known to be signed in (`on`): on a plan or not
+//   (a sub-agent is a row of the account's running-agent count, plan or not; the dashboard opens the session's dispatch for it).
 // - CLOSING what was opened (a sub-agent's finish, a shell's end) is owed because its start was posted, so it is posted whatever the view
-//   says, while it is `unknown` too (a failed refresh empties the view's plan for a moment; comment 10065's stuck row was exactly a close
-//   that never went out). Only `off` drops it: the dashboard has the session on no plan and refuses every report from it
-//   (danxbot plan-sessions-routes.ts handleActivity: no dispatch to write to, 409).
+//   says, while it is `unknown` too (a failed refresh empties the view's plan for a moment; a stuck row would be exactly a close
+//   that never went out). Only `off` drops it: the key was revoked, and the dashboard refuses every report from it.
 // - The ready-cards check runs unless `off`: its own read asks the dashboard which plan the session is on.
 
-// `on`: the view holds the plan the session is on. `off`: the dashboard said the session is on no plan (a loaded view with none), or a
-// person revoked its key. `unknown`: nothing is known (loading, a failed load, a session signed out with its key lapsed).
+// `on`: the view holds the plan the session is on, or the session is signed in on no plan. `off`: a person revoked its key. `unknown`:
+// nothing is known (loading, a failed load, a session signed out with its key lapsed).
 type ReportingState = 'on' | 'off' | 'unknown'
 async function reportingState($: any): Promise<ReportingState> {
   const v = await read($, view)
   if (v.connected !== null) return 'on'
-  return v.phase === 'ready' || v.phase === 'key-revoked' ? 'off' : 'unknown'
+  // a signed-in session on no plan reports its sub-agents too: they are rows of the account's running-agent count, plan or not
+  if (isSignedIn(v)) return 'on'
+  return v.phase === 'key-revoked' ? 'off' : 'unknown'
 }
 
 // A plan state that is `off` takes the reports' memory with it: nothing opened under the plan can be closed from here any more.
@@ -2264,10 +2275,10 @@ type LeaveCloses = { owed: ReportState; rows: number; posted: boolean }
 
 const activities = (n: number) => `${n} running activit${n === 1 ? 'y' : 'ies'}`
 
-// DX-4235 (comment 12426): before the session leaves its plan or moves to another, every close it owes (a running sub-agent's finish, an
-// open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running are the
-// stuck-row bug of comment 10065. Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds the leave; a failure is one toast
-// naming what may stay running, and the leave goes on. The memory is cleared first, so a sub-agent's turn.complete racing the leave
+// before the session leaves its plan or moves to another, every close it owes (a running sub-agent's finish, an
+// open shell's end) is posted, in one call: after the leave the dashboard takes no report from it, and rows left running would stay stuck.
+// Bounded by LEAVE_CLOSE_DEADLINE_MS so a dead dashboard never holds
+// the leave; a failure is one toast naming what may stay running, and the leave goes on. The memory is cleared first, so a sub-agent's turn.complete racing the leave
 // posts nothing twice. `why` names the leave in the toast. The caller hands the answer to `leaveDidNotHappen` when the leave failed.
 async function closeOwedBeforeLeave($: any, why: string): Promise<LeaveCloses> {
   const owed = await read($, reports)
@@ -2285,16 +2296,15 @@ async function closeOwedBeforeLeave($: any, why: string): Promise<LeaveCloses> {
   return { owed, rows: rows.length, posted: failure === null }
 }
 
-// DX-4235: hands the closes a leave took back when the leave did not happen (`left` false); nothing to do when the leave took none (`closes`
+// hands the closes a leave took back when the leave did not happen (`left` false); nothing to do when the leave took none (`closes`
 // null: a move that left no reported plan) or happened.
 async function settleLeave($: any, closes: LeaveCloses | null, left: boolean, why: string): Promise<void> {
   if (closes !== null && !left) await leaveDidNotHappen($, closes, why)
 }
 
-// DX-4235: the leave did not happen (refused, or the call failed): the session is still on its plan, so what the closes took comes back.
+// the leave did not happen (refused, or the call failed): the session is still on its plan, so what the closes took comes back.
 // Closes the dashboard did not take are owed again: the memory returns, merged with anything opened since (one finish each, later). Closes
-// it took cannot be undone: the dashboard keeps a row's FIRST finish (danxbot dispatch-activities-db.ts upsert, finished_at =
-// COALESCE(stored, incoming)), so a reopening post would change nothing; they stay forgotten (nothing is posted twice) and one toast says
+// it took cannot be undone: the dashboard keeps a row's FIRST finish (a stored finish is never overwritten), so a reopening post would change nothing; they stay forgotten (nothing is posted twice) and one toast says
 // they read as finished while they run. The plan always comes back.
 async function leaveDidNotHappen($: any, closes: LeaveCloses, why: string): Promise<void> {
   const { owed } = closes
@@ -2322,18 +2332,18 @@ function postActivity($: any, rows: ActivityChange[]): void {
   detach($, 'danxbot activity report', report($, 'activity', 'POST', ACTIVITY_PATH, { activities: rows }))
 }
 
-// DX-4235: a sub-agent started: its row opens and it is remembered as running, its liveness clock starting now.
+// a sub-agent started: its row opens and it is remembered as running, its liveness clock starting now.
 async function reportSubagentStart($: any, e: any): Promise<void> {
   if (typeof e.agent_id !== 'string' || e.agent_id === '') return
+  if ((await reportingState($)) !== 'on') return
   const planId = await openingPlan($)
-  if (planId === null) return
   const id = subagentKey(e.agent_id)
   const now = await $.clock.now()
-  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: now }, planId }))
+  await update($, reports, cur => ({ ...cur, agents: { ...cur.agents, [id]: now }, planId: planId ?? cur.planId }))
   postActivity($, [agentRow(id, typeof e.agent_type === 'string' && e.agent_type !== '' ? e.agent_type : null, now, null)])
 }
 
-// DX-4235: a sub-agent's turn ended, cleanly or not (a failed sub-agent raises no SubagentStop, but its turn.complete still comes): the
+// a sub-agent's turn ended, cleanly or not (a failed sub-agent raises no SubagentStop, but its turn.complete still comes): the
 // finish its posted start is owed goes out, and it is forgotten. An agent this session never reported (an engine fork, a workflow's
 // agent, one already finished) reports nothing; a resumed sub-agent is reported again from its next start.
 async function reportSubagentEnd($: any, agentId: string): Promise<void> {
@@ -2349,9 +2359,9 @@ async function reportSubagentEnd($: any, agentId: string): Promise<void> {
   postActivity($, [agentRow(id, null, now, now)])
 }
 
-// DX-4235: a tool call whose result names a background task (a `run_in_background` shell, or one the person backgrounded) opens that
-// shell's row, keyed by its task id (the id the engine's `background_tasks` lists it under, comment 12391), labelled by the call's own
-// `description`, redacted (PBLM-2121; never its command).
+// a tool call whose result names a background task (a `run_in_background` shell, or one the person backgrounded) opens that
+// shell's row, keyed by its task id (the id the engine's `background_tasks` lists it under), labelled by the call's own
+// `description`, redacted (never its command).
 async function reportShellStart($: any, e: any, r: any): Promise<void> {
   const taskId = r.deny === undefined ? r.result?.backgroundTaskId : undefined
   if (typeof taskId !== 'string' || taskId === '') return
@@ -2362,8 +2372,8 @@ async function reportShellStart($: any, e: any, r: any): Promise<void> {
   postActivity($, [shellRow(taskId, labelOf(e.description), now, null)])
 }
 
-// DX-4235: a running sub-agent's own tool call re-posts its row with a fresh lastActivityAt, at most once a LIVENESS_MS, so a sub-agent
-// working for minutes never reads as silent (comment 10017).
+// a running sub-agent's own tool call re-posts its row with a fresh lastActivityAt, at most once a LIVENESS_MS, so a sub-agent
+// working for minutes never reads as silent.
 async function reportSubagentAlive($: any, agentId: string): Promise<void> {
   const id = subagentKey(agentId)
   const now = await $.clock.now()
@@ -2374,8 +2384,8 @@ async function reportSubagentAlive($: any, agentId: string): Promise<void> {
   postActivity($, [agentRow(id, null, now, null)])
 }
 
-// DX-4235: a Stop or SubagentStop carries the engine's list of the background work in flight. It finishes the row of every shell this
-// session opened that the list no longer shows running (comment 10065: every start the reports open gets its end). A snapshot that is not
+// a Stop or SubagentStop carries the engine's list of the background work in flight. It finishes the row of every shell this
+// session opened that the list no longer shows running (every start the reports open gets its end). A snapshot that is not
 // a list is one toast.
 async function reportShellEnds($: any, event: 'Stop' | 'SubagentStop', e: any): Promise<void> {
   const state = await reportingState($)
@@ -2395,18 +2405,18 @@ async function reportShellEnds($: any, event: 'Stop' | 'SubagentStop', e: any): 
 // What the ready-cards read came to: the ready cards, nothing to say, or why it failed.
 type ReadyRead = { kind: 'cards'; cards: ReadyCard[] } | { kind: 'quiet' } | { kind: 'failed'; reason: string }
 
-// DX-4534: the answers that end the read quietly, the ordinary ones for a session with nothing to check: it holds no usable key (signed
+// the answers that end the read quietly, the ordinary ones for a session with nothing to check: it holds no usable key (signed
 // out, or a person revoked it: its own tools say so), or the dashboard has it on no plan (409 `session_not_connected`). Any other
 // refusal is a failure the person sees.
 function isNothingToCheck(r: Api): boolean {
   return isSignedOut(r) || outcomeRevokedBy(r) !== null || (r.status === 409 && r.body?.error === 'session_not_connected')
 }
 
-// DX-4534: the plan this session is on and its boards, then the plan's ToDo cards on each board (a plan can span boards; an issues read
+// the plan this session is on and its boards, then the plan's ToDo cards on each board (a plan can span boards; an issues read
 // names its board with the danxbot_api tool's own `board` argument).
 async function readReadyCards($: any): Promise<ReadyRead> {
-  // DX-4997: the pause is read FIRST, and while the session is in an agent pause neither card read is made: both carry the session header, so
-  // they would count as the agent's own dashboard call and end the pause (the pause read does not, DX-4951). The stop is allowed.
+  // the pause is read FIRST, and while the session is in an agent pause neither card read is made: both carry the session header, so
+  // they would count as the agent's own dashboard call and end the pause (the pause read does not). The stop is allowed.
   const pause = await readAgentPause($)
   if (pause.kind === 'paused' || pause.kind === 'nothing') return { kind: 'quiet' }
   if (pause.kind === 'failed') return { kind: 'failed', reason: pause.reason }
@@ -2427,7 +2437,7 @@ async function readReadyCards($: any): Promise<ReadyRead> {
   return { kind: 'cards', cards }
 }
 
-// DX-4235: the main session's stop. Reports the shells' ends, then (DX-4534) blocks the stop once while the plan has ready cards nobody holds.
+// the main session's stop. Reports the shells' ends, then blocks the stop once while the plan has ready cards nobody holds.
 // Never on a stop the hook already forced (`stop_hook_active`, so it cannot loop), never on its own failure (one toast, the stop goes on),
 // and within one deadline over all its reads.
 async function onReportStop($: any, e: any, next: any) {
@@ -2444,28 +2454,28 @@ async function onReportStop($: any, e: any, next: any) {
   return r
 }
 
-// ---- DX-4993 (PLAN-42 rule R-4): an operator session is compacted only after its agent says ready ----------------------------------------------
+// ---- an operator session is compacted only after its agent says ready ----------------------------------------------
 // The control is a local file the session's danx-dashboard MCP relay writes (hooks/compaction/control.ts has the shape and the reasoning). This block
-// starts the compaction when the agent says ready (`$.command.run({ command: 'compact' })` at the main loop's turn end, DX-5231), clears what older plugin versions armed,
+// starts the compaction when the agent says ready (`$.command.run({ command: 'compact' })` at the main loop's turn end), clears what older plugin versions armed,
 // and answers every automatic compaction proposal (`classic.PreCompact`) with a refusal while the session is under the handshake. It fails
 // OPEN: whatever it cannot establish lets Claude Code's own compaction through (a refusal with no way out ends the session), and says so once.
 
 // The last reason told to the person that the control file is unreadable; the same reason is told once.
 let compactionFaultTold: string | null = null
-// DX-5314: the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
+// the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
 let relayOlderTold: string | null = null
-// DX-5365: the person was told once that the engine's release could not be read, so sub-agent compaction waits for the first compaction event
+// the person was told once that the engine's release could not be read, so sub-agent compaction waits for the first compaction event
 let engineVersionTold = false
-// DX-5222: each sub-agent's last model response (its context size and model), noted at `turn.step`: `session.compact` names the proposing sub-agent but not its size, and
+// each sub-agent's last model response (its context size and model), noted at `turn.step`: `session.compact` names the proposing sub-agent but not its size, and
 // `$.session.usage()` is the main conversation's. A Map keeps insertion order, so the oldest agent goes first once AGENT_SIZES_KEEP are held; a reload starts empty (the
 // next response of each agent fills it), and an agent whose size is unknown is refused and told, never guessed (agentVerdict).
 const agentSizes = new Map<string, AgentSize>()
-// DX-5222: the sub-agent refusals already told to the person (`agent id: reason`), each once
-// DX-5562: bounded like agentSizes: past AGENT_FAULT_TOLD_KEEP distinct faults the oldest is forgotten, so a long-lived process holds no more than that
+// the sub-agent refusals already told to the person (`agent id: reason`), each once
+// bounded like agentSizes: past AGENT_FAULT_TOLD_KEEP distinct faults the oldest is forgotten, so a long-lived process holds no more than that
 const agentFaultTold = new Set<string>()
 // true the first time `fault` is seen (the caller then tells the person), false after
 function firstTimeAgentFault(fault: string): boolean {
-  // DX-5562: the fault text can embed an id of any length, so the remembered key is cut to a fixed size
+  // the fault text can embed an id of any length, so the remembered key is cut to a fixed size
   const memory = fault.slice(0, AGENT_FAULT_KEY_MAX)
   if (agentFaultTold.has(memory)) return false
   agentFaultTold.add(memory)
@@ -2492,8 +2502,8 @@ async function contextReading($: any): Promise<{ tokens: number | null; window: 
   return { tokens: count(context?.tokens), window: count(context?.window) }
 }
 
-// The store keeps the spent-release records (DX-4993) and the delivered-request records (DX-5222) of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
-// DX-5562: it answers the keys it deleted, so a caller that keeps a claim beside a record can drop the claim with it.
+// The store keeps the spent-release records and the delivered-request records of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
+// it answers the keys it deleted, so a caller that keeps a claim beside a record can drop the claim with it.
 async function pruneSessionRecords($: any, prefix: string, atField: 'at' | 'sentAt'): Promise<string[]> {
   const entries: { key: string; at: number }[] = []
   for (const key of await storeOp($, { op: 'keys' })) {
@@ -2509,7 +2519,7 @@ async function pruneUsedReleases($: any): Promise<void> {
   await pruneSessionRecords($, USED_RELEASE_PREFIX, 'at')
 }
 
-// DX-5231: one read of the control file per main-loop moment (a turn's start, its end, the idle check) serves everything the plugin does with it: telling the person the
+// one read of the control file per main-loop moment (a turn's start, its end, the idle check) serves everything the plugin does with it: telling the person the
 // file is unreadable, clearing what an older plugin version armed, and starting the compaction an agent asked for. Never throws: a failure is one line to the person.
 async function syncCompaction($: any, { start }: { start: boolean }): Promise<void> {
   try {
@@ -2531,7 +2541,7 @@ async function syncCompaction($: any, { start }: { start: boolean }): Promise<vo
   }
 }
 
-// DX-5231: the idle check runs only while the session is under the handshake (its control file carries a control): a ready can only come to such a session. A session
+// the idle check runs only while the session is under the handshake (its control file carries a control): a ready can only come to such a session. A session
 // with no handshake pays nothing; the check stops the moment the control goes (the switch off, the file pruned or unreadable). A ready lands after the sync that read the
 // file, so the check cannot wait for a release to appear in it.
 function syncCompactionTicker($: any, file: ControlFile): void {
@@ -2543,10 +2553,10 @@ function syncCompactionTicker($: any, file: ControlFile): void {
   }
 }
 
-// The plugin arms nothing for the MAIN agent's own start (DX-5231: it runs /compact itself). An older plugin version armed CLAUDE_CODE_AUTO_COMPACT_WINDOW (DX-4993, DX-5217) and
-// then CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (DX-5217) in this process, and a variable stays in a running process after a plugin reload: the first shrinks the context meter's window,
+// The plugin arms nothing for the MAIN agent's own start (it runs /compact itself). An older plugin version armed CLAUDE_CODE_AUTO_COMPACT_WINDOW and
+// then CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in this process, and a variable stays in a running process after a plugin reload: the first shrinks the context meter's window,
 // the second makes every loop propose early. Once the session has a control file (it is under the handshake) both are cleared, ONCE per process (`leftoverArmingCleared`): the
-// sub-agents' percent (armSubAgents, DX-5222), which outlives main turns, is never wiped by a later turn, and armSubAgents sets the flag BEFORE it first sets the variable, so
+// sub-agents' percent (armSubAgents), which outlives main turns, is never wiped by a later turn, and armSubAgents sets the flag BEFORE it first sets the variable, so
 // the clear can never wipe the value it armed. `$.env.set(name)` with no value restores the default at once (verified, Claude Code 2.1.299). The literal names are kept so
 // the engine lists them as writes of this module. A session with no control file keeps whatever its person set.
 async function clearLeftoverArming($: any, file: ControlFile): Promise<void> {
@@ -2556,14 +2566,14 @@ async function clearLeftoverArming($: any, file: ControlFile): Promise<void> {
   await update($, leftoverArmingCleared, () => true)
 }
 
-// DX-5222: a sub-agent has no command form that starts its compaction (`$.command.run` compacts the main session only), so the only compaction it can have is Claude Code's own
+// a sub-agent has no command form that starts its compaction (`$.command.run` compacts the main session only), so the only compaction it can have is Claude Code's own
 // automatic proposal. The plugin makes that proposal come early, from the floor: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, a process-wide variable (the main loop proposes early too; the gate
 // holds its proposals, onSessionCompact). It is armed while the session is under the handshake, re-armed when the floor moves, and taken back when the handshake ends or the file
 // cannot be read: an armed percent with nothing holding the proposals would compact every agent at the floor. A variable set at runtime DOES reach a sub-agent that is already
-// running (verified live, Claude Code 2.1.299, DX-5222 comment 16303: a running sub-agent proposed three times within 12 s of the set).
-// It is armed only once this host is known to run `session.compact` (`hostRunsSessionCompact`: an event seen, or an engine release from the floor, DX-5365): the per-agent gate lives there, and on a host without it the classic gate alone
+// running (verified live, Claude Code 2.1.299: a running sub-agent proposed three times within 12 s of the set).
+// It is armed only once this host is known to run `session.compact` (`hostRunsSessionCompact`: an event seen, or an engine release from the floor): the per-agent gate lives there, and on a host without it the classic gate alone
 // would hold every agent's early proposal, which can end an agent's work.
-// DX-5365: whether this host runs `session.compact`, known at the first sync without waiting for a compaction: the event was seen (`sessionCompactSeen`), or the engine's release is one that
+// whether this host runs `session.compact`, known at the first sync without waiting for a compaction: the event was seen (`sessionCompactSeen`), or the engine's release is one that
 // serves it per agent (SESSION_COMPACT_FLOOR; the runtime has no capability flag). A version reading that throws or names no release is a host that is not known to run it: nothing arms.
 async function engineCompactState($: any): Promise<'runs' | 'older' | 'unreadable'> {
   const known = await read($, engineCompact)
@@ -2588,14 +2598,14 @@ async function hostRunsSessionCompact($: any): Promise<boolean> {
 async function armSubAgents($: any, file: ControlFile): Promise<void> {
   const asked = armedPercentOf(file)
   const wanted = (await hostRunsSessionCompact($)) ? asked : null
-  // DX-5365: an engine release that cannot be read is not armed, and the person is told once (the compaction handshake's sub-agent half is off until a compaction event shows the host runs it)
+  // an engine release that cannot be read is not armed, and the person is told once (the compaction handshake's sub-agent half is off until a compaction event shows the host runs it)
   if (!engineVersionTold && asked !== null && !(await read($, sessionCompactSeen)) && (await engineCompactState($)) === 'unreadable') {
     engineVersionTold = true
     $.ui.toast(ENGINE_VERSION_NOTICE)
   }
   if (wanted === (await read($, armedPercent))) return
-  // DX-5222 (comment 15880): the once-per-process clear must never wipe the value armed here, so `leftoverArmingCleared` is already true when this first sets it: syncCompaction runs
-  // clearLeftoverArming first, and it raises the flag on the first control file of the session (the one that can arm). compaction-agents.test.tsx pins the order.
+  // the once-per-process clear must never wipe the value armed here, so `leftoverArmingCleared` is already true when this first sets it: syncCompaction runs
+  // clearLeftoverArming first, and it raises the flag on the first control file of the session (the one that can arm). A test pins the order.
   if (wanted === null) await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
   else await $.env.set('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', String(wanted))
   await update($, armedPercent, () => wanted)
@@ -2608,7 +2618,7 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
   const releaseId = readyRelease(file, spentReleaseId(await storeOp($, { op: 'get', key })), now)
   if (releaseId === null) return null
   // the store record outlives this process (claimedRelease below does not): a new process must not start the same release again
-  // DX-5231: the claim, one compare-and-set before any further await: of every caller that read the release as waiting, exactly one gets it
+  // the claim, one compare-and-set before any further await: of every caller that read the release as waiting, exactly one gets it
   let won = false
   await update($, claimedRelease, cur => {
     won = cur !== releaseId
@@ -2620,7 +2630,7 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
   return releaseId
 }
 
-// DX-5231: the agent said ready, so the compaction runs: when no main-loop turn is running (its turn end, or the idle check below) the plugin queues Claude Code's own
+// the agent said ready, so the compaction runs: when no main-loop turn is running (its turn end, or the idle check below) the plugin queues Claude Code's own
 // /compact, which the host runs once the session is idle. Never from inside a turn or a command hook. The file's unexpired release is the ready.
 // The compaction reaches PreCompact and `session.compact` as trigger `manual`. The command takes no arguments: the control carries no instructions.
 // A failure is one line to the person, and the dashboard re-asks once the release has expired.
@@ -2633,7 +2643,7 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
 // The agent's ready is written to the control file by the relay, after its tool call returned, so it can land after the turn that made it already ended (an idle
 // session: no turn.complete follows). The plugin cannot watch the file: its `$.fs` is read, write, list, stat, exists and ancestors only (the hook catalog of Claude Code
 // 2.1.299 has no watch), so a local file read every COMPACTION_IDLE_CHECK_MS starts it, only while no main turn is running.
-// DX-5222: a sub-agent's request is delivered while the main turn runs too (the sub-agents work inside it), so the check runs always and only the START waits for no turn.
+// a sub-agent's request is delivered while the main turn runs too (the sub-agents work inside it), so the check runs always and only the START waits for no turn.
 async function idleCompactionCheck($: any): Promise<void> {
   await syncCompaction($, { start: !(await read($, turn)).isRunning })
 }
@@ -2651,7 +2661,7 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
     return { pass: true, why: 'manual' }
   }
   try {
-    // DX-5222: a `precompute` is judged like an automatic proposal (and, installing nothing, announces nothing)
+    // a `precompute` is judged like an automatic proposal (and, installing nothing, announces nothing)
     const judged = e.trigger === 'auto' || e.trigger === 'precompute'
     const reading = judged ? await contextReading($) : { tokens: null, window: null }
     const v = verdict({
@@ -2671,10 +2681,10 @@ async function compactionVerdict($: any, e: any): Promise<Verdict> {
 }
 
 async function onPreCompact($: any, e: any, next: any) {
-  // DX-5222: on a host that runs `session.compact` every automatic proposal that goes through it was judged there, per agent, before core ran this classic hook, which cannot tell the
+  // on a host that runs `session.compact` every automatic proposal that goes through it was judged there, per agent, before core ran this classic hook, which cannot tell the
   // agents apart (in 2.1.299 its input never names one): it is not judged a second time. Three proposals skip `session.compact` and reach only the classic hooks, and this passes all of
   // them: (1) a model whose window source is `auto` (under 1M in the catalog), (2) the in-process runner, (3) an isolated sub-agent (the built-in comment-thread-analyst,
-  // `delegatedObservation`). That assumes the 1M models the handshake is built for (PLAN-42 caveat CAV-2): holding any of them by the MAIN agent's size would never release it (its own
+  // `delegatedObservation`). That assumes the 1M models the handshake is built for: holding any of them by the MAIN agent's size would never release it (its own
   // context is not the main conversation's) and would end that agent's work at its window. Their contexts are short-lived and bounded, and the main agent's compaction stays held.
   if (e.trigger === 'auto' && (await hostRunsSessionCompact($))) return next(e)
   const v = await compactionVerdict($, e)
@@ -2688,18 +2698,18 @@ async function onPreCompact($: any, e: any, next: any) {
   return v.pass ? r : { ...r, block: v.reason }
 }
 
-// ---- DX-5222: each sub-agent is gated, and recommended, on its own --------------------------------------------------------------------------------------------
+// ---- each sub-agent is gated, and recommended, on its own --------------------------------------------------------------------------------------------
 
 // Every model request of a sub-agent notes its context: `turn.step` (streaming) hands back the response with the usage the API reported and the model that answered. Only a
 // sub-agent's request reaches this hook: the registration matches an `agentId`, and that matcher is the one place that keeps the main loop out (its size is `$.session.usage()`).
-// The bookkeeping is plain arithmetic over a typed usage and a Map; the one thing that can throw is `subagentKey` on an id Claude Code never produces (DX-5328), which is caught, told once and ends the note without failing the request (DX-5562). It returns nothing, which the typed contract of a streaming hook defines as "its last next(e)'s result
-// stands": the response the model gave passes on untouched (compaction-agents.test.tsx asserts the result a caller reads).
+// The bookkeeping is plain arithmetic over a typed usage and a Map; the one thing that can throw is `subagentKey` on an id Claude Code never produces, which is caught, told once and ends the note without failing the request. It returns nothing, which the typed contract of a streaming hook defines as "its last next(e)'s result
+// stands": the response the model gave passes on untouched (a test asserts the result a caller reads).
 async function* noteAgentStep($: any, e: any, next: any): any {
   const response = yield* next(e)
   const size = response?.usage === null || response?.usage === undefined ? null : sizeOfUsage(response.usage)
   if (size !== null) {
-    // DX-5328: sizes are kept under the canonical key the verdict and the handshake's `agents` map use; the event carries Claude Code's bare id
-    // DX-5562: this is an observer on a model request, so an id of the wrong form is told once and leaves the request alone (the agent then has no known size, which agentVerdict refuses and tells)
+    // sizes are kept under the canonical key the verdict and the handshake's `agents` map use; the event carries Claude Code's bare id
+    // this is an observer on a model request, so an id of the wrong form is told once and leaves the request alone (the agent then has no known size, which agentVerdict refuses and tells)
     let key: string
     try {
       key = subagentKey(e.agentId)
@@ -2718,13 +2728,13 @@ async function* noteAgentStep($: any, e: any, next: any): any {
 // the sub-agents' percent and hands the judging of automatic proposals to the per-agent gate below. Observes only.
 async function onSessionCompactSeen($: any, e: any, next: any) {
   if (!(await read($, sessionCompactSeen))) await update($, sessionCompactSeen, () => true)
-  // DX-5344: a person's own /compact (or the plugin's) is the main agent's, and replaces the note of a sub-agent proposal that never delivered a start
+  // a person's own /compact (or the plugin's) is the main agent's, and replaces the note of a sub-agent proposal that never delivered a start
   if (e.trigger !== 'manual') return next(e)
   await noteCompacting($, null)
   return settledCompaction($, null, next, e)
 }
 
-// DX-5344: runs core's compaction and settles the agent's entry by what came back: a result that is not a skip is a compaction that finished, a skip or a throw is one that did not happen
+// runs core's compaction and settles the agent's entry by what came back: a result that is not a skip is a compaction that finished, a skip or a throw is one that did not happen
 // (the throw goes on).
 async function settledCompaction($: any, agentId: string | null, next: any, e: any) {
   let r: any
@@ -2746,14 +2756,14 @@ async function settledCompaction($: any, agentId: string | null, next: any, e: a
 async function onSessionCompact($: any, e: any, next: any) {
   const v = e.agentId === undefined ? await compactionVerdict($, e) : await agentCompactionVerdict($, e)
   if (!v.pass) return { skip: v.reason }
-  // DX-5344: the proposal passed, so this agent compacts next (a precompute installs nothing and names nobody)
+  // the proposal passed, so this agent compacts next (a precompute installs nothing and names nobody)
   if (e.trigger !== 'auto') return next(e)
   await noteCompacting($, e.agentId ?? null)
   return settledCompaction($, e.agentId ?? null, next, e)
 }
 
 async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
-  // DX-5328: the event's `agentId` is Claude Code's bare id; the control's `agents` map is keyed `agent-<id>`, so it is converted once here and the verdict sees only the key
+  // the event's `agentId` is Claude Code's bare id; the control's `agents` map is keyed `agent-<id>`, so it is converted once here and the verdict sees only the key
   const spends = e.trigger === 'auto'
   let agentId: string = e.agentId
   try {
@@ -2782,12 +2792,12 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
 // the main agent's request is the relay's (it shows it as a record). Only a running sub-agent is sent to: a message to a finished one would resume it from its transcript. A failed
 // send (a refusal, a rejection) is not recorded, so the next sync sends it again.
 async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
-  // DX-5314: no ask is delivered while sub-agent control is unavailable (an older relay)
+  // no ask is delivered while sub-agent control is unavailable (an older relay)
   if (file.kind !== 'control' || file.control === null || file.control.subagents === null) return
   const asks = Object.entries(file.control.subagents.agents).flatMap(([id, a]) => (a.ask === null ? [] : [{ id, ask: a.ask }]))
   if (asks.length === 0) return
   const sessionId = String(await $.session.id())
-  // DX-5328: the engine lists a sub-agent by its bare id, the control keys it `agent-<id>`. Converted per id: one id of the wrong form is left out and told once, and cannot break the sync
+  // the engine lists a sub-agent by its bare id, the control keys it `agent-<id>`. Converted per id: one id of the wrong form is left out and told once, and cannot break the sync
   // (which goes on to start the main agent's ready compaction).
   const running = new Set<string>()
   for (const a of (await $.agent.list()) as { id: string; status: string }[]) {
@@ -2803,7 +2813,7 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
   for (const { id, ask } of asks) {
     const key = askSentKey(sessionId, id)
     if (!running.has(id) || sentAskAt(await storeOp($, { op: 'get', key })) === ask.at) continue
-    // DX-5222: the claim, one compare-and-set before the send: of every sync that read this request as unsent, exactly one sends it
+    // the claim, one compare-and-set before the send: of every sync that read this request as unsent, exactly one sends it
     let won = false
     await update($, claimedAsks, cur => {
       won = cur[key] !== ask.at
@@ -2811,7 +2821,7 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
     })
     if (!won) continue
     try {
-      const sent = await $.session.send({ to: { agentId: bareSubagentId(id) }, text: ask.text }) // DX-5328: `to.agentId` is the bare id
+      const sent = await $.session.send({ to: { agentId: bareSubagentId(id) }, text: ask.text }) // `to.agentId` is the bare id
       if (!sent.isDelivered) throw new Error(sent.reason)
     } catch (err: any) {
       // the claim goes back, so the next sync sends it again
@@ -2824,7 +2834,7 @@ async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
     recorded = true
   }
   if (recorded) {
-    // DX-5562: a claim lives as long as its delivered-request record (the claimedAsks keys are the record keys)
+    // a claim lives as long as its delivered-request record (the claimedAsks keys are the record keys)
     const pruned = new Set(await pruneSessionRecords($, ASK_SENT_PREFIX, 'sentAt'))
     if (pruned.size > 0) await update($, claimedAsks, cur => Object.fromEntries(Object.entries(cur).filter(([k]) => !pruned.has(k))))
   }
@@ -2856,7 +2866,7 @@ async function compactionBriefing($: any): Promise<string> {
   return briefingText({ plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, cards, agents, git })
 }
 
-// DX-4982: the plugin's `dashboard_url` option, as the engine passed it to register (the last resort of blockedOrigin)
+// the plugin's `dashboard_url` option, as the engine passed it to register (the last resort of blockedOrigin)
 let dashboardOption: string | undefined
 
 export const register: Register = (on, options) => {
@@ -2865,27 +2875,27 @@ export const register: Register = (on, options) => {
   on('session.attach', onSessionAttach)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
-  // DX-4805: the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
+  // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
   on('tool.check', (_$, e, next) => ownServerCheck(e, next))
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('turn.start', onTurnStart)
   on('turn.complete', onTurnComplete)
-  // DX-4993 / DX-5231: an automatic compaction is held while the session is under the handshake; the agent's ready starts /compact itself (startReadyCompaction)
+  // an automatic compaction is held while the session is under the handshake; the agent's ready starts /compact itself (startReadyCompaction)
   on('classic.PreCompact', onPreCompact)
-  // DX-5222: Claude Code's own automatic proposals (and the same compaction computed ahead of time) are judged per agent (a person's /compact and the plugin's own start are not matched: the classic gate answers them); each sub-agent's
+  // Claude Code's own automatic proposals (and the same compaction computed ahead of time) are judged per agent (a person's /compact and the plugin's own start are not matched: the classic gate answers them); each sub-agent's
   // last response is noted at `turn.step`
   on('session.compact', onSessionCompactSeen)
   on('session.compact', { trigger: /^(auto|precompute)$/ }, onSessionCompact)
   // only a sub-agent's requests (an agentId): the main loop's every streamed chunk would otherwise cross into the plugin for nothing
   on('turn.step', { agentId: /.+/ }, noteAgentStep)
   on('session.measure', onMeasure)
-  // DX-4340: usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
+  // usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onClassicSessionStart)
-  // DX-4235: the shells' ends and (DX-4534) the ready-cards check
+  // the shells' ends and the ready-cards check
   on('classic.Stop', onReportStop)
   on('prompt.submit', onPromptStamp)
   on('tool.call', onToolStamp)

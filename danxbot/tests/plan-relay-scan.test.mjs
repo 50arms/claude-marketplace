@@ -26,7 +26,7 @@ const read = (rel) => readFileSync(path.join(root, rel), "utf8");
 /** The relay block of register.tsx: from its banner to the session.start hook that follows it. */
 function relayBlock() {
   const src = read("hooks/register.tsx");
-  const from = src.indexOf("// ---- DX-4233: the plan event relay");
+  const from = src.indexOf("// ---- the plan event relay");
   const to = src.indexOf("async function onSessionStart");
   assert.ok(from > -1 && to > from, "the relay block is found by its banner and the session.start hook after it");
   return src.slice(from, to);

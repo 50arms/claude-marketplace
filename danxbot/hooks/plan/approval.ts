@@ -1,14 +1,14 @@
-// DX-4391: what `plan_connect` answers while the session holds no dashboard key. The MCP server
-// (DX-4390) replies with the bare request, not the `{ok, status, body}` envelope a connect uses:
+// what `plan_connect` answers while the session holds no dashboard key. The MCP server
+// replies with the bare request, not the `{ok, status, body}` envelope a connect uses:
 //   { state: 'approval_required', approvalUrl, confirmCode, expiresAt, instruction }
 // `approval_required` is the answer to a NEW request (a later call answers `approval_pending`), so
 // it is the one state that opens the approval page.
 
-// DX-4435: `permissions` is set for a `request_permission` request (what the key asks to be granted), absent for a sign-in.
+// `permissions` is set for a `request_permission` request (what the key asks to be granted), absent for a sign-in.
 export type ApprovalRequest = { url: string; code: string; permissions?: readonly string[] }
 
 // `states`: the answers that carry a request to show. A model's `plan_connect` shows only a NEW request
-// (`approval_required`); DX-4423's Sign in also reads the request a waiting call names (`approval_pending`).
+// (`approval_required`); the Sign in also reads the request a waiting call names (`approval_pending`).
 export function approvalRequestOf(text: string | undefined, states: readonly string[] = ['approval_required']): ApprovalRequest | null {
   if (!text) return null
   let parsed: any
@@ -28,7 +28,7 @@ export function approvalRequestOf(text: string | undefined, states: readonly str
 // What the person is asked to approve: the permissions a key asked for, else the session itself.
 export const approvalSubject = (a: ApprovalRequest) => (a.permissions && a.permissions.length > 0 ? `permission ${a.permissions.join(', ')}` : 'this session')
 
-// DX-4630: a permission request's toast: the link and code together (the person follows the link; the plugin opens nothing).
+// a permission request's toast: the link and code together (the person follows the link; the plugin opens nothing).
 export const permissionToast = (a: ApprovalRequest) => `Approve ${approvalSubject(a)}: open ${a.url} and check that confirm code ${a.code} matches.`
 
 // What the model reads after a tool answer that carries a permission request: the plugin toasts the link and code to the person (the
@@ -36,7 +36,7 @@ export const permissionToast = (a: ApprovalRequest) => `Approve ${approvalSubjec
 export const permissionShownNote = (a: ApprovalRequest) =>
   `The danxbot plugin already showed the person the approval link (${a.url}) and confirm code ${a.code} in a notification. Do not open the link yourself; tell the user to approve with confirm code ${a.code}.`
 
-// DX-4630: a sign-in request's toast: the link and code together, no browser involved (the person follows the link).
+// a sign-in request's toast: the link and code together, no browser involved (the person follows the link).
 export const signInToast = (a: ApprovalRequest) => `Approve this session: open ${a.url} and check that confirm code ${a.code} matches.`
 
 // The label of the band's sign-in link, and the words beside a request's code.

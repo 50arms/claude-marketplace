@@ -1,7 +1,7 @@
 import type { ConnectedPlan } from '../../types'
 import { boardCardUrl, cardUrl } from './config'
 
-// DX-4448: card ids in an assistant reply drawn as markdown links. Pure: text + known prefixes + connected plan + the plan's
+// card ids in an assistant reply drawn as markdown links. Pure: text + known prefixes + connected plan + the plan's
 // loaded card ids in, text out. No call is made here (the draw path never touches the network); the prefixes come from the
 // `view` atom, filled at refresh.
 

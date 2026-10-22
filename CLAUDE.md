@@ -175,3 +175,10 @@ Before declaring any plugin work done, answer both:
 "I'll update later" / "the consumer will pick it up" / "it's only a small edit" are the rationalizations both checks exist to block.
 
 Both yes → done. **NEVER test, verify, or file AC or problems about the published version reaching or loading in a new session** (operator, 2026-09-27) — that is the Claude Code harness's job, it works, and it is not ours.
+
+## Shipped files carry no card ids, source paths or internal mechanics (DX-5786, operator 2026-10-22)
+
+Everything under `danxbot/` except `tests/` is installed on third-party machines and opened by their agents and people, who see their own cards and plans, the public dashboard API and the MCP tools, and nothing else. So a shipped file (skill, agent, mantra, hook, script, type declaration, manifest, and every comment in them) never names one of our card, plan or problem ids, a path or module in danxbot's / 50 Arms' own source, an internal profile or script, or an internal person or repo.
+
+- **This overrides the issue-ref comment default** (`// CARD-ID: reason`) for shipped plugin files: a comment that needs a reason states the reason itself, in words. Card ids stay fine in commit messages, tests and this file.
+- `scripts/check-general-audience.mjs` enforces the id and source-path parts over comments too (`publish.sh` runs it before any bump; `scripts/tests/check-general-audience.test.mjs` runs it over the shipped plugin). A failing line is reworded, never allow-listed.

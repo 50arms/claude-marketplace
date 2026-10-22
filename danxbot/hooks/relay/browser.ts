@@ -1,4 +1,4 @@
-// DX-5093: the plan-tab keepalive reaches the desktop app's Browser pane itself, with no model turn. The pane's server is one of the session's MCP
+// the plan-tab keepalive reaches the desktop app's Browser pane itself, with no model turn. The pane's server is one of the session's MCP
 // servers (named `Claude_Browser`, its tools `mcp__Claude_Browser__*`), and `$.mcp.call` runs a tool of any connected server by name (claude.exe
 // 2.1.295: it looks the tool up in the session's tool list, so an SDK-hosted server answers like any other). The hook asks which tabs the pane holds
 // (`tabs_context`) and, when the plan page's tab is missing, opens it again (`tabs_create`, then `navigate`; `navigate` alone when the pane is closed).
@@ -86,7 +86,7 @@ export function createdTab(result: BrowserResult): CreatedTab {
   return typeof body.tabId === 'string' && body.tabId !== '' ? { kind: 'created', tabId: body.tabId } : { kind: 'refused', why: 'tabs_create named no tab' }
 }
 
-// DX-5093: said once per session when the desktop session has no Browser pane the plugin can call.
+// said once per session when the desktop session has no Browser pane the plugin can call.
 export const BROWSER_MISSING_LINE =
   "danxbot: the desktop's Browser pane is not reachable from the plugin, so this session's plan tab will close after the app's 30 idle minutes and nothing reopens it."
 

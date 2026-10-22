@@ -4,7 +4,7 @@ import { ERROR_BODY_MAX, KEY_REVOKED_HALT, SIGNED_OUT_MARK } from './config'
 
 // The engine's rejection when the session has no such server or tool:
 //   `<plugin>: $.mcp.call: no connected MCP tool "<tool>" on a server named "<server>"`
-// (Claude Code 2.1.286). At session start it means the plugin's server has not connected yet (DX-4578).
+// (Claude Code 2.1.286). At session start it means the plugin's server has not connected yet.
 const SERVER_NOT_CONNECTED = /\$\.mcp\.call: no connected MCP tool/
 
 export function isServerNotConnected(message: string): boolean {
@@ -15,9 +15,9 @@ export function mcpText(r: any): string {
   return (r?.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
 }
 
-// DX-4233: the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {planId}}}` envelope (the tool's session is danxbot's PlanSession, camelCase: issues/db/plan-sessions.ts PlanSession; GET /api/plans's own `session` is snake_case and is read in load.ts). Null for anything
+// the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {planId}}}` envelope (the tool's session is camelCase; GET /api/plans's own `session` is snake_case and is read in load.ts). Null for anything
 // else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
-// DX-4982: the plan with its name (`session.planName`, '' when the answer has none): what the band names while the plugin's own
+// the plan with its name (`session.planName`, '' when the answer has none): what the band names while the plugin's own
 // reads are refused by auto mode's classifier and the model's own successful plan_connect is all that is known of the plan.
 export function connectedPlanOf(text: unknown): { id: number; name: string } | null {
   if (typeof text !== 'string') return null
@@ -39,7 +39,7 @@ export function toolOutcome(r: any): ToolOutcome {
 }
 
 // THE one parser of that envelope, from a result's text (`isError`: the call threw): toolOutcome, connectedPlanOf, and the model's own
-// plan_connect result as its tool.call hook sees it (DX-4235: whether its leave or move happened) all read it here.
+// plan_connect result as its tool.call hook sees it (whether its leave or move happened) all read it here.
 export function textOutcome(text: string, isError: boolean): ToolOutcome {
   if (isError) return { ok: false, status: 0, body: { error: text } }
   let parsed: any
@@ -63,30 +63,40 @@ export function refusalText(o: ToolOutcome): string {
   return `${o.status || 'mcp'} ${said}${real}`
 }
 
-// DX-4423: whether a tool's outcome says the session holds no dashboard key (see SIGNED_OUT_MARK). The server answers it as an
+// whether a tool's outcome says the session holds no dashboard key (see SIGNED_OUT_MARK). The server answers it as an
 // error result, which toolOutcome reads as status 0 with the text as the error; a failure with a real status that merely
 // mentions signing in is a plain failure.
 export function isSignedOut(o: ToolOutcome): boolean {
   return !o.ok && o.status === 0 && typeof o.body?.error === 'string' && o.body.error.includes(SIGNED_OUT_MARK)
 }
 
-// DX-5549 / DX-5554: the MCP's agent gate. Once `plan_connect` answered that no team agent is free, every other dashboard call of the session answers
-// that same block (packages/danx-dashboard-mcp agent-gate.ts: `{state, instruction, ...}` as JSON, an error result) until a plan_connect holds an agent.
-// The state when the outcome is that halt, else null.
-export type AgentBlock = 'agent_needed' | 'agent_limit_reached'
+// The agent gate. A session must hold a team agent before it reads a plan or a card, and two things say it holds none.
+// The MCP's own halt: once `plan_connect` answered that no agent can be signed in as, every other dashboard call answers that block as an
+// error result (`{state, instruction, ...}` as JSON, status 0) until a `plan_connect` holds one. And the dashboard's own 403 for a
+// session whose agent was released (the session ended and came back): the envelope's body is `{error, state, instruction}`.
+// The state when the outcome is either, else null.
+export type AgentBlock = 'agent_needed' | 'agent_limit_reached' | 'agent_not_held'
+const AGENT_BLOCKS: readonly string[] = ['agent_needed', 'agent_limit_reached', 'agent_not_held']
 export function agentBlockOf(o: ToolOutcome): AgentBlock | null {
-  if (o.ok || o.status !== 0 || typeof o.body?.error !== 'string') return null
-  let parsed: any
-  try {
-    parsed = JSON.parse(o.body.error)
-  } catch {
+  if (o.ok) return null
+  let refusal: any
+  if (o.status === 0) {
+    if (typeof o.body?.error !== 'string') return null
+    try {
+      refusal = JSON.parse(o.body.error)
+    } catch {
+      return null
+    }
+  } else if (o.status === 403) {
+    refusal = o.body
+  } else {
     return null
   }
-  if (parsed === null || typeof parsed !== 'object' || typeof parsed.instruction !== 'string') return null
-  return parsed.state === 'agent_needed' || parsed.state === 'agent_limit_reached' ? parsed.state : null
+  if (refusal === null || typeof refusal !== 'object' || typeof refusal.instruction !== 'string') return null
+  return AGENT_BLOCKS.includes(refusal.state) ? (refusal.state as AgentBlock) : null
 }
 
-// DX-4418: who revoked the key, when the text is the MCP's stop halt for a key a person revoked (see KEY_REVOKED_HALT); null for
+// who revoked the key, when the text is the MCP's stop halt for a key a person revoked (see KEY_REVOKED_HALT); null for
 // any other text. Anchored at the start: nothing that merely quotes the sentence counts.
 export function keyRevokedBy(text: string): string | null {
   return KEY_REVOKED_HALT.exec(text)?.[1] ?? null

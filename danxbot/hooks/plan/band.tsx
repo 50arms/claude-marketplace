@@ -10,7 +10,7 @@ import { bandLabel, bandLabelCols, eventsWarning, problemBadge, viewPercent } fr
 
 // The controls' labels the width budget counts.
 const OPEN_PLAN_LABEL = 'Open plan'
-// DX-5554: a session holding a stand-alone card opens the card's own page
+// a session holding a stand-alone card opens the card's own page
 const OPEN_CARD_LABEL = 'Open card'
 const CLOSE_LABEL = '×'
 
@@ -18,11 +18,11 @@ const CLOSE_LABEL = '×'
 function openUrl(plan: PlanView['connected'], card: PlanView['card'], dashboardUrl: string | null): string | null {
   if (plan !== null) return planUrl(plan)
   if (dashboardUrl === null) return null
-  return card !== null ? boardCardUrl(dashboardUrl, card.id) : plansUrl(dashboardUrl)
+  return card !== null ? boardCardUrl({ dashboardUrl }, card.id) : plansUrl(dashboardUrl)
 }
 
-// The band above the prompt: the plan line (indicator, label, then the events warning / the open-problem count (DX-4420) / the permission
-// request / Open plan, Disconnect (DX-5605) and a close control hugging the right edge, the label truncating first). DX-4630: every control that
+// The band above the prompt: the plan line (indicator, label, then the events warning / the open-problem count / the permission
+// request / Open plan, Disconnect and a close control hugging the right edge, the label truncating first). Every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text).
 export function renderBand(
@@ -31,14 +31,14 @@ export function renderBand(
   v: PlanView,
   hasSvg: boolean,
   busy: string[],
-  // DX-4435: the model's permission requests still open: how many, and the newest (its approval link and code are drawn, DX-4630); null when none.
+  // the model's permission requests still open: how many, and the newest (its approval link and code are drawn); null when none.
   permission: { count: number; newest: ApprovalRequest } | null,
-  // DX-4630: the sign-in request waiting for the person: its link and confirm code are drawn at once.
+  // the sign-in request waiting for the person: its link and confirm code are drawn at once.
   signIn: ApprovalRequest | null,
   // The band's width in columns (`bodyColumns`); undefined in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns: number | undefined,
-  // DX-5232: the plan event relay's state, for the events warning (its reason is toasted by the caller, once).
+  // the plan event relay's state, for the events warning (its reason is toasted by the caller, once).
   relay: RelayState,
 ): any {
   const { Box, Text, Button } = E
@@ -48,29 +48,29 @@ export function renderBand(
     </Button>
   )
   const plan = v.connected
-  // DX-4420: a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
+  // a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
   const badge = v.phase === 'error' || v.phase === 'blocked' ? '' : problemBadge(v)
   const permissionLabel = permission === null ? '' : permissionBadge(permission.count)
-  // DX-4420: the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
+  // the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
   const showBadge = plan !== null && badge !== ''
-  // DX-4423: a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
+  // a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
-  // DX-4630: the sign-in request's link and code show while signed out
+  // the sign-in request's link and code show while signed out
   const approve = signedOut ? signIn : null
-  // DX-4418: a revoked key is red too, with no Sign in
+  // a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
-  // DX-4521: both links are in every state: the plan's page when connected, the held card's page (DX-5554) when it holds one, else the dashboard's plans list. Only an origin never
+  // both links are in every state: the plan's page when connected, the held card's page when it holds one, else the dashboard's plans list. Only an origin never
   // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
   const card = plan === null && v.dashboardUrl !== null ? v.card : null
   const linkUrl = openUrl(plan, card, v.dashboardUrl)
   const openLabel = card !== null ? OPEN_CARD_LABEL : OPEN_PLAN_LABEL
-  // DX-5232: Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`); the events warning shows only while the events are not flowing.
+  // Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`); the events warning shows only while the events are not flowing.
   const disconnecting = busyKey.isDisconnecting(busy)
-  // DX-5605: Disconnect is a red control beside the close x. The plugin UI API has no icon or tooltip prop on a Button (ButtonProps: key, label,
+  // Disconnect is a red control beside the close x. The plugin UI API has no icon or tooltip prop on a Button (ButtonProps: key, label,
   // hotkey, action, plain, dimColor, variant primary|secondary, role, autoFocus, hover; children only strings and Text), and a hover card
   // is clipped by the band's region, so: the desktop draws one red glyph and the Button's `label` is its accessible name ("Disconnect from
-  // PLAN-46"); the terminal, which cannot tell what a lone glyph means, draws the red word.
+  // PLAN-NN"); the terminal, which cannot tell what a lone glyph means, draws the red word.
   const disconnectName = plan === null ? '' : disconnecting ? DISCONNECTING_LABEL : `${DISCONNECT_WORD} from ${plan.ref}`
   const disconnectShown = disconnecting ? DISCONNECTING_LABEL : hasSvg ? DISCONNECT_GLYPH : DISCONNECT_WORD
   const warning = eventsWarning(v, relay)
@@ -85,15 +85,15 @@ export function renderBand(
     ...(plan !== null ? [{ label: disconnectShown, isButton: true }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
-  // DX-4626: the column model is the terminal's (a cell per character, `[ label ]` button chrome). The desktop draws proportional text
-  // and native buttons, so the model over-counted and cut the name far short of the real space (`PLAN-17 · 50 …` beside a wide empty gap).
+  // the column model is the terminal's (a cell per character, `[ label ]` button chrome). The desktop draws proportional text
+  // and native buttons, so the model over-counted and cut the name far short of the real space (`PLAN-NN · 50 …` beside a wide empty gap).
   // The desktop therefore passes the full name and lets the layout cut it: the label box shrinks (the controls never do) and its
   // `truncate-end` puts the … exactly where the name would run into them.
   const labelCols = columns === undefined || hasSvg ? undefined : bandLabelCols(columns, controls)
   const percent = viewPercent(v)
-  // DX-4419: a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
+  // a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
   const failed = v.phase === 'error' || signedOut || revoked
-  // DX-4982: auto mode blocking the plugin's calls is not a failure of the plan: yellow, with the sentence and fix on a line of its own (full width, wrapped)
+  // auto mode blocking the plugin's calls is not a failure of the plan: yellow, with the sentence and fix on a line of its own (full width, wrapped)
   const blocked = v.phase === 'blocked'
   const failedColor = failed ? DANGER : blocked ? WARNING : undefined
   const indicator =
@@ -105,10 +105,10 @@ export function renderBand(
   const line = (
     <Box key="band-line" flexDirection="row" gap={1} minWidth={0}>
       <Box flexShrink={0}>{indicator}</Box>
-      {/* DX-4626: a flex item never shrinks below its content's width unless its min width is 0, so without minWidth={0} and the
+      {/* a flex item never shrinks below its content's width unless its min width is 0, so without minWidth={0} and the
           clip the full name pushed the controls off the band's edge instead of being cut by `truncate-end`. */}
       <Box flexShrink={1} minWidth={0} overflow="hidden">
-        {/* DX-4419: a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
+        {/* a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
         <Text color={failedColor} dimColor={!failed} wrap="truncate-end">
           {bandLabel(v, labelCols)}
         </Text>
@@ -127,9 +127,9 @@ export function renderBand(
             {warning}
           </Text>
         )}
-        {/* DX-4420: the open-problem count is a call to action that opens the plan's Needs You tab. */}
+        {/* the open-problem count is a call to action that opens the plan's Needs You tab. */}
         {showBadge && plan !== null && mdLink(E, 'open-problems', badge, needsYouUrl(plan))}
-        {/* DX-4435: the newest open permission request: its approval page, with the code to check against the page. */}
+        {/* the newest open permission request: its approval page, with the code to check against the page. */}
         {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
         {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
         {linkUrl !== null && mdLink(E, 'open-tab', openLabel, linkUrl)}

@@ -1,4 +1,4 @@
-// DX-4538: argument parsing for scripts/capture-screenshot.mjs, pure so a test needs no browser.
+// argument parsing for scripts/capture-screenshot.mjs, pure so a test needs no browser.
 
 export const CAPTURE_DEFAULTS = {
   width: 1440,

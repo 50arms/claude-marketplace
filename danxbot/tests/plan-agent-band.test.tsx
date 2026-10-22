@@ -36,7 +36,8 @@ describe('the agent and its association in the band label', () => {
   })
   test('DX-5549: a session the agent gate holds reads why it has no agent', () => {
     expect(bandLabel({ ...ready, agentBlock: 'agent_needed' })).toBe('Danxbot: waiting for a team agent')
-    expect(bandLabel({ ...ready, agentBlock: 'agent_limit_reached' })).toBe('Danxbot: no team agent free (limit reached)')
+    expect(bandLabel({ ...ready, agentBlock: 'agent_limit_reached' })).toBe('Danxbot: agent session limit reached')
+    expect(bandLabel({ ...ready, agentBlock: 'agent_not_held' })).toBe('Danxbot: no team agent held (plan_connect claims one)')
   })
   test('the agent gate is read from its own answer, and nothing else is', () => {
     const halted = (body: unknown) => ({ ok: false, status: 0, body: { error: JSON.stringify(body) } })
@@ -44,6 +45,15 @@ describe('the agent and its association in the band label', () => {
     expect(agentBlockOf(halted(AGENT_GATE_HALT('agent_limit_reached')))).toBe('agent_limit_reached')
     expect(agentBlockOf(halted({ state: 'agent_needed' }))).toBe(null)
     expect(agentBlockOf({ ok: false, status: 0, body: { error: 'not json' } })).toBe(null)
+    // the dashboard's own refusal for a session whose agent was released: status 403, body {error, state, instruction}
+    const refused = (status: number, body: unknown) => ({ ok: false, status, body })
+    for (const state of ['agent_not_held', 'agent_needed', 'agent_limit_reached'] as const) {
+      expect(agentBlockOf(refused(403, { error: state, state, instruction: 'Call plan_connect.' }))).toBe(state)
+    }
+    expect(agentBlockOf(refused(403, { error: 'agent_not_held', state: 'agent_not_held' }))).toBe(null)
+    expect(agentBlockOf(refused(403, { error: 'forbidden', state: 'something_else', instruction: 'x' }))).toBe(null)
+    expect(agentBlockOf(refused(409, { error: 'agent_not_held', state: 'agent_not_held', instruction: 'x' }))).toBe(null)
+    expect(agentBlockOf({ ok: true, status: 200, body: { state: 'agent_not_held', instruction: 'x' } })).toBe(null)
     expect(agentBlockOf({ ok: false, status: 409, body: { error: JSON.stringify(AGENT_GATE_HALT('agent_needed')) } })).toBe(null)
   })
   test('the footer names a held card as it names a plan', () => {
@@ -80,6 +90,24 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await labelOf(band)).toBe('Danxbot · Tendai: not connected to a plan or card')
       expect(await openLinks(band)).toEqual([{ key: 'open-tab', label: 'Open plan', href: `${DASHBOARD_URL}/plans` }])
+    })
+
+    test('a resumed session whose agent was released reads that it holds none (never Disconnected) from the dashboard's own 403', async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      d.world.agentGate = 'agent_not_held'
+      await forceRefresh($, d)
+      expect(await labelOf(band)).toBe('Danxbot: no team agent held (plan_connect claims one)')
+    })
+
+    test('an agent whose avatar_url is unreadable still loads: the band never draws it', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      d.world.agent = { id: 6, name: 'Tendai', avatar_url: 42 } as any
+      await forceRefresh($, d)
+      expect(await labelOf(band)).toMatch(/^Tendai · PLAN-23/)
     })
 
     test('a session row whose agent is not {id, name, avatar_url} fails the load, never a guessed name', async ($, on) => {

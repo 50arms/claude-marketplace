@@ -13,13 +13,12 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 
 | | Dispatched worker | Operator-session sub-agent |
 |---|---|---|
-| Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
+| Worktree | prepared before you start | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
-| Gates | the profile instruction carries them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
-| Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to the target branch (or open a pull request when "Delivery" below says so), `complete` + retro, report |
+| Gates | your dispatch instructions carry them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
+| Merge + end | your dispatch instructions | push the card branch, report its tip SHA, stop; when told to land: push to the target branch (or open a pull request when "Delivery" below says so), `complete` + retro, report |
 
-Dispatched-only mechanics (the dispatch-complete call, halt, `agent-finalize.sh`, the pre-synced
-worktree, DB resets) live only in danxbot's `work` profile.
+The dispatched worker's own mechanics (how it ends, halts and merges) are in the instructions its dispatch gave it.
 
 ## Flow
 
@@ -38,8 +37,7 @@ worktree, DB resets) live only in danxbot's `work` profile.
    "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Pass its POST gates ("Gates" below).
-6. Merge first: a dispatched worker runs its profile's end order, `agent-finalize.sh`
-   first; an operator-session sub-agent, once told to land, commits and pushes to the target
+6. Merge first: a dispatched worker follows the end order its dispatch instructions give; an operator-session sub-agent, once told to land, commits and pushes to the target
    branch, or opens a pull request when the card's controls require one ("Delivery" below).
    Only then transition `complete` with a summary and write the retro (last — it 409s
    until terminal), citing the sha now on the target branch (on a pull request: the pull
@@ -47,7 +45,7 @@ worktree, DB resets) live only in danxbot's `work` profile.
    Phase N` as an agent note on the next phase card.
    A card with an open problem never becomes Done: `complete`, a board drop or move to Done
    and a container roll-up are refused (409 `open_problems_block_completion`).
-   Answer or remove each open problem first.
+   Get each open problem answered by a person first; remove one only when it has become irrelevant, never because it was answered.
 
 ## Gates
 
@@ -75,6 +73,10 @@ and says when to land. Whoever runs a gate:
    replaced only by one naming a different ref, so a re-run after the work or the card changed
    records normally, and a second verdict on the same ref is refused.
 
+A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused
+for every caller. Do what its text says (it may have you publish work for the person to
+choose from on the card), then stop; the person's choice passes it.
+
 Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
 that doesn't apply to the card is removed (`POST` the same card route with
 `{action: "remove"}`) with an agent note saying why —
@@ -84,14 +86,14 @@ never passed to get it out of the way.
 
 Genuinely need a human → open a problem on the card: an `action` when only a person can do
 it (access, credentials, hardware, authority), else a `question`. Never `AskUserQuestion` or
-a plan-mode pause. A card needs a human exactly while it has an open problem; removing its
-last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
+a plan-mode pause. A card needs a human exactly while it has an open problem; a person
+answering its last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
 
 A call refused 403 for a missing permission → `request_permission` with a reason (show the person its code) and keep working; blocked without it, open an action problem.
 
 ## Claiming (operator-session sub-agents only)
 
-A dispatched worker never claims: danxbot picked the card up before spawning it
+A dispatched worker never claims: the dashboard picked the card up before spawning it
 (`In Progress`, `dispatch_id` set), so a `pickup` from it is refused 409
 `dispatch_id (already dispatched)`.
 
@@ -220,8 +222,8 @@ Every user-facing bug report, one block per bug:
 ## Delivery: push or pull request
 
 Applies to a session that lands its own work (an operator-session sub-agent, or any session
-building a card in a repo danxbot does not run a worker for). A dispatched worker ends as its
-`work` profile says.
+building a card in a repo no dashboard worker serves). A dispatched worker ends as its dispatch
+instructions say.
 
 Read the card's resolved controls: `GET /api/issues/<id>` with `fields {"controls":true}`, then
 take the value of each key from the entry with that `key`:

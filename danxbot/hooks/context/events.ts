@@ -3,7 +3,7 @@ import { errText } from '../plan/load'
 import { ERROR_BODY_MAX } from '../plan/config'
 import { mcpText } from '../plan/mcp'
 
-// DX-4234: the event text a plan-connected session is told, and the restart notice a session that replaced a connected one is told.
+// the event text a plan-connected session is told, and the restart notice a session that replaced a connected one is told.
 // The wording is a danxbot registry row (`GET /api/reminders/event/:event`, the `plan_restart.waiting_events` reminder); this file
 // carries no wording of its own but the two failure lines.
 
@@ -92,7 +92,7 @@ export const eventFailureLine = (event: DanxEvent, reason: string) =>
 export const restartFailureLine = (reason: string) =>
   `⚠ Could not load the restart notice (${reason}). Tell the operator if this session should be plan-connected.`
 
-// DX-4234: ONE deadline over the plugin's own work in a context lookup (the wait for the server, the plan read and the event text read of a
+// ONE deadline over the plugin's own work in a context lookup (the wait for the server, the plan read and the event text read of a
 // session start, or the reads of a sub-agent start, together), as the bash hook's `timeout 8s` was: a hung dashboard answers the failure line
 // below instead of holding the start. The restart notice is the server's own lookup and has its own 8 s deadline (`lookup_timeout`).
 export const CONTEXT_DEADLINE_MS = 8_000

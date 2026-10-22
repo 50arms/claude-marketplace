@@ -7,14 +7,14 @@ export const PLUGIN_NAME = 'danxbot'
 // The origin the host stamps on a call the model (or the engine itself) made; every call a plugin raises carries that plugin's name instead.
 export const ENGINE_ORIGIN = 'engine'
 
-// DX-4857: a call a plugin raised itself (`$.mcp.call`, `$.tool.call`), any plugin's, not the model's. Its result goes to the plugin, never the model.
+// a call a plugin raised itself (`$.mcp.call`, `$.tool.call`), any plugin's, not the model's. Its result goes to the plugin, never the model.
 export const raisedByPlugin = (origin: { plugin: string }): boolean => origin.plugin !== ENGINE_ORIGIN
 
-// DX-4805: in auto permission mode the engine puts a hook-initiated `$.mcp.call` to its classifier like any tool call, and a call the
+// in auto permission mode the engine puts a hook-initiated `$.mcp.call` to its classifier like any tool call, and a call the
 // classifier "gave no verdict" on is refused: `$.mcp.call(<server>, <tool>) refused: The server-side auto mode classifier gave no verdict for
 // <tool>`. The plugin's own tool.check hook allows the calls it raises on its own server (`ownServerCheck` below, seated by the `on('tool.check', ...)` in register.tsx); when one is
 // refused anyway (an engine that gates it differently), nothing in the plugin can fix it, so the failure is told with the real words and the fix
-// that works: an allow rule for the server's tools. DX-4982: a restart is not needed (observed: the relay attached and the band showed the plan
+// that works: an allow rule for the server's tools. A restart is not needed (observed: the relay attached and the band showed the plan
 // minutes after the rule was added, in the same session), so the relay retries a refused call on its own and the plan load is retried by the
 // session-start watch; a restart is the fallback when it does not clear.
 
@@ -33,7 +33,7 @@ export function classifierRefusal(message: string): Refusal | null {
   return CLASSIFIER_MARK.test(message) ? { detail: message, fix: CLASSIFIER_FIX } : null
 }
 
-// DX-5062: a danxbot MCP from before the DX-5033 release refuses the `background` key the hooks send with each danxbot_api call (a strict schema:
+// a danxbot MCP from before the release that added `background` refuses the `background` key the hooks send with each danxbot_api call (a strict schema:
 // MCP error -32602, `unrecognized_keys`, `keys: ["background"]`). The call is not retried without the key (one path); the failure is STALE_MCP_LINE,
 // short enough to stay whole in every toast this failure reaches. Both marks are needed: an unrecognized key that is not `background`, or a `background` that
 // is not an unrecognized key, is some other failure.
@@ -44,13 +44,13 @@ export function isStaleMcpRefusal(message: string): boolean {
   return UNRECOGNIZED_KEYS.test(message) && /\bbackground\b/.test(message)
 }
 
-// DX-4805: the plugin ships the permission its own hooks need. Auto permission mode puts a hook-initiated `$.mcp.call` to its classifier like any
+// the plugin ships the permission its own hooks need. Auto permission mode puts a hook-initiated `$.mcp.call` to its classifier like any
 // tool call, and a call the classifier gave no verdict on is refused, which left the relay dead. `tool.check` is the engine's permission decision,
 // asked before the mode's decider (the classifier) and last-word-wins, so an `allow` here settles a call THIS plugin raised on its OWN server's
 // tools (and the Browser pane tools above). `next.origin` is set by the host from where the call came from: the model's own call to the same tool arrives as `engine` and keeps the
 // engine's verdict. The engine's verdict is asked first and a `deny` (a user's `permissions.deny`, an organization's rule) always stands; an
 // organization `ceiling` of `ask` also stands, as the ceiling is the most permissive verdict it lets the tool reach.
-// DX-5093: also the three tools of the desktop's Browser pane the plan-tab keepalive calls (relay/browser.ts): a look at the pane and the plan page opened
+// also the three tools of the desktop's Browser pane the plan-tab keepalive calls (relay/browser.ts): a look at the pane and the plan page opened
 // again, raised by this plugin only; the model's own call to the same tool keeps the engine's verdict.
 export function isOwnServerCall(origin: { plugin: string }, tool: string): boolean {
   return origin.plugin === PLUGIN_NAME && (tool.startsWith(toolName('')) || isBrowserKeepaliveTool(tool))

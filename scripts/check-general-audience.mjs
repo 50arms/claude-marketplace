@@ -12,8 +12,9 @@
 // shipped, so test files that hold the banned tokens as matcher proof are exempt by construction),
 // except `.claude-plugin/plugin.json`, the plugin manifest, whose `dashboard_url` default is the
 // product's own public address. Markdown and JSON are scanned whole; code (.mjs .js .ts .tsx .sh)
-// is scanned with its comments stripped, because a comment is read only by a maintainer and never
-// reaches a user. A file type the scan does not know throws (binary assets are an explicit list),
+// is scanned with its comments stripped for the author-setup tokens (a comment is read by a maintainer, not shown
+// to a user), but its comments are still scanned for internal card ids and source paths: anyone who installs the
+// plugin can open its files, and cannot see our cards or our source. A file type the scan does not know throws (binary assets are an explicit list),
 // so a new type can never ship unscanned.
 //
 // COMMENT STRIPPING is a small state machine, not a parser. It follows strings, template
@@ -21,7 +22,11 @@
 // spot is JSX text (plain words between tags): an apostrophe there is not a string, and a `//`
 // there reads as a comment start, which can hide the rest of that line from the scan.
 //
-// USAGE  node scripts/check-general-audience.mjs [plugin ...]   (default: every marketplace plugin)
+// SOURCE FILES IN COMMENTS. Any file name ending .ts .tsx or .mjs (any case), or .js (starting lowercase), that a comment names must be a file
+// the plugin ships. A user's own file names, such as `index.ts`, are meant to fail too: describe them in words. Only capitalised
+// product names ending .js (Node.js, Next.js) are not file names and pass; Button.tsx does not.
+//
+// USAGE node scripts/check-general-audience.mjs [plugin ...]   (default: every marketplace plugin)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -58,9 +63,35 @@ export const BANNED = [
   { name: "another of the author's products", pattern: /gpt-manager/i },
   { name: "another of the author's organizations", pattern: /flytedesk/i },
   { name: "the author's own UI library", pattern: /@danxbot\/ui/i },
-  { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages)\/[\w.-]/ },
-  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|R)-\d+/ },
+  // `comments: true` kinds also apply inside code comments. A comment is read by anyone who opens the installed plugin, so it may
+  // name none of our cards, card comments or source paths; it states the reason itself. (The other kinds are about text a user is shown.)
+  { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages|mcp-servers|frontend|docs\/pages)\/[\w.-]/, comments: true },
+  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|PBLM|CAV|R)-\d+/, comments: true },
+  { name: "an internal card comment, note or problem number", pattern: /\b(?:comment|note|problem)s? #?\d{3,}\b/i, comments: true },
 ];
+
+/** Names of the comment-applicable banned things `text` mentions (one entry per kind). */
+export const commentHits = (text) => BANNED.filter((b) => b.comments).flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
+
+// Product names are capitalised and end in .js (Node.js, Next.js), so only a .js name starting lowercase counts; a .ts .tsx or .mjs name
+// counts whatever its case (Button.tsx is a source file, not a product).
+const SOURCE_FILE_NAME = /\b(?:[a-z][\w.-]*\.js|[A-Za-z][\w.-]*\.(?:tsx|ts|mjs))\b/g;
+export const FOREIGN_SOURCE_FILE = "a source file the plugin does not ship";
+
+/** Source file names `commentText` mentions that are not in `shippedBasenames`: a comment may name the plugin's own files, never outside sources. */
+export const foreignSourceFiles = (commentText, shippedBasenames) =>
+  (commentText.match(SOURCE_FILE_NAME) ?? []).filter((name) => !shippedBasenames.has(name));
+
+/** `raw` keeping only its comments (everything else blanked to spaces, newlines kept), or null for a file type with no comments to read. */
+export function commentOnly(rel, raw) {
+  const ext = path.extname(rel).toLowerCase();
+  const stripped = JS_LIKE.has(ext) ? stripJsComments(raw) : ext === ".sh" ? stripShellComments(raw) : null;
+  if (stripped === null) return null;
+  // By UTF-16 unit, like `stripped` (the strippers keep every unit in place), so an emoji earlier in the file cannot shift the comparison.
+  let out = "";
+  for (let i = 0; i < raw.length; i++) out += raw[i] === "\n" || stripped[i] !== raw[i] ? raw[i] : " ";
+  return out;
+}
 
 /** Names of the banned things `text` mentions (one entry per kind). */
 export const bannedHits = (text) => BANNED.flatMap(({ name, pattern }) => (pattern.test(text) ? [name] : []));
@@ -172,11 +203,17 @@ export function userFacingText(rel, raw) {
 /** Violations `{file, line, what}` over `relFiles` of `pluginDir`. */
 export function scanFiles(pluginDir, relFiles) {
   const violations = [];
+  const shippedBasenames = new Set(relFiles.map((rel) => path.basename(rel)));
   for (const rel of relFiles) {
-    const text = userFacingText(rel, fs.readFileSync(path.join(pluginDir, rel), "utf8"));
+    const source = fs.readFileSync(path.join(pluginDir, rel), "utf8");
+    const text = userFacingText(rel, source);
     if (text === null) continue;
+    const rawLines = source.split("\n");
+    const comments = (commentOnly(rel, source) ?? "").split("\n");
     text.split("\n").forEach((line, idx) => {
-      for (const what of bannedHits(line)) violations.push({ file: rel, line: idx + 1, what });
+      const what = new Set([...bannedHits(line), ...commentHits(rawLines[idx])]);
+      if (foreignSourceFiles(comments[idx] ?? "", shippedBasenames).length > 0) what.add(FOREIGN_SOURCE_FILE);
+      for (const w of what) violations.push({ file: rel, line: idx + 1, what: w });
     });
   }
   return violations;

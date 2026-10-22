@@ -20,7 +20,7 @@ throughout; this skill is the plan mechanics.
 2. Take your identity from the reply: signing in makes you one of the team's agents, and the
    reply's `agent` and `agentInstruction` say which. Use that agent's name and personality for
    the whole session and sign every note, comment and message with its name; never choose a
-   name yourself. No agent is free:
+   name yourself. When no agent can be signed in as:
    - `agent_needed` → propose one at once, without asking in chat: `danxbot_api`
      `POST /api/team/agent-proposals` with `{name, bio}` (a first name not taken in the team, a
      short bio of the personality you want) answers `{public_id, url, expires_at}`. With an
@@ -146,16 +146,37 @@ From the dashboard:
 - `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
   record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
   Recording the outcome means, in that same turn, editing every plan record, architecture
-  section and card it changes, and removing (with a note) each problem it settles or moots.
-  A new build card alone records nothing.
+  section and card it changes. A problem stays on the card as the record of what was asked and
+  decided: delete one only when it has become irrelevant (a change of direction made the question
+  pointless), with a note saying why; never because it was answered or because another answer
+  settled it. A problem a person commented on or answered is never deleted: the dashboard refuses
+  the delete. When such a question no longer applies, add a solution saying so and why, mark it
+  recommended, and ask the person to accept it. A new build card alone records nothing.
 - `commented on problem` → a follow-up: reply with a comment on that problem. A comment that
-  decides the question (for example "do it this other way") is an answer: handle it as one.
+  decides the question (for example "do it this other way") is not yet an answer: only a
+  person's accepted solution answers. Edit the problem's solutions to state what they said (change
+  one, or add one), mark that solution recommended, then tell them to accept it. Never delete the
+  problem. If they tell you to accept it for them, call `request_permission` for `cards.answer`
+  with that reason and answer the problem with that solution only once it is granted; never ask
+  them to click it when they have already told you to do it. A design problem is the person's
+  alone and no permission lets you answer it.
   One that asks, thinks aloud or says it is unsure decides nothing, however concrete its idea:
   answer what it asks in full (the exact calculation, a worked example) and leave the problem
   open. An option you write from it names every point you added and is never marked
   recommended until they confirm it.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
-  read it for the full text.
+  read it for the full text. A card's design problem (the one listing its designs to choose
+  from) is the person's alone: nothing to do but tell them it waits in Needs You.
+- `APPROVED revision N of design M` (then `answered` on the design problem) → a person chose
+  that design, which passes the card's design gate: the card builds from the design it holds
+  now. Nothing to record.
+- `requested changes on revision …`, a `REJECTED revision …` that closed the card's last live
+  design, or a comment starting `**Asked for another design:**` → the designer owes a turn: run
+  the card's design gate again through a sub-agent at the gate's effort tier, unless one you
+  started is still on it. It works from the board's gate text, builds with the repo's own mini
+  app (the repo's mini-app usage instructions first), and publishes a new revision or design.
+- `retracted the answer to` the design problem → the choice was withdrawn and the gate waits on
+  the person again: build nothing from that design.
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
@@ -255,7 +276,8 @@ and every card is Done or Cancelled.
 
 Every message from the dashboard starts a paid turn at your whole context size. When you have
 nothing you can do (waiting on a person's answer, a long build, a dependency), do not answer
-each reminder with "still waiting": pause.
+each reminder with "still waiting": pause. A session with nothing to do right now pauses; it
+never stays active just to wait.
 
 1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block): the
    pause is only the signal, never the record. Waiting on a person is always an open problem
@@ -296,6 +318,13 @@ paused, continued"): read them all before acting. Act on it once, as on the
 messages themselves (a held nudge still means the cards it names are workable now). A pause that
 ended on your own call needs no reply. Read the plan before resuming, since the cause names what
 changed.
+
+A pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
+on Team > Agents) gives your session's team agent back to the pool. The pause-ended notice then says
+`Your agent <name> went back to the pool after <N> minutes paused. Call plan_connect to take an agent
+again.` On waking, call `plan_connect` before any other dashboard work: it takes the same agent again
+when it is free, otherwise the next free one, otherwise answers `agent_limit_reached`. Until then work
+calls are refused with `agent_not_held` or `agent_needed`.
 
 ## Stopping
 
@@ -340,8 +369,18 @@ A pacing message (`Usage pacing for your Claude account changed: …`) or a spaw
 `Usage pacing: …` states the level, the agent budget of the whole account and the reset
 time; trust those numbers, never your own estimate. Never retry a refused spawn.
 
+The budget is a strict cap: exactly that many agents run on the account at once, never one
+more. The count is danxbot's own and is live, one for the whole account (every session's
+main thread and sub-agents, and the running worker dispatches). Each spawn takes its slot from
+danxbot before it starts, so there is nothing for you to count or reserve. A spawn whose slot
+cannot be taken (danxbot could not be reached or did not answer) is refused too, in the same
+`Usage pacing:` words, naming the failure.
+
 - **On pace**: carry on. A spawn is still refused while the account's budget is full, and
-  may be moved to haiku when the budget is nearly full.
+  may be moved to haiku when the budget is nearly full. A slot danxbot offered to a session it
+  woke is held for that session for 60 seconds and counts as taken: a spawn refused for it says
+  the slot is held and frees within 60 seconds, and pausing with `waits_on` `pacing` gets you
+  offered one.
 - **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.
   Let running agents finish; do only cheap work yourself (verify landed commits, card writes),
   and record anything else as paused in an agent note on its card. (This is the account's usage pause, which

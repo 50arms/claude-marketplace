@@ -1,7 +1,7 @@
 import type { HeldCard, SessionAgent } from '../../types'
 
-// DX-5554: the session's team agent and what it holds, as GET /api/plans answers them on its `session` (the plan_session resource: `agent`
-// {id, name, avatar_url} or null, DX-5551; `card_id` / `card_title`, DX-5553), and the release of the agent when the session ends.
+// the session's team agent and what it holds, as GET /api/plans answers them on its `session` (the plan_session resource: `agent`
+// {id, name, avatar_url} or null; `card_id` / `card_title`), and the release of the agent when the session ends.
 
 // What a session row's agent and card read as, or the reason the row cannot be read (the load then fails: never a guessed name or card).
 export type SessionHolds = { agent: SessionAgent | null; card: HeldCard | null } | { error: string }
@@ -21,8 +21,8 @@ const isText = (v: unknown): v is string => typeof v === 'string' && v !== ''
 function readAgent(raw: any): SessionAgent | null | typeof MALFORMED {
   if (raw === null) return null
   if (raw === undefined || typeof raw !== 'object' || typeof raw.id !== 'number' || !isText(raw.name)) return MALFORMED
-  if (raw.avatar_url !== null && !isText(raw.avatar_url)) return MALFORMED
-  return { name: raw.name, avatarUrl: raw.avatar_url }
+  // the band never draws the avatar, so an unreadable one is no reason to fail the whole load
+  return { name: raw.name, avatarUrl: isText(raw.avatar_url) ? raw.avatar_url : null }
 }
 
 function readCard(id: unknown, title: unknown): HeldCard | null | typeof MALFORMED {

@@ -1,6 +1,6 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4340 (PLAN-29 section 3): a new sub-agent is handed danxbot's pacing line (GET /api/pacing/line) as SubagentStart additionalContext,
-// from the same cache the spawn guard reads. Unknown is explicit on the wire (reason set, line null): then it is told nothing. A failed
+// from the one pacing cache (which the spawn guard's claim also writes). Unknown is explicit on the wire (reason set, line null): then it is told nothing. A failed
 // read starts the sub-agent without a line and toasts once.
 import { describe, expect } from 'claude-code/testing'
 
@@ -9,18 +9,24 @@ import type { PacingEnv } from '../hooks/plan/pacing-line'
 import { test, EVENT_TEXT, dashboard, startSession } from './plan-kit'
 
 const LINE = 'Pacing: this account is over pace; 0 agents may run on the account until 2026-10-08 12:00 UTC. Do the work yourself, cheaply.'
-const known = { account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 2, line: LINE, spend: null, limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroom_minutes: -30, resets_in_minutes: 100, used_percent: 96, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null }
-const unknown = { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' }
+const known = { account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 2, reserved_agents: 0, line: LINE, spend: null, limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroom_minutes: -30, resets_in_minutes: 100, used_percent: 96, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null }
+const unknown = { account: null, level: null, budget: null, resets_at: null, running_agents: null, reserved_agents: null, line: null, reason: 'no_usage_account' }
 const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' } as any
 
 describe('parsePacing', () => {
   test('the verdict and line, null for an explicit unknown, an error for anything else', () => {
-    expect(parsePacing(known)).toEqual({ verdict: { level: 'over_pace', budget: 0, resetsAt: '2026-10-08T12:00:00.000Z', runningAgents: 2 }, line: LINE, spend: null, readout: { worst: 'five_hour', limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroomMinutes: -30, resetsInMinutes: 100, usedPercent: 96, targetPercent: 95, criticalPercent: 99, resetsAt: '2026-10-08T12:00:00.000Z' }] } })
+    expect(parsePacing(known)).toEqual({ verdict: { level: 'over_pace', budget: 0, resetsAt: '2026-10-08T12:00:00.000Z', runningAgents: 2, reservedAgents: 0 }, line: LINE, spend: null, readout: { worst: 'five_hour', limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroomMinutes: -30, resetsInMinutes: 100, usedPercent: 96, targetPercent: 95, criticalPercent: 99, resetsAt: '2026-10-08T12:00:00.000Z' }] } })
     expect(parsePacing(unknown)).toBeNull()
     expect(parsePacing({ ...unknown, reason: null })).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, level: 'fine' })).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, budget: -1 })).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, running_agents: null })).toEqual({ error: expect.any(String) })
+    expect(parsePacing({ ...known, reserved_agents: 3 })).toMatchObject({ verdict: { reservedAgents: 3 } })
+    // DX-5595: reserved_agents is part of the one canonical shape of a known answer
+    expect(parsePacing({ ...known, reserved_agents: null })).toEqual({ error: expect.any(String) })
+    expect(parsePacing({ ...known, reserved_agents: -1 })).toEqual({ error: expect.any(String) })
+    const { reserved_agents: _r, ...noReserved } = known
+    expect(parsePacing(noReserved)).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, line: '  ' })).toEqual({ error: expect.any(String) })
     expect(parsePacing(null)).toEqual({ error: expect.any(String) })
   })
@@ -83,7 +89,7 @@ describe('the SubagentStart pacing line', () => {
 })
 
 describe('a clock that rejects', () => {
-  const env = (toasts: string[]): PacingEnv => ({ now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), toast: t => void toasts.push(t) })
+  const env = (toasts: string[]): PacingEnv => ({ now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) })
 
   test('is a failed read, told once: neither the line nor a forced session-start read rejects', async () => {
     resetPacing()
@@ -93,5 +99,29 @@ describe('a clock that rejects', () => {
     expect(await pacingLine(env(toasts))).toBeNull()
     expect(toasts).toHaveLength(1)
     expect(toasts[0]).toContain('clock down')
+  })
+})
+
+describe('a session whose MCP server becomes unreachable', () => {
+  test('toasts that the pacing read failed, once for a repeat of the same failure, and never says spawns are not paced', async () => {
+    resetPacing()
+    const toasts: string[] = []
+    // DX-5593: the first read succeeds (an unreachable server is silent until one has), every later one finds the server gone
+    const answers = [{ ok: true, status: 200, body: known }, { ok: false, status: 0, body: null, unreachable: true }]
+    const env: PacingEnv = {
+      now: () => Promise.resolve(0),
+      within: (_ms, work) => work,
+      call: () => Promise.resolve(answers.length > 1 ? answers.shift()! : answers[0]),
+      reading: () => Promise.resolve(null),
+      signedIn: () => Promise.resolve(true),
+      sleep: () => Promise.resolve(),
+      toast: t => void toasts.push(t),
+    }
+    await refreshPacing(env, true)
+    expect(toasts).toEqual([])
+    await refreshPacing(env, true)
+    await refreshPacing(env, true)
+    expect(toasts).toEqual(['Usage pacing could not be read (sub-agents get no pacing line until it can): the danx-dashboard MCP server is not reachable from this session'])
+    expect(toasts[0]).not.toMatch(/not paced/i)
   })
 })
