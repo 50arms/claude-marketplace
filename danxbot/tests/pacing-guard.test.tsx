@@ -597,6 +597,20 @@ describe('failures of the guard itself', () => {
     expect(toasts[0]).toContain('clock down')
   })
 
+  // DX-5595: danxbot refused the claim for held slots, but the verdict it answered with reads as room to the plugin's own order (the figures moved between the
+  // judgment and the answer): the refusal still stands, worded as held slots, never as a full budget or a level
+  test('a claim danxbot refused whose verdict the plugin would allow is still refused, worded as held slots', async () => {
+    resetPacing()
+    const refused = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null }
+    const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: refused } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+    const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
+    let started = false
+    const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
+    expect(started).toBe(false)
+    expect(r.deny).toMatch(/1 agent\(s\) run on this account and 1 slot\(s\) are held for sessions that waited longer/)
+    expect(r.deny).not.toMatch(/already run/)
+  })
+
   test('a refusal starts with the prefix the skill quotes', () => {
     expect((decideSpawn(v({ level: 'critical', budget: 0 }), 'opus') as { reason: string }).reason.startsWith(REFUSAL_PREFIX)).toBe(true)
     expect(REFUSAL_PREFIX).toBe('Usage pacing:')
