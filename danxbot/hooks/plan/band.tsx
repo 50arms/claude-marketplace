@@ -99,8 +99,7 @@ export function renderBand(
       {/* a flex item never shrinks below its content's width unless its min width is 0, so without minWidth={0} and the
           clip the full name pushed the controls off the band's edge instead of being cut by `truncate-end`. */}
       <Box flexShrink={1} minWidth={0} overflow="hidden" flexDirection="row">
-        {/* a held plan or card reads `<agent> · <id> · <name>`, the id the link that opens the plan (or the card of a plan-less session). */}
-        {parts !== null && parts.lead !== '' && <Text dimColor wrap="truncate-end">{parts.lead}</Text>}
+        {/* a held plan or card reads `<id> · <name>`, the id the link that opens the plan (or the card of a plan-less session). */}
         {parts !== null && linkUrl !== null && mdLink(E, plan !== null ? 'open-plan' : 'open-card', parts.ref, linkUrl)}
         {parts !== null && linkUrl === null && <Text dimColor wrap="truncate-end">{parts.ref}</Text>}
         {/* a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
