@@ -5,7 +5,7 @@ import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME
 // shows (cards, not problems), '' for none (the badge is then not drawn). It is a link, not label text: see band.tsx.
 export function needsYouBadge(v: PlanView): string {
   const n = v.needsYou
-  return n === null || n === 0 ? '' : `${PROBLEM_GLYPH} ${n} ${n === 1 ? 'card needs' : 'cards need'} you`
+  return n === null || n === 0 ? '' : `${PROBLEM_GLYPH} ${n}`
 }
 
 // `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.

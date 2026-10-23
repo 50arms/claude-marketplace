@@ -18,7 +18,7 @@ for (const surface of SURFACES) {
   describe(`open problems on ${surface}`, () => {
     test('the band counts the cards that need a person, and a refresh re-reads the count', async ($, on) => {
       const { d, band } = await openBand($, on, surface)
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
       for (const c of d.world.cards) for (const p of c.problems) p.open = false
       await forceRefresh($, d)
       expect(await needsYouBadgeOf(band)).toBeUndefined()
@@ -31,14 +31,14 @@ for (const surface of SURFACES) {
       d.world.cards[1]!.problems = [6, 7, 8, 9].map(open)
       d.world.cards.push({ id: 'DX-40', title: 'Quiet card', priority: 1, problems: [{ ...open(10), open: false }] })
       await forceRefresh($, d)
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
     })
 
     test('one card that needs a person reads in the singular', async ($, on) => {
       const { d, band } = await openBand($, on, surface)
       d.world.cards[1]!.problems = []
       await forceRefresh($, d)
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 1 card needs you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 1')
     })
 
     test('the band offers no control to answer, reject or comment', async ($, on) => {

@@ -22,7 +22,7 @@ for (const surface of SURFACES) {
     test('the load reads no card of its own: the count is the needs-you card count of the plan read, whatever one card holds', async ($, on) => {
       const { d, band } = await openBand($, on, surface, { bigCard: true })
       expect(issueReads(d)).toEqual([])
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 3 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 3')
       expect(await text(band)).not.toContain('Disconnected')
     })
 
@@ -30,7 +30,7 @@ for (const surface of SURFACES) {
     // blanked the count and the links on any plan past about 20 cards: the band reads ids and the bucket counts off the plan read instead.
     test('a 150-card plan: the count and the links load from the plan read, no card-list read of the plan is made, nothing is toasted', async ($, on) => {
       const { d, band } = await openBand($, on, surface, { extraPlanCards: 150 })
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
       const planReads = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23')
       expect(planReads.length).toBeGreaterThan(0)
       for (const a of planReads) expect(a.query).toEqual({ fields: { card_ids: true } })

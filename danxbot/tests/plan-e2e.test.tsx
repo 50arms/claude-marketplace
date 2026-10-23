@@ -22,7 +22,7 @@ for (const surface of SURFACES) {
 
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
       await expectIndicator(band, surface, 25)
       expect((await linksOf(band)).map(l => l.key)).toEqual(['needs-you', 'open-plan'])
       // nothing the band does writes to a card

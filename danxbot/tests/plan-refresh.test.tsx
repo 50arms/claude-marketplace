@@ -14,7 +14,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
 
       // a problem appears on a third card of the dashboard; ten minutes of clock bring no load
       d.world.cards.push({ id: 'DX-40', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
@@ -22,13 +22,13 @@ for (const surface of SURFACES) {
       const before = loads()
       await d.clock.advance(600_000)
       expect(loads()).toBe(before)
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
 
       // the dashboard's event for that problem reaches the session: the relay delivers it and the plan is read again
       d.relay.push({ cursor: 'c7', text: 'operator opened a problem on DX-2' })
       await d.clock.settle()
       expect(loads()).toBe(before + 1)
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 3 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 3')
     })
 
     test('a refresh error shows `50 Arms: Disconnected` in the band', async ($, on) => {
@@ -42,7 +42,7 @@ for (const surface of SURFACES) {
       // and it recovers on the next good load
       d.failList(false)
       await forceRefresh($, d)
-      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
     })
   })
 }
@@ -99,13 +99,13 @@ describe('the hooks that refresh', () => {
     await $.turn.complete(turn)
     await d.clock.settle()
     expect(loads()).toBe(before)
-    expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
+    expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
 
     await d.clock.advance(6_000)
     await $.turn.complete(turn)
     await d.clock.settle()
     expect(loads()).toBe(before + 1)
-    expect(await needsYouBadgeOf(band)).toBe('⚠ 3 cards need you')
+    expect(await needsYouBadgeOf(band)).toBe('⚠ 3')
   })
 })
 

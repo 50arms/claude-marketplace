@@ -23,8 +23,8 @@ describe('plan band', () => {
     const wide = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     expect(await bandLabelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, `⚠ 2 cards need you` 8, × 6 (the glyph is narrower than the word, so the name keeps more)
-    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan n…')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, `⚠ 2` 3, × 6
+    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name that goes o…')
     expect((await narrow.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
   })
   test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {
@@ -58,7 +58,7 @@ describe('plan band', () => {
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await needsYouBadgeOf(ui)).toBe('⚠ 2 cards need you')
+      expect(await needsYouBadgeOf(ui)).toBe('⚠ 2')
       expect(await ui.find({ type: 'Button', key: 'needs-you' })).toBeUndefined()
       expect(await ui.findAll({ type: 'Link' })).toEqual([])
       expect((await linksOf(ui)).find(l => l.key === 'needs-you')?.href).toBe(`${DASHBOARD_URL}/plans/23?tab=needs-you`)
@@ -87,7 +87,7 @@ describe('plan band', () => {
       expect(await ui.findAll({ type: 'Link' })).toEqual([])
       expect(await ui.find({ key: 'open-tab' })).toBeUndefined()
       expect(await linksOf(ui)).toEqual([
-        { key: 'needs-you', label: '⚠ 2 cards need you', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` },
+        { key: 'needs-you', label: '⚠ 2', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` },
         { key: 'open-plan', label: 'PLAN-23', href: `${DASHBOARD_URL}/plans/23` },
       ])
       expect(JSON.stringify(await ui.findAll({ type: 'Text' }))).not.toContain('Open plan')
