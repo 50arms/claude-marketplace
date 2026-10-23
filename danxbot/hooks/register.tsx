@@ -1286,8 +1286,9 @@ async function promptNotes($: any, texts: string[]): Promise<void> {
 }
 
 // the outbox (relay/outbox.ts says why the poll loop does not deliver). The records of one answer are queued in the order the server sent them
-// and issued to the session in that order, each as soon as the one before it has been ISSUED (a prompt queued behind a running turn is out, and
-// must not hold the next event: an urgent note behind it is for the running turn).
+// and issued to the session strictly in that order (only the head of the outbox is issued), each as soon as the one before it has been ISSUED (a prompt queued
+// behind a running turn is out, and must not hold the next event: an urgent note behind it is for the running turn). A refused event goes back to its place and
+// holds the events behind it until its backoff ends: a refusal hits every event alike, so nothing is lost by waiting, and no event overtakes an earlier one.
 // An event is DELIVERED when its engine call is made, not when the call's promise settles: the engine keeps a queued prompt across a reload (relay/outbox.ts),
 // while the promise the old module instance awaited is lost with it (whether the promise of a prompt merged into a queued turn settles is not measured), so
 // waiting for it re-sent the whole backlog at every reload. At the call the event's cursor is stored as the resume cursor (in order: events are issued in order)
@@ -1304,9 +1305,11 @@ let outboxFailure: string | null = null
 // refusals seen in a row, one per refused event (a delivery that works resets it): the backoff of the next re-issue steps once per refusal, so a burst of
 // refused events backs off faster than a lone one
 let outboxRefusals = 0
+// the last sequence number given to a queued event: the order the server sent them in, which a put-back event goes back to (relay/outbox.ts)
+let outboxSeq = 0
 
 async function queueEvents($: any, run: RelayRun, events: RelayEvent[]): Promise<void> {
-  for (const event of events) outbox.push({ planId: run.planId, event, held: false })
+  for (const event of events) outbox.push({ planId: run.planId, seq: ++outboxSeq, event, held: false })
   // the copy first: the next poll presents these cursors, and the server drops what they cover
   await persistOutbox($)
   detach($, 'Plan event delivery', issueOutbox($))
@@ -1321,8 +1324,11 @@ async function persistOutbox($: any): Promise<void> {
 // A run's start: a reloaded module has an empty outbox, so what the atom kept for this plan is the outbox again (another plan's events are dropped, as a
 // move drops them). Then whatever waits is issued: the run that polls on from its newest cursor never asks the server for it again.
 async function restoreOutbox($: any, run: RelayRun): Promise<void> {
-  const saved = fromPending(await read($, relayOutbox), run.planId)
-  if (outbox.length === 0) outbox = saved
+  const saved = fromPending(await read($, relayOutbox), run.planId, outboxSeq + 1)
+  if (outbox.length === 0) {
+    outbox = saved
+    outboxSeq += saved.length
+  }
   await persistOutbox($)
   if (outbox.length > 0) detach($, 'Plan event delivery', issueOutbox($))
 }
@@ -1332,20 +1338,10 @@ async function issueOutbox($: any): Promise<void> {
   outboxIssuing = true
   try {
     for (;;) {
-      // a new event may go while a put-back waits out its backoff, but a put-back never goes ahead of an earlier put-back that still waits
-      let next: Queued | undefined
-      let putBackWaits = false
-      for (const q of outbox) {
-        if (q.held) {
-          if (q.again === true) putBackWaits = true
-          continue
-        }
-        if (q.again === true && putBackWaits) continue
-        next = q
-        break
-      }
+      // strictly in order: only the head goes, and a head that waits out its backoff holds everything behind it
+      const next = outbox[0]
       // no live run on that plan: the events wait for a run that serves it (startRelay starts this again)
-      if (next === undefined || relayRun === null || relayRun.planId !== next.planId) return
+      if (next === undefined || next.held || relayRun === null || relayRun.planId !== next.planId) return
       const issued = await issueEvent($, next.event.text, next.event.urgent)
       // the outcome gets its rejection handler at once, before anything awaits (the cursor store below), so a rejection is never unhandled
       const outcome = issued.done.catch((err: any) => notTakenLine(errMessage(err)))
@@ -1385,8 +1381,8 @@ async function clearRetrying($: any, planId: number | null): Promise<void> {
 }
 
 // How a delivery that was called for ended, seen by the module instance that made the call (a reload loses this watch, and the engine's queue keeps
-// the prompt). Delivered: the retrying state clears once no put-back event waits. Refused (`drop`, a throw, a refused note, a rejected call): the event goes back behind the events
-// already put back and ahead of the events not yet issued, in the outbox and the atom, is held for the backoff, and is issued again; its cursor was stored at the
+// the prompt). Delivered: the retrying state clears once no put-back event waits. Refused (`drop`, a throw, a refused note, a rejected call): the event goes back at its place in the original order
+// (`seq`), in the outbox and the atom, is held for the backoff, and is issued again (only the head is ever issued, so nothing behind it goes first); its cursor was stored at the
 // first call, so it stores none.
 async function settleOutbox($: any, event: Queued, outcome: Promise<string | null>): Promise<void> {
   // `outcome` never rejects: issueOutbox turned a rejection into its failure line at the call
