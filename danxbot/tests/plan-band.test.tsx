@@ -1,7 +1,7 @@
 import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
-import { EMPTY } from '../hooks/plan/config'
+import { DISCONNECT_GLYPH, EMPTY } from '../hooks/plan/config'
 import { bandLabel } from '../hooks/plan/words'
 import { test, AGENT_NAME, DASHBOARD_URL, SURFACES, answerPlanConnect, bandLabelOf, browserCalls, linksOf, problemBadgeOf, dashboard, expectText, footerText, holdAgent, mountIndicator, pressFooter, startSession } from './plan-kit'
 
@@ -23,9 +23,9 @@ describe('plan band', () => {
     const wide = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     expect(await bandLabelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: Disconnect 15, `⚠ 3` 8, × 6
-    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name that g…')
-    expect((await narrow.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, `⚠ 3` 8, × 6 (the glyph is narrower than the word, so the name keeps more)
+    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name that goes o…')
+    expect((await narrow.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
   })
   test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {
     const d = dashboard(on, { planName: 'A very long plan name that goes on and on and on' })
@@ -33,7 +33,7 @@ describe('plan band', () => {
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
     expect((await narrow.find({ type: 'Text', text: / · / }))?.props.wrap).toBe('truncate-end')
-    expect((await narrow.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+    expect((await narrow.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
   })
 
 
@@ -78,7 +78,7 @@ describe('plan band', () => {
     }
   })
 
-  test('connected: the plan id is the link to the plan, then the name and the open-problem count; no Open plan link, the same on both surfaces', async ($, on) => {
+  test('connected: the open-problem count leads, then the plan id link and the name; no Open plan link, the same on both surfaces', async ($, on) => {
     const d = dashboard(on)
     for (const surface of SURFACES) {
       await startSession($, d, surface)
@@ -87,8 +87,8 @@ describe('plan band', () => {
       expect(await ui.findAll({ type: 'Link' })).toEqual([])
       expect(await ui.find({ key: 'open-tab' })).toBeUndefined()
       expect(await linksOf(ui)).toEqual([
-        { key: 'open-plan', label: 'PLAN-23', href: `${DASHBOARD_URL}/plans/23` },
         { key: 'open-problems', label: '⚠ 3', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` },
+        { key: 'open-plan', label: 'PLAN-23', href: `${DASHBOARD_URL}/plans/23` },
       ])
       expect(JSON.stringify(await ui.findAll({ type: 'Text' }))).not.toContain('Open plan')
       await ui.unmount()
@@ -205,7 +205,7 @@ for (const surface of SURFACES) {
       // order and keys unchanged, the close control last
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
       expect(keys).toEqual(['disconnect', 'band-close'])
-      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-plan', 'open-problems'])
+      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-plan'])
       expect((await band.find({ key: 'band-close' }))?.props.role).toBe('dismiss')
     })
   })

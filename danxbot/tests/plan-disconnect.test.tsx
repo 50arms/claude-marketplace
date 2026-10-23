@@ -3,6 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // session off its plan; the model is told in the same step; every refusal is shown, never swallowed.
 import { describe, expect } from 'claude-code/testing'
 
+import { DISCONNECT_GLYPH } from '../hooks/plan/config'
 import { test, SURFACES, bandLabelOf, dashboard, expectRowCarries, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -21,9 +22,9 @@ for (const surface of SURFACES) {
       const band = await mounted($, d, surface)
       expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
       // DX-5605: a red control reading just Disconnect, last but for the close x
-      expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+      expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
       expect((await band.find({ key: 'disconnect' }))?.props.plain).toBe(true)
-      expect((await band.find({ type: 'Text', text: 'Disconnect' }))?.props.color).toBe('red')
+      expect((await band.find({ type: 'Text', text: DISCONNECT_GLYPH }))?.props.color).toBe('error')
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
       expect(keys.slice(-2)).toEqual(['disconnect', 'band-close'])
       expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
@@ -92,7 +93,7 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toHaveLength(0)
       expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
       // the key was released: the button is back
-      expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+      expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
       expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
     })
 

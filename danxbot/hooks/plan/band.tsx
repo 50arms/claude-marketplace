@@ -1,7 +1,7 @@
 import type { PlanView } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
-import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_WORD, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
@@ -59,9 +59,9 @@ export function renderBand(
   // Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`). The band draws no events
   // status: the band is sign-in, the plan and Disconnect (operator, 2026-10-22); a relay fault reaches the person as its toast.
   const disconnecting = busyKey.isDisconnecting(busy)
-  // Disconnect reads just that word, in red. A Button's `label`, when set, is what the desktop draws (ButtonProps.label), so it carries none: the
-  // red `Text` child is its text (children of strings and Text are drawn in the label's place) and the Button is keyed instead.
-  const disconnectShown = disconnecting ? DISCONNECTING_LABEL : DISCONNECT_WORD
+  // Disconnect is the glyph in the theme's error color. A Button's `label`, when set, is what the desktop draws (ButtonProps.label), so it carries
+  // none: the `Text` child is its text (children of strings and Text are drawn in the label's place) and the Button is keyed instead.
+  const disconnectShown = disconnecting ? DISCONNECTING_LABEL : DISCONNECT_GLYPH
   const controls = [
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
@@ -93,6 +93,8 @@ export function renderBand(
   const line = (
     <Box key="band-line" flexDirection="row" gap={1} minWidth={0}>
       <Box flexShrink={0}>{indicator}</Box>
+      {/* the open-problem count leads the plan link: a call to action that opens the plan's Needs You tab. */}
+      {showBadge && plan !== null && <Box flexShrink={0}>{mdLink(E, 'open-problems', badge, needsYouUrl(plan))}</Box>}
       {/* a flex item never shrinks below its content's width unless its min width is 0, so without minWidth={0} and the
           clip the full name pushed the controls off the band's edge instead of being cut by `truncate-end`. */}
       <Box flexShrink={1} minWidth={0} overflow="hidden" flexDirection="row">
@@ -113,14 +115,12 @@ export function renderBand(
         )}
         {approve !== null && mdLink(E, 'approve-sign-in', APPROVE_SIGN_IN_LABEL, approve.url)}
         {approve !== null && <Text key="sign-in-code">{codeLabel(approve)}</Text>}
-        {/* the open-problem count is a call to action that opens the plan's Needs You tab. */}
-        {showBadge && plan !== null && mdLink(E, 'open-problems', badge, needsYouUrl(plan))}
         {/* the newest open permission request: its approval page, with the code to check against the page. */}
         {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
         {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
         {plan !== null && (
           <Button key="disconnect" plain dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
-            <Text color={DANGER}>{disconnectShown}</Text>
+            <Text color="error">{disconnectShown}</Text>
           </Button>
         )}
         {close}

@@ -17,7 +17,7 @@ for (const surface of SURFACES) {
         const d = dashboard(on, { dashboardUrl: origin })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-        expect(await hrefs(band)).toEqual([`${origin}/plans/23`, `${origin}/plans/23?tab=needs-you`])
+        expect(await hrefs(band)).toEqual([`${origin}/plans/23?tab=needs-you`, `${origin}/plans/23`])
       })
     })
   }
@@ -40,7 +40,7 @@ describe('an origin the plugin can use', () => {
     const d = dashboard(on, { dashboardUrl: `${OTHER}/some/path/` })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await hrefs(band)).toEqual([`${OTHER}/plans/23`, `${OTHER}/plans/23?tab=needs-you`])
+    expect(await hrefs(band)).toEqual([`${OTHER}/plans/23?tab=needs-you`, `${OTHER}/plans/23`])
   })
 })
 

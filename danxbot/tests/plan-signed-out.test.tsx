@@ -7,7 +7,7 @@ import { describe, expect } from 'claude-code/testing'
 import { loadPlan } from '../hooks/plan/load'
 import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
 import { signInToast } from '../hooks/plan/approval'
-import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
+import { APPROVAL_TOAST_MS, DISCONNECT_GLYPH } from '../hooks/plan/config'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
 import { test, bandLabelOf, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
@@ -155,7 +155,7 @@ for (const surface of SURFACES) {
         expect(await buttons(band)).toContain('Sign in')
         expect(await footerText(footer)).toBe('50 Arms: signed out')
         for (const shown of [await texts(band), (await buttons(band)).join(' ')]) expect(shown).not.toMatch(AGENT_TEXT)
-        expect(await buttons(band)).not.toContain('Disconnect')
+        expect(await buttons(band)).not.toContain(DISCONNECT_GLYPH)
         expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
       })
     })
@@ -176,7 +176,7 @@ for (const surface of SURFACES) {
         expect(shown).not.toMatch(AGENT_TEXT)
         expect(shown).not.toContain('Sign in')
       }
-      expect(await buttons(band)).not.toContain('Disconnect')
+      expect(await buttons(band)).not.toContain(DISCONNECT_GLYPH)
       expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
     })
 

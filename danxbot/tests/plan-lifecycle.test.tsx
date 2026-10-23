@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // connects, and what one load reports.
 import { describe, expect } from 'claude-code/testing'
 
-import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
+import { DISCONNECT_GLYPH, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
 import { test, bandLabelOf, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -199,7 +199,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // the new start frees the key
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+    expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
     expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
     await d.clock.advance(60_000)
     await leaving

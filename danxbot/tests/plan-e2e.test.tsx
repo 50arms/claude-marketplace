@@ -24,7 +24,7 @@ for (const surface of SURFACES) {
       expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
       expect(await problemBadgeOf(band)).toBe('⚠ 4')
       await expectIndicator(band, surface, 25)
-      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-plan', 'open-problems'])
+      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-plan'])
       // nothing the band does writes to a card
       expect(d.writes()).toEqual([])
     })
