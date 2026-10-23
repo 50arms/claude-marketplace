@@ -6,7 +6,7 @@ import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
-import { bandContent, bandLabelCols, bandNameText, eventsWarning, problemBadge, viewPercent } from './words'
+import { bandContent, bandLabelCols, bandNameText, problemBadge, viewPercent } from './words'
 
 // The controls' labels the width budget counts.
 const CLOSE_LABEL = '×'
@@ -58,16 +58,15 @@ export function renderBand(
   // a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
-  // Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`); the events warning shows only while the events are not flowing.
+  // Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`). The band draws no events
+  // status: the band is sign-in, the plan and Disconnect (operator, 2026-10-22); a relay fault reaches the person as its toast.
   const disconnecting = busyKey.isDisconnecting(busy)
   // Disconnect reads just that word, in red. A Button's `label`, when set, is what the desktop draws (ButtonProps.label), so it carries none: the
   // red `Text` child is its text (children of strings and Text are drawn in the label's place) and the Button is keyed instead.
   const disconnectShown = disconnecting ? DISCONNECTING_LABEL : DISCONNECT_WORD
-  const warning = eventsWarning(v, relay)
   const controls = [
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
-    ...(warning !== null ? [{ label: warning, isButton: false }] : []),
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
     ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
@@ -116,11 +115,6 @@ export function renderBand(
         )}
         {approve !== null && mdLink(E, 'approve-sign-in', APPROVE_SIGN_IN_LABEL, approve.url)}
         {approve !== null && <Text key="sign-in-code">{codeLabel(approve)}</Text>}
-        {warning !== null && (
-          <Text key="events-warning" color={WARNING}>
-            {warning}
-          </Text>
-        )}
         {/* the open-problem count is a call to action that opens the plan's Needs You tab. */}
         {showBadge && plan !== null && mdLink(E, 'open-problems', badge, needsYouUrl(plan))}
         {/* the newest open permission request: its approval page, with the code to check against the page. */}
