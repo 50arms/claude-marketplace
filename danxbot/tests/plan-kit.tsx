@@ -174,6 +174,8 @@ export function dashboard(
     accountUuid?: string
     // DX-4806: the process's CLAUDE_CODE_ENTRYPOINT ('claude-desktop' for the desktop app, 'cli' for a terminal); none by default
     entrypoint?: string
+    // CP-1: further process environment variables the session starts with (the Windows or WSL markers the disk notice reads)
+    env?: Record<string, string>
     // DX-5217: CLAUDE_CODE_AUTO_COMPACT_WINDOW as the session's process starts with it (an older plugin version set it to the floor)
     autoCompactWindow?: string
     // DX-5231: a CLAUDE_AUTOCOMPACT_PCT_OVERRIDE an older plugin version left in the process
@@ -303,6 +305,8 @@ export function dashboard(
     files: {} as Record<string, string>,
     // DX-4993: what `git status --porcelain=v1 -b` prints in the session's directory (the resume briefing), or its exit code when it fails
     gitStatus: { exitCode: 0, stdout: '## main...origin/main\n' } as { exitCode: number; stdout: string },
+    // CP-1: what a `$.process.run` answers by its program (argv[0], for example `df` or `cmd.exe`); a program with no entry answers the git status above
+    processes: {} as Record<string, { exitCode?: number; stdout: string }>,
     // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
     rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
     // DX-4423: null while the session holds a key
@@ -1002,6 +1006,7 @@ export function dashboard(
   // DX-5217: the process environment is live: a set changes what the next get answers, as in the engine (an undefined value unsets)
   const liveEnv: Record<string, string> = {
     HOME: HOME_DIR,
+    ...(options.env ?? {}),
     ...(options.entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: options.entrypoint }),
     ...(options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid }),
     ...(options.autoCompactWindow === undefined ? {} : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: options.autoCompactWindow }),
@@ -1019,7 +1024,13 @@ export function dashboard(
   })
   on('env.get', (_$: any, e: any) => ({ value: liveEnv[e.name] }) as any)
   on('session.cwd', () => ({ value: '/work/repo' }) as any)
-  on('process.run', (_$: any, e: any) => ({ value: { exitCode: world.gitStatus.exitCode, stdout: world.gitStatus.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as any)
+  // CP-1: every `$.process.run` the plugin makes, as its argv
+  const runCalls: string[][] = []
+  on('process.run', (_$: any, e: any) => {
+    runCalls.push([...e.argv])
+    const answer: { exitCode?: number; stdout: string } = world.processes[e.argv[0]] ?? world.gitStatus
+    return { value: { exitCode: answer.exitCode ?? 0, stdout: answer.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as any
+  })
   on('session.id', () => ({ value: world.sessionId }) as any)
   // DX-5222: every `$.session.send` the plugin makes (the recipient as the engine spells it, and the text), and how the host answers it: delivered, refused or a rejection
   const sends: { to: string; text: string }[] = []
@@ -1155,7 +1166,7 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an

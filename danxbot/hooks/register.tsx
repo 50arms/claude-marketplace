@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskTold } from '../types'
+import type { CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { diskDecision, diskNotice, realHost } from './context/disk'
+import { DISK_MEASURE_MS, FLOOR_ENV, HARD_MINIMUM_ENV, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
+import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
@@ -119,9 +120,12 @@ const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as
 // a session start the model has not been told about. On a desktop or headless startup, resume and fork the engine has not bound the
 // session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
 // prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
-// the last disk notice told to the model (free-space floor, compaction window), so a tool call repeats it only on a change or after DISK_REPEAT_MS.
-const diskTold = atom({ plugin: 'danxbot', key: 'diskTold' } as const, null as DiskTold)
 const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, null as PendingStart)
+// CP-1: the machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
+// notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home resolved once per session.
+const diskTold = atom({ plugin: 'danxbot', key: 'diskTold' } as const, {} as DiskTold)
+const diskMeasured = atom({ plugin: 'danxbot', key: 'diskMeasured' } as const, null as DiskMeasured)
+const diskHome = atom({ plugin: 'danxbot', key: 'diskHome' } as const, null as DiskHome)
 // the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
 const endedSession = atom({ plugin: 'danxbot', key: 'endedSession' } as const, null as string | null)
@@ -1807,33 +1811,99 @@ async function renderStart($: any, start: NonNullable<PendingStart>): Promise<st
 // the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
 // (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
 // the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
-async function stampEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool'): Promise<string[]> {
+async function stampEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
   const pending = takeStart ? await takePendingStart($) : null
   const line = await timeLine($)
-  const disk = await diskLine($, trigger)
+  const disk = await diskLine($, trigger, agent)
   const head = disk === null ? [line] : [line, disk]
   if (pending === null) return head
   const start = await renderStart($, pending)
   return start === null ? head : [...head, start]
 }
 
-// The machine's free-space notice (hooks/context/disk.ts), in every repo: a person's prompt, a session start (it clears the memory, so the first
-// tool call after it tells) and autonomous tool calls, sub-agents' included. A tool call repeats an unchanged notice only after DISK_REPEAT_MS.
-async function diskLine($: any, trigger: 'prompt' | 'tool'): Promise<string | null> {
-  const text = diskNotice(realHost())
+// CP-1: the machine's free-space notice (hooks/context/disk.ts), in every repo: a person's prompt, a session start (it clears the memory, so the first
+// tool call after it tells) and autonomous tool calls, sub-agents' included. A tool call reuses the last measurement for DISK_MEASURE_MS (a person's prompt
+// measures again) and repeats an unchanged notice to the same agent only after DISK_REPEAT_MS.
+async function diskLine($: any, trigger: 'prompt' | 'tool', agent: string): Promise<string | null> {
   const now = await $.clock.now()
+  const text = await diskText($, trigger, now)
   let line: string | null = null
   await update($, diskTold, told => {
-    const d = diskDecision(text, now, told, trigger)
+    const d = diskDecision(text, now, told, trigger, agent)
     line = d.line
     return d.told
   })
   return line
 }
 
+async function diskText($: any, trigger: 'prompt' | 'tool', now: number): Promise<string> {
+  const last = await read($, diskMeasured)
+  if (trigger === 'tool' && last !== null && now - last.at < DISK_MEASURE_MS) return last.text
+  const text = await measureDisk($)
+  await update($, diskMeasured, () => ({ text, at: now }))
+  return text
+}
+
+const DISK_ENV_NAMES = ['SystemDrive', 'WSL_DISTRO_NAME', 'USERPROFILE', FLOOR_ENV, HARD_MINIMUM_ENV]
+const WSL_INTEROP_TIMEOUT_MS = 10_000
+const DISK_PROBE_TIMEOUT_MS = 10_000
+
+// '' for a machine this policy does not concern (no C:, or no `<home>/.danxbot/` directory: the machine has not opted in to danxbot's machine tooling)
+// or when all is well; else the notice. Every fault is ONE line, never silence.
+async function measureDisk($: any): Promise<string> {
+  try {
+    const env: DiskEnv = {}
+    for (const name of DISK_ENV_NAMES) env[name] = await $.env.get(name)
+    const kind = hostKindOf(env)
+    if (kind === null) return ''
+    const home = await windowsHome($, kind, env)
+    const dir = joinPath(kind, home, '.danxbot')
+    if (!(await $.fs.exists(dir))) return ''
+    const floorsPath = joinPath(kind, dir, 'machine-disk-floors')
+    const windowPath = joinPath(kind, dir, 'compaction-window')
+    const floorsText = (await $.fs.exists(floorsPath)) ? String(await $.fs.read(floorsPath)) : null
+    const windowText = (await $.fs.exists(windowPath)) ? String(await $.fs.read(windowPath)) : null
+    // `$` has no statfs: the system drive's free space is asked of a bounded process (powershell.exe, or df in WSL), at most once per DISK_MEASURE_MS
+    const free = await $.process.run(freeSpaceArgv(kind, env), { timeoutMs: DISK_PROBE_TIMEOUT_MS })
+    if (free.exitCode !== 0) throw new Error(`the free-space command exited ${free.exitCode}`)
+    return diskNotice({ env, freeBytes: parseFreeBytes(free.stdout), floorsText, floorsPath, windowText })
+  } catch (err) {
+    return diskFault(err)
+  }
+}
+
+// The Windows home, resolved once per session and kept, a failure included (a stalled cmd.exe interop is never retried per tool call). On Windows it is
+// USERPROFILE; in WSL cmd.exe names it and wslpath converts it, both through the async bounded `$.process.run`.
+async function windowsHome($: any, kind: HostKind, env: DiskEnv): Promise<string> {
+  const kept = await read($, diskHome)
+  if (kept !== null) {
+    if ('fault' in kept) throw new Error(kept.fault)
+    return kept.home
+  }
+  try {
+    let home: string
+    if (kind === 'windows') {
+      if (!env.USERPROFILE) throw new Error('USERPROFILE is not set, so the Windows home cannot be located')
+      home = env.USERPROFILE
+    } else {
+      const cmd = await $.process.run(['cmd.exe', '/c', 'echo %USERPROFILE%'], { timeoutMs: WSL_INTEROP_TIMEOUT_MS })
+      if (cmd.exitCode !== 0) throw new Error(`cmd.exe exited ${cmd.exitCode}`)
+      const converted = await $.process.run(['wslpath', '-u', parseWindowsProfile(cmd.stdout)], { timeoutMs: WSL_INTEROP_TIMEOUT_MS })
+      if (converted.exitCode !== 0) throw new Error(`wslpath exited ${converted.exitCode}`)
+      home = String(converted.stdout).trim()
+      if (!(await $.fs.exists(home))) throw new Error(`the Windows home ${home} does not exist`)
+    }
+    await update($, diskHome, () => ({ home }))
+    return home
+  } catch (err: any) {
+    await update($, diskHome, () => ({ fault: String(err?.message ?? err) }))
+    throw err
+  }
+}
+
 // the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
 async function onPromptStamp($: any, e: any, next: any) {
-  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt'))] })
+  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT))] })
 }
 
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
@@ -1853,7 +1923,7 @@ async function onToolStamp($: any, e: any, next: any) {
   if (r.deny !== undefined) return r
   // a sub-agent's compaction briefs that sub-agent, in its own tool result
   const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
-  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined, 'tool')), ...(briefing === null ? [] : [briefing])] }
+  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing])] }
 }
 
 // what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -2105,7 +2175,8 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   if (!restart.briefsMain) return below
   const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended }
   await update($, pendingStart, () => start)
-  await update($, diskTold, () => null)
+  await update($, diskTold, () => ({}))
+  await update($, diskMeasured, () => null)
   // a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
   // the main agent's OWN compaction (`restart.own`). A restart with no entry at all (an unattributed sub-agent compaction, a host without session.compact) is briefed passively and starts no turn.
   // The isRunning read is a deliberate fast path: a running turn carries the briefing on its next tool result, with no reads or take here.
