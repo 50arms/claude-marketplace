@@ -104,7 +104,7 @@ export type PermissionRequest = { url: string; code: string; publicId: string; p
 // appended into it that no main-loop tool result has carried yet (hooks/relay/delivery.ts).
 export type TurnState = { isRunning: boolean; pending: string[] }
 
-// the event relay's state, as the band's events warning shows it. `streaming`: waiting on the server for events (or just
+// the event relay's state, as the events warning (a toast on the change into it) is built from it. `streaming`: waiting on the server for events (or just
 // delivered some); `retrying`: the last wait or delivery failed and the relay tries again on its own (`detail` is the cause);
 // `stopped`: the server said the relay cannot go on (`detail` is its fix); `off`: no relay runs (not connected, signed out).
 export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; planId: number | null; detail: string | null }
@@ -157,7 +157,7 @@ declare module 'claude-code' {
       usageError: string | null
       // when the last API response arrived (epoch ms): the age of the usage figure. null until one has.
       measuredAt: number | null
-      // the event relay's state (see RelayState): the band's events warning says it when it is not streaming.
+      // the event relay's state (see RelayState): the events warning is built from it when it is not streaming; the band draws none of it.
       relay: RelayState
       // the events warning last toasted (null: none), so its reason is told once per transition
       eventsWarned: string | null

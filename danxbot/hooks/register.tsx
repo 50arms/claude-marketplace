@@ -108,9 +108,9 @@ const transcript = atom({ plugin: 'danxbot', key: 'transcript' } as const, null 
 const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null as string | null)
 // when the last API response arrived (epoch ms), the age of the usage figure; null until the session has seen one.
 const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null as number | null)
-// the plan event relay's state (the band's events warning). And the main loop's turn (TurnState).
+// the plan event relay's state (what the events warning is built from). And the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
-// the events warning the band last showed (null: none), so its reason is told once on the transition into it.
+// the events warning last stored (null: none), so its reason is told once on the transition into it.
 const eventsWarned = atom({ plugin: 'danxbot', key: 'eventsWarned' } as const, null as string | null)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
@@ -954,7 +954,7 @@ async function startRelayWhenKnown($: any): Promise<void> {
 }
 
 // Ends the loop: its pending call is left to the server (a newer wait supersedes it, or it times out), and everything it answers late is
-// ignored (relay state, cursor and delivery are each gated on `dead`). It leaves the relay state as it was: the band draws that state
+// ignored (relay state, cursor and delivery are each gated on `dead`). It leaves the relay state as it was: the events warning names that state
 // only for the plan it belongs to, and the next run of that plan writes its own first.
 function stopRelay(): void {
   if (relayRun === null) return
@@ -1180,7 +1180,7 @@ async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detai
   return true
 }
 
-// One failure, shown in the band's events warning and told to the session ONCE (the same text is not told again until a wait succeeds).
+// One failure, stored as the events warning, toasted and told to the session ONCE (the same text is not told again until a wait succeeds).
 // `stopped` also halts the relay for this plan until something asks for it again (syncRelay).
 async function relayFailed($: any, run: RelayRun, phase: 'retrying' | 'stopped', detail: string, line: string): Promise<void> {
   if (!(await setRelay($, run, phase, detail))) return
@@ -1571,7 +1571,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
       await $.clock.sleep(backoffMs(failures))
     }
   } catch (err: any) {
-    // An error nothing above anticipated halts the relay for this plan, shown in the band and told once, never restarted by a refresh
+    // An error nothing above anticipated halts the relay for this plan, stored as the events warning, toasted and told once, never restarted by a refresh
     // behind the person's back (an ended run says nothing: relayFailed's gate). When the environment itself is gone the writes below
     // reject, and settleDetached (the loop's caller) is what drops that one rejection.
     await haltRelay($, run, err)
@@ -2225,7 +2225,6 @@ async function drawBand($: any, e: any, next: any) {
     newestPermission === undefined ? null : { count: permissions.length, newest: asApproval(newestPermission) },
     await read($, signInRequest),
     e.props.bodyColumns,
-    await read($, relay),
   )
 }
 

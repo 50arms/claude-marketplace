@@ -8,10 +8,9 @@ import { describe, expect } from 'claude-code/testing'
 import { connectedPlanOf } from '../hooks/plan/mcp'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { OLD_SERVER_FIX } from '../hooks/relay/text'
-import { test, SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
+import { test, bandSilent, relayPhase, eventsWarned, SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const raw = (t: string, isError = false) => ({ value: { content: [{ type: 'text', text: t }], isError } })
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const TEN_MINUTES = 600_000
@@ -191,8 +190,10 @@ for (const surface of SURFACES) {
       d.relay.server.script.push(() => ({ deny: NOT_CONNECTED }) as any)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('relay retrying')
-      expect(await text(band)).not.toContain('relay stopped')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
+      expect(relayPhase(d)).not.toBe('stopped')
+      await bandSilent(band)
       await d.clock.advance(BACKOFF_MS[0])
       expect(d.relay.calls).toHaveLength(2)
       // a refresh does not find it halted either
@@ -215,12 +216,15 @@ for (const surface of SURFACES) {
       // the third failure (at 3 s) is not yet the evidence: the tool list is dynamic, a refetch after sign-in or a grant takes a while
       await d.clock.advance(BACKOFF_MS[0] + BACKOFF_MS[1])
       expect(d.relay.calls).toHaveLength(3)
-      expect(await text(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
       await d.clock.advance(BACKOFF_MS[2] - 1)
-      expect(await text(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       await d.clock.advance(1)
-      expect(await text(band)).toContain('relay stopped')
+      expect(relayPhase(d)).toBe('stopped')
+      await bandSilent(band)
       expect(d.relay.told.join(' ')).toContain(`Fix: ${OLD_SERVER_FIX}`)
       expect(d.relay.calls).toHaveLength(4)
       await d.clock.advance(60_000)
@@ -239,7 +243,8 @@ for (const surface of SURFACES) {
       await d.clock.advance(60_000)
       expect(d.relay.calls.length).toBeGreaterThanOrEqual(4)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).not.toContain('relay stopped')
+      expect(relayPhase(d)).not.toBe('stopped')
+      await bandSilent(band)
       expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
       d.relay.push({ cursor: 'c1', text: 'streams' })
       await d.clock.settle()
@@ -256,7 +261,8 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await d.clock.advance(20_000)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
     })
 
@@ -271,7 +277,8 @@ for (const surface of SURFACES) {
       d.world.tools = 'old'
       await d.clock.advance(16_500)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
     })
 
@@ -292,7 +299,8 @@ for (const surface of SURFACES) {
         await d.clock.advance(120_000)
         expect(d.relay.calls).toHaveLength(calls)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-        expect(await text(band)).not.toContain('relay stopped')
+        expect(relayPhase(d)).not.toBe('stopped')
+        await bandSilent(band)
         expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
       })
     }
@@ -310,8 +318,10 @@ for (const surface of SURFACES) {
       await d.clock.advance(60_000)
       expect(d.relay.calls.length).toBeGreaterThan(calls + 3)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('relay retrying')
-      expect(await text(band)).not.toContain('relay stopped')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
+      expect(relayPhase(d)).not.toBe('stopped')
+      await bandSilent(band)
       expect(d.relay.told.join(' ')).not.toContain(OLD_SERVER_FIX)
     })
 
@@ -335,7 +345,8 @@ for (const surface of SURFACES) {
       d.relay.server.script.push(() => ({ deny: UNBOUND }) as any)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       await d.clock.advance(BACKOFF_MS[0])
       expect(d.relay.calls).toHaveLength(2)
       expect(d.relay.told).toHaveLength(1)
@@ -346,7 +357,8 @@ for (const surface of SURFACES) {
       d.relay.server.script.push(() => raw('Unknown tool: plan_events_wait', true))
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('relay stopped')
+      expect(relayPhase(d)).toBe('stopped')
+      await bandSilent(band)
     })
   })
 
@@ -357,21 +369,24 @@ for (const surface of SURFACES) {
       d.relay.server.script.push(() => raw(SIGN_IN_HALT, true))
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('relay not running')
+      expect(eventsWarned(d)).toBe('events: relay not running')
+      await bandSilent(band)
     })
 
     test('says nothing of it while the relay streams', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).not.toContain('relay not running')
+      expect(eventsWarned(d)).not.toBe('events: relay not running')
+      await bandSilent(band)
     })
 
     test('says nothing of it for a session on no plan', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).not.toContain('relay not running')
+      expect(eventsWarned(d)).not.toBe('events: relay not running')
+      await bandSilent(band)
     })
   })
 }

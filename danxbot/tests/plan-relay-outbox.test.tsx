@@ -12,14 +12,13 @@ import { BACKOFF_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS } from '../hooks/relay
 import { fromPending, pollCursor, putBack, toPending } from '../hooks/relay/outbox'
 import type { Queued } from '../hooks/relay/outbox'
 import { stalledNotice } from '../hooks/relay/text'
-import { test, SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
+import { test, bandSilent, relayPhase, SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
 
 const KEY = 'relayCursor:sess-own'
 const START = { turnId: 't1' } as any
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const STALLED = (t: string) => t.startsWith('Plan events stalled')
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const bandText = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })
 const MCP_PLAN_CONNECT = 'mcp__plugin_danxbot_danx-dashboard__plan_connect'
 // what the plugin keeps in $.state for an event it took and has not delivered (the `relayOutbox` atom)
@@ -318,10 +317,12 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c2', text: 'second digest' })
       await d.clock.settle()
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await bandText(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       await d.clock.advance(BACKOFF_MS[0])
       expect(d.relay.delivered).toHaveLength(2)
-      expect(await bandText(band)).not.toContain('relay retrying')
+      expect(relayPhase(d)).not.toBe('retrying')
+      await bandSilent(band)
     })
 
     // nb3: the note is in the turn once it is appended, so a bookkeeping failure after that is a toast: the event is neither put back nor appended again
@@ -336,7 +337,8 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter((t: string) => t.startsWith('Plan event delivered'))).toHaveLength(1)
       expect(d.relay.told).toEqual(['[danxbot plan event] critical pacing stop'])
       expect(pendingWrites(d).at(-1)).toEqual([])
-      expect(await bandText(band)).not.toContain('relay retrying')
+      expect(relayPhase(d)).not.toBe('retrying')
+      await bandSilent(band)
       await d.clock.advance(BACKOFF_MS[0])
       expect(d.relay.told).toHaveLength(1)
       expect(d.relay.delivered).toEqual([])
@@ -350,12 +352,14 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c1', text: 'digest' })
       await d.clock.settle()
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await bandText(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       d.relay.acceptPrompts()
       const prompts = d.relay.holdPrompts()
       await d.clock.advance(BACKOFF_MS[0])
       expect(prompts.held()).toBe(1)
-      expect(await bandText(band)).not.toContain('relay retrying')
+      expect(relayPhase(d)).not.toBe('retrying')
+      await bandSilent(band)
       prompts.release()
       await d.clock.settle()
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] digest'])
@@ -428,7 +432,8 @@ for (const surface of SURFACES) {
       prompts.release()
       await d.clock.advance(BACKOFF_MS[0])
       expect(pendingWrites(d).at(-1)).toEqual([])
-      expect(await bandText(await $.ui.mount({ plugin: 'danxbot', surface, ...BAND }))).not.toContain('relay retrying')
+      expect(relayPhase(d)).not.toBe('retrying')
+      await bandSilent(await $.ui.mount({ plugin: 'danxbot', surface, ...BAND }))
     })
 
     test('a loop that makes no step (a wait that never settles) is told to the person and the session, and started again', async ($, on) => {
@@ -540,14 +545,16 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c1', text: 'digest' })
       await d.clock.settle()
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await bandText(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       d.relay.acceptPrompts()
       // the new plan's first wait fails, then answers an empty list: a poll that works says the relay is streaming again
       d.relay.server.script.push(() => ({ deny: 'request timed out' }) as any, () => answer({ events: [] }))
       await $.tool.call({ tool: MCP_PLAN_CONNECT, plan_id: 24 } as any)
       await d.clock.settle()
       await d.clock.advance(BACKOFF_MS[0] + 60_000)
-      expect(await bandText(band)).not.toContain('relay retrying')
+      expect(relayPhase(d)).not.toBe('retrying')
+      await bandSilent(band)
       expect(d.relay.delivered).toEqual([])
     })
 

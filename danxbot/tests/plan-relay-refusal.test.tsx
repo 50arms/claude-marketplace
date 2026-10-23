@@ -8,7 +8,7 @@ import { toolName } from '../hooks/plan/config'
 import { ownServerCheck, raisedByPlugin } from '../hooks/relay/refusal'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { blockedOrigin, optionDashboardUrl } from '../hooks/plan/origin'
-import { test, bandLabelOf, CLASSIFIER_REFUSAL, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, linksOf, mountIndicator, startSession } from './plan-kit'
+import { test, bandSilent, relayPhase, bandLabelOf, CLASSIFIER_REFUSAL, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, linksOf, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -32,7 +32,8 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       // DX-5232: the band says the relay is retrying; the reason (the sentence and fix) is toasted on the change into that state
-      expect(await text(band)).toContain('relay retrying')
+      expect(relayPhase(d)).toBe('retrying')
+      await bandSilent(band)
       // the whole sentence fits the toast (TOAST_ERROR_MAX), none of it cut
       expect(d.toasts).toContain(`events: relay retrying. ${SAID}`)
       expect(d.toasts.join(' | ')).not.toMatch(RAW)
