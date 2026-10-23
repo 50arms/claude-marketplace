@@ -66,7 +66,7 @@ export const BANNED = [
   // `comments: true` kinds also apply inside code comments. A comment is read by anyone who opens the installed plugin, so it may
   // name none of our cards, card comments or source paths; it states the reason itself. (The other kinds are about text a user is shown.)
   { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages|mcp-servers|frontend|docs\/pages)\/[\w.-]/, comments: true },
-  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|PBLM|CAV|R)-\d+/, comments: true },
+  { name: "an internal card, plan or plan-record id", pattern: /\b(?:DX|PLAN|PLN|SG|PBLM|CAV|CP|R)-\d+/, comments: true },
   { name: "an internal card comment, note or problem number", pattern: /\b(?:comment|note|problem)s? #?\d{3,}\b/i, comments: true },
 ];
 

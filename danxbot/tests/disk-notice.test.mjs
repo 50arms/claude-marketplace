@@ -1,5 +1,5 @@
 import "./designated-test-container.mjs";
-// CP-1: the machine's free-space notice, pure parts (hooks/context/disk.ts). The hooks that gather the facts and hand the notice to a prompt, a tool
+// The machine's free-space notice, pure parts (hooks/context/disk.ts). The hooks that gather the facts and hand the notice to a prompt, a tool
 // call, a sub-agent and a session start are driven through the hook kit's fake host in disk-notice-hooks.test.tsx.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -29,9 +29,13 @@ const FLOORS_PATH = 'C:\\Users\\dev\\.danxbot\\machine-disk-floors'
 
 const facts = (over = {}) => ({ env: { SystemDrive: 'C:' }, freeBytes: 100 * GIB, floorsText: FLOORS_FILE, floorsPath: FLOORS_PATH, windowText: null, ...over })
 
-test('the hooks module imports nothing from node: (the machine is reached only through $ in register.tsx)', () => {
+test('disk.ts has no import but relative ones and no require (the machine is reached only through $ in register.tsx)', () => {
   const dir = join(dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'context')
-  assert.doesNotMatch(readFileSync(join(dir, 'disk.ts'), 'utf8'), /from 'node:/)
+  const source = readFileSync(join(dir, 'disk.ts'), 'utf8')
+  const specifiers = [...source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*(['"])([^'"]+)\1/g)].map(m => m[2])
+  assert.ok(specifiers.length > 0)
+  for (const specifier of specifiers) assert.match(specifier, /^\./, `${specifier} is not a relative import`)
+  assert.doesNotMatch(source, /\brequire\s*\(/)
 })
 
 test('hostKindOf: WSL_DISTRO_NAME is wsl, SystemDrive is windows, anything else has no C:', () => {
@@ -109,7 +113,8 @@ test('both of danxbot overrides apply, and the two limits are checked against ea
 test('an open compaction window tells the session to pause, before the disk line', () => {
   const notice = diskNotice(facts({ freeBytes: 25 * GIB, windowText: '1792728384\ncompacting docker\n' }))
   const lines = notice.split('\n')
-  assert.match(lines[0], /^MAINTENANCE WINDOW OPEN since 2026-10-2\dT.*: compacting docker$/)
+  // the marker's opening time is fixed (epoch second 1792728384), so no clock is involved
+  assert.equal(lines[0], 'MAINTENANCE WINDOW OPEN since 2026-10-23T04:06:24.000Z: compacting docker')
   assert.match(lines[1], /start no test run, build, deploy or dispatch/)
   assert.match(lines[1], /run from the danxbot checkout/)
   assert.ok(notice.indexOf('MAINTENANCE WINDOW') < notice.indexOf('LOW DISK'))

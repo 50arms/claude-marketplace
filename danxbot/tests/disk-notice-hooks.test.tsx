@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// CP-1: the machine's free-space notice as the engine runs it: a person's prompt, an autonomous tool call, a sub-agent's tool call and a session start,
+// The machine's free-space notice as the engine runs it: a person's prompt, an autonomous tool call, a sub-agent's tool call and a session start,
 // on a fake host (hooks/context/disk.ts holds the pure parts, tests/disk-notice.test.mjs checks them). Everything the plugin learns of the machine
 // comes through `$` (`$.env`, `$.fs`, `$.process.run`), which the kit fakes: files by path, a process's answer by program, every run recorded.
 import { describe, expect } from 'claude-code/testing'
@@ -15,12 +15,15 @@ const WSL = { WSL_DISTRO_NAME: 'Ubuntu' }
 const WINDOWS = { SystemDrive: 'C:', USERPROFILE: 'C:\\Users\\dev' }
 
 // inside WSL: cmd.exe names the Windows home, wslpath converts it, df answers the free bytes of /mnt/c
-function wslMachine(d: any, over: { freeGiB?: number; optedIn?: boolean; floors?: string | null; window?: string } = {}) {
-  const { freeGiB = 30, optedIn = true, floors = FLOORS_FILE, window } = over
+// The opt-in is read from the mounted C: alone (a user folder holding .danxbot); cmd.exe is asked only when several folders hold one.
+function wslMachine(d: any, over: { freeGiB?: number; optedIn?: boolean; floors?: string | null; window?: string; twoUsers?: boolean } = {}) {
+  const { freeGiB = 30, optedIn = true, floors = FLOORS_FILE, window, twoUsers = false } = over
   d.world.processes['cmd.exe'] = { stdout: 'C:\\Users\\dev\r\n' }
   d.world.processes['wslpath'] = { stdout: '/mnt/c/Users/dev\n' }
   d.world.processes['df'] = { stdout: `     Avail\n${freeGiB * GIB}\n` }
   d.world.files['/mnt/c/Users/dev'] = ''
+  d.world.files['/mnt/c/Users/Public'] = ''
+  if (twoUsers) d.world.files['/mnt/c/Users/other/.danxbot'] = ''
   if (optedIn) d.world.files['/mnt/c/Users/dev/.danxbot'] = ''
   if (floors !== null) d.world.files['/mnt/c/Users/dev/.danxbot/machine-disk-floors'] = floors
   if (window !== undefined) d.world.files['/mnt/c/Users/dev/.danxbot/compaction-window'] = window
@@ -42,13 +45,12 @@ for (const surface of SURFACES) {
     const tool = async ($: any, agentId?: string) => ((await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)).context ?? []) as string[]
 
     test('a prompt carries the LOW DISK notice, every time, beside the time stamp', async ($, on) => {
-      const d = await started($, on, WSL, wslMachine)
+      await started($, on, WSL, wslMachine)
       const first = await $.prompt.submit({ text: 'hello' })
       expect(first.context).toHaveLength(2)
       expect(noticeOf(first.context)).toMatch(LOW)
       const second = await $.prompt.submit({ text: 'again' })
       expect(noticeOf(second.context)).toMatch(LOW)
-      expect(d.runCalls.length).toBeGreaterThan(0)
     })
 
     test('an autonomous tool call tells once, stays quiet, and tells again after the repeat interval', async ($, on) => {
@@ -59,11 +61,14 @@ for (const surface of SURFACES) {
       expect(noticeOf(await tool($))).toMatch(LOW)
     })
 
-    test('a changed notice is told at once', async ($, on) => {
+    test('a changed notice is told by the first tool call after the background refresh found it', async ($, on) => {
       const d = await started($, on, WSL, wslMachine)
       expect(noticeOf(await tool($))).toMatch(LOW)
       d.world.processes['df'] = { stdout: `Avail\n${10 * GIB}\n` }
       await d.clock.advance(DISK_MEASURE_MS)
+      // the stale answer comes back at once and the measurement refreshes behind it
+      expect(await tool($)).toHaveLength(1)
+      await d.clock.settle()
       expect(noticeOf(await tool($))).toMatch(/Under the 15\.0 GB hard minimum: host test runs refuse/)
     })
 
@@ -82,40 +87,67 @@ for (const surface of SURFACES) {
       expect(noticeOf(await tool($))).toMatch(LOW)
     })
 
-    test('the Windows home is resolved once per session, and a tool call within a minute measures nothing again', async ($, on) => {
+    test('one user folder holding .danxbot is the home: no interop call is made at all', async ($, on) => {
       const d = await started($, on, WSL, wslMachine)
       await tool($)
+      await $.prompt.submit({ text: 'hello' })
+      expect(runsOf(d, 'cmd.exe')).toEqual([])
+      expect(runsOf(d, 'wslpath')).toEqual([])
+    })
+
+    test('several user folders holding .danxbot: cmd.exe names the signed-in one, once per session, and a tool call within a minute measures nothing again', async ($, on) => {
+      const d = await started($, on, WSL, m => wslMachine(m, { twoUsers: true }))
+      expect(noticeOf(await tool($))).toMatch(LOW)
       await tool($)
       await tool($, 'a1')
       expect(runsOf(d, 'cmd.exe')).toHaveLength(1)
       expect(runsOf(d, 'wslpath')).toHaveLength(1)
       expect(runsOf(d, 'df')).toHaveLength(1)
-      await d.clock.advance(DISK_MEASURE_MS)
-      await tool($)
-      expect(runsOf(d, 'df')).toHaveLength(2)
       await $.prompt.submit({ text: 'fresh' })
-      expect(runsOf(d, 'df')).toHaveLength(3)
+      expect(runsOf(d, 'df')).toHaveLength(2)
+      expect(runsOf(d, 'cmd.exe')).toHaveLength(1)
+    })
+
+    test('a tool call past the measuring interval answers from the last measurement and refreshes behind it', async ($, on) => {
+      const d = await started($, on, WSL, wslMachine)
+      await tool($)
+      await d.clock.advance(DISK_MEASURE_MS)
+      expect(await tool($)).toHaveLength(1)
+      await d.clock.settle()
+      expect(runsOf(d, 'df')).toHaveLength(2)
+    })
+
+    test('hooks that land together share one probe and one home lookup', async ($, on) => {
+      const d = await started($, on, WSL, m => wslMachine(m, { twoUsers: true }))
+      await Promise.all([tool($), tool($, 'a1'), $.prompt.submit({ text: 'hello' })])
+      expect(runsOf(d, 'df')).toHaveLength(1)
       expect(runsOf(d, 'cmd.exe')).toHaveLength(1)
     })
 
     test('a Windows home that could not be resolved is one DISK CHECK FAILED line and is not tried again', async ($, on) => {
       const d = await started($, on, WSL, m => {
-        wslMachine(m)
+        wslMachine(m, { twoUsers: true })
         m.world.processes['cmd.exe'] = { exitCode: 1, stdout: '' }
       })
       expect(noticeOf(await tool($))).toMatch(/^DISK CHECK FAILED: cmd\.exe exited 1/)
       await $.prompt.submit({ text: 'again' })
       await d.clock.advance(DISK_MEASURE_MS)
       await tool($)
+      await d.clock.settle()
       expect(runsOf(d, 'cmd.exe')).toHaveLength(1)
     })
 
-    test('a machine that has not opted in (no ~/.danxbot directory) is told nothing and nothing is measured', async ($, on) => {
-      const d = await started($, on, WSL, m => wslMachine(m, { optedIn: false, floors: null }))
+    test('a machine that has not opted in (no ~/.danxbot directory) is told nothing, nothing is measured and interop is never called, even when it would fail', async ($, on) => {
+      const d = await started($, on, WSL, m => {
+        wslMachine(m, { optedIn: false, floors: null })
+        m.world.processes['cmd.exe'] = { exitCode: 1, stdout: '' }
+      })
       const prompt = await $.prompt.submit({ text: 'hello' })
       expect(prompt.context).toHaveLength(1)
       expect(await tool($)).toHaveLength(1)
       expect(runsOf(d, 'df')).toEqual([])
+      expect(runsOf(d, 'cmd.exe')).toEqual([])
+      expect(runsOf(d, 'wslpath')).toEqual([])
     })
 
     test('an opted-in machine with no limits file is told DISK FLOORS UNAVAILABLE, never a built-in default', async ($, on) => {
@@ -134,7 +166,8 @@ for (const surface of SURFACES) {
     test('an open compaction window tells the session to pause', async ($, on) => {
       await started($, on, WSL, m => wslMachine(m, { freeGiB: 100, window: '1792728384\ncompacting docker\n' }))
       const notice = noticeOf((await $.prompt.submit({ text: 'hello' })).context)
-      expect(notice).toMatch(/^MAINTENANCE WINDOW OPEN since 2026-10-2\dT.*: compacting docker/)
+      // the marker's opening time is fixed (epoch second 1792728384), so no clock is involved
+      expect(notice.split('\n')[0]).toBe('MAINTENANCE WINDOW OPEN since 2026-10-23T04:06:24.000Z: compacting docker')
       expect(notice).toMatch(/start no test run, build, deploy or dispatch/)
       expect(notice).toMatch(/run from the danxbot checkout/)
     })
