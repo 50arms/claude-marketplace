@@ -1,29 +1,26 @@
 import type { PlanView, RelayState } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
-import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DISCONNECT_WORD, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl, plansUrl } from './config'
+import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_WORD, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
-import { bandLabel, bandLabelCols, eventsWarning, problemBadge, viewPercent } from './words'
+import { bandLabel, bandLabelCols, bandParts, eventsWarning, problemBadge, viewPercent } from './words'
 
 // The controls' labels the width budget counts.
-const OPEN_PLAN_LABEL = 'Open plan'
-// a session holding a stand-alone card opens the card's own page
-const OPEN_CARD_LABEL = 'Open card'
 const CLOSE_LABEL = '×'
 
-// Where the band's Open link goes: the plan's page, else the held card's page, else the plans list; null while no dashboard origin is known.
-function openUrl(plan: PlanView['connected'], card: PlanView['card'], dashboardUrl: string | null): string | null {
+// Where the band's id link goes: the plan's page, else the held card's page; null with neither, or while no dashboard origin is known.
+function idUrl(plan: PlanView['connected'], card: PlanView['card'], dashboardUrl: string | null): string | null {
   if (plan !== null) return planUrl(plan)
-  if (dashboardUrl === null) return null
-  return card !== null ? boardCardUrl({ dashboardUrl }, card.id) : plansUrl(dashboardUrl)
+  return card !== null && dashboardUrl !== null ? boardCardUrl({ dashboardUrl }, card.id) : null
 }
 
 // The band above the prompt: the plan line (indicator, label, then the events warning / the open-problem count / the permission
-// request / Open plan, Disconnect and a close control hugging the right edge, the label truncating first). Every control that
+// request / Disconnect and a close control hugging the right edge, the label truncating first). Every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
+// The held plan's `PLAN-NN` (or a card-only session's card id) in the label is that link: there is no separate Open control.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text).
 export function renderBand(
   E: any,
@@ -60,19 +57,12 @@ export function renderBand(
   const approve = signedOut ? signIn : null
   // a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
-  // both links are in every state: the plan's page when connected, the held card's page when it holds one, else the dashboard's plans list. Only an origin never
-  // seen (a first load, or a machine that has not yet reached its dashboard) leaves them out: there is no address to open.
-  const card = plan === null && v.dashboardUrl !== null ? v.card : null
-  const linkUrl = openUrl(plan, card, v.dashboardUrl)
-  const openLabel = card !== null ? OPEN_CARD_LABEL : OPEN_PLAN_LABEL
+  const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
   // Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`); the events warning shows only while the events are not flowing.
   const disconnecting = busyKey.isDisconnecting(busy)
-  // Disconnect is a red control beside the close x. The plugin UI API has no icon or tooltip prop on a Button (ButtonProps: key, label,
-  // hotkey, action, plain, dimColor, variant primary|secondary, role, autoFocus, hover; children only strings and Text), and a hover card
-  // is clipped by the band's region, so: the desktop draws one red glyph and the Button's `label` is its accessible name ("Disconnect from
-  // PLAN-NN"); the terminal, which cannot tell what a lone glyph means, draws the red word.
-  const disconnectName = plan === null ? '' : disconnecting ? DISCONNECTING_LABEL : `${DISCONNECT_WORD} from ${plan.ref}`
-  const disconnectShown = disconnecting ? DISCONNECTING_LABEL : hasSvg ? DISCONNECT_GLYPH : DISCONNECT_WORD
+  // Disconnect reads just that word, in red. A Button's `label`, when set, is what the desktop draws (ButtonProps.label), so it carries none: the
+  // red `Text` child is its text (children of strings and Text are drawn in the label's place) and the Button is keyed instead.
+  const disconnectShown = disconnecting ? DISCONNECTING_LABEL : DISCONNECT_WORD
   const warning = eventsWarning(v, relay)
   const controls = [
     ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
@@ -81,7 +71,6 @@ export function renderBand(
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
     ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
-    ...(linkUrl !== null ? [{ label: openLabel, isButton: false }] : []),
     ...(plan !== null ? [{ label: disconnectShown, isButton: true }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
@@ -102,15 +91,20 @@ export function renderBand(
     ) : (
       donutMark(E, percent, hasSvg, DONUT_BAND_PX)
     )
+  const parts = bandParts(v, labelCols)
   const line = (
     <Box key="band-line" flexDirection="row" gap={1} minWidth={0}>
       <Box flexShrink={0}>{indicator}</Box>
       {/* a flex item never shrinks below its content's width unless its min width is 0, so without minWidth={0} and the
           clip the full name pushed the controls off the band's edge instead of being cut by `truncate-end`. */}
-      <Box flexShrink={1} minWidth={0} overflow="hidden">
+      <Box flexShrink={1} minWidth={0} overflow="hidden" flexDirection="row">
+        {/* a held plan or card reads `<agent> · <id> · <name>`, the id the link that opens the plan (or the card of a plan-less session). */}
+        {parts !== null && parts.lead !== '' && <Text dimColor wrap="truncate-end">{parts.lead}</Text>}
+        {parts !== null && linkUrl !== null && mdLink(E, plan !== null ? 'open-plan' : 'open-card', parts.ref, linkUrl)}
+        {parts !== null && linkUrl === null && <Text dimColor wrap="truncate-end">{parts.ref}</Text>}
         {/* a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
         <Text color={failedColor} dimColor={!failed} wrap="truncate-end">
-          {bandLabel(v, labelCols)}
+          {parts !== null ? (parts.name === '' ? '' : ` · ${parts.name}`) : bandLabel(v, labelCols)}
         </Text>
       </Box>
       <Box flexGrow={1} />
@@ -132,9 +126,8 @@ export function renderBand(
         {/* the newest open permission request: its approval page, with the code to check against the page. */}
         {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
         {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
-        {linkUrl !== null && mdLink(E, 'open-tab', openLabel, linkUrl)}
         {plan !== null && (
-          <Button key="disconnect" plain label={disconnectName} dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
+          <Button key="disconnect" plain dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
             <Text color={DANGER}>{disconnectShown}</Text>
           </Button>
         )}

@@ -94,23 +94,6 @@ export type RefreshGate = {
 // the pacing line's wire shapes (hooks/plan/pacing-line.ts).
 export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
 // The account's verdict for this session (the usage-pacing cache): `budget` null = no cap, 0 = start nothing new, n = most agents at once.
-// the account's spend limit as the server priced it (GET /api/pacing/line `spend`): percent of the account's budget spent in the current period, the period end as `resetsAt`.
-export type SpendFigure = { usedPercent: number; level: PacingLevel; resetsAt: string; spentUsd: number; budgetUsd: number }
-// one limit's readout as the server judged it (GET /api/pacing/line `limits[]`), never recomputed here. `headroomMinutes`: positive = the window resets that long before the target would be reached (spare), negative = the target is reached that long before the reset (short). `resetsInMinutes`: whole minutes to the reset.
-export type PacingLimitKey = 'five_hour' | 'weekly' | 'spend'
-export type PacingState = 'spare' | 'short' | 'hold' | 'stop'
-export type LimitReadout = {
-  limit: PacingLimitKey
-  level: PacingLevel
-  state: PacingState
-  headroomMinutes: number
-  resetsInMinutes: number
-  usedPercent: number
-  targetPercent: number
-  criticalPercent: number
-  resetsAt: string
-}
-export type PacingReadout = { limits: LimitReadout[]; worst: PacingLimitKey }
 // `reservedAgents` is the slots held for sessions danxbot woke (an offer, for 60 s), taken by no running agent yet; a claim from another session counts them as taken.
 export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number; reservedAgents: number }
 

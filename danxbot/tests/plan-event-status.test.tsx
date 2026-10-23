@@ -75,13 +75,13 @@ for (const surface of SURFACES) {
       ['no nextStep at all', { attached: true, state: 'stopped' }],
       ['a status that is not an object', 'healthy'],
     ] as const) {
-      test(`${name}: the load fails, the footer reads Danxbot, and no events warning is drawn`, async ($, on) => {
+      test(`${name}: the load fails, the footer reads 50 Arms disconnected, and no events warning is drawn`, async ($, on) => {
         const d = dashboard(on, { rawListener: raw })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         expect(await joined(band)).not.toContain(NO_EVENT_STATUS)
         expect(await warning(band)).toBeUndefined()
-        expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
+        expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
       })
     }
 

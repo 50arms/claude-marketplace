@@ -21,7 +21,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       await $.command.run({ command: 'danx-plan' })
       await d.clock.settle()
-      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-tab'])
+      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-plan', 'open-problems'])
       expect(await band.findAll({ type: 'Link' })).toEqual([])
       expect(browserCalls(d)).toEqual([])
     })

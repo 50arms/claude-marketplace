@@ -10,7 +10,7 @@ import { signInToast } from '../hooks/plan/approval'
 import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
-import { test, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
+import { test, bandLabelOf, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
@@ -343,7 +343,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.toasts).toContain('Signed in')
       expect(await texts(band)).not.toContain('signed out')
-      expect(await texts(band)).toContain('PLAN-23')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
       expect(await buttons(band)).not.toContain('Sign in')
       expect(await buttons(band)).not.toContain('Signing in…')
       // not one toast of the whole sign-in carried the server's words (a "Could not tell the model" toast, which carries the model's text, aside)

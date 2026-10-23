@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { linkCardIds } from '../hooks/plan/card-links'
-import { test, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
+import { test, bandLabelOf, AGENT_NAME, DASHBOARD_URL, SURFACES, answerPlanConnect, dashboard, footerText, holdAgent, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
 
 const plan = { id: 23, ref: 'PLAN-23', name: 'p', status: 'building', dashboardUrl: DASHBOARD_URL } as any
 const PREFIXES = ['DX', 'SG']
@@ -122,8 +122,10 @@ for (const surface of SURFACES) {
     ] as const) {
       test(`${name}: the plan stays ready, the reply is drawn as it is`, async ($, on) => {
         const d = dashboard(on, options as any)
+        answerPlanConnect(on, d)
         await startSession($, d, surface)
-        expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
+        await holdAgent($, d)
+        expect(await footerText(await mountIndicator($, surface))).toBe(`${AGENT_NAME} · PLAN-23`)
         expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
         expect(d.toasts.filter(t => t.startsWith('Card links unavailable: '))).toHaveLength(1)
       })
@@ -144,7 +146,7 @@ for (const surface of SURFACES) {
         const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
         const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
         expect(all).not.toContain('Disconnected')
-        expect(all).toContain('PLAN-23')
+        expect(await bandLabelOf(band)).toContain('PLAN-23')
         expect(await problemBadgeOf(band)).toBeUndefined()
         // one toast for the shared cause: the count and the links both stand on this read
         expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)

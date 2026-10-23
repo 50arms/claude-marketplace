@@ -17,7 +17,7 @@ import { linkCardIds } from './plan/card-links'
 import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
-import { eventsReason, eventsWarning, footerLabel } from './plan/words'
+import { eventsReason, eventsWarning, footerLabel, footerTone } from './plan/words'
 import {
   APPROVAL_TOAST_MS,
   CALL_ERROR_MAX,
@@ -520,8 +520,8 @@ function toastCallFailedAndReload($: any, what: string, err: any): void {
 const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
 
 // what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards,
-// listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin). A leave puts the session on no plan.
-const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl })
+// listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin, the session's team agent). A leave puts the session on no plan.
+const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl, agent: cur.agent })
 function leftView(cur: any): any {
   return { ...planIndependent(cur), phase: 'ready', refreshedAt: cur.refreshedAt }
 }
@@ -2191,9 +2191,10 @@ async function drawBand($: any, e: any, next: any) {
 // The footer: the engine's own mode labels (next) stay, with ONE plan button beside them. Nothing
 // to say (loading) leaves the site untouched; no MCP server reads `Danxbot · off`.
 async function drawSessionMode($: any, e: any, next: any) {
-  const label = footerLabel(await read($, view))
+  const v = await read($, view)
+  const label = footerLabel(v)
   if (label === null) return next(e)
-  return renderFooter($.ui.resolve(e), handlers($), label, await next(e))
+  return renderFooter($.ui.resolve(e), handlers($), label, footerTone(v), await next(e), e.surface)
 }
 
 // card ids in an assistant reply drawn as links. Reads only the `view` atom (filled at refresh): no network in the draw.
