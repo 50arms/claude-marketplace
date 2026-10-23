@@ -3065,8 +3065,12 @@ async function compactionBriefing($: any): Promise<string> {
   const owed = await briefingSource<OwedComment[]>(async () => {
     const r = await api($, 'GET', '/api/plan-sessions/me/owed-comments')
     if (!r.ok) throw new Error(errText(r))
-    if (!Array.isArray(r.body?.owedComments)) throw new Error('bad_response: owed-comments answered no owedComments list')
-    return r.body.owedComments
+    const list = r.body?.owedComments
+    if (!Array.isArray(list)) throw new Error('bad_response: owed-comments answered no owedComments list')
+    // a malformed element is a stated failure, never a briefing that throws while it is worded
+    const bad = list.findIndex(c => typeof c?.cardId !== 'string' || typeof c.cardTitle !== 'string' || typeof c.commentId !== 'number' || typeof c.author?.name !== 'string' || typeof c.excerpt?.text !== 'string' || !(c.state === 'sent' || c.state === 'seen') || typeof c.waitedMs !== 'number')
+    if (bad !== -1) throw new Error(`bad_response: owed-comments element ${bad} is not an owed comment`)
+    return list
   })
   const cards = await briefingSource<BriefingCard[]>(async () => v.inProgress.map(c => ({ id: c.id, title: c.title })))
   const agents = await briefingSource<BriefingAgent[]>(async () => {

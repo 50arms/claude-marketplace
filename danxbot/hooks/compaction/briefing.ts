@@ -46,6 +46,8 @@ export function parseGitStatus(out: string): GitState | null {
 
 const OWED_STATE_LABEL: Record<OwedComment['state'], string> = { sent: 'Sent', seen: 'Seen' }
 const EXCERPT_MAX = 160
+const TITLE_MAX = 60
+const AUTHOR_MAX = 40
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
@@ -57,13 +59,14 @@ function waitedText(ms: number): string {
   return `${Math.floor(ms / DAY_MS)} d`
 }
 
-// DX-5692: a comment survives a compaction only as a line in the summary, so every comment still owed is listed FIRST (oldest first, the order the route answers), with the two-step reply
-// DX-5799 defined. A `seen` comment is already acknowledged, so its ack is skipped. A failed read is said as a failure: an omitted list would read as "nothing owed".
+// DX-5692: a comment survives a compaction only as a line in the summary, so every comment still owed is listed first (oldest first, the order the route answers), with the
+// two-step reply DX-5799 defined. A `seen` comment is already acknowledged, so its ack is skipped. A failed read is said as a failure: an omitted list would read as "nothing owed".
+// The list is never capped (unlike the cards and agents lists): a comment dropped from the briefing is a comment nobody answers.
 function owedLine(owed: Source<OwedComment[]>): string {
-  if (!owed.ok) return `Comments you owe an answer: NOT KNOWN, the read failed (${oneLine(owed.reason, REASON_MAX)}). Read your plan's cards for person comments with no reply of yours before you do anything else.`
-  if (owed.value.length === 0) return 'Comments you owe an answer: none.'
-  const items = owed.value.map(c => `${c.cardId} ${oneLine(c.cardTitle, 60)}, comment ${c.commentId} from ${oneLine(c.author.name, 40)} [${OWED_STATE_LABEL[c.state]}, waiting ${waitedText(c.waitedMs)}]: "${oneLine(c.excerpt.text, EXCERPT_MAX)}"`)
-  return `Comments you still owe an answer, answer these FIRST, oldest first: ${items.join('; ')}. For each, acknowledge it (POST /api/issues/<card>/comments/<commentId>/reply with phase "ack"; skip this for one that is Seen, already acknowledged), then write your answer into that same message (the same route with phase "reply").`
+  if (!owed.ok) return `Comments you still owe an answer: NOT KNOWN, the read failed (${oneLine(owed.reason, REASON_MAX)}). Read your plan's cards for person comments with no reply of yours before you continue the step that was in progress.`
+  if (owed.value.length === 0) return 'Comments you still owe an answer: none.'
+  const items = owed.value.map(c => `${c.cardId} ${oneLine(c.cardTitle, TITLE_MAX)}, comment ${c.commentId} from ${oneLine(c.author.name, AUTHOR_MAX)} [${OWED_STATE_LABEL[c.state]}, waiting ${waitedText(c.waitedMs)}]: "${oneLine(c.excerpt.text, EXCERPT_MAX)}"`)
+  return `Comments you still owe an answer, oldest first: ${items.join('; ')}. Answer them right after steps (1)-(3) above (skills, handoff note, cards) and before you continue the step that was in progress. For each, acknowledge it (POST /api/issues/<card>/comments/<commentId>/reply with phase "ack" and your short acknowledgement as body; skip this for one that is Seen, already acknowledged), then write your answer into that same message (the same route with phase "reply" and the answer as body).`
 }
 
 function cardsLine(cards: Source<BriefingCard[]>): string {

@@ -260,8 +260,8 @@ describe('the resume briefing (pure)', () => {
   })
 
   const OWED = [
-    { cardId: 'DX-5075', cardTitle: 'Some card', commentId: 17031, author: { name: 'Dan' }, excerpt: { text: 'Please also cover the retry path' }, state: 'sent' as const, waitedMs: 5 * 60_000 },
     { cardId: 'DX-6', cardTitle: 'Other', commentId: 9, author: { name: 'Wren' }, excerpt: { text: 'ok?' }, state: 'seen' as const, waitedMs: 3 * 3_600_000 },
+    { cardId: 'DX-5075', cardTitle: 'Some card', commentId: 17031, author: { name: 'Dan' }, excerpt: { text: 'Please also cover the retry path' }, state: 'sent' as const, waitedMs: 5 * 60_000 },
   ]
   const EMPTY_GIT = ok({ branch: null, changed: 0, upstream: null, ahead: null })
 
@@ -269,17 +269,18 @@ describe('the resume briefing (pure)', () => {
     const text = briefingText({ plan: { ref: 'PLAN-1', name: 'P' }, owed: ok(OWED), cards: ok([]), agents: ok([]), git: EMPTY_GIT })
     expect(text).toContain('DX-5075 Some card, comment 17031 from Dan [Sent, waiting 5 min]: "Please also cover the retry path"')
     expect(text).toContain('DX-6 Other, comment 9 from Wren [Seen, waiting 3 h]: "ok?"')
-    expect(text.indexOf('comment 17031')).toBeLessThan(text.indexOf('comment 9 '))
-    expect(text.indexOf('comment 17031')).toBeLessThan(text.indexOf('Your plan is'))
-    expect(text).toContain('phase "ack"; skip this for one that is Seen')
-    expect(text).toContain('phase "reply"')
+    expect(text.indexOf('comment 9 ')).toBeLessThan(text.indexOf('comment 17031'))
+    expect(text.indexOf('comment 9 ')).toBeLessThan(text.indexOf('Your plan is'))
+    expect(text).toContain('POST /api/issues/<card>/comments/<commentId>/reply')
+    expect(text).toContain('phase "ack" and your short acknowledgement as body; skip this for one that is Seen')
+    expect(text).toContain('phase "reply" and the answer as body')
   })
 
   test('says none owed, and says a failed owed-comments read as a failure, never as none', () => {
     const base = { plan: null, cards: ok([]), agents: ok([]), git: EMPTY_GIT }
-    expect(briefingText({ ...base, owed: ok([]) })).toContain('Comments you owe an answer: none.')
+    expect(briefingText({ ...base, owed: ok([]) })).toContain('Comments you still owe an answer: none.')
     const failed = briefingText({ ...base, owed: { ok: false, reason: 'http 503' } })
-    expect(failed).toContain('Comments you owe an answer: NOT KNOWN, the read failed (http 503).')
+    expect(failed).toContain('Comments you still owe an answer: NOT KNOWN, the read failed (http 503).')
     expect(failed).not.toContain('owe an answer: none')
   })
 })
@@ -719,7 +720,7 @@ for (const surface of SURFACES) {
       d.world.reportReplies['GET /api/plan-sessions/me/owed-comments'] = { status: 503, body: { error: 'down' } }
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
       const failed = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
-      expect(failed).toContain('Comments you owe an answer: NOT KNOWN, the read failed')
+      expect(failed).toContain('Comments you still owe an answer: NOT KNOWN, the read failed')
     })
 
     test('a startup or resume carries no briefing', async ($, on) => {
