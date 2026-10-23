@@ -1299,8 +1299,8 @@ async function promptNotes($: any, texts: string[]): Promise<void> {
 // again after the backoff, and the band says so. The poll acknowledges a taken event to the server (which then drops it), so every queued event is also written to the
 // `relayOutbox` atom BEFORE the poll that carries its cursor, and removed from it once called for: a reload of this module (which empties `outbox`) finds
 // the ones not yet called for there and issues them (`restoreOutbox`). Delivered means handed over, not acknowledged: the one window left is a reload between the
-// engine call and the end of the atom write that follows the cursor store, where the event is repeated; and an event can be lost if Claude Code itself exits while its
-// prompt is still queued behind a running turn (nothing acknowledges it back to the plugin yet; re-delivery on acknowledgement is planned work).
+// engine call and the end of the atom write that follows the cursor store, where the event is repeated. An event that asks to be acknowledged (`acks`) is sent again by the dashboard until the session acknowledges it,
+// which covers Claude Code exiting while the prompt is still queued; `ackInFlight` lets a re-send of one the session already holds be dropped while its turn runs (relay/outbox.ts).
 // `queueEvents` and `restoreOutbox` are idempotent; `issueOutbox` is single-flight (whoever queues or starts a run calls it).
 let outboxIssuing = false
 // the cause of the delivery failure being retried, null when none: the poll's own success must not draw over it (handleAnswer)
@@ -1336,6 +1336,17 @@ async function restoreOutbox($: any, run: RelayRun): Promise<void> {
   if (outbox.length > 0) detach($, 'Plan event delivery', issueOutbox($))
 }
 
+// The delivered tail of the head event (issued, or dropped as a re-send): the cursor first, then the atom (a reload between the two repeats this event, where the other
+// order would lose the resume point); a delivery that leaves no put-back event waiting ends the retrying state here, not only when its own outcome settles (a re-issued
+// put-back may never settle).
+async function markDelivered($: any, next: Queued): Promise<void> {
+  if (next.again !== true) await saveCursor($, next.planId, next.event.cursor)
+  const at = outbox.indexOf(next)
+  if (at >= 0) outbox.splice(at, 1)
+  await persistOutbox($)
+  if (!outbox.some(q => q.again === true)) await clearRetrying($, next.planId)
+}
+
 async function issueOutbox($: any): Promise<void> {
   if (outboxIssuing) return
   outboxIssuing = true
@@ -1350,27 +1361,16 @@ async function issueOutbox($: any): Promise<void> {
       const asks = next.event.acks.length > 0
       const resend = asks && shouldDropResend(next.event.acks, await read($, ackInFlight), (await read($, turn)).isRunning)
       if (resend) {
-        if (!outbox.includes(next)) continue
-        if (next.again !== true) await saveCursor($, next.planId, next.event.cursor)
-        const dropAt = outbox.indexOf(next)
-        if (dropAt >= 0) outbox.splice(dropAt, 1)
-        await persistOutbox($)
-        if (!outbox.some(q => q.again === true)) await clearRetrying($, next.planId)
+        if (outbox.includes(next)) await markDelivered($, next)
         continue
       }
       const issued = await issueEvent($, next.event.text, next.event.urgent)
-      if (asks) await update($, ackInFlight, cur => markInFlight(cur, next.event.acks))
-      // the outcome gets its rejection handler at once, before anything awaits (the cursor store below), so a rejection is never unhandled
+      // the outcome gets its rejection handler at once, before anything awaits (the in-flight record and the cursor store below), so a rejection is never unhandled
       const outcome = issued.done.catch((err: any) => notTakenLine(errMessage(err)))
+      if (asks) await update($, ackInFlight, cur => markInFlight(cur, next.event.acks))
       // a move to another plan dropped it while the call was made: it is no longer this module's to deliver
       if (!outbox.includes(next)) continue
-      // delivered. The cursor first, then the atom: a reload between the two repeats this event, where the other order would lose the resume point
-      if (next.again !== true) await saveCursor($, next.planId, next.event.cursor)
-      const at = outbox.indexOf(next)
-      if (at >= 0) outbox.splice(at, 1)
-      await persistOutbox($)
-      // a call that leaves no put-back event waiting ends the retrying state here, not only when its own outcome settles (a re-issued put-back may never settle)
-      if (!outbox.some(q => q.again === true)) await clearRetrying($, next.planId)
+      await markDelivered($, next)
       detach($, 'Plan event delivery', settleOutbox($, next, outcome))
     }
   } catch (err: any) {

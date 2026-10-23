@@ -37,7 +37,7 @@ export const NO_URGENT_FIX = 'restart the session so its danx-dashboard server s
 export const NO_ACKS_DETAIL = "this session's danx-dashboard MCP server answers events with no acks list, so it is older than this plugin needs"
 export const NO_ACKS_FIX = NO_URGENT_FIX
 export const STALE_PENDING_DETAIL = 'events queued by an older version of this plugin are still waiting and carry no acks list, so they cannot be delivered'
-export const STALE_PENDING_FIX = 'restart the session so the plugin starts with an empty queue; the dashboard sends the events it still needs acknowledged again'
+export const STALE_PENDING_FIX = 'restart the session so the plugin starts with an empty queue; the server then resumes from the stored cursor, so every event past it is sent again'
 
 // The relay's own loop hit an error nothing above anticipated: it stops for that plan until something asks for it again.
 export const RELAY_ERROR_FIX = 'call plan_connect to start the relay again'
