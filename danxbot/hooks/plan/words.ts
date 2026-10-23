@@ -75,10 +75,10 @@ export function bandContent(v: PlanView, maxCols?: number): { parts: BandParts }
   return { parts }
 }
 
-// the text after the lead and the id: ` · name`, or the bare name where nothing leads it, '' for no name
+// the text after the lead and the id: ` · name` after an id, else the bare name (a lead already ends in the separator), '' for no name
 export function bandNameText(parts: BandParts): string {
   if (parts.name === '') return ''
-  return parts.lead + parts.ref === '' ? parts.name : `${NAME_SEP}${parts.name}`
+  return parts.ref === '' ? parts.name : `${NAME_SEP}${parts.name}`
 }
 
 // The band's label as one string (the held plan's or card's parts joined, or the state's words).

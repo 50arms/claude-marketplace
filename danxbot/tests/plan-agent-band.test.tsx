@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
-import { bandLabel, footerLabel, footerTone } from '../hooks/plan/words'
+import { bandLabel, bandNameText, footerLabel, footerTone } from '../hooks/plan/words'
 import { agentBlockOf } from '../hooks/plan/mcp'
 import { test, AGENT_GATE_HALT, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, linksOf, mountIndicator, startSession } from './plan-kit'
 
@@ -61,6 +61,12 @@ describe('the agent and its association in the band label', () => {
     expect(agentBlockOf(refused(409, { error: 'agent_not_held', state: 'agent_not_held', instruction: 'x' }))).toBe(null)
     expect(agentBlockOf({ ok: true, status: 200, body: { state: 'agent_not_held', instruction: 'x' } })).toBe(null)
     expect(agentBlockOf({ ok: false, status: 409, body: { error: JSON.stringify(AGENT_GATE_HALT('agent_needed')) } })).toBe(null)
+  })
+  test('the name follows an id with the separator, and directly after a lead or nothing', () => {
+    expect(bandNameText({ lead: 'Tendai · ', ref: 'DX-77', name: 'One-off fix' })).toBe(' · One-off fix')
+    expect(bandNameText({ lead: 'Tendai · ', ref: '', name: 'One-off fix' })).toBe('One-off fix')
+    expect(bandNameText({ lead: '', ref: '', name: 'One-off fix' })).toBe('One-off fix')
+    expect(bandNameText({ lead: 'Tendai · ', ref: 'DX-77', name: '' })).toBe('')
   })
   test('the footer names the agent alone while it holds a card (no plan)', () => {
     expect(footerLabel({ ...ready, agent, card: CARD })).toBe('Tendai')
