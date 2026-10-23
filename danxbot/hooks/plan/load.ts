@@ -102,9 +102,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   // One load of everything about the connected plan: the plan itself (its status counts, card ids and open-problem total),
   // the in-progress cards and the boards, together.
   const [planR, inProg, boards] = await Promise.all([
-    // the plan's every card id and its open-problem total come on this read (`PLAN_BAND_FIELDS`), whatever the plan's board or size: the plan
-    // route is not board-scoped by the MCP (route-board-scope lists `/api/plans/:planId/cards` as false; GET /api/issues would be stamped
-    // with the session's board and miss a plan's other boards)
+    // the plan's every card id and its open-problem total come on this read (`PLAN_BAND_FIELDS`), whatever the plan's boards or size
     call('GET', `/api/plans/${connectedId}`, { query: { fields: PLAN_BAND_FIELDS } }),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', order: 'desc', limit: IN_PROGRESS_LIMIT } }),
     // the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
@@ -125,7 +123,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
   const base = { dashboardUrl, connected, listener, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
 
-  // The in-progress bucket: the same completeness rule.
+  // The in-progress bucket: its list is only as complete as the total says, so an answer without a numeric total is an error.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
   if (typeof inProg.body.total !== 'number') {
     return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
