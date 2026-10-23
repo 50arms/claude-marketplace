@@ -178,9 +178,7 @@ From the dashboard:
   now. Nothing to record.
 - `requested changes on revision …`, a `REJECTED revision …` that closed the card's last live
   design, or a comment starting `**Asked for another design:**` → the designer owes a turn: run
-  the card's design gate again through a sub-agent at the gate's effort tier, unless one you
-  started is still on it. It works from the board's gate text, builds with the repo's own mini
-  app (the repo's mini-app usage instructions first), and publishes a new revision or design.
+  it again ("Sub-agents"), unless one you started is still on it.
 - `retracted the answer to` the design problem → the choice was withdrawn and the gate waits on
   the person again: build nothing from that design.
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
@@ -347,7 +345,11 @@ below only when the card wouldn't cover it. Set `effort_level` first, by its har
 its breadth (issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
 never `general-purpose`. A card that carries gates never goes to a `worker-haiku-*` tier.
 A builder runs its PRE gates itself and never spawns gate agents; once it reports its pushed
-tip SHA, you run its POST gates as gate workers and say when to land.
+tip SHA, you run its POST gates as gate workers and say when to land. A card owing `plan-design`
+once its `plan-dependency` passed goes to no builder yet: run its designer,
+`Agent({subagent_type:"danxbot:worker-<the gate's tier>", prompt:"<CARD-ID> plan-design"})`
+(issue-workflow "Gates" names the tier and what the designer does), and again for each design
+event above that owes it a turn.
 
 Partition files before fanning out. State a time-box; never background a long test run and
 end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits

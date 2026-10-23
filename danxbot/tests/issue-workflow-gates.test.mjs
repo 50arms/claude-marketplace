@@ -108,12 +108,29 @@ test("the creation guide carries no hard-coded parent-child list", () => {
   assert.doesNotMatch(creation, /Feature → Story\/Bug\/Chore\/Task/);
 });
 
-// A gate that only a person's answer passes (the design gate) takes no recorded verdict: the server refuses its
-// PATCH for every caller, and the person's choice passes it. The section says so without naming the gate.
-test("a gate only a person's answer passes is never recorded by the agent, and the section still names no gate", () => {
+// A gate that only a person's answer passes takes no recorded verdict: the server refuses its PATCH for every caller,
+// and the person's choice passes it. DX-4734 AC 50935: nothing told an orchestrator to start the first designer, and
+// the builder's "run your PRE gates yourself" pointed it at a gate whose pickup is refused. The section names
+// `plan-design` only to say WHO runs it and how a sub-agent becomes its designer; what a designer builds stays in
+// the board's gate text.
+test("a gate only a person's answer passes is never recorded by the agent", () => {
   assert.match(gates, /A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused for every caller\./);
-  assert.match(gates, /then stop; the person's choice passes it\./);
-  assert.ok(!gates.includes("plan-design"), "the design gate's name belongs to the board's gate text and the creation guide");
+  assert.match(gates, /the person's choice of a design on the card passes the gate\./);
+});
+
+test("the operator session, never the builder, runs one designer sub-agent at the gate's tier", () => {
+  assert.match(gates, /runs its PRE gates itself, in its own context \(all but `plan-design`, below\)/);
+  assert.match(gates, /`plan-design` is one, and the builder never runs it: when a card owes it, the operator session runs one designer sub-agent at the tier the gate's `effort_level` on the card names \(unset: `danxbot:worker-sonnet-high`\)\./);
+  assert.match(gates, /Until then a builder's `pickup` is refused \(409 `design_not_chosen`\)\./);
+});
+
+test("a sub-agent handed only a card id and plan-design can set itself up as the designer", () => {
+  assert.match(gates, /A sub-agent handed a card id and `plan-design` is that designer: it claims nothing, fetches the gate text \(step 1\), reads the repo's mini-app usage instructions, builds and publishes as the text says, then stops;/);
+});
+
+test("plan-workflow starts the first designer, not only the re-run, with a card-id-and-gate brief", () => {
+  assert.match(subAgents, /A card owing `plan-design` once its `plan-dependency` passed goes to no builder yet: run its designer, `Agent\(\{subagent_type:"danxbot:worker-<the gate's tier>", prompt:"<CARD-ID> plan-design"\}\)`/);
+  assert.match(subAgents, /and again for each design event above that owes it a turn\./);
 });
 
 test("the creation guide lists both design gates with when to add each, and builds no designer of its own", () => {

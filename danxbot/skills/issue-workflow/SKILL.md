@@ -53,12 +53,12 @@ A quality gate is a step a card must pass: PRE gates (`plan-*`) run before the b
 gates (`code-*`) on the finished diff. The card's `quality_gates` lists the ones it
 carries, and each board keeps its own text for what a gate does.
 
-An operator-session sub-agent runs its PRE gates itself, in its own context, then builds,
-pushes its card branch, reports the tip SHA and stops. It never spawns gate agents: a
-background agent's notice reaches only the top-level session. The operator session runs
-each POST gate not yet `pass` through one gate worker per gate (`danxbot:worker-opus-high`
-for an architecture gate, `danxbot:worker-sonnet-high` for the rest), relays the findings
-and says when to land. Whoever runs a gate:
+An operator-session sub-agent runs its PRE gates itself, in its own context (all but
+`plan-design`, below), then builds, pushes its card branch, reports the tip SHA and stops.
+It never spawns gate agents: a background agent's notice reaches only the top-level session.
+The operator session runs each POST gate not yet `pass` through one gate worker per gate
+(`danxbot:worker-opus-high` for an architecture gate, `danxbot:worker-sonnet-high` for the
+rest), relays the findings and says when to land. Whoever runs a gate:
 
 1. Fetch the board's gate text through `danxbot_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
@@ -74,8 +74,13 @@ and says when to land. Whoever runs a gate:
    records normally, and a second verdict on the same ref is refused.
 
 A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused
-for every caller. Do what its text says (it may have you publish work for the person to
-choose from on the card), then stop; the person's choice passes it.
+for every caller. `plan-design` is one, and the builder never runs it: when a card owes it, the
+operator session runs one designer sub-agent at the tier the gate's `effort_level` on the card
+names (unset: `danxbot:worker-sonnet-high`). A sub-agent handed a card id and `plan-design` is
+that designer: it claims nothing, fetches the gate text (step 1), reads the repo's mini-app
+usage instructions, builds and publishes as the text says, then stops; the person's choice of
+a design on the card passes the gate. Until then a builder's `pickup` is refused (409
+`design_not_chosen`).
 
 Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
 that doesn't apply to the card is removed (`POST` the same card route with
