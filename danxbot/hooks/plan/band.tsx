@@ -17,7 +17,7 @@ function idUrl(plan: PlanView['connected'], card: PlanView['card'], dashboardUrl
   return card !== null && dashboardUrl !== null ? boardCardUrl({ dashboardUrl }, card.id) : null
 }
 
-// The band above the prompt: the plan line (indicator, label, then the open-problem count / the permission
+// The band above the prompt: the plan line (indicator, label, then the count of cards that need you / the permission
 // request / Disconnect and a close control hugging the right edge, the label truncating first). Every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
 // The held plan's `PLAN-NN` (or a card-only session's card id) in the label is that link: there is no separate Open control.
@@ -43,7 +43,7 @@ export function renderBand(
     </Button>
   )
   const plan = v.connected
-  // a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
+  // a failed load reads Disconnected, so no (stale) needs-you count is drawn beside it.
   const badge = v.phase === 'error' || v.phase === 'blocked' ? '' : needsYouBadge(v)
   const permissionLabel = permission === null ? '' : permissionBadge(permission.count)
   // the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not

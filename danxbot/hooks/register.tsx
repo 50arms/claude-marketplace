@@ -1628,7 +1628,7 @@ async function onSessionStart($: any, e: any, next: any) {
     await update($, desktopHosted, () => true)
   }
   await unpinStatus($)
-  await $.command.register({ name: COMMAND, description: 'Show the danxbot plan band (connection + open problems)' })
+  await $.command.register({ name: COMMAND, description: 'Show the danxbot plan band (connection + cards that need you)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
   await update($, modelPlan, () => null)
