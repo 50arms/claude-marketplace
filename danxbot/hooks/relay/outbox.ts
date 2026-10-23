@@ -19,7 +19,7 @@ import { isAckList, type RelayEvent } from './answer'
 // and not yet delivered exists nowhere else once the next poll is made. A reload of the hook module empties the module variable, so each queued event is
 // also kept in the `relayOutbox` atom ($.state outlives a reload), written before the poll that acknowledges it and cleared when it is delivered, i.e. when
 // its engine call is made (`toPending`, `fromPending`). A reload therefore loses no event that was taken and not yet called for, and re-sends none that was:
-// the one repeat is a reload between the engine call and the end of the atom write that follows the cursor store. Delivered means handed over, not acknowledged: an event can be lost if Claude Code itself exits while its prompt is still queued behind a running turn (acknowledgement-based re-delivery is planned work). A new process has no atom, and the server
+// the one repeat is a reload between the engine call and the end of the atom write that follows the cursor store. Delivered means handed over, not acknowledged: an event can be lost if Claude Code itself exits while its prompt is still queued behind a running turn (an event that asks to be acknowledged is sent again by the dashboard until the session acknowledges it, which covers that). A new process has no atom, and the server
 // then resumes from the stored (delivered) cursor.
 // Events are issued strictly in the order the server sent them: only the head of the outbox is ever issued. A refusal (the engine is busy or failing) hits
 // every event alike, so an event waiting behind a refused one loses nothing by waiting.

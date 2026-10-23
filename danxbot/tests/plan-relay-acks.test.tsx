@@ -6,7 +6,8 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { isAckList, readWaitAnswer } from '../hooks/relay/answer'
-import { ACK_IN_FLIGHT_MAX, ackedEventId, clearInFlight, fromPending, markInFlight, shouldDropResend, StalePendingError } from '../hooks/relay/outbox'
+import { BACKOFF_MS } from '../hooks/relay/config'
+import { ACK_IN_FLIGHT_MAX, ackedEventId, clearInFlight, fromPending, markInFlight, shouldDropResend, StalePendingError, toPending } from '../hooks/relay/outbox'
 import { NO_ACKS_DETAIL, NO_ACKS_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX } from '../hooks/relay/text'
 import { test, bandSilent, relayPhase, SURFACES, dashboard, startSession } from './plan-kit'
 
@@ -125,6 +126,45 @@ for (const surface of SURFACES) {
       })
     }
 
+    test('a result the engine denied does not clear the event', async ($, on) => {
+      const d = dashboard(on)
+      on('tool.call', { tool: API }, () => ({ deny: 'refused by the engine' }) as any)
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      d.relay.push({ cursor: 'c1', text: 'first copy', acks: [{ eventId: 5, attempt: 1 }] })
+      await d.clock.settle()
+      await $.tool.call(ack(5))
+      expect(inFlight(d)).toEqual([[5, 1]])
+    })
+
+    test('a refused ack-bearing delivery is not in flight; its put-back is issued again, not dropped, and then is', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.turn.start(START)
+      d.relay.push({ cursor: 'c1', text: 'first copy', acks: [{ eventId: 5, attempt: 1 }] })
+      await d.clock.settle()
+      // a re-send naming 5 (held) and 6 (never received): issued, so refused by the session
+      d.relay.dropPrompts('busy')
+      d.relay.push({ cursor: 'c2', text: 'both', acks: [{ eventId: 5, attempt: 2 }, { eventId: 6, attempt: 2 }] })
+      await d.clock.settle()
+      expect(inFlight(d)).toEqual([])
+      // T1: the put-back record keeps its acks in the atom
+      expect(pendingWrites(d).at(-1)).toEqual([{ planId: 23, cursor: 'c2', text: 'both', urgent: false, acks: [{ eventId: 5, attempt: 2 }, { eventId: 6, attempt: 2 }], again: true }])
+      d.relay.acceptPrompts()
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(texts(d)).toEqual(['[danxbot plan event] first copy', '[danxbot plan event] both'])
+      expect(inFlight(d)).toEqual([[5, 2], [6, 2]])
+    })
+
+    test('an ack-bearing record the atom kept across a reload is restored with its acks and delivered once', async ($, on) => {
+      const d = dashboard(on)
+      d.seedState('relayOutbox', [{ planId: 23, cursor: 'c1', text: 'kept', urgent: false, acks: [{ eventId: 7, attempt: 3 }] }])
+      await startSession($, d, surface)
+      await d.clock.settle()
+      expect(texts(d)).toEqual(['[danxbot plan event] kept'])
+      expect(inFlight(d)).toEqual([[7, 3]])
+    })
+
     test('records from a server that sends no acks list stop the relay with the restart remedy, told once, never retried', async ($, on) => {
       const d = dashboard(on)
       d.relay.server.script.push(() => answer({ events: [{ cursor: 'c3', text: 'x', urgent: false }] }))
@@ -179,6 +219,9 @@ describe('the acknowledgement helpers', () => {
     expect(cur.at(-1)).toEqual([51, 2])
     expect(cur[0]).toEqual([52, 1])
     expect(markInFlight(cur, [])).toBe(cur)
+    // a MIDDLE id re-marked moves to the end, the rest keep their order
+    const small = markInFlight([], [1, 2, 3, 4, 5].map(eventId => ({ eventId, attempt: 1 })))
+    expect(markInFlight(small, [{ eventId: 3, attempt: 2 }])).toEqual([[1, 1], [2, 1], [4, 1], [5, 1], [3, 2]])
   })
 
   test('clearInFlight removes the named events and returns the same list when none is there', () => {
@@ -190,7 +233,8 @@ describe('the acknowledgement helpers', () => {
   test('ackedEventId reads only POST /api/plan-sessions/me/events/<N>/ack', () => {
     expect(ackedEventId('POST', '/api/plan-sessions/me/events/12/ack')).toBe(12)
     expect(ackedEventId('post', '/api/plan-sessions/me/events/12/ack')).toBe(12)
-    for (const [m, p] of [['GET', '/api/plan-sessions/me/events/12/ack'], ['POST', '/api/plan-sessions/me/events/0/ack'], ['POST', '/api/plan-sessions/me/events/012/ack'], ['POST', '/api/plan-sessions/me/events/12'], ['POST', '/api/plan-sessions/me/events/12/ack/x'], ['POST', '/api/plan-sessions/other/events/12/ack'], [undefined, undefined]] as const) {
+    expect(ackedEventId('POST', '/api/plan-sessions/me/events/12/ack?x=1')).toBe(12)
+    for (const [m, p] of [['GET', '/api/plan-sessions/me/events/12/ack'], ['POST', '/api/plan-sessions/me/events/0/ack'], ['POST', '/api/plan-sessions/me/events/012/ack'], ['POST', '/api/plan-sessions/me/events/12'], ['POST', '/api/plan-sessions/me/events/12/ack/x'], ['POST', '/api/plan-sessions/other/events/12/ack'], ['POST', 'x/api/plan-sessions/me/events/12/ack'], ['POST', 'https://h/api/plan-sessions/me/events/12/ack'], [undefined, undefined]] as const) {
       expect(ackedEventId(m, p)).toBeNull()
     }
   })
@@ -204,6 +248,13 @@ describe('the acknowledgement helpers', () => {
     expect(read([{ cursor: 'c1', text: 'x', urgent: false }])).toEqual({ kind: 'stopped', detail: NO_ACKS_DETAIL, fix: NO_ACKS_FIX })
     expect(read([{ cursor: 'c1', text: 'x', urgent: false, acks: 'x' }])).toMatchObject({ kind: 'failed' })
     expect(read([{ cursor: 'c1', text: 'x', urgent: false, acks: [{ eventId: 'a', attempt: 1 }] }])).toMatchObject({ kind: 'failed' })
+  })
+
+  test('toPending keeps the acks of every record: a persisted ack-bearing record is restored with them', () => {
+    const acks = [{ eventId: 4, attempt: 2 }]
+    const queued = { planId: 23, seq: 1, event: { cursor: 'c1', text: 'x', urgent: false, acks }, held: false }
+    expect(toPending([queued])).toEqual([{ planId: 23, cursor: 'c1', text: 'x', urgent: false, acks }])
+    expect(fromPending(toPending([queued]), 23, 1)[0].event.acks).toEqual(acks)
   })
 
   test('fromPending carries acks and refuses an entry without them, never a default', () => {
