@@ -871,6 +871,8 @@ function startRelay($: any, planId: number | null): void {
   const head = outbox[0]
   outbox = onlyPlan(outbox, planId)
   if (outbox[0] !== head) outboxFailure = null
+  // a plan move starts the refusal backoff afresh: the old plan's refusals do not lengthen the new plan's first wait
+  outboxRefusals = 0
   const run: RelayRun = { planId, dead: false, told: null, lacking: null, beat: 0 }
   relayRun = run
   if (stallTicker === null) stallTicker = $.clock.every(RELAY_STALL_CHECK_MS, () => detach($, 'Plan event relay stall check', checkRelayStall($)))
@@ -1227,7 +1229,7 @@ async function submitEvent($: any, line: string): Promise<string | null> {
 }
 
 // A note the model reads in the turn that is running. A refused or throwing append is a failure like any other (no silent fallback to
-// a prompt): the event is not delivered, the cursor does not move, and the loop's backoff asks for it again.
+// a prompt): the event is not delivered: it is put back and issued again after the backoff (its cursor was stored when the call was made, so the re-issue stores none).
 async function appendNote($: any, line: string): Promise<string | null> {
   try {
     const r = await $.session.append(modelRow(line))
@@ -1252,14 +1254,19 @@ async function issueEvent($: any, text: string, urgent: boolean): Promise<{ done
 async function appendTrackedNote($: any, text: string): Promise<string | null> {
   const failure = await appendNote($, relayLine(text))
   if (failure !== null) return failure
-  // `prompt` is set inside the updater, which sees the turn as it is when the write happens
-  let prompt = null as string | null
-  await update($, turn, cur => {
-    const appended = noteAppended(cur, text)
-    prompt = appended.prompt
-    return appended.turn
-  })
-  if (prompt !== null) detach($, 'Telling the session', promptNotes($, [prompt]))
+  // the note is in the turn from here: a bookkeeping failure after it is a toast, never a failed delivery (a retry would append the note again)
+  try {
+    // `prompt` is set inside the updater, which sees the turn as it is when the write happens
+    let prompt = null as string | null
+    await update($, turn, cur => {
+      const appended = noteAppended(cur, text)
+      prompt = appended.prompt
+      return appended.turn
+    })
+    if (prompt !== null) detach($, 'Telling the session', promptNotes($, [prompt]))
+  } catch (err: any) {
+    $.ui.toast(`Plan event delivered, but the turn's record failed: ${errMessage(err)}`.slice(0, TOAST_ERROR_MAX))
+  }
   return null
 }
 
@@ -1288,7 +1295,7 @@ async function promptNotes($: any, texts: string[]): Promise<void> {
 // again after the backoff, and the band says so. The poll acknowledges a taken event to the server (which then drops it), so every queued event is also written to the
 // `relayOutbox` atom BEFORE the poll that carries its cursor, and removed from it once called for: a reload of this module (which empties `outbox`) finds
 // the ones not yet called for there and issues them (`restoreOutbox`). Delivered means handed over, not acknowledged: the one window left is a reload between the
-// cursor store and the atom write that follow the call, where the event is repeated; and an event can be lost if Claude Code itself exits while its
+// engine call and the end of the atom write that follows the cursor store, where the event is repeated; and an event can be lost if Claude Code itself exits while its
 // prompt is still queued behind a running turn (nothing acknowledges it back to the plugin yet; re-delivery on acknowledgement is planned work).
 // `queueEvents` and `restoreOutbox` are idempotent; `issueOutbox` is single-flight (whoever queues or starts a run calls it).
 let outboxIssuing = false
@@ -1299,7 +1306,7 @@ let outboxFailure: string | null = null
 let outboxRefusals = 0
 
 async function queueEvents($: any, run: RelayRun, events: RelayEvent[]): Promise<void> {
-  for (const event of events) outbox.push({ planId: run.planId, event })
+  for (const event of events) outbox.push({ planId: run.planId, event, held: false })
   // the copy first: the next poll presents these cursors, and the server drops what they cover
   await persistOutbox($)
   detach($, 'Plan event delivery', issueOutbox($))
@@ -1325,10 +1332,23 @@ async function issueOutbox($: any): Promise<void> {
   outboxIssuing = true
   try {
     for (;;) {
-      const next = outbox.find(q => q.held !== true)
+      // a new event may go while a put-back waits out its backoff, but a put-back never goes ahead of an earlier put-back that still waits
+      let next: Queued | undefined
+      let putBackWaits = false
+      for (const q of outbox) {
+        if (q.held) {
+          if (q.again === true) putBackWaits = true
+          continue
+        }
+        if (q.again === true && putBackWaits) continue
+        next = q
+        break
+      }
       // no live run on that plan: the events wait for a run that serves it (startRelay starts this again)
       if (next === undefined || relayRun === null || relayRun.planId !== next.planId) return
       const issued = await issueEvent($, next.event.text, next.event.urgent)
+      // the outcome gets its rejection handler at once, before anything awaits (the cursor store below), so a rejection is never unhandled
+      const outcome = issued.done.catch((err: any) => notTakenLine(errMessage(err)))
       // a move to another plan dropped it while the call was made: it is no longer this module's to deliver
       if (!outbox.includes(next)) continue
       // delivered. The cursor first, then the atom: a reload between the two repeats this event, where the other order would lose the resume point
@@ -1336,7 +1356,9 @@ async function issueOutbox($: any): Promise<void> {
       const at = outbox.indexOf(next)
       if (at >= 0) outbox.splice(at, 1)
       await persistOutbox($)
-      detach($, 'Plan event delivery', settleOutbox($, next, issued.done))
+      // a call that leaves no put-back event waiting ends the retrying state here, not only when its own outcome settles (a re-issued put-back may never settle)
+      if (!outbox.some(q => q.again === true)) await clearRetrying($, next.planId)
+      detach($, 'Plan event delivery', settleOutbox($, next, outcome))
     }
   } catch (err: any) {
     // the cursor store failing is the loop's own kind of error (an unexpected one): the relay stops for the plan, never restarted behind the person's back
@@ -1350,13 +1372,25 @@ async function issueOutbox($: any): Promise<void> {
   }
 }
 
+// The retrying state of an outbox failure clears once no put-back event waits. A delivery's call does this too, not only its settle: a re-issued put-back
+// whose submit never settles would otherwise hold the state for good. The band goes back to streaming only when the outbox had a failure to clear.
+async function clearRetrying($: any, planId: number | null): Promise<void> {
+  if (outboxFailure === null) return
+  outboxFailure = null
+  const live = relayRun !== null && relayRun.planId === planId ? relayRun : null
+  if (live !== null) {
+    live.told = null
+    await setRelay($, live, 'streaming', null)
+  }
+}
+
 // How a delivery that was called for ended, seen by the module instance that made the call (a reload loses this watch, and the engine's queue keeps
 // the prompt). Delivered: the retrying state clears once no put-back event waits. Refused (`drop`, a throw, a refused note, a rejected call): the event goes back behind the events
 // already put back and ahead of the events not yet issued, in the outbox and the atom, is held for the backoff, and is issued again; its cursor was stored at the
 // first call, so it stores none.
-async function settleOutbox($: any, event: Queued, done: Promise<string | null>): Promise<void> {
-  // a rejection of the call (the note's bookkeeping throwing) is a failure like a refusal
-  const failure = await done.catch((err: any) => notTakenLine(errMessage(err)))
+async function settleOutbox($: any, event: Queued, outcome: Promise<string | null>): Promise<void> {
+  // `outcome` never rejects: issueOutbox turned a rejection into its failure line at the call
+  const failure = await outcome
   const live = relayRun !== null && relayRun.planId === event.planId ? relayRun : null
   if (failure === null) {
     // a late success says nothing about an event that is still put back

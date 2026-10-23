@@ -503,6 +503,8 @@ export function dashboard(
   const delivered: { text: string }[] = []
   // DX-5093: every prompt the plugin submitted, marked or not (`delivered` holds only the plan-event ones)
   const submitted: string[] = []
+  // every prompt submit the plugin made, refused ones too, with the fake-clock time it was made at (a retry is one of these; the outbox tests count them)
+  const attempts: { at: number; text: string }[] = []
   const told: string[] = []
   const deliveryFlags = {
     submitDrops: undefined as string | undefined,
@@ -522,6 +524,7 @@ export function dashboard(
   // the engine answers a turn's start with its id
   on('turn.start', () => ({ turnId: 't1' }) as any)
   on('prompt.submit', async (_$: any, e: any) => {
+    attempts.push({ at: clock.now(), text: e.text })
     await deliveryFlags.duringPrompt?.()
     // DX-5398: the engine (claude.exe 2.1.299) settles a plugin's `$.prompt.submit` only when the queued prompt ENTERS the session, which behind a
     // running turn is when the turn ends. The prompt is then recorded as submitted at that moment, not at the call.
@@ -1095,6 +1098,7 @@ export function dashboard(
     server,
     delivered,
     submitted,
+    attempts,
     // the plan_events_wait calls the plugin made
     calls: server.calls,
     // events appear on the dashboard: a held wait answers at once

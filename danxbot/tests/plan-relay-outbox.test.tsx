@@ -26,9 +26,9 @@ const MCP_PLAN_CONNECT = 'mcp__plugin_danxbot_danx-dashboard__plan_connect'
 const PENDING = { planId: 23, cursor: 'c1', text: 'digest', urgent: false }
 // DX-5602: an event put back after the session refused it was delivered once at its call, so it carries `again` (issuing it again stores no cursor)
 const PUT_BACK = { ...PENDING, again: true }
-// what the 'two events queued' test observed per surface (stored cursor, last atom write): the reload test starts from it, never from a hand-written copy
-const reached: Record<string, { stored: unknown; atom: unknown }> = {}
 const pendingWrites = (d: any) => d.stateWrites.filter((w: any) => w.key === 'relayOutbox').map((w: any) => w.value)
+// the submits of the event texts the plugin made, refused ones included
+const tries = (d: any) => d.relay.attempts.filter((a: any) => a.text.includes('digest')).length
 
 for (const surface of SURFACES) {
   describe(`the relay outbox on ${surface}`, () => {
@@ -114,25 +114,23 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(prompts.held()).toBe(2)
       expect(d.relay.delivered).toEqual([])
-      reached[surface] = { stored: d.stored.get(KEY), atom: pendingWrites(d).at(-1) }
-      expect(reached[surface].stored).toMatchObject({ planId: 23, cursor: 'c2' })
-      expect(reached[surface].atom).toEqual([])
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c2' })
+      expect(pendingWrites(d).at(-1)).toEqual([])
     })
 
-    // The kit has no second module instance. A reload is modelled as the previous test's OBSERVED end state (`reached`: what the stored cursor and the atom held
-    // when two events were queued behind a running turn), with a fresh module and a server that has dropped both events. Nothing may be submitted again.
+    // The kit cannot register a second module instance inside one test (its hooks register once), so the reload starts from the state that the
+    // 'two events queued' test above asserts it leaves: the stored cursor at c2 and an empty atom. Nothing may be submitted again, and the first poll
+    // goes on from the second event.
     test('after a reload that followed two events queued behind a running turn, nothing is submitted again and the first poll goes on from the second event', async ($, on) => {
-      const before = reached[surface]
-      if (before === undefined) throw new Error('run this with the test before it: it starts from the state that test observed')
       const d = dashboard(on)
-      d.stored.set(KEY, before.stored as any)
-      d.seedState('relayOutbox', before.atom)
+      d.stored.set(KEY, { planId: 23, cursor: 'c2', at: 1 } as any)
+      d.seedState('relayOutbox', [])
       await startSession($, d, surface)
       await d.clock.settle()
       expect(d.relay.calls[0]?.cursor).toBe('c2')
       expect(d.relay.delivered).toEqual([])
       await d.clock.advance(60_000)
-      expect(d.relay.delivered).toEqual([])
+      expect(d.relay.attempts.filter((a: any) => a.text.includes('digest'))).toEqual([])
     })
 
     // the cursor first, then the atom: a reload between the two repeats the event, where the other order would lose the resume point
@@ -281,7 +279,8 @@ for (const surface of SURFACES) {
       expect(await bandText(band)).not.toContain('relay retrying')
     })
 
-    test('a note whose bookkeeping throws is a failed delivery: the event is put back and delivered again after the backoff', async ($, on) => {
+    // nb3: the note is in the turn once it is appended, so a bookkeeping failure after that is a toast: the event is neither put back nor appended again
+    test('a note appended whose turn bookkeeping throws is delivered once: the failure is toasted, and nothing is put back or appended again', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       await $.turn.start(START)
@@ -289,11 +288,82 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c1', text: 'critical pacing stop', urgent: true })
       await d.clock.settle()
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await bandText(band)).toContain('relay retrying')
-      expect(pendingWrites(d).at(-1)).toEqual([{ ...PENDING, text: 'critical pacing stop', urgent: true, again: true }])
-      await d.clock.advance(BACKOFF_MS[0])
+      expect(d.toasts.filter((t: string) => t.startsWith('Plan event delivered'))).toHaveLength(1)
+      expect(d.relay.told).toEqual(['[danxbot plan event] critical pacing stop'])
       expect(pendingWrites(d).at(-1)).toEqual([])
       expect(await bandText(band)).not.toContain('relay retrying')
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(d.relay.told).toHaveLength(1)
+      expect(d.relay.delivered).toEqual([])
+    })
+
+    // nb4: a re-issued put-back whose submit never settles (the engine holds it) does not leave the relay on 'retrying': its call is the delivery
+    test('a re-issued put-back whose submit never settles does not leave the relay retrying', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.rejectPrompts('busy')
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
+      expect(await bandText(band)).toContain('relay retrying')
+      d.relay.acceptPrompts()
+      const prompts = d.relay.holdPrompts()
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(prompts.held()).toBe(1)
+      expect(await bandText(band)).not.toContain('relay retrying')
+      prompts.release()
+      await d.clock.settle()
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] digest'])
+      expect(pendingWrites(d).at(-1)).toEqual([])
+    })
+
+    // nb6: a plan move starts the refusal backoff afresh: the old plan's two refusals do not lengthen the new plan's first wait
+    test('a plan move starts the refusal backoff afresh: a refused event on the new plan waits the first backoff step', async ($, on) => {
+      const d = dashboard(on)
+      answerPlanConnect(on, d)
+      await startSession($, d, surface)
+      d.relay.rejectPrompts('busy')
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      // the re-issue after the first step is refused again: the old plan has two refusals in a row
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(tries(d)).toBe(2)
+      await $.tool.call({ tool: MCP_PLAN_CONNECT, plan_id: 24 } as any)
+      await d.clock.settle()
+      d.relay.push({ cursor: 'd1', text: 'plan 24 digest' })
+      await d.clock.settle()
+      expect(tries(d)).toBe(3)
+      // refused once on the new plan: its first wait is BACKOFF_MS[0], so it is issued again at that step and not later
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(tries(d)).toBe(4)
+      d.relay.acceptPrompts()
+      await d.clock.advance(BACKOFF_MS[1] + 60_000)
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] plan 24 digest'])
+    })
+
+    // n31: a stall restart keeps the put-back events held. A restart that swapped them for unheld copies would submit them at the moment the stall is judged,
+    // before their backoff ends; the judged moment must see no submit.
+    test('a stall restart keeps the put-back events held: none is submitted at the moment the stall is judged', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.rejectPrompts('busy')
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      // the wait after c2 never settles, so the loop makes no step and the stall watch replaces its run while c1 and c2 are put back
+      d.relay.server.script.push(() => new Promise(() => {}))
+      d.relay.push({ cursor: 'c2', text: 'second digest' })
+      await d.clock.settle()
+      const submitsBefore = tries(d)
+      for (let i = 0; i < 10 && d.toasts.filter(STALLED).length === 0; i++) await d.clock.advance(RELAY_STALL_CHECK_MS)
+      expect(d.toasts.filter(STALLED)).toHaveLength(1)
+      const judgedAt = d.clock.now()
+      expect(d.relay.attempts.filter((a: any) => a.at === judgedAt)).toEqual([])
+      expect(tries(d)).toBeGreaterThan(submitsBefore)
+      d.relay.acceptPrompts()
+      await d.clock.advance(BACKOFF_MS[BACKOFF_MS.length - 1])
+      // both delivered once; their order is not asserted here: a put-back refused again goes behind a later one (not in the order of the first refusal)
+      expect(d.relay.delivered.map(x => x.text).sort()).toEqual(['[danxbot plan event] digest', '[danxbot plan event] second digest'])
+      expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c2' })
     })
 
     test('a refusal that reaches a module whose plan has moved on puts nothing back and leaves no retrying state behind', async ($, on) => {
@@ -454,7 +524,7 @@ describe('the stalled notice', () => {
 })
 
 describe('the outbox helpers', () => {
-  const q = (cursor: string, again = false, planId: number | null = 23): Queued => ({ planId, event: { cursor, text: cursor, urgent: false }, ...(again ? { again: true as const } : {}) })
+  const q = (cursor: string, again = false, planId: number | null = 23): Queued => ({ planId, event: { cursor, text: cursor, urgent: false }, held: false, ...(again ? { again: true as const } : {}) })
 
   test('pollCursor goes on from the newest event not yet delivered, else the stored cursor, never from a put-back', () => {
     expect(pollCursor([q('c1'), q('c2')], 23, 'c0')).toBe('c2')
@@ -480,6 +550,6 @@ describe('the outbox helpers', () => {
     expect(pending.map(p => p.again)).toEqual([true, undefined, undefined])
     const back = fromPending(pending, 23)
     expect(back.map(x => [x.event.cursor, x.again])).toEqual([['c1', true], ['c2', undefined]])
-    expect(back.every(x => x.held !== true)).toBe(true)
+    expect(back.every(x => !x.held)).toBe(true)
   })
 })

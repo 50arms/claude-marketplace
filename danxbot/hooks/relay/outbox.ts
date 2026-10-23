@@ -19,11 +19,11 @@ import type { RelayEvent } from './answer'
 // and not yet delivered exists nowhere else once the next poll is made. A reload of the hook module empties the module variable, so each queued event is
 // also kept in the `relayOutbox` atom ($.state outlives a reload), written before the poll that acknowledges it and cleared when it is delivered, i.e. when
 // its engine call is made (`toPending`, `fromPending`). A reload therefore loses no event that was taken and not yet called for, and re-sends none that was:
-// the one repeat is a reload between the cursor store and the atom write that follow the call. Delivered means handed over, not acknowledged: an event can be lost if Claude Code itself exits while its prompt is still queued behind a running turn (acknowledgement-based re-delivery is planned work). A new process has no atom, and the server
+// the one repeat is a reload between the engine call and the end of the atom write that follows the cursor store. Delivered means handed over, not acknowledged: an event can be lost if Claude Code itself exits while its prompt is still queued behind a running turn (acknowledgement-based re-delivery is planned work). A new process has no atom, and the server
 // then resumes from the stored (delivered) cursor.
-// `held`: a put-back event waits out the backoff and is not issued until it is released.
+// `held` (always set): a put-back event waits out the backoff and is not issued until it is released.
 // `again`: it was delivered once and put back; its cursor is stored already, so issuing it again stores none.
-export type Queued = { planId: number | null; event: RelayEvent; held?: boolean; again?: true }
+export type Queued = { planId: number | null; event: RelayEvent; held: boolean; again?: true }
 
 // What a run on `planId` polls from: the cursor of the newest event of that plan taken and not yet delivered, else the stored one. A put-back event
 // (`again`) was delivered already, so its cursor is older than the stored one and is never polled from; cursors are opaque and are never compared.
@@ -32,7 +32,7 @@ export function pollCursor(outbox: readonly Queued[], planId: number | null, sto
   return stored
 }
 
-// A refused event goes back behind the events already put back (they were refused in the order they were issued, so this keeps that order) and before every event not yet issued.
+// A refused event goes behind the put-back events already there (their refusal order is kept among them) and ahead of every event not yet issued.
 export function putBack(outbox: Queued[], event: Queued): void {
   const firstNew = outbox.findIndex(q => q.again !== true)
   outbox.splice(firstNew === -1 ? outbox.length : firstNew, 0, event)
@@ -51,7 +51,7 @@ export const toPending = (outbox: readonly Queued[]): PendingEvent[] =>
 
 // The outbox of a run on `planId`, from what a reload found: nothing is issued yet, and another plan's events are not this run's.
 export const fromPending = (pending: readonly PendingEvent[], planId: number | null): Queued[] =>
-  pending.filter(p => p.planId === planId).map(p => ({ planId: p.planId, event: { cursor: p.cursor, text: p.text, urgent: p.urgent }, ...(p.again === true ? { again: true as const } : {}) }))
+  pending.filter(p => p.planId === planId).map(p => ({ planId: p.planId, event: { cursor: p.cursor, text: p.text, urgent: p.urgent }, held: false, ...(p.again === true ? { again: true as const } : {}) }))
 
 // A watch tick that ran more than twice its interval after the last one: the machine slept, and the wall clock moved while no timer did.
 export const isLateTick = (now: number, lastTickAt: number | null, intervalMs: number): boolean => lastTickAt !== null && now - lastTickAt > 2 * intervalMs
