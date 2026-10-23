@@ -32,19 +32,18 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
   return columns - BAND_INDICATOR_COLS - 2 * BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
 }
 
-export type BandParts = { lead: string; ref: string; name: string }
+export type BandParts = { ref: string; name: string }
 
-// A held plan or card's band label as parts: the team agent that leads (`Tendai · `), the plan's `PLAN-NN` (or the card's id) that is the link, and the
-// name or title after it. Null where nothing is held. `maxCols`: the columns the label may take (absent: no
-// limit, the layout truncates); the name is cut to what the lead and `PLAN-NN · ` leave, with an ellipsis.
+// A held plan or card's band label as parts: the plan's `PLAN-NN` (or the card's id) that is the link, and the name or title after it.
+// DX-5605: no agent name leads it (operator, 2026-10-22): the footer names the agent. Null where nothing is held. `maxCols`: the columns the label may take (absent: no
+// limit, the layout truncates); the name is cut to what `PLAN-NN · ` leaves, with an ellipsis.
 function heldParts(v: PlanView, maxCols?: number): BandParts | null {
   const held = v.connected !== null ? { ref: v.connected.ref, name: v.connected.name } : v.card !== null ? { ref: v.card.id, name: v.card.title } : null
   if (held === null) return null
-  const lead = v.agent === null ? '' : `${v.agent.name}${NAME_SEP}`
   const { ref, name } = held
   const sepCols = ref ? NAME_SEP.length : 0
-  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - lead.length - ref.length - sepCols)
-  return { lead, ref, name: ellipsize(name, nameCols) }
+  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - ref.length - sepCols)
+  return { ref, name: ellipsize(name, nameCols) }
 }
 
 // the band's whole label for a state that names no plan or card, else null (then the label is the held plan's or card's parts).
@@ -75,7 +74,7 @@ export function bandContent(v: PlanView, maxCols?: number): { parts: BandParts }
   return { parts }
 }
 
-// the text after the lead and the id: ` · name` after an id, else the bare name (a lead already ends in the separator), '' for no name
+// the text after the id: ` · name` after an id, else the bare name, '' for no name
 export function bandNameText(parts: BandParts): string {
   if (parts.name === '') return ''
   return parts.ref === '' ? parts.name : `${NAME_SEP}${parts.name}`
@@ -84,7 +83,7 @@ export function bandNameText(parts: BandParts): string {
 // The band's label as one string (the held plan's or card's parts joined, or the state's words).
 export function bandLabel(v: PlanView, maxCols?: number): string {
   const c = bandContent(v, maxCols)
-  return 'state' in c ? c.state : `${c.parts.lead}${c.parts.ref}${bandNameText(c.parts)}`
+  return 'state' in c ? c.state : `${c.parts.ref}${bandNameText(c.parts)}`
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula the dashboard's plan page uses:

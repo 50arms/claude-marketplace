@@ -15,8 +15,7 @@ const CARD = { id: 'DX-77', title: 'One-off fix' }
 const labelOf = async (ui: any) => {
   const id = (await linksOf(ui)).find(l => l.key === 'open-plan' || l.key === 'open-card')
   if (id === undefined) return (await ui.find({ type: 'Text', text: /50 Arms:|50 Arms ·/ }))?.text as string
-  const lead = ((await ui.find({ type: 'Text', text: /^Tendai · $/ }))?.text as string | undefined) ?? ''
-  return `${lead}${id.label}${((await ui.find({ type: 'Text', text: /^ · / }))?.text as string | undefined) ?? ''}`
+  return `${id.label}${((await ui.find({ type: 'Text', text: /^ · / }))?.text as string | undefined) ?? ''}`
 }
 const woken = (d: any): string[] => d.relay.delivered.map((x: any) => x.text)
 const pageLinks = async (ui: any) => (await linksOf(ui)).filter(l => l.key === 'open-plan' || l.key === 'open-card' || l.key === 'open-tab')
@@ -24,14 +23,14 @@ const pageLinks = async (ui: any) => (await linksOf(ui)).filter(l => l.key === '
 describe('the agent and its association in the band label', () => {
   const agent = { name: 'Tendai' }
   const ready = { ...EMPTY, phase: 'ready' as const, dashboardUrl: DASHBOARD_URL }
-  test('on a plan: the agent, then the plan', () => {
+  test('on a plan: the plan id, then its name; no agent name leads it', () => {
     const v = { ...ready, agent, connected: { id: 23, ref: 'PLAN-23', name: 'Danxbot plugin', dashboardUrl: DASHBOARD_URL } }
-    expect(bandLabel(v)).toBe('Tendai · PLAN-23 · Danxbot plugin')
-    // the plan name is what a narrow band cuts, never the agent's name
-    expect(bandLabel(v, 30)).toBe('Tendai · PLAN-23 · Danxbot pl…')
+    expect(bandLabel(v)).toBe('PLAN-23 · Danxbot plugin')
+    // the plan name is what a narrow band cuts, never the id
+    expect(bandLabel(v, 20)).toBe('PLAN-23 · Danxbot p…')
   })
-  test('holding a card: the agent, then the card', () => {
-    expect(bandLabel({ ...ready, agent, card: CARD })).toBe('Tendai · DX-77 · One-off fix')
+  test('holding a card: the card id, then its title', () => {
+    expect(bandLabel({ ...ready, agent, card: CARD })).toBe('DX-77 · One-off fix')
   })
   test('on neither: the agent, and that it is on neither', () => {
     expect(bandLabel({ ...ready, agent })).toBe('50 Arms · Tendai: not connected to a plan or card')
@@ -62,11 +61,10 @@ describe('the agent and its association in the band label', () => {
     expect(agentBlockOf({ ok: true, status: 200, body: { state: 'agent_not_held', instruction: 'x' } })).toBe(null)
     expect(agentBlockOf({ ok: false, status: 409, body: { error: JSON.stringify(AGENT_GATE_HALT('agent_needed')) } })).toBe(null)
   })
-  test('the name follows an id with the separator, and directly after a lead or nothing', () => {
-    expect(bandNameText({ lead: 'Tendai · ', ref: 'DX-77', name: 'One-off fix' })).toBe(' · One-off fix')
-    expect(bandNameText({ lead: 'Tendai · ', ref: '', name: 'One-off fix' })).toBe('One-off fix')
-    expect(bandNameText({ lead: '', ref: '', name: 'One-off fix' })).toBe('One-off fix')
-    expect(bandNameText({ lead: 'Tendai · ', ref: 'DX-77', name: '' })).toBe('')
+  test('the name follows an id with the separator, and stands alone with no id', () => {
+    expect(bandNameText({ ref: 'DX-77', name: 'One-off fix' })).toBe(' · One-off fix')
+    expect(bandNameText({ ref: '', name: 'One-off fix' })).toBe('One-off fix')
+    expect(bandNameText({ ref: 'DX-77', name: '' })).toBe('')
   })
   test('the footer names the agent alone while it holds a card (no plan)', () => {
     expect(footerLabel({ ...ready, agent, card: CARD })).toBe('Tendai')
@@ -99,7 +97,7 @@ for (const surface of SURFACES) {
       d.world.agent = AGENT
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await labelOf(band)).toBe('Tendai · PLAN-23 · Danxbot plugin')
+      expect(await labelOf(band)).toBe('PLAN-23 · Danxbot plugin')
     })
 
     test('a session holding a stand-alone card reads the card, and the card id is the link to its page', async ($, on) => {
@@ -108,7 +106,7 @@ for (const surface of SURFACES) {
       d.world.card = CARD
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await labelOf(band)).toBe('Tendai · DX-77 · One-off fix')
+      expect(await labelOf(band)).toBe('DX-77 · One-off fix')
       expect(await pageLinks(band)).toEqual([{ key: 'open-card', label: 'DX-77', href: `${DASHBOARD_URL}/board/DX-77` }])
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
       expect(await footerText(await mountIndicator($, surface))).toBe('Tendai')
