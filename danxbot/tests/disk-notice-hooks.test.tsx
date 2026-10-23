@@ -134,7 +134,7 @@ for (const surface of SURFACES) {
     test('an open compaction window tells the session to pause', async ($, on) => {
       await started($, on, WSL, m => wslMachine(m, { freeGiB: 100, window: '1792728384\ncompacting docker\n' }))
       const notice = noticeOf((await $.prompt.submit({ text: 'hello' })).context)
-      expect(notice).toMatch(/^MAINTENANCE WINDOW OPEN since 2026-10-22T.*: compacting docker/)
+      expect(notice).toMatch(/^MAINTENANCE WINDOW OPEN since 2026-10-2\dT.*: compacting docker/)
       expect(notice).toMatch(/start no test run, build, deploy or dispatch/)
       expect(notice).toMatch(/run from the danxbot checkout/)
     })

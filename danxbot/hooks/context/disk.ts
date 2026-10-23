@@ -50,10 +50,9 @@ export function freeSpaceArgv(kind: HostKind, env: DiskEnv): string[] {
 }
 
 export function parseFreeBytes(stdout: string): number {
-  const last = stdout.trim().split(/\r?\n/).pop() ?? ''
-  const n = Number(last.trim())
-  if (!Number.isInteger(n) || n < 0) throw new Error(`the free-space command did not answer a byte count (it said ${JSON.stringify(stdout.trim().slice(0, 100))})`)
-  return n
+  const last = (stdout.trim().split(/\r?\n/).pop() ?? '').trim()
+  if (!/^[0-9]+$/.test(last)) throw new Error(`the free-space command did not answer a byte count (it said ${JSON.stringify(stdout.trim().slice(0, 100))})`)
+  return Number(last)
 }
 
 // `echo %USERPROFILE%` from cmd.exe, as the Windows path it names

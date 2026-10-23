@@ -14,6 +14,10 @@ import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/rel
 export const KIT_TEST_TIMEOUT_MS = 60_000
 export const test = (name: string, body: (...args: any[]) => unknown): void => baseTest(name, { timeoutMs: KIT_TEST_TIMEOUT_MS } as any, body as any)
 
+// CP-1: a path as the fixture's disk keys it: a Windows path (C:\Users\x) loses its drive letter and its backslashes, and the Linux test engine's resolution of it
+// against its own working directory (/app/danxbot/C:\Users\x) is undone, so a test holds the file at /Users/x
+const fsKey = (path: string): string => path.replace(/^(?:.*\/)?[A-Za-z]:/, '').replaceAll('\\', '/')
+
 export const SURFACES = ['terminal', 'desktop'] as const
 
 const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError: false })
@@ -990,17 +994,17 @@ export function dashboard(
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
   on('fs.exists', (_$: any, e: any) => {
     if (world.fsError !== undefined) return { deny: world.fsError } as any
-    const path = e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
+    const path = fsKey(e.path)
     return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) || path in world.files } as any
   })
   // DX-4993: the compaction control file, the window the plugin arms, and the git status of the resume briefing
   on('fs.read', (_$: any, e: any) => {
-    const path = e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
+    const path = fsKey(e.path)
     return (path in world.files ? { value: world.files[path] } : { deny: `ENOENT: no such file ${path}` }) as any
   })
   // a file the plugin writes lands in `world.files`
   on('fs.write', (_$: any, e: any) => {
-    world.files[e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')] = e.text
+    world.files[fsKey(e.path)] = e.text
     return { value: undefined } as any
   })
   // DX-5217: the process environment is live: a set changes what the next get answers, as in the engine (an undefined value unsets)
