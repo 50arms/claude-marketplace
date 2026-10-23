@@ -29,7 +29,7 @@ function readCard(id: unknown, title: unknown): HeldCard | null | typeof MALFORM
   return isText(id) && typeof title === 'string' ? { id, title } : MALFORMED
 }
 
-// The release: frees the agent for the team at once instead of the dashboard's 30-minute dead-session window. Idempotent on the server
+// The release: frees the agent for the team at once instead of waiting for the dashboard's liveness window (a session that goes quiet for a minute is a crash and loses its agent then). Idempotent on the server
 // (`{released: false}` for a session that held none). Bounded, so a dashboard that never answers holds the session's end this long at most.
 export const AGENT_RELEASE_PATH = '/api/plan-sessions/me/agent'
 export const AGENT_RELEASE_DEADLINE_MS = 3_000
@@ -37,4 +37,4 @@ export const AGENT_RELEASE_TIMEOUT_REASON = `timeout: no response within ${AGENT
 // The reason is cut so the toast keeps its second half (the consequence) within the toast's length.
 const RELEASE_REASON_MAX = 70
 export const releaseFailureToast = (reason: string) =>
-  `Could not free this session's team agent (${reason.length > RELEASE_REASON_MAX ? `${reason.slice(0, RELEASE_REASON_MAX - 1)}…` : reason}); it is freed 30 minutes after the session ends.`
+  `Could not free this session's team agent (${reason.length > RELEASE_REASON_MAX ? `${reason.slice(0, RELEASE_REASON_MAX - 1)}…` : reason}); it is freed about a minute after the session ends.`

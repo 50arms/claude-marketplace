@@ -32,7 +32,9 @@ throughout; this skill is the plan mechanics.
      who can raise it, `raised_by`), or that ending another session frees its agent; call
      `plan_connect` again once they say one is free.
    Until an agent is held, every other dashboard call answers that same state: do no other
-   dashboard work.
+   dashboard work. You hold the agent only while this session is connected: a revoked key, a
+   session that stopped responding for a minute (a crash) or a pause past the hold timeout frees
+   it at once, and signing in again takes the next free agent, never necessarily the same one.
 3. What you work on: a plan → `plan_connect({plan_id})`; none in the list fits → create one.
    One card on no plan (a one-off, a quick fix, an epic that is not a plan) →
    `card_connect({card_id})` instead; a card on a plan is refused `card_on_plan` (connect to
@@ -320,11 +322,13 @@ ended on your own call needs no reply. Read the plan before resuming, since the 
 changed.
 
 A pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
-on Team > Agents) gives your session's team agent back to the pool. The pause-ended notice then says
-`Your agent <name> went back to the pool after <N> minutes paused. Call plan_connect to take an agent
-again.` On waking, call `plan_connect` before any other dashboard work: it takes the same agent again
-when it is free, otherwise the next free one, otherwise answers `agent_limit_reached`. Until then work
-calls are refused with `agent_not_held` or `agent_needed`.
+on Team > Agents) disconnects your session: its key is revoked, its team agent goes back to the pool and
+it leaves every session list. A session holds an agent exactly while it is connected, and nothing
+remembers the agent you had. On waking, your next dashboard call is refused as a revoked key: sign in
+again (approval as for any new key), then `plan_connect`, which takes the next free agent or answers
+`agent_limit_reached`. The pause-ended notice then says `Your agent <name> went back to the pool; you
+were disconnected after <N> minutes paused. You signed in again: call plan_connect.` Until you hold an
+agent again work calls are refused with `agent_not_held` or `agent_needed`.
 
 ## Stopping
 

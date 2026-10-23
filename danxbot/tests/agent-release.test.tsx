@@ -1,6 +1,6 @@
 import "./run-tests-with-npm-test.generated"
 // DX-5554: when the Claude session ends, the plugin frees the team agent it signed in as at once (DELETE /api/plan-sessions/me/agent), instead of the
-// agent staying held for the dashboard's 30-minute dead-session window. Best effort and bounded: a failure is one toast, and a dashboard that never
+// agent staying held until the dashboard's liveness window (about a minute) lapses. Best effort and bounded: a failure is one toast, and a dashboard that never
 // answers holds the end for AGENT_RELEASE_DEADLINE_MS at most.
 import { describe, expect } from 'claude-code/testing'
 
