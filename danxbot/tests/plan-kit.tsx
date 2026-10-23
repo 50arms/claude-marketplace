@@ -14,7 +14,7 @@ import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/rel
 export const KIT_TEST_TIMEOUT_MS = 60_000
 export const test = (name: string, body: (...args: any[]) => unknown): void => baseTest(name, { timeoutMs: KIT_TEST_TIMEOUT_MS } as any, body as any)
 
-// CP-1: a path as the fixture's disk keys it: a Windows path (C:\Users\x) loses its drive letter and its backslashes, and the Linux test engine's resolution of it
+// A path as the fixture's disk keys it: a Windows path (C:\Users\x) loses its drive letter and its backslashes, and the Linux test engine's resolution of it
 // against its own working directory (/app/danxbot/C:\Users\x) is undone, so a test holds the file at /Users/x
 const fsKey = (path: string): string => path.replace(/^(?:.*\/)?[A-Za-z]:/, '').replaceAll('\\', '/')
 
@@ -178,7 +178,7 @@ export function dashboard(
     accountUuid?: string
     // DX-4806: the process's CLAUDE_CODE_ENTRYPOINT ('claude-desktop' for the desktop app, 'cli' for a terminal); none by default
     entrypoint?: string
-    // CP-1: further process environment variables the session starts with (the Windows or WSL markers the disk notice reads)
+    // Further process environment variables the session starts with (the Windows or WSL markers the disk notice reads)
     env?: Record<string, string>
     // DX-5217: CLAUDE_CODE_AUTO_COMPACT_WINDOW as the session's process starts with it (an older plugin version set it to the floor)
     autoCompactWindow?: string
@@ -309,7 +309,7 @@ export function dashboard(
     files: {} as Record<string, string>,
     // DX-4993: what `git status --porcelain=v1 -b` prints in the session's directory (the resume briefing), or its exit code when it fails
     gitStatus: { exitCode: 0, stdout: '## main...origin/main\n' } as { exitCode: number; stdout: string },
-    // CP-1: what a `$.process.run` answers by its program (argv[0], for example `df` or `cmd.exe`); a program with no entry answers the git status above
+    // What a `$.process.run` answers by its program (argv[0], for example `df` or `cmd.exe`); a program with no entry answers the git status above
     processes: {} as Record<string, { exitCode?: number; stdout: string }>,
     // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
     rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
@@ -995,12 +995,25 @@ export function dashboard(
   on('fs.exists', (_$: any, e: any) => {
     if (world.fsError !== undefined) return { deny: world.fsError } as any
     const path = fsKey(e.path)
-    return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) || path in world.files } as any
+    return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) || path in world.files || Object.keys(world.files).some(file => file.startsWith(path + '/')) } as any
   })
   // DX-4993: the compaction control file, the window the plugin arms, and the git status of the resume briefing
   on('fs.read', (_$: any, e: any) => {
     const path = fsKey(e.path)
     return (path in world.files ? { value: world.files[path] } : { deny: `ENOENT: no such file ${path}` }) as any
+  })
+  // a directory listing from the fixture's disk: the first path segment under it of every file held there. An entry is a dir when something lies deeper or its text is empty
+  on('fs.list', (_$: any, e: any) => {
+    const dir = fsKey(e.path).replace(/\/$/, '')
+    const kinds = new Map<string, 'file' | 'dir'>()
+    for (const [path, text] of Object.entries(world.files)) {
+      if (!path.startsWith(dir + '/')) continue
+      const rest = path.slice(dir.length + 1)
+      const name = rest.split('/')[0]
+      const dirLike = rest.includes('/') || text === ''
+      kinds.set(name, dirLike || kinds.get(name) === 'dir' ? 'dir' : 'file')
+    }
+    return { value: [...kinds].map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })) } as any
   })
   // a file the plugin writes lands in `world.files`
   on('fs.write', (_$: any, e: any) => {
@@ -1028,7 +1041,7 @@ export function dashboard(
   })
   on('env.get', (_$: any, e: any) => ({ value: liveEnv[e.name] }) as any)
   on('session.cwd', () => ({ value: '/work/repo' }) as any)
-  // CP-1: every `$.process.run` the plugin makes, as its argv
+  // Every `$.process.run` the plugin makes, as its argv
   const runCalls: string[][] = []
   on('process.run', (_$: any, e: any) => {
     runCalls.push([...e.argv])

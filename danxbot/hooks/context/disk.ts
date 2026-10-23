@@ -1,6 +1,6 @@
 import type { DiskTold } from '../../types'
 
-// CP-1: the machine's free-space warning for every session. The Windows dev machine keeps two limits in one file, `<home>/.danxbot/machine-disk-floors`
+// The machine's free-space warning for every session. The Windows dev machine keeps two limits in one file, `<home>/.danxbot/machine-disk-floors`
 // (floor_gib warns, hard_minimum_gib refuses host test runs), and a marker file `<home>/.danxbot/compaction-window` while Docker's data disks are
 // being compacted. Everything here is pure: it takes facts as arguments and never reaches the machine. `register.tsx` gathers the facts through `$`
 // (`$.fs`, `$.env`, `$.process.run`), so the hook kit's fake host drives the wiring and no `node:` import enters the hooks module.

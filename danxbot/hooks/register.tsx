@@ -121,8 +121,8 @@ const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as
 // session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
 // prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
 const pendingStart = atom({ plugin: 'danxbot', key: 'pendingStart' } as const, null as PendingStart)
-// CP-1: the machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
-// notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home resolved once per session.
+// The machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
+// notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home found once per session.
 const diskTold = atom({ plugin: 'danxbot', key: 'diskTold' } as const, {} as DiskTold)
 const diskMeasured = atom({ plugin: 'danxbot', key: 'diskMeasured' } as const, null as DiskMeasured)
 const diskHome = atom({ plugin: 'danxbot', key: 'diskHome' } as const, null as DiskHome)
@@ -1821,9 +1821,10 @@ async function stampEntries($: any, takeStart: boolean, trigger: 'prompt' | 'too
   return start === null ? head : [...head, start]
 }
 
-// CP-1: the machine's free-space notice (hooks/context/disk.ts), in every repo: a person's prompt, a session start (it clears the memory, so the first
-// tool call after it tells) and autonomous tool calls, sub-agents' included. A tool call reuses the last measurement for DISK_MEASURE_MS (a person's prompt
-// measures again) and repeats an unchanged notice to the same agent only after DISK_REPEAT_MS.
+// The machine's free-space notice (hooks/context/disk.ts), in every repo: a person's prompt, a session start (it clears the memory, so the first
+// tool call after it tells) and autonomous tool calls, sub-agents' included. A tool call answers from the last measurement and, once it is older
+// than DISK_MEASURE_MS, refreshes it in the background (a person's prompt measures again before it answers). An unchanged notice is repeated to
+// the same agent only after DISK_REPEAT_MS.
 async function diskLine($: any, trigger: 'prompt' | 'tool', agent: string): Promise<string | null> {
   const now = await $.clock.now()
   const text = await diskText($, trigger, now)
@@ -1838,20 +1839,42 @@ async function diskLine($: any, trigger: 'prompt' | 'tool', agent: string): Prom
 
 async function diskText($: any, trigger: 'prompt' | 'tool', now: number): Promise<string> {
   const last = await read($, diskMeasured)
-  if (trigger === 'tool' && last !== null && now - last.at < DISK_MEASURE_MS) return last.text
-  const text = await measureDisk($)
-  await update($, diskMeasured, () => ({ text, at: now }))
-  return text
+  if (trigger === 'tool' && last !== null) {
+    if (now - last.at >= DISK_MEASURE_MS) detach($, 'Disk check', probeDisk($))
+    return last.text
+  }
+  return probeDisk($)
+}
+
+// What is running now, by session, so concurrent hooks share one probe and one home lookup instead of each starting their own.
+const diskProbes = new Map<string, Promise<string>>()
+const homeLookups = new Map<string, Promise<string | null>>()
+function sharedRun<T>(running: Map<string, Promise<T>>, key: string, run: () => Promise<T>): Promise<T> {
+  const found = running.get(key)
+  if (found !== undefined) return found
+  const started = run().finally(() => running.delete(key))
+  running.set(key, started)
+  return started
+}
+
+async function probeDisk($: any): Promise<string> {
+  return sharedRun(diskProbes, String(await $.session.id()), async () => {
+    const text = await measureDisk($)
+    const at = await $.clock.now()
+    await update($, diskMeasured, () => ({ text, at }))
+    return text
+  })
 }
 
 const WSL_INTEROP_TIMEOUT_MS = 10_000
 const DISK_PROBE_TIMEOUT_MS = 10_000
+const WSL_USERS_DIR = '/mnt/c/Users'
 
-// '' for a machine this policy does not concern (no C:, or no `<home>/.danxbot/` directory: the machine has not opted in to danxbot's machine tooling)
-// or when all is well; else the notice. Every fault is ONE line, never silence.
+// '' for a machine this policy does not concern (no C:, or no Windows home holding a `.danxbot` directory: the machine has not opted in to danxbot's
+// machine tooling) or when all is well; else the notice. Every fault is ONE line, never silence.
 async function measureDisk($: any): Promise<string> {
   try {
-    // each variable by its own literal name: `$.env.get` takes a literal so the variables a module reads can be listed (the names are FLOOR_ENV / HARD_MINIMUM_ENV in disk.ts)
+    // each variable by its own literal name: `$.env.get` takes a literal so the variables a module reads can be listed
     const env: DiskEnv = {
       SystemDrive: await $.env.get('SystemDrive'),
       WSL_DISTRO_NAME: await $.env.get('WSL_DISTRO_NAME'),
@@ -1861,14 +1884,14 @@ async function measureDisk($: any): Promise<string> {
     }
     const kind = hostKindOf(env)
     if (kind === null) return ''
-    const home = await windowsHome($, kind, env)
+    const home = await machineHome($, kind, env)
+    if (home === null) return ''
     const dir = joinPath(kind, home, '.danxbot')
-    if (!(await $.fs.exists(dir))) return ''
     const floorsPath = joinPath(kind, dir, 'machine-disk-floors')
     const windowPath = joinPath(kind, dir, 'compaction-window')
     const floorsText = (await $.fs.exists(floorsPath)) ? String(await $.fs.read(floorsPath)) : null
     const windowText = (await $.fs.exists(windowPath)) ? String(await $.fs.read(windowPath)) : null
-    // `$` has no statfs: the system drive's free space is asked of a bounded process (powershell.exe, or df in WSL), at most once per DISK_MEASURE_MS
+    // `$` has no statfs: the system drive's free space is asked of a bounded process (powershell.exe, or df in WSL)
     const free = await $.process.run(freeSpaceArgv(kind, env), { timeoutMs: DISK_PROBE_TIMEOUT_MS })
     if (free.exitCode !== 0) throw new Error(`the free-space command exited ${free.exitCode}`)
     return diskNotice({ env, freeBytes: parseFreeBytes(free.stdout), floorsText, floorsPath, windowText })
@@ -1877,33 +1900,48 @@ async function measureDisk($: any): Promise<string> {
   }
 }
 
-// The Windows home, resolved once per session and kept, a failure included (a stalled cmd.exe interop is never retried per tool call). On Windows it is
-// USERPROFILE; in WSL cmd.exe names it and wslpath converts it, both through the async bounded `$.process.run`.
-async function windowsHome($: any, kind: HostKind, env: DiskEnv): Promise<string> {
-  const kept = await read($, diskHome)
-  if (kept !== null) {
-    if ('fault' in kept) throw new Error(kept.fault)
-    return kept.home
-  }
-  try {
-    let home: string
-    if (kind === 'windows') {
-      if (!env.USERPROFILE) throw new Error('USERPROFILE is not set, so the Windows home cannot be located')
-      home = env.USERPROFILE
-    } else {
-      const cmd = await $.process.run(['cmd.exe', '/c', 'echo %USERPROFILE%'], { timeoutMs: WSL_INTEROP_TIMEOUT_MS })
-      if (cmd.exitCode !== 0) throw new Error(`cmd.exe exited ${cmd.exitCode}`)
-      const converted = await $.process.run(['wslpath', '-u', parseWindowsProfile(cmd.stdout)], { timeoutMs: WSL_INTEROP_TIMEOUT_MS })
-      if (converted.exitCode !== 0) throw new Error(`wslpath exited ${converted.exitCode}`)
-      home = String(converted.stdout).trim()
-      if (!(await $.fs.exists(home))) throw new Error(`the Windows home ${home} does not exist`)
+// The Windows home that holds `.danxbot`, or null when the machine has not opted in. Found and failed answers are kept for the session (a stalled
+// interop call is never retried per tool call); "not opted in" is asked again, which costs a directory listing and never an interop call.
+async function machineHome($: any, kind: HostKind, env: DiskEnv): Promise<string | null> {
+  return sharedRun(homeLookups, String(await $.session.id()), async () => {
+    const kept = await read($, diskHome)
+    if (kept !== null) {
+      if ('fault' in kept) throw new Error(kept.fault)
+      return kept.home
     }
-    await update($, diskHome, () => ({ home }))
-    return home
-  } catch (err: any) {
-    await update($, diskHome, () => ({ fault: String(err?.message ?? err) }))
-    throw err
+    try {
+      const home = kind === 'windows' ? await windowsProfileHome($, env) : await wslHome($)
+      if (home !== null) await update($, diskHome, () => ({ home }))
+      return home
+    } catch (err: any) {
+      await update($, diskHome, () => ({ fault: String(err?.message ?? err) }))
+      throw err
+    }
+  })
+}
+
+async function windowsProfileHome($: any, env: DiskEnv): Promise<string | null> {
+  if (!env.USERPROFILE) throw new Error('USERPROFILE is not set, so the Windows home cannot be located')
+  return (await $.fs.exists(joinPath('windows', env.USERPROFILE, '.danxbot'))) ? env.USERPROFILE : null
+}
+
+// In WSL the opt-in is decided from the mounted C: alone: the user folders holding `.danxbot`. No interop call happens before that, so a machine
+// that has not opted in is never told anything, even with interop off. Only several candidates need cmd.exe, to say which one is the signed-in user's.
+async function wslHome($: any): Promise<string | null> {
+  if (!(await $.fs.exists(WSL_USERS_DIR))) return null
+  const candidates: string[] = []
+  for (const entry of await $.fs.list(WSL_USERS_DIR)) {
+    if (entry.kind === 'dir' && (await $.fs.exists(joinPath('wsl', WSL_USERS_DIR, entry.name, '.danxbot')))) candidates.push(joinPath('wsl', WSL_USERS_DIR, entry.name))
   }
+  if (candidates.length <= 1) return candidates[0] ?? null
+  const cmd = await $.process.run(['cmd.exe', '/c', 'echo %USERPROFILE%'], { timeoutMs: WSL_INTEROP_TIMEOUT_MS })
+  if (cmd.exitCode !== 0) throw new Error(`cmd.exe exited ${cmd.exitCode}`)
+  const converted = await $.process.run(['wslpath', '-u', parseWindowsProfile(cmd.stdout)], { timeoutMs: WSL_INTEROP_TIMEOUT_MS })
+  if (converted.exitCode !== 0) throw new Error(`wslpath exited ${converted.exitCode}`)
+  const profile = String(converted.stdout).trim()
+  const chosen = candidates.find(c => c.toLowerCase() === profile.toLowerCase())
+  if (chosen === undefined) throw new Error(`the Windows home ${profile} has no .danxbot directory, but ${candidates.join(' and ')} do`)
+  return chosen
 }
 
 // the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
@@ -2177,11 +2215,12 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   const ended = await takeEndedSession($)
   // a restart only sub-agents account for is theirs to be briefed about; the main agent's pending start is for its own compaction (and every other start, and a restart nobody noted)
   const restart = e.source === 'compact' ? await restartBriefsMain($) : { briefsMain: true, own: false }
+  // every start, a sub-agent's compaction included, loses what the model was told: the disk notice is told again and measured afresh
+  await update($, diskTold, () => ({}))
+  await update($, diskMeasured, () => null)
   if (!restart.briefsMain) return below
   const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended }
   await update($, pendingStart, () => start)
-  await update($, diskTold, () => ({}))
-  await update($, diskMeasured, () => null)
   // a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
   // the main agent's OWN compaction (`restart.own`). A restart with no entry at all (an unattributed sub-agent compaction, a host without session.compact) is briefed passively and starts no turn.
   // The isRunning read is a deliberate fast path: a running turn carries the briefing on its next tool result, with no reads or take here.
