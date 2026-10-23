@@ -33,8 +33,7 @@ to tell the operator (DX-3421); the hook never reads a local mantra file. **Noth
 rule** — no `SKILL.md`, agent body, hook text, `CLAUDE.md`, rule file or profile. A skill may
 point at the mantra or add procedure the mantra doesn't state. To change a rule, change the `mantra`
 row in danxbot's `src/issues/reminders/seed.yaml` (or override it in the app); phrase each rule so it
-holds for every one of those readers. No
-prose states how many sub-agents to run (R-23).
+holds for every one of those readers. No prose states how many sub-agents to run (R-23).
 
 ## The time stamp, the event text and the restart notice are function hooks (DX-4234)
 
