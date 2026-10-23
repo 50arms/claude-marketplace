@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // stand-in danx-dashboard MCP server: the band at session start counts the open problems as links and writes nothing to a card.
 import { describe, expect } from 'claude-code/testing'
 
-import { test, AGENT_NAME, bandSilent, eventsWarned, SURFACES, answerPlanConnect, bandLabelOf, dashboard, expectIndicator, footerText, holdAgent, mountIndicator, linksOf, pressFooter, problemBadgeOf, startSession, forceRefresh } from './plan-kit'
+import { test, AGENT_NAME, bandSilent, eventsWarned, SURFACES, answerPlanConnect, bandLabelOf, dashboard, expectIndicator, footerText, holdAgent, mountIndicator, linksOf, pressFooter, needsYouBadgeOf, startSession, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -22,9 +22,9 @@ for (const surface of SURFACES) {
 
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
-      expect(await problemBadgeOf(band)).toBe('⚠ 4')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
       await expectIndicator(band, surface, 25)
-      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-plan'])
+      expect((await linksOf(band)).map(l => l.key)).toEqual(['needs-you', 'open-plan'])
       // nothing the band does writes to a card
       expect(d.writes()).toEqual([])
     })

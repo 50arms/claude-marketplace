@@ -1,11 +1,11 @@
 import type { PlanView, RelayState, StatusBreakdown } from '../../types'
 import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, DANGER, NO_AGENT_LABEL, PROBLEM_GLYPH, SUCCESS, WARNING, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, BLOCKED_LABEL, keyRevokedLabel } from './config'
 
-// the band button's label: a problem glyph and the count,
-// '' for none (the button is then not drawn). The count is a button, not label text: see band.tsx.
-export function problemBadge(v: PlanView): string {
-  const n = v.openProblems
-  return n === null || n === 0 ? '' : `${PROBLEM_GLYPH} ${n}`
+// the band badge's label: a warning glyph and the number of plan cards waiting on a person, the same number the plan's Needs You tab
+// shows (cards, not problems), '' for none (the badge is then not drawn). It is a link, not label text: see band.tsx.
+export function needsYouBadge(v: PlanView): string {
+  const n = v.needsYou
+  return n === null || n === 0 ? '' : `${PROBLEM_GLYPH} ${n} ${n === 1 ? 'card needs' : 'cards need'} you`
 }
 
 // `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.
@@ -124,10 +124,10 @@ export function footerLabel(v: PlanView): string | null {
 }
 
 // the footer text's colour, by the connection's state: red where the connection is lost or refused, yellow where it needs attention (the
-// auto-mode block, the plan's failed load, an open problem), green when connected with an agent, none (the footer's own text colour) when disconnected.
+// auto-mode block, the plan's failed load, a card waiting on a person), green when connected with an agent, none (the footer's own text colour) when disconnected.
 export function footerTone(v: PlanView): string | undefined {
   if (v.phase === 'signed-out' || v.phase === 'key-revoked') return DANGER
-  if (v.phase === 'blocked' || v.phase === 'error' || (v.openProblems ?? 0) > 0) return WARNING
+  if (v.phase === 'blocked' || v.phase === 'error' || (v.needsYou ?? 0) > 0) return WARNING
   return v.agent !== null && v.connected ? SUCCESS : undefined
 }
 

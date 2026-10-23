@@ -163,8 +163,8 @@ export function dashboard(
     boardsFail?: boolean
     // ... answers boards the plugin cannot read: none at all, or a prefix that is not capital letters
     boardsShape?: 'none' | 'badPrefix' | 'noKey'
-    // DX-5933: the plan read (GET /api/plans/:id) answers no card_ids, ids that are not all strings, or no open_problem_count
-    planFieldsShape?: 'noCardIds' | 'badCardIds' | 'noOpenCount'
+    // DX-5933: the plan read (GET /api/plans/:id) answers no card_ids, ids that are not all strings, or no bucket_counts
+    planFieldsShape?: 'noCardIds' | 'badCardIds' | 'noNeedsYou'
     // ... and a plan holding this many more cards than the fixture's own (a large plan: 150 would have passed the host's limit with whole card rows)
     extraPlanCards?: number
     // DX-4458: DX-3, a needs-you card with 49 open problems (DX-4443's shape)
@@ -403,11 +403,9 @@ export function dashboard(
         status: p.status,
         card_count: planCardIds.length,
         ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
-        // as the real route answers: the two opt-in fields only when `fields` names them (DX-5933)
+        // as the real route answers: `bucket_counts` always (the needs-you bucket counts CARDS holding an open problem), `card_ids` only when `fields` names it
+        ...(options.planFieldsShape === 'noNeedsYou' ? {} : { bucket_counts: { 'needs-you': world.cards.filter(c => c.problems.some(p => p.open)).length } }),
         ...(query?.fields?.card_ids && options.planFieldsShape !== 'noCardIds' ? { card_ids: options.planFieldsShape === 'badCardIds' ? [...planCardIds, 7] : planCardIds } : {}),
-        ...(query?.fields?.open_problem_count && options.planFieldsShape !== 'noOpenCount'
-          ? { open_problem_count: world.cards.reduce((n, c) => n + c.problems.filter(p => p.open).length, 0) }
-          : {}),
       })
     }
     const cards = /^\/api\/plans\/(\d+)\/cards$/.exec(path)
@@ -1293,9 +1291,9 @@ export async function linksOf(ui: any): Promise<{ key: string | undefined; label
   })
 }
 
-// the band's open-problem count: its text, or undefined when none is drawn
-export async function problemBadgeOf(ui: any): Promise<string | undefined> {
-  return (await linksOf(ui)).find(l => l.key === 'open-problems')?.label
+// the band's Needs You badge: its text, or undefined when none is drawn
+export async function needsYouBadgeOf(ui: any): Promise<string | undefined> {
+  return (await linksOf(ui)).find(l => l.key === 'needs-you')?.label
 }
 
 // DX-4630: the plugin opens no page itself: every call the fake dashboard host saw for the in-app browser's server, which stays empty

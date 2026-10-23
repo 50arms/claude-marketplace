@@ -13,7 +13,7 @@ const PLAN = `${DASHBOARD_URL}/plans/23`
 async function pageLinks(ui: any) {
   expect(await ui.findAll({ type: 'Link' })).toEqual([])
   expect(await ui.findAll({ type: 'Button', key: 'open-tab' })).toEqual([])
-  return (await linksOf(ui)).filter(l => l.key !== 'open-problems')
+  return (await linksOf(ui)).filter(l => l.key !== 'needs-you')
 }
 
 for (const surface of SURFACES) {

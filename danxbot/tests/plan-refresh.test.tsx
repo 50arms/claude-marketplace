@@ -1,7 +1,7 @@
 import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
-import { test, bandLabelOf, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
+import { test, bandLabelOf, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, needsYouBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const label = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
@@ -14,21 +14,21 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await problemBadgeOf(band)).toBe('⚠ 3')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
 
-      // a new problem appears on the dashboard; ten minutes of clock bring no load
-      d.world.cards[1]!.problems.push({ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] })
+      // a problem appears on a third card of the dashboard; ten minutes of clock bring no load
+      d.world.cards.push({ id: 'DX-9', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
       const loads = () => d.api.filter(a => a.path === '/api/plans').length
       const before = loads()
       await d.clock.advance(600_000)
       expect(loads()).toBe(before)
-      expect(await problemBadgeOf(band)).toBe('⚠ 3')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
 
       // the dashboard's event for that problem reaches the session: the relay delivers it and the plan is read again
       d.relay.push({ cursor: 'c7', text: 'operator opened a problem on DX-2' })
       await d.clock.settle()
       expect(loads()).toBe(before + 1)
-      expect(await problemBadgeOf(band)).toBe('⚠ 4')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 3 cards need you')
     })
 
     test('a refresh error shows `50 Arms: Disconnected` in the band', async ($, on) => {
@@ -42,7 +42,7 @@ for (const surface of SURFACES) {
       // and it recovers on the next good load
       d.failList(false)
       await forceRefresh($, d)
-      expect(await problemBadgeOf(band)).toBe('⚠ 3')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
     })
   })
 }
@@ -91,7 +91,7 @@ describe('the hooks that refresh', () => {
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     const loads = () => d.api.filter(a => a.path === '/api/plans').length
-    d.world.cards[1]!.problems.push({ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] })
+    d.world.cards.push({ id: 'DX-9', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
     const turn = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 
     await d.clock.advance(5_000)
@@ -99,13 +99,13 @@ describe('the hooks that refresh', () => {
     await $.turn.complete(turn)
     await d.clock.settle()
     expect(loads()).toBe(before)
-    expect(await problemBadgeOf(band)).toBe('⚠ 3')
+    expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
 
     await d.clock.advance(6_000)
     await $.turn.complete(turn)
     await d.clock.settle()
     expect(loads()).toBe(before + 1)
-    expect(await problemBadgeOf(band)).toBe('⚠ 4')
+    expect(await needsYouBadgeOf(band)).toBe('⚠ 3 cards need you')
   })
 })
 

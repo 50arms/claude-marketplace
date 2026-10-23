@@ -295,9 +295,9 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
     told = []
     if (loaded.phase === 'error' && cur.phase !== 'error' && !loaded.serverNotConnected) told.push(`Plan load failed: ${loaded.error}`)
     // the count's reason is told once and takes the links' own toast with it: both stand on the one plan read
-    if (loaded.openProblemsError && cur.openProblemsError !== loaded.openProblemsError) told.push(`Plan cards unavailable: ${loaded.openProblemsError}`)
+    if (loaded.needsYouError && cur.needsYouError !== loaded.needsYouError) told.push(`Plan cards unavailable: ${loaded.needsYouError}`)
     // the card links' error: the replies are drawn as written
-    if (loaded.links?.state === 'error' && cur.links?.state !== 'error' && !loaded.openProblemsError) told.push(`Card links unavailable: ${loaded.links.message}`)
+    if (loaded.links?.state === 'error' && cur.links?.state !== 'error' && !loaded.needsYouError) told.push(`Card links unavailable: ${loaded.links.message}`)
     if (loaded.phase === 'ready') return loaded
     const base = { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }
     return named === null || origin === null ? base : { ...base, dashboardUrl: origin, connected: { id: named.id, ref: `PLAN-${named.id}`, name: named.name, dashboardUrl: origin } }

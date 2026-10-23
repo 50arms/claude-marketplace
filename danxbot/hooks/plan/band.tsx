@@ -6,7 +6,7 @@ import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
-import { bandContent, bandLabelCols, bandNameText, problemBadge, viewPercent } from './words'
+import { bandContent, bandLabelCols, bandNameText, needsYouBadge, viewPercent } from './words'
 
 // The controls' labels the width budget counts.
 const CLOSE_LABEL = '×'
@@ -44,7 +44,7 @@ export function renderBand(
   )
   const plan = v.connected
   // a failed load reads Disconnected, so no (stale) problem count is drawn beside it.
-  const badge = v.phase === 'error' || v.phase === 'blocked' ? '' : problemBadge(v)
+  const badge = v.phase === 'error' || v.phase === 'blocked' ? '' : needsYouBadge(v)
   const permissionLabel = permission === null ? '' : permissionBadge(permission.count)
   // the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
@@ -93,8 +93,8 @@ export function renderBand(
   const line = (
     <Box key="band-line" flexDirection="row" gap={1} minWidth={0}>
       <Box flexShrink={0}>{indicator}</Box>
-      {/* the open-problem count leads the plan link: a call to action that opens the plan's Needs You tab. */}
-      {showBadge && plan !== null && <Box flexShrink={0}>{mdLink(E, 'open-problems', badge, needsYouUrl(plan))}</Box>}
+      {/* the Needs You card count leads the plan link: a call to action that opens the plan's Needs You tab. */}
+      {showBadge && plan !== null && <Box flexShrink={0}>{mdLink(E, 'needs-you', badge, needsYouUrl(plan))}</Box>}
       {/* a flex item never shrinks below its content's width unless its min width is 0, so without minWidth={0} and the
           clip the full name pushed the controls off the band's edge instead of being cut by `truncate-end`. */}
       <Box flexShrink={1} minWidth={0} overflow="hidden" flexDirection="row">
