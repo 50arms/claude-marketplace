@@ -1552,7 +1552,7 @@ async function onSessionStart($: any, e: any, next: any) {
   // $.state, which a reload keeps and a new process starts without.
   // the desktop app sets CLAUDE_CODE_ENTRYPOINT=claude-desktop on every process it spawns (fresh or resumed; a reload keeps the process and the atom); a terminal reads `cli`. A resumed
   // session nobody has viewed yet has no attach and a detached roster, so the environment is the source that names its host.
-  if ((await $.session.surfaces()).includes('desktop') || (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) === 'claude-desktop') {
+  if ((await $.session.surfaces()).includes(DESKTOP_SURFACE) || (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) === 'claude-desktop') {
     await update($, desktopHosted, () => true)
   }
   await unpinStatus($)

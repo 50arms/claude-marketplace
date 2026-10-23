@@ -78,9 +78,10 @@ export const APPROVAL_TOAST_MS = 60_000
 // What the fallback toast puts between its reason and the model row it could not append.
 export const NOTE_MARKER = ' | It was to read: '
 
-// Colours standing in for the React app's tokens: success (connected / for), danger (action required / against), warning (open question).
 // the surface name the app reports for its desktop host (the other is the terminal)
 export const DESKTOP_SURFACE = 'desktop'
+
+// Colours standing in for the React app's tokens: success (connected / for), danger (action required / against), warning (open question).
 export const SUCCESS = 'green'
 export const DANGER = 'red'
 export const WARNING = 'yellow'
