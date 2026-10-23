@@ -8,7 +8,7 @@ import { stamp as nextStamp } from './context/stamp'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
-import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
+import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from './compaction/briefing'
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
@@ -3062,6 +3062,12 @@ async function briefingSource<T>(readSource: () => Promise<T>): Promise<Source<T
 
 async function compactionBriefing($: any): Promise<string> {
   const v = await read($, view)
+  const owed = await briefingSource<OwedComment[]>(async () => {
+    const r = await api($, 'GET', '/api/plan-sessions/me/owed-comments')
+    if (!r.ok) throw new Error(errText(r))
+    if (!Array.isArray(r.body?.owedComments)) throw new Error('bad_response: owed-comments answered no owedComments list')
+    return r.body.owedComments
+  })
   const cards = await briefingSource<BriefingCard[]>(async () => v.inProgress.map(c => ({ id: c.id, title: c.title })))
   const agents = await briefingSource<BriefingAgent[]>(async () => {
     const listed: { id: string; type: string; description: string; status: string }[] = await $.agent.list()
@@ -3074,7 +3080,7 @@ async function compactionBriefing($: any): Promise<string> {
     if (state === null) throw new Error('git status printed nothing readable')
     return state
   })
-  return briefingText({ plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, cards, agents, git })
+  return briefingText({ plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, owed, cards, agents, git })
 }
 
 // the plugin's `dashboard_url` option, as the engine passed it to register (the last resort of blockedOrigin)

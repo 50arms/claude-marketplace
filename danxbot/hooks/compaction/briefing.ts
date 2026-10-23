@@ -9,8 +9,12 @@ export type BriefingCard = { id: string; title: string }
 export type BriefingAgent = { id: string; type: string; description: string }
 export type GitState = { branch: string | null; changed: number; ahead: number | null; upstream: string | null }
 
+// DX-5692: one person comment the agent still owes an answer, as GET /api/plan-sessions/me/owed-comments (danxbot DX-5689, `OwedComment`) hands it over. Only the fields the briefing words.
+export type OwedComment = { cardId: string; cardTitle: string; commentId: number; author: { name: string }; excerpt: { text: string }; state: 'sent' | 'seen'; waitedMs: number }
+
 export type BriefingInput = {
   plan: { ref: string; name: string } | null
+  owed: Source<OwedComment[]>
   cards: Source<BriefingCard[]>
   agents: Source<BriefingAgent[]>
   git: Source<GitState>
@@ -38,6 +42,28 @@ export function parseGitStatus(out: string): GitState | null {
   const upstream = m[2] ?? null
   const ahead = /ahead (\d+)/.exec(m[3] ?? '')
   return { branch, changed, upstream, ahead: upstream === null ? null : ahead === null ? 0 : Number(ahead[1]) }
+}
+
+const OWED_STATE_LABEL: Record<OwedComment['state'], string> = { sent: 'Sent', seen: 'Seen' }
+const EXCERPT_MAX = 160
+const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+
+function waitedText(ms: number): string {
+  if (ms < MINUTE_MS) return 'under a minute'
+  if (ms < HOUR_MS) return `${Math.floor(ms / MINUTE_MS)} min`
+  if (ms < DAY_MS) return `${Math.floor(ms / HOUR_MS)} h`
+  return `${Math.floor(ms / DAY_MS)} d`
+}
+
+// DX-5692: a comment survives a compaction only as a line in the summary, so every comment still owed is listed FIRST (oldest first, the order the route answers), with the two-step reply
+// DX-5799 defined. A `seen` comment is already acknowledged, so its ack is skipped. A failed read is said as a failure: an omitted list would read as "nothing owed".
+function owedLine(owed: Source<OwedComment[]>): string {
+  if (!owed.ok) return `Comments you owe an answer: NOT KNOWN, the read failed (${oneLine(owed.reason, REASON_MAX)}). Read your plan's cards for person comments with no reply of yours before you do anything else.`
+  if (owed.value.length === 0) return 'Comments you owe an answer: none.'
+  const items = owed.value.map(c => `${c.cardId} ${oneLine(c.cardTitle, 60)}, comment ${c.commentId} from ${oneLine(c.author.name, 40)} [${OWED_STATE_LABEL[c.state]}, waiting ${waitedText(c.waitedMs)}]: "${oneLine(c.excerpt.text, EXCERPT_MAX)}"`)
+  return `Comments you still owe an answer, answer these FIRST, oldest first: ${items.join('; ')}. For each, acknowledge it (POST /api/issues/<card>/comments/<commentId>/reply with phase "ack"; skip this for one that is Seen, already acknowledged), then write your answer into that same message (the same route with phase "reply").`
 }
 
 function cardsLine(cards: Source<BriefingCard[]>): string {
@@ -75,7 +101,7 @@ export const RESUME_OPENING = `[50 ARMS] Your conversation was just compacted. $
 
 export function briefingText(input: BriefingInput): string {
   const plan = input.plan === null ? 'You are on no plan.' : `Your plan is ${input.plan.ref} ${oneLine(input.plan.name, 80)}.`
-  return `${RESUME_OPENING} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
+  return `${RESUME_OPENING} ${owedLine(input.owed)} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
 }
 
 // a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes

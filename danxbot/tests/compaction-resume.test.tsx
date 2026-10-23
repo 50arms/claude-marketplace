@@ -27,7 +27,7 @@ describe('the resume procedure (pure)', () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at)
     expect(RESUME_PROCEDURE).toContain('without asking the person')
     const ok = <T,>(value: T) => ({ ok: true as const, value })
-    expect(briefingText({ plan: null, cards: ok([]), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })).toContain(RESUME_PROCEDURE)
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })).toContain(RESUME_PROCEDURE)
   })
 })
 
