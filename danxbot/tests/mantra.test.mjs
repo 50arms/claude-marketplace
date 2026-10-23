@@ -39,14 +39,14 @@ test("rule 1 holds for every agent: no main-session qualifier, and an agent that
 });
 
 // DX-5242: the person asked that feedback be offered in the thread when they voiced it there,
-// so that offer is rule 3's second named exception beside the plan sign-off.
-test("rule 3 routes a human decision to a problem on the card, with the plan sign-off and an in-thread feedback offer as the exceptions", () => {
+// so that offer is rule 3's named exception beside the plan sign-off and the switch to live mode.
+test("rule 3 routes a human decision to a problem on the card, with the plan sign-off, the live-mode switch and an in-thread feedback offer as the exceptions", () => {
   const decide = rule(3);
   assert.match(decide, /problem, with solutions, on the card it\s+concerns/);
   assert.match(decide, /never a question in the\s+session/);
   assert.match(
     decide,
-    /The exceptions are the\s+plan's human sign-off and, when the person raised it in the thread, offering\s+there to send 50 Arms feedback \(`danxbot:plan-workflow`\)/,
+    /The exceptions are the\s+plan's human sign-off, the switch to live mode and, when the person raised it in the thread, offering\s+there to send 50 Arms feedback \(`danxbot:plan-workflow`\)/,
   );
 });
 
@@ -97,4 +97,11 @@ test("CLAUDE.md names the one `mantra` row and no retired key", () => {
   assert.doesNotMatch(repoClaudeMd, /mantra\.(session_start|dispatch)/);
   assert.match(repoClaudeMd, /`mantra` registry row|registry row `mantra`/);
   assert.match(repoClaudeMd, /\{\{reminder:mantra\}\}/);
+});
+
+// The person named two ways of working: workflow mode (every rule) and live mode (changes at once, no overhead), entered only on their yes.
+test("the mantra names workflow mode as the default and live mode as entered only on the person's yes", () => {
+  assert.match(mantra, /\*\*Workflow mode\*\* is the default/);
+  assert.match(mantra, /\*\*Live mode\*\* is rapid iteration/);
+  assert.match(mantra, /Never\s+enter live mode on your own: ask the person/);
 });
