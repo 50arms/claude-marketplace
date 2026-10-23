@@ -147,7 +147,7 @@ export const NO_AGENT_LABEL = '50 Arms disconnected'
 // The donut's size in px (Svg takes CSS pixels): the band line's.
 export const DONUT_BAND_PX = 16
 
-// what the band's events warning says for a connected session the server reports no event listener for
+// what the events warning says for a connected session the server reports no event listener for
 // (`sessionListenerAttached` null): the plugin knows only that no status came, so it says that; never green, never silent.
 export const NO_EVENT_STATUS = 'the dashboard sent no event status for this session'
 

@@ -1186,6 +1186,21 @@ export function dashboard(
     }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
+// DX-5605: the session's stored events warning (the text its one toast is built from): the latest value the plugin wrote, null while events flow.
+// The band draws none of it; this is where a test reads the fact that the band text used to carry.
+export const eventsWarned = (d: { stateWrites: { key: string; value: unknown }[] }): string | null =>
+  (d.stateWrites.filter(w => w.key === 'eventsWarned').at(-1)?.value as string | undefined) ?? null
+
+// DX-5605: the band draws no events or relay status, whatever the relay or the listener is doing: none of its Text mentions either.
+export const bandSilent = async (band: any): Promise<void> => {
+  const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+  if (/events|relay/i.test(all)) throw new Error(`the band drew events or relay text: ${all}`)
+}
+
+// DX-5605: the relay's stored phase ('off', 'running', 'retrying', 'stopped', ...) as the plugin last wrote it; null before its first write.
+export const relayPhase = (d: { stateWrites: { key: string; value: unknown }[] }): string | null =>
+  ((d.stateWrites.filter(w => w.key === 'relay').at(-1)?.value as { phase?: string } | undefined)?.phase) ?? null
+
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an
 // idle session, as opposed to `relay.told`, the rows only a later turn reads
 export const woken = (d: { relay: { delivered: { text: string }[] } }): string[] => d.relay.delivered.map(x => x.text)

@@ -1,4 +1,4 @@
-import type { PlanView, RelayState } from '../../types'
+import type { PlanView } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
 import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_WORD, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
@@ -17,7 +17,7 @@ function idUrl(plan: PlanView['connected'], card: PlanView['card'], dashboardUrl
   return card !== null && dashboardUrl !== null ? boardCardUrl({ dashboardUrl }, card.id) : null
 }
 
-// The band above the prompt: the plan line (indicator, label, then the events warning / the open-problem count / the permission
+// The band above the prompt: the plan line (indicator, label, then the open-problem count / the permission
 // request / Disconnect and a close control hugging the right edge, the label truncating first). Every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
 // The held plan's `PLAN-NN` (or a card-only session's card id) in the label is that link: there is no separate Open control.
@@ -35,8 +35,6 @@ export function renderBand(
   // The band's width in columns (`bodyColumns`); undefined in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns: number | undefined,
-  // the plan event relay's state, for the events warning (its reason is toasted by the caller, once).
-  relay: RelayState,
 ): any {
   const { Box, Text, Button } = E
   const close = (

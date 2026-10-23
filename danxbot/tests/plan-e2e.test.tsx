@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // stand-in danx-dashboard MCP server: the band at session start counts the open problems as links and writes nothing to a card.
 import { describe, expect } from 'claude-code/testing'
 
-import { test, AGENT_NAME, SURFACES, answerPlanConnect, bandLabelOf, dashboard, expectIndicator, footerText, holdAgent, mountIndicator, linksOf, pressFooter, problemBadgeOf, startSession, forceRefresh } from './plan-kit'
+import { test, AGENT_NAME, bandSilent, eventsWarned, SURFACES, answerPlanConnect, bandLabelOf, dashboard, expectIndicator, footerText, holdAgent, mountIndicator, linksOf, pressFooter, problemBadgeOf, startSession, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -34,7 +34,7 @@ for (const surface of SURFACES) {
 // DX-4374: the indicator flow, end to end on both surfaces.
 for (const surface of SURFACES) {
   describe(`the indicator flow on ${surface}`, () => {
-    test('connected, dismiss, one footer press restores the band, the listener degrades, disconnect', async ($, on) => {
+    test('connected, dismiss, one footer press restores the band, the listener degrades (stored, never drawn), disconnect', async ($, on) => {
       const d = dashboard(on)
       answerPlanConnect(on, d)
       await startSession($, d, surface)
@@ -43,7 +43,8 @@ for (const surface of SURFACES) {
       const footer = await mountIndicator($, surface, ['focus'])
       expect(await footerText(footer)).toBe(`${AGENT_NAME} · PLAN-23`)
       await expectIndicator(band, surface, 25)
-      expect(await band.find({ type: 'Text', text: /^events: / })).toBeUndefined()
+      expect(eventsWarned(d)).toBeNull()
+      await bandSilent(band)
 
       await band.press({ key: 'band-close' })
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
@@ -52,7 +53,9 @@ for (const surface of SURFACES) {
 
       d.setListener('unattached')
       await forceRefresh($, d)
-      expect((await band.find({ type: 'Text', text: /^events: / }))?.text).toBe('events: unattached')
+      // the degraded listener is the session's stored warning and a toast; the band draws none of it
+      expect(eventsWarned(d)).toBe('events: unattached')
+      await bandSilent(band)
 
       await band.press({ key: 'disconnect' })
       await d.clock.settle()

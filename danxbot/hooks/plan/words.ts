@@ -131,7 +131,7 @@ export function footerTone(v: PlanView): string | undefined {
   return v.agent !== null && v.connected ? SUCCESS : undefined
 }
 
-// the band's events warning: why the plan's events are not flowing, or null while they are.
+// the events warning (stored in the session and toasted once on the change into it; the band draws none of it): why the plan's events are not flowing, or null while they are.
 // The plugin's own relay comes first: one that retries or stopped, or is not running for the plan the session is on, is never drawn healthy
 // whatever the dashboard last read; then the dashboard's own view of the session's listener (no status at all is a warning, never healthy).
 export function eventsWarning(v: PlanView, relay: RelayState): string | null {
