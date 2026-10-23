@@ -1,6 +1,6 @@
 import "./run-tests-with-npm-test.generated"
 // DX-5554: the band names the team agent the session signs in as (GET /api/plans `session.agent`) and what it answers for: the plan, the stand-alone
-// card it holds (`session.card_id` / `card_title`), or neither. A held card's Open link goes to the card's own page; the footer names the card too.
+// card it holds (`session.card_id` / `card_title`), or neither. A held card's id is the link to the card's own page (the plan's id is the plan's link); the footer names the agent.
 import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
@@ -11,9 +11,15 @@ import { test, AGENT_GATE_HALT, DASHBOARD_URL, SURFACES, dashboard, footerText, 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const AGENT = { id: 6, name: 'Tendai', avatar_url: 'https://cdn.example/tendai.png' }
 const CARD = { id: 'DX-77', title: 'One-off fix' }
-const labelOf = async (ui: any) => (await ui.find({ type: 'Text', text: /Tendai|Danxbot:|PLAN-23|DX-77/ }))?.text as string
+// the band's label read back: a held plan or card is the agent's name, the id as the link, then the name; every other state is one Text.
+const labelOf = async (ui: any) => {
+  const id = (await linksOf(ui)).find(l => l.key === 'open-plan' || l.key === 'open-card')
+  if (id === undefined) return (await ui.find({ type: 'Text', text: /Danxbot:|Danxbot ·/ }))?.text as string
+  const lead = ((await ui.find({ type: 'Text', text: /^Tendai · $/ }))?.text as string | undefined) ?? ''
+  return `${lead}${id.label}${((await ui.find({ type: 'Text', text: /^ · / }))?.text as string | undefined) ?? ''}`
+}
 const woken = (d: any): string[] => d.relay.delivered.map((x: any) => x.text)
-const openLinks = async (ui: any) => (await linksOf(ui)).filter(l => l.key === 'open-tab')
+const pageLinks = async (ui: any) => (await linksOf(ui)).filter(l => l.key === 'open-plan' || l.key === 'open-card' || l.key === 'open-tab')
 
 describe('the agent and its association in the band label', () => {
   const agent = { name: 'Tendai' }
@@ -56,8 +62,8 @@ describe('the agent and its association in the band label', () => {
     expect(agentBlockOf({ ok: true, status: 200, body: { state: 'agent_not_held', instruction: 'x' } })).toBe(null)
     expect(agentBlockOf({ ok: false, status: 409, body: { error: JSON.stringify(AGENT_GATE_HALT('agent_needed')) } })).toBe(null)
   })
-  test('the footer names a held card as it names a plan', () => {
-    expect(footerLabel({ ...ready, agent, card: CARD })).toBe('Danxbot · DX-77')
+  test('the footer names the agent alone while it holds a card (no plan)', () => {
+    expect(footerLabel({ ...ready, agent, card: CARD })).toBe('Tendai')
   })
 })
 
@@ -71,25 +77,25 @@ for (const surface of SURFACES) {
       expect(await labelOf(band)).toBe('Tendai · PLAN-23 · Danxbot plugin')
     })
 
-    test('a session holding a stand-alone card reads the card, and Open card goes to its page', async ($, on) => {
+    test('a session holding a stand-alone card reads the card, and the card id is the link to its page', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       d.world.card = CARD
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await labelOf(band)).toBe('Tendai · DX-77 · One-off fix')
-      expect(await openLinks(band)).toEqual([{ key: 'open-tab', label: 'Open card', href: `${DASHBOARD_URL}/board/DX-77` }])
+      expect(await pageLinks(band)).toEqual([{ key: 'open-card', label: 'DX-77', href: `${DASHBOARD_URL}/board/DX-77` }])
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
-      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · DX-77')
+      expect(await footerText(await mountIndicator($, surface))).toBe('Tendai')
     })
 
-    test('a signed-in session on neither reads the agent and the plans list link', async ($, on) => {
+    test('a signed-in session on neither reads the agent and has no page link', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await labelOf(band)).toBe('Danxbot · Tendai: not connected to a plan or card')
-      expect(await openLinks(band)).toEqual([{ key: 'open-tab', label: 'Open plan', href: `${DASHBOARD_URL}/plans` }])
+      expect(await pageLinks(band)).toEqual([])
     })
 
     test('a resumed session whose agent was released reads that it holds none (never Disconnected) from the dashboard own 403 refusal', async ($, on) => {

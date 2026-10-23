@@ -1233,7 +1233,7 @@ export const pressFooter = async (ui: any) => {
 export const AGENT_NAME = 'Katya'
 export async function bandLabelOf(ui: any): Promise<string> {
   const ref = (await linksOf(ui)).find(l => l.key === 'open-plan')?.label ?? ''
-  const name = ((await ui.find({ type: 'Text', text: / · / }))?.text as string | undefined) ?? ''
+  const name = ((await ui.find({ type: 'Text', text: /^ · / }))?.text as string | undefined) ?? ''
   return `${ref}${name}`
 }
 
