@@ -163,11 +163,10 @@ export function dashboard(
     boardsFail?: boolean
     // ... answers boards the plugin cannot read: none at all, or a prefix that is not capital letters
     boardsShape?: 'none' | 'badPrefix' | 'noKey'
-    // DX-4448: the plan's all-cards read fails / counts more cards than it returned
-    planCardsFail?: boolean
-    planCardsTotal?: number
-    // ... answers no total, a row with no id, no list, or a plan card_count the cards do not add up to
-    planCardsShape?: 'noTotal' | 'noId' | 'noList' | 'otherCount'
+    // DX-5933: the plan read (GET /api/plans/:id) answers no card_ids, ids that are not all strings, or no open_problem_count
+    planFieldsShape?: 'noCardIds' | 'badCardIds' | 'noOpenCount'
+    // ... and a plan holding this many more cards than the fixture's own (a large plan: 150 makes the old every-card read pass the host's limit)
+    extraPlanCards?: number
     // DX-4458: DX-3, a needs-you card with 49 open problems (DX-4443's shape)
     bigCard?: boolean
     // DX-4458: GET /api/issues/<id> answers 500 for this card
@@ -342,7 +341,7 @@ export function dashboard(
   }
   if (options.bigCard) world.cards.push(bigCard())
   // DX-5232: every card of the plan (any status, either board): the fixture's own cards and the others
-  const planCardIds = [...new Set([...PLAN_CARD_IDS, ...world.cards.map(c => c.id)])]
+  const planCardIds = [...new Set([...PLAN_CARD_IDS, ...world.cards.map(c => c.id), ...Array.from({ length: options.extraPlanCards ?? 0 }, (_, i) => `DX-${1000 + i}`)])]
   const plans = [
     { id: 23, ref: 'PLAN-23', name: options.planName ?? 'Danxbot plugin', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 2 } },
     { id: 24, ref: 'PLAN-24', name: 'Agent mode', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 0 } },
@@ -402,8 +401,13 @@ export function dashboard(
         ref: p.ref,
         name: p.name,
         status: p.status,
-        card_count: options.planCardsShape === 'otherCount' ? planCardIds.length + 1 : planCardIds.length,
+        card_count: planCardIds.length,
         ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
+        // as the real route answers: the two opt-in fields only when `fields` names them (DX-5933)
+        ...(query?.fields?.card_ids && options.planFieldsShape !== 'noCardIds' ? { card_ids: options.planFieldsShape === 'badCardIds' ? [...planCardIds, 7] : planCardIds } : {}),
+        ...(query?.fields?.open_problem_count && options.planFieldsShape !== 'noOpenCount'
+          ? { open_problem_count: world.cards.reduce((n, c) => n + c.problems.filter(p => p.open).length, 0) }
+          : {}),
       })
     }
     const cards = /^\/api\/plans\/(\d+)\/cards$/.exec(path)
@@ -413,17 +417,6 @@ export function dashboard(
         cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4 })),
         ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
       })
-    }
-    // DX-4448: the plan's every card in any status and on either board, unpaged (not board-scoped): DX-30 and DX-31 are in neither the
-    // needs-you nor the in-progress bucket, SG-7 is on the gpt-manager board
-    if (method === 'GET' && cards && query?.bucket === undefined) {
-      if (options.planCardsFail) return reply({ error: 'plan cards boom' }, 500)
-      if (options.planCardsShape === 'noList') return reply({ total: 0 })
-      const rows = planCardIds.map(id => {
-        const openProblemCount = world.cards.find(c => c.id === id)?.problems.filter(p => p.open).length ?? 0
-        return options.planCardsShape === 'noId' ? { title: id, openProblemCount } : { id, openProblemCount, boardId: id.startsWith('SG') ? 'gpt-manager:gpt-manager-main' : 'danxbot:danxbot-main' }
-      })
-      return reply({ cards: rows, ...(options.planCardsShape === 'noTotal' ? {} : { total: options.planCardsTotal ?? rows.length }) })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)

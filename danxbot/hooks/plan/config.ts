@@ -27,6 +27,10 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 export const IN_PROGRESS_LIMIT = 15
 // `GET /api/plans` is asked for one row only because only its `session`, `dashboard_url` and listener fields are read (never the whole list).
 export const SESSION_PLAN_PROBE = { limit: 1 }
+// DX-5933: `GET /api/plans/:id` is asked, besides its always-present counts, for the plan's card ids and its open-problem total (two opt-in fields,
+// a few bytes per card at any plan size). The band and the reply links need nothing more of a card, and the plan's card-list route answers whole
+// card rows (about 3 KB each), which past about 20 cards exceeds the host's tool-result limit.
+export const PLAN_BAND_FIELDS = { card_ids: true, open_problem_count: true }
 // an issue prefix as a board names it (`ABC`, `XYZ`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10

@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// DX-4458: a card with dozens of problems (DX-4443: 49 questions) is never read for its rows: the count comes from the every-card list.
+// DX-4458: a card with dozens of problems (DX-4443: 49 questions) is never read for its rows: the count comes from the plan read's open_problem_count.
 import { describe, expect } from 'claude-code/testing'
 
 import { errText, failureReason, loadPlan } from '../hooks/plan/load'
@@ -19,11 +19,24 @@ const issueReads = (d: any) => d.api.filter((a: any) => a.method === 'GET' && /^
 
 for (const surface of SURFACES) {
   describe(`a card with many problems on ${surface}`, () => {
-    test('the load reads no card of its own: the count is summed from the every-card list, whatever one card holds', async ($, on) => {
+    test('the load reads no card of its own: the count is the open_problem_count of the plan read, whatever one card holds', async ($, on) => {
       const { d, band } = await openBand($, on, surface, { bigCard: true })
       expect(issueReads(d)).toEqual([])
       expect(await problemBadgeOf(band)).toBe('⚠ 52')
       expect(await text(band)).not.toContain('Disconnected')
+    })
+
+    // DX-5933: a plan of 150 cards. The plan's card-list route answers whole rows (about 3 KB each) and the host refuses a result past its limit, which
+    // blanked the count and the links on any plan past about 20 cards: the band reads ids and the open-problem total off the plan read instead.
+    test('a 150-card plan: the count and the links load from the plan read, no card-list read of the plan is made, nothing is toasted', async ($, on) => {
+      const { d, band } = await openBand($, on, surface, { extraPlanCards: 150 })
+      expect(await problemBadgeOf(band)).toBe('⚠ 3')
+      const planReads = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23')
+      expect(planReads.length).toBeGreaterThan(0)
+      for (const a of planReads) expect(a.query).toEqual({ fields: { card_ids: true, open_problem_count: true } })
+      const cardLists = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23/cards')
+      for (const a of cardLists) expect(a.query.bucket).toBe('in-progress')
+      expect(d.toasts).toEqual([])
     })
 
     test('the plan list is asked for one row only, however many plans exist', async ($, on) => {

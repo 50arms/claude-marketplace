@@ -80,6 +80,13 @@ for (const surface of SURFACES) {
       expect(d.api.length).toBe(api)
     })
 
+    // DX-5933: on a 150-card plan every card id of the plan is still known, so the last one links to the plan, not the board
+    test('a 150-card plan: its last card links to the plan page', async ($, on) => {
+      const d = dashboard(on, { extraPlanCards: 150 })
+      await startSession($, d, surface)
+      expect(await drawnText(await $.ui.mount({ ...message('DX-1149 DX-1150'), surface }))).toBe(`${PLAN_URL('DX-1149')} ${BOARD_URL('DX-1150')}`)
+    })
+
     test('the other props ride along as received', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
@@ -117,8 +124,8 @@ for (const surface of SURFACES) {
       ['a boards answer with no boards', { boardsShape: 'none' }],
       ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }],
       ['a boards answer with no boards key', { boardsShape: 'noKey' }],
-      ['a plan card with no id', { planCardsShape: 'noId' }],
-      ['cards that do not add up to the plan card_count (a board missing)', { planCardsShape: 'otherCount' }],
+      ['a plan read with no card_ids', { planFieldsShape: 'noCardIds' }],
+      ['a plan read with a card id that is not a string', { planFieldsShape: 'badCardIds' }],
     ] as const) {
       test(`${name}: the plan stays ready, the reply is drawn as it is`, async ($, on) => {
         const d = dashboard(on, options as any)
@@ -131,27 +138,19 @@ for (const surface of SURFACES) {
       })
     }
 
-    // DX-5232: the open-problem count is summed from the same every-card read; one that cannot be read whole leaves the plan ready,
-    // the band with no count (never a guessed 0), and the reason told once
-    for (const [name, options] of [
-      ['the plan cards call failing', { planCardsFail: true }],
-      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }],
-      ['the plan cards answer with no list', { planCardsShape: 'noList' }],
-      ['the plan cards answer with no total', { planCardsShape: 'noTotal' }],
-    ] as const) {
-      test(`${name}: the plan stays ready, no count is shown, the reason is told once`, async ($, on) => {
-        const d = dashboard(on, options as any)
-        await startSession($, d, surface)
-        await forceRefresh($, d)
-        const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
-        const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
-        expect(all).not.toContain('Disconnected')
-        expect(await bandLabelOf(band)).toContain('PLAN-23')
-        expect(await problemBadgeOf(band)).toBeUndefined()
-        // one toast for the shared cause: the count and the links both stand on this read
-        expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)
-        expect(d.toasts.filter(t => t.startsWith('Card links unavailable'))).toEqual([])
-      })
-    }
+    // DX-5933: the open-problem count is the plan read's own `open_problem_count`; an answer without it leaves the plan ready, the band with no
+    // count (never a guessed 0), and the reason told once. The links stand on `card_ids`, a separate field, and keep working.
+    test('a plan read with no open_problem_count: the plan stays ready, no count is shown, the reason is told once, the links still work', async ($, on) => {
+      const d = dashboard(on, { planFieldsShape: 'noOpenCount' })
+      await startSession($, d, surface)
+      await forceRefresh($, d)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+      expect(all).not.toContain('Disconnected')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
+      expect(await problemBadgeOf(band)).toBeUndefined()
+      expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23 answered no open_problem_count'))).toHaveLength(1)
+      expect(d.toasts.filter(t => t.startsWith('Card links unavailable'))).toEqual([])
+    })
   })
 }

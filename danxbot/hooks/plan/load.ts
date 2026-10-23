@@ -1,5 +1,5 @@
 import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, PREFIX_PATTERN, SESSION_PLAN_PROBE, STATUS_KEYS } from './config'
+import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, PLAN_BAND_FIELDS, PREFIX_PATTERN, SESSION_PLAN_PROBE, STATUS_KEYS } from './config'
 import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './mcp'
 import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
@@ -99,18 +99,17 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const noPlan = { dashboardUrl, connected: null, listener, ...holds }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
-  // One load of everything about the connected plan: the plan itself (its status counts),
-  // the in-progress cards, the boards and every card, together.
-  const [planR, inProg, boards, allCards] = await Promise.all([
-    call('GET', `/api/plans/${connectedId}`),
+  // One load of everything about the connected plan: the plan itself (its status counts, card ids and open-problem total),
+  // the in-progress cards and the boards, together.
+  const [planR, inProg, boards] = await Promise.all([
+    // the plan's every card id and its open-problem total come on this read (`PLAN_BAND_FIELDS`), whatever the plan's board or size: the plan
+    // route is not board-scoped by the MCP (route-board-scope lists `/api/plans/:planId/cards` as false; GET /api/issues would be stamped
+    // with the session's board and miss a plan's other boards)
+    call('GET', `/api/plans/${connectedId}`, { query: { fields: PLAN_BAND_FIELDS } }),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', order: 'desc', limit: IN_PROGRESS_LIMIT } }),
     // the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
     // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
     call('GET', '/api/boards'),
-    // every card id of the plan, whatever its board or status: the plan route is not board-scoped by the MCP (route-board-scope
-    // lists `/api/plans/:planId/cards` as false; GET /api/issues would be stamped with the session's board and miss a plan's other
-    // boards) and, with no `limit`, answers every row (rows come whole: the route takes no `fields`).
-    call('GET', `/api/plans/${connectedId}/cards`),
   ])
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
   if (!planR.ok) return fail(errText(planR))
@@ -124,8 +123,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const read = readAllCards(allCards, connectedId)
-  const base = { dashboardUrl, connected, listener, ...holds, statusBreakdown: breakdown, links: readLinks(boards, read, planR.body.card_count) }
+  const base = { dashboardUrl, connected, listener, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
 
   // The in-progress bucket: the same completeness rule.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
@@ -134,48 +132,24 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
   const ipRows: any[] = inProg.body.cards ?? []
   const inProgress: InProgressRow[] = ipRows.map(row => ({ id: row.id, title: row.title }))
-  // the open problems are the sum of each card's `openProblemCount` on the every-card read. A read that cannot give that count leaves the
-  // view ready (the plan itself was read) with the count unknown (null, never a guessed 0) and the reason in `openProblemsError`.
-  const counted = countOpenProblems(read)
+  // the open problems are the plan's own `open_problem_count`. An answer without it leaves the view ready (the plan itself was read) with the
+  // count unknown (null, never a guessed 0) and the reason in `openProblemsError`.
+  const counted = planR.body.open_problem_count
   return {
     ...EMPTY,
     ...base,
     phase: 'ready',
     error: null,
     openProblems: typeof counted === 'number' ? counted : null,
-    openProblemsError: typeof counted === 'string' ? counted : null,
+    openProblemsError: typeof counted === 'number' ? null : `GET /api/plans/${connectedId} answered no open_problem_count: cannot count the open problems`,
     inProgress,
     refreshedAt,
   }
 }
 
-type AllCards = { cards: any[]; route: string } | { error: string }
-
-// the plan's every-card read, whole or the one reason it is not: the one home of the checks that make it a complete list.
-function readAllCards(allCards: Api, planId: number): AllCards {
-  const route = `GET /api/plans/${planId}/cards (all)`
-  if (!allCards.ok) return { error: `${route} ${errText(allCards)}` }
-  const cards = allCards.body?.cards
-  if (!Array.isArray(cards)) return { error: `${route} answered no list of cards` }
-  if (typeof allCards.body.total !== 'number') return { error: `${route} answered no total` }
-  if (allCards.body.total !== cards.length) return { error: `${route} answered ${cards.length} of ${allCards.body.total} cards` }
-  return { cards, route }
-}
-
-// The sum of `openProblemCount` over a whole every-card read, or the reason it cannot be a count (never a lower bound).
-function countOpenProblems(read: AllCards): number | string {
-  if ('error' in read) return `${read.error}: cannot count the open problems`
-  let sum = 0
-  for (const c of read.cards) {
-    if (typeof c?.openProblemCount !== 'number') return `${read.route} answered a card with no openProblemCount: cannot count the open problems`
-    sum += c.openProblemCount
-  }
-  return sum
-}
-
 // the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays
 // `ready` (the plan itself was read), the view says why replies are not linked, and replies are drawn as written.
-function readLinks(boards: Api, read: AllCards, planCardCount: unknown): CardLinks {
+function readLinks(boards: Api, cardIds: unknown, route: string): CardLinks {
   const error = (message: string): CardLinks => ({ state: 'error', message })
   if (!boards.ok) return error(`GET /api/boards ${errText(boards)}`)
   const list = boards.body?.boards
@@ -184,12 +158,10 @@ function readLinks(boards: Api, read: AllCards, planCardCount: unknown): CardLin
   if (!prefixes.every((p): p is string => typeof p === 'string' && PREFIX_PATTERN.test(p))) {
     return error('GET /api/boards answered a board with no issue_prefix of capital letters')
   }
-  if ('error' in read) return error(`${read.error}: cannot tell which ids are the plan's`)
-  const { cards, route } = read
-  // the plan's own count (every board's cards) must agree, so a board-scoped or partial answer is an error, never a smaller set
-  if (planCardCount !== cards.length) return error(`${route} answered ${cards.length} cards but the plan has ${String(planCardCount)}`)
-  if (!cards.every(c => typeof c?.id === 'string')) return error(`${route} answered a card with no id`)
-  return { state: 'ready', prefixes: [...new Set(prefixes as string[])], planCardIds: cards.map(c => c.id) }
+  if (!Array.isArray(cardIds) || !cardIds.every((id): id is string => typeof id === 'string')) {
+    return error(`${route} answered no list of card ids: cannot tell which ids are the plan's`)
+  }
+  return { state: 'ready', prefixes: [...new Set(prefixes as string[])], planCardIds: cardIds }
 }
 
 // The origin of an http(s) URL string, or null: a trailing slash or path is dropped, a non-URL is refused.
