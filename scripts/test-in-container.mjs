@@ -28,6 +28,19 @@ const TEST_USER = { uid: 1000, gid: 1000 };
 /** Git for Windows rewrites arguments that look like POSIX paths; every path handed to docker here is a container path. */
 const DOCKER_ENV = { ...process.env, MSYS_NO_PATHCONV: "1", MSYS2_ARG_CONV_EXCL: "*" };
 
+/**
+ * CP-2: the container name, set the moment before `docker run` is spawned. `docker run --rm` has the daemon remove the container when it
+ * stops, however this process ends. What it cannot cover is the window inside `docker run` itself, which creates the container, attaches,
+ * then starts it: a CLI killed in that window leaves a `Created` container that --rm never removes. A graceful end (exit, die(), SIGINT,
+ * SIGTERM) removes it here, best effort and harmless once --rm already has. A HARD kill (SIGKILL, a Windows process-tree kill) in that
+ * window runs no code, so no runner can close it: the backstop is danxbot's `make sweep-docker`, which removes a container that is not
+ * running once it has been idle past its window (60 minutes by default), a `Created` one by its creation time.
+ */
+let containerName;
+process.on("exit", () => {
+  if (containerName) spawnSync("docker", ["rm", "-f", containerName], { stdio: "ignore", env: DOCKER_ENV });
+});
+
 const die = (message) => {
   console.error(`test-in-container: ${message}`);
   process.exit(2);
@@ -112,13 +125,20 @@ function main() {
   // The archive is built BEFORE the container exists, so a failure collecting it has no container to leak.
   const archive = buildUstar(collectSource(), TEST_USER);
   const name = `claude-plugins-test-${process.pid}-${Date.now()}`;
-  // CP-2: one `docker run --rm -i`; the archive goes in on stdin, so no container exists before it runs under --rm.
+  // CP-2: one `docker run --rm -i`; the archive goes in on stdin, so the only window left is inside `docker run` itself (see containerName above).
+  containerName = name;
   const run = spawn("docker", containerRunArgs(name, image, testFiles), { env: DOCKER_ENV, stdio: ["pipe", "inherit", "inherit"] });
   run.on("error", (e) => die(`docker run failed: ${e.message}`));
   run.stdin.on("error", () => {}); // a container that exits early surfaces through its exit code below
   run.stdin.end(archive);
-  process.on("SIGINT", () => run.kill("SIGINT"));
-  process.on("SIGTERM", () => run.kill("SIGTERM"));
+  process.on("SIGINT", () => {
+    run.kill("SIGINT");
+    process.exit(130); // the exit handler removes the container
+  });
+  process.on("SIGTERM", () => {
+    run.kill("SIGTERM");
+    process.exit(143);
+  });
   run.on("exit", (status) => process.exit(status ?? 1));
 }
 
