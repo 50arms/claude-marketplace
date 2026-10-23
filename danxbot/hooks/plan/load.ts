@@ -1,5 +1,5 @@
 import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, PLAN_BAND_FIELDS, PREFIX_PATTERN, SESSION_PLAN_PROBE, STATUS_KEYS } from './config'
+import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, NEEDS_YOU_BUCKET_ID, PLAN_BAND_FIELDS, PREFIX_PATTERN, SESSION_PLAN_PROBE, STATUS_KEYS } from './config'
 import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './mcp'
 import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
@@ -99,10 +99,10 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const noPlan = { dashboardUrl, connected: null, listener, ...holds }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
-  // One load of everything about the connected plan: the plan itself (its status counts, card ids and open-problem total),
+  // One load of everything about the connected plan: the plan itself (its status counts, bucket counts and card ids),
   // the in-progress cards and the boards, together.
   const [planR, inProg, boards] = await Promise.all([
-    // the plan's every card id and its open-problem total come on this read (`PLAN_BAND_FIELDS`), whatever the plan's boards or size
+    // the plan's every card id and its bucket counts come on this read (`PLAN_BAND_FIELDS`), whatever the plan's boards or size
     call('GET', `/api/plans/${connectedId}`, { query: { fields: PLAN_BAND_FIELDS } }),
     call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', order: 'desc', limit: IN_PROGRESS_LIMIT } }),
     // the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
@@ -130,16 +130,16 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
   const ipRows: any[] = inProg.body.cards ?? []
   const inProgress: InProgressRow[] = ipRows.map(row => ({ id: row.id, title: row.title }))
-  // the open problems are the plan's own `open_problem_count`. An answer without it leaves the view ready (the plan itself was read) with the
-  // count unknown (null, never a guessed 0) and the reason in `openProblemsError`.
-  const counted = planR.body.open_problem_count
+  // the cards waiting on a person are the plan's `bucket_counts["needs-you"]`, the number its Needs You tab shows. An answer without it leaves the view
+  // ready (the plan itself was read) with the count unknown (null, never a guessed 0) and the reason in `needsYouError`.
+  const counted = planR.body.bucket_counts?.[NEEDS_YOU_BUCKET_ID]
   return {
     ...EMPTY,
     ...base,
     phase: 'ready',
     error: null,
-    openProblems: typeof counted === 'number' ? counted : null,
-    openProblemsError: typeof counted === 'number' ? null : `GET /api/plans/${connectedId} answered no open_problem_count: cannot count the open problems`,
+    needsYou: typeof counted === 'number' ? counted : null,
+    needsYouError: typeof counted === 'number' ? null : `GET /api/plans/${connectedId} answered no bucket_counts["${NEEDS_YOU_BUCKET_ID}"]: cannot count the cards that need you`,
     inProgress,
     refreshedAt,
   }

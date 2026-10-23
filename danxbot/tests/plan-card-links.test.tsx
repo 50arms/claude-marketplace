@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { linkCardIds } from '../hooks/plan/card-links'
-import { test, bandLabelOf, AGENT_NAME, DASHBOARD_URL, SURFACES, answerPlanConnect, dashboard, footerText, holdAgent, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
+import { test, bandLabelOf, AGENT_NAME, DASHBOARD_URL, SURFACES, answerPlanConnect, dashboard, footerText, holdAgent, forceRefresh, mountIndicator, needsYouBadgeOf, startSession } from './plan-kit'
 
 const plan = { id: 23, ref: 'PLAN-23', name: 'p', status: 'building', dashboardUrl: DASHBOARD_URL } as any
 const PREFIXES = ['DX', 'SG']
@@ -138,18 +138,18 @@ for (const surface of SURFACES) {
       })
     }
 
-    // DX-5933: the open-problem count is the plan read's own `open_problem_count`; an answer without it leaves the plan ready, the band with no
+    // DX-5933: the badge's count is the plan read's own `bucket_counts["needs-you"]`; an answer without it leaves the plan ready, the band with no
     // count (never a guessed 0), and the reason told once. The links stand on `card_ids`, a separate field, and keep working.
-    test('a plan read with no open_problem_count: the plan stays ready, no count is shown, the reason is told once, the links still work', async ($, on) => {
-      const d = dashboard(on, { planFieldsShape: 'noOpenCount' })
+    test('a plan read with no needs-you count: the plan stays ready, no count is shown, the reason is told once, the links still work', async ($, on) => {
+      const d = dashboard(on, { planFieldsShape: 'noNeedsYou' })
       await startSession($, d, surface)
       await forceRefresh($, d)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
       const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
       expect(all).not.toContain('Disconnected')
       expect(await bandLabelOf(band)).toContain('PLAN-23')
-      expect(await problemBadgeOf(band)).toBeUndefined()
-      expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23 answered no open_problem_count'))).toHaveLength(1)
+      expect(await needsYouBadgeOf(band)).toBeUndefined()
+      expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23 answered no bucket_counts["needs-you"]'))).toHaveLength(1)
       expect(d.toasts.filter(t => t.startsWith('Card links unavailable'))).toEqual([])
     })
   })

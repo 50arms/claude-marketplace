@@ -3,7 +3,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { DISCONNECT_GLYPH, EMPTY } from '../hooks/plan/config'
 import { bandLabel } from '../hooks/plan/words'
-import { test, AGENT_NAME, DASHBOARD_URL, SURFACES, answerPlanConnect, bandLabelOf, browserCalls, linksOf, problemBadgeOf, dashboard, expectText, footerText, holdAgent, mountIndicator, pressFooter, startSession } from './plan-kit'
+import { test, AGENT_NAME, DASHBOARD_URL, SURFACES, answerPlanConnect, bandLabelOf, browserCalls, linksOf, needsYouBadgeOf, dashboard, expectText, footerText, holdAgent, mountIndicator, pressFooter, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
@@ -23,8 +23,8 @@ describe('plan band', () => {
     const wide = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     expect(await bandLabelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, `⚠ 3` 8, × 6 (the glyph is narrower than the word, so the name keeps more)
-    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name that goes o…')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, `⚠ 2 cards need you` 8, × 6 (the glyph is narrower than the word, so the name keeps more)
+    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan n…')
     expect((await narrow.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
   })
   test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {
@@ -53,32 +53,32 @@ describe('plan band', () => {
     }
   })
 
-  test('the open-problem count is a Markdown link to the Needs You tab on every surface, never a Button or a Link element', async ($, on) => {
+  test('the Needs You badge is a Markdown link to the Needs You tab on every surface, never a Button or a Link element', async ($, on) => {
     const d = dashboard(on)
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await problemBadgeOf(ui)).toBe('⚠ 3')
-      expect(await ui.find({ type: 'Button', key: 'open-problems' })).toBeUndefined()
+      expect(await needsYouBadgeOf(ui)).toBe('⚠ 2 cards need you')
+      expect(await ui.find({ type: 'Button', key: 'needs-you' })).toBeUndefined()
       expect(await ui.findAll({ type: 'Link' })).toEqual([])
-      expect((await linksOf(ui)).find(l => l.key === 'open-problems')?.href).toBe(`${DASHBOARD_URL}/plans/23?tab=needs-you`)
+      expect((await linksOf(ui)).find(l => l.key === 'needs-you')?.href).toBe(`${DASHBOARD_URL}/plans/23?tab=needs-you`)
       await ui.unmount()
       expect(browserCalls(d)).toEqual([])
     }
   })
 
-  test('a plan with no open problems draws no problem button or link', async ($, on) => {
+  test('a plan with no cards that need a person draws no Needs You badge', async ($, on) => {
     const d = dashboard(on)
     for (const card of d.world.cards) card.problems = []
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await problemBadgeOf(ui)).toBeUndefined()
+      expect(await needsYouBadgeOf(ui)).toBeUndefined()
       await ui.unmount()
     }
   })
 
-  test('connected: the open-problem count leads, then the plan id link and the name; no Open plan link, the same on both surfaces', async ($, on) => {
+  test('connected: the Needs You badge leads, then the plan id link and the name; no Open plan link, the same on both surfaces', async ($, on) => {
     const d = dashboard(on)
     for (const surface of SURFACES) {
       await startSession($, d, surface)
@@ -87,7 +87,7 @@ describe('plan band', () => {
       expect(await ui.findAll({ type: 'Link' })).toEqual([])
       expect(await ui.find({ key: 'open-tab' })).toBeUndefined()
       expect(await linksOf(ui)).toEqual([
-        { key: 'open-problems', label: '⚠ 3', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` },
+        { key: 'needs-you', label: '⚠ 2 cards need you', href: `${DASHBOARD_URL}/plans/23?tab=needs-you` },
         { key: 'open-plan', label: 'PLAN-23', href: `${DASHBOARD_URL}/plans/23` },
       ])
       expect(JSON.stringify(await ui.findAll({ type: 'Text' }))).not.toContain('Open plan')
@@ -205,7 +205,7 @@ for (const surface of SURFACES) {
       // order and keys unchanged, the close control last
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
       expect(keys).toEqual(['disconnect', 'band-close'])
-      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-plan'])
+      expect((await linksOf(band)).map(l => l.key)).toEqual(['needs-you', 'open-plan'])
       expect((await band.find({ key: 'band-close' }))?.props.role).toBe('dismiss')
     })
   })

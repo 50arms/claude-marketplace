@@ -27,10 +27,10 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 export const IN_PROGRESS_LIMIT = 15
 // `GET /api/plans` is asked for one row only because only its `session`, `dashboard_url` and listener fields are read (never the whole list).
 export const SESSION_PLAN_PROBE = { limit: 1 }
-// `GET /api/plans/:id` is asked, besides its always-present counts, for the plan's card ids and its open-problem total (two opt-in fields,
-// a few bytes per card at any plan size). The band and the reply links need nothing more of a card, and the plan's card-list route answers whole
+// `GET /api/plans/:id` is asked, besides its always-present counts (the status breakdown and the bucket counts, whose `needs-you` the band's badge shows),
+// for the plan's card ids (an opt-in field, a few bytes per card at any plan size). The band and the reply links need nothing more of a card, and the plan's card-list route answers whole
 // card rows (about 3 KB each), which past about 20 cards exceeds the host's tool-result limit.
-export const PLAN_BAND_FIELDS = { card_ids: true, open_problem_count: true }
+export const PLAN_BAND_FIELDS = { card_ids: true }
 // an issue prefix as a board names it (`ABC`, `XYZ`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10
@@ -101,8 +101,8 @@ export const EMPTY: PlanView = {
   agentBlock: null,
   statusBreakdown: null,
   inProgress: [],
-  openProblems: 0,
-  openProblemsError: null,
+  needsYou: 0,
+  needsYouError: null,
   // nothing to link until a load reads the boards and the plan's cards
   links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,
@@ -126,7 +126,7 @@ export function planUrl(plan: ConnectedPlan): string {
   return `${plan.dashboardUrl}/plans/${plan.id}`
 }
 
-// the plan page's Needs You tab, which the band's problem button opens. `needs-you` is the id of the dashboard's Needs You bucket, which the plan page reads from `?tab=`.
+// the plan page's Needs You tab, which the band's Needs You badge opens. `needs-you` is the id of the dashboard's Needs You bucket, which the plan page reads from `?tab=`.
 export const NEEDS_YOU_BUCKET_ID = 'needs-you'
 export function needsYouUrl(plan: ConnectedPlan): string {
   return `${planUrl(plan)}?tab=${NEEDS_YOU_BUCKET_ID}`

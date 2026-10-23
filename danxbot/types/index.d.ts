@@ -66,11 +66,10 @@ export type PlanView = {
   statusBreakdown: StatusBreakdown | null
   // The in-progress bucket's rows (a card in progress with an open problem sits in needs-you, not here).
   inProgress: InProgressRow[]
-  // the open problems on the connected plan's cards (the sum of each card's
-  // `open_problem_count` on the plan read); a count, never the problems themselves.
-  // null when the plan read gave no count (the band then shows none); `openProblemsError` says why.
-  openProblems: number | null
-  openProblemsError: string | null
+  // the plan cards waiting on a person (the plan read's `bucket_counts["needs-you"]`, the number its Needs You tab shows); a count of cards, never of problems.
+  // null when the plan read gave no count (the band then shows none); `needsYouError` says why.
+  needsYou: number | null
+  needsYouError: string | null
   // what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready`, shows one toast, and replies are then drawn as written.
   links: CardLinks

@@ -78,10 +78,10 @@ describe('the agent and its association in the band label', () => {
     test('yellow for the auto-mode block, a failed load, and an open problem', () => {
       expect(footerTone({ ...ready, phase: 'blocked' })).toBe('yellow')
       expect(footerTone({ ...ready, phase: 'error' })).toBe('yellow')
-      expect(footerTone({ ...ready, agent, connected: plan, openProblems: 2 })).toBe('yellow')
+      expect(footerTone({ ...ready, agent, connected: plan, needsYou: 2 })).toBe('yellow')
     })
     test('green when connected with an agent and no problems', () => {
-      expect(footerTone({ ...ready, agent, connected: plan, openProblems: 0 })).toBe('green')
+      expect(footerTone({ ...ready, agent, connected: plan, needsYou: 0 })).toBe('green')
     })
     test('no colour with no agent, or with an agent and no plan', () => {
       expect(footerTone({ ...ready, connected: plan })).toBeUndefined()

@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { DISCONNECT_GLYPH, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
-import { test, bandLabelOf, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
+import { test, bandLabelOf, dashboard, expectRowCarries, needsYouBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 // DX-4415: the band has no Refresh button; `/danx-plan` forces a load (detached from the command, which returns at once)
@@ -81,7 +81,7 @@ describe('what one load says about what it did not read', () => {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await text(band)).toContain('50 Arms: Disconnected')
-      expect(await problemBadgeOf(band)).toBeUndefined()
+      expect(await needsYouBadgeOf(band)).toBeUndefined()
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('red')
       const label = await band.find({ type: 'Text', text: /50 Arms: Disconnected/ })
       expect(label?.props.color).toBe('red')
