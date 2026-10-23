@@ -447,7 +447,7 @@ export function dashboard(
   // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
   const server = {
     calls: [] as { plan_id: number; cursor: string | null; timeout_ms: number; transcript_path?: string }[],
-    buffer: [] as { cursor: string; text: string; urgent: boolean }[],
+    buffer: [] as { cursor: string; text: string; urgent: boolean; acks: { eventId: number; attempt: number }[] }[],
     plan: undefined as number | undefined,
     script: [] as (() => any)[],
     stopped: undefined as { reason: string; detail: string; fix: string } | undefined,
@@ -1103,8 +1103,9 @@ export function dashboard(
     calls: server.calls,
     // events appear on the dashboard: a held wait answers at once
     // (DX-4721: every record the server answers carries a boolean `urgent`; a test that does not say is a not-urgent record)
-    push: (...events: { cursor: string; text: string; urgent?: boolean }[]) => {
-      server.buffer.push(...events.map(e => ({ urgent: false, ...e })))
+    // (DX-5846: so does `acks`, the events the record asks the session to acknowledge; a test that does not say asks for none)
+    push: (...events: { cursor: string; text: string; urgent?: boolean; acks?: { eventId: number; attempt: number }[] }[]) => {
+      server.buffer.push(...events.map(e => ({ urgent: false, acks: [], ...e })))
       server.wake?.()
     },
     // every key the plugin wrote to $.store, in order

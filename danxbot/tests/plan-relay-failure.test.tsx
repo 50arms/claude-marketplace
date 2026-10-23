@@ -84,7 +84,7 @@ for (const surface of SURFACES) {
     // relay stops with the remedy (restart the session). A flag that is there and not a boolean is a malformed answer, retried (the loop above).
     test('a record with no urgent flag stops the relay with the restart remedy, told once, never retried', async ($, on) => {
       const d = dashboard(on)
-      d.relay.server.script.push(() => answer({ events: [{ cursor: 'c3', text: 'x', urgent: false }, { cursor: 'c4', text: 'y' }] }))
+      d.relay.server.script.push(() => answer({ events: [{ cursor: 'c3', text: 'x', urgent: false, acks: [] }, { cursor: 'c4', text: 'y' }] }))
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(relayPhase(d)).toBe('stopped')
@@ -219,10 +219,10 @@ for (const surface of SURFACES) {
       ['an event with a null cursor', JSON.stringify({ events: [{ cursor: null, text: 'x' }] })],
       ['an event with no text', JSON.stringify({ events: [{ cursor: 'c3', urgent: false }] })],
       ['an event with an empty text', JSON.stringify({ events: [{ cursor: 'c3', text: '', urgent: false }] })],
-      ['an event whose urgent is a string', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: 'true' }] })],
-      ['an event whose urgent is a number', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: 1 }] })],
-      ['an event whose urgent is null', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: null }] })],
-      ['a good event followed by one whose urgent is a string', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: false }, { cursor: 'c4', text: 'y', urgent: 'no' }] })],
+      ['an event whose urgent is a string', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: 'true', acks: [] }] })],
+      ['an event whose urgent is a number', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: 1, acks: [] }] })],
+      ['an event whose urgent is null', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: null, acks: [] }] })],
+      ['a good event followed by one whose urgent is a string', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: false, acks: [] }, { cursor: 'c4', text: 'y', urgent: 'no', acks: [] }] })],
       ['a stopped record without a fix', JSON.stringify({ stopped: { reason: 'r', detail: 'd' } })],
     ] as const) {
       test(`a malformed answer (${name}) is a loud failure, never an empty list`, async ($, on) => {

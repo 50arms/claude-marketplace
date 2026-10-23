@@ -137,6 +137,10 @@ One writer: the main session. Sub-agent briefs say "no plan writes; return findi
 Your plan's events arrive unprompted, tagged `[danxbot plan event]` — never poll, loop or
 Monitor for them. Every line is one of these kinds.
 
+Acknowledge each flagged event right after reading it, before acting: a line starting
+`[ack-required event N]` gives the exact `danxbot_api POST /api/plan-sessions/me/events/N/ack`
+call (no body). One you already acted on is only acknowledged, never acted on twice.
+
 From the dashboard:
 
 - `has not made an MCP call …` → the dashboard's idle nudge: every card it names is workable by
