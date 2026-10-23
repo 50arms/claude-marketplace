@@ -35,7 +35,7 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
 export type BandParts = { ref: string; name: string }
 
 // A held plan or card's band label as parts: the plan's `PLAN-NN` (or the card's id) that is the link, and the name or title after it.
-// DX-5605: no agent name leads it (operator, 2026-10-22): the footer names the agent. Null where nothing is held. `maxCols`: the columns the label may take (absent: no
+// No agent name leads it: the footer names the agent. Null where nothing is held. `maxCols`: the columns the label may take (absent: no
 // limit, the layout truncates); the name is cut to what `PLAN-NN · ` leaves, with an ellipsis.
 function heldParts(v: PlanView, maxCols?: number): BandParts | null {
   const held = v.connected !== null ? { ref: v.connected.ref, name: v.connected.name } : v.card !== null ? { ref: v.card.id, name: v.card.title } : null
