@@ -1628,7 +1628,7 @@ async function onSessionStart($: any, e: any, next: any) {
 // too: stopping a timer in a live process is the harm, a timer left in a dying one is not.
 const PROCESS_ENDS = ['prompt_input_exit', 'logout', 'other']
 
-// the session that ends frees the team agent it signed in as at once, instead of the dashboard's 30-minute dead-session window. Only when the
+// the session that ends frees the team agent it signed in as at once, instead of the dashboard freeing it when the session's liveness lapses (about a minute). Only when the
 // process really ends (PROCESS_ENDS): a /clear or a /resume ends this session but the MCP carries on with the same session id and still needs its agent. Best effort and bounded (AGENT_RELEASE_DEADLINE_MS): a failure is one toast, never a held end. A
 // session with no key (signed out, revoked) or none to free (the agent gate holds it: it never got one) asks nothing.
 async function releaseAgent($: any): Promise<void> {
