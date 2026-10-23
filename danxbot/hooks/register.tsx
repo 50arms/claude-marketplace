@@ -294,7 +294,7 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   await update($, view, cur => {
     told = []
     if (loaded.phase === 'error' && cur.phase !== 'error' && !loaded.serverNotConnected) told.push(`Plan load failed: ${loaded.error}`)
-    // one toast for the every-card read's failure: it takes the count and the links down together
+    // the count's reason is told once and takes the links' own toast with it: both stand on the one plan read
     if (loaded.openProblemsError && cur.openProblemsError !== loaded.openProblemsError) told.push(`Plan cards unavailable: ${loaded.openProblemsError}`)
     // the card links' error: the replies are drawn as written
     if (loaded.links?.state === 'error' && cur.links?.state !== 'error' && !loaded.openProblemsError) told.push(`Card links unavailable: ${loaded.links.message}`)

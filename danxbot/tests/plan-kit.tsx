@@ -165,7 +165,7 @@ export function dashboard(
     boardsShape?: 'none' | 'badPrefix' | 'noKey'
     // DX-5933: the plan read (GET /api/plans/:id) answers no card_ids, ids that are not all strings, or no open_problem_count
     planFieldsShape?: 'noCardIds' | 'badCardIds' | 'noOpenCount'
-    // ... and a plan holding this many more cards than the fixture's own (a large plan: 150 makes the old every-card read pass the host's limit)
+    // ... and a plan holding this many more cards than the fixture's own (a large plan: 150 would have passed the host's limit with whole card rows)
     extraPlanCards?: number
     // DX-4458: DX-3, a needs-you card with 49 open problems (DX-4443's shape)
     bigCard?: boolean

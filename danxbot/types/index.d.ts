@@ -67,8 +67,8 @@ export type PlanView = {
   // The in-progress bucket's rows (a card in progress with an open problem sits in needs-you, not here).
   inProgress: InProgressRow[]
   // the open problems on the connected plan's cards (the sum of each card's
-  // `openProblemCount` on the every-card read); a count, never the problems themselves.
-  // null when the every-card read could not give a count (the band then shows none); `openProblemsError` says why.
+  // `open_problem_count` on the plan read); a count, never the problems themselves.
+  // null when the plan read gave no count (the band then shows none); `openProblemsError` says why.
   openProblems: number | null
   openProblemsError: string | null
   // what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
