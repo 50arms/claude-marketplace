@@ -1,4 +1,5 @@
 import type { Handlers } from './handlers'
+import { DESKTOP_SURFACE } from './config'
 import { linkMarkdown } from './links'
 
 // The footer indicator in the `SessionMode` site. It sits beside whatever the engine and other plugins already put there
@@ -8,9 +9,7 @@ import { linkMarkdown } from './links'
 // `onLinkPress` (MarkdownProps): drawn as text with no chip, so the desktop draws that. A Markdown link takes no colour, so the desktop's text is the
 // link's own; the terminal, whose `plain` Button has no chrome, keeps the Button and its `Text` child carries the status colour. The href is only
 // the link's address (nothing opens it: the press opens the band).
-export const FOOTER_HREF = 'https://app.50arms.ai/'
-// the surface name the app reports for its desktop host (the other is the terminal)
-const DESKTOP_SURFACE = 'desktop'
+const FOOTER_HREF = 'https://app.50arms.ai/'
 
 export function renderFooter(E: any, hd: Handlers, label: string, tone: string | undefined, rest: any, surface: string): any {
   const { Box, Button, Markdown, Text } = E

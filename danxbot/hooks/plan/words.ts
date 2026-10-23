@@ -32,11 +32,12 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
   return columns - BAND_INDICATOR_COLS - 2 * BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
 }
 
+export type BandParts = { lead: string; ref: string; name: string }
+
 // A held plan or card's band label as parts: the team agent that leads (`Tendai · `), the plan's `PLAN-NN` (or the card's id) that is the link, and the
-// name or title after it. Null for every state that names neither (the Danxbot-prefixed ones). `maxCols`: the columns the label may take (absent: no
+// name or title after it. Null where nothing is held. `maxCols`: the columns the label may take (absent: no
 // limit, the layout truncates); the name is cut to what the lead and `PLAN-NN · ` leave, with an ellipsis.
-export function bandParts(v: PlanView, maxCols?: number): { lead: string; ref: string; name: string } | null {
-  if (bandState(v) !== null) return null
+function heldParts(v: PlanView, maxCols?: number): BandParts | null {
   const held = v.connected !== null ? { ref: v.connected.ref, name: v.connected.name } : v.card !== null ? { ref: v.card.id, name: v.card.title } : null
   if (held === null) return null
   const lead = v.agent === null ? '' : `${v.agent.name}${NAME_SEP}`
@@ -63,10 +64,27 @@ function bandState(v: PlanView): string | null {
   return null
 }
 
+// The band's label, composed once for both the band and bandLabel: either the held plan's or card's parts, or the state's whole words.
+// A state names no plan or card, so the two cases are told apart by type, never by a cast.
+export function bandContent(v: PlanView, maxCols?: number): { parts: BandParts } | { state: string } {
+  const state = bandState(v)
+  if (state !== null) return { state }
+  const parts = heldParts(v, maxCols)
+  // bandState is null only where a plan or card is held
+  if (parts === null) throw new Error('bandContent: no state label and nothing held')
+  return { parts }
+}
+
+// the text after the lead and the id: ` · name`, or the bare name where nothing leads it, '' for no name
+export function bandNameText(parts: BandParts): string {
+  if (parts.name === '') return ''
+  return parts.lead + parts.ref === '' ? parts.name : `${NAME_SEP}${parts.name}`
+}
+
 // The band's label as one string (the held plan's or card's parts joined, or the state's words).
 export function bandLabel(v: PlanView, maxCols?: number): string {
-  const parts = bandParts(v, maxCols)
-  return parts === null ? (bandState(v) as string) : [`${parts.lead}${parts.ref}`, parts.name].filter(Boolean).join(NAME_SEP)
+  const c = bandContent(v, maxCols)
+  return 'state' in c ? c.state : `${c.parts.lead}${c.parts.ref}${bandNameText(c.parts)}`
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula the dashboard's plan page uses:
@@ -92,10 +110,11 @@ export function viewPercent(v: PlanView): number | null {
   return v.phase === 'ready' && v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
 }
 
-// the footer indicator's text, read from `view.connected` and the team agent the session holds (`view.agent`, from the server): `<agent name> · PLAN-NN`, the agent's name alone on no plan, and `50 Arms disconnected` with no agent session. Null where the footer shows
-// nothing (loading with no plan shown yet; a connect shows its plan at once). The signed-out, revoked and blocked states keep their own words.
-// The plan flips off when a plan-list load fails: that error view carries no connected plan (the session is read from the same failed answer), so the
-// footer cannot name one. An error built after the plan was read keeps it.
+// the footer indicator's text, read from `view.connected` and the team agent the session holds (`view.agent`, from the server):
+// `<agent name> · PLAN-NN`, the agent's name alone on no plan, and `50 Arms disconnected` with no agent session. Null where the footer
+// shows nothing (loading with no plan shown yet; a connect shows its plan at once). The signed-out, revoked and blocked states keep
+// their own words. The plan flips off when a plan-list load fails: that error view carries no connected plan (the session is read from
+// the same failed answer), so the footer cannot name one. An error built after the plan was read keeps it.
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' && !(v.connected && v.refreshedAt)) return null
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL

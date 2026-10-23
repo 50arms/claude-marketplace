@@ -79,6 +79,8 @@ export const APPROVAL_TOAST_MS = 60_000
 export const NOTE_MARKER = ' | It was to read: '
 
 // Colours standing in for the React app's tokens: success (connected / for), danger (action required / against), warning (open question).
+// the surface name the app reports for its desktop host (the other is the terminal)
+export const DESKTOP_SURFACE = 'desktop'
 export const SUCCESS = 'green'
 export const DANGER = 'red'
 export const WARNING = 'yellow'
@@ -117,11 +119,6 @@ export const busyKey = {
 // connected plan: there is no origin constant, so a link always opens the dashboard the data came from.
 export function planUrl(plan: ConnectedPlan): string {
   return `${plan.dashboardUrl}/plans/${plan.id}`
-}
-
-// the dashboard's plans list, where the band's links go while no plan is connected.
-export function plansUrl(dashboardUrl: string): string {
-  return `${dashboardUrl}/plans`
 }
 
 // the plan page's Needs You tab, which the band's problem button opens. `needs-you` is the id of the dashboard's Needs You bucket, which the plan page reads from `?tab=`.

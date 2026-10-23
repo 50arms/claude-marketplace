@@ -49,6 +49,7 @@ import {
   planUrl,
   busyKey,
   SESSION_PLAN_PROBE,
+  DESKTOP_SURFACE,
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
 import { blockedOrigin, optionDashboardUrl } from './plan/origin'
@@ -1581,7 +1582,7 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
 
 // the desktop attached (it does so again each time the person views the session): it hosts this one from now on
 async function onSessionAttach($: any, e: any, next: any) {
-  if (e.surface === 'desktop') await update($, desktopHosted, () => true)
+  if (e.surface === DESKTOP_SURFACE) await update($, desktopHosted, () => true)
   return next(e)
 }
 
@@ -2219,7 +2220,7 @@ async function drawBand($: any, e: any, next: any) {
     $.ui.resolve(e),
     handlers($),
     v,
-    e.surface === 'desktop',
+    e.surface === DESKTOP_SURFACE,
     await read($, busy),
     newestPermission === undefined ? null : { count: permissions.length, newest: asApproval(newestPermission) },
     await read($, signInRequest),

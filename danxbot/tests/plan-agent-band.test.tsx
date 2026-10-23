@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
-import { bandLabel, footerLabel } from '../hooks/plan/words'
+import { bandLabel, footerLabel, footerTone } from '../hooks/plan/words'
 import { agentBlockOf } from '../hooks/plan/mcp'
 import { test, AGENT_GATE_HALT, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, linksOf, mountIndicator, startSession } from './plan-kit'
 
@@ -64,6 +64,25 @@ describe('the agent and its association in the band label', () => {
   })
   test('the footer names the agent alone while it holds a card (no plan)', () => {
     expect(footerLabel({ ...ready, agent, card: CARD })).toBe('Tendai')
+  })
+  describe('the footer text colour', () => {
+    const plan = { id: 23, ref: 'PLAN-23', name: 'Danxbot plugin', dashboardUrl: DASHBOARD_URL }
+    test('red where signed out or the key was revoked', () => {
+      expect(footerTone({ ...ready, phase: 'signed-out' })).toBe('red')
+      expect(footerTone({ ...ready, phase: 'key-revoked', revokedBy: 'Dan' })).toBe('red')
+    })
+    test('yellow for the auto-mode block, a failed load, and an open problem', () => {
+      expect(footerTone({ ...ready, phase: 'blocked' })).toBe('yellow')
+      expect(footerTone({ ...ready, phase: 'error' })).toBe('yellow')
+      expect(footerTone({ ...ready, agent, connected: plan, openProblems: 2 })).toBe('yellow')
+    })
+    test('green when connected with an agent and no problems', () => {
+      expect(footerTone({ ...ready, agent, connected: plan, openProblems: 0 })).toBe('green')
+    })
+    test('no colour with no agent, or with an agent and no plan', () => {
+      expect(footerTone({ ...ready, connected: plan })).toBeUndefined()
+      expect(footerTone({ ...ready, agent })).toBeUndefined()
+    })
   })
 })
 

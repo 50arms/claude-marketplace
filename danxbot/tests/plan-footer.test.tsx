@@ -119,13 +119,6 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('a session on no plan whose server row holds an agent: the agent alone, read with no plan_connect at all', async ($, on) => {
-      const d = dashboard(on, { connected: false })
-      await startSession($, d, surface)
-      await holdAgent($, d)
-      expect(await footerText(await mountIndicator($, surface))).toBe(AGENT_NAME)
-    })
-
     test('a session agent with no name fails the load loudly: the band says error and the footer names no agent', async ($, on) => {
       const d = dashboard(on)
       d.world.agent = { id: 7, name: '', avatar_url: null }

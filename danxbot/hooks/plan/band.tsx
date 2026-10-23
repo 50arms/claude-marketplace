@@ -6,7 +6,7 @@ import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
-import { bandLabel, bandLabelCols, bandParts, eventsWarning, problemBadge, viewPercent } from './words'
+import { bandContent, bandLabelCols, bandNameText, eventsWarning, problemBadge, viewPercent } from './words'
 
 // The controls' labels the width budget counts.
 const CLOSE_LABEL = '×'
@@ -91,7 +91,8 @@ export function renderBand(
     ) : (
       donutMark(E, percent, hasSvg, DONUT_BAND_PX)
     )
-  const parts = bandParts(v, labelCols)
+  const content = bandContent(v, labelCols)
+  const parts = 'parts' in content ? content.parts : null
   const line = (
     <Box key="band-line" flexDirection="row" gap={1} minWidth={0}>
       <Box flexShrink={0}>{indicator}</Box>
@@ -104,7 +105,7 @@ export function renderBand(
         {parts !== null && linkUrl === null && <Text dimColor wrap="truncate-end">{parts.ref}</Text>}
         {/* a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
         <Text color={failedColor} dimColor={!failed} wrap="truncate-end">
-          {parts !== null ? (parts.name === '' ? '' : ` · ${parts.name}`) : bandLabel(v, labelCols)}
+          {'parts' in content ? bandNameText(content.parts) : content.state}
         </Text>
       </Box>
       <Box flexGrow={1} />

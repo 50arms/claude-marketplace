@@ -31,7 +31,7 @@ test("no hooks source draws a Link element or reads one from the element table",
   assert.deepEqual(found, []);
 });
 
-test("no hooks source gives a Markdown a link handler: a plain click would go to the plugin and the app would open nothing", () => {
+test("no hooks source but the footer indicator gives a Markdown a link handler: a plain click would go to the plugin and the app would open nothing", () => {
   // DX-5605: the footer indicator is the one exception: its Markdown link IS the plugin's own control (it opens the band, nothing is to be
   // opened), drawn that way because the desktop draws every Button as a chip.
   const found = sources(hooks).filter((p) => /onLinkPress|pressableLinks/.test(readFileSync(p, "utf8"))).map((p) => path.relative(hooks, p).replaceAll("\\", "/"));
