@@ -65,7 +65,7 @@ import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanT
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
-import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, toPending } from './relay/outbox'
+import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, putBack, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
@@ -871,6 +871,8 @@ function startRelay($: any, planId: number | null): void {
   const head = outbox[0]
   outbox = onlyPlan(outbox, planId)
   if (outbox[0] !== head) outboxFailure = null
+  // every start of a run (a stall restart, a replacing plan_connect, a plan move) starts the refusal backoff afresh: earlier refusals do not lengthen the new run's first wait
+  outboxRefusals = 0
   const run: RelayRun = { planId, dead: false, told: null, lacking: null, beat: 0 }
   relayRun = run
   if (stallTicker === null) stallTicker = $.clock.every(RELAY_STALL_CHECK_MS, () => detach($, 'Plan event relay stall check', checkRelayStall($)))
@@ -1227,7 +1229,7 @@ async function submitEvent($: any, line: string): Promise<string | null> {
 }
 
 // A note the model reads in the turn that is running. A refused or throwing append is a failure like any other (no silent fallback to
-// a prompt): the event is not delivered, the cursor does not move, and the loop's backoff asks for it again.
+// a prompt): the event is not delivered: it is put back and issued again after the backoff (its cursor was stored when the call was made, so the re-issue stores none).
 async function appendNote($: any, line: string): Promise<string | null> {
   try {
     const r = await $.session.append(modelRow(line))
@@ -1252,14 +1254,19 @@ async function issueEvent($: any, text: string, urgent: boolean): Promise<{ done
 async function appendTrackedNote($: any, text: string): Promise<string | null> {
   const failure = await appendNote($, relayLine(text))
   if (failure !== null) return failure
-  // `prompt` is set inside the updater, which sees the turn as it is when the write happens
-  let prompt = null as string | null
-  await update($, turn, cur => {
-    const appended = noteAppended(cur, text)
-    prompt = appended.prompt
-    return appended.turn
-  })
-  if (prompt !== null) detach($, 'Telling the session', promptNotes($, [prompt]))
+  // the note is in the turn from here: a bookkeeping failure after it is a toast, never a failed delivery (a retry would append the note again)
+  try {
+    // `prompt` is set inside the updater, which sees the turn as it is when the write happens
+    let prompt = null as string | null
+    await update($, turn, cur => {
+      const appended = noteAppended(cur, text)
+      prompt = appended.prompt
+      return appended.turn
+    })
+    if (prompt !== null) detach($, 'Telling the session', promptNotes($, [prompt]))
+  } catch (err: any) {
+    $.ui.toast(`Plan event delivered, but the turn's record failed: ${errMessage(err)}`.slice(0, TOAST_ERROR_MAX))
+  }
   return null
 }
 
@@ -1279,21 +1286,30 @@ async function promptNotes($: any, texts: string[]): Promise<void> {
 }
 
 // the outbox (relay/outbox.ts says why the poll loop does not deliver). The records of one answer are queued in the order the server sent them
-// and issued to the session in that order, each as soon as the one before it has been ISSUED (a prompt queued behind a running turn is out, not done, and
-// must not hold the next event: an urgent note behind it is for the running turn). Each one's cursor is stored as the resume cursor once it is DELIVERED,
-// in order (never compared with another: the server decides what comes after a cursor). An event the session refuses is issued again after the backoff,
-// and the band says so. The poll acknowledges a taken event to the server (which then drops it), so every queued event is also written to the `relayOutbox`
-// atom BEFORE the poll that carries its cursor, and removed from it once delivered: a reload of this module (which empties `outbox`) finds them there and
-// issues them again (`restoreOutbox`). A reload can repeat any event still in the atom: one issued and not yet delivered (the engine's own queue is not ours to
-// read), including an urgent note already appended behind a waiting prompt (it stays in the atom until that prompt settles); a duplicate, never a loss. A NEW process starts with no atom: the stored resume cursor is then what the server resumes from.
-// Both functions are idempotent and single-flight: whoever queues, starts a run, or finishes an event calls them.
+// and issued to the session strictly in that order (only the head of the outbox is issued), each as soon as the one before it has been ISSUED (a prompt queued
+// behind a running turn is out, and must not hold the next event: an urgent note behind it is for the running turn). A refused event goes back to its place and
+// holds the events behind it until its backoff ends: a refusal hits every event alike, so nothing is lost by waiting, and no event overtakes an earlier one.
+// An event is DELIVERED when its engine call is made, not when the call's promise settles: the engine keeps a queued prompt across a reload (relay/outbox.ts),
+// while the promise the old module instance awaited is lost with it (whether the promise of a prompt merged into a queued turn settles is not measured), so
+// waiting for it re-sent the whole backlog at every reload. At the call the event's cursor is stored as the resume cursor (in order: events are issued in order)
+// and the event leaves the outbox and the atom. The instance that made the call watches its outcome (`settleOutbox`): a refusal puts the event back and issues it
+// again after the backoff, and the band says so. The poll acknowledges a taken event to the server (which then drops it), so every queued event is also written to the
+// `relayOutbox` atom BEFORE the poll that carries its cursor, and removed from it once called for: a reload of this module (which empties `outbox`) finds
+// the ones not yet called for there and issues them (`restoreOutbox`). Delivered means handed over, not acknowledged: the one window left is a reload between the
+// engine call and the end of the atom write that follows the cursor store, where the event is repeated; and an event can be lost if Claude Code itself exits while its
+// prompt is still queued behind a running turn (nothing acknowledges it back to the plugin yet; re-delivery on acknowledgement is planned work).
+// `queueEvents` and `restoreOutbox` are idempotent; `issueOutbox` is single-flight (whoever queues or starts a run calls it).
 let outboxIssuing = false
-let outboxSettling = false
 // the cause of the delivery failure being retried, null when none: the poll's own success must not draw over it (handleAnswer)
 let outboxFailure: string | null = null
+// refusals seen in a row, one per refused event (a delivery that works resets it): the backoff of the next re-issue steps once per refusal, so a burst of
+// refused events backs off faster than a lone one
+let outboxRefusals = 0
+// the last sequence number given to a queued event: the order the server sent them in, which a put-back event goes back to (relay/outbox.ts)
+let outboxSeq = 0
 
 async function queueEvents($: any, run: RelayRun, events: RelayEvent[]): Promise<void> {
-  for (const event of events) outbox.push({ planId: run.planId, event, done: null })
+  for (const event of events) outbox.push({ planId: run.planId, seq: ++outboxSeq, event, held: false })
   // the copy first: the next poll presents these cursors, and the server drops what they cover
   await persistOutbox($)
   detach($, 'Plan event delivery', issueOutbox($))
@@ -1308,8 +1324,11 @@ async function persistOutbox($: any): Promise<void> {
 // A run's start: a reloaded module has an empty outbox, so what the atom kept for this plan is the outbox again (another plan's events are dropped, as a
 // move drops them). Then whatever waits is issued: the run that polls on from its newest cursor never asks the server for it again.
 async function restoreOutbox($: any, run: RelayRun): Promise<void> {
-  const saved = fromPending(await read($, relayOutbox), run.planId)
-  if (outbox.length === 0) outbox = saved
+  const saved = fromPending(await read($, relayOutbox), run.planId, outboxSeq + 1)
+  if (outbox.length === 0) {
+    outbox = saved
+    outboxSeq += saved.length
+  }
   await persistOutbox($)
   if (outbox.length > 0) detach($, 'Plan event delivery', issueOutbox($))
 }
@@ -1319,48 +1338,23 @@ async function issueOutbox($: any): Promise<void> {
   outboxIssuing = true
   try {
     for (;;) {
-      const next = outbox.find(q => q.done === null)
+      // strictly in order: only the head goes, and a head that waits out its backoff holds everything behind it
+      const next = outbox[0]
       // no live run on that plan: the events wait for a run that serves it (startRelay starts this again)
-      if (next === undefined || relayRun === null || relayRun.planId !== next.planId) return
-      next.done = (await issueEvent($, next.event.text, next.event.urgent)).done
-      detach($, 'Plan event delivery', settleOutbox($))
-    }
-  } finally {
-    outboxIssuing = false
-  }
-}
-
-async function settleOutbox($: any): Promise<void> {
-  if (outboxSettling) return
-  outboxSettling = true
-  let failures = 0
-  try {
-    for (;;) {
-      const head = outbox[0]
-      if (head === undefined || head.done === null) return
-      const failure = await head.done
-      // a move to another plan dropped it while it was out
-      if (outbox[0] !== head) continue
-      const live = relayRun !== null && relayRun.planId === head.planId ? relayRun : null
-      if (failure !== null) {
-        outboxFailure = failure
-        if (live !== null) await relayFailed($, live, 'retrying', failure, delayedLine(failure))
-        failures++
-        await $.clock.sleep(backoffMs(failures))
-        if (outbox[0] === head) head.done = null
-        detach($, 'Plan event delivery', issueOutbox($))
-        continue
-      }
-      outbox.shift()
-      failures = 0
-      outboxFailure = null
-      // the cursor first: a reload between the two repeats this event, where the other order would lose the resume point
-      await saveCursor($, head.planId, head.event.cursor)
+      if (next === undefined || next.held || relayRun === null || relayRun.planId !== next.planId) return
+      const issued = await issueEvent($, next.event.text, next.event.urgent)
+      // the outcome gets its rejection handler at once, before anything awaits (the cursor store below), so a rejection is never unhandled
+      const outcome = issued.done.catch((err: any) => notTakenLine(errMessage(err)))
+      // a move to another plan dropped it while the call was made: it is no longer this module's to deliver
+      if (!outbox.includes(next)) continue
+      // delivered. The cursor first, then the atom: a reload between the two repeats this event, where the other order would lose the resume point
+      if (next.again !== true) await saveCursor($, next.planId, next.event.cursor)
+      const at = outbox.indexOf(next)
+      if (at >= 0) outbox.splice(at, 1)
       await persistOutbox($)
-      if (live !== null) {
-        live.told = null
-        await setRelay($, live, 'streaming', null)
-      }
+      // a call that leaves no put-back event waiting ends the retrying state here, not only when its own outcome settles (a re-issued put-back may never settle)
+      if (!outbox.some(q => q.again === true)) await clearRetrying($, next.planId)
+      detach($, 'Plan event delivery', settleOutbox($, next, outcome))
     }
   } catch (err: any) {
     // the cursor store failing is the loop's own kind of error (an unexpected one): the relay stops for the plan, never restarted behind the person's back
@@ -1370,13 +1364,59 @@ async function settleOutbox($: any): Promise<void> {
       stopRelay()
     }
   } finally {
-    outboxSettling = false
+    outboxIssuing = false
   }
+}
+
+// The retrying state of an outbox failure clears once no put-back event waits. A delivery's call does this too, not only its settle: a re-issued put-back
+// whose submit never settles would otherwise hold the state for good. The band goes back to streaming only when the outbox had a failure to clear.
+async function clearRetrying($: any, planId: number | null): Promise<void> {
+  if (outboxFailure === null) return
+  outboxFailure = null
+  const live = relayRun !== null && relayRun.planId === planId ? relayRun : null
+  if (live !== null) {
+    live.told = null
+    await setRelay($, live, 'streaming', null)
+  }
+}
+
+// How a delivery that was called for ended, seen by the module instance that made the call (a reload loses this watch, and the engine's queue keeps
+// the prompt). Delivered: the retrying state clears once no put-back event waits. Refused (`drop`, a throw, a refused note, a rejected call): the event goes back at its place in the original order
+// (`seq`), in the outbox and the atom, is held for the backoff, and is issued again (only the head is ever issued, so nothing behind it goes first); its cursor was stored at the
+// first call, so it stores none.
+async function settleOutbox($: any, event: Queued, outcome: Promise<string | null>): Promise<void> {
+  // `outcome` never rejects: issueOutbox turned a rejection into its failure line at the call
+  const failure = await outcome
+  const live = relayRun !== null && relayRun.planId === event.planId ? relayRun : null
+  if (failure === null) {
+    // a late success says nothing about an event that is still put back
+    if (outbox.some(q => q.again === true)) return
+    outboxRefusals = 0
+    outboxFailure = null
+    if (live !== null) {
+      live.told = null
+      await setRelay($, live, 'streaming', null)
+    }
+    return
+  }
+  // a run on another plan has left this event behind with its plan
+  if (relayRun !== null && relayRun.planId !== event.planId) return
+  outboxFailure = failure
+  outboxRefusals++
+  const held: Queued = { ...event, again: true, held: true }
+  putBack(outbox, held)
+  await persistOutbox($)
+  if (live !== null) await relayFailed($, live, 'retrying', failure, delayedLine(failure))
+  await $.clock.sleep(backoffMs(outboxRefusals))
+  // a move to another plan dropped it while it waited
+  if (!outbox.includes(held)) return
+  held.held = false
+  detach($, 'Plan event delivery', issueOutbox($))
 }
 
 // the stall watch, every RELAY_STALL_CHECK_MS. A loop that has made no step for RELAY_STALL_MS is awaiting a call that never settles (the poll,
 // the cursor store, the plan read): nothing it could say reaches anyone, so the watch tells the person (a toast) and the session (a note, detached: the
-// note's own call is one of the things that may be stuck), then starts the relay again. Events in flight are not lost or repeated (the outbox).
+// note's own call is one of the things that may be stuck), then starts the relay again. Events waiting in the outbox survive the restart (the outbox).
 async function checkRelayStall($: any): Promise<void> {
   const run = relayRun
   const now = await $.clock.now()
