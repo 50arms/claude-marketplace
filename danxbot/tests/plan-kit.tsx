@@ -1222,18 +1222,9 @@ export async function mountIndicator($: any, surface: string, modes: string[] = 
 // carries `N% complete` on the desktop, the text glyph on the terminal (no Svg there).
 // DX-4420: the desktop pads the footer label with non-breaking spaces (footer.tsx); the label is what is compared.
 export const FOOTER_PAD = / /g
-// DX-5605: on the desktop the indicator is a Markdown link (no chip), on the terminal a plain Button; both are keyed `footer-plan`.
-const FOOTER_LINK = /^\[(.*)\]\((.*)\)$/
-export const footerText = async (ui: any): Promise<string | undefined> => {
-  const el = await ui.find({ key: 'footer-plan' })
-  const raw = el?.text?.replace(FOOTER_PAD, '')
-  return el?.type === 'Markdown' ? raw?.match(FOOTER_LINK)?.[1] : raw
-}
-export const pressFooter = async (ui: any) => {
-  const el = await ui.find({ key: 'footer-plan' })
-  if (el?.type !== 'Markdown') return ui.press({ key: 'footer-plan' })
-  return ui.press({ key: 'footer-plan', link: { href: el.text.match(FOOTER_LINK)[2] } })
-}
+// DX-5605: the indicator is a plain Button keyed `footer-plan` on every surface.
+export const footerText = async (ui: any): Promise<string | undefined> => (await ui.find({ key: 'footer-plan' }))?.text?.replace(FOOTER_PAD, '')
+export const pressFooter = async (ui: any) => ui.press({ key: 'footer-plan' })
 
 // DX-5605: the team agent the model's plan_connect answer carries (PLAN-51), and the band's label read back: the plan id is the link keyed
 // `open-plan`, the name the Text after it.

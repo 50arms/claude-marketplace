@@ -37,8 +37,8 @@ describe('plan band', () => {
   })
 
 
-  test('the first load reads Danxbot: loading…', () => {
-    expect(bandLabel({ ...EMPTY, phase: 'loading', refreshedAt: null })).toBe('Danxbot: loading…')
+  test('the first load reads 50 Arms: loading…', () => {
+    expect(bandLabel({ ...EMPTY, phase: 'loading', refreshedAt: null })).toBe('50 Arms: loading…')
   })
 
   test('shows Not connected and a close control with no command typed, on every surface', async ($, on) => {
@@ -46,7 +46,7 @@ describe('plan band', () => {
     for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expectText(await ui.find({ type: 'Text', text: /Danxbot: not connected to a plan/ }), /Danxbot: not connected to a plan/)
+      expectText(await ui.find({ type: 'Text', text: /50 Arms: not connected to a plan/ }), /50 Arms: not connected to a plan/)
       expect(await ui.find({ type: 'Button', key: 'band-close' })).toBeDefined()
       expect(await ui.find({ key: 'disconnect' })).toBeUndefined()
       await ui.unmount()

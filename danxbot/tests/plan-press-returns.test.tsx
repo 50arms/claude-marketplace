@@ -20,11 +20,11 @@ for (const surface of SURFACES) {
       await d.clock.advance(1_000)
       await press
       expect(d.toasts).toContain('Disconnected from PLAN-23')
-      expect(await text(band)).toContain('Danxbot: not connected to a plan')
+      expect(await text(band)).toContain('50 Arms: not connected to a plan')
       expect(d.relay.told).toHaveLength(1)
       d.holdApi(0)
       await d.clock.settle()
-      expect(await text(band)).toContain('Danxbot: not connected to a plan')
+      expect(await text(band)).toContain('50 Arms: not connected to a plan')
     })
 
     test('a detached task that throws is toasted under its own name, not a press update', async ($, on) => {

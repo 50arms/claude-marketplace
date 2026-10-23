@@ -33,7 +33,7 @@ for (const surface of SURFACES) {
 
       expect(disconnectCalls(d)).toEqual([{ server: 'plugin:danxbot:danx-dashboard', tool: 'plan_connect', args: { plan_id: 23, disconnect: true } }])
       expect(d.toasts).toContain('Disconnected from PLAN-23')
-      expect(await text(band)).toContain('Danxbot: not connected to a plan')
+      expect(await text(band)).toContain('50 Arms: not connected to a plan')
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('yellow')
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
 
@@ -80,7 +80,7 @@ for (const surface of SURFACES) {
         'Disconnect refused: 409 Session 41365fb5-6b43-443b-a01b-81245574f648 is not connected to a plan, so there is nothing to leave.',
       )
       expect(d.relay.told).toHaveLength(0)
-      expect(await text(band)).toContain('Danxbot: not connected to a plan')
+      expect(await text(band)).toContain('50 Arms: not connected to a plan')
     })
 
     test('a 404 (the route is not deployed yet) carries its status and message; the plan stays connected', async ($, on) => {
@@ -103,7 +103,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.toasts.at(-1)).toBe('Disconnect failed: the answer named no plan left')
       expect(d.relay.told).toHaveLength(0)
-      expect(await text(band)).toContain('Danxbot: not connected to a plan')
+      expect(await text(band)).toContain('50 Arms: not connected to a plan')
     })
 
     test('a THROWN call (the only error result) is a toast with the rejection text', async ($, on) => {
@@ -125,7 +125,7 @@ for (const surface of SURFACES) {
       expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
       await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23, disconnect: true } as any)
       await d.clock.settle()
-      expect(await text(band)).toContain('Danxbot: not connected to a plan')
+      expect(await text(band)).toContain('50 Arms: not connected to a plan')
     })
   })
 }

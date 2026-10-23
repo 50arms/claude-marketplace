@@ -14,7 +14,7 @@ const CARD = { id: 'DX-77', title: 'One-off fix' }
 // the band's label read back: a held plan or card is the agent's name, the id as the link, then the name; every other state is one Text.
 const labelOf = async (ui: any) => {
   const id = (await linksOf(ui)).find(l => l.key === 'open-plan' || l.key === 'open-card')
-  if (id === undefined) return (await ui.find({ type: 'Text', text: /Danxbot:|Danxbot ·/ }))?.text as string
+  if (id === undefined) return (await ui.find({ type: 'Text', text: /50 Arms:|50 Arms ·/ }))?.text as string
   const lead = ((await ui.find({ type: 'Text', text: /^Tendai · $/ }))?.text as string | undefined) ?? ''
   return `${lead}${id.label}${((await ui.find({ type: 'Text', text: /^ · / }))?.text as string | undefined) ?? ''}`
 }
@@ -34,16 +34,16 @@ describe('the agent and its association in the band label', () => {
     expect(bandLabel({ ...ready, agent, card: CARD })).toBe('Tendai · DX-77 · One-off fix')
   })
   test('on neither: the agent, and that it is on neither', () => {
-    expect(bandLabel({ ...ready, agent })).toBe('Danxbot · Tendai: not connected to a plan or card')
+    expect(bandLabel({ ...ready, agent })).toBe('50 Arms · Tendai: not connected to a plan or card')
   })
   test('no agent held: the association alone', () => {
     expect(bandLabel({ ...ready, card: CARD })).toBe('DX-77 · One-off fix')
-    expect(bandLabel(ready)).toBe('Danxbot: not connected to a plan or card')
+    expect(bandLabel(ready)).toBe('50 Arms: not connected to a plan or card')
   })
   test('DX-5549: a session the agent gate holds reads why it has no agent', () => {
-    expect(bandLabel({ ...ready, agentBlock: 'agent_needed' })).toBe('Danxbot: waiting for a team agent')
-    expect(bandLabel({ ...ready, agentBlock: 'agent_limit_reached' })).toBe('Danxbot: agent session limit reached')
-    expect(bandLabel({ ...ready, agentBlock: 'agent_not_held' })).toBe('Danxbot: no team agent held (plan_connect claims one)')
+    expect(bandLabel({ ...ready, agentBlock: 'agent_needed' })).toBe('50 Arms: waiting for a team agent')
+    expect(bandLabel({ ...ready, agentBlock: 'agent_limit_reached' })).toBe('50 Arms: agent session limit reached')
+    expect(bandLabel({ ...ready, agentBlock: 'agent_not_held' })).toBe('50 Arms: no team agent held (plan_connect claims one)')
   })
   test('the agent gate is read from its own answer, and nothing else is', () => {
     const halted = (body: unknown) => ({ ok: false, status: 0, body: { error: JSON.stringify(body) } })
@@ -119,7 +119,7 @@ for (const surface of SURFACES) {
       d.world.agent = AGENT
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await labelOf(band)).toBe('Danxbot · Tendai: not connected to a plan or card')
+      expect(await labelOf(band)).toBe('50 Arms · Tendai: not connected to a plan or card')
       expect(await pageLinks(band)).toEqual([])
     })
 
@@ -129,7 +129,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.world.agentGate = 'agent_not_held'
       await forceRefresh($, d)
-      expect(await labelOf(band)).toBe('Danxbot: no team agent held (plan_connect claims one)')
+      expect(await labelOf(band)).toBe('50 Arms: no team agent held (plan_connect claims one)')
     })
 
     test('a session row whose agent is not {id, name} fails the load, never a guessed name', async ($, on) => {
@@ -138,7 +138,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.world.agent = { id: 6, name: '' } as any
       await forceRefresh($, d)
-      expect(await labelOf(band)).toBe('Danxbot: Disconnected')
+      expect(await labelOf(band)).toBe('50 Arms: Disconnected')
     })
 
     test('DX-5549: while the agent gate holds the session, the band says so (never Disconnected), the relay runs on no plan and an event wakes it', async ($, on) => {
@@ -147,7 +147,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.world.agentGate = 'agent_needed'
       await forceRefresh($, d)
-      expect(await labelOf(band)).toBe('Danxbot: waiting for a team agent')
+      expect(await labelOf(band)).toBe('50 Arms: waiting for a team agent')
       expect(d.relay.calls.at(-1)?.plan_id).toBe(null)
       // the dashboard's wake once a person created the agent (the MCP turns the stream's team_agent_created into an urgent record)
       d.relay.push({ cursor: 'c1', text: 'A person created your team agent Mira: call plan_connect again to take it.', urgent: true })

@@ -17,20 +17,19 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await holdAgent($, d)
       const footer = await mountIndicator($, surface, ['focus & memory paused'])
-      // the desktop draws a Markdown link (no chip: a Button is a native button there), the terminal a plain Button
+      // a plain Button on every surface, like the engine's own footer buttons
       const el = await footer.find({ key: 'footer-plan' })
-      expect(el?.type).toBe(surface === 'desktop' ? 'Markdown' : 'Button')
-      expect(await footer.findAll({ type: 'Button' })).toHaveLength(surface === 'desktop' ? 0 : 1)
-      if (surface === 'terminal') {
-        expect(el?.props.plain).toBe(true)
-      }
+      expect(el?.type).toBe('Button')
+      expect(el?.props.plain).toBe(true)
+      expect(await footer.findAll({ type: 'Button' })).toHaveLength(1)
+      expect(await footer.findAll({ type: 'Markdown' })).toHaveLength(0)
       expect(await footerText(footer)).toBe(`${AGENT_NAME} · PLAN-23`)
       expect(await footer.find({ type: 'Svg' })).toBeUndefined()
       // the only Text is the engine's own mode label (the terminal Button's child Text is the indicator's, a Button's text)
       expect((await footer.findAll({ type: 'Text' })).map((t: any) => t.text).filter((t: string) => t !== `${AGENT_NAME} · PLAN-23`).join(' | ')).toBe('focus & memory paused')
     })
 
-    test('the terminal text is coloured by the state; the desktop link takes no colour', async ($, on) => {
+    test('the terminal text is coloured by the state; the desktop button draws the label as its own text', async ($, on) => {
       const d = dashboard(on)
       answerPlanConnect(on, d)
       await startSession($, d, surface)
