@@ -14,18 +14,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (rel) => readFileSync(path.join(here, "..", rel), "utf8");
 const flat = (s) => s.replace(/\s+/g, " ");
 
-const mantra = flat(read("mantra.md"));
 const planWorkflow = flat(read("skills/plan-workflow/SKILL.md"));
 const issueWorkflow = flat(read("skills/issue-workflow/SKILL.md"));
 const cardCreation = flat(read("skills/issue-workflow/references/card-creation-and-reference.md"));
 const compaction = flat(read("skills/prepare-for-compaction/SKILL.md"));
-
-test("mantra rules 3 and 4 name the agent note: a reversible decision is written as one, state lives on a card, plan record or agent note, and neither a comment nor a note alone updates a record", () => {
-  assert.match(mantra, /Reversible → decide, do it, write an agent note, and continue\./);
-  assert.match(mantra, /unpushed SHA is on a card, plan record or agent note, never only in your conversation/);
-  assert.match(mantra, /a comment or agent note alone leaves it stale/);
-  assert.doesNotMatch(mantra, /plan record or comment/);
-});
 
 test("plan-workflow sends the working log, handoffs and blockers to agent notes and keeps comments for a person", () => {
   assert.match(planWorkflow, /agent note on the card \(`POST \/api\/issues\/:id\/notes`\) = your working log: progress, evidence, status, local state, handoffs, blockers; card comment = talking with a person \(a reply to what they wrote or asked\)/);

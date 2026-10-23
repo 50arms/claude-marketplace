@@ -15,7 +15,8 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const skill = readFileSync(path.join(here, "../skills/issue-workflow/SKILL.md"), "utf8");
-const mantra = readFileSync(path.join(here, "../mantra.md"), "utf8");
+// DX-5889 / CP-4: the mantra lives in danxbot's reminder seed, so its five rule titles are pinned here.
+const MANTRA_RULE_TITLES = ["Orchestrate.", "Evidence.", "Decide, don't wait.", "Zero context.", "Craft."];
 
 const start = skill.indexOf("## Gates");
 const end = skill.indexOf("\n## ", start + 1);
@@ -40,9 +41,7 @@ test("the section names no gate and copies no gate's behaviour or mantra rule", 
   for (const owned of ["plan-tdd", "plan-dependency", "Feature Tests", "E2E Tests", "depends_on", "conflict_on"]) {
     assert.ok(!gates.includes(owned), `"${owned}" belongs to the board's gate text, not the skill`);
   }
-  const ruleTitles = [...mantra.matchAll(/^\d+\. \*\*([^*]+)\*\*/gm)].map((m) => m[1]);
-  assert.ok(ruleTitles.length > 0, "the mantra's rule titles were found");
-  for (const title of ruleTitles) {
+  for (const title of MANTRA_RULE_TITLES) {
     assert.ok(!gates.includes(title), `the mantra rule "${title}" is not restated`);
   }
 });

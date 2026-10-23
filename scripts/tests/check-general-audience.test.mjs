@@ -178,7 +178,7 @@ test("the shipped danxbot plugin passes, test files that hold the tokens as matc
   const shipped = listPluginFiles(REPO_ROOT, "danxbot");
   assert.ok(!shipped.includes("tests/start-skill.test.mjs"));
   assert.ok(shipped.includes("skills/start/SKILL.md"));
-  assert.ok(shipped.includes("hooks/hooks.json") && shipped.includes("hooks/register.tsx") && shipped.includes("mantra.md"));
+  assert.ok(shipped.includes("hooks/hooks.json") && shipped.includes("hooks/register.tsx"));
   assert.ok(shipped.includes("scripts/capture-screenshot.mjs"));
 });
 
