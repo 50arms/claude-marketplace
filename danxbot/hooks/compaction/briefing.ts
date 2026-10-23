@@ -9,7 +9,7 @@ export type BriefingCard = { id: string; title: string }
 export type BriefingAgent = { id: string; type: string; description: string }
 export type GitState = { branch: string | null; changed: number; ahead: number | null; upstream: string | null }
 
-// DX-5692: one person comment the agent still owes an answer, as GET /api/plan-sessions/me/owed-comments (danxbot DX-5689, `OwedComment`) hands it over. Only the fields the briefing words.
+// One person comment the agent still owes an answer, as GET /api/plan-sessions/me/owed-comments (the dashboard's `OwedComment`) hands it over. Only the fields the briefing words.
 export type OwedComment = { cardId: string; cardTitle: string; commentId: number; author: { name: string }; excerpt: { text: string }; state: 'sent' | 'seen'; waitedMs: number }
 
 export type BriefingInput = {
@@ -59,8 +59,8 @@ function waitedText(ms: number): string {
   return `${Math.floor(ms / DAY_MS)} d`
 }
 
-// DX-5692: a comment survives a compaction only as a line in the summary, so every comment still owed is listed first (oldest first, the order the route answers), with the
-// two-step reply DX-5799 defined. A `seen` comment is already acknowledged, so its ack is skipped. A failed read is said as a failure: an omitted list would read as "nothing owed".
+// A comment survives a compaction only as a line in the summary, so every comment still owed is listed first (oldest first, the order the route answers), with the
+// dashboard's two-step reply (acknowledge, then reply into the same message). A `seen` comment is already acknowledged, so its ack is skipped. A failed read is said as a failure: an omitted list would read as "nothing owed".
 // The list is never capped (unlike the cards and agents lists): a comment dropped from the briefing is a comment nobody answers.
 function owedLine(owed: Source<OwedComment[]>): string {
   if (!owed.ok) return `Comments you still owe an answer: NOT KNOWN, the read failed (${oneLine(owed.reason, REASON_MAX)}). Read your plan's cards for person comments with no reply of yours before you continue the step that was in progress.`
