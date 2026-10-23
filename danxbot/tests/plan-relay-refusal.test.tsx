@@ -129,7 +129,8 @@ for (const surface of SURFACES) {
       expect(await bandLabelOf(band)).toContain('PLAN-23')
       await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any)
       await d.clock.settle()
-      expect(await bandLabelOf(band)).not.toContain('PLAN-23')
+      expect(await bandLabelOf(band)).toBe('')
+      expect(await text(band)).not.toContain('Plan twenty-three')
       expect(await text(band)).toContain('Danxbot: blocked by auto mode')
     })
 
