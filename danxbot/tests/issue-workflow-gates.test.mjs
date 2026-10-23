@@ -76,7 +76,7 @@ test("the builder runs its PRE gates in its own context, then pushes, reports th
 
 test("the operator session runs and re-runs the POST gates as gate workers, then lands the branch itself", () => {
   assert.match(gates, /The operator session runs each POST gate not yet `pass` through one gate worker per gate/);
-  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\), sends the builder the findings to fix, and lands the branch once every one passes \(Flow step 6\)\./);
+  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\), sends the builder the findings to fix, and lands the branch once every one passes \("Delivery" below\)\./);
   assert.match(gates, /the operator session re-runs a POST gate/);
 });
 
@@ -89,7 +89,8 @@ test("the Two callers table and Flow agree with the Gates section", () => {
   assert.match(callers, /PRE gates: in your own context; POST gates: run by the operator session/);
   assert.match(callers, /push the card branch, report its tip SHA, stop; the operator session lands it: push to the target branch/);
   assert.match(flow, /5\. Pass its POST gates \("Gates" below\)\./);
-  assert.match(flow, /the operator session lands its own work or an operator-session sub-agent's pushed card branch: it pushes to the target branch/);
+  assert.match(flow, /An operator-session sub-agent stops at its pushed card branch: it reports the tip SHA and ends, and never lands the branch, transitions `complete` or writes the retro\./);
+  assert.match(flow, /Landing is the operator session's job, for its own work and for a sub-agent's pushed card branch alike/);
 });
 
 // A builder briefed `work <CARD-ID>` runs the `work` profile, whose operator-session lines leave the landing, `complete` and the

@@ -37,14 +37,12 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Pass its POST gates ("Gates" below).
-6. Merge first: a dispatched worker follows the end order its dispatch instructions give; the
-   operator session lands its own work or an operator-session sub-agent's pushed card branch: it
-   pushes to the target branch, or opens a pull request when the card's controls require one
-   ("Delivery" below).
-   Only then transition `complete` with a summary and write the retro (last — it 409s
-   until terminal), citing the sha now on the target branch (on a pull request: the pull
-   request link and the branch tip). A phase card leaves `Notes from
-   Phase N` as an agent note on the next phase card.
+6. End: a dispatched worker follows the end order its dispatch instructions give. An
+   operator-session sub-agent stops at its pushed card branch: it reports the tip SHA and ends,
+   and never lands the branch, transitions `complete` or writes the retro. Landing is the
+   operator session's job, for its own work and for a sub-agent's pushed card branch alike, and
+   every step of it (merge first, then `complete`, then the retro) is in "Delivery" below.
+   A phase card leaves `Notes from Phase N` as an agent note on the next phase card.
    A card with an open problem never becomes Done: `complete`, a board drop or move to Done
    and a container roll-up are refused (409 `open_problems_block_completion`).
    Get each open problem answered by a person first; remove one only when it has become irrelevant, never because it was answered.
@@ -61,7 +59,7 @@ It never spawns gate agents: a background agent's notice reaches only the top-le
 The operator session runs each POST gate not yet `pass` through one gate worker per gate
 (`danxbot:worker-opus-high` for an architecture gate, `danxbot:worker-sonnet-high` for the
 rest), briefed by profile and card (plan-workflow "Sub-agents"), sends the builder the findings
-to fix, and lands the branch once every one passes (Flow step 6). Whoever runs a gate:
+to fix, and lands the branch once every one passes ("Delivery" below). Whoever runs a gate:
 
 1. Fetch the board's gate text through `danxbot_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
@@ -226,9 +224,17 @@ Every user-facing bug report, one block per bug:
 
 ## Delivery: push or pull request
 
-Applies to a session that lands a card: an operator session, landing its own work or a
-sub-agent's pushed card branch, or any session building a card in a repo no dashboard worker
-serves. A dispatched worker ends as its dispatch instructions say.
+Delivery lands a card's finished work on its target branch, then completes the card. It is the
+lander's job: the operator session, landing its own work or an operator-session sub-agent's
+pushed card branch once every POST gate on it passes ("Gates"), or any session building a card
+in a repo no dashboard worker serves. An operator-session sub-agent never lands: it pushes its
+card branch, reports the tip and stops (Flow step 6). A dispatched worker ends as its dispatch
+instructions say.
+
+The order is fixed: the work reaches the target branch (or its pull request opens) first, only
+then the card transitions `complete`, and the retro is written last (it 409s until the card is
+terminal), citing the sha now on the target branch (on a pull request: the pull request link and
+the branch tip).
 
 Read the card's resolved controls: `GET /api/issues/<id>` with `fields {"controls":true}`, then
 take the value of each key from the entry with that `key`:
@@ -242,19 +248,29 @@ take the value of each key from the entry with that `key`:
 A key missing from the reply means the dashboard does not know it: open an `action` problem on
 the card saying which key is missing, then stop ("Needing a human"). Never guess `false`.
 
-**`required` is `false`:** commit and push to the target branch, as "Git" below says.
+**`required` is `false`:** land the card branch on the target branch yourself.
+
+1. `git fetch origin`, then bring the card branch onto `origin/<target branch>` in its worktree
+   (`git -C <worktree> rebase origin/<target branch>`), resolving any conflict as "Git" below
+   says, and re-run the card's tests on the result.
+2. Run the repo's own finalize or land command when its instructions name one; otherwise push the
+   result: `git -C <worktree> push origin HEAD:<target branch>`. A push refused as not a
+   fast-forward means the target moved: fetch, rebase and test again, never force it.
+3. Transition `complete` with a summary, then write the retro citing the sha now on the target
+   branch.
 
 **`required` is `true`:** the target branch is never pushed to.
 
-1. Check the GitHub CLI before any commit leaves the machine: `gh --version`, then
+1. Check the GitHub CLI first, before you push or open anything: `gh --version`, then
    `gh auth status --active --hostname github.com` (it checks only the active account and
    masks the token, so no secret reaches the transcript). `gh` missing → open an
    `action` problem on the card telling the person to install the GitHub CLI
    (https://cli.github.com) and run `gh auth login`; not signed in → one telling them to run
    `gh auth login`. Then stop. Never fall back to pushing the target branch, or to any other
    way of getting the work onto it.
-2. Work on a branch cut from `origin/<target branch>` (never the target branch itself), commit,
-   and `git push -u origin <branch>`.
+2. The pull request's head is the card branch: a sub-agent's pushed card branch, or for your own
+   work a branch cut from `origin/<target branch>` (never the target branch itself), committed
+   and pushed with `git push -u origin <branch>`.
 3. Reuse an open pull request for the branch: `gh pr view <branch> --json url,state`. Its
    `state` is `OPEN` → use its `url`. A non-zero exit (no pull request) or any other `state`
    (closed, merged) means no open pull request → `gh pr create --base <target branch> --head <branch> --title
@@ -274,10 +290,11 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 
 ## Git
 
-- Commit each verified, coherent unit without asking, then push (to the target branch, or to the
-  card's branch when "Delivery" says a pull request is required). Diverged → `git pull
-  --rebase`; resolve conflicts by reading both sides and keeping both intents
-  (`-Xours`/`-Xtheirs` and whole-file overwrites are forbidden); re-run tests. Push fails
+- Commit each verified, coherent unit without asking, then push. An operator-session sub-agent
+  pushes only its card branch, never the target branch: the operator session lands it. The
+  target branch receives work only as "Delivery" above says. Diverged → `git pull --rebase`;
+  resolve conflicts by reading both sides and keeping both intents (`-Xours`/`-Xtheirs` and
+  whole-file overwrites are forbidden); re-run tests. Push fails
   (auth, headless credential prompt, no upstream) → report and stop. Never force-push without
   explicit authorization.
 - Never discard uncommitted work you didn't write — no `reset --hard`, `checkout`/`restore`
