@@ -1222,7 +1222,27 @@ export async function mountIndicator($: any, surface: string, modes: string[] = 
 // carries `N% complete` on the desktop, the text glyph on the terminal (no Svg there).
 // DX-4420: the desktop pads the footer label with non-breaking spaces (footer.tsx); the label is what is compared.
 export const FOOTER_PAD = / /g
-export const footerText = async (ui: any): Promise<string | undefined> => (await ui.find({ key: 'footer-plan' }))?.text?.replace(FOOTER_PAD, '')
+// DX-5605: on the desktop the indicator is a Markdown link (no chip), on the terminal a plain Button; both are keyed `footer-plan`.
+const FOOTER_LINK = /^\[(.*)\]\((.*)\)$/
+export const footerText = async (ui: any): Promise<string | undefined> => {
+  const el = await ui.find({ key: 'footer-plan' })
+  const raw = el?.text?.replace(FOOTER_PAD, '')
+  return el?.type === 'Markdown' ? raw?.match(FOOTER_LINK)?.[1] : raw
+}
+export const pressFooter = async (ui: any) => {
+  const el = await ui.find({ key: 'footer-plan' })
+  if (el?.type !== 'Markdown') return ui.press({ key: 'footer-plan' })
+  return ui.press({ key: 'footer-plan', link: { href: el.text.match(FOOTER_LINK)[2] } })
+}
+
+// DX-5605: the team agent the model's plan_connect answer carries (PLAN-51), and the band's label read back: the plan id is the link keyed
+// `open-plan`, the name the Text after it.
+export const AGENT_NAME = 'Katya'
+export async function bandLabelOf(ui: any): Promise<string> {
+  const ref = (await linksOf(ui)).find(l => l.key === 'open-plan')?.label ?? ''
+  const name = ((await ui.find({ type: 'Text', text: / · / }))?.text as string | undefined) ?? ''
+  return `${ref}${name}`
+}
 
 export async function expectIndicator(band: any, surface: string, percent: number) {
   const GLYPHS: [number, string][] = [[0, '○'], [37, '◔'], [62, '◑'], [99, '◕'], [100, '●']]
@@ -1262,6 +1282,12 @@ export function answerPlanConnect(on: On, d: { world: { planId: number | null } 
     const text = JSON.stringify({ ok: true, status: 200, body: { session: { planId: d.world.planId } } })
     return { result: {}, text, isError: false } as any
   })
+}
+
+// DX-5605: the server holds a team agent for the session (GET /api/plans answers it as `session.agent`); the view is read again so the footer shows it.
+export async function holdAgent($: any, d: Dashboard) {
+  d.world.agent = { id: 7, name: AGENT_NAME, avatar_url: null }
+  await forceRefresh($, d)
 }
 
 // DX-4233: there is no polling timer any more, so a refresh a test used to wait 60 s of the fake clock for is asked for here: the

@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
-import { test, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
+import { test, bandLabelOf, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 // DX-4415: the band has no Refresh button; `/danx-plan` forces a load (detached from the command, which returns at once)
@@ -39,7 +39,7 @@ describe('the MCP server connects after session start', () => {
     expect(await text(band)).toContain('Disconnected')
     d.setMcp('up')
     await d.clock.advance(2_000)
-    expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+    expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
   })
 
   test('the retries are bounded: one more load per wait, then the view settles on the error', async ($, on) => {
@@ -120,12 +120,12 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // past the wait for it the lock is released and the refresh asked behind it runs
     await d.clock.advance(LOAD_ORPHAN_WAIT_MS)
     expect(loadsOf(d)).toBe(2)
-    expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+    expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
     // the call that never settled answering at last changes nothing
     d.release()
     await d.clock.settle()
     expect(loadsOf(d)).toBe(2)
-    expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+    expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
   })
 
   // DX-4686: the live sub-agent check is no step of the refresh (a hung one cannot hold the lock), so the step after the load that is held here is
@@ -183,7 +183,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     d.release()
     await d.clock.settle()
     expect(loadsOf(d)).toBe(1)
-    expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+    expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
   })
 
   test('a busy key left by an earlier process is cleared at session.start', async ($, on) => {
@@ -199,7 +199,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // the new start frees the key
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    expect((await band.find({ key: 'disconnect' }))?.text).toBe('⏏')
+    expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
     expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
     await d.clock.advance(60_000)
     await leaving

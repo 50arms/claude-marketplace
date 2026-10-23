@@ -17,7 +17,7 @@ for (const surface of SURFACES) {
         const d = dashboard(on, { dashboardUrl: origin })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-        expect(await hrefs(band)).toEqual([`${origin}/plans/23?tab=needs-you`, `${origin}/plans/23`])
+        expect(await hrefs(band)).toEqual([`${origin}/plans/23`, `${origin}/plans/23?tab=needs-you`])
       })
     })
   }
@@ -25,11 +25,11 @@ for (const surface of SURFACES) {
 
 for (const surface of SURFACES) {
   describe(`the page links of the band are built on the session dashboard, on ${surface}`, () => {
-    test('the Open plan links go to the answered origin and the plugin calls no browser tool', async ($, on) => {
+    test('the plan links go to the answered origin and the plugin calls no browser tool', async ($, on) => {
       const d = dashboard(on, { dashboardUrl: OTHER })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect((await linksOf(band)).find(l => l.key === 'open-tab')?.href).toBe(`${OTHER}/plans/23`)
+      expect((await linksOf(band)).find(l => l.key === 'open-plan')?.href).toBe(`${OTHER}/plans/23`)
       expect(browserCalls(d)).toEqual([])
     })
   })
@@ -40,7 +40,7 @@ describe('an origin the plugin can use', () => {
     const d = dashboard(on, { dashboardUrl: `${OTHER}/some/path/` })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await hrefs(band)).toEqual([`${OTHER}/plans/23?tab=needs-you`, `${OTHER}/plans/23`])
+    expect(await hrefs(band)).toEqual([`${OTHER}/plans/23`, `${OTHER}/plans/23?tab=needs-you`])
   })
 })
 
@@ -54,14 +54,14 @@ for (const surface of SURFACES) {
       ['not a URL', 'localhost:5555 please'],
       ['not http(s)', 'ftp://plans.example.test'],
     ] as const) {
-      test(`${name}: the band says error, draws no link and the footer reads Plan`, async ($, on) => {
+      test(`${name}: the band says error, draws no link and the footer reads 50 Arms disconnected`, async ($, on) => {
         const d = dashboard(on, { dashboardUrl: value })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         const footer = await mountIndicator($, surface)
-        expect(await footerText(footer)).toBe('Danxbot')
+        expect(await footerText(footer)).toBe('50 Arms disconnected')
         expect(await linksOf(band)).toEqual([])
-        expect(await band.find({ key: 'open-tab' })).toBeUndefined()
+        expect(await band.find({ key: 'open-plan' })).toBeUndefined()
       })
     }
 
@@ -69,7 +69,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { dashboardUrl: NO_DASHBOARD_URL, connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect(await footerText(footer)).toBe('Danxbot')
+      expect(await footerText(footer)).toBe('50 Arms disconnected')
     })
   })
 }

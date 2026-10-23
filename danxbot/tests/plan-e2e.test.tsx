@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // stand-in danx-dashboard MCP server: the band at session start counts the open problems as links and writes nothing to a card.
 import { describe, expect } from 'claude-code/testing'
 
-import { test, SURFACES, dashboard, expectIndicator, footerText, mountIndicator, linksOf, problemBadgeOf, startSession, forceRefresh } from './plan-kit'
+import { test, AGENT_NAME, SURFACES, answerPlanConnect, bandLabelOf, dashboard, expectIndicator, footerText, holdAgent, mountIndicator, linksOf, pressFooter, problemBadgeOf, startSession, forceRefresh } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -21,10 +21,10 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
 
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+      expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
       expect(await problemBadgeOf(band)).toBe('⚠ 4')
       await expectIndicator(band, surface, 25)
-      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-tab'])
+      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-plan', 'open-problems'])
       // nothing the band does writes to a card
       expect(d.writes()).toEqual([])
     })
@@ -36,16 +36,18 @@ for (const surface of SURFACES) {
   describe(`the indicator flow on ${surface}`, () => {
     test('connected, dismiss, one footer press restores the band, the listener degrades, disconnect', async ($, on) => {
       const d = dashboard(on)
+      answerPlanConnect(on, d)
       await startSession($, d, surface)
+      await holdAgent($, d)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const footer = await mountIndicator($, surface, ['focus'])
-      expect(await footerText(footer)).toBe('Danxbot · PLAN-23')
+      expect(await footerText(footer)).toBe(`${AGENT_NAME} · PLAN-23`)
       await expectIndicator(band, surface, 25)
       expect(await band.find({ type: 'Text', text: /^events: / })).toBeUndefined()
 
       await band.press({ key: 'band-close' })
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
-      await footer.press({ key: 'footer-plan' })
+      await pressFooter(footer)
       expect(await band.find({ key: 'disconnect' })).toBeDefined()
 
       d.setListener('unattached')
@@ -54,7 +56,8 @@ for (const surface of SURFACES) {
 
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(await footerText(footer)).toBe('Danxbot')
+      // the session still holds its agent: the footer names the agent alone
+      expect(await footerText(footer)).toBe(AGENT_NAME)
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await band.find({ type: 'Text', text: /^events: / })).toBeUndefined()
       expect(await text(band)).not.toMatch(/events|%/)

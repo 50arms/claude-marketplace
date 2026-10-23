@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // session off its plan; the model is told in the same step; every refusal is shown, never swallowed.
 import { describe, expect } from 'claude-code/testing'
 
-import { test, SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
+import { test, SURFACES, bandLabelOf, dashboard, expectRowCarries, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -19,12 +19,11 @@ for (const surface of SURFACES) {
     test('one call with the connected plan id and disconnect: true; the band reads not connected; the model is told', async ($, on) => {
       const d = dashboard(on)
       const band = await mounted($, d, surface)
-      expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
-      expect((await band.find({ key: 'disconnect' }))?.text).toBe((surface === 'desktop' ? '⏏' : 'Disconnect'))
-      // DX-5605: a red control whose label names the plan it leaves, last but for the close x
-      expect((await band.find({ key: 'disconnect' }))?.props.label).toBe('Disconnect from PLAN-23')
+      expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
+      // DX-5605: a red control reading just Disconnect, last but for the close x
+      expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
       expect((await band.find({ key: 'disconnect' }))?.props.plain).toBe(true)
-      expect((await band.find({ type: 'Text', text: (surface === 'desktop' ? '⏏' : 'Disconnect') }))?.props.color).toBe('red')
+      expect((await band.find({ type: 'Text', text: 'Disconnect' }))?.props.color).toBe('red')
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
       expect(keys.slice(-2)).toEqual(['disconnect', 'band-close'])
       expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
@@ -69,7 +68,7 @@ for (const surface of SURFACES) {
       )
       expect(d.relay.told).toHaveLength(0)
       // the refresh read the session's real plan
-      expect(await text(band)).toContain('PLAN-24')
+      expect(await bandLabelOf(band)).toContain('PLAN-24')
     })
 
     test('session_not_connected: shown, and the refresh shows not connected', async ($, on) => {
@@ -91,9 +90,9 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.toasts.at(-1)).toMatch(/^Disconnect refused: 404 Not found/)
       expect(d.relay.told).toHaveLength(0)
-      expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+      expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
       // the key was released: the button is back
-      expect((await band.find({ key: 'disconnect' }))?.text).toBe((surface === 'desktop' ? '⏏' : 'Disconnect'))
+      expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
       expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
     })
 
@@ -123,7 +122,7 @@ for (const surface of SURFACES) {
       })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+      expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
       await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 23, disconnect: true } as any)
       await d.clock.settle()
       expect(await text(band)).toContain('Danxbot: not connected to a plan')

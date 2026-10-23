@@ -1,7 +1,7 @@
 import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
-import { test, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
+import { test, bandLabelOf, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const label = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
@@ -38,7 +38,7 @@ for (const surface of SURFACES) {
       d.failList()
       await forceRefresh($, d)
       expect(await label(band)).toContain('Danxbot: Disconnected')
-      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
       // and it recovers on the next good load
       d.failList(false)
       await forceRefresh($, d)
@@ -65,7 +65,7 @@ describe('the dashboard cannot be read', () => {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await label(band)).toContain('Danxbot: Disconnected')
       expect(await label(band)).not.toContain('not connected in this session')
-      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
     })
   }
 })
@@ -82,7 +82,7 @@ describe('the hooks that refresh', () => {
     expect(await label(band)).toContain('Danxbot: not connected to a plan')
     await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 24 } as any)
     await d.clock.settle()
-    expect(await label(band)).toContain('PLAN-24 · Agent mode')
+    expect(await bandLabelOf(band)).toBe('PLAN-24 · Agent mode')
   })
 
   test('a finished turn refreshes, but never twice within 10 s', async ($, on) => {

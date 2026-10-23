@@ -1,5 +1,5 @@
 import type { PlanView, RelayState, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, PROBLEM_GLYPH, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, BLOCKED_LABEL, keyRevokedLabel } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, DANGER, NO_AGENT_LABEL, PROBLEM_GLYPH, SUCCESS, WARNING, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, BLOCKED_LABEL, keyRevokedLabel } from './config'
 
 // the band button's label: a problem glyph and the count,
 // '' for none (the button is then not drawn). The count is a button, not label text: see band.tsx.
@@ -32,11 +32,22 @@ export function bandLabelCols(columns: number, controls: readonly { label: strin
   return columns - BAND_INDICATOR_COLS - 2 * BAND_GAP_COLS - controlCols - BAND_SPARE_COLS
 }
 
-// The band's label for a view. `maxCols`: the columns the label may take (absent:
-// no limit, the layout truncates); a connected plan's name (or a held card's title) is cut to what `PLAN-NN · ` leaves, with an ellipsis.
-// the team agent the session signs in as leads (`Tendai · PLAN-NN · name`), and a session holding a stand-alone card names the card
-// where a plan would be (`Tendai · ABC-77 · title`).
-export function bandLabel(v: PlanView, maxCols?: number): string {
+// A held plan or card's band label as parts: the team agent that leads (`Tendai · `), the plan's `PLAN-NN` (or the card's id) that is the link, and the
+// name or title after it. Null for every state that names neither (the Danxbot-prefixed ones). `maxCols`: the columns the label may take (absent: no
+// limit, the layout truncates); the name is cut to what the lead and `PLAN-NN · ` leave, with an ellipsis.
+export function bandParts(v: PlanView, maxCols?: number): { lead: string; ref: string; name: string } | null {
+  if (bandState(v) !== null) return null
+  const held = v.connected !== null ? { ref: v.connected.ref, name: v.connected.name } : v.card !== null ? { ref: v.card.id, name: v.card.title } : null
+  if (held === null) return null
+  const lead = v.agent === null ? '' : `${v.agent.name}${NAME_SEP}`
+  const { ref, name } = held
+  const sepCols = ref ? NAME_SEP.length : 0
+  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - lead.length - ref.length - sepCols)
+  return { lead, ref, name: ellipsize(name, nameCols) }
+}
+
+// the band's whole label for a state that names no plan or card, else null (then the label is the held plan's or card's parts).
+function bandState(v: PlanView): string | null {
   // a session with no key reads signed out, in the operator's words, whatever it was connected to before.
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   // a revoked key names who revoked it.
@@ -48,14 +59,14 @@ export function bandLabel(v: PlanView, maxCols?: number): string {
   if (v.phase === 'loading' && !v.refreshedAt) return `${BRAND}: loading…`
   // a signed-in session the agent gate holds: no plan or card can be read until it holds a team agent
   if (v.agentBlock !== null) return `${BRAND}: ${AGENT_BLOCK_LABEL[v.agentBlock]}`
-  const held = v.connected !== null ? { ref: v.connected.ref, name: v.connected.name } : v.card !== null ? { ref: v.card.id, name: v.card.title } : null
-  if (held === null) return v.agent === null ? `${BRAND}: ${NOTHING_HELD}` : `${BRAND}${NAME_SEP}${v.agent.name}: ${NOTHING_HELD}`
-  // a connected band reads `PLAN-NN · name`; the Danxbot prefix stays on the states with no plan.
-  const lead = v.agent === null ? '' : `${v.agent.name}${NAME_SEP}`
-  const { ref, name } = held
-  const sepCols = ref ? NAME_SEP.length : 0
-  const nameCols = maxCols === undefined ? name.length : Math.max(BAND_NAME_MIN_COLS, maxCols - lead.length - ref.length - sepCols)
-  return lead + [ref, ellipsize(name, nameCols)].filter(Boolean).join(NAME_SEP)
+  if (v.connected === null && v.card === null) return v.agent === null ? `${BRAND}: ${NOTHING_HELD}` : `${BRAND}${NAME_SEP}${v.agent.name}: ${NOTHING_HELD}`
+  return null
+}
+
+// The band's label as one string (the held plan's or card's parts joined, or the state's words).
+export function bandLabel(v: PlanView, maxCols?: number): string {
+  const parts = bandParts(v, maxCols)
+  return parts === null ? (bandState(v) as string) : [`${parts.lead}${parts.ref}`, parts.name].filter(Boolean).join(NAME_SEP)
 }
 
 // Percent complete, as the dashboard's plan header computes it. Mirrors the formula the dashboard's plan page uses:
@@ -81,18 +92,25 @@ export function viewPercent(v: PlanView): number | null {
   return v.phase === 'ready' && v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
 }
 
-// the footer button's label, read from `view.connected` alone (never from the phase's error):
-// `Danxbot · PLAN-NN` when a plan is known, `Danxbot` otherwise; null where the footer shows nothing (loading with no plan shown yet; a connect shows its plan at once).
-// The label can flip to `Danxbot` when a plan-list load fails: that error view carries no connected plan (the
-// session is read from the same failed answer), so the footer cannot name one. An error built after the plan
-// was read keeps it, and the footer keeps `Danxbot · PLAN-NN`.
+// the footer indicator's text, read from `view.connected` and the team agent the session holds (`view.agent`, from the server): `<agent name> · PLAN-NN`, the agent's name alone on no plan, and `50 Arms disconnected` with no agent session. Null where the footer shows
+// nothing (loading with no plan shown yet; a connect shows its plan at once). The signed-out, revoked and blocked states keep their own words.
+// The plan flips off when a plan-list load fails: that error view carries no connected plan (the session is read from the same failed answer), so the
+// footer cannot name one. An error built after the plan was read keeps it.
 export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'loading' && !(v.connected && v.refreshedAt)) return null
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   if (v.phase === 'key-revoked') return KEY_REVOKED_FOOTER
   if (v.phase === 'blocked' && !v.connected) return BLOCKED_LABEL
-  if (v.connected) return `${BRAND} · ${v.connected.ref}`
-  return v.card ? `${BRAND} · ${v.card.id}` : BRAND
+  if (v.agent === null) return NO_AGENT_LABEL
+  return v.connected ? `${v.agent.name}${NAME_SEP}${v.connected.ref}` : v.agent.name
+}
+
+// the footer text's colour, by the connection's state: red where the connection is lost or refused, yellow where it needs attention (the
+// auto-mode block, the plan's failed load, an open problem), green when connected with an agent, none (the footer's own text colour) when disconnected.
+export function footerTone(v: PlanView): string | undefined {
+  if (v.phase === 'signed-out' || v.phase === 'key-revoked') return DANGER
+  if (v.phase === 'blocked' || v.phase === 'error' || (v.openProblems ?? 0) > 0) return WARNING
+  return v.agent !== null && v.connected ? SUCCESS : undefined
 }
 
 // the band's events warning: why the plan's events are not flowing, or null while they are.

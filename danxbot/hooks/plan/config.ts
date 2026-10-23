@@ -99,6 +99,7 @@ export const EMPTY: PlanView = {
   // nothing to link until a load reads the boards and the plan's cards
   links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,
+  agent: null,
   refreshedAt: null,
   resumePlan: null,
   revokedBy: null,
@@ -142,8 +143,8 @@ export function boardCardUrl(plan: { dashboardUrl: string }, cardId: string): st
 
 export const DISCONNECT_WORD = 'Disconnect'
 export const DISCONNECTING_LABEL = 'Disconnecting…'
-// the desktop's one-glyph Disconnect (eject: leave the plan); the terminal draws DISCONNECT_WORD.
-export const DISCONNECT_GLYPH = '⏏'
+// the footer when no team agent is known for the session: the dashboard holds none, or the load failed (the band then says Disconnected too).
+export const NO_AGENT_LABEL = '50 Arms disconnected'
 
 // The donut's size in px (Svg takes CSS pixels): the band line's.
 export const DONUT_BAND_PX = 16

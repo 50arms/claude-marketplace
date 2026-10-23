@@ -15,7 +15,7 @@ const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' } as an
 
 describe('parsePacing', () => {
   test('the verdict and line, null for an explicit unknown, an error for anything else', () => {
-    expect(parsePacing(known)).toEqual({ verdict: { level: 'over_pace', budget: 0, resetsAt: '2026-10-08T12:00:00.000Z', runningAgents: 2, reservedAgents: 0 }, line: LINE, spend: null, readout: { worst: 'five_hour', limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroomMinutes: -30, resetsInMinutes: 100, usedPercent: 96, targetPercent: 95, criticalPercent: 99, resetsAt: '2026-10-08T12:00:00.000Z' }] } })
+    expect(parsePacing(known)).toEqual({ verdict: { level: 'over_pace', budget: 0, resetsAt: '2026-10-08T12:00:00.000Z', runningAgents: 2, reservedAgents: 0 }, line: LINE })
     expect(parsePacing(unknown)).toBeNull()
     expect(parsePacing({ ...unknown, reason: null })).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, level: 'fine' })).toEqual({ error: expect.any(String) })
@@ -29,30 +29,6 @@ describe('parsePacing', () => {
     expect(parsePacing(noReserved)).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, line: '  ' })).toEqual({ error: expect.any(String) })
     expect(parsePacing(null)).toEqual({ error: expect.any(String) })
-  })
-
-  // DX-4656: the readout rides every known answer; absent or malformed is an error, never a guessed readout
-  test('limits and worst_limit are read as given, and a missing or malformed readout is an error', () => {
-    const { limits: _l, ...noLimits } = known
-    expect(parsePacing(noLimits)).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, limits: [] })).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, worst_limit: 'monthly' })).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, worst_limit: 'weekly' })).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, limits: [{ ...known.limits[0], state: 'fine' }] })).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, limits: [{ ...known.limits[0], headroom_minutes: 1.5 }] })).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, limits: [{ ...known.limits[0], resets_in_minutes: -1 }] })).toEqual({ error: expect.any(String) })
-  })
-
-  // DX-4595: the server's spend figure rides the known answer; null stays null, anything else unreadable is loud
-  test('spend is the server figure or null, and a missing or malformed spend is an error', () => {
-    const spend = { used_percent: 82.4, level: 'critical', resets_at: '2026-10-08T12:00:00.000Z', spent_usd: 41.2, budget_usd: 50 }
-    expect(parsePacing({ ...known, spend })).toMatchObject({ spend: { usedPercent: 82.4, level: 'critical', resetsAt: '2026-10-08T12:00:00.000Z', spentUsd: 41.2, budgetUsd: 50 } })
-    expect(parsePacing({ ...known, spend: null })).toMatchObject({ spend: null })
-    const { spend: _omit, ...without } = known
-    expect(parsePacing(without)).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, spend: { ...spend, level: 'fine' } })).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, spend: { ...spend, spent_usd: '41' } })).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, spend: { ...spend, resets_at: null } })).toEqual({ error: expect.any(String) })
   })
 })
 

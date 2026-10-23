@@ -8,7 +8,7 @@ import { toolName } from '../hooks/plan/config'
 import { ownServerCheck, raisedByPlugin } from '../hooks/relay/refusal'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { blockedOrigin, optionDashboardUrl } from '../hooks/plan/origin'
-import { test, CLASSIFIER_REFUSAL, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, linksOf, mountIndicator, startSession } from './plan-kit'
+import { test, bandLabelOf, CLASSIFIER_REFUSAL, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, linksOf, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -17,7 +17,8 @@ const LOUD = /^\[danxbot plan event\] events delayed: events are NOT reaching th
 const NAMES_START = /the person runs \/danxbot:start \(or you load its skill\), which adds the allow rule \S+ once the person says yes, or the person adds it to permissions\.allow in ~\/\.claude\/settings\.json/
 const NOT_THE_FIX = /\b(update[ds]?|updating|reinstall(ing)?)\b(?!( the plugin)? does not)/i
 
-const LEFT = JSON.stringify({ ok: true, status: 200, body: { session: { planId: null } } })
+// the leave's answer carries an agent too: it must not change which branch clears the plan the model named (DX-5605)
+const LEFT = JSON.stringify({ ok: true, status: 200, body: { session: { planId: null }, agent: { id: 7, name: 'Katya' } } })
 const MODEL_CONNECTED = JSON.stringify({ ok: true, status: 200, body: { session: { planId: 23, planName: 'Plan twenty-three' } } })
 // DX-4982: the words the person reads, whole, and nothing of the engine's raw refusal in them
 const SAID = "Auto mode is blocking Danxbot's calls. Run /danxbot:start to allow them; this clears by itself, or restart the session if it does not."
@@ -67,7 +68,7 @@ for (const surface of SURFACES) {
       // the rule is added: the next calls succeed, and the band shows the plan with no restart and no press
       d.setMcp('up')
       await d.clock.advance(300_000)
-      expect(await text(band)).toContain('PLAN-23')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
       expect(await text(band)).not.toContain(SAID)
     })
 
@@ -84,14 +85,15 @@ for (const surface of SURFACES) {
     const OPTION = 'https://app.50arms.ai'
     const planLink = async (band: any) => (await linksOf(band)).map(l => l.href).filter(h => h.includes('/plans/23'))
 
-    test("the model's own successful plan_connect names its plan in the band while the plugin's own reads are refused, on the plugin's dashboard_url option alone, and the footer says it", async ($, on) => {
+    test("the model's own successful plan_connect names its plan in the band while the plugin's own reads are refused, on the plugin's dashboard_url option alone, and the footer reads 50 Arms disconnected (the agent cannot be read)", async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
       const band = await modelConnected($, on, d)
       const said = await text(band)
-      expect(said).toContain('PLAN-23 · Plan twenty-three')
+      expect(await bandLabelOf(band)).toBe('PLAN-23 · Plan twenty-three')
       expect(said).toContain(SAID)
       expect(said).not.toMatch(RAW)
-      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
+      // the plugin's own reads are refused, so the agent the server holds cannot be read
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
       expect(await planLink(band)).toEqual([`${OPTION}/plans/23`])
       expect(d.toasts.join(' | ')).not.toMatch(RAW)
     })
@@ -108,7 +110,7 @@ for (const surface of SURFACES) {
       d.setEnv('DANXBOT_DASHBOARD_URL', DASHBOARD_URL)
       d.stored.set('dashboardOrigin', 'https://stored.example')
       const band = await modelConnected($, on, d)
-      expect(await text(band)).toContain('PLAN-23 · Plan twenty-three')
+      expect(await bandLabelOf(band)).toBe('PLAN-23 · Plan twenty-three')
       expect(await planLink(band)).toEqual(['https://stored.example/plans/23'])
     })
 
@@ -124,10 +126,10 @@ for (const surface of SURFACES) {
     test("the model's own leave drops the plan it named: the blocked band names no plan afterwards", async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
       const band = await modelConnected($, on, d)
-      expect(await text(band)).toContain('PLAN-23')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
       await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any)
       await d.clock.settle()
-      expect(await text(band)).not.toContain('PLAN-23')
+      expect(await bandLabelOf(band)).not.toContain('PLAN-23')
       expect(await text(band)).toContain('Danxbot: blocked by auto mode')
     })
 
@@ -135,7 +137,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('PLAN-23')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
       d.setMcp('refused')
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
