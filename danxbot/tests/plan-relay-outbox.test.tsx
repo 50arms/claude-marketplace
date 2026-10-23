@@ -22,7 +22,7 @@ const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })
 const MCP_PLAN_CONNECT = 'mcp__plugin_danxbot_danx-dashboard__plan_connect'
 // what the plugin keeps in $.state for an event it took and has not delivered (the `relayOutbox` atom)
-const PENDING = { planId: 23, cursor: 'c1', text: 'digest', urgent: false }
+const PENDING = { planId: 23, cursor: 'c1', text: 'digest', urgent: false, acks: [] as unknown[] }
 // DX-5602: an event put back after the session refused it was delivered once at its call, so it carries `again` (issuing it again stores no cursor)
 const PUT_BACK = { ...PENDING, again: true }
 // the state the 'two events queued' test asserts is left behind (stored resume cursor, atom contents); the reload test starts from this same value
@@ -576,7 +576,7 @@ describe('the stalled notice', () => {
 })
 
 describe('the outbox helpers', () => {
-  const q = (cursor: string, again = false, planId: number | null = 23, seq = Number(cursor.slice(1))): Queued => ({ planId, seq, event: { cursor, text: cursor, urgent: false }, held: false, ...(again ? { again: true as const } : {}) })
+  const q = (cursor: string, again = false, planId: number | null = 23, seq = Number(cursor.slice(1))): Queued => ({ planId, seq, event: { cursor, text: cursor, urgent: false, acks: [] }, held: false, ...(again ? { again: true as const } : {}) })
 
   test('pollCursor goes on from the newest event not yet delivered, else the stored cursor, never from a put-back', () => {
     expect(pollCursor([q('c1'), q('c2')], 23, 'c0')).toBe('c2')

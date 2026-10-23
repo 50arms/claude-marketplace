@@ -138,7 +138,14 @@ export type ReportState = { agents: Record<string, number>; shells: string[]; pl
 // empties the module's own outbox) finds it again. The server drops every event at or below the cursor a poll presents, so this copy is the only one.
 // It is listed only while it is NOT delivered: from being taken until `$.prompt.submit` (or the note append) is called for it, and again when the
 // session refused it. `again`: it was delivered once at its call (its cursor is stored, maybe behind later ones), so issuing it again stores no cursor.
-export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; again?: true }
+// `acks`: the events the record asks the session to acknowledge (empty for most records); required, so one written by the previous plugin version (which has none) is a fault when it is read back (fromPending).
+export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; acks: AckRef[]; again?: true }
+
+// one event the dashboard needs the session to acknowledge; `attempt` is how many times it has been sent (1 = the first send).
+export type AckRef = { eventId: number; attempt: number }
+
+// the acknowledgement-requiring events this module has issued and no acknowledgement has confirmed yet, as [event id, attempt] pairs oldest first, capped (ACK_IN_FLIGHT_MAX).
+export type AckInFlight = [number, number][]
 
 declare module 'claude-code' {
   interface PluginState {
@@ -209,6 +216,8 @@ declare module 'claude-code' {
       reports: ReportState
       // the relay's undelivered events, in the order the server sent them (see PendingEvent).
       relayOutbox: PendingEvent[]
+      // the events issued to the session whose acknowledgement call has not succeeded yet (see AckInFlight): the relay drops a re-send of one the session already holds while its turn runs.
+      ackInFlight: AckInFlight
     }
   }
 }

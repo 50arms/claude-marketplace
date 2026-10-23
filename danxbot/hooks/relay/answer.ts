@@ -1,11 +1,12 @@
 import { SIGNED_OUT_MARK } from '../plan/config'
 import { RELAY_TOOL, FAILURE_MAX, WAIT_MS } from './config'
-import { NO_URGENT_DETAIL, NO_URGENT_FIX } from './text'
+import { NO_ACKS_DETAIL, NO_ACKS_FIX, NO_URGENT_DETAIL, NO_URGENT_FIX } from './text'
 import { keyRevokedBy, mcpText } from '../plan/mcp'
 import { classifierRefusal } from './refusal'
+import type { AckRef } from '../../types'
 
 // What one `plan_events_wait` call came to. The tool answers:
-//   {events: [{cursor: string, text: string, urgent: boolean}]}   (events empty when the wait timed out)
+//   {events: [{cursor: string, text: string, urgent: boolean, acks: {eventId, attempt}[]}]}   (events empty when the wait timed out)
 //   {stopped: {reason, detail, fix}}             (the relay cannot go on: the server's own detail and fix; the reason is for the server's logs)
 // as JSON text. Anything else is a failure shown as one, never an empty list (Core Principle 1).
 // A record's `cursor` is an opaque string the server minted: what to send back, and store, once that record is delivered. The plugin
@@ -13,7 +14,9 @@ import { classifierRefusal } from './refusal'
 // records in the order the server sent them and keeps the cursor of the last one delivered.
 // `urgent` is the server's decision, by the record's kind, and is required on every record: a record
 // without a boolean one is refused, never read as false.
-export type RelayEvent = { cursor: string; text: string; urgent: boolean }
+// `acks` is required on every record too (empty for most): the events the record asks the session to acknowledge. A record without it comes from a
+// server older than the release that adds it, which stops the relay with a remedy; a record whose `acks` is not a list of {eventId, attempt} is malformed.
+export type RelayEvent = { cursor: string; text: string; urgent: boolean; acks: AckRef[] }
 export type WaitAnswer =
   | { kind: 'events'; events: RelayEvent[] }
   | { kind: 'stopped'; detail: string; fix: string }
@@ -38,7 +41,9 @@ const cut = (text: string, max = FAILURE_MAX) => (text.length > max ? `${text.sl
 
 const isRecord = (x: any): boolean =>
   x !== null && typeof x === 'object' && typeof x.text === 'string' && x.text !== '' && typeof x.cursor === 'string' && x.cursor !== ''
-const isEvent = (x: any): x is RelayEvent => isRecord(x) && typeof x.urgent === 'boolean'
+export const isAckList = (x: any): x is AckRef[] =>
+  Array.isArray(x) && x.every(a => a !== null && typeof a === 'object' && Number.isSafeInteger(a.eventId) && a.eventId > 0 && Number.isSafeInteger(a.attempt) && a.attempt >= 1)
+const isEvent = (x: any): x is RelayEvent => isRecord(x) && typeof x.urgent === 'boolean' && isAckList(x.acks)
 
 // a malformed answer is a loud failure, never an empty list (Core Principle 1)
 export function readWaitAnswer(r: any): WaitAnswer {
@@ -64,7 +69,9 @@ export function readWaitAnswer(r: any): WaitAnswer {
     // a record with NO `urgent` is a danx-dashboard server older than the release that adds it: the relay cannot go on until the session is
     // restarted, so it stops with that remedy instead of retrying forever. A record whose `urgent` is there and not a boolean is a malformed answer.
     if (list.some(x => x.urgent === undefined)) return { kind: 'stopped', detail: NO_URGENT_DETAIL, fix: NO_URGENT_FIX }
-    return { kind: 'failed', message: `${RELAY_TOOL} answered a record whose urgent is not a boolean: ${cut(text, SNIPPET_MAX)}` }
+    // the same for `acks`: a record with none is a danx-dashboard server older than the release that adds it (a record whose `acks` is there and wrong is malformed)
+    if (list.some(x => typeof x.urgent === 'boolean' && x.acks === undefined)) return { kind: 'stopped', detail: NO_ACKS_DETAIL, fix: NO_ACKS_FIX }
+    return { kind: 'failed', message: `${RELAY_TOOL} answered a record whose urgent is not a boolean or whose acks is not a list of {eventId, attempt}: ${cut(text, SNIPPET_MAX)}` }
   }
   return { kind: 'failed', message: `${RELAY_TOOL} answered neither {events} nor {stopped}: ${cut(text, SNIPPET_MAX)}` }
 }

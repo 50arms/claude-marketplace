@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
+import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -68,10 +68,10 @@ import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanT
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
-import { fromPending, isLateTick, isStalled, onlyPlan, pollCursor, putBack, toPending } from './relay/outbox'
+import { StalePendingError, ackedEventId, clearInFlight, fromPending, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, shouldDropResend, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
-import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
+import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
@@ -169,6 +169,8 @@ const compacting = atom({ plugin: 'danxbot', key: 'compacting' } as const, { mai
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
 // the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
 const relayOutbox = atom({ plugin: 'danxbot', key: 'relayOutbox' } as const, [] as PendingEvent[])
+// the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
+const ackInFlight = atom({ plugin: 'danxbot', key: 'ackInFlight' } as const, [] as AckInFlight)
 
 // the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -1350,7 +1352,21 @@ async function issueOutbox($: any): Promise<void> {
       const next = outbox[0]
       // no live run on that plan: the events wait for a run that serves it (startRelay starts this again)
       if (next === undefined || next.held || relayRun === null || relayRun.planId !== next.planId) return
+      // a re-send of an event the session already holds, while its turn runs, is delivered in effect (its cursor moves, it leaves the outbox) but not issued again
+      // (a record that asks for no acknowledgement, the common case, reads nothing and awaits nothing extra)
+      const asks = next.event.acks.length > 0
+      const resend = asks && shouldDropResend(next.event.acks, await read($, ackInFlight), (await read($, turn)).isRunning)
+      if (resend) {
+        if (!outbox.includes(next)) continue
+        if (next.again !== true) await saveCursor($, next.planId, next.event.cursor)
+        const dropAt = outbox.indexOf(next)
+        if (dropAt >= 0) outbox.splice(dropAt, 1)
+        await persistOutbox($)
+        if (!outbox.some(q => q.again === true)) await clearRetrying($, next.planId)
+        continue
+      }
       const issued = await issueEvent($, next.event.text, next.event.urgent)
+      if (asks) await update($, ackInFlight, cur => markInFlight(cur, next.event.acks))
       // the outcome gets its rejection handler at once, before anything awaits (the cursor store below), so a rejection is never unhandled
       const outcome = issued.done.catch((err: any) => notTakenLine(errMessage(err)))
       // a move to another plan dropped it while the call was made: it is no longer this module's to deliver
@@ -1411,6 +1427,8 @@ async function settleOutbox($: any, event: Queued, outcome: Promise<string | nul
   if (relayRun !== null && relayRun.planId !== event.planId) return
   outboxFailure = failure
   outboxRefusals++
+  // the refused event never reached the session, so it is not an event the session holds
+  if (event.event.acks.length > 0) await update($, ackInFlight, cur => clearInFlight(cur, event.event.acks.map(a => a.eventId)))
   const held: Queued = { ...event, again: true, held: true }
   putBack(outbox, held)
   await persistOutbox($)
@@ -1549,7 +1567,14 @@ async function relayLoop($: any, run: RelayRun): Promise<void> {
     // the run's first word comes before any await of its own: until then the band would still show the state the last run of this plan left
     await setRelay($, run, 'streaming', null)
     await pruneCursors($)
-    await restoreOutbox($, run)
+    try {
+      await restoreOutbox($, run)
+    } catch (err: any) {
+      // a queued event a previous plugin version kept has no acks list: a fault, never a default. The relay stops with the remedy.
+      if (!(err instanceof StalePendingError)) throw err
+      await relayFailed($, run, 'stopped', STALE_PENDING_FIX, stoppedLine(`${STALE_PENDING_DETAIL} (${err.message})`, STALE_PENDING_FIX))
+      return
+    }
     // on from the newest event still waiting in the outbox (a run replacing a stuck one, or a reloaded module), else from the stored cursor
     let cursor = pollCursor(outbox, run.planId, await loadCursor($, run.planId))
     let keyedBy = await $.session.id()
@@ -1748,6 +1773,16 @@ async function onRequestPermission($: any, e: any, next: any) {
   const approval = asApproval(request)
   toastPermission($, approval)
   return withPermissionNote(ran, approval)
+}
+
+// the session acknowledged an event (POST /api/plan-sessions/me/events/<N>/ack): it is no longer in flight. A refusal comes back as a normal result with
+// ok:false (a 400 is not an error result), so success is the envelope's ok, never the absence of isError.
+async function onAckCall($: any, e: any, next: any) {
+  const ran = await next(e)
+  const id = ackedEventId(e.method, e.path)
+  if (id === null) return ran
+  if (textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
+  return ran
 }
 
 async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
@@ -3055,6 +3090,7 @@ export const register: Register = (on, options) => {
   on('tool.check', (_$, e, next) => ownServerCheck(e, next))
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
+  on('tool.call', { tool: toolName('danxbot_api') }, onAckCall)
   on('turn.start', onTurnStart)
   on('turn.complete', onTurnComplete)
   // an automatic compaction is held while the session is under the handshake; the agent's ready starts /compact itself (startReadyCompaction)
