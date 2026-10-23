@@ -56,7 +56,7 @@ test("CLAUDE.md and hooks.json name no bridge or watchdog", () => {
 
 // The design gate's events (listen.ts formats them): a chosen design passes the gate; a change request, the last live design
 // rejected or "Ask for another design" owes the designer a turn, run again as "Sub-agents" says (DX-4734 AC 50935: one place
-// for how the designer is started; issue-workflow "Gates" says what it does);
+// for how the designer is started; since DX-5899 the `gate-designer` profile its brief fetches says what it does);
 // a withdrawn choice puts the gate back on the person.
 test("Live events tells the session what each design event means and when the designer runs again", () => {
   const section = liveEvents();
