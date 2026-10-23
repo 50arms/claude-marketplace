@@ -178,7 +178,7 @@ From the dashboard:
   now. Nothing to record.
 - `requested changes on revision …`, a `REJECTED revision …` that closed the card's last live
   design, or a comment starting `**Asked for another design:**` → the designer owes a turn: run
-  it again ("Sub-agents"), unless one you started is still on it.
+  the designer again ("Sub-agents"), unless one you started is still on it.
 - `retracted the answer to` the design problem → the choice was withdrawn and the gate waits on
   the person again: build nothing from that design.
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
@@ -345,11 +345,12 @@ below only when the card wouldn't cover it. Set `effort_level` first, by its har
 its breadth (issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
 never `general-purpose`. A card that carries gates never goes to a `worker-haiku-*` tier.
 A builder runs its PRE gates itself and never spawns gate agents; once it reports its pushed
-tip SHA, you run its POST gates as gate workers and say when to land. A card owing `plan-design`
-once its `plan-dependency` passed goes to no builder yet: run its designer,
-`Agent({subagent_type:"danxbot:worker-<the gate's tier>", prompt:"<CARD-ID> plan-design"})`
-(issue-workflow "Gates" names the tier and what the designer does), and again for each design
-event above that owes it a turn.
+tip SHA, you run its POST gates as gate workers and say when to land. A card carrying
+`plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
+have passed and it carries no design yet, run its designer, unless one you started is still on
+it: `Agent({subagent_type:"danxbot:worker-<tier>", prompt:"<CARD-ID> plan-design"})`, `<tier>`
+as issue-workflow "Gates" picks it. It reports the designs it published or the problem it
+opened. Run it again only for a design event above that owes it a turn.
 
 Partition files before fanning out. State a time-box; never background a long test run and
 end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits

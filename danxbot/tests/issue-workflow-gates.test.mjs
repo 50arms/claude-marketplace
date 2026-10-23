@@ -115,22 +115,30 @@ test("the creation guide carries no hard-coded parent-child list", () => {
 // the board's gate text.
 test("a gate only a person's answer passes is never recorded by the agent", () => {
   assert.match(gates, /A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused for every caller\./);
-  assert.match(gates, /the person's choice of a design on the card passes the gate\./);
+  assert.match(gates, /Publishing leaves the gate open: only a person's choice of a design on the card passes it\./);
 });
 
 test("the operator session, never the builder, runs one designer sub-agent at the gate's tier", () => {
   assert.match(gates, /runs its PRE gates itself, in its own context \(all but `plan-design`, below\)/);
-  assert.match(gates, /`plan-design` is one, and the builder never runs it: when a card owes it, the operator session runs one designer sub-agent at the tier the gate's `effort_level` on the card names \(unset: `danxbot:worker-sonnet-high`\)\./);
-  assert.match(gates, /Until then a builder's `pickup` is refused \(409 `design_not_chosen`\)\./);
+  assert.match(gates, /`plan-design` is one, and the builder never runs it\. Once the PRE gates before it have passed and the card carries no design yet, the operator session runs one designer sub-agent, unless one it started is still on it, at the tier the gate's `effort_level` on the card names \(unset: `danxbot:worker-sonnet-high`, the gate-worker tier above\)\./);
+});
+
+test("Flow and Claiming exempt the designer from the claim, and a refused builder stops", () => {
+  assert.match(flow, /2\. Operator-session sub-agent: claim it before any work \(below\); a `plan-design` designer claims nothing \("Gates"\)\./);
+  const claiming = flat(skill.slice(skill.indexOf("## Claiming"), skill.indexOf("## When to block")));
+  assert.match(claiming, /Nor does a `plan-design` designer \("Gates"\)\./);
+  assert.match(claiming, /A builder whose `pickup` is refused 409 `design_not_chosen` stops and reports it: the card waits on a person choosing a design\./);
 });
 
 test("a sub-agent handed only a card id and plan-design can set itself up as the designer", () => {
-  assert.match(gates, /A sub-agent handed a card id and `plan-design` is that designer: it claims nothing, fetches the gate text \(step 1\), reads the repo's mini-app usage instructions, builds and publishes as the text says, then stops;/);
+  assert.match(gates, /A sub-agent handed a card id and `plan-design` is that designer: it claims nothing, fetches the gate text \(step 1\), reads the repo's mini-app usage instructions, builds and publishes as the text says, then stops and reports the design and revision numbers it published\./);
+  assert.match(gates, /A design it cannot build \(no mini-app target, a build that keeps failing\) becomes an `action` problem on the card naming why, and it reports that instead\./);
 });
 
 test("plan-workflow starts the first designer, not only the re-run, with a card-id-and-gate brief", () => {
-  assert.match(subAgents, /A card owing `plan-design` once its `plan-dependency` passed goes to no builder yet: run its designer, `Agent\(\{subagent_type:"danxbot:worker-<the gate's tier>", prompt:"<CARD-ID> plan-design"\}\)`/);
-  assert.match(subAgents, /and again for each design event above that owes it a turn\./);
+  assert.match(subAgents, /A card carrying `plan-design` goes to no builder until a person chooses a design\./);
+  assert.match(subAgents, /Once the PRE gates before it have passed and it carries no design yet, run its designer, unless one you started is still on it: `Agent\(\{subagent_type:"danxbot:worker-<tier>", prompt:"<CARD-ID> plan-design"\}\)`, `<tier>` as issue-workflow "Gates" picks it\./);
+  assert.match(subAgents, /It reports the designs it published or the problem it opened\. Run it again only for a design event above that owes it a turn\./);
 });
 
 test("the creation guide lists both design gates with when to add each, and builds no designer of its own", () => {
