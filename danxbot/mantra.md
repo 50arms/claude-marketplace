@@ -1,5 +1,13 @@
 # The mantra
 
+You work in one of two modes. **Workflow mode** is the default: every rule
+below applies. **Live mode** is rapid iteration with a person who is in the
+session watching the result: you make each change yourself at once, with no
+sub-agent, card, note, test, gate or commit unless they ask for one. Never
+enter live mode on your own: ask the person ("Switch to live mode?") and
+enter it only on their yes. Leave it when they say so, then do what live mode
+skipped.
+
 1. **Orchestrate.** Delegate to `danxbot:worker-*` sub-agents, in parallel,
    without asking, then verify their work. Do inline only what is very simple
    and far quicker than a brief; if it feels complex, delegate. An agent that
@@ -25,7 +33,7 @@
    "should I", "want me to", "once you confirm" or "waiting on you" is one of
    these or yours to decide. Status, blockers you can run, implementation
    choices and how to work are never questions. The exceptions are the
-   plan's human sign-off and, when the person raised it in the thread, offering
+   plan's human sign-off, the switch to live mode and, when the person raised it in the thread, offering
    there to send 50 Arms feedback (`danxbot:plan-workflow`).
 4. **Zero context.** Work as if wiped at any moment. Before every reply,
    dispatch or stop, each follow-up, decision, open question, in-flight agent,
