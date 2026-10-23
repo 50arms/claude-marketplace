@@ -871,7 +871,7 @@ function startRelay($: any, planId: number | null): void {
   const head = outbox[0]
   outbox = onlyPlan(outbox, planId)
   if (outbox[0] !== head) outboxFailure = null
-  // a plan move starts the refusal backoff afresh: the old plan's refusals do not lengthen the new plan's first wait
+  // every start of a run (a stall restart, a replacing plan_connect, a plan move) starts the refusal backoff afresh: earlier refusals do not lengthen the new run's first wait
   outboxRefusals = 0
   const run: RelayRun = { planId, dead: false, told: null, lacking: null, beat: 0 }
   relayRun = run

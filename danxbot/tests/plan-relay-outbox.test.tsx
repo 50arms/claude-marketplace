@@ -244,6 +244,36 @@ for (const surface of SURFACES) {
       expect(d.stored.get(KEY)).toMatchObject({ planId: 23, cursor: 'c2' })
     })
 
+    test('c1 and c2 are both called, c2 is refused first and c1 after it: both go back in the original order and are delivered c1 then c2', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.rejectPrompts('busy')
+      // c1's call is held inside the engine until released, so c2's call (made while c1's has not settled) settles and is refused first
+      let calls = 0
+      let releaseC1!: () => void
+      const c1Gate = new Promise<void>(resolve => (releaseC1 = resolve))
+      d.relay.duringPrompt(async () => {
+        if (++calls === 1) await c1Gate
+      })
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      d.relay.push({ cursor: 'c2', text: 'second digest' })
+      await d.clock.settle()
+      expect(d.relay.attempts.map(a => a.text)).toEqual(['[danxbot plan event] digest', '[danxbot plan event] second digest'])
+      releaseC1()
+      await d.clock.settle()
+      d.relay.acceptPrompts()
+      await d.clock.advance(BACKOFF_MS[BACKOFF_MS.length - 1])
+      // bounded: a regression that issues in a wrong order or loops fails here by name rather than hanging
+      expect(d.relay.attempts.map(a => a.text)).toEqual([
+        '[danxbot plan event] digest',
+        '[danxbot plan event] second digest',
+        '[danxbot plan event] digest',
+        '[danxbot plan event] second digest',
+      ])
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[danxbot plan event] digest', '[danxbot plan event] second digest'])
+    })
+
     test('after a reload the put-back event the atom kept is issued once, the stored cursor stays at c2, and the first poll carries c2', async ($, on) => {
       const d = dashboard(on)
       d.stored.set(KEY, { planId: 23, cursor: 'c2', at: 1 })
