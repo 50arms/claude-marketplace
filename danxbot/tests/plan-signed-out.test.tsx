@@ -1,6 +1,6 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4423: a session with no dashboard key (lapsed, never approved; a key a person revoked is its own view, DX-4418). The danx-dashboard MCP answers every tool but
-// plan_connect with an error result written for the agent; the band and footer must say "Danxbot: signed out" in the
+// plan_connect with an error result written for the agent; the band and footer must say "50 Arms: signed out" in the
 // person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.
 import { describe, expect } from 'claude-code/testing'
 
@@ -144,16 +144,16 @@ describe('signInNote', () => {
 for (const surface of SURFACES) {
   for (const kind of ['signed-out', 'lapsed'] as const) {
     describe(`${kind} on ${surface}`, () => {
-      test("band and footer say Danxbot: signed out in red, with a Sign in button and none of the server's words", async ($, on) => {
+      test("band and footer say 50 Arms: signed out in red, with a Sign in button and none of the server's words", async ($, on) => {
         const d = dashboard(on, { signedOut: kind })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         const footer = await mountIndicator($, surface)
 
-        const label = await band.find({ type: 'Text', text: /Danxbot: signed out/ })
+        const label = await band.find({ type: 'Text', text: /50 Arms: signed out/ })
         expect(label.props.color).toBe('red')
         expect(await buttons(band)).toContain('Sign in')
-        expect(await footerText(footer)).toBe('Danxbot: signed out')
+        expect(await footerText(footer)).toBe('50 Arms: signed out')
         for (const shown of [await texts(band), (await buttons(band)).join(' ')]) expect(shown).not.toMatch(AGENT_TEXT)
         expect(await buttons(band)).not.toContain('Disconnect')
         expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
@@ -168,9 +168,9 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const footer = await mountIndicator($, surface)
 
-      const label = await band.find({ type: 'Text', text: /Danxbot: access revoked by dana/ })
+      const label = await band.find({ type: 'Text', text: /50 Arms: access revoked by dana/ })
       expect(label.props.color).toBe('red')
-      expect(await footerText(footer)).toBe('Danxbot: access revoked')
+      expect(await footerText(footer)).toBe('50 Arms: access revoked')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
       for (const shown of [await texts(band), (await buttons(band)).join(' ')]) {
         expect(shown).not.toMatch(AGENT_TEXT)
@@ -191,10 +191,10 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { signedOut: 'lapsed' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await texts(band)).toContain('Danxbot: signed out')
+      expect(await texts(band)).toContain('50 Arms: signed out')
       d.world.signedOut = 'revoked'
       await forceRefresh($, d)
-      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
+      expect(await texts(band)).toContain('50 Arms: access revoked by dana')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
     })
 
@@ -207,8 +207,8 @@ for (const surface of SURFACES) {
       d.relay.told.length = 0
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.toasts).toEqual(['Danxbot: access revoked by dana. This session must stop.'])
-      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
+      expect(d.toasts).toEqual(['50 Arms: access revoked by dana. This session must stop.'])
+      expect(await texts(band)).toContain('50 Arms: access revoked by dana')
     })
 
     test('a person revokes the key while Sign in waits: one toast, the view reads revoked, and no further call is made', async ($, on) => {
@@ -220,8 +220,8 @@ for (const surface of SURFACES) {
       d.world.signedOut = 'revoked'
       await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe('Danxbot: access revoked by dana. This session must stop.')
-      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
+      expect(d.toasts.at(-1)).toBe('50 Arms: access revoked by dana. This session must stop.')
+      expect(await texts(band)).toContain('50 Arms: access revoked by dana')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
       const calls = connectCalls(d).length
       await d.clock.advance(120_000)
@@ -239,7 +239,7 @@ for (const surface of SURFACES) {
       d.world.signedOut = 'lapsed'
       // three polls while signed out: the plan it was on is still remembered after the first
       for (let i = 0; i < 3; i++) await forceRefresh($, d)
-      expect(await texts(band)).toContain('Danxbot: signed out')
+      expect(await texts(band)).toContain('50 Arms: signed out')
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
       expect(connectCalls(d)[0]!.args).toEqual({ plan_id: 23, title: 'PLAN-23: danxbot plugin' })
@@ -365,7 +365,7 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(await texts(band)).toContain('Danxbot: not connected to a plan')
+      expect(await texts(band)).toContain('50 Arms: not connected to a plan')
       // DX-4530: told it is signed in, with no plan named (it asked for none)
       const prompts = woken(d)
       expect(d.relay.told).toEqual([])
@@ -409,7 +409,7 @@ for (const surface of SURFACES) {
         // DX-4530: nothing was signed in, so the model is told nothing
         expect([...d.relay.told, ...woken(d)]).toEqual([])
         expect(connectCalls(d)).toHaveLength(1)
-        expect(await texts(band)).toContain('Danxbot: signed out')
+        expect(await texts(band)).toContain('50 Arms: signed out')
         expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
       })
     }

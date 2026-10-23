@@ -31,13 +31,13 @@ for (const surface of SURFACES) {
       expect(await problemBadgeOf(band)).toBe('⚠ 4')
     })
 
-    test('a refresh error shows `Danxbot: Disconnected` in the band', async ($, on) => {
+    test('a refresh error shows `50 Arms: Disconnected` in the band', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       d.failList()
       await forceRefresh($, d)
-      expect(await label(band)).toContain('Danxbot: Disconnected')
+      expect(await label(band)).toContain('50 Arms: Disconnected')
       expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
       // and it recovers on the next good load
       d.failList(false)
@@ -63,7 +63,7 @@ describe('the dashboard cannot be read', () => {
       const d = dashboard(on, { mcp: 'flaky' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await label(band)).toContain('Danxbot: Disconnected')
+      expect(await label(band)).toContain('50 Arms: Disconnected')
       expect(await label(band)).not.toContain('not connected in this session')
       expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
     })
@@ -79,7 +79,7 @@ describe('the hooks that refresh', () => {
     })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    expect(await label(band)).toContain('Danxbot: not connected to a plan')
+    expect(await label(band)).toContain('50 Arms: not connected to a plan')
     await $.tool.call({ tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect', plan_id: 24 } as any)
     await d.clock.settle()
     expect(await bandLabelOf(band)).toBe('PLAN-24 · Agent mode')

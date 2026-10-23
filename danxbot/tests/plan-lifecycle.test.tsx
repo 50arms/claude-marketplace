@@ -80,10 +80,10 @@ describe('what one load says about what it did not read', () => {
       const d = dashboard(on, { noInProgressTotal: true })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('Danxbot: Disconnected')
+      expect(await text(band)).toContain('50 Arms: Disconnected')
       expect(await problemBadgeOf(band)).toBeUndefined()
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('red')
-      const label = await band.find({ type: 'Text', text: /Danxbot: Disconnected/ })
+      const label = await band.find({ type: 'Text', text: /50 Arms: Disconnected/ })
       expect(label?.props.color).toBe('red')
       expect(label?.props.dimColor).toBeFalsy()
     })
@@ -113,7 +113,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // DX-4233: the deadline ends the load as an error shown now; the call that never settled still holds the lock, so a refresh in this window
     // starts no second load beside it
     await d.clock.advance(LOAD_DEADLINE_MS / 2 + 1_000)
-    expect(await text(band)).toContain('Danxbot: Disconnected')
+    expect(await text(band)).toContain('50 Arms: Disconnected')
     await ask($, d)
     expect(loadsOf(d)).toBe(1)
 
@@ -179,7 +179,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await d.clock.settle()
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await d.clock.advance(LOAD_DEADLINE_MS + 1_000)
-    expect(await text(band)).toContain('Danxbot: Disconnected')
+    expect(await text(band)).toContain('50 Arms: Disconnected')
     d.release()
     await d.clock.settle()
     expect(loadsOf(d)).toBe(1)

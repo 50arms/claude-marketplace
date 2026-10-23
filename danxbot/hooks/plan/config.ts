@@ -2,7 +2,7 @@ import type { ConnectedPlan, PlanView } from '../../types'
 
 // the name every footer label, and the band's not-connected, loading and disconnected states, carry,
 // so the operator can tell the text is danxbot's.
-export const BRAND = 'Danxbot'
+export const BRAND = '50 Arms'
 // the problem icon on the band's count button (a Button label is text only).
 export const PROBLEM_GLYPH = '⚠'
 export const COMMAND = 'danx-plan'

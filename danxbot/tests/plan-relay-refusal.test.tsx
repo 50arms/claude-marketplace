@@ -60,9 +60,9 @@ for (const surface of SURFACES) {
       const said = await text(band)
       expect(said).toContain(SAID)
       expect(said).not.toMatch(RAW)
-      expect(await text(band)).toContain('Danxbot: blocked by auto mode')
+      expect(await text(band)).toContain('50 Arms: blocked by auto mode')
       // the footer says it too (never the bare brand)
-      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot: blocked by auto mode')
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms: blocked by auto mode')
       expect(await band.find({ key: 'sign-in' })).toBeFalsy()
       expect(d.toasts.join(' | ')).not.toMatch(RAW)
       // the rule is added: the next calls succeed, and the band shows the plan with no restart and no press
@@ -119,7 +119,7 @@ for (const surface of SURFACES) {
       d.seedState('modelPlan', { id: 99, name: 'Stale plan' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('Danxbot: blocked by auto mode')
+      expect(await text(band)).toContain('50 Arms: blocked by auto mode')
       expect(await text(band)).not.toContain('Stale plan')
     })
 
@@ -131,7 +131,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(await bandLabelOf(band)).toBe('')
       expect(await text(band)).not.toContain('Plan twenty-three')
-      expect(await text(band)).toContain('Danxbot: blocked by auto mode')
+      expect(await text(band)).toContain('50 Arms: blocked by auto mode')
     })
 
     test('a press the engine refuses (Disconnect) toasts the sentence, never the raw text, and reloads the view', async ($, on) => {
@@ -160,7 +160,7 @@ for (const surface of SURFACES) {
       d.setMcp('refused')
       await forceRefresh($, d)
       const blocked = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(blocked)).toContain('Danxbot: blocked by auto mode')
+      expect(await text(blocked)).toContain('50 Arms: blocked by auto mode')
       expect(await text(blocked)).not.toContain('Plan twenty-three')
     })
 

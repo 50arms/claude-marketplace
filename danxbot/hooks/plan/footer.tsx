@@ -1,30 +1,18 @@
 import type { Handlers } from './handlers'
 import { DESKTOP_SURFACE } from './config'
-import { linkMarkdown } from './links'
 
-// The footer indicator in the `SessionMode` site. It sits beside whatever the engine and other plugins already put there
-// (`rest`, the result of next(e)), so the existing mode labels survive.
-// plain text, no chip. A Button is drawn by the desktop as a native button with a chip whatever `plain` says (ButtonProps.plain: "A desktop
-// draws its native button either way"), and `Text` has no onPress. The one pressable that is not a button is a `Markdown` link answered by
-// `onLinkPress` (MarkdownProps): drawn as text with no chip, so the desktop draws that. A Markdown link takes no colour, so the desktop's text is the
-// link's own; the terminal, whose `plain` Button has no chrome, keeps the Button and its `Text` child carries the status colour. The href is only
-// the link's address (nothing opens it: the press opens the band).
-const FOOTER_HREF = 'https://app.50arms.ai/'
-
+// The footer indicator in the `SessionMode` site: a Button, like the engine's own "Bypass permissions" and model buttons beside it. It sits
+// beside whatever the engine and other plugins already put there (`rest`, the result of next(e)), so the existing mode labels survive.
+// DX-5605: a button, never a link or plain text (operator, 2026-10-22). The desktop draws its native button from the label text and ignores a
+// child's colour, so it gets the label as text; the terminal's `plain` Button has no chrome and its `Text` child carries the status colour.
 export function renderFooter(E: any, hd: Handlers, label: string, tone: string | undefined, rest: any, surface: string): any {
-  const { Box, Button, Markdown, Text } = E
-  const indicator =
-    surface === DESKTOP_SURFACE ? (
-      <Markdown key="footer-plan" text={linkMarkdown(label, FOOTER_HREF)} pressableLinks={[FOOTER_HREF]} onLinkPress={() => void hd.showPlan()} />
-    ) : (
-      <Button key="footer-plan" plain onPress={() => hd.showPlan()}>
-        <Text color={tone}>{label}</Text>
-      </Button>
-    )
+  const { Box, Button, Text } = E
   return (
     <Box flexDirection="row" gap={1}>
       {rest}
-      {indicator}
+      <Button key="footer-plan" plain onPress={() => hd.showPlan()}>
+        {surface === DESKTOP_SURFACE ? label : <Text color={tone}>{label}</Text>}
+      </Button>
     </Box>
   )
 }
