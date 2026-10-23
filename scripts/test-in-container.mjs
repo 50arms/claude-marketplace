@@ -7,7 +7,7 @@
  *   npm test -- danxbot/tests/mantra.test.mjs      named files: .mjs files run under `node --test`, .tsx files under `claude plugin test`
  *
  * HOW THE SOURCE GETS IN. Nothing from this machine is mounted. The image holds the installed dependencies and the claude CLI; the
- * source is streamed in as a tar archive (`docker cp`) into a container created from it. The copy is exactly the files git sees here
+ * source is streamed in on stdin as a tar archive of a single `docker run --rm -i`, whose bootstrap unpacks it (CP-2). The copy is exactly the files git sees here
  * (tracked, plus untracked files that are not ignored, as they are on disk now), each tracked file with the mode the git index records.
  * A container-side write can never reach a host node_modules, and a host node_modules (Windows-native binaries) never goes in. The
  * container also gets a git repository whose HEAD is the copied tree: the delivery and publish suites clone it.
@@ -17,26 +17,16 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { containerCreateArgs } from "./lib/container-create-args.mjs";
+import { containerRunArgs } from "./lib/container-run-args.mjs";
 import { buildUstar } from "./lib/ustar.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const APP = "/app";
 /** The most `git ls-files` output the collector accepts: a checkout lists far fewer paths than this. */
 const GIT_OUTPUT_MAX_BYTES = 256 * 1024 * 1024;
 /** The `node` user of the official node image, which Dockerfile.test runs the suite as. */
 const TEST_USER = { uid: 1000, gid: 1000 };
 /** Git for Windows rewrites arguments that look like POSIX paths; every path handed to docker here is a container path. */
 const DOCKER_ENV = { ...process.env, MSYS_NO_PATHCONV: "1", MSYS2_ARG_CONV_EXCL: "*" };
-
-/**
- * Set once the container exists. The container is created with --rm (CP-2), so the daemon removes it when it stops, even if this
- * process is killed; the exit handler is for the one path --rm cannot cover: a created container that never started (docker cp failed).
- */
-let createdContainer;
-process.on("exit", () => {
-  if (createdContainer) spawnSync("docker", ["rm", "-f", createdContainer], { stdio: "ignore", env: DOCKER_ENV });
-});
 
 const die = (message) => {
   console.error(`test-in-container: ${message}`);
@@ -122,22 +112,14 @@ function main() {
   // The archive is built BEFORE the container exists, so a failure collecting it has no container to leak.
   const archive = buildUstar(collectSource(), TEST_USER);
   const name = `claude-plugins-test-${process.pid}-${Date.now()}`;
-  const created = docker(containerCreateArgs(name, image, testFiles));
-  if (created.status !== 0) die(`docker create failed: ${created.stderr}`);
-  createdContainer = name; // --rm removes it once started and stopped; the exit handler covers a failure before the start
-  process.on("SIGINT", () => process.exit(130));
-  process.on("SIGTERM", () => process.exit(143));
-
-  const copy = spawn("docker", ["cp", "-a", "-", `${name}:${APP}`], { env: DOCKER_ENV, stdio: ["pipe", "inherit", "inherit"] });
-  copy.on("error", (e) => die(`docker cp failed: ${e.message}`));
-  copy.stdin.on("error", () => {}); // a docker cp that exits early surfaces through its exit code below
-  copy.stdin.end(archive);
-  copy.on("exit", (code) => {
-    if (code !== 0) die(`copying the source into the container failed (docker cp exit ${code})`);
-    const run = spawn("docker", ["start", "-a", name], { env: DOCKER_ENV, stdio: "inherit" });
-    run.on("error", (e) => die(`docker start failed: ${e.message}`));
-    run.on("exit", (status) => process.exit(status ?? 1));
-  });
+  // CP-2: one `docker run --rm -i`; the archive goes in on stdin, so no container exists before it runs under --rm.
+  const run = spawn("docker", containerRunArgs(name, image, testFiles), { env: DOCKER_ENV, stdio: ["pipe", "inherit", "inherit"] });
+  run.on("error", (e) => die(`docker run failed: ${e.message}`));
+  run.stdin.on("error", () => {}); // a container that exits early surfaces through its exit code below
+  run.stdin.end(archive);
+  process.on("SIGINT", () => run.kill("SIGINT"));
+  process.on("SIGTERM", () => run.kill("SIGTERM"));
+  run.on("exit", (status) => process.exit(status ?? 1));
 }
 
 main();
