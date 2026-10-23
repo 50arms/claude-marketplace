@@ -5,7 +5,7 @@ import type { CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingSta
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { DISK_MEASURE_MS, FLOOR_ENV, HARD_MINIMUM_ENV, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
+import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, Source } from './compaction/briefing'
@@ -1844,7 +1844,6 @@ async function diskText($: any, trigger: 'prompt' | 'tool', now: number): Promis
   return text
 }
 
-const DISK_ENV_NAMES = ['SystemDrive', 'WSL_DISTRO_NAME', 'USERPROFILE', FLOOR_ENV, HARD_MINIMUM_ENV]
 const WSL_INTEROP_TIMEOUT_MS = 10_000
 const DISK_PROBE_TIMEOUT_MS = 10_000
 
@@ -1852,8 +1851,14 @@ const DISK_PROBE_TIMEOUT_MS = 10_000
 // or when all is well; else the notice. Every fault is ONE line, never silence.
 async function measureDisk($: any): Promise<string> {
   try {
-    const env: DiskEnv = {}
-    for (const name of DISK_ENV_NAMES) env[name] = await $.env.get(name)
+    // each variable by its own literal name: `$.env.get` takes a literal so the variables a module reads can be listed (the names are FLOOR_ENV / HARD_MINIMUM_ENV in disk.ts)
+    const env: DiskEnv = {
+      SystemDrive: await $.env.get('SystemDrive'),
+      WSL_DISTRO_NAME: await $.env.get('WSL_DISTRO_NAME'),
+      USERPROFILE: await $.env.get('USERPROFILE'),
+      DANXBOT_DISK_FLOOR_GIB: await $.env.get('DANXBOT_DISK_FLOOR_GIB'),
+      DANXBOT_DISK_HARD_MINIMUM_GIB: await $.env.get('DANXBOT_DISK_HARD_MINIMUM_GIB'),
+    }
     const kind = hostKindOf(env)
     if (kind === null) return ''
     const home = await windowsHome($, kind, env)

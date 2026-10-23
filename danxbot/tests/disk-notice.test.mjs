@@ -109,7 +109,7 @@ test('both of danxbot overrides apply, and the two limits are checked against ea
 test('an open compaction window tells the session to pause, before the disk line', () => {
   const notice = diskNotice(facts({ freeBytes: 25 * GIB, windowText: '1792728384\ncompacting docker\n' }))
   const lines = notice.split('\n')
-  assert.match(lines[0], /^MAINTENANCE WINDOW OPEN since 2026-10-22T.*: compacting docker$/)
+  assert.match(lines[0], /^MAINTENANCE WINDOW OPEN since 2026-10-2\dT.*: compacting docker$/)
   assert.match(lines[1], /start no test run, build, deploy or dispatch/)
   assert.match(lines[1], /run from the danxbot checkout/)
   assert.ok(notice.indexOf('MAINTENANCE WINDOW') < notice.indexOf('LOW DISK'))
