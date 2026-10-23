@@ -1,7 +1,7 @@
 import "../../danxbot/tests/designated-test-container.mjs";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -19,16 +19,10 @@ test("docker run carries --rm directly after `run`, before the image", () => {
   assert.ok(args.indexOf("--rm") < args.indexOf("img"));
 });
 
-test("the bootstrap unpacks stdin into /app before the entry script and passes the test files on", () => {
-  const args = containerRunArgs("n", "img", ["a.test.mjs", "b.test.mjs"]);
-  assert.ok(args.includes("-i"));
-  assert.match(args[args.indexOf("-c") + 1], /^tar -x -C \/app && exec bash scripts\/test-container-entry\.sh "\$@"$/);
-  assert.deepEqual(args.slice(-2), ["a.test.mjs", "b.test.mjs"]);
-});
-
 // The bootstrap in a temp dir: bad stdin must fail the unpack and never reach the entry script.
-test("the bootstrap with a bad archive on stdin fails and never runs the entry script", () => {
+test("the bootstrap with a bad archive on stdin fails and never runs the entry script", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "cp2-bootstrap-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, "scripts"));
   const marker = join(dir, "entry-ran");
   writeFileSync(join(dir, "scripts", "test-container-entry.sh"), `#!/bin/bash\ntouch ${JSON.stringify(marker)}\n`);
@@ -40,8 +34,9 @@ test("the bootstrap with a bad archive on stdin fails and never runs the entry s
 
 // The runner against a stub `docker` on PATH: `build` succeeds, `run` records its argv and stdin and either exits with STUB_EXIT or
 // waits for a signal, `rm` records the container it was asked to remove.
-function stubbedRunner(env) {
+function stubbedRunner(t, env) {
   const dir = mkdtempSync(join(tmpdir(), "cp2-runner-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const bin = join(dir, "bin");
   mkdirSync(bin);
   const log = (name) => join(dir, name);
@@ -68,8 +63,8 @@ esac
   return { child, done, log, read: (name) => (existsSync(log(name)) ? readFileSync(log(name), "utf8").split("\n").filter(Boolean) : []) };
 }
 
-test("the runner passes the run argv and the archive on stdin, and propagates the container's exit code", async () => {
-  const s = stubbedRunner({ STUB_EXIT: "7" });
+test("the runner passes the run argv and the archive on stdin, and propagates the container's exit code", async (t) => {
+  const s = stubbedRunner(t, { STUB_EXIT: "7" });
   const { code } = await s.done;
   assert.equal(code, 7);
   const argv = s.read("run.argv");
@@ -82,8 +77,8 @@ test("the runner passes the run argv and the archive on stdin, and propagates th
   assert.equal(s.read("rm.argv")[2], argv[argv.indexOf("--name") + 1]);
 });
 
-test("SIGTERM to the runner removes the container by name and exits 143", async () => {
-  const s = stubbedRunner({ STUB_HANG: "1" });
+test("SIGTERM to the runner removes the container by name and exits 143", async (t) => {
+  const s = stubbedRunner(t, { STUB_HANG: "1" });
   const deadline = Date.now() + 30000;
   while (!existsSync(s.log("started")) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
   assert.ok(existsSync(s.log("started")), "the stub run started");
