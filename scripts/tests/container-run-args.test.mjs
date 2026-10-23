@@ -19,6 +19,21 @@ test("docker run carries --rm directly after `run`, before the image", () => {
   assert.ok(args.indexOf("--rm") < args.indexOf("img"));
 });
 
+const labelsOf = (args) => args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
+
+// CP-3: pinned equal to danxbot's schema (src/docker-ownership/labels.ts: OWNER_LABEL kind/release/session; kind test-run; release idle:<minutes>).
+test("the container carries danxbot's owner labels: test-run, idle:60, and the session when set", () => {
+  const withSession = labelsOf(containerRunArgs("n", "img", [], { CLAUDE_CODE_SESSION_ID: "abc-123" }));
+  assert.deepEqual(withSession, ["claude-plugins.test-container=1", "danxbot.kind=test-run", "danxbot.release=idle:60", "danxbot.session=abc-123"]);
+  assert.deepEqual(labelsOf(containerRunArgs("n", "img", [], {})), ["claude-plugins.test-container=1", "danxbot.kind=test-run", "danxbot.release=idle:60"]);
+  assert.deepEqual(labelsOf(containerRunArgs("n", "img", [], { CLAUDE_CODE_SESSION_ID: "" })).length, 3);
+});
+
+test("every label sits before the image", () => {
+  const args = containerRunArgs("n", "img", ["x"], { CLAUDE_CODE_SESSION_ID: "s" });
+  assert.ok(args.lastIndexOf("--label") < args.indexOf("img"));
+});
+
 // The bootstrap in a temp dir: bad stdin must fail the unpack and never reach the entry script.
 test("the bootstrap with a bad archive on stdin fails and never runs the entry script", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "cp2-bootstrap-"));
