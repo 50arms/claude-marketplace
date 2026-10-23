@@ -326,8 +326,8 @@ on Team > Agents) disconnects your session: its key is revoked, its team agent g
 it leaves every session list. A session holds an agent exactly while it is connected, and nothing
 remembers the agent you had. On waking, your next dashboard call is refused as a revoked key: sign in
 again (approval as for any new key), then `plan_connect`, which takes the next free agent or answers
-`agent_limit_reached`. The pause-ended notice then says `Your agent <name> went back to the pool; you
-were disconnected after <N> minutes paused. You signed in again: call plan_connect.` Until you hold an
+`agent_limit_reached`. The pause-ended notice then says `Your agent <name> went back to the pool: this session was
+disconnected after <N> minutes paused. Sign in again with plan_connect.` Until you hold an
 agent again work calls are refused with `agent_not_held` or `agent_needed`.
 
 ## Stopping
