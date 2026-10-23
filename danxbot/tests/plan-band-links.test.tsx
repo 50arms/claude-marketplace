@@ -1,7 +1,7 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4521 / DX-4630 / DX-5605: the band's page link is the plan id (`PLAN-23`) beside the donut, going to the plan's page. There is no Open plan control: with no
 // plan connected the band names none, so it draws no page link. It is a Markdown link on every surface, so the app opens it in the in-app browser as it opens a
-// link in the thread; the plugin makes no browser tool call. The open-problem count's link is separate (its own Needs You URL).
+// link in the thread; the plugin makes no browser tool call. The needs-you count's link is separate (its own Needs You URL).
 import { describe, expect } from 'claude-code/testing'
 
 import { test, DASHBOARD_URL, NO_DASHBOARD_URL, SURFACES, browserCalls, dashboard, forceRefresh, linksOf, startSession } from './plan-kit'
@@ -9,7 +9,7 @@ import { test, DASHBOARD_URL, NO_DASHBOARD_URL, SURFACES, browserCalls, dashboar
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const PLAN = `${DASHBOARD_URL}/plans/23`
 
-// the page links the band draws, apart from the open-problem count's
+// the page links the band draws, apart from the needs-you count's
 async function pageLinks(ui: any) {
   expect(await ui.findAll({ type: 'Link' })).toEqual([])
   expect(await ui.findAll({ type: 'Button', key: 'open-tab' })).toEqual([])
