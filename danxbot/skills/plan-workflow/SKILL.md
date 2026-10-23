@@ -339,18 +339,20 @@ blocker (card id, open problem, user action) to an agent note on that card.
 
 ## Sub-agents
 
-Delegate by card id: `Agent({subagent_type:"danxbot:worker-<tier>", prompt:"<CARD-ID>"})` is
-the whole brief — each tier loads `danxbot:issue-workflow` itself. Add the worktree rule
+Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and
+the sub-agent's first call fetches that profile's instruction for the card, which is its whole
+task, so the brief repeats nothing the profile or the card says. Build a card with
+`Agent({subagent_type:"danxbot:worker-<tier>", prompt:"work <CARD-ID>"})`. Add the worktree rule
 below only when the card wouldn't cover it. Set `effort_level` first, by its hardest single step, never
 its breadth (issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
 never `general-purpose`. A card that carries gates never goes to a `worker-haiku-*` tier.
 A builder runs its PRE gates itself and never spawns gate agents; once it reports its pushed
-tip SHA, you run its POST gates as gate workers and say when to land. A card carrying
+tip SHA, you run its POST gates as gate workers, each briefed `gate-reviewer <CARD-ID> <gate>` at
+the tier issue-workflow "Gates" names; once they pass, land it and complete the card. A card carrying
 `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
-have passed and it carries no design yet, run its designer, unless one you started is still on
-it: `Agent({subagent_type:"danxbot:worker-<tier>", prompt:"<CARD-ID> plan-design"})`, `<tier>`
-as issue-workflow "Gates" picks it. It reports the designs it published or the problem it
-opened. Run it again only for a design event above that owes it a turn.
+have passed and it carries no design yet, start its designer, unless one you started is still on
+it: `gate-designer <CARD-ID>`, at the tier the gate's `effort_level` on the card names (unset:
+`danxbot:worker-sonnet-high`). Run it again only for a design event above that owes it a turn.
 
 Partition files before fanning out. State a time-box; never background a long test run and
 end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits

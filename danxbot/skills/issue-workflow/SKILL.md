@@ -16,7 +16,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 | Worktree | prepared before you start | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
 | Gates | your dispatch instructions carry them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
-| Merge + end | your dispatch instructions | push the card branch, report its tip SHA, stop; when told to land: push to the target branch (or open a pull request when "Delivery" below says so), `complete` + retro, report |
+| Merge + end | your dispatch instructions | push the card branch, report its tip SHA, stop; the operator session lands it: push to the target branch (or open a pull request when "Delivery" below says so), then `complete` + retro |
 
 The dispatched worker's own mechanics (how it ends, halts and merges) are in the instructions its dispatch gave it.
 
@@ -31,14 +31,16 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    the lines you are about to edit. Everything you read stays in your context and is paid
    again on every later turn, so the larger your context and the more turns remain, the
    sooner delegating is cheaper than its ~60k-token start.
-2. Operator-session sub-agent: claim it before any work (below); a `plan-design` designer
-   claims nothing ("Gates"). Dispatched worker: skip this step, the card is already yours.
+2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip this
+   step, the card is already yours.
 3. Pass its PRE gates ("Gates" below), then build test-first, to the rules under
    "Building" below.
 4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
 5. Pass its POST gates ("Gates" below).
-6. Merge first: a dispatched worker follows the end order its dispatch instructions give; an operator-session sub-agent, once told to land, commits and pushes to the target
-   branch, or opens a pull request when the card's controls require one ("Delivery" below).
+6. Merge first: a dispatched worker follows the end order its dispatch instructions give; the
+   operator session lands its own work or an operator-session sub-agent's pushed card branch: it
+   pushes to the target branch, or opens a pull request when the card's controls require one
+   ("Delivery" below).
    Only then transition `complete` with a summary and write the retro (last — it 409s
    until terminal), citing the sha now on the target branch (on a pull request: the pull
    request link and the branch tip). A phase card leaves `Notes from
@@ -58,7 +60,8 @@ An operator-session sub-agent runs its PRE gates itself, in its own context (all
 It never spawns gate agents: a background agent's notice reaches only the top-level session.
 The operator session runs each POST gate not yet `pass` through one gate worker per gate
 (`danxbot:worker-opus-high` for an architecture gate, `danxbot:worker-sonnet-high` for the
-rest), relays the findings and says when to land. Whoever runs a gate:
+rest), briefed by profile and card (plan-workflow "Sub-agents"), sends the builder the findings
+to fix, and lands the branch once every one passes (Flow step 6). Whoever runs a gate:
 
 1. Fetch the board's gate text through `danxbot_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
@@ -74,16 +77,9 @@ rest), relays the findings and says when to land. Whoever runs a gate:
    records normally, and a second verdict on the same ref is refused.
 
 A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused
-for every caller. `plan-design` is one, and the builder never runs it. Once the PRE gates
-before it have passed and the card carries no design yet, the operator session runs one
-designer sub-agent, unless one it started is still on it, at the tier the gate's
-`effort_level` on the card names (unset: `danxbot:worker-sonnet-high`, the gate-worker tier
-above). A sub-agent handed a card id and `plan-design` is that designer: it claims nothing,
-fetches the gate text (step 1), reads the repo's mini-app usage instructions, builds and
-publishes as the text says, then stops and reports the design and revision numbers it
-published. A design it cannot build (no mini-app target, a build that keeps failing) becomes
-an `action` problem on the card naming why, and it reports that instead. Publishing leaves the
-gate open: only a person's choice of a design on the card passes it.
+for every caller. `plan-design` is one: the builder never runs it, the operator session starts
+its designer (plan-workflow "Sub-agents"), and only a person's choice of a design on the card
+passes it.
 
 Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
 that doesn't apply to the card is removed (`POST` the same card route with
@@ -103,9 +99,8 @@ A call refused 403 for a missing permission → `request_permission` with a reas
 
 A dispatched worker never claims: the dashboard picked the card up before spawning it
 (`In Progress`, `dispatch_id` set), so a `pickup` from it is refused 409
-`dispatch_id (already dispatched)`. Nor does a `plan-design` designer ("Gates"). A builder
-whose `pickup` is refused 409 `design_not_chosen` stops and reports it: the card waits on a
-person choosing a design.
+`dispatch_id (already dispatched)`. A builder whose `pickup` is refused 409
+`design_not_chosen` stops and reports it: the card waits on a person choosing a design.
 
 A `ToDo` card is an open dispatch request — working it unclaimed races a worker onto it.
 Transition `pickup` with `manual:true`, which stops anything auto-transitioning it. The
@@ -231,9 +226,9 @@ Every user-facing bug report, one block per bug:
 
 ## Delivery: push or pull request
 
-Applies to a session that lands its own work (an operator-session sub-agent, or any session
-building a card in a repo no dashboard worker serves). A dispatched worker ends as its dispatch
-instructions say.
+Applies to a session that lands a card: an operator session, landing its own work or a
+sub-agent's pushed card branch, or any session building a card in a repo no dashboard worker
+serves. A dispatched worker ends as its dispatch instructions say.
 
 Read the card's resolved controls: `GET /api/issues/<id>` with `fields {"controls":true}`, then
 take the value of each key from the entry with that `key`:
