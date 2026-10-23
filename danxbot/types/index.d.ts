@@ -112,6 +112,9 @@ export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; 
 // the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
 export type StampState = { at: number; day: string } | null
 
+// the last disk notice handed to the model: its text and when (epoch ms); null before the first or once all was well.
+export type DiskTold = { text: string; at: number } | null
+
 // a session start the model has not yet been told about: SessionStart records it (the engine has not bound the session yet, so it
 // cannot call the MCP), and the next prompt.submit or main-loop tool.call result consumes it.
 // who is compacting. `main` is the epoch ms of the main agent's compaction proposal (null: none); `agents` has one entry per sub-agent (bare id), `at` its proposal's time, or its
@@ -165,6 +168,8 @@ declare module 'claude-code' {
       turn: TurnState
       // the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState
+      // the last disk notice told to the model (see DiskTold), so a tool call repeats it only on a change or after a few minutes.
+      diskTold: DiskTold
       // the session start waiting for the next prompt or main-loop tool result (see PendingStart).
       pendingStart: PendingStart
       // the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
