@@ -21,7 +21,6 @@ const read = (rel) => readFileSync(path.join(here, rel), "utf8");
 const fixBehavior = read("../skills/fix-agent-behavior/SKILL.md");
 const planWorkflow = read("../skills/plan-workflow/SKILL.md");
 const issueWorkflow = read("../skills/issue-workflow/SKILL.md");
-const mantra = read("../mantra.md");
 
 /** One line, single-spaced, so no assertion depends on where the prose wraps. */
 const flat = (text) => text.replace(/\s+/g, " ");
@@ -55,7 +54,7 @@ test("the list of homes rules a memory file out and moves a correction already s
 });
 
 test("the memory-file rule lives in fix-agent-behavior only", () => {
-  for (const [name, text] of [["mantra", mantra], ["plan-workflow", planWorkflow], ["issue-workflow", issueWorkflow]]) {
+  for (const [name, text] of [["plan-workflow", planWorkflow], ["issue-workflow", issueWorkflow]]) {
     assert.doesNotMatch(flat(text), /memory file/i, name);
   }
 });
@@ -68,5 +67,4 @@ test("a gated card never goes to a haiku tier: once, where plan-workflow picks t
     "follows the sentence that picks the tier",
   );
   assert.equal(count(planWorkflow, GATED_NEVER_HAIKU), 1);
-  assert.doesNotMatch(flat(mantra), GATED_NEVER_HAIKU);
 });

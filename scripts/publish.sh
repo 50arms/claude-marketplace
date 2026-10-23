@@ -181,7 +181,7 @@ fi
 # --- Pre-flight: general-audience scan (DX-4551) --------------------------
 #
 # Everything a plugin ships is read by every user who installs it. The scan fails the
-# publish when a skill, agent, hook, script output string or the mantra names something
+# publish when a skill, agent, hook or script output string names something
 # only the author's own setup has (a personal account or alias, the author's domain, an
 # internal card or plan id, a path in the author's repo). Whole repo, before any bump.
 

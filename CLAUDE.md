@@ -4,9 +4,10 @@ Source of truth for the `50arms` marketplace (`50arms/claude-marketplace`, insta
 
 ## The mantra is the one home for every rule it states (PLN-11 R-22)
 
-`danxbot/mantra.md` is the mantra's single hand-maintained text: danxbot seeds the reminder
-registry row `mantra` from it, and every agent receives that row's effective text (or the
-board's override of it, DX-4144), never a copy:
+The plugin ships no mantra text. Its default is the `mantra` row of danxbot's own reminder seed
+(`src/issues/reminders/seed.yaml`, in the danxbot repo), stored in danxbot's database and
+overridable per install, board and plan. Every agent receives the reminder registry row `mantra`'s
+effective text (or the board's override of it, DX-4144), never a copy:
 
 - the main session: the module's `classic.SessionStart` hook (`danxbot/hooks/register.tsx`, source
   `startup|resume|compact`), ONLY once the session is signed in (DX-5554; before it, DX-3421
@@ -27,14 +28,12 @@ board's override of it, DX-4144), never a copy:
 - every dispatched worker: its profile's `{{reminder:mantra}}`, resolved by danxbot per
   dispatch against the card's board (DX-4144: one mantra; the dispatch fork is gone).
 
-`mantra.md` is the git source `resolveReminderSeedItems` derives the `mantra`
-registry row's default from at dashboard-seed time — it is NOT a runtime fallback any more
-(DX-3421: a registry fetch failure is one line naming the failure and telling the agent
-to tell the operator; the hook never re-reads this file). **Nothing else restates a mantra
+A registry fetch failure is one line naming the failure and telling the agent
+to tell the operator (DX-3421); the hook never reads a local mantra file. **Nothing else restates a mantra
 rule** — no `SKILL.md`, agent body, hook text, `CLAUDE.md`, rule file or profile. A skill may
-point at the mantra or add procedure the mantra doesn't state. To change a rule, edit
-`mantra.md` and publish; phrase each rule so it holds for every one of those readers. No
-prose states how many sub-agents to run (R-23).
+point at the mantra or add procedure the mantra doesn't state. To change a rule, change the `mantra`
+row in danxbot's `src/issues/reminders/seed.yaml` (or override it in the app); phrase each rule so it
+holds for every one of those readers. No prose states how many sub-agents to run (R-23).
 
 ## The time stamp, the event text and the restart notice are function hooks (DX-4234)
 

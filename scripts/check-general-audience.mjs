@@ -2,8 +2,8 @@
 //
 // check-general-audience.mjs — DX-4551 (AC 44348).
 //
-// A plugin's text reaches every user who installs it: skills, agent bodies, hook text, the strings
-// its scripts print, and the mantra. None of it may name something only its author's own setup
+// A plugin's text reaches every user who installs it: skills, agent bodies, hook text
+// and the strings its scripts print. None of it may name something only its author's own setup
 // has: a personal GitHub account or marketplace name, a shell alias, the author's domain or other
 // products, an internal card/plan id, or a path in the author's own repo. This scan fails the
 // publish (scripts/publish.sh runs it before any bump) when any shipped file does.
