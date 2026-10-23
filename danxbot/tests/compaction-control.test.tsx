@@ -223,6 +223,7 @@ describe('the resume briefing (pure)', () => {
   test('names the plan, the cards in flight, the running sub-agents and the work not pushed', () => {
     const text = briefingText({
       plan: { ref: 'PLAN-23', name: 'The plugin' },
+      owed: ok([]),
       cards: ok([{ id: 'DX-9', title: 'In flight card' }]),
       agents: ok([{ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build the thing' }]),
       git: ok(GIT),
@@ -237,6 +238,7 @@ describe('the resume briefing (pure)', () => {
   test('says what is empty and what could not be read, never an empty-looking line for either', () => {
     const text = briefingText({
       plan: null,
+      owed: ok([]),
       cards: ok([]),
       agents: { ok: false, reason: 'the engine did not list this session\'s sub-agents' },
       git: { ok: false, reason: 'git status exited 128' },
@@ -249,12 +251,36 @@ describe('the resume briefing (pure)', () => {
 
   test('counts the rest past eight cards or agents, and words a clean checkout and a branch with no upstream', () => {
     const cards = Array.from({ length: 10 }, (_, i) => ({ id: `DX-${i + 1}`, title: `Card ${i + 1}` }))
-    const text = briefingText({ plan: null, cards: ok(cards), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })
+    const text = briefingText({ plan: null, owed: ok([]), cards: ok(cards), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })
     expect(text).toContain('DX-8 Card 8, and 2 more.')
     expect(text).toContain('Sub-agents running: none.')
     expect(text).toContain('(a detached checkout): no uncommitted changes, no upstream branch (nothing on it is pushed).')
-    expect(briefingText({ plan: null, cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 1, ahead: 1 }) })).toContain('1 uncommitted path, 1 unpushed commit.')
-    expect(briefingText({ plan: null, cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 0, ahead: 0 }) })).toContain('no uncommitted changes, nothing unpushed.')
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 1, ahead: 1 }) })).toContain('1 uncommitted path, 1 unpushed commit.')
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 0, ahead: 0 }) })).toContain('no uncommitted changes, nothing unpushed.')
+  })
+
+  const OWED = [
+    { cardId: 'DX-5075', cardTitle: 'Some card', commentId: 17031, author: { name: 'Dan' }, excerpt: { text: 'Please also cover the retry path' }, state: 'sent' as const, waitedMs: 5 * 60_000 },
+    { cardId: 'DX-6', cardTitle: 'Other', commentId: 9, author: { name: 'Wren' }, excerpt: { text: 'ok?' }, state: 'seen' as const, waitedMs: 3 * 3_600_000 },
+  ]
+  const EMPTY_GIT = ok({ branch: null, changed: 0, upstream: null, ahead: null })
+
+  test('lists every owed comment before the plan, oldest first, with state, wait and the two-step reply', () => {
+    const text = briefingText({ plan: { ref: 'PLAN-1', name: 'P' }, owed: ok(OWED), cards: ok([]), agents: ok([]), git: EMPTY_GIT })
+    expect(text).toContain('DX-5075 Some card, comment 17031 from Dan [Sent, waiting 5 min]: "Please also cover the retry path"')
+    expect(text).toContain('DX-6 Other, comment 9 from Wren [Seen, waiting 3 h]: "ok?"')
+    expect(text.indexOf('comment 17031')).toBeLessThan(text.indexOf('comment 9 '))
+    expect(text.indexOf('comment 17031')).toBeLessThan(text.indexOf('Your plan is'))
+    expect(text).toContain('phase "ack"; skip this for one that is Seen')
+    expect(text).toContain('phase "reply"')
+  })
+
+  test('says none owed, and says a failed owed-comments read as a failure, never as none', () => {
+    const base = { plan: null, cards: ok([]), agents: ok([]), git: EMPTY_GIT }
+    expect(briefingText({ ...base, owed: ok([]) })).toContain('Comments you owe an answer: none.')
+    const failed = briefingText({ ...base, owed: { ok: false, reason: 'http 503' } })
+    expect(failed).toContain('Comments you owe an answer: NOT KNOWN, the read failed (http 503).')
+    expect(failed).not.toContain('owe an answer: none')
   })
 })
 
@@ -678,6 +704,22 @@ for (const surface of SURFACES) {
       const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
       expect(told).toContain('Work not pushed: not known (git status exited 128).')
       expect(told).toContain('Sub-agents running: none.')
+    })
+
+    test('a compaction briefing lists the owed comments the dashboard names, and says a failed read as a failure', async ($, on) => {
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      on('classic.SessionStart', () => ({}) as any)
+      const d = dashboard(on)
+      d.world.owedComments = [{ cardId: 'DX-5075', cardTitle: 'Some card', commentId: 17031, author: { name: 'Dan' }, excerpt: { text: 'Cover retry too' }, state: 'sent', waitedMs: 120_000 }]
+      await startSession($, d, surface)
+      await $.prompt.submit({ text: 'go' })
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
+      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
+      expect(told).toContain('DX-5075 Some card, comment 17031 from Dan [Sent, waiting 2 min]: "Cover retry too"')
+      d.world.reportReplies['GET /api/plan-sessions/me/owed-comments'] = { status: 503, body: { error: 'down' } }
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
+      const failed = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
+      expect(failed).toContain('Comments you owe an answer: NOT KNOWN, the read failed')
     })
 
     test('a startup or resume carries no briefing', async ($, on) => {

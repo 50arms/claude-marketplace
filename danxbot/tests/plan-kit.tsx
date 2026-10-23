@@ -28,7 +28,7 @@ export const EVENT_TEXT = (event: string) => `The ${event} text.`
 // DX-4993: a connected session's compaction is followed by the resume briefing in the same entry: here for the fixture's plan (PLAN-23 Danxbot plugin), DX-9 in
 // flight, no running sub-agent and a clean checkout of main. `TOLD(event)` is everything a session start of that event adds beside the time stamp.
 // the procedure is pinned literally (not imported): a reworded production text must fail the tests that compare against it
-export const DEFAULT_BRIEFING = "[50 ARMS] Your conversation was just compacted. Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress. Your plan is PLAN-23 Danxbot plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed."
+export const DEFAULT_BRIEFING = "[50 ARMS] Your conversation was just compacted. Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress. Comments you owe an answer: none. Your plan is PLAN-23 Danxbot plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed."
 export const TOLD = (event: string) => (event === 'after_compaction' ? `${EVENT_TEXT(event)}
 ${DEFAULT_BRIEFING}` : EVENT_TEXT(event))
 // DX-4234: where the fixture's machine keeps the MCP server's connection record of a session (what makes a session locally known as plan-connected)
@@ -302,6 +302,8 @@ export function dashboard(
     readyRows: {} as Record<string, unknown[]>,
     // DX-4997: what GET /api/plan-sessions/me/pause answers as `pause` (null, an agent pause, a usage pause)
     pause: null as unknown,
+    // DX-5692: what GET /api/plan-sessions/me/owed-comments answers as `owedComments` (the comments the session still owes an answer)
+    owedComments: [] as unknown[],
     reportReplies: {} as Record<string, { status?: number; body?: unknown; deny?: string; delayMs?: number }>,
     // DX-4993: the context `$.session.usage()` answers (tokens now, the model's window): none by default, a session before its first response
     context: {} as { tokens?: number; window?: number },
@@ -596,11 +598,12 @@ export function dashboard(
   const sequence: string[] = []
   const isReportCall = (a: any) =>
     (a.method === 'POST' && a.path === '/api/plan-sessions/me/activity') ||
-    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause'))
+    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause' || a.path === '/api/plan-sessions/me/owed-comments'))
   // ... answered as the real routes answer them (danxbot plan-sessions-routes, plans/mine, the issues list)
   function reportAnswer(a: any) {
     if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })
     if (a.path === '/api/plan-sessions/me/pause') return reply({ pause: world.pause })
+    if (a.path === '/api/plan-sessions/me/owed-comments') return reply({ owedComments: world.owedComments })
     if (a.path === '/api/plans/mine') return world.planId === null ? reply({ error: 'session_not_connected' }, 409) : reply({ id: world.planId, boards: world.planBoards })
     // as the issues list answers: the always-returned row, plus only the fields the `fields` tree names
     const rows = (world.readyRows[a.board] ?? []).map((row: any) =>
