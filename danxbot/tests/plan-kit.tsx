@@ -342,8 +342,10 @@ export function dashboard(
   if (options.bigCard) world.cards.push(bigCard())
   // DX-5232: every card of the plan (any status, either board): the fixture's own cards and the others
   const planCardIds = [...new Set([...PLAN_CARD_IDS, ...world.cards.map(c => c.id), ...Array.from({ length: options.extraPlanCards ?? 0 }, (_, i) => `DX-${1000 + i}`)])]
+  // the plan's Needs You bucket counts CARDS holding an open problem, on the plan list and on the plan read alike
+  const needsYouCards = () => world.cards.filter(c => c.problems.some(p => p.open)).length
   const plans = [
-    { id: 23, ref: 'PLAN-23', name: options.planName ?? 'Danxbot plugin', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 2 } },
+    { id: 23, ref: 'PLAN-23', name: options.planName ?? 'Danxbot plugin', status: 'building', archived_at: null, get bucket_counts() { return { 'needs-you': needsYouCards() } } },
     { id: 24, ref: 'PLAN-24', name: 'Agent mode', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 0 } },
     { id: 25, ref: 'PLAN-25', name: 'Archived', status: 'done', archived_at: 'x', bucket_counts: {} },
   ]
@@ -404,7 +406,7 @@ export function dashboard(
         card_count: planCardIds.length,
         ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
         // as the real route answers: `bucket_counts` always (the needs-you bucket counts CARDS holding an open problem), `card_ids` only when `fields` names it
-        ...(options.planFieldsShape === 'noNeedsYou' ? {} : { bucket_counts: { 'needs-you': world.cards.filter(c => c.problems.some(p => p.open)).length } }),
+        ...(options.planFieldsShape === 'noNeedsYou' ? {} : { bucket_counts: { 'needs-you': needsYouCards() } }),
         ...(query?.fields?.card_ids && options.planFieldsShape !== 'noCardIds' ? { card_ids: options.planFieldsShape === 'badCardIds' ? [...planCardIds, 7] : planCardIds } : {}),
       })
     }

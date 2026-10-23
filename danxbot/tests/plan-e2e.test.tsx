@@ -1,6 +1,6 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4232 E2E: one whole operator session per surface through the real hooks module with a
-// stand-in danx-dashboard MCP server: the band at session start counts the open problems as links and writes nothing to a card.
+// stand-in danx-dashboard MCP server: the band at session start counts the cards that need a person as a link and writes nothing to a card.
 import { describe, expect } from 'claude-code/testing'
 
 import { test, AGENT_NAME, bandSilent, eventsWarned, SURFACES, answerPlanConnect, bandLabelOf, dashboard, expectIndicator, footerText, holdAgent, mountIndicator, linksOf, pressFooter, needsYouBadgeOf, startSession, forceRefresh } from './plan-kit'
@@ -10,7 +10,7 @@ const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any
 
 for (const surface of SURFACES) {
   describe(`end to end on ${surface}`, () => {
-    test('band, the open problems as a link, the plan page as a link', async ($, on) => {
+    test('band, the Needs You count as a link, the plan page as a link', async ($, on) => {
       const d = dashboard(on)
       d.world.cards[1]!.problems.push({
         id: 23,

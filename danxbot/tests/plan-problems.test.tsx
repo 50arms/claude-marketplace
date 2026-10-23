@@ -24,9 +24,13 @@ for (const surface of SURFACES) {
       expect(await needsYouBadgeOf(band)).toBeUndefined()
     })
 
-    test('the badge counts the cards that need a person, not their problems: 3 open problems on 2 cards read 2', async ($, on) => {
+    test('the badge counts the cards that need a person, not their problems: 9 open problems on 2 of 3 cards read 2', async ($, on) => {
       const { d, band } = await openBand($, on, surface)
-      expect(d.world.cards.reduce((n: number, c: any) => n + c.problems.filter((p: any) => p.open).length, 0)).toBe(3)
+      const open = (id: number) => ({ id, type: 'question', statement: `Q${id}?`, open: true, solutions: [] })
+      d.world.cards[0]!.problems = [1, 2, 3, 4, 5].map(open)
+      d.world.cards[1]!.problems = [6, 7, 8, 9].map(open)
+      d.world.cards.push({ id: 'DX-40', title: 'Quiet card', priority: 1, problems: [{ ...open(10), open: false }] })
+      await forceRefresh($, d)
       expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
     })
 

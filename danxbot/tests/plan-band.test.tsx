@@ -23,7 +23,7 @@ describe('plan band', () => {
     const wide = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
     const narrow = await $.ui.mount({ plugin: 'danxbot', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     expect(await bandLabelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, `⚠ 3` 8, × 6 (the glyph is narrower than the word, so the name keeps more)
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, `⚠ 2 cards need you` 8, × 6 (the glyph is narrower than the word, so the name keeps more)
     expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan n…')
     expect((await narrow.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
   })
@@ -67,7 +67,7 @@ describe('plan band', () => {
     }
   })
 
-  test('a plan with no open problems draws no problem button or link', async ($, on) => {
+  test('a plan with no cards that need a person draws no Needs You badge', async ($, on) => {
     const d = dashboard(on)
     for (const card of d.world.cards) card.problems = []
     for (const surface of SURFACES) {

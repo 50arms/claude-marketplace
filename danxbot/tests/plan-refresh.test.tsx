@@ -17,7 +17,7 @@ for (const surface of SURFACES) {
       expect(await needsYouBadgeOf(band)).toBe('⚠ 2 cards need you')
 
       // a problem appears on a third card of the dashboard; ten minutes of clock bring no load
-      d.world.cards.push({ id: 'DX-9', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
+      d.world.cards.push({ id: 'DX-40', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
       const loads = () => d.api.filter(a => a.path === '/api/plans').length
       const before = loads()
       await d.clock.advance(600_000)
@@ -91,7 +91,7 @@ describe('the hooks that refresh', () => {
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     const loads = () => d.api.filter(a => a.path === '/api/plans').length
-    d.world.cards.push({ id: 'DX-9', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
+    d.world.cards.push({ id: 'DX-40', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
     const turn = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 
     await d.clock.advance(5_000)
