@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { containerCreateArgs } from "./lib/container-create-args.mjs";
 import { buildUstar } from "./lib/ustar.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,7 +29,10 @@ const TEST_USER = { uid: 1000, gid: 1000 };
 /** Git for Windows rewrites arguments that look like POSIX paths; every path handed to docker here is a container path. */
 const DOCKER_ENV = { ...process.env, MSYS_NO_PATHCONV: "1", MSYS2_ARG_CONV_EXCL: "*" };
 
-/** Set once the container exists; the exit handler removes it on every path out, die() included. */
+/**
+ * Set once the container exists. The container is created with --rm (CP-2), so the daemon removes it when it stops, even if this
+ * process is killed; the exit handler is for the one path --rm cannot cover: a created container that never started (docker cp failed).
+ */
 let createdContainer;
 process.on("exit", () => {
   if (createdContainer) spawnSync("docker", ["rm", "-f", createdContainer], { stdio: "ignore", env: DOCKER_ENV });
@@ -118,9 +122,9 @@ function main() {
   // The archive is built BEFORE the container exists, so a failure collecting it has no container to leak.
   const archive = buildUstar(collectSource(), TEST_USER);
   const name = `claude-plugins-test-${process.pid}-${Date.now()}`;
-  const created = docker(["create", "--name", name, "--label", "claude-plugins.test-container=1", image, "bash", "scripts/test-container-entry.sh", ...testFiles]);
+  const created = docker(containerCreateArgs(name, image, testFiles));
   if (created.status !== 0) die(`docker create failed: ${created.stderr}`);
-  createdContainer = name; // removed by the exit handler on every path from here
+  createdContainer = name; // --rm removes it once started and stopped; the exit handler covers a failure before the start
   process.on("SIGINT", () => process.exit(130));
   process.on("SIGTERM", () => process.exit(143));
 
