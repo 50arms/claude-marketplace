@@ -112,8 +112,12 @@ export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; 
 // the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
 export type StampState = { at: number; day: string } | null
 
-// the last disk notice handed to the model: its text and when (epoch ms); null before the first or once all was well.
-export type DiskTold = { text: string; at: number } | null
+// the disk notice last handed to each agent (the main thread is 'main', a sub-agent its id): its text and when (epoch ms). An agent with nothing to be told has no entry.
+export type DiskTold = Record<string, { text: string; at: number }>
+// the last disk measurement: the notice text it produced ('' when all is well) and when (epoch ms); null before the first or after a session start.
+export type DiskMeasured = { text: string; at: number } | null
+// where the machine's Windows home is, resolved once per session (a failure is kept too, so a stalled interop call is never retried per tool call).
+export type DiskHome = { home: string } | { fault: string } | null
 
 // a session start the model has not yet been told about: SessionStart records it (the engine has not bound the session yet, so it
 // cannot call the MCP), and the next prompt.submit or main-loop tool.call result consumes it.
@@ -168,8 +172,12 @@ declare module 'claude-code' {
       turn: TurnState
       // the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState
-      // the last disk notice told to the model (see DiskTold), so a tool call repeats it only on a change or after a few minutes.
+      // the disk notice last told to each agent (see DiskTold), so a tool call repeats it only on a change or after a few minutes.
       diskTold: DiskTold
+      // the last disk measurement (see DiskMeasured), reused by tool calls for a minute.
+      diskMeasured: DiskMeasured
+      // the machine's Windows home, resolved once per session (see DiskHome).
+      diskHome: DiskHome
       // the session start waiting for the next prompt or main-loop tool result (see PendingStart).
       pendingStart: PendingStart
       // the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
