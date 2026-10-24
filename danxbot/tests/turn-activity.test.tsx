@@ -12,6 +12,18 @@ const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { prompt: 'go', turnId: 't1' } as any
 const PUT = 'PUT /api/plan-sessions/me/turn-activity'
+const CARD_ID = 'DX-9'
+const CARD_TITLE = 'A one-off card'
+const CARD_CONNECT = { tool: toolName('card_connect'), card_id: CARD_ID } as any
+
+// the real answer's envelope (the MCP's card_connect): the card the session holds now, as GET /api/plans then reads it
+function answerCardConnect(on: any, d: any) {
+  on('tool.call', { tool: toolName('card_connect') }, (_$: any, e: any) => {
+    d.world.card = { id: e.card_id, title: CARD_TITLE }
+    const text = JSON.stringify({ ok: true, status: 200, body: { session: { cardId: e.card_id } } })
+    return { result: {}, text, isError: false } as any
+  })
+}
 
 describe('the turn activity body (pure)', () => {
   test('since is an ISO-8601 UTC instant as Date#toISOString writes it', () => {
@@ -33,15 +45,17 @@ describe('the turn activity body (pure)', () => {
 
 for (const surface of SURFACES) {
   describe(`the turn activity reports on ${surface}`, () => {
-    async function started($: any, on: any, compact: () => unknown = () => COMPACTED, onPlan = true) {
+    async function started($: any, on: any, compact: () => unknown = () => COMPACTED, onPlan = true, onCard = false) {
       on('classic.SessionStart', () => ({}) as any)
       on('classic.PreCompact', () => ({}) as any)
       on('session.compact', async () => compact() as any)
       on('turn.complete', () => ({ text: 'done' }) as any)
       const d = dashboard(on)
       answerPlanConnect(on, d)
+      answerCardConnect(on, d)
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       if (!onPlan) d.world.planId = null
+      if (onCard) d.world.card = { id: CARD_ID, title: CARD_TITLE }
       await startSession($, d, surface)
       return d
     }
@@ -130,6 +144,22 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter((t: string) => t.startsWith('danxbot turn activity report failed'))).toHaveLength(1)
     })
 
+    test('a session holding a stand-alone card sends in_turn and idle for its turn, as a plan session does', async ($, on) => {
+      const d = await started($, on, () => COMPACTED, false, true)
+      await $.turn.start(START)
+      await d.clock.settle()
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(sent(d)).toEqual(['in_turn', 'idle'])
+    })
+
+    test('a session holding a stand-alone card sends compacting, then idle, for a compaction', async ($, on) => {
+      const d = await started($, on, () => COMPACTED, false, true)
+      await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+      await d.clock.settle()
+      expect(sent(d)).toEqual(['compacting', 'idle'])
+    })
+
     test('a session on no plan sends nothing', async ($, on) => {
       const d = await started($, on, () => COMPACTED, false)
       await $.turn.start(START)
@@ -143,6 +173,14 @@ for (const surface of SURFACES) {
       async function offPlan($: any, on: any, compact: () => unknown = () => COMPACTED) {
         return started($, on, compact, false)
       }
+
+      test('holding a stand-alone card mid-turn sends in_turn at once', async ($, on) => {
+        const d = await offPlan($, on)
+        await $.turn.start(START)
+        await $.tool.call(CARD_CONNECT)
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['in_turn'])
+      })
 
       test('connecting while idle sends idle', async ($, on) => {
         const d = await offPlan($, on)
