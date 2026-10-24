@@ -3,6 +3,7 @@ import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, NEEDS_YOU_BUCKET_ID, PLAN_BAN
 import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './mcp'
 import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
+import { PAUSE_PATH, pauseOf } from '../reports/pause'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
@@ -96,7 +97,10 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   // the agent the session signs in as and the card it holds, from the same session row
   const holds = readSessionHolds(session)
   if ('error' in holds) return { ...EMPTY, phase: 'error', error: holds.error }
-  const noPlan = { dashboardUrl, connected: null, listener, ...holds }
+  // a session on nothing has no pause to show; one on a plan or a card reads it with the load
+  const onNothing = connectedId === null && holds.card === null
+  const pausedUntil = onNothing ? null : await readPausedUntil(call, Date.parse(refreshedAt))
+  const noPlan = { dashboardUrl, connected: null, listener, pausedUntil, ...holds }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
   // One load of everything about the connected plan: the plan itself (its status counts, bucket counts and card ids),
@@ -121,7 +125,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, listener, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
+  const base = { dashboardUrl, connected, listener, pausedUntil, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
 
   // The in-progress bucket: its list is only as complete as the total says, so an answer without a numeric total is an error.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
@@ -143,6 +147,15 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     inProgress,
     refreshedAt,
   }
+}
+
+// When the agent's pause ends, or null. The plugin's call carries `background: true` (register.tsx `api`), so this GET never ends the pause it reads.
+// An unexpired agent pause is the only one that counts (pauseOf); a failed or malformed answer is no mark, never a failed load, since the mark is display only.
+async function readPausedUntil(call: Call, now: number): Promise<number | null> {
+  const r = await call('GET', PAUSE_PATH)
+  if (!r.ok) return null
+  const read = pauseOf(r.body, now)
+  return read.kind === 'paused' ? read.until : null
 }
 
 // the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays

@@ -5,8 +5,8 @@ import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
 import { RELAY_OFF } from '../hooks/relay/config'
-import { CONNECTED_TITLE_MARK, DISCONNECTED_TITLE_MARK, NEEDS_YOU_TITLE_MARK, sessionTitle, titleConnection } from '../hooks/plan/words'
-import { test, dashboard, forceRefresh, startSession } from './plan-kit'
+import { CONNECTED_TITLE_MARK, DISCONNECTED_TITLE_MARK, NEEDS_YOU_TITLE_MARK, PAUSED_TITLE_MARK, sessionTitle, titleConnection, unmarkedTitle } from '../hooks/plan/words'
+import { test, CLOCK_START, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const TITLE = 'Danxbot I: PLAN-18 Card plugins'
 const AGENT = { id: 1, name: 'Danxbot I', avatar_url: null }
@@ -16,6 +16,11 @@ const on = (needsYou: number | null) => ({ ...EMPTY, phase: 'ready', needsYou, a
 const UP = CONNECTED_TITLE_MARK
 const DOWN = DISCONNECTED_TITLE_MARK
 const HAND = NEEDS_YOU_TITLE_MARK
+const PAUSE = PAUSED_TITLE_MARK
+const PAUSE_PATH = '/api/plan-sessions/me/pause'
+const LOADS_AT_START = 1
+const paused = (needsYou: number | null) => ({ ...on(needsYou), pausedUntil: CLOCK_START + 3_600_000 }) as any
+const agentPause = (until: number) => ({ limit: 'agent', state: 'agent_waiting', reason: 'waiting for a build', ends_when: null, since: '2026-10-03T07:00:00.000Z', until: new Date(until).toISOString(), held: 0 })
 
 describe('the hand', () => {
   test('marks the title while the plan has cards that need a person, and only then', async () => {
@@ -136,5 +141,88 @@ describe('the desktop app title follows the view', () => {
     const d = dashboard(on)
     await startSession($, d, 'terminal')
     expect(d.world.appSession.set).toEqual([])
+  })
+})
+
+describe('the pause mark', () => {
+  test('the one mark runs red, hand, paused, green, none', async () => {
+    expect(sessionTitle(TITLE, paused(0), OFF)).toBe(`${PAUSE}${TITLE}`)
+    expect(sessionTitle(TITLE, paused(null), OFF)).toBe(`${PAUSE}${TITLE}`)
+    expect(sessionTitle(TITLE, paused(2), OFF)).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...paused(2), agentBlock: 'agent_not_held' }, OFF)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...paused(0), phase: 'error' }, OFF)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, on(0), OFF)).toBe(`${UP}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out', pausedUntil: CLOCK_START } as any, OFF)).toBe(TITLE)
+  })
+
+  test('unmarkedTitle strips the pause mark with or without the selector, in any order with the others', async () => {
+    expect(unmarkedTitle(`${PAUSE}${TITLE}`)).toBe(TITLE)
+    expect(unmarkedTitle(`⏸ ${TITLE}`)).toBe(TITLE)
+    expect(unmarkedTitle(`⏸️ 🔴 ✋ ⏸ 🟢 ${TITLE}`)).toBe(TITLE)
+    expect(sessionTitle(`${HAND}${PAUSE}${TITLE}`, paused(0), OFF)).toBe(`${PAUSE}${TITLE}`)
+  })
+
+  test('a pause mark later in the title is the title', async () => {
+    expect(sessionTitle(`Say ⏸ ${TITLE}`, on(0), OFF)).toBe(`${UP}Say ⏸ ${TITLE}`)
+  })
+
+  test('a load shows the mark for an unexpired agent pause; an expired one and a usage-limit pause show none', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    d.world.pause = agentPause(CLOCK_START + 3_600_000)
+    await startSession($, d, 'desktop')
+    expect(d.world.appSession.title).toBe(`${PAUSE}Tendai: PLAN-23 Agent mode`)
+    d.world.pause = agentPause(CLOCK_START - 1000)
+    await forceRefresh($, d)
+    expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+    d.world.pause = { ...agentPause(CLOCK_START + 3_600_000), limit: 'usage' }
+    await forceRefresh($, d)
+    expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+  })
+
+  test('a pause read that fails or answers no pause field shows no mark and leaves the load ready, with no toast', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    d.world.pause = agentPause(CLOCK_START + 3_600_000)
+    await startSession($, d, 'desktop')
+    expect(d.world.appSession.title).toBe(`${PAUSE}Tendai: PLAN-23 Agent mode`)
+    for (const answer of [{ status: 500, body: { error: 'pause boom' } }, { status: 200, body: {} }]) {
+      d.world.reportReplies[`GET ${PAUSE_PATH}`] = answer
+      await forceRefresh($, d)
+      expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+    }
+    expect(d.toasts.filter(t => /Plan load failed/.test(t))).toEqual([])
+  })
+
+  test("the load's pause read never ends the pause: every one is marked background, and the pause stands across loads", async ($, on) => {
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    d.world.pause = agentPause(CLOCK_START + 3_600_000)
+    await startSession($, d, 'desktop')
+    await forceRefresh($, d)
+    await forceRefresh($, d)
+    expect(d.loadPauseReads).toHaveLength(LOADS_AT_START)
+    expect(d.reports.filter((r: any) => r.path === PAUSE_PATH)).toHaveLength(2)
+    expect(d.unmarked).toEqual([])
+  })
+
+  test("the agent's own pause and resume re-read the plan at once, and the load after the pause ended drops the mark", async ($, on) => {
+    const API = 'mcp__plugin_danxbot_danx-dashboard__danxbot_api'
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    on('tool.call', { tool: API }, () => ({ result: {}, text: JSON.stringify({ ok: true, status: 200, body: {} }), isError: false }) as any)
+    await startSession($, d, 'desktop')
+    expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+    d.world.pause = agentPause(CLOCK_START + 3_600_000)
+    await $.tool.call({ tool: API, method: 'PUT', path: PAUSE_PATH, body: { reason: 'waiting for a build' } })
+    await d.clock.settle()
+    expect(d.world.appSession.title).toBe(`${PAUSE}Tendai: PLAN-23 Agent mode`)
+    d.world.pause = null
+    await $.tool.call({ tool: API, method: 'DELETE', path: PAUSE_PATH })
+    await d.clock.settle()
+    expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
   })
 })

@@ -70,6 +70,9 @@ export type PlanView = {
   // null when the plan read gave no count (the band then shows none); `needsYouError` says why.
   needsYou: number | null
   needsYouError: string | null
+  // when the agent's own pause ends (epoch ms), read at each load by the one call that does not end a pause; null when it is not paused,
+  // its pause has expired, or the pause read gave no usable answer (the mark is display only). Only the title's pause mark reads it.
+  pausedUntil: number | null
   // what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready`, shows one toast, and replies are then drawn as written.
   links: CardLinks

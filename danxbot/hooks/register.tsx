@@ -1812,7 +1812,8 @@ async function onAckCall($: any, e: any, next: any) {
   const ran = await next(e)
   // the session's own card or plan write reaches it as no plan event (the relay hears other members' writes), so the band and the title's
   // Needs You mark re-read the plan the moment the write lands, never at the turn's end
-  if (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && typeof e.path === 'string' && /^\/api\/(issues|plans)\//.test(e.path)) {
+  // The agent's own pause or resume (PUT / DELETE of its pause) changes the title's pause mark the same way, so it re-reads at once too.
+  if (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && typeof e.path === 'string' && (/^\/api\/(issues|plans)\//.test(e.path) || e.path === PAUSE_PATH)) {
     detach($, 'Plan refresh', refresh($, true))
   }
   const id = ackedEventId(e.method, e.path)
