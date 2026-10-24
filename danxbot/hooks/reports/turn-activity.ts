@@ -1,4 +1,4 @@
-// DX-5694: the session's turn activity, reported to the dashboard (`PUT /api/plan-sessions/me/turn-activity`, fixed by DX-5693) so a card's
+// the session's turn activity, reported to the dashboard (`PUT /api/plan-sessions/me/turn-activity`) so a card's
 // Comments drawer can say why a comment is waiting: the agent is finishing a step (in a turn) or compacting (about 2 minutes). Pure:
 // register.tsx decides when and calls the dashboard.
 //

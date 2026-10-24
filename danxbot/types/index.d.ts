@@ -216,6 +216,8 @@ declare module 'claude-code' {
       compacting: CompactingState
       // the reports' memory (see ReportState).
       reports: ReportState
+      // the start (epoch ms) of the last turn activity sent to the dashboard (null: none yet), so the next one starts strictly later.
+      turnReportedAt: number | null
       // the relay's undelivered events, in the order the server sent them (see PendingEvent).
       relayOutbox: PendingEvent[]
       // the events issued to the session whose acknowledgement call has not succeeded yet (see AckInFlight): the relay drops a re-send of one the session already holds while its turn runs.

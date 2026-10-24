@@ -116,7 +116,7 @@ const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null 
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
 // the events warning last stored (null: none), so its reason is told once on the transition into it.
 const eventsWarned = atom({ plugin: 'danxbot', key: 'eventsWarned' } as const, null as string | null)
-// DX-5694: the start (epoch ms) of the last turn activity sent to the dashboard, so the next one starts strictly later (it keeps only the newest start). $.state, so a reload keeps it.
+// the start (epoch ms) of the last turn activity sent to the dashboard, so the next one starts strictly later (it keeps only the newest start). $.state, so a reload keeps it.
 const turnReportedAt = atom({ plugin: 'danxbot', key: 'turnReportedAt' } as const, null as number | null)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
@@ -1777,7 +1777,7 @@ async function onPlanConnect($: any, e: any, next: any) {
   // parsed once; what the blocked view names when the plugin's own reads are refused
   const modelConnected = connectedPlanOf(ran.text)
   if (modelConnected !== null) startRelay($, modelConnected.id)
-  // DX-5694: connected mid-turn or mid-compaction, the dashboard must not read idle until the next change
+  // connected mid-turn or mid-compaction, the dashboard must not read idle until the next change
   if (modelConnected !== null) await reportActivityOnConnect($)
   if (modelConnected !== null) await update($, modelPlan, () => modelConnected)
   else if (leaving && answer.ok) await update($, modelPlan, () => null)
@@ -2629,7 +2629,7 @@ async function report($: any, what: string, method: string, path: string, body: 
   if (!r.ok) $.ui.toast(`danxbot ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
 }
 
-// DX-5694: the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. Only a session on a plan has a row to
+// the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. Only a session on a plan has a row to
 // report it on. Detached like the other reports; a send the dashboard does not take is one toast (`report`), never swallowed.
 async function reportTurnActivity($: any, activity: TurnActivity): Promise<void> {
   if ((await read($, view)).connected === null) return
@@ -3068,7 +3068,7 @@ async function onSessionCompactSeen($: any, e: any, next: any) {
 // runs core's compaction and settles the agent's entry by what came back: a result that is not a skip is a compaction that finished, a skip or a throw is one that did not happen
 // (the throw goes on).
 async function settledCompaction($: any, agentId: string | null, next: any, e: any) {
-  // DX-5694: only the main agent's compaction is the session's activity; a sub-agent compacts beside the main loop
+  // only the main agent's compaction is the session's activity; a sub-agent compacts beside the main loop
   const mainAgent = agentId === null
   if (mainAgent) await reportTurnActivity($, 'compacting')
   let r: any
