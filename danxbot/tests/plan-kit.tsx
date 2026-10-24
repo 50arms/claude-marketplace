@@ -589,9 +589,9 @@ export function dashboard(
   const ISSUE_ROW_FIELDS = ['id', 'type', 'title', 'status', 'parent_id', 'priority', 'created_at', 'updated_at', 'assigned_agent', 'content_hash']
   // DX-4235: the reports' calls and the ready-cards reads, in order, kept out of `calls` and `api` like the context reads (every suite that
   // counts a load's reads or a session's writes stays about its own subject)
+  const reportCalls: { method: string; path: string; body?: any; query?: any; board?: string }[] = []
   // DX-5694: the turn activity sends, in order
   const turnActivityCalls: { activity: string; since: string }[] = []
-  const reportCalls: { method: string; path: string; body?: any; query?: any; board?: string }[] = []
   // DX-4235: the report calls and the plugin server's tool calls in the order they were made (`report <METHOD> <path>`, `tool <name>`)
   const sequence: string[] = []
   const isReportCall = (a: any) =>

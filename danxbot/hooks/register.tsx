@@ -1777,6 +1777,8 @@ async function onPlanConnect($: any, e: any, next: any) {
   // parsed once; what the blocked view names when the plugin's own reads are refused
   const modelConnected = connectedPlanOf(ran.text)
   if (modelConnected !== null) startRelay($, modelConnected.id)
+  // DX-5694: connected mid-turn or mid-compaction, the dashboard must not read idle until the next change
+  if (modelConnected !== null) await reportActivityOnConnect($)
   if (modelConnected !== null) await update($, modelPlan, () => modelConnected)
   else if (leaving && answer.ok) await update($, modelPlan, () => null)
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)))
@@ -2631,6 +2633,10 @@ async function report($: any, what: string, method: string, path: string, body: 
 // report it on. Detached like the other reports; a send the dashboard does not take is one toast (`report`), never swallowed.
 async function reportTurnActivity($: any, activity: TurnActivity): Promise<void> {
   if ((await read($, view)).connected === null) return
+  await sendTurnActivity($, activity)
+}
+
+async function sendTurnActivity($: any, activity: TurnActivity): Promise<void> {
   const now = await $.clock.now()
   let since = now
   await update($, turnReportedAt, last => {
@@ -2638,6 +2644,19 @@ async function reportTurnActivity($: any, activity: TurnActivity): Promise<void>
     return since
   })
   detach($, 'danxbot turn activity report', report($, 'turn activity', 'PUT', TURN_ACTIVITY_PATH, turnActivityBody(activity, since)))
+}
+
+// The main agent's compaction ended (finished, skipped or failed): back to the turn it interrupted, else idle.
+async function reportCompactionEnd($: any): Promise<void> {
+  await reportTurnActivity($, afterCompaction((await read($, turn)).isRunning))
+}
+
+// A plan connect landed (a first connect, a move or a reconnect): the dashboard's row has no activity yet, or a stale one, so the session's current activity is
+// sent now. The view is not loaded yet at this point (its refresh is detached), so the send does not wait on it.
+async function reportActivityOnConnect($: any): Promise<void> {
+  const now = await $.clock.now()
+  const busy = liveCompacting(await read($, compacting), now).main !== null
+  await sendTurnActivity($, busy ? 'compacting' : (await read($, turn)).isRunning ? 'in_turn' : 'idle')
 }
 
 function postActivity($: any, rows: ActivityChange[]): void {
@@ -3057,11 +3076,11 @@ async function settledCompaction($: any, agentId: string | null, next: any, e: a
     r = await next(e)
   } catch (err) {
     await settleCompacting($, agentId, false)
-    if (mainAgent) await reportTurnActivity($, afterCompaction((await read($, turn)).isRunning))
+    if (mainAgent) await reportCompactionEnd($)
     throw err
   }
   await settleCompacting($, agentId, r?.skip === undefined)
-  if (mainAgent) await reportTurnActivity($, afterCompaction((await read($, turn)).isRunning))
+  if (mainAgent) await reportCompactionEnd($)
   return r
 }
 

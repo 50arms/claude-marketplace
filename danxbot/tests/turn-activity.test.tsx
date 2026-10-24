@@ -4,7 +4,8 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { afterCompaction, nextSince, turnActivityBody } from '../hooks/reports/turn-activity'
-import { SURFACES, dashboard, startSession, test } from './plan-kit'
+import { toolName } from '../hooks/plan/config'
+import { SURFACES, answerPlanConnect, dashboard, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
@@ -35,10 +36,11 @@ for (const surface of SURFACES) {
     async function started($: any, on: any, compact: () => unknown = () => COMPACTED, onPlan = true) {
       on('classic.SessionStart', () => ({}) as any)
       on('classic.PreCompact', () => ({}) as any)
-      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       on('session.compact', async () => compact() as any)
       on('turn.complete', () => ({ text: 'done' }) as any)
       const d = dashboard(on)
+      answerPlanConnect(on, d)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       if (!onPlan) d.world.planId = null
       await startSession($, d, surface)
       return d
@@ -81,7 +83,7 @@ for (const surface of SURFACES) {
     test('an automatic compaction in the middle of a turn ends back in_turn', async ($, on) => {
       const d = await started($, on)
       await $.turn.start(START)
-      await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+      await $.session.compact({ trigger: 'auto', messages: TRANSCRIPT })
       await d.clock.settle()
       expect(sent(d)).toEqual(['in_turn', 'compacting', 'in_turn'])
     })
@@ -134,6 +136,50 @@ for (const surface of SURFACES) {
       await $.turn.complete(TURN)
       await d.clock.settle()
       expect(d.turnActivity).toEqual([])
+    })
+
+    describe('a plan connect reports the current activity', () => {
+      const CONNECT = { tool: toolName('plan_connect'), plan_id: 23 } as any
+      async function offPlan($: any, on: any, compact: () => unknown = () => COMPACTED) {
+        return started($, on, compact, false)
+      }
+
+      test('connecting while idle sends idle', async ($, on) => {
+        const d = await offPlan($, on)
+        await $.tool.call(CONNECT)
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['idle'])
+      })
+
+      test('connecting mid-turn sends in_turn, strictly later than the turn start that was not sent', async ($, on) => {
+        const d = await offPlan($, on)
+        await $.turn.start(START)
+        await $.tool.call(CONNECT)
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['in_turn'])
+      })
+
+      test('a reconnect mid-turn sends the activity again, each strictly later', async ($, on) => {
+        const d = await started($, on)
+        await $.turn.start(START)
+        await $.tool.call(CONNECT)
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['in_turn', 'in_turn'])
+        const [a, b] = d.turnActivity.map((c: any) => Date.parse(c.since))
+        expect(b).toBeGreaterThan(a)
+      })
+
+      test('connecting mid-compaction sends compacting', async ($, on) => {
+        let d: any
+        d = await offPlan($, on, async () => {
+          await $.tool.call(CONNECT)
+          await d.clock.settle()
+          return COMPACTED
+        })
+        await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['compacting', 'idle'])
+      })
     })
   })
 }
