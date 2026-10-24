@@ -220,6 +220,8 @@ declare module 'claude-code' {
       relayOutbox: PendingEvent[]
       // the events issued to the session whose acknowledgement call has not succeeded yet (see AckInFlight): the relay drops a re-send of one the session already holds while its turn runs.
       ackInFlight: AckInFlight
+      // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
+      runningAgents: string[]
     }
   }
 }
