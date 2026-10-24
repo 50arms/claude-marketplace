@@ -16,8 +16,10 @@ export const CONNECTED_TITLE_MARK = '🟢 '
 export const DISCONNECTED_TITLE_MARK = '🔴 '
 // the session's agent has paused itself (PUT /api/plan-sessions/me/pause) and the dashboard holds its messages; the selector asks for the emoji form
 export const PAUSED_TITLE_MARK = '⏸️ '
+// one or more of the session's sub-agents is running (a hammer: the earlier building mark was unreadable at title size)
+export const BUILDING_TITLE_MARK = '🔨 '
 // every mark as any title may hold it, the selector or not, repeated or not, in any order (two plugin versions marking one title in turn stacked two)
-const ANY_TITLE_MARK = /^(?:(?:✋️?|⏸️?|🟢|🔴)\s*)+/u
+const ANY_TITLE_MARK = /^(?:(?:✋️?|⏸️?|🔨️?|🟢|🔴)\s*)+/u
 
 // the title without any leading mark: what the plugin keeps and hands to plan_connect, since the marks are display only
 export function unmarkedTitle(title: string): string {
@@ -43,16 +45,18 @@ export function titleConnection(v: PlanView, relay: RelayState): 'up' | 'down' |
 }
 
 // the session title with ONE mark at most (operator, 2026-10-24): red when the connection is lost (titleConnection), else the hand exactly
-// when the band draws its Needs You badge (the same count, hidden on a failed load), else the pause mark while the agent is in an unexpired
-// pause (`pausedUntil`, which the load already left null for an expired one), else green when connected, else none. `title` is the
-// title as the app holds it, marks included or not; '' stays ''. While the view is still loading nothing is known yet, so the title is left as it is.
-export function sessionTitle(title: string, v: PlanView, relay: RelayState): string {
+// when the band draws its Needs You badge (the same count, hidden on a failed load), else the building mark while a sub-agent runs
+// (`building`), else the pause mark while the agent is in an unexpired pause (`pausedUntil`, which the load already left null for an
+// expired one), else green when connected, else none. `title` is the title as the app holds it, marks included or not; '' stays ''.
+// While the view is still loading nothing is known yet, so the title is left as it is.
+export function sessionTitle(title: string, v: PlanView, relay: RelayState, building: boolean): string {
   if (v.phase === 'loading') return title
   const base = unmarkedTitle(title)
   if (base === '') return base
   const connection = titleConnection(v, relay)
   if (connection === 'down') return `${DISCONNECTED_TITLE_MARK}${base}`
   if (v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== '') return `${NEEDS_YOU_TITLE_MARK}${base}`
+  if (connection === 'up' && building) return `${BUILDING_TITLE_MARK}${base}`
   if (connection === 'up' && v.pausedUntil !== null) return `${PAUSED_TITLE_MARK}${base}`
   return connection === 'up' ? `${CONNECTED_TITLE_MARK}${base}` : base
 }

@@ -165,6 +165,8 @@ const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as cons
 // tool call (its entry stays until that call). Rare case: when the main agent and a sub-agent compact together, the sub-agent's restart can use up the main entry; if the main compaction then fails,
 // the main agent gets a stray briefing.
 const compacting = atom({ plugin: 'danxbot', key: 'compacting' } as const, { main: null, agents: {} } as CompactingState)
+// the bare ids of the sub-agents running now: from a sub-agent's start until its stop or the end of its turn (a failed one raises no stop). The session title's building mark shows while it is not empty.
+const runningAgents = atom({ plugin: 'danxbot', key: 'runningAgents' } as const, [] as string[])
 // the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
 // the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
@@ -331,7 +333,7 @@ async function syncTitleMark($: any): Promise<void> {
   if (got.isError) throw new Error(`get_session: ${mcpText(got)}`)
   const held = JSON.parse(mcpText(got))?.title
   if (typeof held !== 'string' || held.trim() === '') return
-  const want = sessionTitle(held.trim(), await read($, view), await read($, relay))
+  const want = sessionTitle(held.trim(), await read($, view), await read($, relay), await subAgentsRunning($))
   if (want === held.trim()) return
   const set = await $.mcp.call(DESKTOP_SESSION_SERVER, 'set_session_title', { session_id: 'self', title: want })
   if (set.isError) throw new Error(`set_session_title: ${mcpText(set)}`)
@@ -1731,6 +1733,7 @@ async function onSessionEnd($: any, e: any, next: any) {
     // nor is the plan its model named
     await update($, modelPlan, () => null)
     await update($, transcript, () => null)
+    await update($, runningAgents, () => [])
     // a fresh conversation (or another session taking this one's place) in the same process: what
     // the dashboard shows may have moved while they were in the old one
     detach($, 'Plan refresh', refresh($, true))
@@ -1820,6 +1823,24 @@ async function onAckCall($: any, e: any, next: any) {
   if (id === null) return ran
   if (textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
   return ran
+}
+
+// whether any sub-agent is running now: the session title's building mark
+async function subAgentsRunning($: any): Promise<boolean> {
+  return (await read($, runningAgents)).length > 0
+}
+
+// a sub-agent started or ended: the running set changes, and the title is synced only when it crosses empty / not empty. An id that is not a
+// non-empty string cannot be counted, so it changes nothing (no guess).
+async function noteRunningAgent($: any, id: unknown, running: boolean): Promise<void> {
+  if (typeof id !== 'string' || id === '') return
+  let crossed = false
+  await update($, runningAgents, cur => {
+    const next = running ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter(a => a !== id)
+    crossed = (cur.length === 0) !== (next.length === 0)
+    return next
+  })
+  if (crossed) detach($, 'The session title mark', syncTitleMark($))
 }
 
 async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
@@ -2334,6 +2355,7 @@ async function restoreStart($: any, start: NonNullable<PendingStart>): Promise<v
 // the new sub-agent also gets danxbot's pacing line (additionalContext), when danxbot has one for this session
 // and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
+  await noteRunningAgent($, e.agent_id, true)
   const r = await onSubagentChange($, e, next, true)
   // its activity row opens
   detach($, 'danxbot activity report', reportSubagentStart($, e))
@@ -2343,6 +2365,7 @@ async function onSubagentStart($: any, e: any, next: any) {
 }
 
 async function onSubagentStop($: any, e: any, next: any) {
+  await noteRunningAgent($, e.agent_id, false)
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, 'danxbot shell-end report', reportShellEnds($, 'SubagentStop', e))
@@ -2369,6 +2392,7 @@ async function onTurnComplete($: any, e: any, next: any) {
   } else {
     // a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
+    await noteRunningAgent($, e.agentId, false)
   }
   detach($, 'Plan refresh', refresh($))
   void watchRelay($)
@@ -2395,7 +2419,7 @@ async function onTurnStart($: any, e: any, next: any) {
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
   const held = typeof e.session_title === 'string' ? e.session_title.trim() : ''
-  const marked = held ? sessionTitle(held, await read($, view), await read($, relay)) : ''
+  const marked = held ? sessionTitle(held, await read($, view), await read($, relay), await subAgentsRunning($)) : ''
   const t = unmarkedTitle(held)
   if (t) await update($, title, () => t)
   const below = await next(e)

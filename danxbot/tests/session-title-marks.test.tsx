@@ -5,8 +5,8 @@ import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
 import { RELAY_OFF } from '../hooks/relay/config'
-import { CONNECTED_TITLE_MARK, DISCONNECTED_TITLE_MARK, NEEDS_YOU_TITLE_MARK, PAUSED_TITLE_MARK, sessionTitle, titleConnection, unmarkedTitle } from '../hooks/plan/words'
-import { test, CLOCK_START, dashboard, forceRefresh, startSession } from './plan-kit'
+import { BUILDING_TITLE_MARK, CONNECTED_TITLE_MARK, DISCONNECTED_TITLE_MARK, NEEDS_YOU_TITLE_MARK, PAUSED_TITLE_MARK, sessionTitle, titleConnection, unmarkedTitle } from '../hooks/plan/words'
+import { test, CLOCK_START, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const TITLE = 'Danxbot I: PLAN-18 Card plugins'
 const AGENT = { id: 1, name: 'Danxbot I', avatar_url: null }
@@ -17,6 +17,8 @@ const UP = CONNECTED_TITLE_MARK
 const DOWN = DISCONNECTED_TITLE_MARK
 const HAND = NEEDS_YOU_TITLE_MARK
 const PAUSE = PAUSED_TITLE_MARK
+const BUILD = BUILDING_TITLE_MARK
+const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const PAUSE_PATH = '/api/plan-sessions/me/pause'
 const LOADS_AT_START = 1
 const paused = (needsYou: number | null) => ({ ...on(needsYou), pausedUntil: CLOCK_START + 3_600_000 }) as any
@@ -24,20 +26,20 @@ const agentPause = (until: number) => ({ limit: 'agent', state: 'agent_waiting',
 
 describe('the hand', () => {
   test('marks the title while the plan has cards that need a person, and only then', async () => {
-    expect(sessionTitle(TITLE, on(2), OFF)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(TITLE, on(0), OFF)).toBe(`${UP}${TITLE}`)
+    expect(sessionTitle(TITLE, on(2), OFF, false)).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(TITLE, on(0), OFF, false)).toBe(`${UP}${TITLE}`)
     // an unknown count is no count: the band draws no badge
-    expect(sessionTitle(TITLE, on(null), OFF)).toBe(`${UP}${TITLE}`)
+    expect(sessionTitle(TITLE, on(null), OFF, false)).toBe(`${UP}${TITLE}`)
   })
 
   test('a lost connection outranks the hand: the title carries the red mark alone', async () => {
-    expect(sessionTitle(TITLE, { ...on(2), agentBlock: 'agent_not_held' }, OFF)).toBe(`${DOWN}${TITLE}`)
-    expect(sessionTitle(TITLE, on(2), { phase: 'stopped', planId: 18, detail: 'gone' })).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(2), agentBlock: 'agent_not_held' }, OFF, false)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, on(2), { phase: 'stopped', planId: 18, detail: 'gone' }, false)).toBe(`${DOWN}${TITLE}`)
   })
 
   test('a failed or refused load draws no badge, so the title carries no hand', async () => {
-    expect(sessionTitle(TITLE, { ...on(3), phase: 'error' }, OFF)).toBe(`${DOWN}${TITLE}`)
-    expect(sessionTitle(TITLE, { ...on(3), phase: 'blocked' }, OFF)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(3), phase: 'error' }, OFF, false)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(3), phase: 'blocked' }, OFF, false)).toBe(`${DOWN}${TITLE}`)
   })
 })
 
@@ -65,30 +67,30 @@ describe('the connection mark', () => {
     expect(titleConnection({ ...EMPTY, phase: 'signed-out' } as any, OFF)).toBeNull()
     expect(titleConnection({ ...EMPTY, phase: 'error', error: 'server not connected' } as any, OFF)).toBeNull()
     expect(titleConnection({ ...EMPTY, phase: 'ready', agent: AGENT } as any, OFF)).toBeNull()
-    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF)).toBe(TITLE)
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, false)).toBe(TITLE)
   })
 
   test('a loading view knows nothing yet, so the title is left exactly as it is', async () => {
-    expect(sessionTitle(`${DOWN}${TITLE}`, EMPTY as any, OFF)).toBe(`${DOWN}${TITLE}`)
-    expect(sessionTitle(TITLE, EMPTY as any, OFF)).toBe(TITLE)
+    expect(sessionTitle(`${DOWN}${TITLE}`, EMPTY as any, OFF, false)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, EMPTY as any, OFF, false)).toBe(TITLE)
   })
 })
 
 describe('marks never stack', () => {
   test('a title keeps exactly one mark, whatever marks, forms, order or count it held', async () => {
-    expect(sessionTitle(`${HAND}${TITLE}`, on(1), OFF)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(`✋ ${TITLE}`, on(1), OFF)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(`✋️ 🔴 ✋ 🟢 ${TITLE}`, on(1), OFF)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(`${HAND}${TITLE}`, { ...on(0), phase: 'error' }, OFF)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(`${HAND}${TITLE}`, on(1), OFF, false)).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(`✋ ${TITLE}`, on(1), OFF, false)).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(`✋️ 🔴 ✋ 🟢 ${TITLE}`, on(1), OFF, false)).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(`${HAND}${TITLE}`, { ...on(0), phase: 'error' }, OFF, false)).toBe(`${DOWN}${TITLE}`)
   })
 
   test('a mark later in the title is the title, never a mark', async () => {
-    expect(sessionTitle(`Say ✋ 🟢 ${TITLE}`, on(0), OFF)).toBe(`${UP}Say ✋ 🟢 ${TITLE}`)
+    expect(sessionTitle(`Say ✋ 🟢 ${TITLE}`, on(0), OFF, false)).toBe(`${UP}Say ✋ 🟢 ${TITLE}`)
   })
 
   test('an empty title stays empty', async () => {
-    expect(sessionTitle('', on(4), OFF)).toBe('')
-    expect(sessionTitle(`${HAND}`, on(4), OFF)).toBe('')
+    expect(sessionTitle('', on(4), OFF, false)).toBe('')
+    expect(sessionTitle(`${HAND}`, on(4), OFF, false)).toBe('')
   })
 })
 
@@ -146,24 +148,24 @@ describe('the desktop app title follows the view', () => {
 
 describe('the pause mark', () => {
   test('the one mark runs red, hand, paused, green, none', async () => {
-    expect(sessionTitle(TITLE, paused(0), OFF)).toBe(`${PAUSE}${TITLE}`)
-    expect(sessionTitle(TITLE, paused(null), OFF)).toBe(`${PAUSE}${TITLE}`)
-    expect(sessionTitle(TITLE, paused(2), OFF)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(TITLE, { ...paused(2), agentBlock: 'agent_not_held' }, OFF)).toBe(`${DOWN}${TITLE}`)
-    expect(sessionTitle(TITLE, { ...paused(0), phase: 'error' }, OFF)).toBe(`${DOWN}${TITLE}`)
-    expect(sessionTitle(TITLE, on(0), OFF)).toBe(`${UP}${TITLE}`)
-    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out', pausedUntil: CLOCK_START } as any, OFF)).toBe(TITLE)
+    expect(sessionTitle(TITLE, paused(0), OFF, false)).toBe(`${PAUSE}${TITLE}`)
+    expect(sessionTitle(TITLE, paused(null), OFF, false)).toBe(`${PAUSE}${TITLE}`)
+    expect(sessionTitle(TITLE, paused(2), OFF, false)).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...paused(2), agentBlock: 'agent_not_held' }, OFF, false)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...paused(0), phase: 'error' }, OFF, false)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, on(0), OFF, false)).toBe(`${UP}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out', pausedUntil: CLOCK_START } as any, OFF, false)).toBe(TITLE)
   })
 
   test('unmarkedTitle strips the pause mark with or without the selector, in any order with the others', async () => {
     expect(unmarkedTitle(`${PAUSE}${TITLE}`)).toBe(TITLE)
     expect(unmarkedTitle(`⏸ ${TITLE}`)).toBe(TITLE)
     expect(unmarkedTitle(`⏸️ 🔴 ✋ ⏸ 🟢 ${TITLE}`)).toBe(TITLE)
-    expect(sessionTitle(`${HAND}${PAUSE}${TITLE}`, paused(0), OFF)).toBe(`${PAUSE}${TITLE}`)
+    expect(sessionTitle(`${HAND}${PAUSE}${TITLE}`, paused(0), OFF, false)).toBe(`${PAUSE}${TITLE}`)
   })
 
   test('a pause mark later in the title is the title', async () => {
-    expect(sessionTitle(`Say ⏸ ${TITLE}`, on(0), OFF)).toBe(`${UP}Say ⏸ ${TITLE}`)
+    expect(sessionTitle(`Say ⏸ ${TITLE}`, on(0), OFF, false)).toBe(`${UP}Say ⏸ ${TITLE}`)
   })
 
   test('a load shows the mark for an unexpired agent pause; an expired one and a usage-limit pause show none', async ($, on) => {
@@ -224,5 +226,115 @@ describe('the pause mark', () => {
     await $.tool.call({ tool: API, method: 'DELETE', path: PAUSE_PATH })
     await d.clock.settle()
     expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+  })
+})
+
+describe('the building mark', () => {
+  test('the one mark runs red, hand, building, paused, green, none', async () => {
+    expect(sessionTitle(TITLE, on(0), OFF, true)).toBe(`${BUILD}${TITLE}`)
+    expect(sessionTitle(TITLE, on(null), OFF, true)).toBe(`${BUILD}${TITLE}`)
+    expect(sessionTitle(TITLE, paused(0), OFF, true)).toBe(`${BUILD}${TITLE}`)
+    expect(sessionTitle(TITLE, paused(0), OFF, false)).toBe(`${PAUSE}${TITLE}`)
+    expect(sessionTitle(TITLE, on(2), OFF, true)).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(0), agentBlock: 'agent_not_held' }, OFF, true)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(0), phase: 'error' }, OFF, true)).toBe(`${DOWN}${TITLE}`)
+    // a session that never connected carries no mark, sub-agents or not
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, true)).toBe(TITLE)
+  })
+
+  test('unmarkedTitle strips the building mark with or without the selector, in any run with the others', async () => {
+    expect(unmarkedTitle(`${BUILD}${TITLE}`)).toBe(TITLE)
+    expect(unmarkedTitle(`🔨️ ${TITLE}`)).toBe(TITLE)
+    expect(unmarkedTitle(`🔨 ✋ ⏸️ 🔨 🔴 🟢 ${TITLE}`)).toBe(TITLE)
+    expect(sessionTitle(`${HAND}${BUILD}${TITLE}`, on(0), OFF, true)).toBe(`${BUILD}${TITLE}`)
+    expect(sessionTitle(`Say 🔨 ${TITLE}`, on(0), OFF, false)).toBe(`${UP}Say 🔨 ${TITLE}`)
+  })
+
+  test('a sub-agent start shows the mark at once, its stop drops it, two overlapping agents keep it until both stop', async ($, on) => {
+    answerReportEvents(on)
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    await startSession($, d, 'desktop')
+    const app = d.world.appSession
+    expect(app.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+    // the title is read once per sync, so the reads count the syncs: one at each crossing of 0 / 1, none between
+    const syncs = async (event: Promise<unknown>) => {
+      const before = app.reads
+      await event
+      await d.clock.settle()
+      return app.reads - before
+    }
+    expect(await syncs($.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(1)
+    expect(app.title).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
+    expect(await syncs($.classic.SubagentStart({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(0)
+    expect(await syncs($.classic.SubagentStop({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(0)
+    expect(app.title).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
+    expect(await syncs($.classic.SubagentStop({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(1)
+    expect(app.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+    // one set to build, one to drop: nothing in between wrote the title
+    expect(app.set).toEqual([`${UP}Tendai: PLAN-23 Agent mode`, `${BUILD}Tendai: PLAN-23 Agent mode`, `${UP}Tendai: PLAN-23 Agent mode`])
+  })
+
+  test("a failed sub-agent raises no stop, but its turn's end drops the mark; a resumed one counts again", async ($, on) => {
+    answerReportEvents(on)
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    await startSession($, d, 'desktop')
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(d.world.appSession.title).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
+    await $.turn.complete({ ...TURN, reason: 'error', agentId: 'a1' })
+    await d.clock.settle()
+    expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(d.world.appSession.title).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
+  })
+
+  test('a start with no readable id counts nothing, and a stop of an agent never started changes nothing', async ($, on) => {
+    answerReportEvents(on)
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    await startSession($, d, 'desktop')
+    const before = d.world.appSession.set.length
+    await $.classic.SubagentStart({ agent_type: 'Explore' } as any)
+    await $.classic.SubagentStop({ agent_id: 'never', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(d.world.appSession.set).toHaveLength(before)
+  })
+
+  test('the same agent started twice and stopped once is no longer running: the mark drops', async ($, on) => {
+    answerReportEvents(on)
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    await startSession($, d, 'desktop')
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+  })
+
+  test("a title event keeps the mark while a sub-agent runs, and a new conversation's title carries none of the old one's sub-agents", async ($, on) => {
+    answerReportEvents(on)
+    on('classic.SessionStart', () => ({}) as any)
+    on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    await startSession($, d, 'desktop')
+    const titleOf = async () => ((await $.classic.SessionStart({ source: 'startup', session_title: 'Tendai: PLAN-23 Agent mode' } as any)) as any).sessionTitle
+    expect(await titleOf()).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(await titleOf()).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
+    await $.session.end({ reason: 'clear', sessionId: 'sess-own' } as any)
+    await d.clock.settle()
+    expect(await titleOf()).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
   })
 })
