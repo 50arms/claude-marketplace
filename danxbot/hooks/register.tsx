@@ -19,7 +19,7 @@ import { linkCardIds } from './plan/card-links'
 import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
-import { eventsReason, eventsWarning, footerLabel, footerTone, needsYouTitle, unmarkedTitle } from './plan/words'
+import { eventsReason, eventsWarning, footerLabel, footerTone, sessionTitle, unmarkedTitle } from './plan/words'
 import {
   APPROVAL_TOAST_MS,
   CALL_ERROR_MAX,
@@ -323,7 +323,7 @@ async function failView($: any, error: string): Promise<void> {
 }
 
 // The desktop app keeps its own session title, which a hook's `sessionTitle` (onTitle) does not reach: the app's own session server renames it.
-// The title gains the Needs You mark while the band shows a count and loses it otherwise (needsYouTitle); a title already right is left alone.
+// The title carries the connection mark and the Needs You mark as the view and the relay say (sessionTitle); a title already right is left alone.
 // A terminal session has no such server, so its title follows at each prompt only.
 async function syncTitleMark($: any): Promise<void> {
   if (!(await read($, desktopHosted))) return
@@ -331,7 +331,7 @@ async function syncTitleMark($: any): Promise<void> {
   if (got.isError) throw new Error(`get_session: ${mcpText(got)}`)
   const held = JSON.parse(mcpText(got))?.title
   if (typeof held !== 'string' || held.trim() === '') return
-  const want = needsYouTitle(held.trim(), await read($, view))
+  const want = sessionTitle(held.trim(), await read($, view), await read($, relay))
   if (want === held.trim()) return
   const set = await $.mcp.call(DESKTOP_SESSION_SERVER, 'set_session_title', { session_id: 'self', title: want })
   if (set.isError) throw new Error(`set_session_title: ${mcpText(set)}`)
@@ -1211,6 +1211,8 @@ async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detai
   await update($, relay, cur => (cur.phase === phase && cur.detail === detail && cur.planId === run.planId ? cur : { phase, planId: run.planId, detail }))
   // the events warning follows the relay's state (a write path, never the draw)
   await noteEventsWarning($)
+  // so does the title's connection mark (a stopped relay is a lost connection)
+  detach($, 'The session title mark', syncTitleMark($))
   return true
 }
 
@@ -2384,11 +2386,11 @@ async function onTurnStart($: any, e: any, next: any) {
 }
 
 // The app's session title (without the Needs You mark), handed to `plan_connect`; and the main transcript's path. The answer's `sessionTitle` sets
-// the Needs You mark (needsYouTitle) on Claude Code's own title, the one a terminal shows; the desktop app's title is syncTitleMark's.
+// the marks (sessionTitle) on Claude Code's own title, the one a terminal shows; the desktop app's title is syncTitleMark's.
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
   const held = typeof e.session_title === 'string' ? e.session_title.trim() : ''
-  const marked = held ? needsYouTitle(held, await read($, view)) : ''
+  const marked = held ? sessionTitle(held, await read($, view), await read($, relay)) : ''
   const t = unmarkedTitle(held)
   if (t) await update($, title, () => t)
   const below = await next(e)

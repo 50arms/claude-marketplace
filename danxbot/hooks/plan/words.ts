@@ -11,21 +11,41 @@ export function needsYouBadge(v: PlanView): string {
 // the session title's lead while the band shows a Needs You count, so a session waiting on its person stands out in the session list; the
 // emoji variation selector (U+FE0F) asks every surface for the emoji form of the hand, never its text form.
 export const NEEDS_YOU_TITLE_MARK = '✋️ '
-// the mark as any title may hold it, the selector or not, repeated or not (two plugin versions marking one title in turn stacked two)
-const ANY_TITLE_MARK = /^(?:✋️?\s*)+/
+// whether the session reaches its plan or card: green while it does, red once it has lost it (titleConnection); one mark at most (sessionTitle)
+export const CONNECTED_TITLE_MARK = '🟢 '
+export const DISCONNECTED_TITLE_MARK = '🔴 '
+// every mark as any title may hold it, the selector or not, repeated or not, in any order (two plugin versions marking one title in turn stacked two)
+const ANY_TITLE_MARK = /^(?:(?:✋️?|🟢|🔴)\s*)+/u
 
-// the title without any leading mark: what the plugin keeps and hands to plan_connect, since the mark is display only
+// the title without any leading mark: what the plugin keeps and hands to plan_connect, since the marks are display only
 export function unmarkedTitle(title: string): string {
   return title.replace(ANY_TITLE_MARK, '')
 }
 
-// the session title with the mark exactly when the band draws its Needs You badge (the same count, hidden on a failed load), else without it.
-// `title` is the title as the app holds it, the mark included or not; '' stays ''.
-export function needsYouTitle(title: string, v: PlanView): string {
+// what the connection mark says. `up`: the session holds a plan or card, has its team agent, its last load answered and (on a plan)
+// its events relay has not stopped. `down`: a session that was signed in or on a plan or card lost it (a failed or refused load, a revoked
+// or lapsed key, no team agent, a stopped relay). null: a session that never connected, or one signed in on nothing, carries no mark.
+export function titleConnection(v: PlanView, relay: RelayState): 'up' | 'down' | null {
+  if (v.phase === 'key-revoked') return 'down'
+  const wasOn = v.connected !== null || v.card !== null || v.resumePlan !== null || v.agent !== null
+  if (v.phase === 'error' || v.phase === 'blocked' || v.phase === 'signed-out') return wasOn ? 'down' : null
+  if (v.agentBlock !== null) return 'down'
+  if (v.connected === null && v.card === null) return null
+  if (v.connected !== null && relay.phase === 'stopped' && relay.planId === v.connected.id) return 'down'
+  return v.agent !== null ? 'up' : 'down'
+}
+
+// the session title with ONE mark at most (operator, 2026-10-24): red when the connection is lost (titleConnection), else the hand exactly
+// when the band draws its Needs You badge (the same count, hidden on a failed load), else green when connected, else none. `title` is the
+// title as the app holds it, marks included or not; '' stays ''. While the view is still loading nothing is known yet, so the title is left as it is.
+export function sessionTitle(title: string, v: PlanView, relay: RelayState): string {
+  if (v.phase === 'loading') return title
   const base = unmarkedTitle(title)
   if (base === '') return base
-  const shown = v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== ''
-  return shown ? `${NEEDS_YOU_TITLE_MARK}${base}` : base
+  const connection = titleConnection(v, relay)
+  if (connection === 'down') return `${DISCONNECTED_TITLE_MARK}${base}`
+  if (v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== '') return `${NEEDS_YOU_TITLE_MARK}${base}`
+  return connection === 'up' ? `${CONNECTED_TITLE_MARK}${base}` : base
 }
 
 // `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.
