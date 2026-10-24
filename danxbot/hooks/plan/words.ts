@@ -8,16 +8,21 @@ export function needsYouBadge(v: PlanView): string {
   return n === null || n === 0 ? '' : `${PROBLEM_GLYPH} ${n}`
 }
 
-// the session title's lead while the band shows a Needs You count, so a session waiting on its person stands out in the session list. The
-// emoji variation selector (U+FE0F) makes every surface draw the colour emoji: a bare U+270B was drawn as a white text glyph in some rows.
+// the session title's lead while the band shows a Needs You count, so a session waiting on its person stands out in the session list; the
+// emoji variation selector (U+FE0F) asks every surface for the emoji form of the hand, never its text form.
 export const NEEDS_YOU_TITLE_MARK = '✋️ '
 // the mark as any title may hold it, the selector or not, repeated or not (two plugin versions marking one title in turn stacked two)
 const ANY_TITLE_MARK = /^(?:✋️?\s*)+/
 
+// the title without any leading mark: what the plugin keeps and hands to plan_connect, since the mark is display only
+export function unmarkedTitle(title: string): string {
+  return title.replace(ANY_TITLE_MARK, '')
+}
+
 // the session title with the mark exactly when the band draws its Needs You badge (the same count, hidden on a failed load), else without it.
 // `title` is the title as the app holds it, the mark included or not; '' stays ''.
 export function needsYouTitle(title: string, v: PlanView): string {
-  const base = title.replace(ANY_TITLE_MARK, '')
+  const base = unmarkedTitle(title)
   if (base === '') return base
   const shown = v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== ''
   return shown ? `${NEEDS_YOU_TITLE_MARK}${base}` : base

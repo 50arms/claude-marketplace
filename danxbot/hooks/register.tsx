@@ -19,7 +19,7 @@ import { linkCardIds } from './plan/card-links'
 import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
-import { NEEDS_YOU_TITLE_MARK, eventsReason, eventsWarning, footerLabel, footerTone, needsYouTitle } from './plan/words'
+import { eventsReason, eventsWarning, footerLabel, footerTone, needsYouTitle, unmarkedTitle } from './plan/words'
 import {
   APPROVAL_TOAST_MS,
   CALL_ERROR_MAX,
@@ -2383,17 +2383,24 @@ async function onTurnStart($: any, e: any, next: any) {
   return next(e)
 }
 
-// The app's session title (without the Needs You mark), handed to `plan_connect`; and the main transcript's path. The answer sets the title's
-// Needs You mark to match the band's badge (needsYouTitle): only a prompt or a session start can set a title, so it follows the count at those.
+// The app's session title (without the Needs You mark), handed to `plan_connect`; and the main transcript's path. The answer's `sessionTitle` sets
+// the Needs You mark (needsYouTitle) on Claude Code's own title, the one a terminal shows; the desktop app's title is syncTitleMark's.
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
   const held = typeof e.session_title === 'string' ? e.session_title.trim() : ''
   const marked = held ? needsYouTitle(held, await read($, view)) : ''
-  const t = held ? needsYouTitle(held, EMPTY) : ''
+  const t = unmarkedTitle(held)
   if (t) await update($, title, () => t)
   const below = await next(e)
-  detach($, 'The session title mark', syncTitleMark($))
   return marked && marked !== held ? { ...below, sessionTitle: marked } : below
+}
+
+// a prompt also checks the desktop app's title, which may have been renamed since the last load (a session start does not: the session is not
+// bound yet, so `$.mcp.call` throws there)
+async function onPromptTitle($: any, e: any, next: any) {
+  const r = await onTitle($, e, next)
+  detach($, 'The session title mark', syncTitleMark($))
+  return r
 }
 
 // the events warning's reason, toasted once on the transition into the warning (a redraw that shows the same warning says nothing).
@@ -3156,7 +3163,7 @@ export const register: Register = (on, options) => {
   on('classic.Stop', onReportStop)
   on('prompt.submit', onPromptStamp)
   on('tool.call', onToolStamp)
-  on('classic.UserPromptSubmit', onTitle)
+  on('classic.UserPromptSubmit', onPromptTitle)
   on('ui.render', { component: 'AbovePrompt' }, drawBand)
   on('ui.render', { component: 'SessionMode' }, drawSessionMode)
   on('ui.render', { component: 'AssistantMessage' }, drawAssistantMessage)
