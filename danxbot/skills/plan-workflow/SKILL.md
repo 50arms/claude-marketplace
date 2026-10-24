@@ -228,6 +228,13 @@ From the plugin's relay (delivery itself):
 
 Changed fact → edit; no longer true → delete.
 
+Record as you go, never in one batch at the end. Assume this session can end at any moment (a
+crash, a revoked key, a compaction) and may never sign back in: only the plan, its cards and
+origin survive it. So at every checkpoint (a gate result, a push or landing, a decision, an
+operator answer, a change in what the requirements mean), write it to the card or plan record in
+that same turn. A local file (`.junk/`, a scratchpad, a notes file) is never a record, nor a
+fallback for one.
+
 ## Card state always true
 
 Delegated pickup → tell the sub-agent its own `CLAUDE_CODE_SESSION_ID` is real (`danxbot_api`
@@ -283,8 +290,9 @@ nothing you can do (waiting on a person's answer, a long build, a dependency), d
 each reminder with "still waiting": pause. A session with nothing to do right now pauses; it
 never stays active just to wait.
 
-1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block): the
-   pause is only the signal, never the record. Waiting on a person is always an open problem
+1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block), and
+   any state not yet recorded: a pause often ends in a disconnect after which you cannot write.
+   The pause is only the signal, never the record. Waiting on a person is always an open problem
    on a card of this plan, worded for the step left now (no note or comment reaches Needs You).
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
