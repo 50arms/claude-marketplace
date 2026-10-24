@@ -18,8 +18,13 @@ export const DISCONNECTED_TITLE_MARK = '🔴 '
 export const PAUSED_TITLE_MARK = '⏸️ '
 // one or more of the session's sub-agents is running (a hammer: the earlier building mark was unreadable at title size)
 export const BUILDING_TITLE_MARK = '🔨 '
+// the plan waits on a person and the session has nothing left running (no turn, no sub-agent): louder than the hand, which only says an answer is open
+export const WAITING_TITLE_MARK = '⚠️ '
+
+// what the session is doing now, for its title: a sub-agent of it runs (`subAgents`), its main loop's turn runs (`turnRunning`)
+export type TitleActivity = { subAgents: boolean; turnRunning: boolean }
 // every mark as any title may hold it, the selector or not, repeated or not, in any order (two plugin versions marking one title in turn stacked two)
-const ANY_TITLE_MARK = /^(?:(?:✋️?|⏸️?|🔨️?|🟢|🔴)\s*)+/u
+const ANY_TITLE_MARK = /^(?:(?:✋️?|⏸️?|🔨️?|⚠️?|🟢|🔴)\s*)+/u
 
 // the title without any leading mark: what the plugin keeps and hands to plan_connect, since the marks are display only
 export function unmarkedTitle(title: string): string {
@@ -44,19 +49,25 @@ export function titleConnection(v: PlanView, relay: RelayState): 'up' | 'down' |
   return v.agent !== null ? 'up' : 'down'
 }
 
-// the session title with ONE mark at most (operator, 2026-10-24): red when the connection is lost (titleConnection), else the hand exactly
-// when the band draws its Needs You badge (the same count, hidden on a failed load), else the building mark while a sub-agent runs
-// (`building`), else the pause mark while the agent is in an unexpired pause (`pausedUntil`, which the load already left null for an
-// expired one), else green when connected, else none. `title` is the title as the app holds it, marks included or not; '' stays ''.
-// While the view is still loading nothing is known yet, so the title is left as it is.
-export function sessionTitle(title: string, v: PlanView, relay: RelayState, building: boolean): string {
+// whether the title carries a Needs You mark (the hand or the waiting mark): exactly when the band draws its Needs You badge, which a failed
+// load hides
+export function needsYouShown(v: PlanView): boolean {
+  return v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== ''
+}
+
+// the session title with ONE mark at most (operator, 2026-10-24): red when the connection is lost (titleConnection); else, while Needs You
+// is shown (needsYouShown), the waiting mark when nothing of the session runs (no turn, no sub-agent: it has done all it can) and the hand
+// while something still does; else the building mark while a sub-agent runs, else the pause mark while the agent is in an unexpired pause
+// (`pausedUntil`, which the load already left null for an expired one), else green when connected, else none. `title` is the title as the
+// app holds it, marks included or not; '' stays ''. While the view is still loading nothing is known yet, so the title is left as it is.
+export function sessionTitle(title: string, v: PlanView, relay: RelayState, activity: TitleActivity): string {
   if (v.phase === 'loading') return title
   const base = unmarkedTitle(title)
   if (base === '') return base
   const connection = titleConnection(v, relay)
   if (connection === 'down') return `${DISCONNECTED_TITLE_MARK}${base}`
-  if (v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== '') return `${NEEDS_YOU_TITLE_MARK}${base}`
-  if (connection === 'up' && building) return `${BUILDING_TITLE_MARK}${base}`
+  if (needsYouShown(v)) return `${activity.subAgents || activity.turnRunning ? NEEDS_YOU_TITLE_MARK : WAITING_TITLE_MARK}${base}`
+  if (connection === 'up' && activity.subAgents) return `${BUILDING_TITLE_MARK}${base}`
   if (connection === 'up' && v.pausedUntil !== null) return `${PAUSED_TITLE_MARK}${base}`
   return connection === 'up' ? `${CONNECTED_TITLE_MARK}${base}` : base
 }

@@ -19,7 +19,7 @@ import { linkCardIds } from './plan/card-links'
 import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
-import { eventsReason, eventsWarning, footerLabel, footerTone, sessionTitle, unmarkedTitle } from './plan/words'
+import { eventsReason, eventsWarning, footerLabel, footerTone, needsYouShown, sessionTitle, unmarkedTitle, type TitleActivity } from './plan/words'
 import {
   APPROVAL_TOAST_MS,
   CALL_ERROR_MAX,
@@ -333,7 +333,7 @@ async function syncTitleMark($: any): Promise<void> {
   if (got.isError) throw new Error(`get_session: ${mcpText(got)}`)
   const held = JSON.parse(mcpText(got))?.title
   if (typeof held !== 'string' || held.trim() === '') return
-  const want = sessionTitle(held.trim(), await read($, view), await read($, relay), await subAgentsRunning($))
+  const want = sessionTitle(held.trim(), await read($, view), await read($, relay), await titleActivity($))
   if (want === held.trim()) return
   const set = await $.mcp.call(DESKTOP_SESSION_SERVER, 'set_session_title', { session_id: 'self', title: want })
   if (set.isError) throw new Error(`set_session_title: ${mcpText(set)}`)
@@ -1825,9 +1825,15 @@ async function onAckCall($: any, e: any, next: any) {
   return ran
 }
 
-// whether any sub-agent is running now: the session title's building mark
-async function subAgentsRunning($: any): Promise<boolean> {
-  return (await read($, runningAgents)).length > 0
+// what the session is doing now, for its title's mark: any sub-agent running, and the main loop's turn
+async function titleActivity($: any): Promise<TitleActivity> {
+  return { subAgents: (await read($, runningAgents)).length > 0, turnRunning: (await read($, turn)).isRunning }
+}
+
+// the main loop's turn started or ended: the hand and the waiting mark trade places only while Needs You is shown, so the title is
+// synced then and never on any other turn
+async function syncTitleOnTurn($: any): Promise<void> {
+  if (needsYouShown(await read($, view))) detach($, 'The session title mark', syncTitleMark($))
 }
 
 // a sub-agent started or ended: the running set changes, and the title is synced only when it crosses empty / not empty. An id that is not a
@@ -2389,6 +2395,7 @@ async function onTurnComplete($: any, e: any, next: any) {
     await armKeepalive($, false)
     // the agent's ready, said during this turn, starts the compaction now that the turn is over
     await syncCompaction($, { start: true })
+    await syncTitleOnTurn($)
   } else {
     // a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
@@ -2411,6 +2418,7 @@ async function onTurnStart($: any, e: any, next: any) {
   if (keepalivePlan !== null && since !== null && now >= since + KEEPALIVE_GIVE_UP_MS) detach($, 'Plan tab re-check', recheckTab($))
   await update($, turn, () => turnStarted())
   await syncCompaction($, { start: false })
+  await syncTitleOnTurn($)
   return next(e)
 }
 
@@ -2419,7 +2427,8 @@ async function onTurnStart($: any, e: any, next: any) {
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
   const held = typeof e.session_title === 'string' ? e.session_title.trim() : ''
-  const marked = held ? sessionTitle(held, await read($, view), await read($, relay), await subAgentsRunning($)) : ''
+  // a session start or a prompt: the session is about to act, so its turn counts as running (the waiting mark follows the turn's end)
+  const marked = held ? sessionTitle(held, await read($, view), await read($, relay), { ...(await titleActivity($)), turnRunning: true }) : ''
   const t = unmarkedTitle(held)
   if (t) await update($, title, () => t)
   const below = await next(e)
