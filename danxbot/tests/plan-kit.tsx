@@ -278,6 +278,9 @@ export function dashboard(
       delayMs: 0,
       calls: [] as string[],
     },
+    // the desktop app's session server (`ccd_session_mgmt`) as the title mark reaches it: the app's title of this session and each title the
+    // plugin set, in order
+    appSession: { title: 'Tendai: PLAN-23 Agent mode', set: [] as string[] },
     // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
     tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
@@ -759,6 +762,17 @@ export function dashboard(
       if (over?.deny !== undefined) return { deny: over.deny }
       if (over?.status !== undefined) return { value: reply(over.body ?? { error: 'report boom' }, over.status) }
       return { value: reportAnswer(e.args) }
+    }
+    // the desktop app's session server, as the real one answers (kept out of `calls` and `sequence`, which are the dashboard's): get_session is one text block, the session's metadata as JSON
+    if (e.server === 'ccd_session_mgmt') {
+      const app = world.appSession
+      if (e.tool === 'get_session') return { value: { content: [{ type: 'text', text: JSON.stringify({ sessionId: 'local_test', title: app.title }, null, 2) }], isError: false } }
+      if (e.tool === 'set_session_title') {
+        app.set.push(e.args.title)
+        const was = app.title
+        app.title = e.args.title
+        return { value: { content: [{ type: 'text', text: `Renamed this session to "${app.title}" (was "${was}").` }], isError: false } }
+      }
     }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.tool !== 'danxbot_api') sequence.push(`tool ${e.tool}`)

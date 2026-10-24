@@ -19,7 +19,7 @@ import { linkCardIds } from './plan/card-links'
 import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
-import { eventsReason, eventsWarning, footerLabel, footerTone } from './plan/words'
+import { NEEDS_YOU_TITLE_MARK, eventsReason, eventsWarning, footerLabel, footerTone, needsYouTitle } from './plan/words'
 import {
   APPROVAL_TOAST_MS,
   CALL_ERROR_MAX,
@@ -303,6 +303,8 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
     return named === null || origin === null ? base : { ...base, dashboardUrl: origin, connected: { id: named.id, ref: `PLAN-${named.id}`, name: named.name, dashboardUrl: origin } }
   })
   for (const t of told) $.ui.toast(t.slice(0, TOAST_ERROR_MAX))
+  // the app's title follows the count as each load lands, not only at the next prompt
+  detach($, 'The session title mark', syncTitleMark($))
   // a write path, never the draw: the events warning's reason is told on the change into it
   await noteEventsWarning($)
   // the view says which plan this session is on, so it says whether a relay runs and for which
@@ -317,6 +319,29 @@ async function failView($: any, error: string): Promise<void> {
     return { ...cur, phase: 'error', error }
   })
   if (first) $.ui.toast(`Plan load failed: ${error}`.slice(0, TOAST_ERROR_MAX))
+  detach($, 'The session title mark', syncTitleMark($))
+}
+
+// The desktop app keeps its own session title, which a hook's `sessionTitle` (onTitle) does not reach: the app's own session server renames it.
+// The title gains the Needs You mark while the band shows a count and loses it otherwise (needsYouTitle); a title already right is left alone.
+// A terminal session has no such server, so its title follows at each prompt only.
+async function syncTitleMark($: any): Promise<void> {
+  if (!(await read($, desktopHosted))) return
+  const got = await $.mcp.call(DESKTOP_SESSION_SERVER, 'get_session', { session_id: 'self' })
+  if (got.isError) throw new Error(`get_session: ${mcpText(got)}`)
+  const held = JSON.parse(mcpText(got))?.title
+  if (typeof held !== 'string' || held.trim() === '') return
+  const want = needsYouTitle(held.trim(), await read($, view))
+  if (want === held.trim()) return
+  const set = await $.mcp.call(DESKTOP_SESSION_SERVER, 'set_session_title', { session_id: 'self', title: want })
+  if (set.isError) throw new Error(`set_session_title: ${mcpText(set)}`)
+}
+
+// the desktop app's session server (its `get_session` / `set_session_title` tools)
+const DESKTOP_SESSION_SERVER = 'ccd_session_mgmt'
+
+function mcpText(r: any): string {
+  return (Array.isArray(r?.content) ? r.content : []).filter((c: any) => c?.type === 'text').map((c: any) => c.text).join('')
 }
 
 // One load in flight at a time, at least MIN_GAP_MS apart unless forced. A forced refresh asked
@@ -1779,6 +1804,11 @@ async function onRequestPermission($: any, e: any, next: any) {
 // ok:false (a 400 is not an error result), so success is the envelope's ok, never the absence of isError.
 async function onAckCall($: any, e: any, next: any) {
   const ran = await next(e)
+  // the session's own card or plan write reaches it as no plan event (the relay hears other members' writes), so the band and the title's
+  // Needs You mark re-read the plan the moment the write lands, never at the turn's end
+  if (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && typeof e.path === 'string' && /^\/api\/(issues|plans)\//.test(e.path)) {
+    detach($, 'Plan refresh', refresh($, true))
+  }
   const id = ackedEventId(e.method, e.path)
   if (id === null) return ran
   if (textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
@@ -2353,12 +2383,17 @@ async function onTurnStart($: any, e: any, next: any) {
   return next(e)
 }
 
-// The app's session title, handed to `plan_connect`; and the main transcript's path.
+// The app's session title (without the Needs You mark), handed to `plan_connect`; and the main transcript's path. The answer sets the title's
+// Needs You mark to match the band's badge (needsYouTitle): only a prompt or a session start can set a title, so it follows the count at those.
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
-  const t = typeof e.session_title === 'string' ? e.session_title.trim() : ''
+  const held = typeof e.session_title === 'string' ? e.session_title.trim() : ''
+  const marked = held ? needsYouTitle(held, await read($, view)) : ''
+  const t = held ? needsYouTitle(held, EMPTY) : ''
   if (t) await update($, title, () => t)
-  return next(e)
+  const below = await next(e)
+  detach($, 'The session title mark', syncTitleMark($))
+  return marked && marked !== held ? { ...below, sessionTitle: marked } : below
 }
 
 // the events warning's reason, toasted once on the transition into the warning (a redraw that shows the same warning says nothing).

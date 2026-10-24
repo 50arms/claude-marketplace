@@ -8,6 +8,21 @@ export function needsYouBadge(v: PlanView): string {
   return n === null || n === 0 ? '' : `${PROBLEM_GLYPH} ${n}`
 }
 
+// the session title's lead while the band shows a Needs You count, so a session waiting on its person stands out in the session list. The
+// emoji variation selector (U+FE0F) makes every surface draw the colour emoji: a bare U+270B was drawn as a white text glyph in some rows.
+export const NEEDS_YOU_TITLE_MARK = '✋️ '
+// the mark as any title may hold it, the selector or not, repeated or not (two plugin versions marking one title in turn stacked two)
+const ANY_TITLE_MARK = /^(?:✋️?\s*)+/
+
+// the session title with the mark exactly when the band draws its Needs You badge (the same count, hidden on a failed load), else without it.
+// `title` is the title as the app holds it, the mark included or not; '' stays ''.
+export function needsYouTitle(title: string, v: PlanView): string {
+  const base = title.replace(ANY_TITLE_MARK, '')
+  if (base === '') return base
+  const shown = v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== ''
+  return shown ? `${NEEDS_YOU_TITLE_MARK}${base}` : base
+}
+
 // `text` cut to `max` characters, the last one an ellipsis, so a cut name never reads as a whole one.
 export function ellipsize(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
