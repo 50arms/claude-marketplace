@@ -76,6 +76,8 @@ import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
 import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
+import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
+import type { TurnActivity } from './reports/turn-activity'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
 import { bareSubagentId, subagentKey } from './compaction/subagent-key'
 import type { ActivityChange } from './reports/activity'
@@ -114,6 +116,8 @@ const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null 
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
 // the events warning last stored (null: none), so its reason is told once on the transition into it.
 const eventsWarned = atom({ plugin: 'danxbot', key: 'eventsWarned' } as const, null as string | null)
+// DX-5694: the start (epoch ms) of the last turn activity sent to the dashboard, so the next one starts strictly later (it keeps only the newest start). $.state, so a reload keeps it.
+const turnReportedAt = atom({ plugin: 'danxbot', key: 'turnReportedAt' } as const, null as number | null)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
 const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
@@ -2391,6 +2395,7 @@ async function onTurnComplete($: any, e: any, next: any) {
     })
     // detached: the turn.complete hook does not wait on the session taking a prompt
     if (prompts.length > 0) detach($, 'Telling the session', promptNotes($, prompts))
+    await reportTurnActivity($, 'idle')
     // a sub-agent's end is not the session going idle
     await armKeepalive($, false)
     // the agent's ready, said during this turn, starts the compaction now that the turn is over
@@ -2417,6 +2422,7 @@ async function onTurnStart($: any, e: any, next: any) {
   await update($, idleSince, () => null)
   if (keepalivePlan !== null && since !== null && now >= since + KEEPALIVE_GIVE_UP_MS) detach($, 'Plan tab re-check', recheckTab($))
   await update($, turn, () => turnStarted())
+  await reportTurnActivity($, 'in_turn')
   await syncCompaction($, { start: false })
   await syncTitleOnTurn($)
   return next(e)
@@ -2619,6 +2625,19 @@ async function movesOffReportedPlan($: any, planId: number): Promise<boolean> {
 async function report($: any, what: string, method: string, path: string, body: object): Promise<void> {
   const r = await api($, method, path, { body })
   if (!r.ok) $.ui.toast(`danxbot ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
+}
+
+// DX-5694: the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. Only a session on a plan has a row to
+// report it on. Detached like the other reports; a send the dashboard does not take is one toast (`report`), never swallowed.
+async function reportTurnActivity($: any, activity: TurnActivity): Promise<void> {
+  if ((await read($, view)).connected === null) return
+  const now = await $.clock.now()
+  let since = now
+  await update($, turnReportedAt, last => {
+    since = nextSince(now, last)
+    return since
+  })
+  detach($, 'danxbot turn activity report', report($, 'turn activity', 'PUT', TURN_ACTIVITY_PATH, turnActivityBody(activity, since)))
 }
 
 function postActivity($: any, rows: ActivityChange[]): void {
@@ -3030,14 +3049,19 @@ async function onSessionCompactSeen($: any, e: any, next: any) {
 // runs core's compaction and settles the agent's entry by what came back: a result that is not a skip is a compaction that finished, a skip or a throw is one that did not happen
 // (the throw goes on).
 async function settledCompaction($: any, agentId: string | null, next: any, e: any) {
+  // DX-5694: only the main agent's compaction is the session's activity; a sub-agent compacts beside the main loop
+  const mainAgent = agentId === null
+  if (mainAgent) await reportTurnActivity($, 'compacting')
   let r: any
   try {
     r = await next(e)
   } catch (err) {
     await settleCompacting($, agentId, false)
+    if (mainAgent) await reportTurnActivity($, afterCompaction((await read($, turn)).isRunning))
     throw err
   }
   await settleCompacting($, agentId, r?.skip === undefined)
+  if (mainAgent) await reportTurnActivity($, afterCompaction((await read($, turn)).isRunning))
   return r
 }
 
