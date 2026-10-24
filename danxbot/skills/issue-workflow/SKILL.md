@@ -35,7 +35,10 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    step, the card is already yours.
 3. Pass its PRE gates ("Gates" below), then build test-first, to the rules under
    "Building" below.
-4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
+4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
+   changes. Run only those: the touched files' own tests and their direct dependents (a prose
+   edit needs only the repo's text checks). A whole suite is for a broad change that touches
+   many parts of the system, never the default.
 5. Pass its POST gates ("Gates" below).
 6. End: a dispatched worker follows the end order its dispatch instructions give. An
    operator-session sub-agent stops at its pushed card branch: it reports the tip SHA and ends,
