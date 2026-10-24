@@ -22,6 +22,11 @@ export function unmarkedTitle(title: string): string {
   return title.replace(ANY_TITLE_MARK, '')
 }
 
+// the relay stopped for the plan the session is on (a relay left over from another plan says nothing about this one)
+function relayStoppedFor(v: PlanView, relay: RelayState): boolean {
+  return v.connected !== null && relay.phase === 'stopped' && relay.planId === v.connected.id
+}
+
 // what the connection mark says. `up`: the session holds a plan or card, has its team agent, its last load answered and (on a plan)
 // its events relay has not stopped. `down`: a session that was signed in or on a plan or card lost it (a failed or refused load, a revoked
 // or lapsed key, no team agent, a stopped relay). null: a session that never connected, or one signed in on nothing, carries no mark.
@@ -31,7 +36,7 @@ export function titleConnection(v: PlanView, relay: RelayState): 'up' | 'down' |
   if (v.phase === 'error' || v.phase === 'blocked' || v.phase === 'signed-out') return wasOn ? 'down' : null
   if (v.agentBlock !== null) return 'down'
   if (v.connected === null && v.card === null) return null
-  if (v.connected !== null && relay.phase === 'stopped' && relay.planId === v.connected.id) return 'down'
+  if (relayStoppedFor(v, relay)) return 'down'
   return v.agent !== null ? 'up' : 'down'
 }
 
@@ -177,9 +182,8 @@ export function footerTone(v: PlanView): string | undefined {
 export function eventsWarning(v: PlanView, relay: RelayState): string | null {
   if (v.connected === null) return null
   // the relay's state belongs to the plan it serves: one left over from another plan says nothing about this one
-  if ((relay.phase === 'retrying' || relay.phase === 'stopped') && relay.planId === v.connected.id) {
-    return relay.phase === 'stopped' ? 'events: relay stopped' : 'events: relay retrying'
-  }
+  if (relayStoppedFor(v, relay)) return 'events: relay stopped'
+  if (relay.phase === 'retrying' && relay.planId === v.connected.id) return 'events: relay retrying'
   if (relay.planId !== v.connected.id || relay.phase === 'off') return 'events: relay not running'
   if (v.listener === null) return NO_EVENT_STATUS
   return v.listener.state === 'healthy' ? null : `events: ${v.listener.state}`

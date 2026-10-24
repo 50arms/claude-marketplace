@@ -1208,11 +1208,15 @@ async function recheckTab($: any): Promise<void> {
 // it and the line told to the model all come after this write, which does not happen for a dead run (false). The new run owns the state.
 async function setRelay($: any, run: RelayRun, phase: RelayState['phase'], detail: string | null): Promise<boolean> {
   if (run.dead) return false
-  await update($, relay, cur => (cur.phase === phase && cur.detail === detail && cur.planId === run.planId ? cur : { phase, planId: run.planId, detail }))
+  let changed = false
+  await update($, relay, cur => {
+    changed = !(cur.phase === phase && cur.detail === detail && cur.planId === run.planId)
+    return changed ? { phase, planId: run.planId, detail } : cur
+  })
   // the events warning follows the relay's state (a write path, never the draw)
   await noteEventsWarning($)
-  // so does the title's connection mark (a stopped relay is a lost connection)
-  detach($, 'The session title mark', syncTitleMark($))
+  // so does the title's connection mark (a stopped relay is a lost connection), on a change only: the relay writes its state every round
+  if (changed) detach($, 'The session title mark', syncTitleMark($))
   return true
 }
 
@@ -2385,7 +2389,7 @@ async function onTurnStart($: any, e: any, next: any) {
   return next(e)
 }
 
-// The app's session title (without the Needs You mark), handed to `plan_connect`; and the main transcript's path. The answer's `sessionTitle` sets
+// The app's session title (without any mark), handed to `plan_connect`; and the main transcript's path. The answer's `sessionTitle` sets
 // the marks (sessionTitle) on Claude Code's own title, the one a terminal shows; the desktop app's title is syncTitleMark's.
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
