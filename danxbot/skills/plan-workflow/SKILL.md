@@ -294,6 +294,8 @@ never stays active just to wait.
    any state not yet recorded: a pause often ends in a disconnect after which you cannot write.
    The pause is only the signal, never the record. Waiting on a person is always an open problem
    on a card of this plan, worded for the step left now (no note or comment reaches Needs You).
+   That includes a check that needs an ordinary act of theirs (a design change request, a
+   review): an `action` problem asks for it now; never wait for it to happen on its own.
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
    what would end the wait. `waits_on` is required, the cause you pick: `pacing` when usage pacing
@@ -343,7 +345,8 @@ agent again work calls are refused with `agent_not_held` or `agent_needed`.
 ## Stopping
 
 Before stopping or saying "blocked", re-read every open plan card and write each real
-blocker (card id, open problem, user action) to an agent note on that card.
+blocker (card id, open problem, user action) to an agent note on that card. A blocker only a
+person can clear is an open problem there too (see "Pausing").
 
 ## Sub-agents
 
