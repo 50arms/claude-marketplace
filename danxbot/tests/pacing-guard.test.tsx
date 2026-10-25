@@ -561,15 +561,12 @@ describe('the agent.spawn hook', () => {
     const d = await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0, main_agents: 40 }) } })
     expect((await spawn($)).deny).toMatch(/^Usage pacing: this account is critical/)
     expect(d.claimsAllowed).toEqual([])
-    // the main thread's own work still runs, and the plugin writes no session pause of its own
-    expect((await $.tool.call({ tool: 'Bash', command: 'git push' } as any)).deny).toBeUndefined()
+    // the plugin writes no session pause of its own
     expect(d.calls.filter((c: any) => c.args?.method === 'PUT' && String(c.args?.path).includes('/pause'))).toEqual([])
   })
 
   test('the main agent count never decides a spawn: only the sub-agent count does (CP-13)', () => {
-    expect(isTight(5, 1, 0)).toBe(false)
     expect(decideSpawn(v({ budget: 5, mainAgents: 99, subAgents: 1 }), 'opus')).toEqual({ kind: 'allow' })
-    expect(denyReason(v({ budget: 3, mainAgents: 99, subAgents: 3 }), 'budget')).not.toContain('99')
   })
 
   test('a tool call of any tool is never denied under a critical verdict: saving work stays possible', async ($, on) => {

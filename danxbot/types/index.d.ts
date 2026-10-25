@@ -95,7 +95,7 @@ export type RefreshGate = {
 
 // the pacing line's wire shapes (hooks/plan/pacing-line.ts).
 export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
-// The account's verdict for this session (the usage-pacing cache): `budget` null = no cap, 0 = start nothing new, n = most agents at once.
+// The account's verdict for this session (the usage-pacing cache): `budget` null = no cap, 0 = start nothing new, n = most sub-agents at once.
 // `reservedAgents` is the slots held for sessions danxbot woke (an offer, for 60 s), taken by no running agent yet; a claim from another session counts them as taken.
 export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; mainAgents: number; subAgents: number; reservedAgents: number }
 
