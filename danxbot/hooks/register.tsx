@@ -1751,6 +1751,22 @@ async function onCommand($: any) {
   return { text: 'Plan band shown.' }
 }
 
+// what a tool call's answer says happened: its text, read as a refusal when the call errored or was denied
+function answerOf(ran: any) {
+  return textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
+}
+
+// The model held a stand-alone card (card_connect, a first connect or a move): the dashboard gets the session's current activity at once, and the view is
+// refreshed so the turn reports see the card the session holds. A refused connect (`card_on_plan`) changes nothing and reports nothing; a leave
+// (`disconnect: true`) refreshes the view so the card clears, but reports nothing, the session holding neither a plan nor a card.
+async function onCardConnect($: any, e: any, next: any) {
+  const ran = await next(e)
+  if (!answerOf(ran).ok) return ran
+  if (e.disconnect !== true) await reportActivityOnConnect($)
+  detach($, 'Plan refresh', refresh($, true))
+  return ran
+}
+
 // The model connected (or moved) this session: show it at once. A signed-out session's `approval_required`
 // answer draws the approval link and the code in the band; the plan page is not opened (there is
 // no connection to show yet).
@@ -1769,7 +1785,7 @@ async function onPlanConnect($: any, e: any, next: any) {
     await settleLeave($, closes, false, why)
     throw err
   }
-  const answer = textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
+  const answer = answerOf(ran)
   await settleLeave($, closes, leaving ? answer.ok : answer.ok && answer.body?.session?.planId === e.plan_id, why)
   // the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
@@ -1827,7 +1843,7 @@ async function onAckCall($: any, e: any, next: any) {
   }
   const id = ackedEventId(e.method, e.path)
   if (id === null) return ran
-  if (textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
+  if (answerOf(ran).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
   return ran
 }
 
@@ -2629,10 +2645,11 @@ async function report($: any, what: string, method: string, path: string, body: 
   if (!r.ok) $.ui.toast(`danxbot ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
 }
 
-// the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. Only a session on a plan has a row to
-// report it on. Detached like the other reports; a send the dashboard does not take is one toast (`report`), never swallowed.
+// the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. Only a session on a plan or holding a
+// stand-alone card has a row to report it on. Detached like the other reports; a send the dashboard does not take is one toast (`report`), never swallowed.
 async function reportTurnActivity($: any, activity: TurnActivity): Promise<void> {
-  if ((await read($, view)).connected === null) return
+  const v = await read($, view)
+  if (v.connected === null && v.card === null) return
   await sendTurnActivity($, activity)
 }
 
@@ -2651,8 +2668,8 @@ async function reportCompactionEnd($: any): Promise<void> {
   await reportTurnActivity($, afterCompaction((await read($, turn)).isRunning))
 }
 
-// A plan connect landed (a first connect, a move or a reconnect): the dashboard's row has no activity yet, or a stale one, so the session's current activity is
-// sent now. The view is not loaded yet at this point (its refresh is detached), so the send does not wait on it.
+// A plan or card connect landed (a first connect, a move or a reconnect): the dashboard's row has no activity yet, or a stale one, so the session's current
+// activity is sent now. The view is not loaded yet at this point (its refresh is detached), so the send does not wait on it.
 async function reportActivityOnConnect($: any): Promise<void> {
   const now = await $.clock.now()
   const busy = liveCompacting(await read($, compacting), now).main !== null
@@ -3224,6 +3241,7 @@ export const register: Register = (on, options) => {
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
   on('tool.check', (_$, e, next) => ownServerCheck(e, next))
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
+  on('tool.call', { tool: toolName('card_connect') }, onCardConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('tool.call', { tool: toolName('danxbot_api') }, onAckCall)
   on('turn.start', onTurnStart)
