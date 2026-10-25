@@ -4,7 +4,7 @@ import type { PacingVerdict } from '../../types'
 import { claimSlot, releaseClaim, reportClaimFailure } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
-// The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap on SUB-AGENTS (DX-5847): N means exactly N sub-agents at all times; main threads are never paced.
+// The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap on SUB-AGENTS: N means exactly N sub-agents at all times; main threads are never paced.
 // So a spawn does not read a count and decide for itself: it CLAIMS its slot from danxbot (POST /api/pacing/agents/claim, which places the
 // session on its account itself and, under one lock, reads the live count and budget and takes the slot or refuses), and the plugin acts on the
 // answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn (`decideSpawn`, pure) and wires

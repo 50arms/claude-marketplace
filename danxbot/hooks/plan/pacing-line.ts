@@ -60,7 +60,7 @@ export function parsePacing(body: any): Pacing | null | { error: string } {
   if (body.level === null && body.line === null) return typeof body.reason === 'string' ? null : { error: 'the pacing line answer has no verdict and no reason' }
   if (!LEVELS.includes(body.level)) return { error: 'the pacing line answer has no valid level' }
   if (body.budget !== null && !(Number.isInteger(body.budget) && body.budget >= 0)) return { error: 'the pacing line answer has no valid budget' }
-  // DX-5847: main agents are counted and shown, never compared with the budget; the budget counts sub-agents only
+  // main agents are counted and shown, never compared with the budget; the budget counts sub-agents only
   if (!Number.isInteger(body.main_agents) || body.main_agents < 0) return { error: 'the pacing line answer has no main_agents' }
   if (!Number.isInteger(body.sub_agents) || body.sub_agents < 0) return { error: 'the pacing line answer has no sub_agents' }
   // the slots held for sessions that waited longer (their offers), other sessions' only: part of the one canonical shape, so absent is an error
