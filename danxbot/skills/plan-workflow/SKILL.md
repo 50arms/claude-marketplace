@@ -408,9 +408,8 @@ were. A pacing text that asks for more than this is outdated: follow this sectio
 
 - **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
 - **Over pace, or the budget full**: stop as above. Agents already running are left to finish.
-- **Critical**: pacing stops sub-agents only, never your own main thread, which carries on. Start no sub-agent (a spawn is refused;
-  stop as above), and tell each running sub-agent to stop where it is and report back; once told to continue, continue each
-  with `SendMessage`.
+- **Critical**: stop as above (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused), and tell
+  each running sub-agent to stop where it is and report back; once told to continue, continue each with `SendMessage`.
 
 ## Liveness
 
