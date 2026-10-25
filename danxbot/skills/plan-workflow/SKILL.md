@@ -390,19 +390,27 @@ A pacing message (`Usage pacing for your Claude account changed: …`) or a spaw
 `Usage pacing: …` states the level, the sub-agent budget of the whole account and the reset
 time; trust those numbers, never your own estimate. Never retry a refused spawn.
 
-The budget is a strict cap on sub-agents: exactly that many sub-agents run on the account at once,
-never one more. Main threads (every session's own thread and each running worker dispatch's agent)
-are counted and shown apart, but pacing never holds one back and the budget never counts one. The
-sub-agent count is danxbot's own and is live, one for the whole account (every session's
-sub-agents and the sub-agents of running worker dispatches). Each sub-agent spawn takes its slot
-from danxbot before it starts, so there is nothing for you to count or reserve. A spawn whose slot
+The budget is a strict cap on sub-agents: exactly that many sub-agents run on the account at
+once, never one more. Main threads (every session's own thread and each running worker
+dispatch's agent) are counted and shown apart, but pacing never holds one back and the budget
+never counts one. The sub-agent count is danxbot's own and is live, one for the whole account
+(every session's sub-agents and the sub-agents of running worker dispatches). Each sub-agent
+spawn takes its slot from danxbot before it starts, so there is nothing for you to count or reserve. A spawn whose slot
 cannot be taken (danxbot could not be reached or did not answer) is refused too, in the same
 `Usage pacing:` words, naming the failure.
 
+**When pacing stops you, just stop.** A refused sub-agent spawn, or a pacing message saying the account is
+over pace, critical, or at its sub-agent budget: end your turn and wait until you are told to continue. Do
+nothing else. Record nothing (no agent note, no block, no problem, no pause call, no
+work-in-progress commit), tell no one, and never do the work yourself instead. The pacer already
+knows; danxbot wakes you with the message that lets you continue, and you then carry on where you
+were. A pacing text that asks for more than this is outdated: follow this section.
+
 - **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
 - **Over pace, or the budget full**: stop as above. Agents already running are left to finish.
-- **Critical**: stop as above, and tell each running sub-agent to stop where it is and report
-  back; once told to continue, continue each with `SendMessage`.
+- **Critical**: pacing stops sub-agents only, never your own main thread, which carries on. Start no sub-agent (a spawn is refused;
+  stop as above), and tell each running sub-agent to stop where it is and report back; once told to continue, continue each
+  with `SendMessage`.
 
 ## Liveness
 
