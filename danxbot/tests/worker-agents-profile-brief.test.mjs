@@ -17,7 +17,7 @@ const agents = readdirSync(agentsDir)
   .map((name) => ({ name, text: readFileSync(path.join(agentsDir, name), "utf8").replace(/\s+/g, " ") }));
 
 const PROFILE_LINE =
-  "If the brief's first line is an agent profile's name and a card id (`gate-designer ABC-12`; a gate reviewer's also names its gate: `gate-reviewer ABC-12 code-quality`), your first call is `danxbot_api` `GET /api/agent-profiles/<profile>/instruction?card=<card id>`, and the `instruction` it returns is your task for that card: follow it. A refused fetch ends the task: report the refusal as given.";
+  "If the brief's first line is an agent profile's name and a card id (`gate-designer ABC-12`; a gate reviewer's also names its gate: `gate-reviewer ABC-12 code-quality`), your first call is `danxbot_api` `GET /api/agent-profiles/<profile>/instruction?card=<card id>` (a gate reviewer adds `&gate=<gate>`, the gate its brief names), and the `instruction` it returns is your task for that card: follow it. A refused fetch ends the task: report the refusal as given.";
 const CARD_FALLBACK = "Otherwise, if the brief names a card, load `danxbot:issue-workflow` and work it.";
 
 test("there are worker agents to check", () => {
