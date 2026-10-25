@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { PACED_STOP, REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -42,6 +42,7 @@ describe('decideSpawn (the decision table)', () => {
       expect(reason).toContain('budget 0')
       expect(reason).toContain(RESET)
       expect(reason).toMatch(/do not retry/i)
+      expect(reason).toContain(PACED_STOP)
     }
     expect(denyReason(v({ budget: 3, runningAgents: 3 }), 'budget')).toContain('3 agent(s) already run')
   })
@@ -51,7 +52,7 @@ describe('decideSpawn (the decision table)', () => {
     const reason = denyReason(v({ budget: 3, runningAgents: 2, reservedAgents: 1 }), 'reserved')
     expect(reason).toContain('2 agent(s) run on this account and 1 slot(s) are held')
     expect(reason).toContain('frees within 60 seconds')
-    expect(reason).toContain('waits_on')
+    expect(reason).toContain(PACED_STOP)
     expect(reason).not.toContain('already run')
   })
 

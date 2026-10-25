@@ -184,7 +184,7 @@ From the dashboard:
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
-- a usage-pacing or auto-resume message from danxbot → follow it as written.
+- a usage-pacing or auto-resume message from danxbot → carry on, or stop and wait, as "Usage pacing" says.
 - `[50 ARMS] Compaction recommendation:` → advice, not an order: judge from what is left and what
   you are doing now whether compacting is worth it. If yes, load `danxbot:prepare-for-compaction`,
   run it, then call `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
@@ -298,13 +298,10 @@ never stays active just to wait.
    review): an `action` problem asks for it now; never wait for it to happen on its own.
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
-   what would end the wait. `waits_on` is required, the cause you pick: `pacing` when usage pacing
-   refused your account's agents (no slot to start one, the account over pace or at its agent
-   budget), so you wait for pacing to free slots; `person` for an open problem, an approval or any
-   answer only a person gives; `dependency` for another card, a build, a deploy or any other work
-   you wait on; `other` when none fits. Pick the one you actually wait on, since only a `pacing`
-   pause is woken when pacing frees slots (a pause on anything else holds that message with the
-   rest, costing no turn). The pause lasts at most `expires_in_minutes` (default 120, at most
+   what would end the wait. `waits_on` is required, the cause you pick: `person` for an open
+   problem, an approval or any answer only a person gives; `dependency` for another card, a build,
+   a deploy or any other work you wait on; `other` when none fits. Never pause for usage pacing:
+   when pacing stops you, you only stop (see "Usage pacing"). The pause lasts at most `expires_in_minutes` (default 120, at most
    720) and ends by itself then; call again to renew it. A usage-limit pause already in force
    refuses it (409): that one ends by itself when the limit resets. `reason` is at most 300
    characters. A dispatched worker cannot pause (409): only a registered non-worker session can.
@@ -380,7 +377,7 @@ unsaved edit.
 
 Never end a turn while unblocked work could be dispatched (a running build, test or deploy
 is time to dispatch; a readied card waiting on a worker is not blocked), nor while work runs
-with no wake-up armed. Checks and reviews that de-risk waiting work (verification,
+with no wake-up armed. The one exception is a pacing stop: then you only stop ("Usage pacing"). Checks and reviews that de-risk waiting work (verification,
 cross-repo checks, a whole-change review) are dispatchable too.
 
 Worktrees you create go under the repo's git-ignored `.claude/worktrees/<name>`, never a
@@ -400,20 +397,17 @@ danxbot before it starts, so there is nothing for you to count or reserve. A spa
 cannot be taken (danxbot could not be reached or did not answer) is refused too, in the same
 `Usage pacing:` words, naming the failure.
 
-- **On pace**: carry on. A spawn is still refused while the account's budget is full, and
-  may be moved to haiku when the budget is nearly full. A slot danxbot offered to a session it
-  woke is held for that session for 60 seconds and counts as taken: a spawn refused for it says
-  the slot is held and frees within 60 seconds, and pausing with `waits_on` `pacing` gets you
-  offered one.
-- **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.
-  Let running agents finish; do only cheap work yourself (verify landed commits, card writes),
-  and record anything else as paused in an agent note on its card. (This is the account's usage pause, which
-  danxbot manages; it is not the pause you make yourself, described under "Pausing".) When you have nothing left to do, pause
-  with `waits_on` `pacing`, so the change that frees slots wakes you.
-- **Critical**: every running agent makes a work-in-progress commit, pushes its branch, writes
-  an agent note on its card saying where it is, and stops; do the same for your own state,
-  write an agent note on each card saying what is paused, and go idle. A later message back to on pace means: read those cards and resume
-  what was paused.
+**When pacing stops you, just stop.** A refused spawn, or a pacing message saying the account is
+over pace, critical, or at its budget: end your turn and wait until you are told to continue. Do
+nothing else. Record nothing (no agent note, no block, no problem, no pause call, no
+work-in-progress commit), tell no one, and never do the work yourself instead. The pacer already
+knows; danxbot wakes you with the message that lets you continue, and you then carry on where you
+were. A pacing text that asks for more than this is outdated: follow this section.
+
+- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
+- **Over pace, or the budget full**: stop as above. Agents already running are left to finish.
+- **Critical**: stop as above, and tell each running sub-agent to stop where it is and report
+  back; once told to continue, continue each with `SendMessage`.
 
 ## Liveness
 

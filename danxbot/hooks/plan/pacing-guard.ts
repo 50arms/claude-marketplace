@@ -43,6 +43,9 @@ export function isTight(budget: number | null, running: number, reserved: number
 // What the plan-workflow skill quotes (see the header): the refusal the model reads starts with this.
 export const REFUSAL_PREFIX = 'Usage pacing:'
 
+// What a paced session does (operator rule, 2026-10-25): stop and wait. Nothing recorded, no work of its own; the pacer wakes it.
+export const PACED_STOP = 'Stop and end your turn: record nothing, do not do the work yourself, and wait until you are told to continue.'
+
 // the refusal the model reads, worded from the cause danxbot's own claim answer names (`refusal`, from its `refusalOf`), never re-derived here.
 export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
   const level = v.level.replace('_', ' ')
@@ -52,14 +55,14 @@ export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved
     // not full of running agents: the free slots are held for sessions that were woken after waiting longer. They free within 60 seconds if unused.
     return (
       `${REFUSAL_PREFIX} ${v.runningAgents} agent(s) run on this account and ${v.reservedAgents} slot(s) are held for sessions that waited longer, against ${budget} ` +
-      `(level ${level}; ${reset}). A held slot frees within 60 seconds if its session does not use it. Do the work yourself, cheaply, in this session, or pause ` +
-      'with `waits_on` `pacing` and you will be woken when a slot is offered to you. Do not retry this spawn now: it will be refused until a held slot frees.'
+      `(level ${level}; ${reset}). A held slot frees within 60 seconds if its session does not use it. ${PACED_STOP} ` +
+      'Do not retry this spawn now: it will be refused until a held slot frees.'
     )
   }
   const cause = why === 'level' ? `this account is ${level}` : `${v.runningAgents} agent(s) already run on this account against ${budget}`
   return (
-    `${REFUSAL_PREFIX} ${cause} (level ${level}, ${budget}; ${reset}). Do the work yourself, cheaply, in this session, or wait until the ` +
-    'reset. Do not retry this spawn: it will be refused again until the verdict changes.'
+    `${REFUSAL_PREFIX} ${cause} (level ${level}, ${budget}; ${reset}). ${PACED_STOP} ` +
+    'Do not retry this spawn: it will be refused again until the verdict changes.'
   )
 }
 
@@ -81,7 +84,7 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
 export function claimFailedReason(failure: string): string {
   return (
     `${REFUSAL_PREFIX} the spawn could not claim its slot from danxbot (${failure}). The budget is a strict cap, so no sub-agent starts until the ` +
-    'claim can be made. Do the work yourself, cheaply, in this session, or try again later.'
+    'claim can be made. Stop and end your turn, record nothing, and try the spawn again later.'
   )
 }
 
