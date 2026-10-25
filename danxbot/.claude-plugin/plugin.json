@@ -1,7 +1,7 @@
 {
   "name": "danxbot",
   "description": "Danxbot's way of working: plan-workflow, issue-workflow, worker tiers, and plan event hooks.",
-  "version": "0.17.21",
+  "version": "0.17.22",
   "author": {
     "name": "Dan Newman",
     "email": "dan@sagesweeper.com"
