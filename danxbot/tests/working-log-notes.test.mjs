@@ -21,8 +21,9 @@ const compaction = flat(read("skills/prepare-for-compaction/SKILL.md"));
 
 test("plan-workflow sends the working log, handoffs and blockers to agent notes and keeps comments for a person", () => {
   assert.match(planWorkflow, /agent note on the card \(`POST \/api\/issues\/:id\/notes`\) = your working log: progress, evidence, status, local state, handoffs, blockers; card comment = talking with a person \(a reply to what they wrote or asked\)/);
-  assert.match(planWorkflow, /record anything else as paused in an agent note on its card/);
-  assert.match(planWorkflow, /writes an agent note on its card saying where it is, and stops; do the same for your own state, write an agent note on each card saying what is paused/);
+  // a pacing stop records nothing (operator rule, 2026-10-25)
+  assert.match(planWorkflow, /\*\*When pacing stops you, just stop\.\*\*.*Record nothing \(no agent note, no block, no problem, no pause call, no work-in-progress commit\)/);
+  assert.doesNotMatch(planWorkflow, /as paused in an agent note|saying what is paused/);
   assert.match(planWorkflow, /the newest handoff agent note \(`agent_notes` on the card read\)/);
   assert.match(planWorkflow, /write each real blocker \(card id, open problem, user action\) to an agent note on that card/);
   assert.match(planWorkflow, /after the handoff agent note, call `plan_connect\(\{plan_id, disconnect: true\}\)`/);
