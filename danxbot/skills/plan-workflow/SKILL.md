@@ -226,7 +226,7 @@ From the plugin's relay (delivery itself):
 
 ## Records
 
-Changed fact → edit; no longer true → delete.
+Changed fact → edit; no longer true → delete. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3); a record or section stating a person's decision changes only on their answer.
 
 Record as you go, never in one batch at the end. Assume this session can end at any moment (a
 crash, a revoked key, a compaction) and may never sign back in: only the plan, its cards and

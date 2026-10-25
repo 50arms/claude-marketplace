@@ -90,7 +90,7 @@ never passed to get it out of the way.
 ## Needing a human
 
 Genuinely need a human → open a problem on the card: an `action` when only a person can do
-it (access, credentials, hardware, authority), else a `question`. Never `AskUserQuestion` or
+it (access, credentials, hardware, authority), else a `question`. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3). Never `AskUserQuestion` or
 a plan-mode pause. A card needs a human exactly while it has an open problem; a person
 answering its last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
 
@@ -122,7 +122,7 @@ first, then end `failed`.
 
 - Waiting on another card to finish first → a `depends_on` dependency, not `block`.
 - Two cards that can't run together → a `conflict_on` dependency.
-- A human is 100% required (a decision, or an action only a person can take) → open a
+- A human is 100% required (a decision, or an action only a person can take; changing, dropping or replacing a decision a person stated always needs that person, mantra item 3) → open a
   problem with solutions — that holds the card for human review before it can be
   dispatched or completed. `block` alone does not.
 - Otherwise, transition `block` with a reason.
