@@ -188,7 +188,7 @@ From the dashboard:
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
 - a usage-pacing or auto-resume message from danxbot → carry on, or stop and wait, as "Usage pacing" says.
-- `[50 ARMS] Compaction recommendation:` → advice, not an order: judge from what is left and what
+- `[50 ARMS] Compaction recommendation:` → advice, not an order. Never compact while a person is in an active conversation with you: a message of theirs reached this session in the last 30 minutes, or you owe them an answer. Then give the recommendation no answer (it comes again later) and never call compaction-ready; say ready only while you work on your own. Otherwise judge from what is left and what
   you are doing now whether compacting is worth it. If yes, load `danxbot:prepare-for-compaction`,
   run it, then call `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
   carry on and answer nothing; it comes again at the next +step of context. Nothing compacts until
@@ -365,18 +365,13 @@ have passed and it carries no design yet, start its designer, unless one you sta
 it: `gate-designer <CARD-ID>`, at the tier the gate's `effort_level` on the card names (unset:
 `danxbot:worker-sonnet-high`). Run it again only for a design event above that owes it a turn.
 
-Partition files before fanning out. State a time-box; never background a long test run and
+Partition files before fanning out. Never background a long test run and
 end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits
 land. Every brief makes the sub-agent stop each background task it started before reporting,
 or name it. Stop a dispatch once its report is consumed. A report is a lead, not a finding:
 read the diff, confirm the push, check for leftover worktrees, commits or background tasks.
 
-Slice a long job into sub-agents that each end well under about 300k tokens of context. When a
-sub-agent nears that, ask it to write a `HANDOFF` agent note on its card (last item done, next item, what the next agent
-must know) and stop; relaunch a fresh one from the original brief plus that note, in the foreground: a
-background relaunch ends your turn. A fresh agent carries far less context than a compacted one, but only what the note says
-crosses, so use it when the job's state is on disk, not in half-finished reasoning, an open browser or an
-unsaved edit.
+A working sub-agent is replaced only by agreement, never by your decision alone. When its context is large, ask it (SendMessage) whether it should hand off. It answers one of three: no; later (ask again once its context has grown by the board's compaction step); or ready, after it has written a handoff agent note on its card and pushed its work. Only on ready, end it and start a fresh sub-agent from the original brief plus that note, in the foreground (a background relaunch ends your turn). Never put a context, token or time cap in a brief, and never stop a sub-agent for its size or because it is taking long; stop or redirect one only on evidence that it is doing the wrong thing (its pushes, notes or report show it off the card or looping), and say what the evidence is.
 
 Never end a turn while unblocked work could be dispatched (a running build, test or deploy
 is time to dispatch; a readied card waiting on a worker is not blocked), nor while work runs
