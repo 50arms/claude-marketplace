@@ -35,6 +35,8 @@ test("agent_needed: the session proposes an agent through danxbot_api, with the 
   assert.match(start, /`body_file`/);
   assert.match(start, /svg/);
   assert.match(start, /`plan_connect` again/);
+  // DX-6157: Create signs the session in and connects it, so the step says no further call is needed
+  assert.match(start, /Create, which signs you in[\s\S]*need no further call/);
   // the deleted MCP tool (DX-5724) is never named
   assert.doesNotMatch(planWorkflow, /agent_propose/);
 });
