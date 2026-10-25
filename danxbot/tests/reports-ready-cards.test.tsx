@@ -12,7 +12,10 @@ import { test, CLOCK_START, SURFACES, answerReportEvents, dashboard, forceRefres
 
 const BOARD = 'danxbot:danxbot-main'
 const GPT_BOARD = 'gpt-manager:gpt-manager-main'
-const INSTRUCTION = 'Dispatch each now, or record on the card why it cannot run (dependency, problem, block).'
+const INSTRUCTION =
+  'Dispatch each now, or record on the card why it cannot run (dependency, problem, block). ' +
+  'A block is only for a cause in that card itself: when usage pacing refuses new agents, build a small card yourself, ' +
+  'or pause with waits_on pacing; never block a card for pacing.'
 
 function card(over: Partial<CardRow> = {}): CardRow {
   return { id: 'DX-1', type: 'Story', title: 'A card', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, ...over }

@@ -115,7 +115,9 @@ export function blockReason(cards: readonly ReadyCard[]): string {
   const more = cards.length > listed.length ? `, and ${cards.length - listed.length} more` : ''
   return (
     `Your plan has ${cards.length} ready, unblocked card${cards.length === 1 ? '' : 's'} nobody is working: ${listed.join('; ')}${more}. ` +
-    'Dispatch each now, or record on the card why it cannot run (dependency, problem, block).'
+    'Dispatch each now, or record on the card why it cannot run (dependency, problem, block). ' +
+    'A block is only for a cause in that card itself: when usage pacing refuses new agents, build a small card yourself, ' +
+    'or pause with waits_on pacing; never block a card for pacing.'
   )
 }
 
