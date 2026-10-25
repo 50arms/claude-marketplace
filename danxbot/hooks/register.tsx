@@ -1751,13 +1751,18 @@ async function onCommand($: any) {
   return { text: 'Plan band shown.' }
 }
 
+// what a tool call's answer says happened: its text, read as a refusal when the call errored or was denied
+function answerOf(ran: any) {
+  return textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
+}
+
 // The model held a stand-alone card (card_connect, a first connect or a move): the dashboard gets the session's current activity at once, and the view is
-// refreshed so the turn reports see the card the session holds. A refused connect (`card_on_plan`) changes nothing and reports nothing.
+// refreshed so the turn reports see the card the session holds. A refused connect (`card_on_plan`) changes nothing and reports nothing; a leave
+// (`disconnect: true`) refreshes the view so the card clears, but reports nothing, the session holding neither a plan nor a card.
 async function onCardConnect($: any, e: any, next: any) {
   const ran = await next(e)
-  const answer = textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
-  if (!answer.ok) return ran
-  await reportActivityOnConnect($)
+  if (!answerOf(ran).ok) return ran
+  if (e.disconnect !== true) await reportActivityOnConnect($)
   detach($, 'Plan refresh', refresh($, true))
   return ran
 }
@@ -1780,7 +1785,7 @@ async function onPlanConnect($: any, e: any, next: any) {
     await settleLeave($, closes, false, why)
     throw err
   }
-  const answer = textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
+  const answer = answerOf(ran)
   await settleLeave($, closes, leaving ? answer.ok : answer.ok && answer.body?.session?.planId === e.plan_id, why)
   // the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
@@ -1838,7 +1843,7 @@ async function onAckCall($: any, e: any, next: any) {
   }
   const id = ackedEventId(e.method, e.path)
   if (id === null) return ran
-  if (textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
+  if (answerOf(ran).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
   return ran
 }
 

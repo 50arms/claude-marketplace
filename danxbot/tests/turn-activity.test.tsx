@@ -19,6 +19,11 @@ const CARD_CONNECT = { tool: toolName('card_connect'), card_id: CARD_ID } as any
 // the real answer's envelope (the MCP's card_connect): the card the session holds now, as GET /api/plans then reads it
 function answerCardConnect(on: any, d: any) {
   on('tool.call', { tool: toolName('card_connect') }, (_$: any, e: any) => {
+    if (d.world.cardRefused) return { result: {}, text: JSON.stringify({ ok: false, status: 409, error: 'card_on_plan' }), isError: true } as any
+    if (e.disconnect === true) {
+      d.world.card = null
+      return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { cardId: null } } }), isError: false } as any
+    }
     d.world.card = { id: e.card_id, title: CARD_TITLE }
     const text = JSON.stringify({ ok: true, status: 200, body: { session: { cardId: e.card_id } } })
     return { result: {}, text, isError: false } as any
@@ -160,7 +165,7 @@ for (const surface of SURFACES) {
       expect(sent(d)).toEqual(['compacting', 'idle'])
     })
 
-    test('a session on no plan sends nothing', async ($, on) => {
+    test('a session holding neither a plan nor a card sends nothing', async ($, on) => {
       const d = await started($, on, () => COMPACTED, false)
       await $.turn.start(START)
       await $.turn.complete(TURN)
@@ -173,14 +178,6 @@ for (const surface of SURFACES) {
       async function offPlan($: any, on: any, compact: () => unknown = () => COMPACTED) {
         return started($, on, compact, false)
       }
-
-      test('holding a stand-alone card mid-turn sends in_turn at once', async ($, on) => {
-        const d = await offPlan($, on)
-        await $.turn.start(START)
-        await $.tool.call(CARD_CONNECT)
-        await d.clock.settle()
-        expect(sent(d)).toEqual(['in_turn'])
-      })
 
       test('connecting while idle sends idle', async ($, on) => {
         const d = await offPlan($, on)
@@ -217,6 +214,35 @@ for (const surface of SURFACES) {
         await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
         await d.clock.settle()
         expect(sent(d)).toEqual(['compacting', 'idle'])
+      })
+    })
+
+    describe('a card connect reports the current activity', () => {
+      test('holding a stand-alone card mid-turn sends in_turn at once', async ($, on) => {
+        const d = await started($, on, () => COMPACTED, false)
+        await $.turn.start(START)
+        await $.tool.call(CARD_CONNECT)
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['in_turn'])
+      })
+
+      test('a leave sends nothing, the session holding neither a plan nor a card', async ($, on) => {
+        const d = await started($, on, () => COMPACTED, false, true)
+        await $.turn.start(START)
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['in_turn'])
+        await $.tool.call({ ...CARD_CONNECT, disconnect: true })
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['in_turn'])
+      })
+
+      test('a refused connect sends nothing', async ($, on) => {
+        const d = await started($, on, () => COMPACTED, false)
+        d.world.cardRefused = true
+        await $.turn.start(START)
+        await $.tool.call(CARD_CONNECT)
+        await d.clock.settle()
+        expect(sent(d)).toEqual([])
       })
     })
   })
