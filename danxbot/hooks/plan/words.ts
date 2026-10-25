@@ -203,6 +203,7 @@ export function eventsWarning(v: PlanView, relay: RelayState): string | null {
   // the relay's state belongs to the plan it serves: one left over from another plan says nothing about this one
   if (relayStoppedFor(v, relay)) return 'events: relay stopped'
   if (relay.phase === 'retrying' && relay.planId === v.connected.id) return 'events: relay retrying'
+  if (relay.phase === 'held' && relay.planId === v.connected.id) return 'events: waiting for your message'
   if (relay.planId !== v.connected.id || relay.phase === 'off') return 'events: relay not running'
   if (v.listener === null) return NO_EVENT_STATUS
   return v.listener.state === 'healthy' ? null : `events: ${v.listener.state}`
@@ -216,6 +217,8 @@ export function eventsReason(v: PlanView, relay: RelayState): string | null {
   if (warning === null || v.connected === null) return null
   if (relay.planId !== v.connected.id) return null
   if (relay.phase === 'off') return null
+  // held: the detail is the whole call to action, already in plain words
+  if (relay.phase === 'held') return relay.detail
   const detail = relay.phase === 'retrying' || relay.phase === 'stopped' ? relay.detail : (v.listener?.nextStep ?? null)
   return detail ? `${warning}. ${detail}` : null
 }

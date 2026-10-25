@@ -24,6 +24,12 @@ export const stalledLine = (seconds: number) => `${RELAY_MARKER} ${stalledNotice
 // how a delivery the session refused reads (a dropped or throwing prompt, a refused or throwing row)
 export const notTakenLine = (why: string) => `the session did not take the event: ${why}`
 
+// Claude Code's drop while a Stop stands ("the session was stopped and nobody has sent input since"): only the person's own message lifts it,
+// so it is the person's step, never a fault the relay or the model can fix. Matched on the engine's words, the only signal it gives.
+export const heldForInput = (failure: string) => /nobody has sent input since/i.test(failure)
+export const HELD_FOR_INPUT_NOTICE = 'Plan events are waiting: this session was stopped, and Claude Code holds them until you send it a message. Send any message here to resume it.'
+export const HELD_FOR_INPUT_BAND = 'Events waiting: send any message to resume this session.'
+
 // the older-release case: the session's danx-dashboard server has no plan_events_wait tool
 export const OLD_SERVER_DETAIL = "this session's danx-dashboard MCP server has no plan_events_wait tool"
 export const OLD_SERVER_FIX = 'restart the session so its danx-dashboard server starts at its latest release; a repo that pins its own danx-dashboard server must update it to the release that adds plan_events_wait'

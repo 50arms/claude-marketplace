@@ -109,7 +109,9 @@ export type TurnState = { isRunning: boolean; pending: string[] }
 // the event relay's state, as the events warning (a toast on the change into it) is built from it. `streaming`: waiting on the server for events (or just
 // delivered some); `retrying`: the last wait or delivery failed and the relay tries again on its own (`detail` is the cause);
 // `stopped`: the server said the relay cannot go on (`detail` is its fix); `off`: no relay runs (not connected, signed out).
-export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'stopped'; planId: number | null; detail: string | null }
+// `held`: Claude Code drops every prompt the plugin submits while a Stop stands, until the person sends the session a message; the relay keeps
+// the events queued and retries, and the person is asked once (a toast and the band) to send a message.
+export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'held' | 'stopped'; planId: number | null; detail: string | null }
 
 // the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
 export type StampState = { at: number; day: string } | null

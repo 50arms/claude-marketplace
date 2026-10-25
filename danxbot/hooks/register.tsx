@@ -71,7 +71,7 @@ import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { StalePendingError, ackedEventId, clearInFlight, fromPending, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, shouldDropResend, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
-import { OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
+import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
@@ -1433,6 +1433,9 @@ async function issueOutbox($: any): Promise<void> {
 // whose submit never settles would otherwise hold the state for good. The band goes back to streaming only when the outbox had a failure to clear.
 async function clearRetrying($: any, planId: number | null): Promise<void> {
   if (outboxFailure === null) return
+  // events held by a Stop clear only when a delivery settles (settleOutbox): a re-issue the engine drops again would otherwise flip the state off and back
+  // on at every retry, a toast each time
+  if ((await read($, relay)).phase === 'held') return
   outboxFailure = null
   const live = relayRun !== null && relayRun.planId === planId ? relayRun : null
   if (live !== null) {
@@ -1469,7 +1472,10 @@ async function settleOutbox($: any, event: Queued, outcome: Promise<string | nul
   const held: Queued = { ...event, again: true, held: true }
   putBack(outbox, held)
   await persistOutbox($)
-  if (live !== null) await relayFailed($, live, 'retrying', failure, delayedLine(failure))
+  // a Stop holds every plugin prompt until the person sends a message: shown to the person once (toast and band), never told to the model, which
+  // reads nothing until then and would get each repeat at once when it resumes
+  if (live !== null && heldForInput(failure)) await setRelay($, live, 'held', HELD_FOR_INPUT_NOTICE)
+  else if (live !== null) await relayFailed($, live, 'retrying', failure, delayedLine(failure))
   await $.clock.sleep(backoffMs(outboxRefusals))
   // a move to another plan dropped it while it waited
   if (!outbox.includes(held)) return
@@ -2492,6 +2498,8 @@ async function drawBand($: any, e: any, next: any) {
   if (await read($, dismissed)) return next(e)
   const permissions = await read($, permissionRequests)
   const newestPermission = permissions.at(-1)
+  const relayState: RelayState = await read($, relay)
+  const held = relayState.phase === 'held' && v.connected !== null && relayState.planId === v.connected.id ? HELD_FOR_INPUT_BAND : null
   return renderBand(
     $.ui.resolve(e),
     handlers($),
@@ -2501,6 +2509,7 @@ async function drawBand($: any, e: any, next: any) {
     newestPermission === undefined ? null : { count: permissions.length, newest: asApproval(newestPermission) },
     await read($, signInRequest),
     e.props.bodyColumns,
+    held,
   )
 }
 

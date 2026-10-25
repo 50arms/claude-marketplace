@@ -35,6 +35,8 @@ export function renderBand(
   // The band's width in columns (`bodyColumns`); undefined in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns: number | undefined,
+  // the plan's events held by a Stop until the person sends a message (a relay `held` on this plan): the call to action, drawn on its own line; null otherwise.
+  held: string | null = null,
 ): any {
   const { Box, Text, Button } = E
   const close = (
@@ -57,7 +59,8 @@ export function renderBand(
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
   // Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`). The band draws no events
-  // status: the band is sign-in, the plan and Disconnect (operator, 2026-10-22); a relay fault reaches the person as its toast.
+  // status: the band is sign-in, the plan and Disconnect (operator, 2026-10-22); a relay fault reaches the person as its toast. The one exception
+  // is events held until the person sends a message (operator, 2026-10-25): that is the person's step, so it stays on the band until done.
   const disconnecting = busyKey.isDisconnecting(busy)
   // Disconnect is the glyph in the theme's error color. A Button's `label`, when set, is what the desktop draws (ButtonProps.label), so it carries
   // none: the `Text` child is its text (children of strings and Text are drawn in the label's place) and the Button is keyed instead.
@@ -127,11 +130,12 @@ export function renderBand(
       </Box>
     </Box>
   )
-  if (!blocked) return line
+  if (!blocked && held === null) return line
   return (
     <Box key="band-blocked" flexDirection="column" minWidth={0}>
       {line}
-      <Text color={WARNING}>{BLOCKED_LINE}</Text>
+      {blocked && <Text color={WARNING}>{BLOCKED_LINE}</Text>}
+      {held !== null && <Text key="band-held" color={WARNING}>{held}</Text>}
     </Box>
   )
 }
