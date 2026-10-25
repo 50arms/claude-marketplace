@@ -33,7 +33,8 @@ test("plan-workflow sends the working log, handoffs and blockers to agent notes 
 
 test("issue-workflow splits Mechanics into Comments (a person) and Agent notes (the working log)", () => {
   assert.match(issueWorkflow, /\*\*Comments\*\* — only for talking with a person: a reply to what they wrote or asked\./);
-  assert.match(issueWorkflow, /\*\*Agent notes\*\* — your working log on the card, `POST \/api\/issues\/:id\/notes` `\{text\}`: progress, evidence, gate results, handoffs, blockers, `## Docs impact`/);
+  assert.match(issueWorkflow, /\*\*Agent notes\*\* — your working log on the card, `POST \/api\/issues\/:id\/notes` `\{text\}`: progress, evidence, gate results, handoffs, blockers; trace/);
+  assert.doesNotMatch(issueWorkflow, /Docs impact/);
   assert.match(issueWorkflow, /\*\*Decisions\*\* — a durable decision goes in the card's description or AC, never in a comment or agent note alone\./);
   assert.match(issueWorkflow, /Read the card with its description, AC, comments, agent notes and dependencies/);
   assert.match(issueWorkflow, /`Notes from Phase N` as an agent note on the next phase card/);
@@ -42,7 +43,8 @@ test("issue-workflow splits Mechanics into Comments (a person) and Agent notes (
   const mechanics = issueWorkflow.slice(issueWorkflow.indexOf("## Mechanics"), issueWorkflow.indexOf("## Building"));
   assert.doesNotMatch(mechanics, /is a problem/);
   assert.match(issueWorkflow, /Genuinely need a human → open a problem on the card/);
-  assert.match(cardCreation, /a `## Docs impact` agent note, never by editing docs pages/);
+  assert.match(cardCreation, /A card never edits docs pages\. It records one docs proposal per page it changes, through `danxbot_api` `POST \/api\/issues\/<card id>\/docs-proposals`/);
+  assert.doesNotMatch(cardCreation, /Docs impact/);
 });
 
 test("prepare-for-compaction writes the handoff state as an agent note", () => {

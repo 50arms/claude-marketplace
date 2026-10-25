@@ -133,7 +133,7 @@ first, then end `failed`.
   `passing` on its checklist item.
 - **Comments** — only for talking with a person: a reply to what they wrote or asked.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
-  progress, evidence, gate results, handoffs, blockers, `## Docs impact`; trace, audit and
+  progress, evidence, gate results, handoffs, blockers; trace, audit and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
 - **Decisions** — a durable decision goes in the card's description or AC, never in a
   comment or agent note alone.
