@@ -4,7 +4,7 @@ import type { PacingVerdict } from '../../types'
 import { claimSlot, releaseClaim, reportClaimFailure } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
-// The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap: N means exactly N agents at all times.
+// The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap on SUB-AGENTS (DX-5847): N means exactly N sub-agents at all times; main threads are never paced.
 // So a spawn does not read a count and decide for itself: it CLAIMS its slot from danxbot (POST /api/pacing/agents/claim, which places the
 // session on its account itself and, under one lock, reads the live count and budget and takes the slot or refuses), and the plugin acts on the
 // answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn (`decideSpawn`, pure) and wires
@@ -49,30 +49,30 @@ export const PACED_STOP = 'Stop and end your turn: record nothing, do not do the
 // the refusal the model reads, worded from the cause danxbot's own claim answer names (`refusal`, from its `refusalOf`), never re-derived here.
 export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
   const level = v.level.replace('_', ' ')
-  const budget = v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start nothing new)' : `budget ${v.budget} at once`
+  const budget = v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start no sub-agent)' : `budget ${v.budget} at once`
   const reset = v.resetsAt === null ? 'its reset time is unknown' : `usage resets at ${v.resetsAt}`
   if (why === 'reserved') {
-    // not full of running agents: the free slots are held for sessions that were woken after waiting longer. They free within 60 seconds if unused.
+    // not full of running sub-agents: the free slots are held for sessions that were woken after waiting longer. They free within 60 seconds if unused.
     return (
-      `${REFUSAL_PREFIX} ${v.runningAgents} agent(s) run on this account and ${v.reservedAgents} slot(s) are held for sessions that waited longer, against ${budget} ` +
+      `${REFUSAL_PREFIX} ${v.subAgents} sub-agent(s) run on this account and ${v.reservedAgents} slot(s) are held for sessions that waited longer, against ${budget} ` +
       `(level ${level}; ${reset}). A held slot frees within 60 seconds if its session does not use it. ${PACED_STOP} ` +
       'Do not retry this spawn now: it will be refused until a held slot frees.'
     )
   }
-  const cause = why === 'level' ? `this account is ${level}` : `${v.runningAgents} agent(s) already run on this account against ${budget}`
+  const cause = why === 'level' ? `this account is ${level}` : `${v.subAgents} sub-agent(s) already run on this account against ${budget}`
   return (
     `${REFUSAL_PREFIX} ${cause} (level ${level}, ${budget}; ${reset}). ${PACED_STOP} ` +
     'Do not retry this spawn: it will be refused again until the verdict changes.'
   )
 }
 
-// The budget's unit is the ACCOUNT's running agents (its sessions' main threads, live sub-agents and running worker dispatches), which the claim's
-// answer carries as `runningAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone: the call's
+// The budget's unit is the ACCOUNT's running sub-agents (main threads and worker dispatches are counted as `mainAgents` but never compared), which the claim's
+// answer carries as `subAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone: the call's
 // `model`, else the parent's (a fork always inherits the parent's). A refusal never reaches here (danxbot refuses the claim itself); this picks the haiku
 // downgrade for a claimed spawn taking the last free slot.
 export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined): SpawnDecision {
   if (verdict === null) return { kind: 'allow' }
-  if (isTight(verdict.budget, verdict.runningAgents, verdict.reservedAgents)) {
+  if (isTight(verdict.budget, verdict.subAgents, verdict.reservedAgents)) {
     const tier = tierOf(requested)
     // an unknown model name is left alone: it cannot be placed on the tier list, so "below it" is not knowable
     if (tier !== null && tier !== 'haiku') return { kind: 'downgrade', model: 'haiku' }

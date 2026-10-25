@@ -313,7 +313,7 @@ While paused, the dashboard holds its nudges, plan-event digests and agent or ma
 you, and the plugin's own ready-cards reminder stays quiet. It ends when a person
 writes to you or acts on a card of yours (that message arrives at once), a critical usage-pacing
 stop, a usage-pacing change that lets your account start agents again while your pause waits on
-`pacing` (on pace, with no count cap or a budget above the agents running; the message is delivered
+`pacing` (on pace, with no count cap or a budget above the sub-agents running; the message is delivered
 at once, so a pause taken after a pacing refusal needs no manual wake; a pause on any other cause
 holds that message), your own next dashboard call (the plugin's background reads do not count) other than the pause
 calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or your session going
@@ -387,22 +387,17 @@ sibling checkout. Remove each once `git status --porcelain` and `git cherry orig
 ## Usage pacing
 
 A pacing message (`Usage pacing for your Claude account changed: …`) or a spawn refused with
-`Usage pacing: …` states the level, the agent budget of the whole account and the reset
+`Usage pacing: …` states the level, the sub-agent budget of the whole account and the reset
 time; trust those numbers, never your own estimate. Never retry a refused spawn.
 
-The budget is a strict cap: exactly that many agents run on the account at once, never one
-more. The count is danxbot's own and is live, one for the whole account (every session's
-main thread and sub-agents, and the running worker dispatches). Each spawn takes its slot from
-danxbot before it starts, so there is nothing for you to count or reserve. A spawn whose slot
+The budget is a strict cap on sub-agents: exactly that many sub-agents run on the account at once,
+never one more. Main threads (every session's own thread and each running worker dispatch's agent)
+are counted and shown apart, but pacing never holds one back and the budget never counts one. The
+sub-agent count is danxbot's own and is live, one for the whole account (every session's
+sub-agents and the sub-agents of running worker dispatches). Each sub-agent spawn takes its slot
+from danxbot before it starts, so there is nothing for you to count or reserve. A spawn whose slot
 cannot be taken (danxbot could not be reached or did not answer) is refused too, in the same
 `Usage pacing:` words, naming the failure.
-
-**When pacing stops you, just stop.** A refused spawn, or a pacing message saying the account is
-over pace, critical, or at its budget: end your turn and wait until you are told to continue. Do
-nothing else. Record nothing (no agent note, no block, no problem, no pause call, no
-work-in-progress commit), tell no one, and never do the work yourself instead. The pacer already
-knows; danxbot wakes you with the message that lets you continue, and you then carry on where you
-were. A pacing text that asks for more than this is outdated: follow this section.
 
 - **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
 - **Over pace, or the budget full**: stop as above. Agents already running are left to finish.

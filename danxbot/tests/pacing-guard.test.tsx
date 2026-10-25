@@ -13,13 +13,14 @@ import { BLOCKED_LINE } from '../hooks/plan/config'
 import { test, dashboard, startSession } from './plan-kit'
 
 const RESET = '2026-10-08T12:00:00.000Z'
-const v = (over: Partial<PacingVerdict> = {}): PacingVerdict => ({ level: 'on_pace', budget: null, resetsAt: RESET, runningAgents: 0, reservedAgents: 0, ...over })
+const v = (over: Partial<PacingVerdict> = {}): PacingVerdict => ({ level: 'on_pace', budget: null, resetsAt: RESET, mainAgents: 0, subAgents: 0, reservedAgents: 0, ...over })
 const wire = (over: Record<string, unknown> = {}) => ({
   account: 'uuid:u1',
   level: 'on_pace',
   budget: null,
   resets_at: RESET,
-  running_agents: 1,
+  main_agents: 3,
+  sub_agents: 1,
   reserved_agents: 0,
   line: 'Pacing line.',
   spend: null,
@@ -28,7 +29,7 @@ const wire = (over: Record<string, unknown> = {}) => ({
   reason: null,
   ...over,
 })
-const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, running_agents: null, reserved_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
+const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, main_agents: null, sub_agents: null, reserved_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: 'no_usage_account' }
 
 describe('decideSpawn (the decision table)', () => {
   test('no verdict allows: pacing never blocks work it cannot see', () => {
@@ -44,27 +45,27 @@ describe('decideSpawn (the decision table)', () => {
       expect(reason).toMatch(/do not retry/i)
       expect(reason).toContain(PACED_STOP)
     }
-    expect(denyReason(v({ budget: 3, runningAgents: 3 }), 'budget')).toContain('3 agent(s) already run')
+    expect(denyReason(v({ budget: 3, subAgents: 3 }), 'budget')).toContain('3 sub-agent(s) already run')
   })
 
   // DX-5595: slots held for woken sessions count as taken, and the refusal says so (not "already run")
   test('the held-slot refusal says the slot frees within 60 seconds', () => {
-    const reason = denyReason(v({ budget: 3, runningAgents: 2, reservedAgents: 1 }), 'reserved')
-    expect(reason).toContain('2 agent(s) run on this account and 1 slot(s) are held')
+    const reason = denyReason(v({ budget: 3, subAgents: 2, reservedAgents: 1 }), 'reserved')
+    expect(reason).toContain('2 sub-agent(s) run on this account and 1 slot(s) are held')
     expect(reason).toContain('frees within 60 seconds')
     expect(reason).toContain(PACED_STOP)
     expect(reason).not.toContain('already run')
   })
 
   test('a claimed verdict with room, or no cap, allows', () => {
-    expect(decideSpawn(v({ budget: 3, runningAgents: 1 }), 'haiku')).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: null, runningAgents: 40 }), 'opus')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 3, subAgents: 1 }), 'haiku')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: null, subAgents: 40 }), 'opus')).toEqual({ kind: 'allow' })
   })
 
   test('a held slot counts toward tight: one free slot left after the hold downgrades', () => {
     expect(isTight(5, 2, 2)).toBe(true)
     expect(isTight(5, 2, 1)).toBe(false)
-    expect(decideSpawn(v({ budget: 5, runningAgents: 2, reservedAgents: 2 }), 'opus')).toEqual({ kind: 'downgrade', model: 'haiku' })
+    expect(decideSpawn(v({ budget: 5, subAgents: 2, reservedAgents: 2 }), 'opus')).toEqual({ kind: 'downgrade', model: 'haiku' })
   })
 
   test('tight (budget - running <= 1) downgrades to haiku, never upward and never an unknown model', () => {
@@ -73,12 +74,12 @@ describe('decideSpawn (the decision table)', () => {
     expect(isTight(3, 1, 0)).toBe(false)
     expect(isTight(null, 99, 0)).toBe(false)
     for (const model of ['opus', 'sonnet', 'claude-opus-4-8', 'fable']) {
-      expect(decideSpawn(v({ budget: 3, runningAgents: 2 }), model)).toEqual({ kind: 'downgrade', model: 'haiku' })
+      expect(decideSpawn(v({ budget: 3, subAgents: 2 }), model)).toEqual({ kind: 'downgrade', model: 'haiku' })
     }
-    expect(decideSpawn(v({ budget: 3, runningAgents: 2 }), 'haiku')).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: 3, runningAgents: 2 }), 'mystery-model')).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: 3, runningAgents: 2 }), undefined)).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: 5, runningAgents: 2 }), 'opus')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'haiku')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'mystery-model')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), undefined)).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 5, subAgents: 2 }), 'opus')).toEqual({ kind: 'allow' })
   })
 
   test('tierOf places aliases and ids', () => {
@@ -128,12 +129,12 @@ describe('the agent.spawn hook', () => {
   })
 
   test('denies when the account is at its budget, by the live account count the claim carries', async ($, on) => {
-    await session($, on, { pacingLine: { body: wire({ budget: 2, running_agents: 2 }) } })
+    await session($, on, { pacingLine: { body: wire({ budget: 2, sub_agents: 2 }) } })
     expect((await spawn($)).deny).toMatch(/2 agent\(s\) already run/)
   })
 
   test('a claim danxbot refused for held slots is worded as held slots, not as a full budget', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 2, reserved_agents: 1 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2, reserved_agents: 1 }) } })
     const r = await spawn($)
     expect(r.deny).toMatch(/1 slot\(s\) are held for sessions that waited longer/)
     expect(r.deny).not.toMatch(/already run/)
@@ -141,7 +142,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('allows with no cap, and leaves the model alone', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: null, running_agents: 9 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: null, sub_agents: 9 }) } })
     const r = await spawn($, { model: 'opus' })
     expect(r.deny).toBeUndefined()
     expect(r.model).toBe('opus')
@@ -149,7 +150,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('rewrites the model down to haiku when the budget is tight, never up', async ($, on) => {
-    await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 2 }) } })
+    await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
     expect((await spawn($, { model: 'opus' })).model).toBe('haiku')
   })
 
@@ -162,7 +163,7 @@ describe('the agent.spawn hook', () => {
 
   // DX-5593 (N2): the first usage report is fire-and-forget, so the claim carries the session's latest reading and danxbot places the session on its account itself
   test("the claim carries the session's latest usage reading, the body the usage report sends", async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 5, running_agents: 1 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 5, sub_agents: 1 }) } })
     d.world.rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-20T20:00:00.000Z' }, { kind: 'seven_day', percentUsed: 10, resetsAt: '2026-10-25T00:00:00.000Z' }]
     await spawn($)
     const sent = d.claimBodies.at(-1)
@@ -172,7 +173,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('a session with no reading to give claims without one', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 5, running_agents: 1 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 5, sub_agents: 1 }) } })
     d.world.rateLimits = []
     await spawn($)
     expect(d.claimBodies.at(-1)).toBeUndefined()
@@ -184,7 +185,7 @@ describe('the agent.spawn hook', () => {
   const started = (results: { agentId?: string }[]) => results.filter(r => r.agentId !== undefined)
 
   test("every spawn asks danxbot for its slot, however long after the last, and starts exactly the spawns it was given a claim for", async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 0 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 0 }) } })
     const first: any[] = []
     for (let i = 0; i < 3; i++) first.push(await spawn($, { model: 'haiku' }))
     expect(started(first)).toHaveLength(3)
@@ -204,7 +205,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('a host-refused spawn gives its own claim back, and only its own', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 2, running_agents: 0 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 2, sub_agents: 0 }) } })
     expect((await spawn($, { model: 'haiku' })).deny).toBeUndefined()
     expect((await spawn($, { prompt: 'refuse', model: 'haiku' })).deny).toBe('host refused')
     expect(d.claimsReleased).toEqual(['claim-2'])
@@ -216,14 +217,14 @@ describe('the agent.spawn hook', () => {
 
   // DX-5593: a spawn the host throws on (not refuses) has also taken a slot; the claim is given back, and the throw still reaches the caller
   test('a spawn that throws while starting gives its own claim back, and the failure still propagates (the harness reports a throwing host as HooksError)', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 2, running_agents: 0 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 2, sub_agents: 0 }) } })
     await expect(spawn($, { prompt: 'throw', model: 'haiku' })).rejects.toThrow(/agent.spawn/)
     expect(d.claimsReleased).toEqual(['claim-1'])
     expect([...d.heldClaims]).toEqual([])
   })
 
   test("parallel spawns each make their own claim, and exactly the ones danxbot allowed start", async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 0 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 0 }) } })
     const results = await Promise.all(Array.from({ length: 6 }, () => spawn($, { model: 'haiku' })))
     expect(d.claimAttempts.n).toBe(6)
     // whichever claims danxbot allowed (its count decides which), the plugin started those spawns and refused the others with the budget's reason
@@ -239,7 +240,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('a tight fork is let through with its model untouched: a fork ignores the model', async ($, on) => {
-    await session($, on, { pacingLine: { body: wire({ budget: 3, running_agents: 2 }) } })
+    await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
     expect((await spawn($, { fork: true, model: 'opus' })).model).toBe('opus')
   })
 
@@ -248,16 +249,16 @@ describe('the agent.spawn hook', () => {
     const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
     const d = await session($, on, options)
     expect((await spawn($)).deny).toMatch(/critical/)
-    options.pacingLine = { body: wire({ budget: 12, running_agents: 5 }) }
+    options.pacingLine = { body: wire({ budget: 12, sub_agents: 5 }) }
     await d.clock.advance(1_000)
     expect((await spawn($)).deny).toBeUndefined()
   })
 
   test('and the other way: allowed before, the very next spawn refused after the dashboard changed', async ($, on) => {
-    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } }
     const d = await session($, on, options)
     expect((await spawn($)).deny).toBeUndefined()
-    options.pacingLine = { body: wire({ budget: 3, running_agents: 11 }) }
+    options.pacingLine = { body: wire({ budget: 3, sub_agents: 11 }) }
     await d.clock.advance(1_000)
     expect((await spawn($)).deny).toMatch(/agent\(s\) already run on this account against budget 3/)
   })
@@ -274,7 +275,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('the sub-agent that a claim started is handed the line of the answer that claimed it', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } })
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
     await spawn($)
     expect(await subagentLine($, d)).toBe('Pacing line.')
   })
@@ -282,7 +283,7 @@ describe('the agent.spawn hook', () => {
   // FAIL CLOSED (DX-5593): a signed-in session whose claim cannot be made is refused, because an allowed spawn there is an agent nobody counted
   describe('a claim that cannot be made refuses the spawn, and says why once', () => {
     test('a claim that outlasts its deadline: refused, told once; the late answer changes nothing', async ($, on) => {
-      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } }
       const d = await session($, on, options)
       options.pacingHoldMs = PACING_READ_DEADLINE_MS + 1_000
       const pending = spawn($)
@@ -306,7 +307,7 @@ describe('the agent.spawn hook', () => {
       options.pacingLine = { status: 404 }
       expect((await spawn($)).deny).toMatch(/answered 404/)
       expect(claimToasts(d, from)).toHaveLength(2)
-      options.pacingLine = { body: wire({ budget: 12, running_agents: 5 }) }
+      options.pacingLine = { body: wire({ budget: 12, sub_agents: 5 }) }
       expect((await spawn($)).deny).toBeUndefined()
     })
 
@@ -318,14 +319,14 @@ describe('the agent.spawn hook', () => {
     })
 
     test("a call auto mode's classifier refused is told as the person's sentence, never `answered 0`", async ($, on) => {
-      const d = await session($, on, { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } })
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
       d.setMcp('refused')
       expect((await spawn($)).deny).toContain(BLOCKED_LINE)
       expect(claimToasts(d)).toEqual([`Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap): ${BLOCKED_LINE}`])
     })
 
     test('a call that never reached the server (status 0, no refusal) is told with its own reason', async ($, on) => {
-      const d = await session($, on, { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } })
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
       d.setMcp('flaky')
       expect((await spawn($)).deny).toContain('request timed out after 60000ms')
       expect(claimToasts(d)).toHaveLength(1)
@@ -336,7 +337,7 @@ describe('the agent.spawn hook', () => {
   // DX-5593 (C1): a claim the host's refusal gives back is told when the give-back fails; the 60 s lapse in danxbot stays the recovery
   describe('a claim that cannot be given back is told once per text, never silently', () => {
     test('an error answer (400): the host refusal still stands, told once however many repeat it', async ($, on) => {
-      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) }, claimRelease: { status: 400 } })
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, sub_agents: 0 }) }, claimRelease: { status: 400 } })
       expect((await spawn($, { prompt: 'refuse' })).deny).toBe('host refused')
       expect((await spawn($, { prompt: 'refuse' })).deny).toBe('host refused')
       expect(giveBackToasts(d)).toHaveLength(1)
@@ -345,7 +346,7 @@ describe('the agent.spawn hook', () => {
     })
 
     test('an error answer (500) is told once too, and a different text is told again', async ($, on) => {
-      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) }, claimRelease: { status: 500 } }
+      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 9, sub_agents: 0 }) }, claimRelease: { status: 500 } }
       const d = await session($, on, options)
       await spawn($, { prompt: 'refuse' })
       await spawn($, { prompt: 'refuse' })
@@ -357,14 +358,14 @@ describe('the agent.spawn hook', () => {
     })
 
     test('{released:false} (a claim danxbot no longer holds) is normal: nothing is told', async ($, on) => {
-      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) }, claimRelease: { body: { released: false } } })
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, sub_agents: 0 }) }, claimRelease: { body: { released: false } } })
       expect((await spawn($, { prompt: 'refuse' })).deny).toBe('host refused')
       expect(d.claimsReleased).toHaveLength(1)
       expect(giveBackToasts(d)).toEqual([])
     })
 
     test('an unreachable server of a signed-in session is told once', async ($, on) => {
-      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) } })
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, sub_agents: 0 }) } })
       expect((await spawn($, { prompt: 'refuse-and-drop' })).deny).toBe('host refused')
       expect(giveBackToasts(d)).toHaveLength(1)
       expect(giveBackToasts(d)[0]).toContain('not reachable')
@@ -394,7 +395,7 @@ describe('the agent.spawn hook', () => {
     // have written is observable on the next claim: hasSucceeded makes an unreachable server "known to be signed in", so that claim fails at once as unreachable.
     test('a claim still in flight across a new session start leaves the new session unmarked', async () => {
       resetPacing()
-      const claimed = { account: 'uuid:u1', level: 'on_pace', budget: 5, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 0, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 30, resets_in_minutes: 100, used_percent: 10, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null, claimed: true, claim_id: 'claim-1' }
+      const claimed = { account: 'uuid:u1', level: 'on_pace', budget: 5, resets_at: '2026-10-08T12:00:00.000Z', main_agents: 2, sub_agents: 0, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 30, resets_in_minutes: 100, used_percent: 10, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null, claimed: true, claim_id: 'claim-1' }
       let clock = 0
       let n = 0
       const env: PacingEnv = {
@@ -442,7 +443,7 @@ describe('the agent.spawn hook', () => {
     })
 
     test('a good give-back tells nothing', async ($, on) => {
-      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, running_agents: 0 }) } })
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 9, sub_agents: 0 }) } })
       await spawn($, { prompt: 'refuse' })
       expect(d.claimsReleased).toHaveLength(1)
       expect(giveBackToasts(d)).toEqual([])
@@ -451,13 +452,13 @@ describe('the agent.spawn hook', () => {
 
   // a refusal told once is told again when it comes back after a good claim
   test('a good claim resets the once-per-text rule of the claim toasts', async ($, on) => {
-    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+    const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } }
     const d = await session($, on, options)
     options.pacingLine = { status: 500 }
     expect((await spawn($)).deny).toMatch(/answered 500/)
     expect((await spawn($)).deny).toMatch(/answered 500/)
     expect(claimToasts(d)).toHaveLength(1)
-    options.pacingLine = { body: wire({ budget: 12, running_agents: 5 }) }
+    options.pacingLine = { body: wire({ budget: 12, sub_agents: 5 }) }
     expect((await spawn($)).deny).toBeUndefined()
     options.pacingLine = { status: 500 }
     expect((await spawn($)).deny).toMatch(/answered 500/)
@@ -467,7 +468,7 @@ describe('the agent.spawn hook', () => {
   // DX-5593 (B1): whether a session is outside pacing is a fact about the session, never about the connection
   describe('a session known to be signed in whose server cannot be reached is refused', () => {
     test('the server drops after a good claim: the spawn is refused, one toast that says it was refused', async ($, on) => {
-      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } }
       const d = await session($, on, options)
       expect((await spawn($)).deny).toBeUndefined()
       options.mcp = 'down'
@@ -493,7 +494,7 @@ describe('the agent.spawn hook', () => {
     })
 
     test('the server drops before any claim, with the plan view loaded: refused', async ($, on) => {
-      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, running_agents: 5 }) } }
+      const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } }
       await session($, on, options)
       options.mcp = 'down'
       expect((await spawn($)).deny).toMatch(/^Usage pacing:/)
@@ -584,7 +585,7 @@ describe('failures of the guard itself', () => {
   // judgment and the answer): the refusal still stands, worded as held slots, never as a full budget or a level
   test('a claim danxbot refused whose verdict the plugin would allow is still refused, worded as held slots', async () => {
     resetPacing()
-    const refused = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal: 'reserved' }
+    const refused = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal: 'reserved' }
     const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: refused } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
     let started = false
@@ -597,7 +598,7 @@ describe('failures of the guard itself', () => {
   // DX-5595: the refusal is worded from the cause danxbot names, not from the plugin's own reading of the figures it came with
   test('the wording follows the cause danxbot names, even when the figures read otherwise', async () => {
     resetPacing()
-    const answer = (refusal: unknown) => ({ account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal })
+    const answer = (refusal: unknown) => ({ account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal })
     const deny = async (refusal: unknown) => {
       resetPacing()
       const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: answer(refusal) } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
@@ -612,7 +613,7 @@ describe('failures of the guard itself', () => {
   test('a refused claim that names no valid cause fails closed as a failed claim', async () => {
     for (const refusal of [undefined, null, 'full']) {
       resetPacing()
-      const body = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, running_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal }
+      const body = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal }
       const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
       const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
       expect((await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny).toMatch(/could not claim its slot.*without naming a valid cause/)

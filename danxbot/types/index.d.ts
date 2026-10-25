@@ -97,7 +97,7 @@ export type RefreshGate = {
 export type PacingLevel = 'on_pace' | 'over_pace' | 'critical'
 // The account's verdict for this session (the usage-pacing cache): `budget` null = no cap, 0 = start nothing new, n = most agents at once.
 // `reservedAgents` is the slots held for sessions danxbot woke (an offer, for 60 s), taken by no running agent yet; a claim from another session counts them as taken.
-export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; runningAgents: number; reservedAgents: number }
+export type PacingVerdict = { level: PacingLevel; budget: number | null; resetsAt: string | null; mainAgents: number; subAgents: number; reservedAgents: number }
 
 // a `request_permission` request the band counts until it is decided. No expiry clock (the claim decides it).
 export type PermissionRequest = { url: string; code: string; publicId: string; permissions: string[] }

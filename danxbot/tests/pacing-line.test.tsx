@@ -9,18 +9,18 @@ import type { PacingEnv } from '../hooks/plan/pacing-line'
 import { test, EVENT_TEXT, dashboard, startSession } from './plan-kit'
 
 const LINE = 'Pacing: this account is over pace; 0 agents may run on the account until 2026-10-08 12:00 UTC. Do the work yourself, cheaply.'
-const known = { account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: '2026-10-08T12:00:00.000Z', running_agents: 2, reserved_agents: 0, line: LINE, spend: null, limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroom_minutes: -30, resets_in_minutes: 100, used_percent: 96, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null }
-const unknown = { account: null, level: null, budget: null, resets_at: null, running_agents: null, reserved_agents: null, line: null, reason: 'no_usage_account' }
+const known = { account: 'uuid:u1', level: 'over_pace', budget: 0, resets_at: '2026-10-08T12:00:00.000Z', main_agents: 4, sub_agents: 2, reserved_agents: 0, line: LINE, spend: null, limits: [{ limit: 'five_hour', level: 'over_pace', state: 'hold', headroom_minutes: -30, resets_in_minutes: 100, used_percent: 96, target_percent: 95, critical_percent: 99, resets_at: '2026-10-08T12:00:00.000Z' }], worst_limit: 'five_hour', reason: null }
+const unknown = { account: null, level: null, budget: null, resets_at: null, main_agents: null, sub_agents: null, reserved_agents: null, line: null, reason: 'no_usage_account' }
 const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' } as any
 
 describe('parsePacing', () => {
   test('the verdict and line, null for an explicit unknown, an error for anything else', () => {
-    expect(parsePacing(known)).toEqual({ verdict: { level: 'over_pace', budget: 0, resetsAt: '2026-10-08T12:00:00.000Z', runningAgents: 2, reservedAgents: 0 }, line: LINE })
+    expect(parsePacing(known)).toEqual({ verdict: { level: 'over_pace', budget: 0, resetsAt: '2026-10-08T12:00:00.000Z', mainAgents: 4, subAgents: 2, reservedAgents: 0 }, line: LINE })
     expect(parsePacing(unknown)).toBeNull()
     expect(parsePacing({ ...unknown, reason: null })).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, level: 'fine' })).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, budget: -1 })).toEqual({ error: expect.any(String) })
-    expect(parsePacing({ ...known, running_agents: null })).toEqual({ error: expect.any(String) })
+    expect(parsePacing({ ...known, sub_agents: null })).toEqual({ error: expect.any(String) })
     expect(parsePacing({ ...known, reserved_agents: 3 })).toMatchObject({ verdict: { reservedAgents: 3 } })
     // DX-5595: reserved_agents is part of the one canonical shape of a known answer
     expect(parsePacing({ ...known, reserved_agents: null })).toEqual({ error: expect.any(String) })
