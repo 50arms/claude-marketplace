@@ -28,8 +28,9 @@ throughout; this skill is the plan mechanics.
      /api/team/agent-proposals/<public_id>/avatar` with `body_file` set to its absolute path.
      Give the person the `url`: they review the proposal and press Create, which signs you in
      as the new agent and connects you to the plan or card you asked for; you are woken with an
-     event saying so, and need no further call. Not woken → call `plan_connect` again: it answers
-     the agent and plan you hold.
+     event saying so. Taking them needs no `plan_connect`; a naming or role step the event carries
+     makes its own call. Not woken → call `plan_connect` again: it answers the agent and plan you
+     hold.
    - `agent_limit_reached` → tell the person the limit the reply names (`held` of `limit`, and
      who can raise it, `raised_by`), or that ending another session frees its agent; call
      `plan_connect` again once they say one is free.
