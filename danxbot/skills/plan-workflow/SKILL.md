@@ -188,7 +188,7 @@ From the dashboard:
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
 - a usage-pacing or auto-resume message from danxbot → carry on, or stop and wait, as "Usage pacing" says.
-- `[50 ARMS] Compaction recommendation:` → advice, not an order. Never compact while a person is in an active conversation with you: a message of theirs reached this session in the last 30 minutes, or you owe them an answer. Then give the recommendation no answer (it comes again later) and never call compaction-ready; say ready only while you work on your own. Otherwise judge from what is left and what
+- `[50 ARMS] Compaction recommendation:` → advice, not an order. Never compact while a conversation with a person is still open: something they said or asked still needs an answer or action that depends on this session's context. Time is only a hint (a message within the last few minutes usually means they are still talking); once the exchange is finished and its outcome is on the cards and plan, compacting is safe at once. Then give the recommendation no answer (it comes again later) and never call compaction-ready; say ready only while you work on your own. Otherwise judge from what is left and what
   you are doing now whether compacting is worth it. If yes, load `danxbot:prepare-for-compaction`,
   run it, then call `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
   carry on and answer nothing; it comes again at the next +step of context. Nothing compacts until
