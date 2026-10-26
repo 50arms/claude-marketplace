@@ -2408,7 +2408,9 @@ async function onSubagentStop($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, 'danxbot shell-end report', reportShellEnds($, 'SubagentStop', e))
-  return withLine(r, SUBAGENT_DONE_REMINDER)
+  // the reminder is for the MAIN session that started the sub-agent: context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn
+  detach($, 'Telling the session', tellModel($, SUBAGENT_DONE_REMINDER))
+  return r
 }
 
 // a dashboard call the session made starts or restarts its record clock; a write to its plan or a card restarts it

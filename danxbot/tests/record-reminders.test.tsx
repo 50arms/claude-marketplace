@@ -59,10 +59,12 @@ for (const surface of SURFACES) {
     }
     const reminders = (d: any) => d.relay.told.filter((t: string) => t === NO_RECENT_RECORD_REMINDER)
 
-    test('a sub-agent that stops carries the reminder', async ($, on) => {
-      await started($, on)
+    test('a sub-agent that stops tells the main session, never the stopping sub-agent', async ($, on) => {
+      const d = await started($, on)
       const r = await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
-      expect(r.additionalContext).toContain(SUBAGENT_DONE_REMINDER)
+      await d.clock.settle()
+      expect(r.additionalContext ?? []).not.toContain(SUBAGENT_DONE_REMINDER)
+      expect(d.relay.told).toContain(SUBAGENT_DONE_REMINDER)
     })
 
     test('a turn ending after the stretch with no record write is reminded once, then not until another stretch', async ($, on) => {
