@@ -5,7 +5,7 @@ import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanVie
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { HANDOFF_FILE_REMINDER, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
+import { HANDOFF_FILE_REMINDER, baseName, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
@@ -1848,7 +1848,7 @@ async function onAckCall($: any, e: any, next: any) {
   // the session's own card or plan write reaches it as no plan event (the relay hears other members' writes), so the band and the title's
   // Needs You mark re-read the plan the moment the write lands, never at the turn's end
   // The agent's own pause or resume (PUT / DELETE of its pause) changes the title's pause mark the same way, so it re-reads at once too.
-  if (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && typeof e.path === 'string' && (/^\/api\/(issues|plans)\//.test(e.path) || e.path === PAUSE_PATH)) {
+  if (isRecordWrite(e.method, e.path) || (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && e.path === PAUSE_PATH)) {
     detach($, 'Plan refresh', refresh($, true))
   }
   const id = ackedEventId(e.method, e.path)
@@ -2425,14 +2425,16 @@ async function onHandoffWrite($: any, e: any, next: any) {
   const r = await next(e)
   if (raisedByPlugin(next.origin) || r.deny !== undefined || !looksLikeHandoff(e.file_path, e.content)) return r
   // no git, a missing directory or an unreadable path is "not tracked": the name already matched and the reminder costs nothing
-  const dir = String(e.file_path).replace(/[\\/][^\\/]*$/, '')
-  const tracked = await $.process.run(['git', '-C', dir, 'ls-files', '--error-unmatch', '--', String(e.file_path)], { timeoutMs: 5_000 }).then((p: any) => p.exitCode === 0, () => false)
+  const file = String(e.file_path)
+  const dir = file.slice(0, file.length - baseName(file).length)
+  const tracked = await $.process.run(['git', '-C', dir, 'ls-files', '--error-unmatch', '--', String(e.file_path)], { timeoutMs: GIT_STATUS_TIMEOUT_MS }).then((p: any) => p.exitCode === 0, () => false)
   return tracked ? r : { ...r, context: [...(r.context ?? []), HANDOFF_FILE_REMINDER] }
 }
 
 // CP-15: the main loop's turn ended after a stretch of work with no write to its plan or cards
 async function remindToRecord($: any): Promise<void> {
   const now = await $.clock.now()
+  // `reminder` is set inside the updater, which sees the clock as it is when the write happens (the same capture as `prompts` in onTurnComplete)
   let reminder = null as string | null
   await update($, recordClock, cur => {
     const due = recordDue(cur, now)

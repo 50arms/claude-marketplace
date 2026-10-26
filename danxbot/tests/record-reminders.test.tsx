@@ -12,6 +12,9 @@ describe('the record clock (pure)', () => {
   test('only a non-GET call on an issue or plan path is a record write', () => {
     expect(isRecordWrite('POST', '/api/issues/CP-15/notes')).toBe(true)
     expect(isRecordWrite('patch', '/api/plans/66/records/1')).toBe(true)
+    expect(isRecordWrite('POST', '/api/issues')).toBe(true)
+    expect(isRecordWrite('POST', '/api/plans')).toBe(true)
+    expect(isRecordWrite('POST', '/api/issues-other')).toBe(false)
     expect(isRecordWrite('GET', '/api/issues/CP-15')).toBe(false)
     expect(isRecordWrite('POST', '/api/plan-sessions/me/events/5/ack')).toBe(false)
     expect(isRecordWrite(undefined, undefined)).toBe(false)
@@ -26,11 +29,14 @@ describe('the record clock (pure)', () => {
     expect(recordDue({ since: 0 }, RECORD_AFTER_MS - 1).reminder).toBeNull()
     expect(recordDue({ since: 0 }, RECORD_AFTER_MS)).toEqual({ reminder: NO_RECENT_RECORD_REMINDER, clock: { since: RECORD_AFTER_MS } })
   })
-  test('a handoff-like name or content, and nothing else', () => {
-    for (const p of ['/x/.junk/handoff.md', 'C:\\x\\notes.txt', '/x/pending-writes.json', '/x/resume.md']) expect(looksLikeHandoff(p, '')).toBe(true)
+  test('a handoff-like name or content', () => {
+    for (const p of ['/x/.junk/handoff.md', 'C:\\x\\notes.txt', '/x/pending-writes.json', '/x/session-handoff.md', 'C:\\x\\hand-off.txt']) expect(looksLikeHandoff(p, '')).toBe(true)
     expect(looksLikeHandoff('/x/a.ts', 'this is the handoff for the next session')).toBe(true)
-    expect(looksLikeHandoff('/x/a.ts', 'const a = 1')).toBe(false)
+  })
+  test('no handoff: a name that only contains a keyword, or a directory that does, on either path style', () => {
+    for (const p of ['/x/notes-app/a.ts', 'C:\\Users\\dev\\notes-app\\a.ts', 'C:\\x\\notes\\a.ts', 'C:\\x\\pending\\a.ts', 'C:\\x\\wip\\a.ts', '/x/wipe.ts', '/x/release-notes.md', '/x/pending-orders.ts', '/x/resume.tsx', '/x/continue.ts', '/x/wip.ts', '/x/pending.ts']) expect(looksLikeHandoff(p, 'const a = 1')).toBe(false)
     expect(looksLikeHandoff(undefined, 'handoff')).toBe(false)
+    expect(looksLikeHandoff('/x/a.ts', 'const a = 1')).toBe(false)
   })
 })
 
@@ -68,7 +74,7 @@ for (const surface of SURFACES) {
       expect(reminders(d)).toHaveLength(1)
     })
 
-    test('a turn ending before the stretch, or with no dashboard call at all, is quiet', async ($, on) => {
+    test('a turn ending before the stretch, or with no model dashboard call at all (the plugin reads never start it), is quiet', async ($, on) => {
       const d = await started($, on)
       await d.clock.advance(RECORD_AFTER_MS * 2)
       await endTurn($)
@@ -76,6 +82,63 @@ for (const surface of SURFACES) {
       await d.clock.advance(RECORD_AFTER_MS - 1000)
       await endTurn($)
       expect(reminders(d)).toHaveLength(0)
+    })
+
+    for (const tool of ['plan_connect', 'card_connect']) {
+      test(`${tool} starts the clock`, async ($, on) => {
+        const d = await started($, on)
+        await $.tool.call({ tool: `mcp__plugin_danxbot_danx-dashboard__${tool}` } as any)
+        await d.clock.advance(RECORD_AFTER_MS)
+        await endTurn($)
+        expect(reminders(d)).toHaveLength(1)
+      })
+    }
+
+    test('a sub-agent that stops carries the reminder', async ($, on) => {
+      await started($, on)
+      const r = await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
+      expect(r.additionalContext).toContain(SUBAGENT_DONE_REMINDER)
+    })
+
+    test('a turn ending after the stretch with no record write is reminded once, then not until another stretch', async ($, on) => {
+      const d = await started($, on)
+      await api($, 'GET', '/api/issues/CP-15')
+      await d.clock.advance(RECORD_AFTER_MS)
+      await endTurn($)
+      expect(reminders(d)).toHaveLength(1)
+      await endTurn($)
+      expect(reminders(d)).toHaveLength(1)
+    })
+
+    test('a turn ending before the stretch, or with no model dashboard call at all (the plugin reads never start it), is quiet', async ($, on) => {
+      const d = await started($, on)
+      await d.clock.advance(RECORD_AFTER_MS * 2)
+      await endTurn($)
+      await api($, 'GET', '/api/issues/CP-15')
+      await d.clock.advance(RECORD_AFTER_MS - 1000)
+      await endTurn($)
+      expect(reminders(d)).toHaveLength(0)
+    })
+
+    test('plan_connect and card_connect each start the clock', async ($, on) => {
+      for (const tool of ['plan_connect', 'card_connect']) {
+        const d = await started($, on)
+        await $.tool.call({ tool: `mcp__plugin_danxbot_danx-dashboard__${tool}` } as any)
+        await d.clock.advance(RECORD_AFTER_MS)
+        await endTurn($)
+        expect(reminders(d)).toHaveLength(1)
+        return
+      }
+    })
+
+    test('a sub-agent write does not restart the stretch', async ($, on) => {
+      const d = await started($, on)
+      await api($, 'GET', '/api/issues/CP-15')
+      await d.clock.advance(RECORD_AFTER_MS - 1000)
+      await $.tool.call({ tool: API, method: 'POST', path: '/api/issues/CP-15/notes', agentId: 'a1' } as any)
+      await d.clock.advance(1000)
+      await endTurn($)
+      expect(reminders(d)).toHaveLength(1)
     })
 
     test('a write to a card restarts the stretch', async ($, on) => {
@@ -100,6 +163,15 @@ for (const surface of SURFACES) {
       const r = await write($, '/repo/.junk/handoff.md')
       expect(r.deny).toBeUndefined()
       expect(await contextOf(r)).toContain(HANDOFF_FILE_REMINDER)
+      expect(d.runCalls).toContainEqual(['git', '-C', '/repo/.junk/', 'ls-files', '--error-unmatch', '--', '/repo/.junk/handoff.md'])
+    })
+
+    test('a Windows path is split on its backslashes', async ($, on) => {
+      const d = await started($, on)
+      d.world.processes['git'] = { exitCode: 1, stdout: '' }
+      expect(await contextOf(await write($, 'C:\\Users\\dev\\notes-app\\a.ts'))).not.toContain(HANDOFF_FILE_REMINDER)
+      expect(await contextOf(await write($, 'C:\\Users\\dev\\.junk\\handoff.md'))).toContain(HANDOFF_FILE_REMINDER)
+      expect(d.runCalls).toContainEqual(['git', '-C', 'C:\\Users\\dev\\.junk\\', 'ls-files', '--error-unmatch', '--', 'C:\\Users\\dev\\.junk\\handoff.md'])
     })
 
     test('a tracked file, and a file that is no handoff, carry none', async ($, on) => {
