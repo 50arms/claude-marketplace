@@ -19,8 +19,8 @@ throughout; this skill is the plan mechanics.
    `request_permission`. Every other dashboard tool answers "not signed in" until then.
 2. Take your identity from the reply: signing in makes you one of the team's agents, and the
    reply's `agent` and `agentInstruction` say which. Use that agent's name and personality for
-   the whole session and sign every note, comment and message with its name; never choose a
-   name yourself. When no agent can be signed in as:
+   the whole session; never choose a name yourself, and never sign what you write (the
+   dashboard already shows you as its author). When no agent can be signed in as:
    - `agent_needed` → propose one at once, without asking in chat: `danxbot_api`
      `POST /api/team/agent-proposals` with `{name, bio}` (a first name not taken in the team, a
      short bio of the personality you want) answers `{public_id, url, expires_at}`. With an
