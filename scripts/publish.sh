@@ -229,10 +229,30 @@ done
 # test command, `npm test`, which runs them in the designated Linux test container
 # (never on this host). Run them before any bump.
 
-info "Running the test suites in the test container (npm test)..."
-if ! (cd "${REPO_ROOT}" && npm test --silent); then
-  err "npm test failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
-  exit 1
+# CP-16 — a publish runs the tests the change affects, never the whole suite by default
+# (scripts/lib/publish-scope.mjs: the files changed since each target's last publish; the whole
+# suite for a broad change, any code file no test names or a deleted test file; no suite when every changed file is prose
+# that no test names, or nothing changed).
+SCOPE="$(node "${REPO_ROOT}/scripts/lib/publish-scope.mjs" "${REPO_ROOT}" "${TARGETS[@]}")"
+case "$SCOPE" in
+  all)
+    info "Running the whole test suite in the test container (npm test)..."
+    RUN_TESTS=1; TEST_ARGS=() ;;
+  none)
+    info "No test is affected by this change: skipping the test suite."
+    RUN_TESTS=0; TEST_ARGS=() ;;
+  files\ *)
+    info "Running the affected tests in the test container (npm test)..."
+    RUN_TESTS=1; read -r -a TEST_ARGS <<< "${SCOPE#files }" ;;
+  *)
+    err "Unreadable test scope: ${SCOPE}"; exit 1 ;;
+esac
+if [ "$RUN_TESTS" -eq 1 ]; then
+  # `${TEST_ARGS[@]:+-- "${TEST_ARGS[@]}"}` expands to nothing for an empty list (the whole suite), else to `-- <files>`
+  if ! (cd "${REPO_ROOT}" && npm test --silent ${TEST_ARGS[@]:+-- "${TEST_ARGS[@]}"}); then
+    err "npm test failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
+    exit 1
+  fi
 fi
 
 # --- Pre-flight: injection budget ---------------------------------------
