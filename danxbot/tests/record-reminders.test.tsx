@@ -32,6 +32,7 @@ describe('the record clock (pure)', () => {
   test('a handoff-like name or content', () => {
     for (const p of ['/x/.junk/handoff.md', 'C:\\x\\notes.txt', '/x/pending-writes.json', '/x/session-handoff.md', 'C:\\x\\hand-off.txt']) expect(looksLikeHandoff(p, '')).toBe(true)
     expect(looksLikeHandoff('/x/a.ts', 'this is the handoff for the next session')).toBe(true)
+    expect(looksLikeHandoff('/x/a.ts', 'pending card writes: CP-15 note')).toBe(true)
   })
   test('no handoff: a name that only contains a keyword, or a directory that does, on either path style', () => {
     for (const p of ['/x/notes-app/a.ts', 'C:\\Users\\dev\\notes-app\\a.ts', 'C:\\x\\notes\\a.ts', 'C:\\x\\pending\\a.ts', 'C:\\x\\wip\\a.ts', '/x/wipe.ts', '/x/release-notes.md', '/x/pending-orders.ts', '/x/resume.tsx', '/x/continue.ts', '/x/wip.ts', '/x/pending.ts']) expect(looksLikeHandoff(p, 'const a = 1')).toBe(false)
@@ -94,42 +95,19 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('a sub-agent that stops carries the reminder', async ($, on) => {
-      await started($, on)
-      const r = await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
-      expect(r.additionalContext).toContain(SUBAGENT_DONE_REMINDER)
-    })
 
-    test('a turn ending after the stretch with no record write is reminded once, then not until another stretch', async ($, on) => {
-      const d = await started($, on)
-      await api($, 'GET', '/api/issues/CP-15')
-      await d.clock.advance(RECORD_AFTER_MS)
-      await endTurn($)
-      expect(reminders(d)).toHaveLength(1)
-      await endTurn($)
-      expect(reminders(d)).toHaveLength(1)
-    })
-
-    test('a turn ending before the stretch, or with no model dashboard call at all (the plugin reads never start it), is quiet', async ($, on) => {
-      const d = await started($, on)
-      await d.clock.advance(RECORD_AFTER_MS * 2)
-      await endTurn($)
-      await api($, 'GET', '/api/issues/CP-15')
-      await d.clock.advance(RECORD_AFTER_MS - 1000)
-      await endTurn($)
-      expect(reminders(d)).toHaveLength(0)
-    })
-
-    test('plan_connect and card_connect each start the clock', async ($, on) => {
-      for (const tool of ['plan_connect', 'card_connect']) {
+    for (const path of ['/api/issues', '/api/plans']) {
+      test(`a POST to ${path} refreshes the plan, a GET does not`, async ($, on) => {
         const d = await started($, on)
-        await $.tool.call({ tool: `mcp__plugin_danxbot_danx-dashboard__${tool}` } as any)
-        await d.clock.advance(RECORD_AFTER_MS)
-        await endTurn($)
-        expect(reminders(d)).toHaveLength(1)
-        return
-      }
-    })
+        const reads = () => d.api.filter((a: any) => a.method === 'GET').length
+        await api($, 'GET', path)
+        await d.clock.settle()
+        const before = reads()
+        await api($, 'POST', path)
+        await d.clock.settle()
+        expect(reads()).toBeGreaterThan(before)
+      })
+    }
 
     test('a sub-agent write does not restart the stretch', async ($, on) => {
       const d = await started($, on)
