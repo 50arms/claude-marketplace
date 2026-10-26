@@ -231,7 +231,7 @@ done
 
 # CP-16 — a publish runs the tests the change affects, never the whole suite by default
 # (scripts/lib/publish-scope.mjs: the files changed since each target's last publish; the whole
-# suite for a broad change or any code file no test names, no suite when every changed file is prose
+# suite for a broad change, any code file no test names or a deleted test file; no suite when every changed file is prose
 # that no test names, or nothing changed).
 SCOPE="$(node "${REPO_ROOT}/scripts/lib/publish-scope.mjs" "${REPO_ROOT}" "${TARGETS[@]}")"
 case "$SCOPE" in

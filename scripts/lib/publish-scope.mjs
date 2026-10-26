@@ -9,6 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** A walked directory is at least this deep (`plugin/folder`): a whole plugin or the repo root is too coarse to count as read. */
+const MIN_WALKED_DEPTH = 2;
 /** More changed code files than this is a broad change. */
 export const MAX_NARROW_CODE_FILES = 5;
 /** The most `git` output read at once: a checkout lists far fewer paths than this. */
@@ -63,7 +65,9 @@ export function publishScope(changed, repo) {
   const run = new Set();
   for (const f of touched) {
     if (TEST_FILE.test(f)) {
-      if (repo.tests.has(f)) run.add(f);
+      // a changed test file that is not there any more was deleted: nothing says what it covered, so only the whole suite vouches for it
+      if (!repo.tests.has(f)) return { kind: "all", reason: `${f} is a test file that no longer exists` };
+      run.add(f);
       continue;
     }
     const wanted = needles(f);
@@ -92,7 +96,7 @@ export function walkedDirectories(root, testPath, text) {
       }
       // a quoted file (`hooks/hooks.json`) names its folder; a plugin folder or the repo root is too coarse to count
       const dir = stat === null ? null : stat.isDirectory() ? target : path.posix.dirname(target);
-      if (dir !== null && dir.split("/").length >= 2 && !dir.startsWith("..")) dirs.add(dir);
+      if (dir !== null && dir.split("/").length >= MIN_WALKED_DEPTH && !dir.startsWith("..")) dirs.add(dir);
     }
   }
   return [...dirs];

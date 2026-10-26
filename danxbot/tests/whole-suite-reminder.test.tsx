@@ -7,7 +7,7 @@ import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 describe('wholeSuiteReminder (the command text)', () => {
   const whole = ['make test', 'make test PROJECT=site', 'make test-frontend', 'npm test', 'npm test --silent', 'npm run test', 'npm test --', 'pnpm test', 'yarn test', 'vitest', 'vitest run', 'npx vitest run --coverage', 'cd x && npm test', 'CI=1 make test', 'ls; make test | tail -5']
-  const targeted = ['make test FILES=a.test.ts', 'make test AFFECTED=1', 'make test-frontend FILES=src/a.test.tsx', 'npm test -- a.test.mjs', 'npm test -- --silent b.test.mjs', 'vitest run src/a.test.ts', 'vitest run a.test.ts --coverage', 'vitest a.test.ts b.test.ts --watch', 'vitest --run a.test.ts --reporter=dot', 'npm test a.test.ts', 'pnpm test a.test.ts', 'npx vitest a.test.ts', 'yarn test a.test.ts']
+  const targeted = ['make test FILES=a.test.ts', 'make test AFFECTED=1', 'make test-frontend FILES=src/a.test.tsx', 'npm test -- a.test.mjs', 'npm test -- --silent b.test.mjs', 'vitest run src/a.test.ts', 'vitest run a.test.ts --coverage', 'vitest a.test.ts b.test.ts --watch', 'vitest --run a.test.ts --reporter=dot', 'npm test a.test.ts', 'FILES=a.test.ts make test', 'AFFECTED=1 make test', 'CI=1 AFFECTED=1 make test', 'pnpm test a.test.ts', 'npx vitest a.test.ts', 'yarn test a.test.ts']
   // heuristic misses, pinned: the make target is not the first operand, so no reminder is given
   const knownMisses = ['make -C dir test', 'make -j 4 test']
   const notTests = ['ls', 'make build', 'npm install', 'npm run build', 'git commit -m "make test"', '', 'echo vitest']

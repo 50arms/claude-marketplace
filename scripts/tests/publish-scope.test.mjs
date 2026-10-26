@@ -55,6 +55,10 @@ test("a test that walks a directory reads every file under it", () => {
   assert.equal(publishScope(["danxbot/other/file.ts"], walking).kind, "all");
 });
 
+test("a deleted test file is a broad change, never none", () => {
+  assert.equal(publishScope(["danxbot/tests/gone.test.mjs"], repo).kind, "all");
+});
+
 test("a changed test file runs itself; the version bump's own files count for nothing", () => {
   assert.deepEqual(publishScope(["danxbot/tests/context-stamp.test.tsx", "danxbot/.claude-plugin/plugin.json"], repo).files, ["danxbot/tests/context-stamp.test.tsx"]);
 });

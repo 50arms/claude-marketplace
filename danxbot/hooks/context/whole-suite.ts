@@ -38,12 +38,13 @@ function vitestStartsWholeSuite(program: string, args: string[]): boolean {
 }
 
 function wholeSuiteSegment(segment: string): boolean {
-  // leading VAR=value words are the caller's environment, not the command
+  // leading VAR=value words are the caller's environment, not the command; make reads them too (a FILES= before make)
   const w = words(segment)
-  while (w.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0]!)) w.shift()
+  const env: string[] = []
+  while (w.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0]!)) env.push(w.shift()!)
   const [program, ...args] = w
   if (program === undefined) return false
-  if (program === 'make') return makeStartsWholeSuite(args)
+  if (program === 'make') return makeStartsWholeSuite([...env, ...args])
   if (PACKAGE_MANAGERS.has(program)) return packageManagerStartsWholeSuite(args)
   if (program === 'vitest') return vitestStartsWholeSuite(program, args)
   if ((program === 'npx' || program === 'pnpx') && args.includes('vitest')) return vitestStartsWholeSuite(program, args)
