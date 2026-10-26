@@ -226,6 +226,8 @@ declare module 'claude-code' {
       ackInFlight: AckInFlight
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
       runningAgents: string[]
+      // when the session last wrote its plan or a card, was last reminded, or first called the dashboard (epoch ms; null: none yet): the no-recent-record reminder counts from it.
+      recordClock: { since: number | null }
     }
   }
 }

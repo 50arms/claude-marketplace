@@ -5,6 +5,8 @@ import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanVie
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
+import { HANDOFF_FILE_REMINDER, baseName, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
+import type { RecordClock } from './context/record'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -177,6 +179,8 @@ const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {
 const relayOutbox = atom({ plugin: 'danxbot', key: 'relayOutbox' } as const, [] as PendingEvent[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: 'danxbot', key: 'ackInFlight' } as const, [] as AckInFlight)
+// when the session last wrote its plan or a card (or was last reminded, or first called the dashboard), what the no-recent-record reminder counts from. $.state, so a reload keeps it.
+const recordClock = atom({ plugin: 'danxbot', key: 'recordClock' } as const, { since: null } as RecordClock)
 
 // the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
@@ -1844,9 +1848,10 @@ async function onAckCall($: any, e: any, next: any) {
   // the session's own card or plan write reaches it as no plan event (the relay hears other members' writes), so the band and the title's
   // Needs You mark re-read the plan the moment the write lands, never at the turn's end
   // The agent's own pause or resume (PUT / DELETE of its pause) changes the title's pause mark the same way, so it re-reads at once too.
-  if (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && typeof e.path === 'string' && (/^\/api\/(issues|plans)\//.test(e.path) || e.path === PAUSE_PATH)) {
+  if (isRecordWrite(e.method, e.path) || (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && e.path === PAUSE_PATH)) {
     detach($, 'Plan refresh', refresh($, true))
   }
+  await touchRecordClock($, e, next)
   const id = ackedEventId(e.method, e.path)
   if (id === null) return ran
   if (answerOf(ran).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
@@ -2403,7 +2408,47 @@ async function onSubagentStop($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, 'danxbot shell-end report', reportShellEnds($, 'SubagentStop', e))
+  return withLine(r, SUBAGENT_DONE_REMINDER)
+}
+
+// a dashboard call the session made starts or restarts its record clock; a write to its plan or a card restarts it
+// (called after `next(e)`: a plugin-raised call or a sub-agent's leaves the clock alone)
+async function touchRecordClock($: any, e: any, next: any): Promise<void> {
+  if (raisedByPlugin(next.origin) || e.agentId !== undefined) return
+  const record = isRecordWrite(e.method, e.path)
+  const now = await $.clock.now()
+  await update($, recordClock, cur => clockAfterCall(cur, record, now))
+}
+
+// plan_connect and card_connect: the danxbot_api calls go through onAckCall, the one handler allowed on that tool
+async function onRecordCall($: any, e: any, next: any) {
+  const r = await next(e)
+  await touchRecordClock($, e, next)
   return r
+}
+
+// a Write of a handoff-like file that git does not track gets the reminder beside its result (never a block: where an agent writes is its own)
+async function onHandoffWrite($: any, e: any, next: any) {
+  const r = await next(e)
+  if (raisedByPlugin(next.origin) || r.deny !== undefined || !looksLikeHandoff(e.file_path, e.content)) return r
+  // no git, a missing directory or an unreadable path is "not tracked": the name already matched and the reminder costs nothing
+  const file = String(e.file_path)
+  const dir = file.slice(0, file.length - baseName(file).length)
+  const tracked = await $.process.run(['git', '-C', dir, 'ls-files', '--error-unmatch', '--', String(e.file_path)], { timeoutMs: GIT_STATUS_TIMEOUT_MS }).then((p: any) => p.exitCode === 0, () => false)
+  return tracked ? r : { ...r, context: [...(r.context ?? []), HANDOFF_FILE_REMINDER] }
+}
+
+// the main loop's turn ended after a stretch of work with no write to its plan or cards
+async function remindToRecord($: any): Promise<void> {
+  const now = await $.clock.now()
+  // `reminder` is set inside the updater, which sees the clock as it is when the write happens (the same capture as `prompts` in onTurnComplete)
+  let reminder = null as string | null
+  await update($, recordClock, cur => {
+    const due = recordDue(cur, now)
+    reminder = due.reminder
+    return due.clock
+  })
+  if (reminder !== null) await tellModel($, reminder)
 }
 
 // the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this).
@@ -2425,6 +2470,7 @@ async function onTurnComplete($: any, e: any, next: any) {
     // the agent's ready, said during this turn, starts the compaction now that the turn is over
     await syncCompaction($, { start: true })
     await syncTitleOnTurn($)
+    await remindToRecord($)
   } else {
     // a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, 'danxbot activity report', reportSubagentEnd($, e.agentId))
@@ -3253,6 +3299,8 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: toolName('card_connect') }, onCardConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('tool.call', { tool: toolName('danxbot_api') }, onAckCall)
+  for (const tool of ['plan_connect', 'card_connect']) on('tool.call', { tool: toolName(tool) }, onRecordCall)
+  on('tool.call', { tool: 'Write' }, onHandoffWrite)
   on('turn.start', onTurnStart)
   on('turn.complete', onTurnComplete)
   // an automatic compaction is held while the session is under the handshake; the agent's ready starts /compact itself (startReadyCompaction)
