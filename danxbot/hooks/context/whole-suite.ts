@@ -53,5 +53,5 @@ function wholeSuiteSegment(segment: string): boolean {
 /** The reminder when any command of the Bash line starts a whole suite, else null. */
 export function wholeSuiteReminder(command: unknown): string | null {
   if (typeof command !== 'string') return null
-  return command.split(/&&|\|\||[;|\n]/).some(wholeSuiteSegment) ? WHOLE_SUITE_REMINDER : null
+  return command.split(/&&|[;|\n]/).some(wholeSuiteSegment) ? WHOLE_SUITE_REMINDER : null
 }

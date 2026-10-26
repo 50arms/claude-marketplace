@@ -33,16 +33,18 @@ const WALKS_A_DIRECTORY = /\breaddir(Sync)?\(/;
 /** A quoted path-looking string. */
 const QUOTED_PATH = /(["'`])([\w./-]+)\1/g;
 
-/** Whether the test text loads the file: a line that imports or reads a file spells one of its needles. */
-function references(text, needles) {
-  return text.split("\n").some((line) => LOADS_A_FILE.test(line) && needles.some((n) => (typeof n === "string" ? line.includes(n) : n.test(line))));
+/** Whether the test text loads the file: a line that imports or reads a file spells one of the wanted needles. */
+function references(text, wanted) {
+  return text.split("\n").some((line) => LOADS_A_FILE.test(line) && wanted.some((n) => (typeof n === "string" ? line.includes(n) : n.test(line))));
 }
+
+const escapeRegExp = (s) => s.replace(/\W/g, "\\$&");
 
 /** What names `file` in a test: its path from the plugin folder, or for a SKILL.md its folder as one quoted path segment. */
 function needles(file) {
   // a test spells a path from its own folder (`../hooks/context/stamp`), so the plugin folder is dropped
   const out = [file.replace(/\.(tsx?|mjs|js)$/, "").replace(/^[^/]+\//, "")];
-  if (path.basename(file) === "SKILL.md") out.push(new RegExp(`['"\`/]${path.basename(path.dirname(file))}['"\`/]`));
+  if (path.basename(file) === "SKILL.md") out.push(new RegExp(`['"\`/]${escapeRegExp(path.basename(path.dirname(file)))}['"\`/]`));
   return out;
 }
 
@@ -76,25 +78,21 @@ export function publishScope(changed, repo) {
 }
 
 /** The repo directories (two levels or deeper, so never a whole plugin) a walking test names, from its quoted paths read from the test's or the plugin's folder. */
-function walkedDirectories(root, testPath, text) {
+export function walkedDirectories(root, testPath, text) {
   const testDir = path.posix.dirname(testPath);
   const dirs = new Set();
   for (const [, , literal] of text.matchAll(QUOTED_PATH)) {
     for (const base of [testDir, path.posix.dirname(testDir)]) {
-      let dir = path.posix.normalize(path.posix.join(base, literal));
-      while (dir.split("/").length >= 2 && !dir.startsWith("..")) {
-        let isDir = false;
-        try {
-          isDir = fs.statSync(path.join(root, dir)).isDirectory();
-        } catch {
-          // the quoted string is no path of this repo
-        }
-        if (isDir) {
-          dirs.add(dir);
-          break;
-        }
-        dir = path.posix.dirname(dir);
+      const target = path.posix.normalize(path.posix.join(base, literal)).replace(/\/+$/, "");
+      let stat = null;
+      try {
+        stat = fs.statSync(path.join(root, target));
+      } catch {
+        // the quoted string is no path of this repo
       }
+      // a quoted file (`hooks/hooks.json`) names its folder; a plugin folder or the repo root is too coarse to count
+      const dir = stat === null ? null : stat.isDirectory() ? target : path.posix.dirname(target);
+      if (dir !== null && dir.split("/").length >= 2 && !dir.startsWith("..")) dirs.add(dir);
     }
   }
   return [...dirs];

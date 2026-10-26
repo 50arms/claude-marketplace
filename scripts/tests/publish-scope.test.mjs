@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
-import { publishScope, readRepo, MAX_NARROW_CODE_FILES } from "../lib/publish-scope.mjs";
+import { publishScope, readRepo, walkedDirectories, MAX_NARROW_CODE_FILES } from "../lib/publish-scope.mjs";
 
 const spell = (...parts) => parts.join("/");
 const THIS_TEST = "scripts/tests/publish-scope.test.mjs";
@@ -95,6 +95,11 @@ test("a string that only spells a path does not name it; an import does", () => 
   assert.equal(publishScope(["danxbot/hooks/y.ts"], spelled).kind, "all");
   const imported = { tests: new Map([["danxbot/tests/a.test.mjs", `import { y } from '../${spell("hooks", "y")}'`]]) };
   assert.equal(publishScope(["danxbot/hooks/y.ts"], imported).kind, "files");
+});
+
+test("a quoted path that is only a plugin folder (a trailing slash) names no directory to walk", () => {
+  for (const literal of ["../", "../../", "danxbot/", ".."]) assert.deepEqual(walkedDirectories(REPO_ROOT, "danxbot/tests/x.test.mjs", `"${literal}"`), [], literal);
+  assert.deepEqual(walkedDirectories(REPO_ROOT, "danxbot/tests/x.test.mjs", '"../hooks/"'), ["danxbot/hooks"]);
 });
 
 // the real test folders

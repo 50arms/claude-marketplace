@@ -231,7 +231,8 @@ done
 
 # CP-16 — a publish runs the tests the change affects, never the whole suite by default
 # (scripts/lib/publish-scope.mjs: the files changed since each target's last publish; the whole
-# suite only for a broad change, none for a change no test names).
+# suite for a broad change or any code file no test names, no suite when every changed file is prose
+# that no test names, or nothing changed).
 SCOPE="$(node "${REPO_ROOT}/scripts/lib/publish-scope.mjs" "${REPO_ROOT}" "${TARGETS[@]}")"
 case "$SCOPE" in
   all)
@@ -247,6 +248,7 @@ case "$SCOPE" in
     err "Unreadable test scope: ${SCOPE}"; exit 1 ;;
 esac
 if [ "$RUN_TESTS" -eq 1 ]; then
+  # `${TEST_ARGS[@]:+-- "${TEST_ARGS[@]}"}` expands to nothing for an empty list (the whole suite), else to `-- <files>`
   if ! (cd "${REPO_ROOT}" && npm test --silent ${TEST_ARGS[@]:+-- "${TEST_ARGS[@]}"}); then
     err "npm test failed (above). Fix it, then re-run publish. Nothing was bumped or pushed."
     exit 1
