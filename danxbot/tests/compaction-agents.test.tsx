@@ -100,7 +100,7 @@ describe('the sub-agent gate (pure)', () => {
   const withAgent = (a: Partial<AgentControl>, over: Partial<WireControl> = {}): ControlFile => withControl({ agents: { a1: entry(a) }, ...over })
   const ask = (over: Partial<AgentGateInput> = {}): AgentGateInput => ({ agentId: 'a1', file: withAgent({}), size: OPUS, ...over })
 
-  test('a sub-agent under its valve with no release is held, and not told', () => {
+  test('a sub-agent under its valve is held, and not told', () => {
     expect(agentVerdict(ask())).toEqual({ pass: false, reason: AGENT_HELD_REASON, told: false })
   })
 
@@ -110,7 +110,6 @@ describe('the sub-agent gate (pure)', () => {
     // the main valve (907,000) is far above: it does not decide a sub-agent
     expect(agentVerdict(ask({ file: withAgent({ passAtTokens: 400_000 }), size: { ...OPUS, tokens: 400_000 } }))).toEqual({ pass: true, why: 'valve' })
   })
-
 
   test("the main agent's release never passes a sub-agent, whether the control has an entry for it or not", () => {
     const file = withAgent({}, { releaseUntilMs: NOW + 60_000, releaseId: 'main-release' })
@@ -313,8 +312,6 @@ for (const surface of SURFACES) {
         expect((await k.propose('s1')).skip).toContain('its context size is not known')
       })
 
-
-
       test("a manual /compact is not this gate's: it is not matched, and the classic gate lets it through", async ($, on) => {
         const k = await started($, on)
         k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
@@ -438,7 +435,6 @@ for (const surface of SURFACES) {
         expect(k.d.versionReads).toBe(1)
       })
     })
-
 
     describe("arming the sub-agents' early proposal", () => {
       const PCT = 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'
