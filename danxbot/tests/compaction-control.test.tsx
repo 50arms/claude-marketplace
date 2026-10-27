@@ -89,7 +89,7 @@ describe('a plugin ahead of its relay (pure, DX-5314)', () => {
 // The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
 // builds the same from the dashboard's frame, and danxbot's operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
 describe('the wire shape (pure)', () => {
-  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000,"ask":{"seq":1,"at":"2026-10-14T11:58:00.000Z","text":"Prepare."},"releaseUntilMs":null,"releaseId":null}},"valves":{"haiku":180000,"sonnet":600000,"opus":907000}},"askedAt":null}'
+  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"haiku":180000,"sonnet":600000,"opus":907000}},"askedAt":null}'
 
   test('the file the relay writes is read whole, and its pass-at size is the safety valve (the plugin has no margin of its own)', () => {
     const file = parse(RELAY_FILE)
@@ -102,7 +102,7 @@ describe('the wire shape (pure)', () => {
         releaseUntilMs: 1_800_000_000_000,
         releaseId: '2026-10-14T11:59:00.000Z',
         subagents: {
-          agents: { a1: { passAtTokens: 600_000, ask: { seq: 1, at: '2026-10-14T11:58:00.000Z', text: 'Prepare.' }, releaseUntilMs: null, releaseId: null } },
+          agents: { a1: { passAtTokens: 600_000 } },
           valves: VALVES,
         },
       },
@@ -196,13 +196,6 @@ describe('spent releases in the store (pure)', () => {
     expect(staleUsedReleaseKeys(entries.slice(2))).toEqual([])
   })
 
-  // DX-5222: a session's sub-agents' records belong to the session: its newer sub-agent records never evict its own older main record, and an old session goes whole
-  test("a session's records stay and go together, so its sub-agents never evict its own main record", () => {
-    const old = [{ key: usedReleaseKey('old'), at: 1 }, { key: usedReleaseKey('old', 'a1'), at: 2 }]
-    const sessions = Array.from({ length: USED_RELEASE_KEEP - 1 }, (_, i) => ({ key: usedReleaseKey(`s${i}`), at: 100 + i }))
-    const current = [{ key: usedReleaseKey('cur'), at: 50 }, ...Array.from({ length: 60 }, (_, i) => ({ key: usedReleaseKey('cur', `a${i}`), at: 1000 + i }))]
-    expect(staleUsedReleaseKeys([...old, ...sessions, ...current])).toEqual(old.map(e => e.key))
-  })
 })
 
 describe('the resume briefing (pure)', () => {

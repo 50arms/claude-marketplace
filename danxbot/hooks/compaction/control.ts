@@ -66,9 +66,9 @@ export const RELAY_OLDER_NOTICE =
 export const ENGINE_VERSION_NOTICE =
   'The Claude Code release could not be read, so sub-agent compaction stays off until this session has compacted once (the main agent still compacts when it says ready).'
 
-// one sub-agent's control as the relay writes it: its own valve, its request (`at` names it; the plugin delivers each once) and its own single-use release
-export type AgentAsk = { seq: number; at: string; text: string }
-export type AgentControl = { passAtTokens: number; ask: AgentAsk | null; releaseUntilMs: number | null; releaseId: string | null }
+// one sub-agent's control as the relay writes it: its own safety valve and nothing else. A sub-agent is never released in place (DX-6184): 50 Arms proposes its
+// handover to the orchestrator, which asks the sub-agent, so the relay writes no request or release for a sub-agent. Extra keys are ignored, not rejected.
+export type AgentControl = { passAtTokens: number }
 
 // the model lines the dashboard knows; a model id `claude-<line>-...` is in that line
 export const MODEL_LINES = ['haiku', 'sonnet', 'opus', 'fable'] as const
@@ -83,14 +83,13 @@ export const modelLineOf = (model: unknown): ModelLine | null => {
 // `absent`: no file (the relay has not written one yet). `control: null`: the session is not under the handshake.
 export type ControlFile = { kind: 'absent' } | { kind: 'control'; control: GateControl | null } | { kind: 'bad'; reason: string }
 
-// The spent releases are kept in $.store, one record per session (the main agent's release) and one per sub-agent (its own), so one agent's release never spends another's.
-// The newest USED_RELEASE_KEEP SESSIONS' records stay (a session's records go or stay together), so the store does not grow with every session ever held and a
-// session's own main record is never evicted by its sub-agents' newer ones.
+// The spent main-agent releases are kept in $.store, one record per session. The newest USED_RELEASE_KEEP SESSIONS' records stay, so the store does not grow with
+// every session ever held.
 export const USED_RELEASE_PREFIX = 'compaction-used-release:'
 export const USED_RELEASE_KEEP = 40
 export type UsedRelease = { releaseId: string; at: number }
-export const usedReleaseKey = (sessionId: string, agentId: string | null = null): string => `${USED_RELEASE_PREFIX}${sessionId}${agentId === null ? '' : `:${agentId}`}`
-// The session a per-session record key belongs to (a session id holds no ':'; what follows one is the agent id).
+export const usedReleaseKey = (sessionId: string): string => `${USED_RELEASE_PREFIX}${sessionId}`
+// The session a per-session record key belongs to (a session id holds no ':').
 const sessionOfKey = (key: string, prefix: string): string => key.slice(prefix.length).split(':')[0]
 export function staleSessionKeys(entries: { key: string; at: number }[], prefix: string): string[] {
   const newest = new Map<string, number>()
@@ -102,14 +101,6 @@ export function staleSessionKeys(entries: { key: string; at: number }[], prefix:
   return entries.filter(e => stale.has(sessionOfKey(e.key, prefix))).map(e => e.key)
 }
 export const staleUsedReleaseKeys = (entries: { key: string; at: number }[]): string[] => staleSessionKeys(entries, USED_RELEASE_PREFIX)
-// the `at` of the sub-agent request the plugin delivered last, kept the same way
-export const ASK_SENT_PREFIX = 'compaction-ask-sent:'
-export type AskSent = { at: string; sentAt: number }
-export const askSentKey = (sessionId: string, agentId: string): string => `${ASK_SENT_PREFIX}${sessionId}:${agentId}`
-export const sentAskAt = (record: unknown): string | null => {
-  const r = record as Partial<AskSent> | null | undefined
-  return r !== null && r !== undefined && typeof r === 'object' && typeof r.at === 'string' ? r.at : null
-}
 // The release a stored record spent, null for none or a record that is not one.
 export const spentReleaseId = (record: unknown): string | null => {
   const r = record as Partial<UsedRelease> | null | undefined
@@ -174,11 +165,7 @@ function parseAgents(value: unknown): Record<string, AgentControl> | string {
     if (id === '') return 'agents has an empty agent id'
     if (!isRecord(a)) return `agents.${id} is not an object`
     if (!isCount(a.passAtTokens)) return `agents.${id}.passAtTokens must be a whole number`
-    const ask = a.ask
-    if (ask !== null && !(isRecord(ask) && isCount(ask.seq) && typeof ask.at === 'string' && ask.at !== '' && typeof ask.text === 'string' && ask.text.trim() !== '')) return `agents.${id}.ask must be null or {seq, at, text}`
-    const release = releaseProblem(a)
-    if (release !== null) return `agents.${id}: ${release}`
-    agents[id] = { passAtTokens: a.passAtTokens, ask: ask as AgentAsk | null, releaseUntilMs: a.releaseUntilMs as number | null, releaseId: a.releaseId as string | null }
+    agents[id] = { passAtTokens: a.passAtTokens }
   }
   return agents
 }
@@ -286,22 +273,16 @@ export type AgentGateInput = {
   file: ControlFile
   // the sub-agent's last model response; null when the plugin has seen none from it
   size: AgentSize | null
-  // the release the plugin spent last for THIS sub-agent
-  usedReleaseId: string | null
-  nowMs: number
 }
 
 // `told: true` is a refusal the person should hear once (the gate cannot establish something it needs), unlike the ordinary hold.
-export type AgentVerdict =
-  | { pass: true; why: 'no-control' | 'unreadable' | 'valve' | 'subagents-off' }
-  | { pass: true; why: 'release'; releaseId: string }
-  | { pass: false; reason: string; told: boolean }
+export type AgentVerdict = { pass: true; why: 'no-control' | 'unreadable' | 'valve' | 'subagents-off' } | { pass: false; reason: string; told: boolean }
 
 // The decision for one AUTOMATIC proposal of the sub-agent `agentId` (a person's own /compact is the main agent's and never reaches this), in order:
 //   a file with no control holds nothing, and neither does one the gate cannot read (fail open, above): there is no handshake to wait for, or none that can be kept;
 //   a control with no sub-agent control (a relay older than the plugin) holds nothing either;
 //   a context size the plugin never saw is refused and told: a size it cannot read is never guessed;
-//   a sub-agent with an entry passes at ITS valve (`passAtTokens`), or once on its own unexpired, unspent release, and is otherwise held;
+//   a sub-agent with an entry passes at ITS valve (`passAtTokens`) and is otherwise held: a sub-agent is never compacted in place, only at its valve or by a person's /compact;
 //   a sub-agent with no entry (not placed yet, or one the dashboard cannot place) passes at the valve of ITS model's line, read from its own responses; a model in no
 //   line, or a line the control has no valve for, is refused and told, never given a guessed model or a default valve.
 export function agentVerdict(input: AgentGateInput): AgentVerdict {
@@ -317,7 +298,6 @@ export function agentVerdict(input: AgentGateInput): AgentVerdict {
   const entry = subagents.agents[agentId]
   if (entry !== undefined) {
     if (size.tokens >= entry.passAtTokens) return { pass: true, why: 'valve' }
-    if (entry.releaseUntilMs !== null && entry.releaseId !== null && entry.releaseUntilMs > input.nowMs && entry.releaseId !== input.usedReleaseId) return { pass: true, why: 'release', releaseId: entry.releaseId }
     return { pass: false, reason: AGENT_HELD_REASON, told: false }
   }
   const line = modelLineOf(size.model)

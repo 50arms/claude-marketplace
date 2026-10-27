@@ -12,7 +12,7 @@ import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeS
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from './compaction/briefing'
-import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, askSentKey, controlPath, parseControlFile, readyRelease, runsSessionCompact, sentAskAt, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, controlPath, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
@@ -82,7 +82,7 @@ import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
-import { bareSubagentId, subagentKey } from './compaction/subagent-key'
+import { subagentKey } from './compaction/subagent-key'
 import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
@@ -157,9 +157,6 @@ const sessionCompactSeen = atom({ plugin: 'danxbot', key: 'sessionCompactSeen' }
 // what the engine's release says about `session.compact`, read once per process (`$.session.version()`), $.state like the flag above: 'unread' until the first question, then 'runs' (a
 // release from SESSION_COMPACT_FLOOR), 'older' (an earlier release), or 'unreadable' (the call threw or named no release: not known to run it, and the person is told once, `engineVersionTold`).
 const engineCompact = atom({ plugin: 'danxbot', key: 'engineCompact' } as const, 'unread' as 'unread' | 'runs' | 'older' | 'unreadable')
-// the sub-agent requests the plugin has claimed to send (`<session>:<agent>` to the request's `at`). One compare-and-set before `$.session.send`, like claimedRelease, so the 5 s check and
-// a turn's sync never both send it; a send that fails gives the claim back.
-const claimedAsks = atom({ plugin: 'danxbot', key: 'claimedAsks' } as const, {} as Record<string, string>)
 // the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
 // check and a person's own /compact racing each other start (or spend) a ready exactly once.
 const claimedRelease = atom({ plugin: 'danxbot', key: 'claimedRelease' } as const, null as string | null)
@@ -2910,21 +2907,15 @@ async function contextReading($: any): Promise<{ tokens: number | null; window: 
   return { tokens: count(context?.tokens), window: count(context?.window) }
 }
 
-// The store keeps the spent-release records and the delivered-request records of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
-// it answers the keys it deleted, so a caller that keeps a claim beside a record can drop the claim with it.
-async function pruneSessionRecords($: any, prefix: string, atField: 'at' | 'sentAt'): Promise<string[]> {
+// The store keeps the spent-release records of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
+async function pruneUsedReleases($: any): Promise<void> {
   const entries: { key: string; at: number }[] = []
   for (const key of await storeOp($, { op: 'keys' })) {
-    if (!key.startsWith(prefix)) continue
+    if (!key.startsWith(USED_RELEASE_PREFIX)) continue
     const rec: any = await storeOp($, { op: 'get', key })
-    entries.push({ key, at: typeof rec?.[atField] === 'number' ? rec[atField] : 0 })
+    entries.push({ key, at: typeof rec?.at === 'number' ? rec.at : 0 })
   }
-  const stale = staleSessionKeys(entries, prefix)
-  for (const key of stale) await storeOp($, { op: 'delete', key })
-  return stale
-}
-async function pruneUsedReleases($: any): Promise<void> {
-  await pruneSessionRecords($, USED_RELEASE_PREFIX, 'at')
+  for (const key of staleSessionKeys(entries, USED_RELEASE_PREFIX)) await storeOp($, { op: 'delete', key })
 }
 
 // one read of the control file per main-loop moment (a turn's start, its end, the idle check) serves everything the plugin does with it: telling the person the
@@ -2942,7 +2933,6 @@ async function syncCompaction($: any, { start }: { start: boolean }): Promise<vo
     syncCompactionTicker($, file)
     await clearLeftoverArming($, file)
     await armSubAgents($, file)
-    await deliverAgentAsks($, file)
     if (start) await startReadyCompaction($, file)
   } catch (err: any) {
     $.ui.toast(`Compaction handshake could not run: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
@@ -3181,16 +3171,8 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
   let agentId: string = e.agentId
   try {
     agentId = subagentKey(e.agentId)
-    const sessionId = String(await $.session.id())
-    const key = usedReleaseKey(sessionId, agentId)
-    const now = await $.clock.now()
-    const v = agentVerdict({ agentId, file: await compactionControl($), size: agentSizes.get(agentId) ?? null, usedReleaseId: spentReleaseId(await storeOp($, { op: 'get', key })), nowMs: now })
-    if (v.pass && v.why === 'release' && spends) {
-      // spent before the compaction runs: this agent's release passes once, however many proposals follow
-      await storeOp($, { op: 'set', key, value: { releaseId: v.releaseId, at: now } })
-      await pruneUsedReleases($)
-      $.ui.toast(`Compacting sub-agent ${agentId} now: it said it is ready.`)
-    } else if (v.pass && v.why === 'valve' && spends) $.ui.toast(`Compacting sub-agent ${agentId} now: its context reached the size where holding it would end its work.`)
+    const v = agentVerdict({ agentId, file: await compactionControl($), size: agentSizes.get(agentId) ?? null })
+    if (v.pass && v.why === 'valve' && spends) $.ui.toast(`Compacting sub-agent ${agentId} now: its context reached the size where holding it would end its work.`)
     else if (!v.pass && v.told && firstTimeAgentFault(`${agentId}: ${v.reason}`)) $.ui.toast(v.reason)
     return v
   } catch (err: any) {
@@ -3198,58 +3180,6 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
     if (compactionFaultTold !== told) $.ui.toast(told)
     compactionFaultTold = told
     return { pass: true, why: 'unreadable' }
-  }
-}
-
-// Each sub-agent's request to prepare for compaction reaches THAT sub-agent only, through `$.session.send`, once per `ask.at`; the text is the dashboard's and never composed here, and
-// the main agent's request is the relay's (it shows it as a record). Only a running sub-agent is sent to: a message to a finished one would resume it from its transcript. A failed
-// send (a refusal, a rejection) is not recorded, so the next sync sends it again.
-async function deliverAgentAsks($: any, file: ControlFile): Promise<void> {
-  // no ask is delivered while sub-agent control is unavailable (an older relay)
-  if (file.kind !== 'control' || file.control === null || file.control.subagents === null) return
-  const asks = Object.entries(file.control.subagents.agents).flatMap(([id, a]) => (a.ask === null ? [] : [{ id, ask: a.ask }]))
-  if (asks.length === 0) return
-  const sessionId = String(await $.session.id())
-  // the engine lists a sub-agent by its bare id, the control keys it `agent-<id>`. Converted per id: one id of the wrong form is left out and told once, and cannot break the sync
-  // (which goes on to start the main agent's ready compaction).
-  const running = new Set<string>()
-  for (const a of (await $.agent.list()) as { id: string; status: string }[]) {
-    if (a.status !== 'running') continue
-    try {
-      running.add(subagentKey(a.id))
-    } catch (err: any) {
-      const told = `Compaction request delivery skips sub-agent ${JSON.stringify(a.id)}: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
-      if (firstTimeAgentFault(told)) $.ui.toast(told)
-    }
-  }
-  let recorded = false
-  for (const { id, ask } of asks) {
-    const key = askSentKey(sessionId, id)
-    if (!running.has(id) || sentAskAt(await storeOp($, { op: 'get', key })) === ask.at) continue
-    // the claim, one compare-and-set before the send: of every sync that read this request as unsent, exactly one sends it
-    let won = false
-    await update($, claimedAsks, cur => {
-      won = cur[key] !== ask.at
-      return won ? { ...cur, [key]: ask.at } : cur
-    })
-    if (!won) continue
-    try {
-      const sent = await $.session.send({ to: { agentId: bareSubagentId(id) }, text: ask.text }) // `to.agentId` is the bare id
-      if (!sent.isDelivered) throw new Error(sent.reason)
-    } catch (err: any) {
-      // the claim goes back, so the next sync sends it again
-      await update($, claimedAsks, cur => Object.fromEntries(Object.entries(cur).filter(([k, at]) => !(k === key && at === ask.at))))
-      const told = `Compaction request for sub-agent ${id} was not delivered: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`
-      if (firstTimeAgentFault(told)) $.ui.toast(told)
-      continue
-    }
-    await storeOp($, { op: 'set', key, value: { at: ask.at, sentAt: await $.clock.now() } })
-    recorded = true
-  }
-  if (recorded) {
-    // a claim lives as long as its delivered-request record (the claimedAsks keys are the record keys)
-    const pruned = new Set(await pruneSessionRecords($, ASK_SENT_PREFIX, 'sentAt'))
-    if (pruned.size > 0) await update($, claimedAsks, cur => Object.fromEntries(Object.entries(cur).filter(([k]) => !pruned.has(k))))
   }
 }
 

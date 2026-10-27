@@ -210,8 +210,6 @@ declare module 'claude-code' {
       sessionCompactSeen: boolean
       // what the engine's release says about `session.compact`, read once per process: 'unread' until first asked, then 'runs' (a release from 2.1.299), 'older', or 'unreadable' (the call threw or named no release).
       engineCompact: 'unread' | 'runs' | 'older' | 'unreadable'
-      // the sub-agent requests claimed for sending (`<session>:<agent>` to the request's `at`), one compare-and-set before `$.session.send`; a failed send gives the claim back.
-      claimedAsks: Record<string, string>
       // the release the plugin claimed to start a compaction with (one compare-and-set, so a ready starts once)
       claimedRelease: string | null
       // who is compacting, one entry per agent (see CompactingState).
