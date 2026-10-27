@@ -123,8 +123,9 @@ first, then end `failed`.
 - Waiting on another card to finish first → a `depends_on` dependency, not `block`.
 - Two cards that can't run together → a `conflict_on` dependency.
 - A human is 100% required (a decision, or an action only a person can take; changing, dropping or replacing a decision a person stated always needs that person, mantra item 3) → open a
-  problem with solutions — that holds the card for human review before it can be
-  dispatched or completed. `block` alone does not.
+  problem with solutions — the problem is the hold: it keeps the card for human review
+  before it can be completed. Never `block` a card for an open problem or an unanswered
+  question.
 - Otherwise, transition `block` with a reason.
 
 ## Mechanics
