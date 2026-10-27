@@ -136,8 +136,14 @@ first, then end `failed`.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
   progress, evidence, gate results, handoffs, blockers; trace, audit and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
-- **Decisions** — a durable decision goes in the card's description or AC, never in a
-  comment or agent note alone.
+- **Decisions** — a consequential decision (a business rule, an architecture choice, a
+  design) is a decision record on its card, `POST /api/issues/<id>/decision-records`, with
+  `made_by` (`human` when a person made it, with that person in `made_by_user_id` and their
+  quoted words and where they said them as `provenance`; `agent` when you did), `impact` and
+  `confidence` (confidence 5 for a person's decision unless they showed clear uncertainty).
+  The card's description or AC says what to build and names the record (`DEC-<n>`), never
+  restating it; a decision is never left in a comment or agent note alone. Changing or
+  deleting a person-approved record is never your call.
 - **Dependencies** — only for a card already known, never a discovery scan.
 - Never write a `status:` literal; transitions derive it.
 - **MCP down** → curl the same route with the credential the dashboard MCP's config names,

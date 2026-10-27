@@ -58,7 +58,8 @@ throughout; this skill is the plan mechanics.
 
 Goal record = outcome measured against; rule record = constraint; caveat record = lasting
 trade-off; architecture section (one per concern) = design; card (on the board it changes) =
-actionable work; AC item = a step finishing an existing card; agent note on the card
+actionable work; decision record on the card = a consequential decision; AC item = a step
+finishing an existing card; agent note on the card
 (`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
 handoffs, blockers; card comment = talking with a person (a reply to what they wrote or
 asked); problem on the card it concerns = user question; steps a person must perform (a
