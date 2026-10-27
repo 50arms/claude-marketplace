@@ -168,10 +168,14 @@ From the dashboard:
   decides the question (for example "do it this other way") is not yet an answer: only a
   person's accepted solution answers. Edit the problem's solutions to state what they said (change
   one, or add one), mark that solution recommended, then tell them to accept it. Never delete the
-  problem. If they tell you to accept it for them, call `request_permission` for `cards.answer`
-  with that reason and answer the problem with that solution only once it is granted; never ask
-  them to click it when they have already told you to do it. A design problem is the person's
-  alone and no permission lets you answer it.
+  problem. If they have already said the answer (in this comment, an earlier one, or in your
+  session thread with them) or told you to accept it for them, answer a question or action
+  problem yourself with `provenance` on the answer route: `source` `comment` with `source_ref`
+  the person's comment id, or `session_thread` with `source_ref` the ISO time of their message
+  in your own session, and `quote` their words verbatim. The server records them as the one who
+  decided and you as who recorded it. Do not call `request_permission` for `cards.answer` for
+  this, and never ask them to click it when they have already said it. Design and docs-review
+  problems are the person's alone: no provenance and no permission lets you answer one.
   One that asks, thinks aloud or says it is unsure decides nothing, however concrete its idea:
   answer what it asks in full (the exact calculation, a worked example) and leave the problem
   open. An option you write from it names every point you added and is never marked

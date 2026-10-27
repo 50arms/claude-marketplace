@@ -66,3 +66,13 @@ test("Live events tells the session what each design event means and when the de
   assert.match(section, /→ the designer owes a turn: run the designer again \("Sub-agents"\), unless one you started is still on it\./);
   assert.match(section, /`retracted the answer to` the design problem → the choice was withdrawn and the gate waits on the person again/);
 });
+
+// DX-6265: a person's answer already said in a comment or the session thread is recorded with provenance, never by asking
+// for cards.answer; design and docs-review problems stay the person's.
+test("a commented-on problem whose answer the person already said is answered with provenance, not request_permission", () => {
+  const section = liveEvents();
+  assert.match(section, /answer a question or action problem yourself with `provenance` on the answer route/);
+  assert.match(section, /Do not call `request_permission` for `cards\.answer` for this/);
+  assert.match(section, /Design and docs-review problems are the person's alone/);
+  assert.doesNotMatch(section, /call `request_permission` for `cards\.answer` with that reason/);
+});
