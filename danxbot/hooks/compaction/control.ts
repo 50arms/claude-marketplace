@@ -66,7 +66,7 @@ export const RELAY_OLDER_NOTICE =
 export const ENGINE_VERSION_NOTICE =
   'The Claude Code release could not be read, so sub-agent compaction stays off until this session has compacted once (the main agent still compacts when it says ready).'
 
-// one sub-agent's control as the relay writes it: its own safety valve and nothing else. A sub-agent is never released in place (DX-6184): 50 Arms proposes its
+// one sub-agent's control as the relay writes it: its own safety valve and nothing else. A sub-agent is never released in place: 50 Arms proposes its
 // handover to the orchestrator, which asks the sub-agent, so the relay writes no request or release for a sub-agent. Extra keys are ignored, not rejected.
 export type AgentControl = { passAtTokens: number }
 
