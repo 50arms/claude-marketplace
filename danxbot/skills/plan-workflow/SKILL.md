@@ -150,7 +150,9 @@ From the dashboard:
 
 - `has not made an MCP call …` → the dashboard's idle nudge: every card it names is workable by
   its recorded state. Work it, or record why you can't: a problem, `depends_on`/`conflict_on`, a
-  block with the real reason, or `rollback_pickup`. Never just ignore it. It is not sent while
+  block with the real reason, or `rollback_pickup`. A card it names as `Filed, not readied` was
+  filed and never readied: ready it now (its order comes from `depends_on`), or open a problem on
+  it when only a person can decide. Never just ignore it. It is not sent while
   you are paused (see "Pausing"); it is held and arrives in the message that ends the pause.
 - `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
   record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
