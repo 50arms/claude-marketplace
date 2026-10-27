@@ -43,7 +43,8 @@ test("issue-workflow splits Mechanics into Comments (a person) and Agent notes (
   const mechanics = issueWorkflow.slice(issueWorkflow.indexOf("## Mechanics"), issueWorkflow.indexOf("## Building"));
   assert.doesNotMatch(mechanics, /is a problem/);
   assert.match(issueWorkflow, /Genuinely need a human → open a problem on the card/);
-  assert.match(cardCreation, /A card never edits docs pages\. It records one docs proposal per page it changes, through `danxbot_api` `POST \/api\/issues\/<card id>\/docs-proposals`/);
+  assert.match(cardCreation, /Edit the docs pages on your own `docs-change\/<name>` branch, cut from the target branch \(never from the card branch\) and holding only docs pages, then submit it through `danxbot_api` `POST \/api\/issues\/<card id>\/docs-submissions` `\{repo, branch, summary\}`/);
+  assert.doesNotMatch(cardCreation, /docs-proposals/);
   assert.doesNotMatch(cardCreation, /Docs impact/);
 });
 

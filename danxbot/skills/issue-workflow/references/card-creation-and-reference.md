@@ -19,7 +19,7 @@ children; work written into a container's own body or AC is a defect.
 
 The type names the slicing rules below use (Story, Feature, Epic) stand for the team's seeded work and container types; the team's own rows from `GET /api/card-types` decide what each type may hold.
 
-A card never edits docs pages. It records one docs proposal per page it changes, through `danxbot_api` `POST /api/issues/<card id>/docs-proposals` `{repo, page_id, new_page_title?, change}` (`new_page_title` set proposes a new page, absent changes the page `page_id`; `change` is the proposed change in prose). Edit one with `PATCH /api/issues/<card id>/docs-proposals/<id>` or remove it with `DELETE` until a docs promotion takes it.
+A docs change is made by the agent itself, never recorded as a proposal. Edit the docs pages on your own `docs-change/<name>` branch, cut from the target branch (never from the card branch) and holding only docs pages, then submit it through `danxbot_api` `POST /api/issues/<card id>/docs-submissions` `{repo, branch, summary}`. The card gets a docs-review problem that a person approves.
 
 ## The slice gate
 
