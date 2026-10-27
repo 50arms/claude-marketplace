@@ -42,11 +42,13 @@ Feature.
 **Other repos' work doesn't count.** A card lives on one board; another repo's slice is its
 own card on its own board.
 
-**A childless container is allowed; children are recommended.** A container card may be
-created with no children as a placeholder while questions or actions are open: record each
-one as a problem on the container, then add the children. An empty container produces no
-work, so add its children as soon as they are known: through `phase_children[]` (optional on
-create, and the convenient way to add them at create) or as child cards with `parent_id`.
+**A container whose slices are known gets its child cards in the same turn it is filed.** A
+container is never dispatched and has no agent, so work written in its own text is never
+built. A child that must wait for another card carries a `depends_on` edge on it; waiting is
+never a reason to leave a slice unfiled. A childless container is only a placeholder while a
+question or action is open, recorded as a problem on it. Add children through
+`phase_children[]` (optional on create, and the convenient way to add them at create) or as
+child cards with `parent_id`.
 Which child types a parent type accepts comes from `GET /api/card-types`.
 
 ## Effort
