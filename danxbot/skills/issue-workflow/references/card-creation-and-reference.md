@@ -72,8 +72,10 @@ card that seems to need `max` is under-planned: plan more instead of raising the
 
 The moment you know B needs A first — at creation or later — add a `depends_on`
 dependency from B to A. `phase_children[]`
-wires no order, and leaving B in Review is not a hold. A card known to need work is readied
-right after filing; Review is triage-only.
+wires no order, and leaving B in Review is not a hold. Every card you file is readied right
+after filing, including a card for an idea a person only floated ("we may consider X"): its
+order comes from `depends_on`, never from Review, and whether to build it is never a question.
+Review is triage-only.
 
 ## Quality gates
 
