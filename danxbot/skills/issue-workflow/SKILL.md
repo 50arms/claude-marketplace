@@ -151,8 +151,7 @@ first, then end `failed`.
   deleting a person-approved record is never your call.
 - **Dependencies** — only for a card already known, never a discovery scan.
 - Never write a `status:` literal; transitions derive it.
-- **MCP down** → curl the same route with the credential the dashboard MCP's config names,
-  plus `x-danx-session-id`.
+- **MCP down** → a failed `danxbot_api` call fails loudly: stop and report the failure. Never retry it another way.
 - **Issue-ref comments** — `// CARD-ID: <reason>` on any non-obvious decision a card forced.
   Before editing a file, grep its anchored refs
   (`grep -rnE '(//|#|--|<!--|/\*|\*)[[:space:]]*[A-Z]+-[0-9]+' <files>`) and load each card.

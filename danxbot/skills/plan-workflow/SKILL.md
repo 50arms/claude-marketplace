@@ -248,7 +248,7 @@ fallback for one.
 ## Card state always true
 
 Delegated pickup → tell the sub-agent its own `CLAUDE_CODE_SESSION_ID` is real (`danxbot_api`
-forwards it; a curl fallback sends it as `x-danx-session-id`). A "fresh worktree" brief →
+forwards it on every call). A "fresh worktree" brief →
 `git worktree list` first; the card may carry unpushed prior work. Nobody working a card you
 hold → `rollback_pickup` with `keep_assignment:true`. Before reporting a card in flight,
 re-read it and confirm In Progress.

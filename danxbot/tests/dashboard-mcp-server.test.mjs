@@ -29,14 +29,26 @@ const NPM = { command: "npm", args: [] };
 let dataDir;
 let registry;
 let env;
+const folders = [];
+/** A session folder; `settings` (when given) is written to its `.claude/settings.local.json`. */
+function sessionFolder(settings) {
+  const dir = mkdtempSync(path.join(tmpdir(), "dash-mcp-folder-"));
+  folders.push(dir);
+  if (settings !== undefined) {
+    mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    writeFileSync(path.join(dir, ".claude", "settings.local.json"), JSON.stringify(settings));
+  }
+  return dir;
+}
 beforeEach(async () => {
   dataDir = mkdtempSync(path.join(tmpdir(), "dash-mcp-data-"));
   registry = await startFakeRegistry({ version: A });
-  env = { CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_DASHBOARD_URL: "https://dash.example", [REGISTRY_BASE_URL_ENV]: registry.url };
+  env = { CLAUDE_PLUGIN_DATA: dataDir, CLAUDE_PROJECT_DIR: sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "https://dash.example" } }), [REGISTRY_BASE_URL_ENV]: registry.url };
 });
 afterEach(async () => {
   await registry.stop();
   rmSync(dataDir, { recursive: true, force: true });
+  for (const dir of folders.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 /** Records `version` the way the launcher does. */
@@ -125,11 +137,38 @@ function harness({ npmMode = "ok" } = {}) {
   return { timeline, spawns, servers, npms, refreshes, errLines, options: { env, spawnFn, fetchFn, stderr, npm: NPM } };
 }
 
-describe("dashboardUrl", () => {
-  test("an explicit DANXBOT_DASHBOARD_URL beats the plugin's configured value, which beats nothing", () => {
-    assert.equal(dashboardUrl({ DANXBOT_DASHBOARD_URL: "https://a", DANXBOT_PLUGIN_DASHBOARD_URL: "https://b" }), "https://a");
-    assert.equal(dashboardUrl({ DANXBOT_DASHBOARD_URL: "", DANXBOT_PLUGIN_DASHBOARD_URL: "https://b" }), "https://b");
-    assert.throws(() => dashboardUrl({}), /no dashboard URL/);
+describe("dashboardUrl: chosen per session folder, never machine-wide", () => {
+  test("the folder's settings.local.json names the dashboard, beating the committed settings.json and the shell", () => {
+    const folder = sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } });
+    writeFileSync(path.join(folder, ".claude", "settings.json"), JSON.stringify({ env: { DANXBOT_DASHBOARD_URL: "https://committed" } }));
+    assert.equal(dashboardUrl({ DANXBOT_DASHBOARD_URL: "https://shell" }, folder), "http://localhost:5555");
+  });
+
+  test("the committed settings.json names the dashboard when the local file does not", () => {
+    const folder = sessionFolder();
+    mkdirSync(path.join(folder, ".claude"), { recursive: true });
+    writeFileSync(path.join(folder, ".claude", "settings.json"), JSON.stringify({ env: { DANXBOT_DASHBOARD_URL: "https://committed" } }));
+    assert.equal(dashboardUrl({}, folder), "https://committed");
+  });
+
+  test("a DANXBOT_DASHBOARD_URL from the shell or a user setting, with no folder naming one, is refused: it would move every session", () => {
+    assert.throws(() => dashboardUrl({ DANXBOT_DASHBOARD_URL: "http://localhost:5555" }, sessionFolder()), /moves every session at once.*settings\.local\.json/);
+  });
+
+  test("with no folder and no shell value, the plugin's dashboard_url option (the hosted default) is used", () => {
+    assert.equal(dashboardUrl({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted" }, sessionFolder()), "https://hosted");
+  });
+
+  test("nothing configured fails loudly", () => {
+    assert.throws(() => dashboardUrl({}, sessionFolder()), /no dashboard URL/);
+  });
+
+  test("a settings file that is not JSON, or names a URL that is not http(s), fails loudly and never falls through to another dashboard", () => {
+    const broken = sessionFolder();
+    mkdirSync(path.join(broken, ".claude"), { recursive: true });
+    writeFileSync(path.join(broken, ".claude", "settings.local.json"), "{ not json");
+    assert.throws(() => dashboardUrl({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted" }, broken), /not readable JSON/);
+    assert.throws(() => dashboardUrl({}, sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "localhost:5555" } })), /not an http\(s\) URL/);
   });
 });
 
@@ -346,7 +385,7 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     recordAt(A);
     layDown(A);
     const h = harness();
-    h.options.env = { ...env, DANXBOT_DASHBOARD_URL: "", DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted", DANX_DASHBOARD_CREDENTIAL: "dispatch-secret" };
+    h.options.env = { ...env, CLAUDE_PROJECT_DIR: sessionFolder(), DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted", DANX_DASHBOARD_CREDENTIAL: "dispatch-secret" };
     await launch(h.options);
     const [{ options }] = h.servers;
     assert.equal(options.env.DANXBOT_DASHBOARD_URL, "https://hosted");
@@ -354,7 +393,7 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     assert.equal(options.stdio, "inherit", "the server owns the MCP stream");
 
     const none = harness();
-    none.options.env = { ...env, DANXBOT_DASHBOARD_URL: "" };
+    none.options.env = { ...env, CLAUDE_PROJECT_DIR: sessionFolder() };
     await assert.rejects(launch(none.options), /no dashboard URL/);
     assert.deepEqual(none.timeline, []);
   });
@@ -537,7 +576,7 @@ describe("the launcher process", () => {
     return spawnSync(process.execPath, [LAUNCHER], {
       input: "",
       encoding: "utf8",
-      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9", [START_WAIT_ENV]: "1", ...extraEnv },
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, CLAUDE_PROJECT_DIR: env.CLAUDE_PROJECT_DIR, [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9", [START_WAIT_ENV]: "1", ...extraEnv },
     });
   }
 
@@ -546,7 +585,7 @@ describe("the launcher process", () => {
     const bin = installedBin(dataDir, "0.1.50");
     mkdirSync(path.dirname(bin), { recursive: true });
     writeFileSync(bin, `process.stdout.write(JSON.stringify({ url: process.env.DANXBOT_DASHBOARD_URL, cred: process.env.DANX_DASHBOARD_CREDENTIAL ?? null, repo: process.env.DANX_REPO_NAME ?? null })); process.exit(4);`);
-    const result = run({ DANXBOT_DASHBOARD_URL: "", DANXBOT_PLUGIN_DASHBOARD_URL: "https://danxbot.sageus.ai", DANX_DASHBOARD_CREDENTIAL: "dispatch-secret" });
+    const result = run({ CLAUDE_PROJECT_DIR: sessionFolder(), DANXBOT_PLUGIN_DASHBOARD_URL: "https://danxbot.sageus.ai", DANX_DASHBOARD_CREDENTIAL: "dispatch-secret" });
     assert.equal(result.status, 4, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), { url: "https://danxbot.sageus.ai", cred: null, repo: null });
   });
@@ -556,22 +595,18 @@ describe("the launcher process", () => {
     const bin = installedBin(dataDir, "0.1.50");
     mkdirSync(path.dirname(bin), { recursive: true });
     writeFileSync(bin, `process.stdout.write("real-server"); process.exit(4);`);
-    const project = mkdtempSync(path.join(tmpdir(), "dash-mcp-project-"));
-    try {
-      writeFileSync(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "danx-dashboard": { command: "node", args: ["x.mjs"] } } }));
-      const result = run({ CLAUDE_PROJECT_DIR: project, DANXBOT_DASHBOARD_URL: "https://danxbot.sageus.ai" });
-      assert.equal(result.status, 4, result.stderr);
-      assert.equal(result.stdout, "real-server");
-    } finally {
-      rmSync(project, { recursive: true, force: true });
-    }
+    const project = sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "https://danxbot.sageus.ai" } });
+    writeFileSync(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "danx-dashboard": { command: "node", args: ["x.mjs"] } } }));
+    const result = run({ CLAUDE_PROJECT_DIR: project });
+    assert.equal(result.status, 4, result.stderr);
+    assert.equal(result.stdout, "real-server");
   });
 
   /** Runs the real launcher with an async spawn (a launcher that exits must not be waited out by the refresh child that holds its stderr). */
   function runAsync(extraEnv = {}) {
     const child = spawn(process.execPath, [LAUNCHER], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_DASHBOARD_URL: "https://dash.example", [REGISTRY_BASE_URL_ENV]: registry.url, [NPM_CLI_ENV]: FAKE_NPM, [START_WAIT_ENV]: "1", ...extraEnv },
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, CLAUDE_PROJECT_DIR: env.CLAUDE_PROJECT_DIR, [REGISTRY_BASE_URL_ENV]: registry.url, [NPM_CLI_ENV]: FAKE_NPM, [START_WAIT_ENV]: "1", ...extraEnv },
     });
     let stderr = "";
     child.stderr.on("data", (chunk) => (stderr += chunk));

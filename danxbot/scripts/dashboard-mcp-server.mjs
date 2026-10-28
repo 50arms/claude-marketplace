@@ -22,18 +22,19 @@
 // it runs, so another session's prune never removes it. The launcher exits when the server does, without waiting for a refresh still
 // running in the background.
 //
-// WHICH DASHBOARD. `dashboardUrl(env)`: DANXBOT_DASHBOARD_URL when set (the user's shell, or an `env`
-// block in a repo's committed `.claude/settings.json`, which is the per-repo or per-company override),
-// else the plugin's `userConfig.dashboard_url` (plugin.json passes it as DANXBOT_PLUGIN_DASHBOARD_URL;
-// its default is the hosted dashboard). Claude Code reads `pluginConfigs` from user and managed
-// settings only, never from a project's. DANX_REPO_NAME / DANXBOT_BOARD_NAME stay unset: the session names its
-// board per call (the `board` argument) or through `plan_connect`.
+// WHICH DASHBOARD (`dashboardUrl`, chosen PER SESSION FOLDER, never machine-wide). The folder's own
+// `.claude/settings.local.json` (gitignored: the session's own switch) or `.claude/settings.json` `env.DANXBOT_DASHBOARD_URL`
+// names the dashboard. With none, a DANXBOT_DASHBOARD_URL in the shell or a user setting is REFUSED (it would move every session
+// at once), and the plugin's `userConfig.dashboard_url` (passed as DANXBOT_PLUGIN_DASHBOARD_URL; its default is the hosted
+// dashboard) is used. DANX_REPO_NAME / DANXBOT_BOARD_NAME stay unset: the session names its board per call (the `board` argument)
+// or through `plan_connect`.
 //
 // The ONE dashboard server: no connected repo declares its own `danx-dashboard` entry any more, so Claude
 // Code lists exactly this one, named `plugin:danxbot:danx-dashboard`, in every folder.
 //
 // stdout is the MCP stream, so nothing here may print to it: every notice goes to stderr, and npm's output is captured.
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -65,10 +66,58 @@ export const START_WAIT_MS = 22_000;
 /** The tests' seam, like `DASHBOARD_MCP_REGISTRY_TIMEOUT_MS`: bounds the start's wait so a hang test does not wait START_WAIT_MS out. */
 export const START_WAIT_ENV = "DASHBOARD_MCP_START_WAIT_MS";
 
-/** The dashboard this session talks to: an explicit DANXBOT_DASHBOARD_URL, else the plugin's configured value. */
-export function dashboardUrl(env) {
-  const url = env.DANXBOT_DASHBOARD_URL || env.DANXBOT_PLUGIN_DASHBOARD_URL;
-  if (!url) throw new Error("no dashboard URL: set DANXBOT_DASHBOARD_URL, or the plugin's dashboard_url option");
+/** The per-folder settings files a session's dashboard can be named in: the gitignored local one wins over the committed one. */
+export const FOLDER_SETTINGS_FILES = [".claude/settings.local.json", ".claude/settings.json"];
+
+/**
+ * The dashboard named by this folder's own settings (`env.DANXBOT_DASHBOARD_URL` in `.claude/settings.local.json`, then
+ * `.claude/settings.json`), or undefined when neither names one. A settings file that is unreadable, not JSON, or names a URL
+ * that is not http(s) fails loudly: a session never silently falls back to another dashboard.
+ */
+export function folderDashboardUrl(projectDir) {
+  for (const rel of FOLDER_SETTINGS_FILES) {
+    const file = path.join(projectDir, rel);
+    if (!existsSync(file)) continue;
+    let settings;
+    try {
+      settings = JSON.parse(readFileSync(file, "utf8"));
+    } catch (err) {
+      throw new Error(`${file} is not readable JSON (${err.message}): fix it, or remove its DANXBOT_DASHBOARD_URL`);
+    }
+    const url = settings?.env?.DANXBOT_DASHBOARD_URL;
+    if (url === undefined) continue;
+    if (!isHttpUrl(url)) throw new Error(`${file} env.DANXBOT_DASHBOARD_URL is not an http(s) URL: ${JSON.stringify(url)}`);
+    return url;
+  }
+  return undefined;
+}
+
+function isHttpUrl(value) {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The dashboard this session talks to, chosen per session folder, never machine-wide:
+ *  1. the folder's own `.claude/settings.local.json` / `.claude/settings.json` `env.DANXBOT_DASHBOARD_URL` (Claude Code
+ *     merges these into the environment, so this is the value the folder names);
+ *  2. a DANXBOT_DASHBOARD_URL that reached the environment WITHOUT a folder naming it came from the shell or a user-level
+ *     setting, which would move every session on the machine at once: refused, naming the folder file to use instead;
+ *  3. the plugin's `dashboard_url` option, the hosted default, which is the only machine-wide value and is the production dashboard.
+ */
+export function dashboardUrl(env, projectDir = env.CLAUDE_PROJECT_DIR || process.cwd()) {
+  const folder = folderDashboardUrl(projectDir);
+  if (folder !== undefined) return folder;
+  if (env.DANXBOT_DASHBOARD_URL) {
+    throw new Error(`DANXBOT_DASHBOARD_URL is set in the shell or a user setting, which moves every session at once: name this folder's dashboard in ${path.join(projectDir, ".claude", "settings.local.json")} under env instead`);
+  }
+  const url = env.DANXBOT_PLUGIN_DASHBOARD_URL;
+  if (!url) throw new Error("no dashboard URL: name one in this folder's .claude/settings.local.json env (DANXBOT_DASHBOARD_URL), or set the plugin's dashboard_url option");
+  if (!isHttpUrl(url)) throw new Error(`the plugin's dashboard_url option is not an http(s) URL: ${JSON.stringify(url)}`);
   return url;
 }
 
