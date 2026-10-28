@@ -138,9 +138,14 @@ first, then end `failed`.
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
 - **Decisions** — a consequential decision (a business rule, an architecture choice, a
   design) is a decision record on its card, `POST /api/issues/<id>/decision-records`, with
-  `made_by` (`human` when a person made it, with that person in `made_by_user_id` and their
-  quoted words and where they said them as `provenance`; `agent` when you did), `impact` and
-  `confidence` (confidence 5 for a person's decision unless they showed clear uncertainty).
+  `made_by` (`human` when a person made it, with that person in `made_by_user_id`; `agent`
+  when you did), `provenance` (a list of provenance records: for a person's decision at least
+  one `{source, source_ref, quote}` quoting their words verbatim from a comment of theirs or
+  your own session with them, so the server checks it; `{reasoning}` for your own why; a
+  record you add later to a decision as it stands is
+  `POST /api/issues/<id>/decision-records/<recordId>/provenance` `{version, record}`),
+  `impact` and `confidence` (confidence 5 for a person's decision unless they showed clear
+  uncertainty).
   The card's description or AC says what to build and names the record (`DEC-<n>`), never
   restating it; a decision is never left in a comment or agent note alone. Changing or
   deleting a person-approved record is never your call.
