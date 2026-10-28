@@ -16,7 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, appendRefreshLog, drainRefreshLog, refreshLogFile, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
 import { REFRESH_FLAG, START_WAIT_ENV, START_WAIT_MS, dashboardChoice, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
-import { LOCAL_DASHBOARD_MARKER_REL, LOCAL_DASHBOARD_MARKER_SCHEMA } from "../scripts/dashboard-mcp-server.mjs";
+import { LOCAL_DASHBOARD_FOLDER, LOCAL_DASHBOARD_MARKER_REL, LOCAL_DASHBOARD_MARKER_SCHEMA } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -201,7 +201,7 @@ describe("the local-dashboard marker contract mirrors the danxbot owner", () => 
     const contract = JSON.parse(readFileSync(new URL("./local-dashboard-contract.json", import.meta.url), "utf8"));
     assert.equal(LOCAL_DASHBOARD_MARKER_REL, contract.marker);
     assert.equal(LOCAL_DASHBOARD_MARKER_SCHEMA, contract.schema);
-    assert.equal(contract.folder, "local-dashboard");
+    assert.equal(LOCAL_DASHBOARD_FOLDER, contract.folder);
   });
 });
 
@@ -232,13 +232,7 @@ describe("dashboardChoice: a local-dashboard folder (DEC-77) is refused rather t
   test("the launcher refuses the hosted default when CLAUDE_PROJECT_DIR is unset: it cannot tell which folder it serves (DEC-73)", async () => {
     const project = sessionFolder();
     const env = { CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai", [REGISTRY_BASE_URL_ENV]: registry.url };
-    const cwd = process.cwd();
-    process.chdir(project);
-    try {
-      await assert.rejects(() => launch({ env, stderr: { write() {} } }), /CLAUDE_PROJECT_DIR is unset/);
-    } finally {
-      process.chdir(cwd);
-    }
+    await assert.rejects(() => launch({ env, cwd: project, stderr: { write() {} } }), /CLAUDE_PROJECT_DIR is unset/);
   });
 
   test("an unmarked folder names its source: the folder's settings file, or the plugin's hosted option", () => {

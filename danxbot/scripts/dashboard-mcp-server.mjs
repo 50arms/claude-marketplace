@@ -75,6 +75,7 @@ export const FOLDER_SETTINGS_FILES = [".claude/settings.local.json", ".claude/se
  */
 // MIRROR of the marker contract owned by the danxbot repo (src/machine-clean/local-dashboard-folder.ts, rule .claude/rules/dashboard-api-access.md).
 // Change them there first, then here.
+export const LOCAL_DASHBOARD_FOLDER = "local-dashboard";
 export const LOCAL_DASHBOARD_MARKER_REL = ".claude/local-dashboard.json";
 export const LOCAL_DASHBOARD_MARKER_SCHEMA = 1;
 
@@ -216,8 +217,8 @@ async function refreshBeforeStart(recorded, { env, spawnFn, stderr, waitMs, time
  * (npm, the server and the refresh child), `fetchFn` (the registry), `stderr`, `startWaitMs` (else START_WAIT_ENV), `timers` ({setTimeout, clearTimeout}: the start's wait, so a test fires it at a chosen moment), and `installVersion`'s
  * `npm` / `installTimeoutMs`.
  */
-export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fetch, stderr = process.stderr, onServer = () => {}, startWaitMs, timers = { setTimeout, clearTimeout }, ...installOptions } = {}) {
-  const projectDir = env.CLAUDE_PROJECT_DIR || process.cwd();
+export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fetch, stderr = process.stderr, onServer = () => {}, startWaitMs, timers = { setTimeout, clearTimeout }, cwd = process.cwd(), ...installOptions } = {}) {
+  const projectDir = env.CLAUDE_PROJECT_DIR || cwd;
   const choice = dashboardChoice(env, projectDir);
   const { url, source } = choice;
   // DEC-73: the hosted default is never chosen by guessing the folder. Claude Code always sets CLAUDE_PROJECT_DIR for a plugin's MCP
