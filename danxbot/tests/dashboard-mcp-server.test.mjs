@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, appendRefreshLog, drainRefreshLog, refreshLogFile, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
-import { REFRESH_FLAG, START_WAIT_ENV, START_WAIT_MS, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
+import { REFRESH_FLAG, START_WAIT_ENV, START_WAIT_MS, dashboardChoice, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -181,6 +181,50 @@ describe("dashboardUrl: chosen per session folder, never machine-wide", () => {
     writeFileSync(path.join(broken, ".claude", "settings.local.json"), "{ not json");
     assert.throws(() => dashboardUrl({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted" }, broken), /not readable JSON/);
     assert.throws(() => dashboardUrl({}, sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "localhost:5555" } })), /not an http\(s\) URL/);
+  });
+});
+
+/** DEC-77: a local-dashboard folder carries the marker the launcher reads; `url` is what the marker names. */
+function localFolder({ settings, marker }) {
+  const dir = sessionFolder(settings);
+  if (marker !== undefined) {
+    mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    writeFileSync(path.join(dir, ".claude", "local-dashboard.json"), JSON.stringify(marker));
+  }
+  return dir;
+}
+
+describe("dashboardChoice: a local-dashboard folder (DEC-77) is refused rather than sent to the hosted default", () => {
+  test("a marked folder whose settings name its URL uses that URL, even with the hosted URL in the shell (DEC-73)", () => {
+    const folder = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } }, marker: { schema: 1, session: "local-dashboard", url: "http://localhost:5555" } });
+    const env = { DANXBOT_DASHBOARD_URL: "https://app.50arms.ai", DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" };
+    assert.deepEqual(dashboardChoice(env, folder), { url: "http://localhost:5555", source: `${path.join(folder, ".claude", "settings.local.json")} (marked local-dashboard session)` });
+  });
+
+  test("a marked folder whose settings name NO URL is refused, even when the plugin option is set: it never falls back to hosted", () => {
+    const folder = localFolder({ settings: {}, marker: { schema: 1, session: "local-dashboard", url: "http://localhost:5555" } });
+    assert.throws(() => dashboardChoice({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" }, folder), /refusing to start on the hosted default/);
+  });
+
+  test("a marker and the folder's settings that name different dashboards are refused", () => {
+    const folder = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5600" } }, marker: { schema: 1, session: "local-dashboard", url: "http://localhost:5555" } });
+    assert.throws(() => dashboardChoice({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" }, folder), /they must agree/);
+  });
+
+  test("a marker of another schema, or without an http(s) url, is refused loudly", () => {
+    const wrongSchema = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } }, marker: { schema: 2, session: "local-dashboard", url: "http://localhost:5555" } });
+    assert.throws(() => dashboardChoice({}, wrongSchema), /schema-1 local-dashboard marker/);
+    const noUrl = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } }, marker: { schema: 1, session: "local-dashboard" } });
+    assert.throws(() => dashboardChoice({}, noUrl), /schema-1 local-dashboard marker/);
+  });
+
+  test("an unmarked folder names its source: the folder's settings file, or the plugin's hosted option", () => {
+    const folder = sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } });
+    assert.deepEqual(dashboardChoice({}, folder), { url: "http://localhost:5555", source: path.join(folder, ".claude", "settings.local.json") });
+    assert.deepEqual(dashboardChoice({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" }, sessionFolder()), {
+      url: "https://app.50arms.ai",
+      source: "the plugin's dashboard_url option (hosted default)",
+    });
   });
 });
 
