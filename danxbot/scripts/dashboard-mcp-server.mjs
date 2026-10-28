@@ -73,6 +73,8 @@ export const FOLDER_SETTINGS_FILES = [".claude/settings.local.json", ".claude/se
  * `make local-dashboard-session` in the operator checkout). The launcher refuses a marked folder whose settings name no URL, so a
  * session meant for the local dashboard can never fall back to the hosted default.
  */
+// MIRROR of the marker contract owned by the danxbot repo (src/machine-clean/local-dashboard-folder.ts, rule .claude/rules/dashboard-api-access.md).
+// Change them there first, then here.
 export const LOCAL_DASHBOARD_MARKER_REL = ".claude/local-dashboard.json";
 export const LOCAL_DASHBOARD_MARKER_SCHEMA = 1;
 
@@ -151,16 +153,16 @@ export function dashboardChoice(env, projectDir = env.CLAUDE_PROJECT_DIR || proc
     if (!sameDashboard(marker.url, folder.url)) {
       throw new Error(`${folder.file} names ${folder.url}, but ${marker.file} names ${marker.url}: they must agree; re-run make local-dashboard-session`);
     }
-    return { url: folder.url, source: `${folder.file} (marked local-dashboard session)` };
+    return { url: folder.url, source: `${folder.file} (marked local-dashboard session)`, kind: "folder" };
   }
-  if (folder !== undefined) return { url: folder.url, source: folder.file };
+  if (folder !== undefined) return { url: folder.url, source: folder.file, kind: "folder" };
   const url = env.DANXBOT_PLUGIN_DASHBOARD_URL;
   if (!url) throw new Error("no dashboard URL: name one in this folder's .claude/settings.local.json env (DANXBOT_DASHBOARD_URL), or set the plugin's dashboard_url option");
   if (!isHttpUrl(url)) throw new Error(`the plugin's dashboard_url option is not an http(s) URL: ${JSON.stringify(url)}`);
   if (env.DANXBOT_DASHBOARD_URL && !sameDashboard(env.DANXBOT_DASHBOARD_URL, url)) {
     throw new Error(`DANXBOT_DASHBOARD_URL=${env.DANXBOT_DASHBOARD_URL} is set in the shell or a user setting, which moves every session at once: name this folder's dashboard in ${path.join(projectDir, ".claude", "settings.local.json")} under env instead`);
   }
-  return { url, source: "the plugin's dashboard_url option (hosted default)" };
+  return { url, source: "the plugin's dashboard_url option (hosted default)", kind: "plugin-option" };
 }
 
 /** The URL this session talks to (see `dashboardChoice`). */
@@ -215,10 +217,17 @@ async function refreshBeforeStart(recorded, { env, spawnFn, stderr, waitMs, time
  * `npm` / `installTimeoutMs`.
  */
 export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fetch, stderr = process.stderr, onServer = () => {}, startWaitMs, timers = { setTimeout, clearTimeout }, ...installOptions } = {}) {
-  const { url, source } = dashboardChoice(env);
+  const projectDir = env.CLAUDE_PROJECT_DIR || process.cwd();
+  const choice = dashboardChoice(env, projectDir);
+  const { url, source } = choice;
+  // DEC-73: the hosted default is never chosen by guessing the folder. Claude Code always sets CLAUDE_PROJECT_DIR for a plugin's MCP
+  // server; without it the launcher cannot tell which session folder this is, so it refuses rather than fall back to hosted.
+  if (choice.kind === "plugin-option" && !env.CLAUDE_PROJECT_DIR) {
+    throw new Error(`CLAUDE_PROJECT_DIR is unset, so this launcher cannot tell which session folder it serves, and refuses the hosted default (${url}). Claude Code sets it for every plugin MCP server: start the session through Claude Code, or set CLAUDE_PROJECT_DIR`);
+  }
   // Which folder file (or the plugin option) decided the dashboard. Only with DANXBOT_DASHBOARD_TRACE set: a start's stderr is
   // otherwise empty or one line (DX-5314), and a trace must not break that.
-  if (env.DANXBOT_DASHBOARD_TRACE) stderr.write(`${PREFIX} dashboard ${url} from ${source}
+  if (env.DANXBOT_DASHBOARD_TRACE) stderr.write(`${PREFIX} dashboard ${url} from ${source}; project dir ${projectDir} (from ${env.CLAUDE_PROJECT_DIR ? "CLAUDE_PROJECT_DIR" : "the working directory"})
 `);
   const waitMs = startWaitMs ?? (Number(env[START_WAIT_ENV]) > 0 ? Number(env[START_WAIT_ENV]) : START_WAIT_MS);
   const options = { env, spawnFn, fetchFn, ...installOptions };

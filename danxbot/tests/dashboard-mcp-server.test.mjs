@@ -198,7 +198,7 @@ describe("dashboardChoice: a local-dashboard folder (DEC-77) is refused rather t
   test("a marked folder whose settings name its URL uses that URL, even with the hosted URL in the shell (DEC-73)", () => {
     const folder = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } }, marker: { schema: 1, session: "local-dashboard", url: "http://localhost:5555" } });
     const env = { DANXBOT_DASHBOARD_URL: "https://app.50arms.ai", DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" };
-    assert.deepEqual(dashboardChoice(env, folder), { url: "http://localhost:5555", source: `${path.join(folder, ".claude", "settings.local.json")} (marked local-dashboard session)` });
+    assert.deepEqual(dashboardChoice(env, folder), { url: "http://localhost:5555", source: `${path.join(folder, ".claude", "settings.local.json")} (marked local-dashboard session)`, kind: "folder" });
   });
 
   test("a marked folder whose settings name NO URL is refused, even when the plugin option is set: it never falls back to hosted", () => {
@@ -218,12 +218,25 @@ describe("dashboardChoice: a local-dashboard folder (DEC-77) is refused rather t
     assert.throws(() => dashboardChoice({}, noUrl), /schema-1 local-dashboard marker/);
   });
 
+  test("the launcher refuses the hosted default when CLAUDE_PROJECT_DIR is unset: it cannot tell which folder it serves (DEC-73)", async () => {
+    const project = sessionFolder();
+    const env = { CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai", [REGISTRY_BASE_URL_ENV]: registry.url };
+    const cwd = process.cwd();
+    process.chdir(project);
+    try {
+      await assert.rejects(() => launch({ env, stderr: { write() {} } }), /CLAUDE_PROJECT_DIR is unset/);
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
   test("an unmarked folder names its source: the folder's settings file, or the plugin's hosted option", () => {
     const folder = sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } });
-    assert.deepEqual(dashboardChoice({}, folder), { url: "http://localhost:5555", source: path.join(folder, ".claude", "settings.local.json") });
+    assert.deepEqual(dashboardChoice({}, folder), { url: "http://localhost:5555", source: path.join(folder, ".claude", "settings.local.json"), kind: "folder" });
     assert.deepEqual(dashboardChoice({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" }, sessionFolder()), {
       url: "https://app.50arms.ai",
       source: "the plugin's dashboard_url option (hosted default)",
+      kind: "plugin-option",
     });
   });
 });
