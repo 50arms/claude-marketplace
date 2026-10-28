@@ -127,7 +127,7 @@ for (const surface of SURFACES) {
     })
 
     test('a failed load toasts its reason once, on the change into the error', async ($, on) => {
-      const d = dashboard(on, { listFails: true })
+      const d = dashboard(on, { sessionReadFails: true })
       await startSession($, d, surface)
       await forceRefresh($, d)
       expect(d.toasts.filter(t => t.startsWith('Plan load failed: '))).toHaveLength(1)

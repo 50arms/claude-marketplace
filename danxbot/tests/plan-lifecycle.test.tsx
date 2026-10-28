@@ -58,7 +58,7 @@ describe('the MCP server connects after session start', () => {
   })
 
   test('a first load that fails with any other error (a refusal, a 500) is not retried at session start', async ($, on) => {
-    const d = dashboard(on, { listFails: true })
+    const d = dashboard(on, { sessionReadFails: true })
     await startSession($, d, 'desktop')
     expect(d.viewClaims()).toBe(1)
     for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)

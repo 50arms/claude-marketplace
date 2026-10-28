@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// DX-4317: every link the band draws is built on the origin the plan list
+// DX-4317: every link the band draws is built on the origin the session read
 // answered (`dashboard_url`), never on a constant; an answer without a usable origin is an error state.
 import { describe, expect } from 'claude-code/testing'
 

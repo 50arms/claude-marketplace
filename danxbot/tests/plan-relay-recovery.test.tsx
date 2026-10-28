@@ -311,7 +311,7 @@ for (const surface of SURFACES) {
       notConnected(d, 40)
       await startSession($, d, surface)
       // the 4th failure (8 s) is the one that asks the dashboard: it answers a fault
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       await d.clock.advance(20_000)
       const calls = d.relay.calls.length
       expect(calls).toBeGreaterThanOrEqual(5)

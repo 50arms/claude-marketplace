@@ -106,17 +106,17 @@ This session replaced one on PLAN-23; 3 events wait.`])
 
     test('a CONNECTED session (its record is on disk) whose plans read fails is told one warning line, at start and at a sub-agent start', async ($, on) => {
       const d = await started($, on)
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines).toEqual([eventFailureLine('session_start', '500: plans boom')])
-      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: plans boom')])
+      expect(r.startLines).toEqual([eventFailureLine('session_start', '500: session boom')])
+      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: session boom')])
       await d.clock.settle()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
     test('DX-3421: a session with no record on disk whose plans read fails is quiet: it is not known to be on a plan', async ($, on) => {
       const d = await started($, on, { connected: false })
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
       expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
       await d.clock.settle()

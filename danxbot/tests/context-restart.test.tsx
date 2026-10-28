@@ -146,7 +146,7 @@ ${NOTICE}`])
 
     test('DX-3421: a plans read that fails with a dashboard fault is silent for the event text, and the restart notice is still asked', async ($, on) => {
       const d = await started($, on, { connected: false })
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       d.world.restart.json = { notice: NOTICE }
       const r = await firstPrompt($, 'startup')
       expect(r.startLines).toEqual([NOTICE])
@@ -155,7 +155,7 @@ ${NOTICE}`])
 
     test('DX-3421: a plans read that fails with a dashboard fault and no notice is quiet', async ($, on) => {
       const d = await started($, on, { connected: false })
-      d.world.plansStatus = 503
+      d.world.sessionReadStatus = 503
       expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
       expect(d.contextReads.filter(p => p.startsWith('/api/reminders/event/'))).toEqual([])
     })

@@ -75,10 +75,10 @@ for (const surface of SURFACES) {
       })
     }
 
-    // the agent and the plan come from the plan-list read: a load that failed before it read the session names neither (the band says Disconnected then
+    // the agent and the plan come from the session read: a load that failed before it read the session names neither (the band says Disconnected then
     // too); one that failed after the session was read keeps both
     for (const [name, options] of [
-      ['a plan-list 500', { listFails: true }],
+      ['a session-read 500', { sessionReadFails: true }],
       ['a thrown MCP call (timeout)', { mcp: 'flaky' }],
       ['a bad dashboard_url', { dashboardUrl: 'not a url' }],
     ] as const) {
@@ -131,7 +131,7 @@ for (const surface of SURFACES) {
     for (const [name, options] of [
       ['connected', {}],
       ['not connected', { connected: false }],
-      ['an error view', { listFails: true }],
+      ['an error view', { sessionReadFails: true }],
     ] as const) {
       test(`a press from ${name} clears dismissed; it tells the model nothing and toasts nothing of its own`, async ($, on) => {
         const d = dashboard(on, options as any)

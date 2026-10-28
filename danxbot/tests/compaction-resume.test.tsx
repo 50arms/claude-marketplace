@@ -111,7 +111,7 @@ for (const surface of SURFACES) {
 
     test('when the dashboard reads fail the prompt is the warning line plus the resume procedure', async ($, on) => {
       const d = await started($, on)
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       await restartMain($)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)
