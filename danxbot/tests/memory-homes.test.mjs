@@ -45,22 +45,19 @@ test("the description every session sees sends a correction to the skill before 
   assert.match(description, /never a memory file or a new skill\.$/);
 });
 
-test("the list of homes rules a memory file out and moves a correction already saved as one", () => {
+test("the list of homes rules a memory file out", () => {
   const locate = section(fixBehavior, "## 3. Locate the target and edit it");
   assert.match(locate, NEVER_A_MEMORY_FILE);
-  assert.match(locate, /it reaches one project on one machine; no dispatched worker, other repo or other machine reads it/);
-  assert.match(locate, /a correction already saved as one moves to its home above and the memory is deleted/);
   assert.equal(count(fixBehavior, NEVER_A_MEMORY_FILE), 1);
 });
 
-// DX-6379 — the placement standard is one 50 Arms docs page; the skill reads it before it picks a home, and keeps a short
-// form inline because a team with no board on the danxbot repo cannot read danxbot's hosted docs.
-test("the list of homes reads the placement standard first and keeps a short form for when it cannot", () => {
+// DX-6379 / DX-6382 — the placement standard is one 50 Arms docs page, readable by every team's agents since DX-6382, so
+// the skill points at it and keeps no inline copy (the page holds the homes and why a memory file is never one).
+test("the list of homes reads the placement standard first and keeps no inline copy of it", () => {
   const locate = section(fixBehavior, "## 3. Locate the target and edit it");
   assert.match(locate, /`topic\.agent-context-placement`: read it first with `docs_read` \(`source: \{kind: "remote", repo: "danxbot"\}`/);
-  assert.match(locate, /If the read fails \(refused, or the page is missing\), place it by this short form/);
-  assert.match(locate, /\*\*How something works\*\* .* that repo's docs, never a rule\./);
-  assert.match(locate, /a scoped rule is invisible to every other session/);
+  assert.doesNotMatch(locate, /short form/);
+  assert.doesNotMatch(locate, /\*\*How something works\*\*/);
 });
 
 test("the memory-file rule lives in fix-agent-behavior only", () => {
