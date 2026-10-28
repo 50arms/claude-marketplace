@@ -105,20 +105,28 @@ function isHttpUrl(value) {
  * The dashboard this session talks to, chosen per session folder, never machine-wide:
  *  1. the folder's own `.claude/settings.local.json` / `.claude/settings.json` `env.DANXBOT_DASHBOARD_URL` (Claude Code
  *     merges these into the environment, so this is the value the folder names);
- *  2. a DANXBOT_DASHBOARD_URL that reached the environment WITHOUT a folder naming it came from the shell or a user-level
- *     setting, which would move every session on the machine at once: refused, naming the folder file to use instead;
- *  3. the plugin's `dashboard_url` option, the hosted default, which is the only machine-wide value and is the production dashboard.
+ *  2. the plugin's `dashboard_url` option, the hosted default, which is the only machine-wide value and is the production dashboard;
+ *  3. a DANXBOT_DASHBOARD_URL that reached the environment WITHOUT a folder naming it came from the shell or a user-level
+ *     setting: one naming a dashboard other than the plugin's option would move every session on the machine at once, so it is
+ *     refused, naming the folder file to use instead. One naming the same dashboard moves nothing and is accepted (DX-6392: this
+ *     machine's Windows user environment carries the hosted URL, inherited by every session).
  */
 export function dashboardUrl(env, projectDir = env.CLAUDE_PROJECT_DIR || process.cwd()) {
   const folder = folderDashboardUrl(projectDir);
   if (folder !== undefined) return folder;
-  if (env.DANXBOT_DASHBOARD_URL) {
-    throw new Error(`DANXBOT_DASHBOARD_URL is set in the shell or a user setting, which moves every session at once: name this folder's dashboard in ${path.join(projectDir, ".claude", "settings.local.json")} under env instead`);
-  }
   const url = env.DANXBOT_PLUGIN_DASHBOARD_URL;
   if (!url) throw new Error("no dashboard URL: name one in this folder's .claude/settings.local.json env (DANXBOT_DASHBOARD_URL), or set the plugin's dashboard_url option");
   if (!isHttpUrl(url)) throw new Error(`the plugin's dashboard_url option is not an http(s) URL: ${JSON.stringify(url)}`);
+  if (env.DANXBOT_DASHBOARD_URL && !sameDashboard(env.DANXBOT_DASHBOARD_URL, url)) {
+    throw new Error(`DANXBOT_DASHBOARD_URL=${env.DANXBOT_DASHBOARD_URL} is set in the shell or a user setting, which moves every session at once: name this folder's dashboard in ${path.join(projectDir, ".claude", "settings.local.json")} under env instead`);
+  }
   return url;
+}
+
+/** Whether two dashboard URLs name the same origin (scheme, host, port); a trailing slash or path never makes them differ. */
+function sameDashboard(a, b) {
+  if (!isHttpUrl(a)) return false;
+  return new URL(a).origin === new URL(b).origin;
 }
 
 /**

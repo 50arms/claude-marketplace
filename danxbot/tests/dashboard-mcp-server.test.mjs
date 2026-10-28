@@ -151,8 +151,20 @@ describe("dashboardUrl: chosen per session folder, never machine-wide", () => {
     assert.equal(dashboardUrl({}, folder), "https://committed");
   });
 
-  test("a DANXBOT_DASHBOARD_URL from the shell or a user setting, with no folder naming one, is refused: it would move every session", () => {
-    assert.throws(() => dashboardUrl({ DANXBOT_DASHBOARD_URL: "http://localhost:5555" }, sessionFolder()), /moves every session at once.*settings\.local\.json/);
+  test("a DANXBOT_DASHBOARD_URL from the shell or a user setting naming another dashboard, with no folder naming one, is refused: it would move every session", () => {
+    assert.throws(
+      () => dashboardUrl({ DANXBOT_DASHBOARD_URL: "http://localhost:5555", DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted.example" }, sessionFolder()),
+      /localhost:5555 is set in the shell or a user setting, which moves every session at once.*settings\.local\.json/,
+    );
+    assert.throws(
+      () => dashboardUrl({ DANXBOT_DASHBOARD_URL: "not a url", DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted.example" }, sessionFolder()),
+      /moves every session at once/,
+    );
+  });
+
+  test("DX-6392: a shell or user-setting DANXBOT_DASHBOARD_URL naming the plugin's own dashboard moves nothing and is accepted", () => {
+    const env = { DANXBOT_DASHBOARD_URL: "https://hosted.example/", DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted.example" };
+    assert.equal(dashboardUrl(env, sessionFolder()), "https://hosted.example");
   });
 
   test("with no folder and no shell value, the plugin's dashboard_url option (the hosted default) is used", () => {
