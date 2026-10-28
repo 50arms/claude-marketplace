@@ -25,8 +25,6 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 
 // The in-progress bucket is listed at most this many rows long (a longer bucket is cut, its total still read).
 export const IN_PROGRESS_LIMIT = 15
-// `GET /api/plans` is asked for one row only because only its `session`, `dashboard_url` and listener fields are read (never the whole list).
-export const SESSION_PLAN_PROBE = { limit: 1 }
 // `GET /api/plans/:id` is asked, besides its always-present counts (the status breakdown and the bucket counts, whose `needs-you` the band's badge shows),
 // for the plan's card ids (an opt-in field, a few bytes per card at any plan size). The band and the reply links need nothing more of a card, and the plan's card-list route answers whole
 // card rows (about 3 KB each), which past about 20 cards exceeds the host's tool-result limit.

@@ -49,8 +49,8 @@ describe('the percent mirrors the dashboard (PlanStatusSummary.tsx, DX-3766)', (
 
 for (const surface of SURFACES) {
   describe(`the progress figure on ${surface}`, () => {
-    test('it is read from the connected plan by id, even when that plan is outside the capped list', async ($, on) => {
-      const d = dashboard(on, { planOutsideList: true })
+    test('it is read from the connected plan by id', async ($, on) => {
+      const d = dashboard(on)
       answerPlanConnect(on, d)
       await startSession($, d, surface)
       await holdAgent($, d)

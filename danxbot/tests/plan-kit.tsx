@@ -115,12 +115,12 @@ export function dashboard(
     connected?: boolean
     // DX-4420: PLAN-23's name, to try a name longer than the band
     planName?: string
-    // `dashboard_url` on GET /api/plans: the default DASHBOARD_URL, an override (any value, so a bad one can
+    // `dashboard_url` on GET /api/plan-sessions/me: the default DASHBOARD_URL, an override (any value, so a bad one can
     // be tried), or NO_DASHBOARD_URL for an answer without the field
     dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky' | 'refused' | 'strictKeys'
-    // `sessionListenerAttached` on GET /api/plans: a state (any string, so an unknown one can be tried; default
+    // `sessionListenerAttached` on GET /api/plan-sessions/me: a state (any string, so an unknown one can be tried; default
     // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
     // as readCallerSessionOverlay does.
     listener?: string | null
@@ -149,16 +149,8 @@ export function dashboard(
     // plan_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
-    // ... and more plans than the plan list returns
-    plansTotal?: number
-    // the paged routes answer no `total` at all
-    noTotal?: boolean
-    // the first /api/plans call never settles until `release()`
+    // the first /api/plan-sessions/me call never settles until `release()`
     hangFirstLoad?: boolean
-    // the plan list comes back empty although the dashboard has this many plans
-    emptyPlanListOf?: number
-    // the connected plan is not in the (capped) plan list
-    planOutsideList?: boolean
     // DX-4448: GET /api/boards fails
     boardsFail?: boolean
     // ... answers boards the plugin cannot read: none at all, or a prefix that is not capital letters
@@ -244,7 +236,7 @@ export function dashboard(
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card' }] as { id: string; title: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
-    // DX-5554: the team agent the session signs in as (GET /api/plans `session.agent`), and the stand-alone card it holds instead of a plan
+    // DX-5554: the team agent the session signs in as (GET /api/plan-sessions/me `session.agent`), and the stand-alone card it holds instead of a plan
     // (`session.card_id` / `card_title`); neither by default. A session with none of a plan, a card and an agent has no session row (`session: null`).
     agent: null as { id: number; name: string; avatar_url: string | null } | null,
     card: null as { id: string; title: string } | null,
@@ -257,7 +249,7 @@ export function dashboard(
     // DX-4234: the context reads never answer (a hung dashboard), or answer after this many ms of the fake clock
     contextHangs: false,
     contextDelayMs: 0,
-    // DX-3421: GET /api/plans (the session-plan read) answers this status (a dashboard fault) instead of the session
+    // DX-3421: GET /api/plan-sessions/me (the session-plan read) answers this status (a dashboard fault) instead of the session
     plansStatus: undefined as number | undefined,
     // DX-4234: whether the engine has bound the session. A desktop or headless startup, resume and fork run their SessionStart hook BEFORE it
     // binds (claude.exe: the session holder is empty until the session is built), where `$.mcp.call` and `$.tool.list` throw; `unbind()` /
@@ -356,14 +348,12 @@ export function dashboard(
   ]
 
   function route(method: string, path: string, body: any, query: any) {
-    if (method === 'GET' && path === '/api/plans') {
-      // DX-4233: GET /api/plans answers this as its body, whatever its shape (a string makes the plugin's session read throw)
+    if (method === 'GET' && path === '/api/plan-sessions/me') {
+      // DX-4233: GET /api/plan-sessions/me answers this as its body, whatever its shape (a string makes the plugin's session read throw)
       if (world.plansBody !== undefined) return reply(world.plansBody)
       if (world.plansStatus !== undefined) return reply({ error: 'plans boom' }, world.plansStatus)
       if (options.listFails) return reply({ error: 'boom' }, 500)
       return reply({
-        plans: options.emptyPlanListOf ? [] : options.planOutsideList ? plans.filter(p => p.id !== world.planId) : plans,
-        ...(options.noTotal ? {} : { total: options.emptyPlanListOf ?? options.plansTotal ?? plans.length }),
         // DX-5551 / DX-5553: the session row as the plan_session resource projects it, for any registered session (on a plan, holding a card, or
         // on neither); null only for a session with no row
         session:
@@ -898,11 +888,11 @@ export function dashboard(
         return { value: text({ ok: true, status: 200, body: { session: { planId: e.args.plan_id } } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
-      if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 2) {
+      if (options.hangFirstLoad && e.args.path === '/api/plan-sessions/me' && api.filter(a => a.path === '/api/plan-sessions/me').length === 2) {
         return hung.promise.then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
       }
       // DX-5232: the plan read is one path now (load and session probe alike), so a slow dashboard slows it as it slows a context read
-      if (e.args.path === '/api/plans' && world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
+      if (e.args.path === '/api/plan-sessions/me' && world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
       if (world.permissionClaimDelayMs > 0 && /\/claim$/.test(String(e.args.path))) await clock.sleep(world.permissionClaimDelayMs)
       // DX-4635: every danxbot_api read answers after `apiHoldMs` on the harness clock (a slow dashboard), and the card reads in flight together are counted
       const isIssueRead = String(e.args.path).startsWith('/api/issues/')
@@ -1350,7 +1340,7 @@ export function answerPlanConnect(on: On, d: { world: { planId: number | null } 
   })
 }
 
-// DX-5605: the server holds a team agent for the session (GET /api/plans answers it as `session.agent`); the view is read again so the footer shows it.
+// DX-5605: the server holds a team agent for the session (GET /api/plan-sessions/me answers it as `session.agent`); the view is read again so the footer shows it.
 export async function holdAgent($: any, d: Dashboard) {
   d.world.agent = { id: 7, name: AGENT_NAME, avatar_url: null }
   await forceRefresh($, d)

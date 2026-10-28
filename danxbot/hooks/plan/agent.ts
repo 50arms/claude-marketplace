@@ -1,6 +1,6 @@
 import type { HeldCard, SessionAgent } from '../../types'
 
-// the session's team agent and what it holds, as GET /api/plans answers them on its `session` (the plan_session resource: `agent`
+// the session's team agent and what it holds, as GET /api/plan-sessions/me answers them on its `session` (the plan_session resource: `agent`
 // {id, name} or null; `card_id` / `card_title`), and the release of the agent when the session ends.
 
 // What a session row's agent and card read as, or the reason the row cannot be read (the load then fails: never a guessed name or card).
@@ -9,9 +9,9 @@ export type SessionHolds = { agent: SessionAgent | null; card: HeldCard | null }
 export function readSessionHolds(session: any): SessionHolds {
   if (session === null || session === undefined) return { agent: null, card: null }
   const agent = readAgent(session.agent)
-  if (agent === MALFORMED) return { error: 'GET /api/plans answered a session whose agent is not {id, name} or null: cannot name the agent the session signs in as' }
+  if (agent === MALFORMED) return { error: 'GET /api/plan-sessions/me answered a session whose agent is not {id, name} or null: cannot name the agent the session signs in as' }
   const card = readCard(session.card_id, session.card_title)
-  if (card === MALFORMED) return { error: 'GET /api/plans answered a session whose card_id and card_title are not a card id and its title, or both null: cannot name the card it holds' }
+  if (card === MALFORMED) return { error: 'GET /api/plan-sessions/me answered a session whose card_id and card_title are not a card id and its title, or both null: cannot name the card it holds' }
   return { agent, card }
 }
 

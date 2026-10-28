@@ -18,7 +18,7 @@ for (const surface of SURFACES) {
 
       // a problem appears on a third card of the dashboard; ten minutes of clock bring no load
       d.world.cards.push({ id: 'DX-40', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
-      const loads = () => d.api.filter(a => a.path === '/api/plans').length
+      const loads = () => d.api.filter(a => a.path === '/api/plan-sessions/me').length
       const before = loads()
       await d.clock.advance(600_000)
       expect(loads()).toBe(before)
@@ -90,7 +90,7 @@ describe('the hooks that refresh', () => {
     on('turn.complete', () => ({ text: 'done' }) as any)
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
-    const loads = () => d.api.filter(a => a.path === '/api/plans').length
+    const loads = () => d.api.filter(a => a.path === '/api/plan-sessions/me').length
     d.world.cards.push({ id: 'DX-40', title: 'Third card', priority: 1, problems: [{ id: 22, type: 'question', statement: 'New?', open: true, solutions: [] }] })
     const turn = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 
@@ -113,7 +113,7 @@ describe('the refresh lock', () => {
   test('several session.start calls leave no timer: the clock alone makes no load', async ($, on) => {
     const d = dashboard(on)
     for (let i = 0; i < 3; i++) await startSession($, d, 'desktop')
-    const loads = () => d.api.filter(a => a.path === '/api/plans').length
+    const loads = () => d.api.filter(a => a.path === '/api/plan-sessions/me').length
     const before = loads()
     await d.clock.advance(180_000)
     expect(loads()).toBe(before)
@@ -122,7 +122,7 @@ describe('the refresh lock', () => {
   test('a refresh that throws releases the lock: the next one still loads', async ($, on) => {
     const d = dashboard(on)
     await startSession($, d, 'desktop')
-    const loads = () => d.api.filter(a => a.path === '/api/plans').length
+    const loads = () => d.api.filter(a => a.path === '/api/plan-sessions/me').length
     // the host refuses the view write, in the load and again in its error handler: the throw escapes the refresh
     d.failViewWrite()
     try {

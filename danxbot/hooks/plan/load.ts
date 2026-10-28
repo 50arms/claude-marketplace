@@ -1,5 +1,5 @@
 import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
-import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, NEEDS_YOU_BUCKET_ID, PLAN_BAND_FIELDS, PREFIX_PATTERN, SESSION_PLAN_PROBE, STATUS_KEYS } from './config'
+import { EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, NEEDS_YOU_BUCKET_ID, PLAN_BAND_FIELDS, PREFIX_PATTERN, STATUS_KEYS } from './config'
 import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './mcp'
 import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
@@ -76,14 +76,14 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
 }
 
 async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
-  // only the answer's `dashboard_url`, `session` and `sessionListenerAttached` are read; one row is asked for (never the whole list)
-  const list = await call('GET', '/api/plans', { query: SESSION_PLAN_PROBE })
+  // the calling session's own route: its `session`, the `dashboard_url` and the `sessionListenerAttached`, read from that session's rows alone (never a plan list)
+  const list = await call('GET', '/api/plan-sessions/me')
   if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true }
 
   // the origin every link is built on. Without it no link can be right, so the load is an error.
   const dashboardUrl = readOrigin(list.body.dashboard_url)
   if (dashboardUrl === null) {
-    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered no valid dashboard_url (an http(s) origin): cannot build plan links' }
+    return { ...EMPTY, phase: 'error', error: 'GET /api/plan-sessions/me answered no valid dashboard_url (an http(s) origin): cannot build plan links' }
   }
   // The session in this same response says WHICH plan; the plan itself is read by id below.
   const session = list.body.session
@@ -92,7 +92,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   // nextStep: string | null} cannot be read, so the load fails (never nulled to the no-status line).
   const listener = readListener(list.body.sessionListenerAttached)
   if (listener === MALFORMED_LISTENER) {
-    return { ...EMPTY, phase: 'error', error: 'GET /api/plans answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
+    return { ...EMPTY, phase: 'error', error: 'GET /api/plan-sessions/me answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
   }
   // the agent the session signs in as and the card it holds, from the same session row
   const holds = readSessionHolds(session)

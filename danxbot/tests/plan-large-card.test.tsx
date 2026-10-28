@@ -39,11 +39,12 @@ for (const surface of SURFACES) {
       expect(d.toasts).toEqual([])
     })
 
-    test('the plan list is asked for one row only, however many plans exist', async ($, on) => {
+    test('the session is read from its own route, never from the plan list', async ($, on) => {
       const { d } = await openBand($, on, surface)
-      const lists = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans')
-      expect(lists.length).toBeGreaterThan(0)
-      for (const a of lists) expect(a.query).toEqual({ limit: 1 })
+      const own = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plan-sessions/me')
+      expect(own.length).toBeGreaterThan(0)
+      for (const a of own) expect(a.query).toBeUndefined()
+      expect(d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans')).toEqual([])
     })
 
     test('the host notice on any call of the load is never the band text', async () => {

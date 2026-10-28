@@ -53,7 +53,6 @@ import {
   TOAST_ERROR_MAX,
   planUrl,
   busyKey,
-  SESSION_PLAN_PROBE,
   DESKTOP_SURFACE,
 } from './plan/config'
 import { errText, loadPlan } from './plan/load'
@@ -2110,17 +2109,17 @@ type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connecte
 // The ONE place a key that is gone or revoked is made quiet (its own tools say so, never a failure line): this read is the first of every
 // context lookup, so a later read that finds the key gone in between is an ordinary failure line.
 async function sessionPlan($: any): Promise<SessionPlan> {
-  const r = await api($, 'GET', '/api/plans', { query: SESSION_PLAN_PROBE })
+  const r = await api($, 'GET', '/api/plan-sessions/me')
   if (r.unreachable === true) return { kind: 'unreachable' }
   // the agent gate holds the session (no team agent yet, or a resume after the agent was released): quiet here, because the dashboard's 403 {state, instruction} on the model's first dashboard call is what tells the model what to do
   if (isSignedOut(r) || outcomeRevokedBy(r) !== null || agentBlockOf(r) !== null) return { kind: 'silent' }
   if (!r.ok) return { kind: 'failed', reason: errText(r), refusal: r.refusal }
-  if (!('session' in (r.body ?? {}))) return { kind: 'failed', reason: 'bad_response: GET /api/plans answered no session field' }
+  if (!('session' in (r.body ?? {}))) return { kind: 'failed', reason: 'bad_response: GET /api/plan-sessions/me answered no session field' }
   if (r.body.session === null) return { kind: 'not-connected' }
   const planId = r.body.session.plan_id
   // a registered session on no plan (it holds a team agent, a stand-alone card, or neither yet) is a row whose plan_id is null
   if (planId === null) return { kind: 'not-connected' }
-  return typeof planId === 'number' ? { kind: 'connected', planId } : { kind: 'failed', reason: 'bad_response: GET /api/plans answered a session whose plan_id is neither a plan id nor null' }
+  return typeof planId === 'number' ? { kind: 'connected', planId } : { kind: 'failed', reason: 'bad_response: GET /api/plan-sessions/me answered a session whose plan_id is neither a plan id nor null' }
 }
 
 // guards a session id used as a file name (the connection record's path), not a sub-agent id

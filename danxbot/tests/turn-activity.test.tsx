@@ -16,7 +16,7 @@ const CARD_ID = 'DX-9'
 const CARD_TITLE = 'A one-off card'
 const CARD_CONNECT = { tool: toolName('card_connect'), card_id: CARD_ID } as any
 
-// the real answer's envelope (the MCP's card_connect): the card the session holds now, as GET /api/plans then reads it
+// the real answer's envelope (the MCP's card_connect): the card the session holds now, as GET /api/plan-sessions/me then reads it
 function answerCardConnect(on: any, d: any) {
   on('tool.call', { tool: toolName('card_connect') }, (_$: any, e: any) => {
     if (d.world.cardRefused) return { result: {}, text: JSON.stringify({ ok: false, status: 409, error: 'card_on_plan' }), isError: true } as any

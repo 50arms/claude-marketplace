@@ -15,7 +15,7 @@ export function mcpText(r: any): string {
   return (r?.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
 }
 
-// the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {planId}}}` envelope (the tool's session is camelCase; GET /api/plans's own `session` is snake_case and is read in load.ts). Null for anything
+// the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {planId}}}` envelope (the tool's session is camelCase; GET /api/plan-sessions/me's own `session` is snake_case and is read in load.ts). Null for anything
 // else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
 // the plan with its name (`session.planName`, '' when the answer has none): what the band names while the plugin's own
 // reads are refused by auto mode's classifier and the model's own successful plan_connect is all that is known of the plan.

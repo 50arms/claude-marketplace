@@ -14,7 +14,7 @@ const ask = async ($: any, d: any) => {
 }
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 // DX-5232: the plan read is one path: a session start's probe (the relay's) and its load are both /api/plans reads; the probe is the first
-const loadsOf = (d: any) => d.api.filter((a: any) => a.path === '/api/plans').length - 1
+const loadsOf = (d: any) => d.api.filter((a: any) => a.path === '/api/plan-sessions/me').length - 1
 
 describe('session.end by reason', () => {
   // DX-4233: what the process's end does to the plan event relay is in plan-relay-lifecycle.test.tsx

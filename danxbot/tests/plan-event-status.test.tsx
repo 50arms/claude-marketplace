@@ -93,10 +93,10 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(eventsWarned(d)).toBeNull()
-      const before = d.api.filter(a => a.path === '/api/plans').length
+      const before = d.api.filter(a => a.path === '/api/plan-sessions/me').length
       d.setListener('unattached')
       await forceRefresh($, d)
-      expect(d.api.filter(a => a.path === '/api/plans')).toHaveLength(before + 1)
+      expect(d.api.filter(a => a.path === '/api/plan-sessions/me')).toHaveLength(before + 1)
       expect(eventsWarned(d)).toBe('events: unattached')
       expect(await warning(band)).toBeUndefined()
     })

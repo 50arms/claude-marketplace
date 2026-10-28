@@ -51,8 +51,8 @@ for (const surface of SURFACES) {
   })
 
   describe(`what one load reads, on ${surface}`, () => {
-    test('a plan beyond the plan list cap still labels correctly, from the session in the same response', async ($, on) => {
-      const { band } = await openBand($, on, surface, { planOutsideList: true })
+    test('the band labels the plan from the session row in the same response', async ($, on) => {
+      const { band } = await openBand($, on, surface)
       expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
     })
   })

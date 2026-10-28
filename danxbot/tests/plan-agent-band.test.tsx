@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// DX-5554: the band names the team agent the session signs in as (GET /api/plans `session.agent`) and what it answers for: the plan, the stand-alone
+// DX-5554: the band names the team agent the session signs in as (GET /api/plan-sessions/me `session.agent`) and what it answers for: the plan, the stand-alone
 // card it holds (`session.card_id` / `card_title`), or neither. A held card's id is the link to the card's own page (the plan's id is the plan's link); the footer names the agent.
 import { describe, expect } from 'claude-code/testing'
 
