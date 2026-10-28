@@ -108,8 +108,8 @@ function isHttpUrl(value) {
  *  2. the plugin's `dashboard_url` option, the hosted default, which is the only machine-wide value and is the production dashboard;
  *  3. a DANXBOT_DASHBOARD_URL that reached the environment WITHOUT a folder naming it came from the shell or a user-level
  *     setting: one naming a dashboard other than the plugin's option would move every session on the machine at once, so it is
- *     refused, naming the folder file to use instead. One naming the same dashboard moves nothing and is accepted (DX-6392: this
- *     machine's Windows user environment carries the hosted URL, inherited by every session).
+ *     refused, naming the folder file to use instead. One naming the same dashboard moves nothing and is accepted (a user-level environment
+ *     that carries the hosted URL is inherited by every session).
  */
 export function dashboardUrl(env, projectDir = env.CLAUDE_PROJECT_DIR || process.cwd()) {
   const folder = folderDashboardUrl(projectDir);
