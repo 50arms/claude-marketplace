@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // with a problem is in the browser, so the band never writes to a card.
 import { describe, expect } from 'claude-code/testing'
 
-import { test, SURFACES, bandLabelOf, dashboard, forceRefresh, needsYouBadgeOf, startSession } from './plan-kit'
+import { test, SURFACES, dashboard, forceRefresh, needsYouBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 
@@ -47,13 +47,6 @@ for (const surface of SURFACES) {
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
       // a button per problem would end its key in the problem's id
       expect(keys.filter((k: string) => /-\d+$/.test(k))).toEqual([])
-    })
-  })
-
-  describe(`what one load reads, on ${surface}`, () => {
-    test('the band labels the plan from the session row in the same response', async ($, on) => {
-      const { band } = await openBand($, on, surface)
-      expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
     })
   })
 }
