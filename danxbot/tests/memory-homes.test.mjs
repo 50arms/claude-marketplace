@@ -53,6 +53,16 @@ test("the list of homes rules a memory file out and moves a correction already s
   assert.equal(count(fixBehavior, NEVER_A_MEMORY_FILE), 1);
 });
 
+// DX-6379 — the placement standard is one 50 Arms docs page; the skill reads it before it picks a home, and keeps a short
+// form inline because a team with no board on the danxbot repo cannot read danxbot's hosted docs.
+test("the list of homes reads the placement standard first and keeps a short form for when it cannot", () => {
+  const locate = section(fixBehavior, "## 3. Locate the target and edit it");
+  assert.match(locate, /`topic\.agent-context-placement`: read it first with `docs_read` \(`source: \{kind: "remote", repo: "danxbot"\}`/);
+  assert.match(locate, /If the read fails \(refused, or the page is missing\), place it by this short form/);
+  assert.match(locate, /\*\*How something works\*\* .* that repo's docs, never a rule\./);
+  assert.match(locate, /a scoped rule is invisible to every other session/);
+});
+
 test("the memory-file rule lives in fix-agent-behavior only", () => {
   for (const [name, text] of [["plan-workflow", planWorkflow], ["issue-workflow", issueWorkflow]]) {
     assert.doesNotMatch(flat(text), /memory file/i, name);
