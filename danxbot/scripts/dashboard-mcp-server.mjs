@@ -68,13 +68,22 @@ export const START_WAIT_ENV = "DASHBOARD_MCP_START_WAIT_MS";
 
 /** The per-folder settings files a session's dashboard can be named in: the gitignored local one wins over the committed one. */
 export const FOLDER_SETTINGS_FILES = [".claude/settings.local.json", ".claude/settings.json"];
+/**
+ * The marker a local-dashboard session folder carries (a folder named local-dashboard, written by the repo's own local-dashboard
+ * session command). The launcher refuses a marked folder whose settings name no URL, so a
+ * session meant for the local dashboard can never fall back to the hosted default.
+ */
+// The marker contract is written by the repo's own local-dashboard session command; these values must match it.
+export const LOCAL_DASHBOARD_FOLDER = "local-dashboard";
+export const LOCAL_DASHBOARD_MARKER_REL = ".claude/local-dashboard.json";
+export const LOCAL_DASHBOARD_MARKER_SCHEMA = 1;
 
 /**
  * The dashboard named by this folder's own settings (`env.DANXBOT_DASHBOARD_URL` in `.claude/settings.local.json`, then
- * `.claude/settings.json`), or undefined when neither names one. A settings file that is unreadable, not JSON, or names a URL
- * that is not http(s) fails loudly: a session never silently falls back to another dashboard.
+ * `.claude/settings.json`) and the file that names it, or undefined when neither names one. A settings file that is unreadable,
+ * not JSON, or names a URL that is not http(s) fails loudly: a session never silently falls back to another dashboard.
  */
-export function folderDashboardUrl(projectDir) {
+export function folderDashboard(projectDir) {
   for (const rel of FOLDER_SETTINGS_FILES) {
     const file = path.join(projectDir, rel);
     if (!existsSync(file)) continue;
@@ -87,9 +96,30 @@ export function folderDashboardUrl(projectDir) {
     const url = settings?.env?.DANXBOT_DASHBOARD_URL;
     if (url === undefined) continue;
     if (!isHttpUrl(url)) throw new Error(`${file} env.DANXBOT_DASHBOARD_URL is not an http(s) URL: ${JSON.stringify(url)}`);
-    return url;
+    return { url, file };
   }
   return undefined;
+}
+
+/** The URL the folder's settings name, or undefined (see `folderDashboard`). */
+export function folderDashboardUrl(projectDir) {
+  return folderDashboard(projectDir)?.url;
+}
+
+/** The folder's local-dashboard marker, or undefined when the folder carries none. A marker of another shape fails loudly. */
+export function localDashboardMarker(projectDir) {
+  const file = path.join(projectDir, LOCAL_DASHBOARD_MARKER_REL);
+  if (!existsSync(file)) return undefined;
+  let marker;
+  try {
+    marker = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    throw new Error(`${file} is not readable JSON (${err.message}): fix it, or remove it and re-run the repo's local-dashboard session command`);
+  }
+  if (marker?.schema !== LOCAL_DASHBOARD_MARKER_SCHEMA || !isHttpUrl(marker?.url)) {
+    throw new Error(`${file} is not a schema-${LOCAL_DASHBOARD_MARKER_SCHEMA} local-dashboard marker with an http(s) url: fix it, or re-run the repo's local-dashboard session command`);
+  }
+  return { url: marker.url, file };
 }
 
 function isHttpUrl(value) {
@@ -111,16 +141,33 @@ function isHttpUrl(value) {
  *     refused, naming the folder file to use instead. One naming the same dashboard moves nothing and is accepted (a user-level environment
  *     that carries the hosted URL is inherited by every session).
  */
-export function dashboardUrl(env, projectDir = env.CLAUDE_PROJECT_DIR || process.cwd()) {
-  const folder = folderDashboardUrl(projectDir);
-  if (folder !== undefined) return folder;
+export function dashboardChoice(env, projectDir = env.CLAUDE_PROJECT_DIR || process.cwd()) {
+  const marker = localDashboardMarker(projectDir);
+  const folder = folderDashboard(projectDir);
+  if (marker !== undefined) {
+    // A marked local-dashboard folder is never the hosted default: its settings must name the URL its marker names.
+    const settingsFile = path.join(projectDir, ".claude", "settings.local.json");
+    if (folder === undefined) {
+      throw new Error(`${marker.file} marks this folder as a local-dashboard session, but ${settingsFile} names no env.DANXBOT_DASHBOARD_URL: refusing to start on the hosted default. Re-run the repo's local-dashboard session command`);
+    }
+    if (!sameDashboard(marker.url, folder.url)) {
+      throw new Error(`${folder.file} names ${folder.url}, but ${marker.file} names ${marker.url}: they must agree; re-run the repo's local-dashboard session command`);
+    }
+    return { url: folder.url, source: `${folder.file} (marked local-dashboard session)`, kind: "folder" };
+  }
+  if (folder !== undefined) return { url: folder.url, source: folder.file, kind: "folder" };
   const url = env.DANXBOT_PLUGIN_DASHBOARD_URL;
   if (!url) throw new Error("no dashboard URL: name one in this folder's .claude/settings.local.json env (DANXBOT_DASHBOARD_URL), or set the plugin's dashboard_url option");
   if (!isHttpUrl(url)) throw new Error(`the plugin's dashboard_url option is not an http(s) URL: ${JSON.stringify(url)}`);
   if (env.DANXBOT_DASHBOARD_URL && !sameDashboard(env.DANXBOT_DASHBOARD_URL, url)) {
     throw new Error(`DANXBOT_DASHBOARD_URL=${env.DANXBOT_DASHBOARD_URL} is set in the shell or a user setting, which moves every session at once: name this folder's dashboard in ${path.join(projectDir, ".claude", "settings.local.json")} under env instead`);
   }
-  return url;
+  return { url, source: "the plugin's dashboard_url option (hosted default)", kind: "plugin-option" };
+}
+
+/** The URL this session talks to (see `dashboardChoice`). */
+export function dashboardUrl(env, projectDir = env.CLAUDE_PROJECT_DIR || process.cwd()) {
+  return dashboardChoice(env, projectDir).url;
 }
 
 /** Whether two dashboard URLs name the same origin (scheme, host, port); a trailing slash or path never makes them differ. */
@@ -169,8 +216,19 @@ async function refreshBeforeStart(recorded, { env, spawnFn, stderr, waitMs, time
  * (npm, the server and the refresh child), `fetchFn` (the registry), `stderr`, `startWaitMs` (else START_WAIT_ENV), `timers` ({setTimeout, clearTimeout}: the start's wait, so a test fires it at a chosen moment), and `installVersion`'s
  * `npm` / `installTimeoutMs`.
  */
-export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fetch, stderr = process.stderr, onServer = () => {}, startWaitMs, timers = { setTimeout, clearTimeout }, ...installOptions } = {}) {
-  const url = dashboardUrl(env);
+export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fetch, stderr = process.stderr, onServer = () => {}, startWaitMs, timers = { setTimeout, clearTimeout }, cwd = process.cwd(), ...installOptions } = {}) {
+  const projectDir = env.CLAUDE_PROJECT_DIR || cwd;
+  const choice = dashboardChoice(env, projectDir);
+  const { url, source } = choice;
+  // The hosted default is never chosen by guessing the folder. Claude Code always sets CLAUDE_PROJECT_DIR for a plugin's MCP
+  // server; without it the launcher cannot tell which session folder this is, so it refuses rather than fall back to hosted.
+  if (choice.kind === "plugin-option" && !env.CLAUDE_PROJECT_DIR) {
+    throw new Error(`CLAUDE_PROJECT_DIR is unset, so this launcher cannot tell which session folder it serves, and refuses the hosted default (${url}). Claude Code sets it for every plugin MCP server: start the session through Claude Code, or set CLAUDE_PROJECT_DIR`);
+  }
+  // Which folder file (or the plugin option) decided the dashboard. Only with DANXBOT_DASHBOARD_TRACE set: a start's stderr is
+  // otherwise empty or one line, and a trace must not break that.
+  if (env.DANXBOT_DASHBOARD_TRACE) stderr.write(`${PREFIX} dashboard ${url} from ${source}; project dir ${projectDir} (from ${env.CLAUDE_PROJECT_DIR ? "CLAUDE_PROJECT_DIR" : "the working directory"})
+`);
   const waitMs = startWaitMs ?? (Number(env[START_WAIT_ENV]) > 0 ? Number(env[START_WAIT_ENV]) : START_WAIT_MS);
   const options = { env, spawnFn, fetchFn, ...installOptions };
   // the recorded version, installed (or, with no record, resolved from the registry and recorded): what a start falls back to
