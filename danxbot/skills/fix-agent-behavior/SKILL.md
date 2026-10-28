@@ -42,7 +42,7 @@ body.
 
 Pick the home by the placement standard, the 50 Arms docs page
 `topic.agent-context-placement`: read it first with `docs_read` (`source: {kind: "remote",
-repo: "danxbot"}`; inside the danxbot repo, `{kind: "local"}`). It names every place agent
+repo: "danxbot"}`; inside that repo itself, `{kind: "local"}`). It names every place agent
 text can live, who reads each and when, its budget and how to write it. If the read fails
 (refused, or the page is missing), place it by this short form, by the KIND of text, never
 by where the failure showed up:
