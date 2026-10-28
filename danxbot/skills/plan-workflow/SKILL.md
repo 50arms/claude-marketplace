@@ -371,6 +371,9 @@ the tier issue-workflow "Gates" names; once they pass, land it and complete the 
 have passed and it carries no design yet, start its designer, unless one you started is still on
 it: `gate-designer <CARD-ID>`, at the tier the gate's `effort_level` on the card names (unset:
 `danxbot:worker-sonnet-high`). Run it again only for a design event above that owes it a turn.
+One screen or component gets ONE design on one card, showing every part that changes with its
+options, however many cards change it: the other cards build from that card's choice. Never a
+design per card or per element of the same screen.
 
 Partition files before fanning out. Never background a long test run and
 end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits
