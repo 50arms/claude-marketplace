@@ -133,6 +133,7 @@ test("done_on merged never completes, releases the claim, and says the person co
   const merged = step(5).slice(step(5).indexOf("`merged`"));
   assert.match(merged, /^`merged`: do not transition `complete`/);
   assert.match(merged, /`rollback_pickup` \(without\s+`keep_assignment`/);
+  assert.doesNotMatch(merged, /keep_assignment: true/);
   assert.match(merged, /the card stays open \(it shows ToDo/);
   assert.doesNotMatch(merged, /In Progress/);
   assert.match(merged, /until the pull request merges/);
