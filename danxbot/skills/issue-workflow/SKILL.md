@@ -136,19 +136,22 @@ first, then end `failed`.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
   progress, evidence, gate results, handoffs, blockers; trace, audit and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
-- **Decisions** — a consequential decision (a business rule, an architecture choice, a
-  design) is a decision record on its card, `POST /api/issues/<id>/decision-records`, with
-  `made_by` (`human` when a person made it, with that person in `made_by_user_id`; `agent`
-  when you did), `provenance` (a list of provenance records: for a person's decision at least
+- **Decisions** — a decision record is the default home for anything important about a card.
+  A consequential decision (a business rule, an architecture choice, a design) is a decision
+  record on its card, `POST /api/issues/<id>/decision-records`, with a brief `title` (at most
+  80 characters), its description in `text`, `made_by` (`human` when a person made it, with
+  that person in `made_by_user_id`; `agent` when you did), `provenance` (a list of provenance records: for a person's decision at least
   one `{source, source_ref, quote}` quoting their words verbatim from a comment of theirs or
   your own session with them, so the server checks it; `{reasoning}` for your own why; a
   record you add later to a decision as it stands is
   `POST /api/issues/<id>/decision-records/<recordId>/provenance` `{version, record}`),
   `impact` and `confidence` (confidence 5 for a person's decision unless they showed clear
-  uncertainty).
-  The card's description or AC says what to build and names the record (`DEC-<n>`), never
-  restating it; a decision is never left in a comment or agent note alone. Changing or
-  deleting a person-approved record is never your call.
+  uncertainty). A card's description holds the background of the ask: what it is and why, who
+  it is for, its timing and importance, and anything else a person needs to understand it. The
+  solution lives in its AC and its decision records, and the card page lists every decision
+  (its `DEC-<n>` ref and title) under the description, so the description never restates a
+  decision or a solution detail. A decision is never left in a comment or agent note alone.
+  Changing or deleting a person-approved record is never your call.
 - **Dependencies** — only for a card already known, never a discovery scan.
 - Never write a `status:` literal; transitions derive it.
 - **MCP down** → a failed `danxbot_api` call fails loudly: stop and report the failure. Never retry it another way.

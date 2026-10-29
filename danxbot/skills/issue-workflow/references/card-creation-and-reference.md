@@ -19,6 +19,10 @@ children; work written into a container's own body or AC is a defect.
 
 The type names the slicing rules below use (Story, Feature, Epic) stand for the team's seeded work and container types; the team's own rows from `GET /api/card-types` decide what each type may hold.
 
+**What goes where.** A card's description is the background of the ask; what it must do goes in its
+AC and decision records, which the card page lists under the description (the skill's "Mechanics",
+Decisions).
+
 A docs change is made by the agent itself, never recorded as a proposal. Edit the docs pages on your own `docs-change/<name>` branch, cut from the target branch (never from the card branch) and holding only docs pages, then submit it through `danxbot_api` `POST /api/issues/<card id>/docs-submissions` `{repo, branch, summary}`. The card gets a docs-review problem that a person approves.
 
 ## The slice gate

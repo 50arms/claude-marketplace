@@ -35,8 +35,8 @@ test("issue-workflow splits Mechanics into Comments (a person) and Agent notes (
   assert.match(issueWorkflow, /\*\*Comments\*\* — only for talking with a person: a reply to what they wrote or asked\./);
   assert.match(issueWorkflow, /\*\*Agent notes\*\* — your working log on the card, `POST \/api\/issues\/:id\/notes` `\{text\}`: progress, evidence, gate results, handoffs, blockers; trace/);
   assert.doesNotMatch(issueWorkflow, /Docs impact/);
-  assert.match(issueWorkflow, /\*\*Decisions\*\* — a consequential decision \(a business rule, an architecture choice, a design\) is a decision record on its card, `POST \/api\/issues\/<id>\/decision-records`/);
-  assert.match(issueWorkflow, /a decision is never left in a comment or agent note alone\./);
+  assert.match(issueWorkflow, /\*\*Decisions\*\* — a decision record is the default home for anything important about a card\. A consequential decision \(a business rule, an architecture choice, a design\) is a decision record on its card, `POST \/api\/issues\/<id>\/decision-records`/);
+  assert.match(issueWorkflow, /A decision is never left in a comment or agent note alone\./);
   assert.doesNotMatch(issueWorkflow, /a durable decision goes in the card's description or AC/);
   assert.match(issueWorkflow, /Read the card with its description, AC, comments, agent notes and dependencies/);
   assert.match(issueWorkflow, /`Notes from Phase N` as an agent note on the next phase card/);
