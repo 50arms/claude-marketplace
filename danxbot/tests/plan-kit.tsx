@@ -294,6 +294,8 @@ export function dashboard(
     // its body), the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock
     planBoards: ['danxbot:danxbot-main'] as string[],
     readyRows: {} as Record<string, unknown[]>,
+    // CP-34: the cards GET /api/plans/<id>/connected-session/detail answers as `detail.cards` (each with the `activity` on it now)
+    heldRows: [] as unknown[],
     // DX-4997: what GET /api/plan-sessions/me/pause answers as `pause` (null, an agent pause, a usage pause)
     pause: null as unknown,
     // DX-5692: what GET /api/plan-sessions/me/owed-comments answers as `owedComments` (the comments the session still owes an answer)
@@ -586,11 +588,12 @@ export function dashboard(
   const sequence: string[] = []
   const isReportCall = (a: any) =>
     (a.method === 'POST' && a.path === '/api/plan-sessions/me/activity') ||
-    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause' || a.path === '/api/plan-sessions/me/owed-comments'))
+    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause' || a.path === '/api/plan-sessions/me/owed-comments' || /^\/api\/plans\/\d+\/connected-session\/detail$/.test(a.path)))
   // ... answered as the real routes answer them (danxbot plan-sessions-routes, plans/mine, the issues list)
   function reportAnswer(a: any) {
     if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })
     if (a.path === '/api/plan-sessions/me/pause') return reply({ pause: world.pause })
+    if (/\/connected-session\/detail$/.test(a.path)) return reply({ detail: { cards: world.heldRows } })
     if (a.path === '/api/plan-sessions/me/owed-comments') return reply({ owedComments: world.owedComments })
     if (a.path === '/api/plans/mine') return world.planId === null ? reply({ error: 'session_not_connected' }, 409) : reply({ id: world.planId, boards: world.planBoards })
     // as the issues list answers: the always-returned row, plus only the fields the `fields` tree names

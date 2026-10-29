@@ -95,7 +95,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       return d
     }
-    const reads = (d: any) => d.reports.filter((r: any) => r.method === 'GET' && r.path !== PAUSE_PATH)
+    const reads = (d: any) => d.reports.filter((r: any) => r.method === 'GET' && r.path !== PAUSE_PATH && !r.path.endsWith('/connected-session/detail'))
     const pauseReads = (d: any) => d.reports.filter((r: any) => r.path === PAUSE_PATH)
     const STOP = { stop_hook_active: false, background_tasks: [] } as any
 

@@ -86,6 +86,8 @@ import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
 import type { ReadyCard } from './reports/ready-cards'
+import { detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
+import type { HeldCard, WorkMarks } from './reports/held-idle'
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
 import type { PauseRead } from './reports/pause'
 import { storeDoor, type StoreCall, type StoreIo } from './store/recover'
@@ -172,6 +174,8 @@ const compacting = atom({ plugin: 'danxbot', key: 'compacting' } as const, { mai
 const runningAgents = atom({ plugin: 'danxbot', key: 'runningAgents' } as const, [] as string[])
 // the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
+// CP-34: the cards this session marked as its own work (PUT /api/work-marks), by card id with the time set; the held-idle Stop check counts them as worked (reports/held-idle.ts).
+const workMarks = atom({ plugin: 'danxbot', key: 'workMarks' } as const, {} as WorkMarks)
 // the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
 const relayOutbox = atom({ plugin: 'danxbot', key: 'relayOutbox' } as const, [] as PendingEvent[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
@@ -1849,6 +1853,11 @@ async function onAckCall($: any, e: any, next: any) {
     detach($, 'Plan refresh', refresh($, true))
   }
   await touchRecordClock($, e, next)
+  // CP-34: the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
+  if (e.agentId === undefined && !raisedByPlugin(next.origin) && answerOf(ran).ok) {
+    const now = await $.clock.now()
+    await update($, workMarks, cur => marksAfter(cur, e.method, e.path, e.body, now))
+  }
   const id = ackedEventId(e.method, e.path)
   if (id === null) return ran
   if (answerOf(ran).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
@@ -2807,7 +2816,7 @@ async function reportShellEnds($: any, event: 'Stop' | 'SubagentStop', e: any): 
 }
 
 // What the ready-cards read came to: the ready cards, nothing to say, or why it failed.
-type ReadyRead = { kind: 'cards'; cards: ReadyCard[] } | { kind: 'quiet' } | { kind: 'failed'; reason: string }
+type ReadyRead = { kind: 'cards'; cards: ReadyCard[]; held: HeldCard[]; heldSkipped: string | null } | { kind: 'quiet' } | { kind: 'failed'; reason: string }
 
 // the answers that end the read quietly, the ordinary ones for a session with nothing to check: it holds no usable key (signed
 // out, or a person revoked it: its own tools say so), or the dashboard has it on no plan (409 `session_not_connected`). Any other
@@ -2830,7 +2839,10 @@ async function readReadyCards($: any): Promise<ReadyRead> {
   const plan = planOf(mine.body)
   if (!plan.ok) return { kind: 'failed', reason: plan.reason }
   const query = issuesQuery(plan.value.planId)
-  const boards = await Promise.all(plan.value.boards.map(board => api($, 'GET', '/api/issues', { board, query })))
+  const [boards, detail] = await Promise.all([
+    Promise.all(plan.value.boards.map(board => api($, 'GET', '/api/issues', { board, query }))),
+    api($, 'GET', detailPath(plan.value.planId)),
+  ])
   const cards: ReadyCard[] = []
   for (const r of boards) {
     if (!r.ok) return { kind: 'failed', reason: errText(r) }
@@ -2838,7 +2850,16 @@ async function readReadyCards($: any): Promise<ReadyRead> {
     if (!read.ok) return { kind: 'failed', reason: read.reason }
     cards.push(...read.value)
   }
-  return { kind: 'cards', cards }
+  // CP-34: the held-idle read fails open on its own (a dashboard without the route never costs the ready-cards check)
+  let held: HeldCard[] = []
+  let heldSkipped: string | null = null
+  if (!detail.ok) heldSkipped = errText(detail)
+  else {
+    const idle = heldIdleOf(detail.body, liveMarks(await read($, workMarks), await $.clock.now()))
+    if (idle.ok) held = idle.value
+    else heldSkipped = idle.reason
+  }
+  return { kind: 'cards', cards, held, heldSkipped }
 }
 
 // the main session's stop. Reports the shells' ends, then blocks the stop once while the plan has ready cards nobody holds.
@@ -2854,7 +2875,10 @@ async function onReportStop($: any, e: any, next: any) {
       : { kind: 'quiet' }
   const r = await next(e)
   if (verdict.kind === 'failed') $.ui.toast(skippedLine(verdict.reason))
-  if (verdict.kind === 'cards' && verdict.cards.length > 0) return { ...r, block: blockReason(verdict.cards) }
+  if (verdict.kind === 'cards' && verdict.heldSkipped !== null) $.ui.toast(heldSkippedLine(verdict.heldSkipped))
+  // CP-34: one block carries both reasons, each only when it has cards
+  const reasons = verdict.kind === 'cards' ? [...(verdict.held.length > 0 ? [heldIdleReason(verdict.held)] : []), ...(verdict.cards.length > 0 ? [blockReason(verdict.cards)] : [])] : []
+  if (reasons.length > 0) return { ...r, block: reasons.join('\n\n') }
   return r
 }
 
