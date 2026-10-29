@@ -174,7 +174,7 @@ const compacting = atom({ plugin: 'danxbot', key: 'compacting' } as const, { mai
 const runningAgents = atom({ plugin: 'danxbot', key: 'runningAgents' } as const, [] as string[])
 // the reports' memory between events (see ReportState).
 const reports = atom({ plugin: 'danxbot', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
-// CP-34: the cards this session marked as its own work (PUT /api/work-marks), by card id with the time set; the held-idle Stop check counts them as worked (reports/held-idle.ts).
+// the cards this session marked as its own work (PUT /api/work-marks), by card id with the time set; the held-idle Stop check counts them as worked (reports/held-idle.ts).
 const workMarks = atom({ plugin: 'danxbot', key: 'workMarks' } as const, {} as WorkMarks)
 // the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
 const relayOutbox = atom({ plugin: 'danxbot', key: 'relayOutbox' } as const, [] as PendingEvent[])
@@ -1853,7 +1853,7 @@ async function onAckCall($: any, e: any, next: any) {
     detach($, 'Plan refresh', refresh($, true))
   }
   await touchRecordClock($, e, next)
-  // CP-34: the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
+  // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
   if (e.agentId === undefined && !raisedByPlugin(next.origin) && answerOf(ran).ok) {
     const now = await $.clock.now()
     await update($, workMarks, cur => marksAfter(cur, e.method, e.path, e.body, now))
@@ -2850,7 +2850,7 @@ async function readReadyCards($: any): Promise<ReadyRead> {
     if (!read.ok) return { kind: 'failed', reason: read.reason }
     cards.push(...read.value)
   }
-  // CP-34: the held-idle read fails open on its own (a dashboard without the route never costs the ready-cards check)
+  // the held-idle read fails open on its own (a dashboard without the route never costs the ready-cards check)
   let held: HeldCard[] = []
   let heldSkipped: string | null = null
   if (!detail.ok) heldSkipped = errText(detail)
@@ -2876,7 +2876,7 @@ async function onReportStop($: any, e: any, next: any) {
   const r = await next(e)
   if (verdict.kind === 'failed') $.ui.toast(skippedLine(verdict.reason))
   if (verdict.kind === 'cards' && verdict.heldSkipped !== null) $.ui.toast(heldSkippedLine(verdict.heldSkipped))
-  // CP-34: one block carries both reasons, each only when it has cards
+  // one block carries both reasons, each only when it has cards
   const reasons = verdict.kind === 'cards' ? [...(verdict.held.length > 0 ? [heldIdleReason(verdict.held)] : []), ...(verdict.cards.length > 0 ? [blockReason(verdict.cards)] : [])] : []
   if (reasons.length > 0) return { ...r, block: reasons.join('\n\n') }
   return r

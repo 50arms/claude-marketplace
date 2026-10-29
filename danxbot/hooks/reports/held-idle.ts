@@ -1,4 +1,4 @@
-// CP-34 / DEC-116: the held-idle Stop check. A plan session HOLDS a card when the card's assigned agent is the session. Holding should mean someone
+// The held-idle Stop check. A plan session HOLDS a card when the card's assigned agent is the session. Holding should mean someone
 // is working the card right now; a card the session holds that nobody is working is assigned to no agent (DEC-116). At turn end, for a
 // plan-connected session, a card it holds that nothing is working blocks the stop once: work it now, or release it. Pure: register.tsx reads
 // `GET /api/plans/<plan id>/connected-session/detail` and asks these functions what the answer means. This file is the plugin's ONE
@@ -17,7 +17,7 @@ export function detailPath(planId: number): string {
 }
 
 // The work marks: the signal for the session's OWN direct work on a card (landing it, deploying it), which shows no sub-agent and no tool
-// activity on the card. A session about to work a card itself says so with `PUT /api/work-marks` on it (DX-6334); the card then counts as
+// activity on the card. A session about to work a card itself says so with `PUT /api/work-marks` on it; the card then counts as
 // worked while the mark lives. This is the ONE signal, chosen because the session makes it deliberately and the plugin sees it on the tool
 // call itself, so nothing about the card's history is guessed. A mark expires on its own after 30 minutes, as the dashboard's does, and
 // `DELETE /api/work-marks` ends it at once.
