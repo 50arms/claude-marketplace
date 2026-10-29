@@ -226,6 +226,8 @@ declare module 'claude-code' {
       runningAgents: string[]
       // when the session last wrote its plan or a card, was last reminded, or first called the dashboard (epoch ms; null: none yet): the no-recent-record reminder counts from it.
       recordClock: { since: number | null }
+      // the cards this session marked as its own work (PUT /api/work-marks), card id to the epoch ms the mark was set; the held-idle Stop check counts them as worked.
+      workMarks: Record<string, number>
     }
   }
 }
