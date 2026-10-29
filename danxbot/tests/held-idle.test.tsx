@@ -30,10 +30,10 @@ describe('held idle (pure)', () => {
   test('only a PUT of a mark on a card sets one, a DELETE clears it, and a mark lives 30 minutes', () => {
     const set = marksAfter({}, 'PUT', '/api/work-marks', MARK, 1000)
     expect(set).toEqual({ 'DX-1': 1000 })
-    expect(marksAfter(set, 'GET', '/api/work-marks', MARK, 2000)).toBe(set)
-    expect(marksAfter(set, 'PUT', '/api/issues', MARK, 2000)).toBe(set)
-    expect(marksAfter(set, 'PUT', '/api/work-marks', { resource: { type: 'problem', id: '4' } }, 2000)).toBe(set)
-    expect(marksAfter(set, 'PUT', '/api/work-marks', {}, 2000)).toBe(set)
+    expect(marksAfter(set, 'GET', '/api/work-marks', MARK, 2000)).toEqual(set)
+    expect(marksAfter(set, 'PUT', '/api/issues', MARK, 2000)).toEqual(set)
+    expect(marksAfter(set, 'PUT', '/api/work-marks', { resource: { type: 'problem', id: '4' } }, 2000)).toEqual(set)
+    expect(marksAfter(set, 'PUT', '/api/work-marks', {}, 2000)).toEqual(set)
     expect(marksAfter(set, 'DELETE', '/api/work-marks', MARK, 2000)).toEqual({})
     expect([...liveMarks(set, 1000 + WORK_MARK_TTL_MS - 1)]).toEqual(['DX-1'])
     expect([...liveMarks(set, 1000 + WORK_MARK_TTL_MS)]).toEqual([])
@@ -64,7 +64,10 @@ for (const surface of SURFACES) {
     test("an idle held card blocks the stop, naming it and the release call; the detail is read from the plan's own path", async ($, on) => {
       const d = await started($, on)
       d.world.heldRows = [held('DX-1', null, 'Idle one'), held('DX-2', 'Agent: Build')]
-      expect((await $.classic.Stop(STOP)).block).toBe(reason('DX-1', 'Idle one'))
+      const blocked = (await $.classic.Stop(STOP)).block
+      expect(blocked).toBe(reason('DX-1', 'Idle one'))
+      expect(blocked).toContain('DX-1 Idle one')
+      expect(blocked).toContain('assigned-agent')
       expect(d.reports.filter((x: any) => x.path === DETAIL)).toHaveLength(1)
     })
 

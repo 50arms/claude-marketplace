@@ -95,7 +95,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       return d
     }
-    const reads = (d: any) => d.reports.filter((r: any) => r.method === 'GET' && r.path !== PAUSE_PATH && !r.path.endsWith('/connected-session/detail'))
+    const reads = (d: any) => d.reports.filter((r: any) => r.method === 'GET' && r.path !== PAUSE_PATH)
     const pauseReads = (d: any) => d.reports.filter((r: any) => r.path === PAUSE_PATH)
     const STOP = { stop_hook_active: false, background_tasks: [] } as any
 
@@ -125,7 +125,7 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       d.world.readyRows[BOARD] = [card({ blocked: { at: 1, reason: 'r', by: 'x' } })]
       expect((await $.classic.Stop(STOP)).block).toBeUndefined()
-      expect(reads(d).map((r: any) => r.path)).toEqual(['/api/plans/mine', '/api/issues'])
+      expect(reads(d).map((r: any) => r.path)).toEqual(['/api/plans/mine', '/api/issues', '/api/plans/23/connected-session/detail'])
     })
 
     test('a stop the hook already forced (stop_hook_active) reads nothing and goes on', async ($, on) => {
