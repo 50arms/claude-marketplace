@@ -7,7 +7,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
 import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
-import type { AgentControl, ControlFile, GateControl, GateInput, LineValves } from '../hooks/compaction/control'
+import type { AgentControl, ControlFile, GateControl, GateInput, ModelValves } from '../hooks/compaction/control'
 import { CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
@@ -17,9 +17,9 @@ const WINDOW = 1_000_000
 const PASS_AT = 907_000
 
 // DX-5222: the dashboard's per-model-line valves (the sub-agent with no entry is measured against its model's line) and the sub-agents' own controls
-const VALVES = { haiku: 180_000, sonnet: 600_000, opus: 907_000 }
+const VALVES = { 'claude-haiku-5-5': 180_000, 'claude-sonnet-5-5': 600_000, 'claude-opus-4-8': 907_000 }
 // DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
-type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: LineValves }
+type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: ModelValves }
 const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
 const fileText = (control: WireControl | null, askedAt: string | null = null, sessionId: string = OWN_SESSION.session_id): string => JSON.stringify({ v: 1, sessionId, control, askedAt })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
@@ -66,7 +66,7 @@ const RELAY_SHAPES = {
   '0.1.311 (no agents, no valves)': (ms: number) => `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
   '0.1.317 (agents only)': (ms: number) => `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))},"agents":{}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
   '0.1.321 (agents and valves)': (ms: number) =>
-    `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))},"agents":{},"valves":{"opus":907000}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
+    `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))},"agents":{},"valves":{"claude-opus-4-8":907000}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
 }
 describe('a plugin ahead of its relay (pure, DX-5314)', () => {
   for (const [relay, text] of Object.entries(RELAY_SHAPES)) {
@@ -89,7 +89,7 @@ describe('a plugin ahead of its relay (pure, DX-5314)', () => {
 // The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
 // builds the same from the dashboard's frame, and danxbot's operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
 describe('the wire shape (pure)', () => {
-  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"haiku":180000,"sonnet":600000,"opus":907000}},"askedAt":null}'
+  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"claude-haiku-5-5":180000,"claude-sonnet-5-5":600000,"claude-opus-4-8":907000}},"askedAt":null}'
 
   test('the file the relay writes is read whole, and its pass-at size is the safety valve (the plugin has no margin of its own)', () => {
     const file = parse(RELAY_FILE)

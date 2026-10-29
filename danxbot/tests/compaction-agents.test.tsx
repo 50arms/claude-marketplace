@@ -3,21 +3,21 @@ import "./run-tests-with-npm-test.generated"
 // the per-agent verdict) and the engine wiring (register.tsx): `session.compact` names the proposing `agentId`, `turn.step` tells the plugin each sub-agent's context, the sub-agents' early-proposal percent is armed after `leftoverArmingCleared`. The main agent's own gate is compaction-control.test.tsx.
 import { describe, expect } from 'claude-code/testing'
 
-import { AGENT_FAULT_TOLD_KEEP, AGENT_HELD_REASON, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, agentVerdict, armedPercentOf, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
-import type { AgentControl, AgentGateInput, ControlFile, GateControl, LineValves } from '../hooks/compaction/control'
+import { AGENT_FAULT_TOLD_KEEP, AGENT_HELD_REASON, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, agentVerdict, armedPercentOf, floorPercent, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import type { AgentControl, AgentGateInput, ControlFile, GateControl, ModelValves } from '../hooks/compaction/control'
 import { CLOCK_START, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
 const NOW = Date.parse('2026-10-14T12:00:00.000Z')
 const WINDOW = 1_000_000
-const VALVES = { haiku: 180_000, sonnet: 600_000, opus: 907_000 }
+const VALVES = { 'claude-haiku-5-5': 180_000, 'claude-sonnet-5-5': 600_000, 'claude-opus-4-8': 907_000 }
 // what core answers a compaction that ran (a compaction leaves at least one message)
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 // the transcript a proposal runs over (a compaction needs at least one message)
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const entry = (over: Partial<AgentControl> = {}): AgentControl => ({ passAtTokens: 600_000, ...over })
 // DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
-type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: LineValves }
+type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: ModelValves }
 const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
 const fileText = (control: WireControl | null): string => JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control, askedAt: null })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
@@ -46,27 +46,22 @@ describe('sub-agents in the control file (pure)', () => {
     bad({ ...main, agents: 'x', valves: {} }, 'agents must be an object keyed by agent id')
     bad({ ...gateControl(), agents: [] }, 'agents must be an object keyed by agent id')
     bad({ ...gateControl(), agents: null }, 'agents must be an object keyed by agent id')
-    bad({ ...gateControl(), valves: null }, 'valves must be an object keyed by model line')
-    bad({ ...main, valves: 'x' }, 'valves must be an object keyed by model line')
+    bad({ ...gateControl(), valves: null }, 'valves must be an object keyed by model id')
+    bad({ ...main, valves: 'x' }, 'valves must be an object keyed by model id')
   })
 
   test('anything the relay would not have written for a sub-agent or a valve is bad, with the reason', () => {
     bad({ ...gateControl(), agents: { '': entry() } }, 'agents has an empty agent id')
     bad({ ...gateControl(), agents: { a1: 3 } }, 'agents.a1 is not an object')
     bad({ ...gateControl(), agents: { a1: { ...entry(), passAtTokens: 1.5 } } }, 'agents.a1.passAtTokens must be a whole number')
-    bad({ ...gateControl(), valves: { gpt: 5 } }, 'valves names "gpt", which is not a model line')
-    bad({ ...gateControl(), valves: { opus: 0 } }, 'valves.opus must be a positive whole number')
-    bad({ ...gateControl(), valves: { opus: 1.5 } }, 'valves.opus must be a positive whole number')
+    bad({ ...gateControl(), valves: { gpt: 5 } }, 'valves names "gpt", which is not an exact model id')
+    bad({ ...gateControl(), valves: { 'claude-opus-4-8': 0 } }, 'valves.claude-opus-4-8 must be a positive whole number')
+    bad({ ...gateControl(), valves: { 'claude-opus-4-8': 1.5 } }, 'valves.claude-opus-4-8 must be a positive whole number')
   })
 
-  test('a model id is in the line its name carries, and no other', () => {
-    expect(modelLineOf('claude-opus-4-8')).toBe('opus')
-    expect(modelLineOf('claude-haiku-5-5')).toBe('haiku')
-    expect(modelLineOf('claude-sonnet-5-5')).toBe('sonnet')
-    expect(modelLineOf('claude-fable-1-0')).toBe('fable')
-    expect(modelLineOf('gpt-5')).toBeNull()
-    expect(modelLineOf('claude-opus')).toBeNull()
-    expect(modelLineOf(undefined)).toBeNull()
+  test('a valve keyed by a model line, not an exact model id, is refused', () => {
+    bad({ ...gateControl(), valves: { haiku: 180_000 } }, 'valves names "haiku", which is not an exact model id')
+    bad({ ...gateControl(), valves: { 'claude-haiku': 180_000 } }, 'valves names "claude-haiku", which is not an exact model id')
   })
 
   test('the context size is the whole prompt of the last response; a response that reported nothing says nothing', () => {
@@ -139,26 +134,31 @@ describe('the sub-agent gate (pure)', () => {
     expect(agentVerdict(ask({ size: null }))).toEqual({ pass: false, reason: `${AGENT_HELD_REASON} (sub-agent a1: its context size is not known)`, told: true })
   })
 
-  describe('a sub-agent with no entry is measured against the valve of its own model line', () => {
+  describe('a sub-agent with no entry is measured against the valve of its exact model id', () => {
     const noEntry = (size: AgentGateInput['size']) => ask({ agentId: 'ghost', size })
 
-    test("it passes at its line's valve, and is held under it", () => {
+    test("it passes at its model's valve, and is held under it", () => {
       expect(agentVerdict(noEntry({ tokens: 180_000, model: 'claude-haiku-5-5' }))).toEqual({ pass: true, why: 'valve' })
       expect(agentVerdict(noEntry({ tokens: 179_999, model: 'claude-haiku-5-5' }))).toEqual({ pass: false, reason: AGENT_HELD_REASON, told: false })
-      // the same size on a bigger line is under that line's valve
+      // the same size on another model is under that model's valve
       expect(agentVerdict(noEntry({ tokens: 180_000, model: 'claude-opus-4-8' }))).toMatchObject({ pass: false })
       expect(agentVerdict(noEntry({ tokens: 907_000, model: 'claude-opus-4-8' }))).toEqual({ pass: true, why: 'valve' })
     })
 
-    test('a model in no line, or a line with no valve, is refused and told: no guessed model, no default valve', () => {
+    test("a model with no valve, even another version of a valved line, is refused and told: no line's valve, no guessed model, no default valve", () => {
       expect(agentVerdict(noEntry({ tokens: 900_000, model: 'gpt-5' }))).toEqual({
         pass: false,
-        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and its model "gpt-5" is in no model line)`,
+        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and the control has no valve for its model "gpt-5")`,
         told: true,
       })
       expect(agentVerdict(noEntry({ tokens: 900_000, model: 'claude-fable-1-0' }))).toEqual({
         pass: false,
-        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and the control has no valve for the fable line)`,
+        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and the control has no valve for its model "claude-fable-1-0")`,
+        told: true,
+      })
+      expect(agentVerdict(noEntry({ tokens: 900_000, model: 'claude-haiku-4-5' }))).toEqual({
+        pass: false,
+        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and the control has no valve for its model "claude-haiku-4-5")`,
         told: true,
       })
     })
@@ -341,26 +341,26 @@ for (const surface of SURFACES) {
         expect(k.d.toasts.filter(t => t.startsWith('Compacting'))).toEqual([])
       })
 
-      test('a sub-agent with no entry passes at the valve of its own model line, read from its own responses', async ($, on) => {
+      test('a sub-agent with no entry passes at the valve of its exact model id, read from its own responses', async ($, on) => {
         const k = await started($, on)
         k.d.world.files[CONTROL_FILE] = fileText(gateControl())
         await k.request('h1', AGENT_TURN_USAGE(179_999, 'claude-haiku-5-5'))
         expect(await k.propose('h1')).toEqual({ skip: AGENT_HELD_REASON })
         await k.request('h1', AGENT_TURN_USAGE(180_000, 'claude-haiku-5-5'))
         expect(await k.propose('h1')).toEqual(COMPACTED)
-        // the same size on another line is under that line's valve
+        // the same size on another model is under that model's valve
         await k.request('o1', AGENT_TURN_USAGE(180_000, 'claude-opus-4-8'))
         expect(await k.propose('o1')).toEqual({ skip: AGENT_HELD_REASON })
       })
 
-      test('a sub-agent with no entry and an unknown model, no valve for its line or no size is refused and told once, never guessed', async ($, on) => {
+      test('a sub-agent with no entry and an unknown model, no valve for its model or no size is refused and told once, never guessed', async ($, on) => {
         const k = await started($, on)
         k.d.world.files[CONTROL_FILE] = fileText(gateControl())
         await k.request('x1', AGENT_TURN_USAGE(900_000, 'gpt-5'))
         await k.request('f1', AGENT_TURN_USAGE(900_000, 'claude-fable-1-0'))
         for (let i = 0; i < 3; i++) {
-          expect((await k.propose('x1')).skip).toContain('is in no model line')
-          expect((await k.propose('f1')).skip).toContain('no valve for the fable line')
+          expect((await k.propose('x1')).skip).toContain('no valve for its model "gpt-5"')
+          expect((await k.propose('f1')).skip).toContain('no valve for its model "claude-fable-1-0"')
           expect((await k.propose('never-seen')).skip).toContain('its context size is not known')
         }
         expect(k.d.toasts.filter(t => t.startsWith(AGENT_HELD_REASON))).toHaveLength(3)

@@ -14,8 +14,8 @@
 //
 // SUB-AGENTS: a sub-agent is gated by its own `agents[id]` entry on Claude Code's `session.compact` event, which names the proposing `agentId`. Its context
 // size is NOT in the event and `$.session.usage()` is the main conversation's, so register.tsx records each sub-agent's last model response (`turn.step`'s usage and
-// model) and hands it here as `AgentSize`. `agentVerdict` decides one automatic proposal. A sub-agent with no entry is measured against the valve of ITS model line
-// (`valves`, which the dashboard writes from the board's model capabilities: the same per-model-line limits a dispatched worker gets), never a guessed model.
+// model) and hands it here as `AgentSize`. `agentVerdict` decides one automatic proposal. A sub-agent with no entry is measured against the valve of ITS exact model id
+// (`valves`, keyed by exact model id, one entry per active version; the dashboard writes it from the board's model capabilities: the same per-version limits a dispatched worker gets), never a guessed model.
 //
 // The control is a local file the session's danx-dashboard MCP relay writes (`~/.config/danxbot/compaction/<sessionId>.json`, shape below): the gate
 // never asks the network, because Claude Code proposes before every model request. A function hook that THROWS lets the compaction through (verified
@@ -37,7 +37,7 @@
 
 export const HELD_REASON = '[50 ARMS] automatic compaction is held: your agent compacts the session when it says ready'
 
-// `windowTokens` is the context window 50 Arms assumed for the session's model line (its table lists a window per line, not per session variant); the floor and
+// `windowTokens` is the context window 50 Arms assumed for the session's model (its table lists a window per exact model version); the floor and
 // the valve were computed from it, so a session whose real window is smaller must not be held (`windowFits`).
 export type GateControl = {
   floorTokens: number
@@ -54,8 +54,8 @@ export type GateControl = {
 export type SubagentControl = {
   // each sub-agent's own control by agent id; `{}` while none has been recommended
   agents: Record<string, AgentControl>
-  // the safety-valve size of each model line the board has a window for: the valve of a sub-agent that has no `agents` entry
-  valves: LineValves
+  // the safety-valve size of each active model version, keyed by exact model id: the valve of a sub-agent that has no `agents` entry
+  valves: ModelValves
 }
 
 // the notice for a control whose relay is older than the plugin (`subagents: null`); register.tsx shows it once per session, and again if it changes.
@@ -70,15 +70,9 @@ export const ENGINE_VERSION_NOTICE =
 // handover to the orchestrator, which asks the sub-agent, so the relay writes no request or release for a sub-agent. Extra keys are ignored, not rejected.
 export type AgentControl = { passAtTokens: number }
 
-// the model lines the dashboard knows; a model id `claude-<line>-...` is in that line
-export const MODEL_LINES = ['haiku', 'sonnet', 'opus', 'fable'] as const
-export type ModelLine = (typeof MODEL_LINES)[number]
-export type LineValves = Partial<Record<ModelLine, number>>
-const MODEL_ID_LINE = /^claude-(haiku|sonnet|opus|fable)-/
-export const modelLineOf = (model: unknown): ModelLine | null => {
-  const line = typeof model === 'string' ? MODEL_ID_LINE.exec(model)?.[1] : undefined
-  return line === undefined ? null : (line as ModelLine)
-}
+// the safety-valve size by exact model id (`claude-<line>-...`, e.g. `claude-haiku-5-5`); a version not active is absent
+export type ModelValves = Record<string, number>
+const MODEL_ID = /^claude-[a-z]+-\S+$/
 
 // `absent`: no file (the relay has not written one yet). `control: null`: the session is not under the handshake.
 export type ControlFile = { kind: 'absent' } | { kind: 'control'; control: GateControl | null } | { kind: 'bad'; reason: string }
@@ -170,19 +164,19 @@ function parseAgents(value: unknown): Record<string, AgentControl> | string {
   return agents
 }
 
-// the per-line valves, or (a string) why they cannot be read: known model lines only, each a positive whole number.
-function parseValves(value: unknown): LineValves | string {
-  if (!isRecord(value)) return 'valves must be an object keyed by model line'
-  const valves: LineValves = {}
-  for (const [line, tokens] of Object.entries(value)) {
-    if (!(MODEL_LINES as readonly string[]).includes(line)) return `valves names ${JSON.stringify(line)}, which is not a model line`
-    if (!isCount(tokens) || tokens === 0) return `valves.${line} must be a positive whole number`
-    valves[line as ModelLine] = tokens
+// the per-version valves, or (a string) why they cannot be read: exact model ids only (`claude-<line>-...`), each a positive whole number.
+function parseValves(value: unknown): ModelValves | string {
+  if (!isRecord(value)) return 'valves must be an object keyed by model id'
+  const valves: ModelValves = {}
+  for (const [model, tokens] of Object.entries(value)) {
+    if (!MODEL_ID.test(model)) return `valves names ${JSON.stringify(model)}, which is not an exact model id`
+    if (!isCount(tokens) || tokens === 0) return `valves.${model} must be a positive whole number`
+    valves[model] = tokens
   }
   return valves
 }
 
-// Whether the control's floor and valve can be reached in this session. 50 Arms computed them from the window it assumed for the model line; when the session's
+// Whether the control's floor and valve can be reached in this session. 50 Arms computed them from the window it assumed for the model; when the session's
 // real window (`$.session.usage().context.window`, null when the engine cannot say yet) is smaller, a proposal could come before the floor and the valve would
 // never be reached. Held only when the real window is not known to be smaller.
 export const windowFits = (control: GateControl, realWindow: number | null): boolean => realWindow === null || realWindow >= control.windowTokens
@@ -283,8 +277,8 @@ export type AgentVerdict = { pass: true; why: 'no-control' | 'unreadable' | 'val
 //   a control with no sub-agent control (a relay older than the plugin) holds nothing either;
 //   a context size the plugin never saw is refused and told: a size it cannot read is never guessed;
 //   a sub-agent with an entry passes at ITS valve (`passAtTokens`) and is otherwise held: a sub-agent is never compacted in place, only at its valve or by a person's /compact;
-//   a sub-agent with no entry (not placed yet, or one the dashboard cannot place) passes at the valve of ITS model's line, read from its own responses; a model in no
-//   line, or a line the control has no valve for, is refused and told, never given a guessed model or a default valve.
+//   a sub-agent with no entry (not placed yet, or one the dashboard cannot place) passes at the valve of ITS exact model id, read from its own responses; a model
+//   the control has no valve for is refused and told, never given a line's valve, a guessed model or a default valve.
 export function agentVerdict(input: AgentGateInput): AgentVerdict {
   const { file, size, agentId } = input
   if (file.kind === 'bad') return { pass: true, why: 'unreadable' }
@@ -300,10 +294,8 @@ export function agentVerdict(input: AgentGateInput): AgentVerdict {
     if (size.tokens >= entry.passAtTokens) return { pass: true, why: 'valve' }
     return { pass: false, reason: AGENT_HELD_REASON, told: false }
   }
-  const line = modelLineOf(size.model)
-  if (line === null) return refuse(`it has no compaction control yet and its model ${JSON.stringify(size.model)} is in no model line`)
-  const valve = subagents.valves[line]
-  if (valve === undefined) return refuse(`it has no compaction control yet and the control has no valve for the ${line} line`)
+  const valve = subagents.valves[size.model]
+  if (valve === undefined) return refuse(`it has no compaction control yet and the control has no valve for its model ${JSON.stringify(size.model)}`)
   if (size.tokens >= valve) return { pass: true, why: 'valve' }
   return { pass: false, reason: AGENT_HELD_REASON, told: false }
 }
