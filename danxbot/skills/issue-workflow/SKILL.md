@@ -300,8 +300,8 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 5. By `git.pull_request.done_on`:
    - `opened`: transition `complete` with a summary naming the pull request, and write the retro
      citing the pull request link and the branch tip.
-   - `merged`: do not transition `complete`. Release your claim with `rollback_pickup` and
-     `keep_assignment: true`, then say plainly that the card stays open (it shows ToDo with its
+   - `merged`: do not transition `complete`. Release the card with `rollback_pickup` (without
+     `keep_assignment`: a card nobody is working is assigned to no agent, DEC-116), then say plainly that the card stays open (it shows ToDo with its
      on-a-pull-request indicator and its pull request link) until the pull request merges, and
      that the person completes it then.
 
