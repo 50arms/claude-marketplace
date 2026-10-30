@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // The shape of the danxbot plugin: every hook is a native function hook of one module (hooks/register.tsx), and scripts/ holds
 // only the MCP server launcher and the screenshot tool. The module's own behaviour is tested
 // by `claude plugin test danxbot` (tests/*.test.tsx); this file pins the manifest shape and that the engine's own validator accepts

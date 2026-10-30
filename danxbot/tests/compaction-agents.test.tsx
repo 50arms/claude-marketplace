@@ -1,24 +1,23 @@
+import "./run-tests-with-npm-test.generated"
 // DX-5222 (PLAN-42 section 141): an operator session's compaction handshake per SUB-AGENT. The pure rules (control.ts: the agents and valves of the control file, the percent,
-// the per-agent verdict) and the engine wiring (register.tsx): `session.compact` names the proposing `agentId`, `turn.step` tells the plugin each sub-agent's context, `$.session.send`
-// delivers each sub-agent's request, and the sub-agents' early-proposal percent is armed after `leftoverArmingCleared`. The main agent's own gate is compaction-control.test.tsx.
+// the per-agent verdict) and the engine wiring (register.tsx): `session.compact` names the proposing `agentId`, `turn.step` tells the plugin each sub-agent's context, the sub-agents' early-proposal percent is armed after `leftoverArmingCleared`. The main agent's own gate is compaction-control.test.tsx.
 import { describe, expect } from 'claude-code/testing'
 
-import { AGENT_HELD_REASON, AGENT_SIZES_KEEP, ASK_SENT_PREFIX, ENGINE_VERSION_NOTICE, HELD_REASON, USED_RELEASE_KEEP, agentVerdict, armedPercentOf, askSentKey, floorPercent, modelLineOf, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
-import type { AgentControl, AgentGateInput, ControlFile, GateControl, LineValves } from '../hooks/compaction/control'
+import { AGENT_FAULT_TOLD_KEEP, AGENT_HELD_REASON, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, agentVerdict, armedPercentOf, floorPercent, parseControlFile, sizeOfUsage, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import type { AgentControl, AgentGateInput, ControlFile, GateControl, ModelValves } from '../hooks/compaction/control'
 import { CLOCK_START, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
 const NOW = Date.parse('2026-10-14T12:00:00.000Z')
 const WINDOW = 1_000_000
-const VALVES = { haiku: 180_000, sonnet: 600_000, opus: 907_000 }
-const ASK = { seq: 2, at: '2026-10-14T11:58:00.000Z', text: 'Prepare for compaction, then say ready.' }
+const VALVES = { 'claude-haiku-5-5': 180_000, 'claude-sonnet-5-5': 600_000, 'claude-opus-4-8': 907_000 }
 // what core answers a compaction that ran (a compaction leaves at least one message)
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 // the transcript a proposal runs over (a compaction needs at least one message)
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
-const entry = (over: Partial<AgentControl> = {}): AgentControl => ({ passAtTokens: 600_000, ask: null, releaseUntilMs: null, releaseId: null, ...over })
+const entry = (over: Partial<AgentControl> = {}): AgentControl => ({ passAtTokens: 600_000, ...over })
 // DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
-type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: LineValves }
+type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: ModelValves }
 const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
 const fileText = (control: WireControl | null): string => JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control, askedAt: null })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
@@ -30,10 +29,11 @@ const withControl = (over: Partial<WireControl> = {}): ControlFile => {
 describe('sub-agents in the control file (pure)', () => {
   const bad = (control: unknown, reason: string) => expect(parse(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control, askedAt: null }))).toEqual({ kind: 'bad', reason })
 
-  test('every sub-agent entry and every line valve is read whole', () => {
-    const agents = { a1: entry({ ask: ASK }), a2: entry({ releaseUntilMs: 9, releaseId: 'r' }) }
+  test('every sub-agent entry is read as its safety valve and every line valve whole; a key the relay does not write is ignored', () => {
+    const agents = { a1: entry(), a2: entry({ passAtTokens: 400_000 }) }
     expect(parse(fileText(gateControl({ agents })))).toEqual(withControl({ agents }))
     expect(parse(fileText(gateControl({ valves: {} })))).toEqual(withControl({ valves: {} }))
+    expect(parse(fileText(gateControl({ agents: { a1: { passAtTokens: 600_000, ask: { seq: 1, at: 'x', text: 'y' }, releaseUntilMs: 9, releaseId: 'r' } as any } })))).toEqual(withControl({ agents: { a1: entry() } }))
   })
 
   // DX-5314: a field the relay did not write is a relay older than the plugin (main handshake kept, sub-agent control off); a field it wrote wrongly is corruption
@@ -46,32 +46,22 @@ describe('sub-agents in the control file (pure)', () => {
     bad({ ...main, agents: 'x', valves: {} }, 'agents must be an object keyed by agent id')
     bad({ ...gateControl(), agents: [] }, 'agents must be an object keyed by agent id')
     bad({ ...gateControl(), agents: null }, 'agents must be an object keyed by agent id')
-    bad({ ...gateControl(), valves: null }, 'valves must be an object keyed by model line')
-    bad({ ...main, valves: 'x' }, 'valves must be an object keyed by model line')
+    bad({ ...gateControl(), valves: null }, 'valves must be an object keyed by model id')
+    bad({ ...main, valves: 'x' }, 'valves must be an object keyed by model id')
   })
 
   test('anything the relay would not have written for a sub-agent or a valve is bad, with the reason', () => {
     bad({ ...gateControl(), agents: { '': entry() } }, 'agents has an empty agent id')
     bad({ ...gateControl(), agents: { a1: 3 } }, 'agents.a1 is not an object')
     bad({ ...gateControl(), agents: { a1: { ...entry(), passAtTokens: 1.5 } } }, 'agents.a1.passAtTokens must be a whole number')
-    bad({ ...gateControl(), agents: { a1: { ...entry(), ask: { seq: 1, at: '', text: 'x' } } } }, 'agents.a1.ask must be null or {seq, at, text}')
-    bad({ ...gateControl(), agents: { a1: { ...entry(), ask: { seq: 1, at: 'x', text: ' ' } } } }, 'agents.a1.ask must be null or {seq, at, text}')
-    bad({ ...gateControl(), agents: { a1: { ...entry(), ask: undefined } } }, 'agents.a1.ask must be null or {seq, at, text}')
-    bad({ ...gateControl(), agents: { a1: entry({ releaseUntilMs: 5 }) } }, 'agents.a1: releaseUntilMs and releaseId are both set or both null')
-    bad({ ...gateControl(), agents: { a1: { ...entry(), releaseUntilMs: 'x', releaseId: 'r' } } }, 'agents.a1: releaseUntilMs must be a number or null')
-    bad({ ...gateControl(), valves: { gpt: 5 } }, 'valves names "gpt", which is not a model line')
-    bad({ ...gateControl(), valves: { opus: 0 } }, 'valves.opus must be a positive whole number')
-    bad({ ...gateControl(), valves: { opus: 1.5 } }, 'valves.opus must be a positive whole number')
+    bad({ ...gateControl(), valves: { gpt: 5 } }, 'valves names "gpt", which is not an exact model id')
+    bad({ ...gateControl(), valves: { 'claude-opus-4-8': 0 } }, 'valves.claude-opus-4-8 must be a positive whole number')
+    bad({ ...gateControl(), valves: { 'claude-opus-4-8': 1.5 } }, 'valves.claude-opus-4-8 must be a positive whole number')
   })
 
-  test('a model id is in the line its name carries, and no other', () => {
-    expect(modelLineOf('claude-opus-4-8')).toBe('opus')
-    expect(modelLineOf('claude-haiku-5-5')).toBe('haiku')
-    expect(modelLineOf('claude-sonnet-5-5')).toBe('sonnet')
-    expect(modelLineOf('claude-fable-1-0')).toBe('fable')
-    expect(modelLineOf('gpt-5')).toBeNull()
-    expect(modelLineOf('claude-opus')).toBeNull()
-    expect(modelLineOf(undefined)).toBeNull()
+  test('a valve keyed by a model line, not an exact model id, is refused', () => {
+    bad({ ...gateControl(), valves: { haiku: 180_000 } }, 'valves names "haiku", which is not an exact model id')
+    bad({ ...gateControl(), valves: { 'claude-haiku': 180_000 } }, 'valves names "claude-haiku", which is not an exact model id')
   })
 
   test('the context size is the whole prompt of the last response; a response that reported nothing says nothing', () => {
@@ -94,20 +84,18 @@ describe('sub-agents in the control file (pure)', () => {
     expect(armedPercentOf({ kind: 'bad', reason: 'x' })).toBeNull()
   })
 
-  test('each key of a store record is its own: the main agent, a sub-agent, and a delivered request', () => {
+  test("the main agent's store record key is its session's", () => {
     expect(usedReleaseKey('s1')).toBe('compaction-used-release:s1')
-    expect(usedReleaseKey('s1', 'a1')).toBe('compaction-used-release:s1:a1')
-    expect(askSentKey('s1', 'a1')).toBe('compaction-ask-sent:s1:a1')
   })
 })
 
-// One automatic proposal of a sub-agent. Its valve and its release are its own: a main-agent release never passes a sub-agent and a sub-agent's never passes the main agent.
+// One automatic proposal of a sub-agent. Its valve is its own: the main agent's valve and release never decide a sub-agent.
 describe('the sub-agent gate (pure)', () => {
   const OPUS = { tokens: 300_000, model: 'claude-opus-4-8' }
   const withAgent = (a: Partial<AgentControl>, over: Partial<WireControl> = {}): ControlFile => withControl({ agents: { a1: entry(a) }, ...over })
-  const ask = (over: Partial<AgentGateInput> = {}): AgentGateInput => ({ agentId: 'a1', file: withAgent({}), size: OPUS, usedReleaseId: null, nowMs: NOW, ...over })
+  const ask = (over: Partial<AgentGateInput> = {}): AgentGateInput => ({ agentId: 'a1', file: withAgent({}), size: OPUS, ...over })
 
-  test('a sub-agent under its valve with no release is held, and not told', () => {
+  test('a sub-agent under its valve is held, and not told', () => {
     expect(agentVerdict(ask())).toEqual({ pass: false, reason: AGENT_HELD_REASON, told: false })
   })
 
@@ -118,23 +106,11 @@ describe('the sub-agent gate (pure)', () => {
     expect(agentVerdict(ask({ file: withAgent({ passAtTokens: 400_000 }), size: { ...OPUS, tokens: 400_000 } }))).toEqual({ pass: true, why: 'valve' })
   })
 
-  test("a sub-agent's unexpired release passes it; a spent, expired or other agent's release does not", () => {
-    const released = (over: Partial<AgentControl> = {}) => ask({ file: withAgent({ releaseUntilMs: NOW + 60_000, releaseId: 'ra', ...over }) })
-    expect(agentVerdict(released())).toEqual({ pass: true, why: 'release', releaseId: 'ra' })
-    expect(agentVerdict({ ...released(), usedReleaseId: 'ra' })).toMatchObject({ pass: false })
-    expect(agentVerdict({ ...released(), usedReleaseId: 'older' })).toEqual({ pass: true, why: 'release', releaseId: 'ra' })
-    expect(agentVerdict(released({ releaseUntilMs: NOW }))).toMatchObject({ pass: false })
-    expect(agentVerdict(released({ releaseUntilMs: NOW - 1 }))).toMatchObject({ pass: false })
-    // another sub-agent has no entry here, and a release in a1's entry is not its
-    expect(agentVerdict({ ...released(), agentId: 'a2' })).toMatchObject({ pass: false })
-  })
-
   test("the main agent's release never passes a sub-agent, whether the control has an entry for it or not", () => {
     const file = withAgent({}, { releaseUntilMs: NOW + 60_000, releaseId: 'main-release' })
     expect(agentVerdict(ask({ file }))).toEqual({ pass: false, reason: AGENT_HELD_REASON, told: false })
     // a sub-agent with no entry is measured against its line's valve only; the main agent's unexpired release is not its release
     expect(agentVerdict(ask({ file, agentId: 'ghost' }))).toEqual({ pass: false, reason: AGENT_HELD_REASON, told: false })
-    expect(agentVerdict(ask({ file, agentId: 'ghost', usedReleaseId: 'older' }))).toEqual({ pass: false, reason: AGENT_HELD_REASON, told: false })
   })
 
   test('a precompute is judged like an automatic proposal: held under the valve, through at it', () => {
@@ -158,26 +134,31 @@ describe('the sub-agent gate (pure)', () => {
     expect(agentVerdict(ask({ size: null }))).toEqual({ pass: false, reason: `${AGENT_HELD_REASON} (sub-agent a1: its context size is not known)`, told: true })
   })
 
-  describe('a sub-agent with no entry is measured against the valve of its own model line', () => {
+  describe('a sub-agent with no entry is measured against the valve of its exact model id', () => {
     const noEntry = (size: AgentGateInput['size']) => ask({ agentId: 'ghost', size })
 
-    test("it passes at its line's valve, and is held under it", () => {
+    test("it passes at its model's valve, and is held under it", () => {
       expect(agentVerdict(noEntry({ tokens: 180_000, model: 'claude-haiku-5-5' }))).toEqual({ pass: true, why: 'valve' })
       expect(agentVerdict(noEntry({ tokens: 179_999, model: 'claude-haiku-5-5' }))).toEqual({ pass: false, reason: AGENT_HELD_REASON, told: false })
-      // the same size on a bigger line is under that line's valve
+      // the same size on another model is under that model's valve
       expect(agentVerdict(noEntry({ tokens: 180_000, model: 'claude-opus-4-8' }))).toMatchObject({ pass: false })
       expect(agentVerdict(noEntry({ tokens: 907_000, model: 'claude-opus-4-8' }))).toEqual({ pass: true, why: 'valve' })
     })
 
-    test('a model in no line, or a line with no valve, is refused and told: no guessed model, no default valve', () => {
+    test("a model with no valve, even another version of a valved line, is refused and told: no line's valve, no guessed model, no default valve", () => {
       expect(agentVerdict(noEntry({ tokens: 900_000, model: 'gpt-5' }))).toEqual({
         pass: false,
-        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and its model "gpt-5" is in no model line)`,
+        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and the control has no valve for its model "gpt-5")`,
         told: true,
       })
       expect(agentVerdict(noEntry({ tokens: 900_000, model: 'claude-fable-1-0' }))).toEqual({
         pass: false,
-        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and the control has no valve for the fable line)`,
+        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and the control has no valve for its model "claude-fable-1-0")`,
+        told: true,
+      })
+      expect(agentVerdict(noEntry({ tokens: 900_000, model: 'claude-haiku-4-5' }))).toEqual({
+        pass: false,
+        reason: `${AGENT_HELD_REASON} (sub-agent ghost: it has no compaction control yet and the control has no valve for its model "claude-haiku-4-5")`,
         told: true,
       })
     })
@@ -231,7 +212,31 @@ for (const surface of SURFACES) {
         see: () => $.session.compact({ trigger: 'manual', messages: TRANSCRIPT }),
       }
     }
-    const running = (d: any, ...ids: string[]) => void (d.world.agents = ids.map(id => ({ id, type: 'danxbot:worker-sonnet-high', description: `agent ${id}`, status: 'running' })))
+
+    // DX-5562: `noteAgentStep` is an observer on every sub-agent model request; an id Claude Code never produces must not fail the request
+    describe('noting a sub-agent request', () => {
+      test('an id of the wrong form does not fail the request: the response stands and the id is told once', async ($, on) => {
+        const k = await started($, on)
+        const usage = AGENT_TURN_USAGE(700_000)
+        for (const id of ['agent-bad', 'agent-bad']) {
+          const response = await k.request(id, usage)
+          expect(response).toMatchObject({ stopReason: 'end_turn' })
+        }
+        expect(k.d.toasts.filter(t => t.startsWith('Compaction could not note the context of sub-agent "agent-bad"'))).toHaveLength(1)
+      })
+    })
+
+    describe('the told-once memory of sub-agent faults', () => {
+      test('is bounded: past AGENT_FAULT_TOLD_KEEP distinct faults the oldest is forgotten, and is told again', async ($, on) => {
+        const k = await started($, on)
+        const toldOf = (id: string) => k.d.toasts.filter(t => t.startsWith(`Compaction could not note the context of sub-agent ${JSON.stringify(id)}`)).length
+        await k.request('agent-bad-0', AGENT_TURN_USAGE(700_000))
+        expect(toldOf('agent-bad-0')).toBe(1)
+        for (let i = 1; i <= AGENT_FAULT_TOLD_KEEP; i++) await k.request(`agent-bad-${i}`, AGENT_TURN_USAGE(700_000))
+        await k.request('agent-bad-0', AGENT_TURN_USAGE(700_000))
+        expect(toldOf('agent-bad-0')).toBe(2)
+      })
+    })
 
     describe('the gate on session.compact', () => {
       test('the main agent keeps its own verdict: held under its valve, through at it; the proposal never reaches core while held', async ($, on) => {
@@ -307,33 +312,6 @@ for (const surface of SURFACES) {
         expect((await k.propose('s1')).skip).toContain('its context size is not known')
       })
 
-      test("a sub-agent's release passes ONCE, is spent for that sub-agent only, and a new release passes again", async ($, on) => {
-        const k = await started($, on)
-        const release = (id: string) => fileText(gateControl({ agents: { 'agent-a1': entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: id }), 'agent-a2': entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: id }) } }))
-        k.d.world.files[CONTROL_FILE] = release('r1')
-        await k.request('a1', AGENT_TURN_USAGE(300_000))
-        await k.request('a2', AGENT_TURN_USAGE(300_000))
-        expect(await k.propose('a1')).toEqual(COMPACTED)
-        expect(k.d.stored.get(usedReleaseKey(OWN_SESSION.session_id, 'agent-a1'))).toEqual({ releaseId: 'r1', at: expect.any(Number) })
-        // the dashboard writes the same release again: spent
-        expect(await k.propose('a1')).toEqual({ skip: AGENT_HELD_REASON })
-        // a2's release is its own, though it has the same id
-        expect(await k.propose('a2')).toEqual(COMPACTED)
-        k.d.world.files[CONTROL_FILE] = release('r2')
-        expect(await k.propose('a1')).toEqual(COMPACTED)
-        expect(k.d.toasts).toContain('Compacting sub-agent agent-a1 now: it said it is ready.')
-      })
-
-      test("the main agent's release never passes a sub-agent and a sub-agent's release never passes the main agent", async ($, on) => {
-        const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'main-r', agents: { 'agent-a1': entry() } }))
-        await k.request('a1', AGENT_TURN_USAGE(300_000))
-        expect(await k.propose('a1')).toEqual({ skip: AGENT_HELD_REASON })
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ releaseUntilMs: CLOCK_START + 60_000, releaseId: 'a1-r' }) } }))
-        expect(await k.propose()).toEqual({ skip: HELD_REASON })
-        expect(k.core).toEqual([])
-      })
-
       test("a manual /compact is not this gate's: it is not matched, and the classic gate lets it through", async ($, on) => {
         const k = await started($, on)
         k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
@@ -353,47 +331,36 @@ for (const surface of SURFACES) {
         expect(k.d.compactRuns).toEqual([])
       })
 
-      test("a precompute is judged per agent like an automatic proposal, and spends no release or announcement: the compaction that follows is the one that does", async ($, on) => {
+      test('a precompute is judged per agent like an automatic proposal, and announces nothing: held under the valve, through at it', async ($, on) => {
         const k = await started($, on)
-        const release = { releaseUntilMs: CLOCK_START + 60_000, releaseId: 'r1' }
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry(release), 'agent-a2': entry() } }))
+        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
         await k.request('a1', AGENT_TURN_USAGE(300_000))
-        await k.request('a2', AGENT_TURN_USAGE(300_000))
-        // held for the agent with no release, through for the one whose release is waiting, and the main agent under its valve is held
-        expect(await k.propose('a2', 'precompute')).toEqual({ skip: AGENT_HELD_REASON })
+        expect(await k.propose('a1', 'precompute')).toEqual({ skip: AGENT_HELD_REASON })
+        await k.request('a1', AGENT_TURN_USAGE(600_000))
         expect(await k.propose('a1', 'precompute')).toEqual(COMPACTED)
-        expect(await k.propose(undefined, 'precompute')).toEqual({ skip: HELD_REASON })
-        expect(k.d.stored.has(usedReleaseKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(false)
         expect(k.d.toasts.filter(t => t.startsWith('Compacting'))).toEqual([])
-        // the release is still a1's for the automatic proposal that follows
-        expect(await k.propose('a1')).toEqual(COMPACTED)
-        expect(k.d.stored.has(usedReleaseKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(true)
-        // at the main valve a precompute passes with no announcement
-        k.d.world.context = { tokens: 907_000, window: WINDOW }
-        expect(await k.propose(undefined, 'precompute')).toEqual(COMPACTED)
-        expect(k.d.toasts.filter(t => t.startsWith('Compacting now'))).toEqual([])
       })
 
-      test('a sub-agent with no entry passes at the valve of its own model line, read from its own responses', async ($, on) => {
+      test('a sub-agent with no entry passes at the valve of its exact model id, read from its own responses', async ($, on) => {
         const k = await started($, on)
         k.d.world.files[CONTROL_FILE] = fileText(gateControl())
         await k.request('h1', AGENT_TURN_USAGE(179_999, 'claude-haiku-5-5'))
         expect(await k.propose('h1')).toEqual({ skip: AGENT_HELD_REASON })
         await k.request('h1', AGENT_TURN_USAGE(180_000, 'claude-haiku-5-5'))
         expect(await k.propose('h1')).toEqual(COMPACTED)
-        // the same size on another line is under that line's valve
+        // the same size on another model is under that model's valve
         await k.request('o1', AGENT_TURN_USAGE(180_000, 'claude-opus-4-8'))
         expect(await k.propose('o1')).toEqual({ skip: AGENT_HELD_REASON })
       })
 
-      test('a sub-agent with no entry and an unknown model, no valve for its line or no size is refused and told once, never guessed', async ($, on) => {
+      test('a sub-agent with no entry and an unknown model, no valve for its model or no size is refused and told once, never guessed', async ($, on) => {
         const k = await started($, on)
         k.d.world.files[CONTROL_FILE] = fileText(gateControl())
         await k.request('x1', AGENT_TURN_USAGE(900_000, 'gpt-5'))
         await k.request('f1', AGENT_TURN_USAGE(900_000, 'claude-fable-1-0'))
         for (let i = 0; i < 3; i++) {
-          expect((await k.propose('x1')).skip).toContain('is in no model line')
-          expect((await k.propose('f1')).skip).toContain('no valve for the fable line')
+          expect((await k.propose('x1')).skip).toContain('no valve for its model "gpt-5"')
+          expect((await k.propose('f1')).skip).toContain('no valve for its model "claude-fable-1-0"')
           expect((await k.propose('never-seen')).skip).toContain('its context size is not known')
         }
         expect(k.d.toasts.filter(t => t.startsWith(AGENT_HELD_REASON))).toHaveLength(3)
@@ -466,165 +433,6 @@ for (const surface of SURFACES) {
         await $.classic.PreCompact(PRE('auto'))
         await $.turn.start(START)
         expect(k.d.versionReads).toBe(1)
-      })
-    })
-
-    describe("delivering each sub-agent's request", () => {
-      test("a request reaches only that sub-agent, once per ask.at, as the dashboard worded it; the main agent never gets one", async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'a1', 'a2')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }), 'agent-a2': entry() } }))
-        await $.turn.start(START)
-        expect(k.d.sends).toHaveLength(1)
-        expect(k.d.sends[0].to).toContain('a1')
-        // DX-5328: the control is keyed `agent-a1`, the real pairing; the engine addresses the sub-agent by the BARE id Claude Code lists it under
-        expect(String(k.d.sends[0].to)).not.toContain('agent-a1')
-        expect(k.d.sends[0].text).toBe(ASK.text)
-        // the same request, however many syncs follow, is not sent again
-        await $.turn.complete(TURN)
-        await $.turn.start(START)
-        await $.turn.complete(TURN)
-        expect(k.d.sends).toHaveLength(1)
-        expect(k.d.stored.get(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toEqual({ at: ASK.at, sentAt: expect.any(Number) })
-        // a later request (a new `at`) is a new one
-        const later = { ...ASK, seq: 3, at: '2026-10-14T12:30:00.000Z', text: 'Prepare again.' }
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: later }), 'agent-a2': entry() } }))
-        await $.turn.start(START)
-        expect(k.d.sends.map(s => s.text)).toEqual([ASK.text, 'Prepare again.'])
-        expect(k.d.sends.every(s => s.to.includes('a1'))).toBe(true)
-      })
-
-      // DX-5328: one id of the wrong form in `$.agent.list()` is left out and told once; it never breaks the sync (which goes on to start the main agent's ready compaction)
-      test('one agent-list id that is not a bare id is excluded and told once, and the other sub-agents still get their request', async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'agent-bad', 'a1')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
-        await $.turn.start(START)
-        await $.turn.complete(TURN)
-        await $.turn.start(START)
-        expect(k.d.sends).toHaveLength(1)
-        expect(k.d.toasts.filter(t => t.startsWith('Compaction request delivery skips sub-agent "agent-bad"'))).toHaveLength(1)
-        expect(k.d.toasts.some(t => t.startsWith('Compaction handshake could not run'))).toBe(false)
-      })
-
-      test('a request is delivered while the main turn is running, at the idle check, not only at a turn boundary', async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'a1')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry() } }))
-        await $.turn.start(START)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
-        await k.d.clock.advance(5_000)
-        expect(k.d.sends).toHaveLength(1)
-        await $.turn.complete(TURN)
-      })
-
-      test('a failed send is not recorded and is sent again at the next sync, and the person hears of it once', async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'a1')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
-        for (const mode of ['refused', 'throws'] as const) {
-          k.d.setSendMode(mode)
-          await $.turn.start(START)
-          await $.turn.complete(TURN)
-        }
-        expect(k.d.sends).toHaveLength(4)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(false)
-        expect(k.d.toasts.filter(t => t.startsWith('Compaction request for sub-agent agent-a1 was not delivered'))).toHaveLength(2)
-        k.d.setSendMode('delivered')
-        await $.turn.start(START)
-        expect(k.d.sends).toHaveLength(5)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(true)
-        await $.turn.complete(TURN)
-        expect(k.d.sends).toHaveLength(5)
-      })
-
-      // a1's send is still in the host's hands while a second sync finds a2's send failing: a2's claim goes back and a1's stays, so a third sync does not send a1 again
-      test("a failed send gives back only its own claim: another sub-agent's send in flight is not sent twice", async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'a1', 'a2')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }), 'agent-a2': entry({ ask: ASK }) } }))
-        k.d.failSendsTo('a2')
-        const hold = k.d.holdSends()
-        const first = $.turn.start(START)
-        await hold.reached
-        const sentTo = (id: string) => k.d.sends.filter(s => String(s.to).includes(id)).length
-        expect(sentTo('a1')).toBe(1)
-        await $.turn.complete(TURN)
-        await $.turn.start(START)
-        expect(sentTo('a1')).toBe(1)
-        // a2's claim was given back each time, so each sync tried it again
-        expect(sentTo('a2')).toBeGreaterThan(1)
-        hold.release()
-        await first
-        expect(sentTo('a1')).toBe(1)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(true)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a2'))).toBe(false)
-      })
-
-      test('only a running sub-agent is sent to: a finished one would be resumed by the message', async ($, on) => {
-        const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
-        k.d.world.agents = [{ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'agent a1', status: 'completed' }] as any
-        await $.turn.start(START)
-        expect(k.d.sends).toEqual([])
-        running(k.d, 'a1')
-        await $.turn.complete(TURN)
-        expect(k.d.sends).toHaveLength(1)
-      })
-
-      test('a request to a finished sub-agent is not sent while another sub-agent runs', async ($, on) => {
-        const k = await started($, on)
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }), 'agent-a2': entry({ ask: ASK }) } }))
-        k.d.world.agents = [
-          { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'agent a1', status: 'completed' },
-          { id: 'a2', type: 'danxbot:worker-sonnet-high', description: 'agent a2', status: 'running' },
-        ] as any
-        await $.turn.start(START)
-        await $.turn.complete(TURN)
-        expect(k.d.sends.map(s => s.to)).toHaveLength(1)
-        expect(k.d.sends[0].to).toContain('a2')
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(false)
-      })
-
-      // the first sync is in the middle of its send (the host has not answered) when a second one reads the same request as unsent
-      test('two syncs racing each other send a request once', async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'a1')
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
-        const hold = k.d.holdSends()
-        const first = $.turn.start(START)
-        await hold.reached
-        await $.turn.complete(TURN)
-        expect(k.d.sends).toHaveLength(1)
-        hold.release()
-        await first
-        expect(k.d.sends).toHaveLength(1)
-        expect(k.d.stored.has(askSentKey(OWN_SESSION.session_id, 'agent-a1'))).toBe(true)
-      })
-
-      test("the store keeps the newest sessions' delivered requests only", async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'a1')
-        for (let i = 0; i < USED_RELEASE_KEEP + 5; i++) k.d.stored.set(`${ASK_SENT_PREFIX}old-${i}:a1`, { at: 'x', sentAt: 100 + i })
-        k.d.stored.set('relayCursor:not-ours', { planId: 1, cursor: 'c', at: 1 })
-        k.d.world.files[CONTROL_FILE] = fileText(gateControl({ agents: { 'agent-a1': entry({ ask: ASK }) } }))
-        await $.turn.start(START)
-        const kept = [...k.d.stored.keys()].filter(key => key.startsWith(ASK_SENT_PREFIX))
-        expect(kept).toHaveLength(USED_RELEASE_KEEP)
-        expect(kept).toContain(askSentKey(OWN_SESSION.session_id, 'agent-a1'))
-        expect(kept).not.toContain(`${ASK_SENT_PREFIX}old-0:a1`)
-        expect(k.d.stored.has('relayCursor:not-ours')).toBe(true)
-      })
-
-      test('a session with no handshake, or an unreadable file, sends nothing', async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'a1')
-        await $.turn.start(START)
-        k.d.world.files[CONTROL_FILE] = fileText(null)
-        await $.turn.complete(TURN)
-        k.d.world.files[CONTROL_FILE] = 'not json'
-        await $.turn.start(START)
-        expect(k.d.sends).toEqual([])
       })
     })
 
@@ -798,14 +606,6 @@ for (const surface of SURFACES) {
         expect(k.d.env(PCT)).toBeUndefined()
       })
 
-      test('no request is delivered to a running sub-agent', async ($, on) => {
-        const k = await started($, on)
-        running(k.d, 'a1')
-        k.d.world.files[CONTROL_FILE] = OLDER
-        await $.turn.start(START)
-        await $.turn.complete(TURN)
-        expect(k.d.sends).toEqual([])
-      })
     })
   })
 }

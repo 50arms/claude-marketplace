@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4435 (parent DX-4432): the model's `request_permission` (danx-dashboard MCP, DX-4434) answers at once with an approval URL and
 // confirm code. DX-4630: the plugin opens no page; it toasts the link, the code and the permissions asked for, the band counts the requests
 // still open and links the newest one's page with its code, and a request leaves the count when it is decided or expires.

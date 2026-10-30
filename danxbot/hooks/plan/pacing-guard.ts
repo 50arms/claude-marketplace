@@ -1,26 +1,25 @@
 import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
 import type { PacingVerdict } from '../../types'
-import { peekPacing, refreshPacing, releaseSlot, report, reserveSlot } from './pacing-line'
+import { claimSlot, releaseClaim, reportClaimFailure } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
-// DX-4340 (PLAN-29 R-10): the usage-pacing guard on sub-agent spawns. danxbot serves the calling session's own account's verdict at
-// GET /api/pacing/line (it places the session on its account itself: no account matching here), which `pacing-line.ts` caches; this
-// module reads it afresh before every `agent.spawn` (one deadline-bound read, DX-4631) and answers from that cache. A pure decision
-// (`decideSpawn`) plus a thin handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
+// The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap on SUB-AGENTS: N means exactly N sub-agents at all times; main threads are never paced.
+// So a spawn does not read a count and decide for itself: it CLAIMS its slot from danxbot (POST /api/pacing/agents/claim, which places the
+// session on its account itself and, under one lock, reads the live count and budget and takes the slot or refuses), and the plugin acts on the
+// answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn (`decideSpawn`, pure) and wires
+// the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
 //
-// BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits,
-// pushes, card writes) however tight the budget. It also never blocks work it cannot see: no verdict (the line's `reason` set: no usage
-// report, no verdict, pacing off; the dashboard unreachable or signed out; a malformed answer; nothing cached) ALLOWS the spawn.
+// BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
+// writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
+// answer) REFUSES the spawn, because an allowed spawn there would be an agent nobody counted (the failure is toasted once per text). The allows
+// without a claim are danxbot's own answer that it sees no account to cap (no usage report, no verdict, pacing off) and a signed-out session:
+// danxbot counts none of its agents. A danx-dashboard MCP server that never connected is refused like any failed claim.
 //
 // These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.
-//
-// A failed or timed-out read is never silent: toasted once per distinct text and drops the verdict (no verdict allows), except that an
-// unreachable dashboard is silent until a read has succeeded (see pacing-line.ts). A burst of spawns inside one turn is held to the budget:
-// the spawns this guard allowed are held as reservations that raise danxbot's running count until they lapse (pacing-line.ts).
 
-export type SpawnDecision = { kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'downgrade'; model: 'haiku' }
+export type SpawnDecision = { kind: 'allow' } | { kind: 'downgrade'; model: 'haiku' }
 
 // ---- the decision ---------------------------------------------------------------------------------------------------------------
 
@@ -36,33 +35,44 @@ export function tierOf(model: string | undefined): Tier | null {
 
 // "Tight": the spawn would take the last free slot under a budget (at most TIGHT_FREE_SLOTS slots free). One rule, documented here and tested.
 export const TIGHT_FREE_SLOTS = 1
-export function isTight(budget: number | null, running: number): boolean {
-  return budget !== null && budget - running <= TIGHT_FREE_SLOTS
+// a slot held for a woken session is not free (`reserved`).
+export function isTight(budget: number | null, running: number, reserved: number): boolean {
+  return budget !== null && budget - running - reserved <= TIGHT_FREE_SLOTS
 }
 
 // What the plan-workflow skill quotes (see the header): the refusal the model reads starts with this.
 export const REFUSAL_PREFIX = 'Usage pacing:'
 
-function denyReason(v: PacingVerdict, why: 'level' | 'budget'): string {
+// What a paced session does (operator rule, 2026-10-25): stop and wait. Nothing recorded, no work of its own; the pacer wakes it.
+export const PACED_STOP = 'Stop and end your turn: record nothing, do not do the work yourself, and wait until you are told to continue.'
+
+// the refusal the model reads, worded from the cause danxbot's own claim answer names (`refusal`, from its `refusalOf`), never re-derived here.
+export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
   const level = v.level.replace('_', ' ')
-  const budget = v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start nothing new)' : `budget ${v.budget} at once`
+  const budget = v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start no sub-agent)' : `budget ${v.budget} at once`
   const reset = v.resetsAt === null ? 'its reset time is unknown' : `usage resets at ${v.resetsAt}`
-  const cause = why === 'level' ? `this account is ${level}` : `${v.runningAgents} agent(s) already run on this account against ${budget}`
+  if (why === 'reserved') {
+    // not full of running sub-agents: the free slots are held for sessions that were woken after waiting longer. They free within 60 seconds if unused.
+    return (
+      `${REFUSAL_PREFIX} ${v.subAgents} sub-agent(s) run on this account and ${v.reservedAgents} slot(s) are held for sessions that waited longer, against ${budget} ` +
+      `(level ${level}; ${reset}). A held slot frees within 60 seconds if its session does not use it. ${PACED_STOP} ` +
+      'Do not retry this spawn now: it will be refused until a held slot frees.'
+    )
+  }
+  const cause = why === 'level' ? `this account is ${level}` : `${v.subAgents} sub-agent(s) already run on this account against ${budget}`
   return (
-    `${REFUSAL_PREFIX} ${cause} (level ${level}, ${budget}; ${reset}). Do the work yourself, cheaply, in this session, or wait until the ` +
-    'reset. Do not retry this spawn: it will be refused again until the verdict changes.'
+    `${REFUSAL_PREFIX} ${cause} (level ${level}, ${budget}; ${reset}). ${PACED_STOP} ` +
+    'Do not retry this spawn: it will be refused again until the verdict changes.'
   )
 }
 
-// The budget's unit is the ACCOUNT's running agents (its sessions' main threads, live sub-agents and running worker dispatches), which
-// the verdict carries as `runningAgents`; the plugin's own count would only be a lower bound and is not used. `requested` is the model
-// the spawn would run on if left alone: the call's `model`, else the parent's (a fork always inherits the parent's).
+// The budget's unit is the ACCOUNT's running sub-agents (main threads and worker dispatches are counted as `mainAgents` but never compared), which the claim's
+// answer carries as `subAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone: the call's
+// `model`, else the parent's (a fork always inherits the parent's). A refusal never reaches here (danxbot refuses the claim itself); this picks the haiku
+// downgrade for a claimed spawn taking the last free slot.
 export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined): SpawnDecision {
   if (verdict === null) return { kind: 'allow' }
-  if (verdict.level !== 'on_pace') return { kind: 'deny', reason: denyReason(verdict, 'level') }
-  // a null budget imposes no count cap; the level above still applies
-  if (verdict.budget !== null && verdict.runningAgents >= verdict.budget) return { kind: 'deny', reason: denyReason(verdict, 'budget') }
-  if (isTight(verdict.budget, verdict.runningAgents)) {
+  if (isTight(verdict.budget, verdict.subAgents, verdict.reservedAgents)) {
     const tier = tierOf(requested)
     // an unknown model name is left alone: it cannot be placed on the tier list, so "below it" is not knowable
     if (tier !== null && tier !== 'haiku') return { kind: 'downgrade', model: 'haiku' }
@@ -70,42 +80,33 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
   return { kind: 'allow' }
 }
 
-// Decide AND reserve, atomically: every await comes first (the refresh, the clock), then the cache is read, the decision made and the
-// slot reserved with NO await between them, so parallel spawns each see the others' reservations whatever the host's concurrency.
-// `slot` is the reservation to give back if the spawn does not start; null when nothing was reserved.
-async function reserve(env: PacingEnv, e: AgentSpawnInput): Promise<{ decision: SpawnDecision; slot: number | null }> {
-  // DX-4631: its own read every time (spawns are rare, a read is cheap, and the read has a deadline): the spawn is decided on the verdict as it
-  // is now, never on one a message or a tick has since replaced.
-  await refreshPacing(env, true)
-  const now = await env.now()
-  const pacing = peekPacing(now)
-  // a fork always inherits the parent's model, so the model it would run on is the parent's
-  const decision = decideSpawn(pacing?.verdict ?? null, e.fork ? e.parentModel : (e.model ?? e.parentModel))
-  if (decision.kind === 'deny' || pacing === null) return { decision, slot: null }
-  return { decision, slot: reserveSlot(now) }
+// Why a spawn is refused when its claim could not be made (fail closed).
+export function claimFailedReason(failure: string): string {
+  return (
+    `${REFUSAL_PREFIX} the spawn could not claim its slot from danxbot (${failure}). The budget is a strict cap, so no sub-agent starts until the ` +
+    'claim can be made. Stop and end your turn, record nothing, and try the spawn again later.'
+  )
 }
 
-// The `agent.spawn` hook. Pacing's own failures never stop a spawn: any failure to LOOK means allow (see the header), and it is told
-// through the same once-per-text report as a failed read.
+// The `agent.spawn` hook.
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
-    let decision: SpawnDecision = { kind: 'allow' }
-    let slot: number | null = null
-    try {
-      const reserved = await reserve(env, e)
-      decision = reserved.decision
-      slot = reserved.slot
-    } catch (err: any) {
-      report(env, String(err?.message ?? err))
+    const claim = await claimSlot(env)
+    if (claim.kind === 'failed') {
+      reportClaimFailure(env, claim.failure)
+      return { deny: claimFailedReason(claim.failure) }
     }
-    if (decision.kind === 'deny') return { deny: decision.reason }
+    // danxbot refused the claim, so the spawn is refused, worded from danxbot's own cause whatever the plugin's reading of the verdict says
+    if (claim.kind === 'refused') return { deny: denyReason(claim.pacing.verdict, claim.why) }
+    let decision: SpawnDecision = { kind: 'allow' }
+    if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
     try {
       // a fork ignores `model`, so there is nothing to rewrite
       const started = await next(decision.kind === 'downgrade' && !e.fork ? { ...e, model: decision.model } : e)
-      if (slot !== null && started.deny !== undefined) releaseSlot(slot)
+      if (claim.kind === 'claimed' && started.deny !== undefined) await releaseClaim(env, claim.claimId)
       return started
     } catch (err) {
-      if (slot !== null) releaseSlot(slot)
+      if (claim.kind === 'claimed') await releaseClaim(env, claim.claimId)
       throw err
     }
   }

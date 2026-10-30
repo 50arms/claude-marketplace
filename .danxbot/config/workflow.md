@@ -54,7 +54,8 @@ on `main` outside the finalize flow. That is why `publish.sh` skips its push ins
 worktree (`DANX_AGENT_WORKTREE`) and `agent-finalize.sh` (squash, then `HEAD:main` with a
 rebase-race loop) does the real ship. Run both, in order.
 
-## No tests / no build
+## Tests / no build
 
-This repo ships markdown. There is no test suite, lint, or build to run —
-the version bump + push IS the gate. Do not invent a `npm test` step.
+This repo ships markdown and a plugin hooks module. There is no lint or build to
+run. Its tests (DX-5648) run through `npm test` only, in a Linux Docker container;
+`scripts/publish.sh` runs the same command before it bumps.

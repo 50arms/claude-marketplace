@@ -1,6 +1,8 @@
-// DX-4234: the registry's event text for a plan-connected session (SessionStart startup / resume / compact, and every sub-agent's start),
-// fetched through the session's own danx-dashboard server (R-2: `danxbot_api`, never the package's CLI), and the silence rules: nothing for
-// a session that is not on a plan, one warning line for a fetch that failed, quiet for a session with no usable key.
+import "./run-tests-with-npm-test.generated"
+// DX-4234 / DX-5554: the registry's event text for every signed-in session (SessionStart startup / resume / compact, and every sub-agent's start),
+// fetched through the session's own danx-dashboard server (R-2: `danxbot_api`, never the package's CLI), and the silence rules: one warning line for a
+// fetch that failed, quiet for a session with no usable key. The dashboard decides the lines: a plan-connected session's text carries the plan-only
+// line, a session on no plan's the agent-scoped lines alone.
 import { describe, expect } from 'claude-code/testing'
 
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine } from '../hooks/context/events'
@@ -46,15 +48,44 @@ for (const surface of SURFACES) {
       expect(EVENT_PATHS(d.contextReads)).toEqual(['/api/reminders/event/sub_agent_start'])
     })
 
-    test('a session that is not on a plan is told no event text, at start, resume, compaction or a sub-agent start', async ($, on) => {
+    // DX-5554: the plan-only line is the dashboard's to leave out; the plugin asks for every signed-in session
+    for (const [label, world] of [
+      ['with no session row', {}],
+      ['holding a team agent', { agent: { id: 6, name: 'Tendai', avatar_url: null } }],
+      ['holding a stand-alone card', { agent: { id: 6, name: 'Tendai', avatar_url: null }, card: { id: 'DX-77', title: 'One-off fix' } }],
+    ] as const) {
+      test(`a signed-in session on no plan (${label}) is told the event text, at start, resume, compaction and a sub-agent start`, async ($, on) => {
+        const d = await started($, on, { connected: false })
+        Object.assign(d.world, world)
+        for (const [source, event] of [['startup', 'session_start'], ['resume', 'session_resume'], ['compact', 'after_compaction']] as const) {
+          const r = await firstPrompt($, source)
+          // no compaction briefing: it is about the plan's cards
+          expect(r.startLines).toEqual([EVENT_TEXT(event)])
+        }
+        const r = await $.classic.SubagentStart(START)
+        await d.clock.settle()
+        expect(r.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])
+        expect(EVENT_PATHS(d.contextReads)).toEqual(['/api/reminders/event/session_start', '/api/reminders/event/session_resume', '/api/reminders/event/after_compaction', '/api/reminders/event/sub_agent_start'])
+      })
+    }
+
+    test('a signed-in session on no plan that replaced one is told its event text, then the restart notice', async ($, on) => {
       const d = await started($, on, { connected: false })
-      for (const source of ['startup', 'resume', 'compact'] as const) {
-        const r = await firstPrompt($, source)
-        expect(r.startLines).toBeUndefined()
-      }
-      expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
+      d.world.restart.json = { notice: 'This session replaced one on PLAN-23; 3 events wait.' }
+      const r = await firstPrompt($, 'startup')
+      expect(r.startLines).toEqual([`${EVENT_TEXT('session_start')}
+This session replaced one on PLAN-23; 3 events wait.`])
+      expect(d.restartCalls).toEqual([{}])
+    })
+
+    test('a signed-in session on no plan whose event read fails is told one warning line, at start and at a sub-agent start', async ($, on) => {
+      const d = await started($, on, { connected: false })
+      d.world.eventText.session_start = { status: 500 }
+      d.world.eventText.sub_agent_start = { status: 500 }
+      expect((await firstPrompt($, 'startup')).startLines).toEqual([eventFailureLine('session_start', '500: event boom')])
+      const r = await $.classic.SubagentStart(START)
       await d.clock.settle()
-      expect(EVENT_PATHS(d.contextReads)).toEqual([])
+      expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: event boom')])
     })
 
     test('a fetch that fails is one warning line naming the event and the reason', async ($, on) => {
@@ -75,17 +106,17 @@ for (const surface of SURFACES) {
 
     test('a CONNECTED session (its record is on disk) whose plans read fails is told one warning line, at start and at a sub-agent start', async ($, on) => {
       const d = await started($, on)
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines).toEqual([eventFailureLine('session_start', '500: plans boom')])
-      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: plans boom')])
+      expect(r.startLines).toEqual([eventFailureLine('session_start', '500: session boom')])
+      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: session boom')])
       await d.clock.settle()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
     test('DX-3421: a session with no record on disk whose plans read fails is quiet: it is not known to be on a plan', async ($, on) => {
       const d = await started($, on, { connected: false })
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
       expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
       await d.clock.settle()

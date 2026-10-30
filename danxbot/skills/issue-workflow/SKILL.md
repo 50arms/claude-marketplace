@@ -13,13 +13,12 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 
 | | Dispatched worker | Operator-session sub-agent |
 |---|---|---|
-| Worktree | prepared by danxbot | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
+| Worktree | prepared before you start | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
-| Gates | the profile instruction carries them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
-| Merge + end | the `work` profile instruction | push the card branch, report its tip SHA, stop; when told to land: push to the target branch (or open a pull request when "Delivery" below says so), `complete` + retro, report |
+| Gates | your dispatch instructions carry them | Gates: run by the operator session, each in its own gate worker ("Gates" below) |
+| Merge + end | your dispatch instructions | push the card branch, report its tip SHA, stop; the operator session lands it: push to the target branch (or open a pull request when "Delivery" below says so), then `complete` + retro |
 
-Dispatched-only mechanics (the dispatch-complete call, halt, `agent-finalize.sh`, the pre-synced
-worktree, DB resets) live only in danxbot's `work` profile.
+The dispatched worker's own mechanics (how it ends, halts and merges) are in the instructions its dispatch gave it.
 
 ## Flow
 
@@ -27,27 +26,29 @@ worktree, DB resets) live only in danxbot's `work` profile.
    set; on a plan, read its architecture and note overlapping siblings.
    Any investigation that takes more than a few commands (understanding unread code,
    reproducing a bug, debugging a failing test, proving an idea works) goes to a foreground
-   sub-agent (`Explore` to read, a worker tier to run things) that returns only the
+   sub-agent (`Explore` to read, a worker agent grade to run things) that returns only the
    conclusion with file:line evidence; keep a single lookup inline and read directly only
    the lines you are about to edit. Everything you read stays in your context and is paid
    again on every later turn, so the larger your context and the more turns remain, the
    sooner delegating is cheaper than its ~60k-token start.
-2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip
-   this step, the card is already yours.
-3. Pass its PRE gates ("Gates" below), then build test-first, to the rules under
+2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip this
+   step, the card is already yours.
+3. Its PRE gates have passed ("Gates" below); build test-first, to the rules under
    "Building" below.
-4. Tick every AC/checklist item, pass every test, browser-test user-facing changes.
+4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
+   changes. Run only those: the touched files' own tests and their direct dependents (a prose
+   edit needs only the repo's text checks). A whole suite is for a broad change that touches
+   many parts of the system, never the default.
 5. Pass its POST gates ("Gates" below).
-6. Merge first: a dispatched worker runs its profile's end order, `agent-finalize.sh`
-   first; an operator-session sub-agent, once told to land, commits and pushes to the target
-   branch, or opens a pull request when the card's controls require one ("Delivery" below).
-   Only then transition `complete` with a summary and write the retro (last — it 409s
-   until terminal), citing the sha now on the target branch (on a pull request: the pull
-   request link and the branch tip). A phase card leaves `Notes from
-   Phase N` as an agent note on the next phase card.
+6. End: a dispatched worker follows the end order its dispatch instructions give. An
+   operator-session sub-agent stops at its pushed card branch: it reports the tip SHA and ends,
+   and never lands the branch, transitions `complete` or writes the retro. Landing is the
+   operator session's job, for its own work and for a sub-agent's pushed card branch alike, and
+   every step of it (merge first, then `complete`, then the retro) is in "Delivery" below.
+   A phase card leaves `Notes from Phase N` as an agent note on the next phase card.
    A card with an open problem never becomes Done: `complete`, a board drop or move to Done
    and a container roll-up are refused (409 `open_problems_block_completion`).
-   Answer or remove each open problem first.
+   Get each open problem answered by a person first; remove one only when it has become irrelevant, never because it was answered.
 
 ## Gates
 
@@ -55,15 +56,15 @@ A quality gate is a step a card must pass: PRE gates (`plan-*`) run before the b
 gates (`code-*`) on the finished diff. The card's `quality_gates` lists the ones it
 carries, and each board keeps its own text for what a gate does.
 
-An operator-session sub-agent runs its PRE gates itself, in its own context, then builds,
-pushes its card branch, reports the tip SHA and stops. It never spawns gate agents: a
-background agent's notice reaches only the top-level session. The operator session runs
-each POST gate not yet `pass` through one gate worker per gate (`danxbot:worker-opus-high`
-for an architecture gate, `danxbot:worker-sonnet-high` for the rest), relays the findings
-and says when to land. Whoever runs a gate:
+The operator session runs each gate not yet `pass` (all but `plan-design`, below) through its own gate worker, at the gate's review
+grade, which the board sets: the gate instruction route answers it with its model and effort when the worker starts, and the worker is the matching `danxbot:worker-<model>-<effort>`. PRE gates run
+before the builder starts; POST gates run on its pushed tip. The builder only builds, at its card's build
+grade, and a gate never changes that grade. A builder pushes its card branch, reports the tip SHA and stops.
+Gate workers are briefed by profile and card (plan-workflow "Sub-agents"); the operator session sends the
+builder the findings to fix, and lands the branch once every gate passes ("Delivery" below). Whoever runs a gate:
 
 1. Fetch the board's gate text through `danxbot_api`:
-   `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, by its numeric id>`.
+   `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, by its ref number>`.
 2. Do what that text says for the card, including any card writes it asks for (checklists,
    dependency edges), and nothing else.
 3. Record the verdict through `danxbot_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`
@@ -75,6 +76,11 @@ and says when to land. Whoever runs a gate:
    replaced only by one naming a different ref, so a re-run after the work or the card changed
    records normally, and a second verdict on the same ref is refused.
 
+A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused
+for every caller. `plan-design` is one: the builder never runs it, the operator session starts
+its designer (plan-workflow "Sub-agents"), and only a person's choice of a design on the card
+passes it.
+
 Fix a `fail`, then run the gate again (the operator session re-runs a POST gate). A gate
 that doesn't apply to the card is removed (`POST` the same card route with
 `{action: "remove"}`) with an agent note saying why —
@@ -83,17 +89,18 @@ never passed to get it out of the way.
 ## Needing a human
 
 Genuinely need a human → open a problem on the card: an `action` when only a person can do
-it (access, credentials, hardware, authority), else a `question`. Never `AskUserQuestion` or
-a plan-mode pause. A card needs a human exactly while it has an open problem; removing its
-last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
+it (access, credentials, hardware, authority), else a `question`. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3). Never `AskUserQuestion` or
+a plan-mode pause. A card needs a human exactly while it has an open problem; a person
+answering its last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
 
 A call refused 403 for a missing permission → `request_permission` with a reason (show the person its code) and keep working; blocked without it, open an action problem.
 
 ## Claiming (operator-session sub-agents only)
 
-A dispatched worker never claims: danxbot picked the card up before spawning it
+A dispatched worker never claims: the dashboard picked the card up before spawning it
 (`In Progress`, `dispatch_id` set), so a `pickup` from it is refused 409
-`dispatch_id (already dispatched)`.
+`dispatch_id (already dispatched)`. A builder whose `pickup` is refused 409
+`design_not_chosen` stops and reports it: the card waits on a person choosing a design.
 
 A `ToDo` card is an open dispatch request — working it unclaimed races a worker onto it.
 Transition `pickup` with `manual:true`, which stops anything auto-transitioning it. The
@@ -114,9 +121,10 @@ first, then end `failed`.
 
 - Waiting on another card to finish first → a `depends_on` dependency, not `block`.
 - Two cards that can't run together → a `conflict_on` dependency.
-- A human is 100% required (a decision, or an action only a person can take) → open a
-  problem with solutions — that holds the card for human review before it can be
-  dispatched or completed. `block` alone does not.
+- A human is 100% required (a decision, or an action only a person can take; changing, dropping or replacing a decision a person stated always needs that person, mantra item 3) → open a
+  problem with solutions — the problem is the hold: it keeps the card for human review
+  before it can be completed. Never `block` a card for an open problem or an unanswered
+  question.
 - Otherwise, transition `block` with a reason.
 
 ## Mechanics
@@ -125,14 +133,27 @@ first, then end `failed`.
   `passing` on its checklist item.
 - **Comments** — only for talking with a person: a reply to what they wrote or asked.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
-  progress, evidence, gate results, handoffs, blockers, `## Docs impact`; trace, audit and
+  progress, evidence, gate results, handoffs, blockers; trace, audit and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
-- **Decisions** — a durable decision goes in the card's description or AC, never in a
-  comment or agent note alone.
+- **Decisions** — a decision record is the default home for anything important about a card.
+  A consequential decision (a business rule, an architecture choice, a design) is a decision
+  record on its card, `POST /api/issues/<id>/decision-records`, with a brief `title` (at most
+  80 characters), its description in `text`, `made_by` (`human` when a person made it, with
+  that person in `made_by_user_id`; `agent` when you did), `provenance` (a list of provenance records: for a person's decision at least
+  one `{source, source_ref, quote}` quoting their words verbatim from a comment of theirs or
+  your own session with them, so the server checks it; `{reasoning}` for your own why; a
+  record you add later to a decision as it stands is
+  `POST /api/issues/<id>/decision-records/<recordId>/provenance` `{version, record}`),
+  `impact` and `confidence` (confidence 5 for a person's decision unless they showed clear
+  uncertainty). A card's description holds the background of the ask: what it is and why, who
+  it is for, its timing and importance, and anything else a person needs to understand it. The
+  solution lives in its AC and its decision records, and the card page lists every decision
+  (its `DEC-<n>` ref and title) under the description, so the description never restates a
+  decision or a solution detail. A decision is never left in a comment or agent note alone.
+  Changing or deleting a person-approved record is never your call.
 - **Dependencies** — only for a card already known, never a discovery scan.
 - Never write a `status:` literal; transitions derive it.
-- **MCP down** → curl the same route with the credential the dashboard MCP's config names,
-  plus `x-danx-session-id`.
+- **MCP down** → a failed `danxbot_api` call fails loudly: stop and report the failure. Never retry it another way.
 - **Issue-ref comments** — `// CARD-ID: <reason>` on any non-obvious decision a card forced.
   Before editing a file, grep its anchored refs
   (`grep -rnE '(//|#|--|<!--|/\*|\*)[[:space:]]*[A-Z]+-[0-9]+' <files>`) and load each card.
@@ -219,9 +240,17 @@ Every user-facing bug report, one block per bug:
 
 ## Delivery: push or pull request
 
-Applies to a session that lands its own work (an operator-session sub-agent, or any session
-building a card in a repo danxbot does not run a worker for). A dispatched worker ends as its
-`work` profile says.
+Delivery lands a card's finished work on its target branch, then completes the card. It is the
+lander's job: the operator session, landing its own work or an operator-session sub-agent's
+pushed card branch once every POST gate on it passes ("Gates"), or any session building a card
+in a repo no dashboard worker serves. An operator-session sub-agent never lands: it pushes its
+card branch, reports the tip and stops (Flow step 6). A dispatched worker ends as its dispatch
+instructions say.
+
+The order is fixed: the work reaches the target branch (or its pull request opens) first, only
+then the card transitions `complete`, and the retro is written last (it 409s until the card is
+terminal), citing the sha now on the target branch (on a pull request: the pull request link and
+the branch tip).
 
 Read the card's resolved controls: `GET /api/issues/<id>` with `fields {"controls":true}`, then
 take the value of each key from the entry with that `key`:
@@ -235,19 +264,29 @@ take the value of each key from the entry with that `key`:
 A key missing from the reply means the dashboard does not know it: open an `action` problem on
 the card saying which key is missing, then stop ("Needing a human"). Never guess `false`.
 
-**`required` is `false`:** commit and push to the target branch, as "Git" below says.
+**`required` is `false`:** land the card branch on the target branch yourself.
+
+1. `git fetch origin`, then bring the card branch onto `origin/<target branch>` in its worktree
+   (`git -C <worktree> rebase origin/<target branch>`), resolving any conflict as "Git" below
+   says, and re-run the card's tests on the result.
+2. Run the repo's own finalize or land command when its instructions name one; otherwise push the
+   result: `git -C <worktree> push origin HEAD:<target branch>`. A push refused as not a
+   fast-forward means the target moved: fetch, rebase and test again, never force it.
+3. Transition `complete` with a summary, then write the retro citing the sha now on the target
+   branch.
 
 **`required` is `true`:** the target branch is never pushed to.
 
-1. Check the GitHub CLI before any commit leaves the machine: `gh --version`, then
+1. Check the GitHub CLI first, before you push or open anything: `gh --version`, then
    `gh auth status --active --hostname github.com` (it checks only the active account and
    masks the token, so no secret reaches the transcript). `gh` missing → open an
    `action` problem on the card telling the person to install the GitHub CLI
    (https://cli.github.com) and run `gh auth login`; not signed in → one telling them to run
    `gh auth login`. Then stop. Never fall back to pushing the target branch, or to any other
    way of getting the work onto it.
-2. Work on a branch cut from `origin/<target branch>` (never the target branch itself), commit,
-   and `git push -u origin <branch>`.
+2. The pull request's head is the card branch: a sub-agent's pushed card branch, or for your own
+   work a branch cut from `origin/<target branch>` (never the target branch itself), committed
+   and pushed with `git push -u origin <branch>`.
 3. Reuse an open pull request for the branch: `gh pr view <branch> --json url,state`. Its
    `state` is `OPEN` → use its `url`. A non-zero exit (no pull request) or any other `state`
    (closed, merged) means no open pull request → `gh pr create --base <target branch> --head <branch> --title
@@ -260,17 +299,18 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 5. By `git.pull_request.done_on`:
    - `opened`: transition `complete` with a summary naming the pull request, and write the retro
      citing the pull request link and the branch tip.
-   - `merged`: do not transition `complete`. Release your claim with `rollback_pickup` and
-     `keep_assignment: true`, then say plainly that the card stays open (it shows ToDo with its
+   - `merged`: do not transition `complete`. Release the card with `rollback_pickup` (without
+     `keep_assignment`: a card nobody is working is assigned to no agent, DEC-116), then say plainly that the card stays open (it shows ToDo with its
      on-a-pull-request indicator and its pull request link) until the pull request merges, and
      that the person completes it then.
 
 ## Git
 
-- Commit each verified, coherent unit without asking, then push (to the target branch, or to the
-  card's branch when "Delivery" says a pull request is required). Diverged → `git pull
-  --rebase`; resolve conflicts by reading both sides and keeping both intents
-  (`-Xours`/`-Xtheirs` and whole-file overwrites are forbidden); re-run tests. Push fails
+- Commit each verified, coherent unit without asking, then push. An operator-session sub-agent
+  pushes only its card branch, never the target branch: the operator session lands it. The
+  target branch receives work only as "Delivery" above says. Diverged → `git pull --rebase`;
+  resolve conflicts by reading both sides and keeping both intents (`-Xours`/`-Xtheirs` and
+  whole-file overwrites are forbidden); re-run tests. Push fails
   (auth, headless credential prompt, no upstream) → report and stop. Never force-push without
   explicit authorization.
 - Never discard uncommitted work you didn't write — no `reset --hard`, `checkout`/`restore`
@@ -301,6 +341,10 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 - Never read or edit `dist/`/build output; `node_modules/` is read-only.
 - Browser checks: the in-app browser tool only, never a headed browser on the desktop. Open
   your own tab and pass its `tabId` on every call (none acts on the tab the user has
-  fronted); close the tabs you opened.
+  fronted); close the tabs you opened. Make it with `tabs_create`, which opens it in the
+  background so the person's tab and typing keep focus, then `navigate` it by `tabId`. Never
+  `preview_start` or `tabs_select` for your own check: both bring a tab to the front; front
+  yours only when they asked to watch. A tab that `preview_start` or `navigate` hands back as already
+  open (`reused: true`) is the person's, never yours.
 - Signal only a PID you spawned and captured at spawn — never `pkill -f`, `killall` or a
   pattern lookup. A dev server someone may be using is not yours to restart without asking.

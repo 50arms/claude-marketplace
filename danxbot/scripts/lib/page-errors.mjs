@@ -1,4 +1,4 @@
-// DX-4539: uncaught page exceptions, made safe to print. The page URL, a script URL or a stack frame can
+// uncaught page exceptions, made safe to print. The page URL, a script URL or a stack frame can
 // carry a credential in its query string or fragment, so no URL is ever printed with either.
 
 /** The longest one error is printed; a thrown payload can be arbitrarily large. */

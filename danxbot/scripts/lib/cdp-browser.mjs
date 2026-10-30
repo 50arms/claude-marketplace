@@ -1,4 +1,4 @@
-// DX-4538: a dependency-free Chrome DevTools Protocol client over the machine's own Chrome or Edge.
+// a dependency-free Chrome DevTools Protocol client over the machine's own Chrome or Edge.
 // The plugin ships no node_modules, so Playwright is not resolvable from it; Node 22's built-in
 // WebSocket plus an installed Chromium-family browser is all a capture needs.
 import { spawn } from "node:child_process";

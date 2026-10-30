@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4233: the words that describe the relay. danxbot:plan-workflow "Live events" keeps the `[danxbot plan event]` tag and names the
 // relay's own states; the cross-session inbox note and the `bridge down:` text are gone, and neither CLAUDE.md nor hooks.json names a
 // bridge or a watchdog.
@@ -51,4 +52,27 @@ test("CLAUDE.md and hooks.json name no bridge or watchdog", () => {
     assert.doesNotMatch(read(rel), /bridge|watchdog/i, rel);
   }
   assert.match(read("../hooks/hooks.json"), /plan event relay/);
+});
+
+// The design gate's events (listen.ts formats them): a chosen design passes the gate; a change request, the last live design
+// rejected or "Ask for another design" owes the designer a turn, run again as "Sub-agents" says (DX-4734 AC 50935: one place
+// for how the designer is started; since DX-5899 the `gate-designer` profile its brief fetches says what it does);
+// a withdrawn choice puts the gate back on the person.
+test("Live events tells the session what each design event means and when the designer runs again", () => {
+  const section = liveEvents();
+  assert.match(section, /A card's design problem \(the one listing its designs to choose from\) is the person's alone/);
+  assert.match(section, /`APPROVED revision N of design M` \(then `answered` on the design problem\) → a person chose that design, which passes the card's design gate/);
+  assert.match(section, /`requested changes on revision …`, a `REJECTED revision …` that closed the card's last live design, or a comment starting `\*\*Asked for another design:\*\*` → the designer owes a turn/);
+  assert.match(section, /→ the designer owes a turn: run the designer again \("Sub-agents"\), unless one you started is still on it\./);
+  assert.match(section, /`retracted the answer to` the design problem → the choice was withdrawn and the gate waits on the person again/);
+});
+
+// DX-6265: a person's answer already said in a comment or the session thread is recorded with provenance, never by asking
+// for cards.answer; design and docs-review problems stay the person's.
+test("a commented-on problem whose answer the person already said is answered with provenance, not request_permission", () => {
+  const section = liveEvents();
+  assert.match(section, /answer a question or action problem yourself with `provenance` on the answer route/);
+  assert.match(section, /Do not call `request_permission` for `cards\.answer` for this/);
+  assert.match(section, /Design and docs-review problems are the person's alone/);
+  assert.doesNotMatch(section, /call `request_permission` for `cards\.answer` with that reason/);
 });

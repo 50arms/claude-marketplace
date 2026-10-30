@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4235 (comment 12426): before the session leaves its plan or moves to another, every close the reports owe (a running sub-agent's
 // finish, an open background shell's end) is posted first: after the leave the dashboard takes no report from the session, and a row left
 // running is the stuck-row bug of comment 10065. Every leave the module takes part in: the band's Disconnect and the model's plan_connect leave or move. Bounded so a dead dashboard never holds the leave; a failure is one toast.
@@ -5,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { toolName } from '../hooks/plan/config'
 import { LEAVE_CLOSE_DEADLINE_MS, agentRow, shellRow } from '../hooks/reports/activity'
-import { test, SURFACES, answerReportEvents, dashboard, finishes, startSession } from './plan-kit'
+import { test, SURFACES, answerReportEvents, dashboard, finishes, startSession, takeLoadPauseReads } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
@@ -55,9 +56,12 @@ for (const surface of SURFACES) {
       const d = await working($, on)
       await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23 } as any)
       await d.clock.settle()
+      // CP-8: the plan load after a connect reads the pause for the title's mark; that read is not what this test counts
+      takeLoadPauseReads(d)
       expect(d.sequence).toEqual(['tool plan_connect'])
       await $.tool.call({ tool: toolName('plan_connect'), plan_id: 24 } as any)
       await d.clock.settle()
+      takeLoadPauseReads(d)
       expect(d.sequence.slice(1, 3)).toEqual([CLOSE, 'tool plan_connect'])
       expect(finishes(d).map(r => r.activityId)).toEqual(['agent-a1', 'b1'])
       // DX-4982: the move happened (the answer's session is on plan 24): no "did not happen" toast, and nothing owed again

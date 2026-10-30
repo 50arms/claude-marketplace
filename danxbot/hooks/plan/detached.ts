@@ -1,4 +1,4 @@
-// DX-4586: the host refuses every call of an environment that is gone (a reload, the process ending) with this text.
+// the host refuses every call of an environment that is gone (a reload, the process ending) with this text.
 const ENVIRONMENT_GONE = /no hooks module of that name is loaded/
 
 // A task detached from its event reports its own failures in a toast; only its environment ending under it escapes, and nobody is left to tell.

@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4630: across a whole session (connect, sign-in, a permission request, a refresh) the band draws its page controls as
 // Markdown links and the plugin makes no Claude_Browser call and draws no Link element, on both surfaces.
 import { describe, expect } from 'claude-code/testing'
@@ -20,7 +21,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       await $.command.run({ command: 'danx-plan' })
       await d.clock.settle()
-      expect((await linksOf(band)).map(l => l.key)).toEqual(['open-problems', 'open-tab'])
+      expect((await linksOf(band)).map(l => l.key)).toEqual(['needs-you', 'open-plan'])
       expect(await band.findAll({ type: 'Link' })).toEqual([])
       expect(browserCalls(d)).toEqual([])
     })

@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4319 — the operator's project memory directory had grown 16 files, each
 // written when an agent was corrected. A memory file reaches one project on one
 // machine, so a correction saved there never reaches a dispatched worker,
@@ -5,8 +6,8 @@
 // carrying them home, each stated ONCE in the skill that owns the subject:
 //   - fix-agent-behavior is where a correction goes, and it says so in the one
 //     line every session sees (its description) and in its list of homes;
-//   - a card that carries gates never goes to a haiku tier (plan-workflow,
-//     where the tier is picked).
+//   - story points never pick the agent grade (plan-workflow, where the
+//     agent grade is picked).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -20,7 +21,6 @@ const read = (rel) => readFileSync(path.join(here, rel), "utf8");
 const fixBehavior = read("../skills/fix-agent-behavior/SKILL.md");
 const planWorkflow = read("../skills/plan-workflow/SKILL.md");
 const issueWorkflow = read("../skills/issue-workflow/SKILL.md");
-const mantra = read("../mantra.md");
 
 /** One line, single-spaced, so no assertion depends on where the prose wraps. */
 const flat = (text) => text.replace(/\s+/g, " ");
@@ -36,7 +36,7 @@ function section(text, heading) {
 const count = (text, pattern) => [...flat(text).matchAll(new RegExp(pattern.source, "g"))].length;
 
 const NEVER_A_MEMORY_FILE = /Never a memory file/;
-const GATED_NEVER_HAIKU = /A card that carries gates never goes to a `worker-haiku-\*` tier\./;
+const POINTS_NEVER_GRADE = /Story points decide process \(a card, gates, splitting\), never the agent grade\./;
 
 test("the description every session sees sends a correction to the skill before it is saved anywhere", () => {
   const frontmatter = fixBehavior.slice(4, fixBehavior.indexOf("\n---", 4));
@@ -45,27 +45,33 @@ test("the description every session sees sends a correction to the skill before 
   assert.match(description, /never a memory file or a new skill\.$/);
 });
 
-test("the list of homes rules a memory file out and moves a correction already saved as one", () => {
+test("the list of homes rules a memory file out", () => {
   const locate = section(fixBehavior, "## 3. Locate the target and edit it");
   assert.match(locate, NEVER_A_MEMORY_FILE);
-  assert.match(locate, /it reaches one project on one machine; no dispatched worker, other repo or other machine reads it/);
-  assert.match(locate, /a correction already saved as one moves to its home above and the memory is deleted/);
   assert.equal(count(fixBehavior, NEVER_A_MEMORY_FILE), 1);
 });
 
+// DX-6379 / DX-6382 — the placement standard is one 50 Arms docs page, readable by every team's agents since DX-6382, so
+// the skill points at it and keeps no inline copy (the page holds the homes and why a memory file is never one).
+test("the list of homes reads the placement standard first and keeps no inline copy of it", () => {
+  const locate = section(fixBehavior, "## 3. Locate the target and edit it");
+  assert.match(locate, /`topic\.agent-context-placement`: read it first with `docs_read` \(`source: \{kind: "remote", repo: "danxbot"\}`/);
+  assert.doesNotMatch(locate, /short form/);
+  assert.doesNotMatch(locate, /\*\*How something works\*\*/);
+});
+
 test("the memory-file rule lives in fix-agent-behavior only", () => {
-  for (const [name, text] of [["mantra", mantra], ["plan-workflow", planWorkflow], ["issue-workflow", issueWorkflow]]) {
+  for (const [name, text] of [["plan-workflow", planWorkflow], ["issue-workflow", issueWorkflow]]) {
     assert.doesNotMatch(flat(text), /memory file/i, name);
   }
 });
 
-test("a gated card never goes to a haiku tier: once, where plan-workflow picks the tier", () => {
+test("story points never pick the agent grade: once, where plan-workflow picks the agent grade", () => {
   const subAgents = section(planWorkflow, "## Sub-agents");
-  assert.match(subAgents, GATED_NEVER_HAIKU);
+  assert.match(subAgents, POINTS_NEVER_GRADE);
   assert.ok(
-    subAgents.indexOf("never `general-purpose`") < subAgents.search(GATED_NEVER_HAIKU),
-    "follows the sentence that picks the tier",
+    subAgents.indexOf("never `general-purpose`") < subAgents.search(POINTS_NEVER_GRADE),
+    "follows the sentence that picks the agent grade",
   );
-  assert.equal(count(planWorkflow, GATED_NEVER_HAIKU), 1);
-  assert.doesNotMatch(flat(mantra), GATED_NEVER_HAIKU);
+  assert.equal(count(planWorkflow, POINTS_NEVER_GRADE), 1);
 });

@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4234 (DX-3928, DX-4632): a session that is not on a plan but replaced one that was is told which plan it was on and how many events wait.
 // The session's own danx-dashboard server finds the earlier session and answers through its `restart_notice` tool (no arguments); this hook
 // tells the model that answer and surfaces a stop. Both surfaces: the model's context and the failure line.
@@ -83,10 +84,11 @@ for (const surface of SURFACES) {
       expect(d.restartCalls).toEqual([])
     })
 
-    test('a session that holds a key but is on no plan (a person who signed in and has not connected) is told the notice too', async ($, on) => {
+    test('a session that holds a key but is on no plan (a person who signed in and has not connected) is told the notice too, after its event text (DX-5554)', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'resume')).startLines).toEqual([NOTICE])
+      expect((await firstPrompt($, 'resume')).startLines).toEqual([`The session_resume text.
+${NOTICE}`])
     })
 
     for (const reason of ['no_session_id', 'lookup_failed', 'lookup_timeout'] as const) {
@@ -144,7 +146,7 @@ for (const surface of SURFACES) {
 
     test('DX-3421: a plans read that fails with a dashboard fault is silent for the event text, and the restart notice is still asked', async ($, on) => {
       const d = await started($, on, { connected: false })
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       d.world.restart.json = { notice: NOTICE }
       const r = await firstPrompt($, 'startup')
       expect(r.startLines).toEqual([NOTICE])
@@ -153,7 +155,7 @@ for (const surface of SURFACES) {
 
     test('DX-3421: a plans read that fails with a dashboard fault and no notice is quiet', async ($, on) => {
       const d = await started($, on, { connected: false })
-      d.world.plansStatus = 503
+      d.world.sessionReadStatus = 503
       expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
       expect(d.contextReads.filter(p => p.startsWith('/api/reminders/event/'))).toEqual([])
     })

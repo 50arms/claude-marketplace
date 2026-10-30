@@ -1,8 +1,8 @@
 import { CURSOR_KEEP, CURSOR_PREFIX } from './config'
 
-// DX-4233: the resume cursor ($.store, per session): the plan it is for and the cursor of the last record DELIVERED (an opaque string the server minted). It is stored only after a
+// the resume cursor ($.store, per session): the plan it is for and the cursor of the last record DELIVERED (an opaque string the server minted). It is stored only after a
 // delivery succeeded, so a failed one stays queued for a retry (relay/outbox.ts) and a restart never skips an event.
-// DX-4884: planId null is the cursor of a relay run while the session is on no plan (still one record per session).
+// planId null is the cursor of a relay run while the session is on no plan (still one record per session).
 export type CursorRecord = { planId: number | null; cursor: string; at: number }
 
 export const cursorKey = (sessionId: string) => `${CURSOR_PREFIX}${sessionId}`

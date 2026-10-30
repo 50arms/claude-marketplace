@@ -1,4 +1,4 @@
-// DX-4993 (PLAN-42 rule R-4): the resume briefing an operator session reads in its first turn after a compaction. A compaction replaces the
+// the resume briefing an operator session reads in its first turn after a compaction. A compaction replaces the
 // conversation with a summary; this hands back what the summary tends to lose and what only the machine knows: the plan, the cards in flight, the
 // sub-agents still running (they carry on through a compaction) and the work not yet pushed. Pure: register.tsx reads each source (the plan view, the
 // engine's agent list, git) and hands them here; a source that could not be read arrives as `unavailable` with its reason, never as an empty one.
@@ -9,8 +9,12 @@ export type BriefingCard = { id: string; title: string }
 export type BriefingAgent = { id: string; type: string; description: string }
 export type GitState = { branch: string | null; changed: number; ahead: number | null; upstream: string | null }
 
+// One person comment the agent still owes an answer, as GET /api/plan-sessions/me/owed-comments (the dashboard's `OwedComment`) hands it over. Only the fields the briefing words.
+export type OwedComment = { cardId: string; cardTitle: string; commentId: number; author: { name: string }; excerpt: { text: string }; state: 'sent' | 'seen'; waitedMs: number }
+
 export type BriefingInput = {
   plan: { ref: string; name: string } | null
+  owed: Source<OwedComment[]>
   cards: Source<BriefingCard[]>
   agents: Source<BriefingAgent[]>
   git: Source<GitState>
@@ -40,6 +44,31 @@ export function parseGitStatus(out: string): GitState | null {
   return { branch, changed, upstream, ahead: upstream === null ? null : ahead === null ? 0 : Number(ahead[1]) }
 }
 
+const OWED_STATE_LABEL: Record<OwedComment['state'], string> = { sent: 'Sent', seen: 'Seen' }
+const EXCERPT_MAX = 160
+const TITLE_MAX = 60
+const AUTHOR_MAX = 40
+const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+
+function waitedText(ms: number): string {
+  if (ms < MINUTE_MS) return 'under a minute'
+  if (ms < HOUR_MS) return `${Math.floor(ms / MINUTE_MS)} min`
+  if (ms < DAY_MS) return `${Math.floor(ms / HOUR_MS)} h`
+  return `${Math.floor(ms / DAY_MS)} d`
+}
+
+// A comment survives a compaction only as a line in the summary, so every comment still owed is listed first (oldest first, the order the route answers), with the
+// dashboard's two-step reply (acknowledge, then reply into the same message). A `seen` comment is already acknowledged, so its ack is skipped. A failed read is said as a failure: an omitted list would read as "nothing owed".
+// The list is never capped (unlike the cards and agents lists): a comment dropped from the briefing is a comment nobody answers.
+function owedLine(owed: Source<OwedComment[]>): string {
+  if (!owed.ok) return `Comments you still owe an answer: NOT KNOWN, the read failed (${oneLine(owed.reason, REASON_MAX)}). Read your plan's cards for person comments with no reply of yours before you continue the step that was in progress.`
+  if (owed.value.length === 0) return 'Comments you still owe an answer: none.'
+  const items = owed.value.map(c => `${c.cardId} ${oneLine(c.cardTitle, TITLE_MAX)}, comment ${c.commentId} from ${oneLine(c.author.name, AUTHOR_MAX)} [${OWED_STATE_LABEL[c.state]}, waiting ${waitedText(c.waitedMs)}]: "${oneLine(c.excerpt.text, EXCERPT_MAX)}"`)
+  return `Comments you still owe an answer, oldest first: ${items.join('; ')}. Answer them right after steps (1)-(3) above (skills, handoff note, cards) and before you continue the step that was in progress. For each, acknowledge it (POST /api/issues/<card>/comments/<commentId>/reply with phase "ack" and your short acknowledgement as body; skip this for one that is Seen, already acknowledged), then write your answer into that same message (the same route with phase "reply" and the answer as body).`
+}
+
 function cardsLine(cards: Source<BriefingCard[]>): string {
   if (!cards.ok) return `Cards in flight: not known (${oneLine(cards.reason, REASON_MAX)}).`
   if (cards.value.length === 0) return 'Cards in flight: none on your plan.'
@@ -67,7 +96,7 @@ function gitLine(git: Source<GitState>): string {
   return `Work not pushed, in the session's own checkout (${where}): ${parts.join(', ')}.`
 }
 
-// DX-5385: how the main agent picks up after a compaction, in order; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing.
+// how the main agent picks up after a compaction, in order; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing.
 export const RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress."
 
 // the briefing's opening, alone: a resume prompt whose dashboard reads failed still carries it
@@ -75,10 +104,10 @@ export const RESUME_OPENING = `[50 ARMS] Your conversation was just compacted. $
 
 export function briefingText(input: BriefingInput): string {
   const plan = input.plan === null ? 'You are on no plan.' : `Your plan is ${input.plan.ref} ${oneLine(input.plan.name, 80)}.`
-  return `${RESUME_OPENING} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
+  return `${RESUME_OPENING} ${owedLine(input.owed)} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
 }
 
-// DX-5344: a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
+// a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
 // from its summary and the progress notes it kept before compacting, so the briefing names who it is and points at them. `type` and `description` are null when the engine no longer lists the agent.
 export type SubagentBriefingInput = { id: string; type: string | null; description: string | null }
 

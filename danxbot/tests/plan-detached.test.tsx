@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4586: a detached task ends quietly only when its environment is gone; any other failure stays loud.
 import { describe, expect, test } from 'claude-code/testing'
 

@@ -1,3 +1,4 @@
+import "../../danxbot/tests/designated-test-container.mjs";
 // DX-4235 (R-1): the danxbot plugin's command hooks, their integrity launcher and its hash manifest, the session-start install
 // script and the package module's CLI are gone. A name of any of them left in the plugin, the repo scripts or the docs is a
 // reference to something that no longer exists, so this test finds none.

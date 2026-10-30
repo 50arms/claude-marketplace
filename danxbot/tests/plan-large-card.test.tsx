@@ -1,8 +1,9 @@
-// DX-4458: a card with dozens of problems (DX-4443: 49 questions) is never read for its rows: the count comes from the every-card list.
+import "./run-tests-with-npm-test.generated"
+// DX-4458: a card with dozens of problems (DX-4443: 49 questions) is never read for its rows: the count comes from the plan read's bucket_counts.
 import { describe, expect } from 'claude-code/testing'
 
 import { errText, failureReason, loadPlan } from '../hooks/plan/load'
-import { test, HOST_OVERSIZE, SURFACES, dashboard, problemBadgeOf, startSession } from './plan-kit'
+import { test, HOST_OVERSIZE, SURFACES, dashboard, needsYouBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -18,18 +19,32 @@ const issueReads = (d: any) => d.api.filter((a: any) => a.method === 'GET' && /^
 
 for (const surface of SURFACES) {
   describe(`a card with many problems on ${surface}`, () => {
-    test('the load reads no card of its own: the count is summed from the every-card list, whatever one card holds', async ($, on) => {
+    test('the load reads no card of its own: the count is the needs-you card count of the plan read, whatever one card holds', async ($, on) => {
       const { d, band } = await openBand($, on, surface, { bigCard: true })
       expect(issueReads(d)).toEqual([])
-      expect(await problemBadgeOf(band)).toBe('⚠ 52')
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 3')
       expect(await text(band)).not.toContain('Disconnected')
     })
 
-    test('the plan list is asked for one row only, however many plans exist', async ($, on) => {
+    // DX-5933: a plan of 150 cards. The plan's card-list route answers whole rows (about 3 KB each) and the host refuses a result past its limit, which
+    // blanked the count and the links on any plan past about 20 cards: the band reads ids and the bucket counts off the plan read instead.
+    test('a 150-card plan: the count and the links load from the plan read, no card-list read of the plan is made, nothing is toasted', async ($, on) => {
+      const { d, band } = await openBand($, on, surface, { extraPlanCards: 150 })
+      expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
+      const planReads = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23')
+      expect(planReads.length).toBeGreaterThan(0)
+      for (const a of planReads) expect(a.query).toEqual({ fields: { card_ids: true } })
+      const cardLists = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23/cards')
+      for (const a of cardLists) expect(a.query.bucket).toBe('in-progress')
+      expect(d.toasts).toEqual([])
+    })
+
+    test('the session is read from its own route, never from the plan list', async ($, on) => {
       const { d } = await openBand($, on, surface)
-      const lists = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans')
-      expect(lists.length).toBeGreaterThan(0)
-      for (const a of lists) expect(a.query).toEqual({ limit: 1 })
+      const own = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plan-sessions/me')
+      expect(own.length).toBeGreaterThan(0)
+      for (const a of own) expect(a.query).toBeUndefined()
+      expect(d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans')).toEqual([])
     })
 
     test('the host notice on any call of the load is never the band text', async () => {

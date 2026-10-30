@@ -1,4 +1,4 @@
-// DX-4539: the programs capture-screenshot.mjs runs inside the page (via Runtime.evaluate).
+// the programs capture-screenshot.mjs runs inside the page (via Runtime.evaluate).
 // Kept apart from argument parsing: this is page-side code, not node-side.
 
 /**

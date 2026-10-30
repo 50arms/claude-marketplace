@@ -5,12 +5,13 @@ runtime: local
 language: markdown
 framework: none
 
-# No build/test toolchain — the marketplace ships markdown (skills, rules,
-# agent files). The "gate" for a change reaching consumers is the version
-# bump in <plugin>/.claude-plugin/plugin.json, pushed to origin/main by
-# agent-finalize.sh. See workflow.md.
+# No build or lint toolchain — the marketplace ships markdown (skills, rules,
+# agent files) plus the danxbot plugin's function hooks. Tests run in the one
+# designated Linux container: `npm test` (DX-5648). The "gate" for a change
+# reaching consumers is the version bump in <plugin>/.claude-plugin/plugin.json,
+# pushed to origin/main by agent-finalize.sh. See workflow.md.
 commands:
-  test: ""
+  test: npm test
   lint: ""
   type_check: ""
   dev: ""

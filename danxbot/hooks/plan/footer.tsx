@@ -1,21 +1,21 @@
 import type { Handlers } from './handlers'
+import { DESKTOP_SURFACE } from './config'
 
-export const FOOTER_PAD = '\u00A0' // a non-breaking space
+// The footer indicator in the `SessionMode` site: a Button, as close to the engine's own footer buttons ("Bypass permissions") as the plugin
+// UI API allows. It sits beside whatever the engine and other plugins already put there (`rest`, the result of next(e)), so the existing mode
+// labels survive.
+// The desktop draws a plugin Button as its native chip whatever `plain` says (ButtonProps.plain), and ButtonProps has no padding or tooltip;
+// a Markdown link in a hover Box was tried and the desktop neither pressed it nor drew the hover card as a card. So the desktop label is
+// padded with non-breaking spaces inside the chip. The terminal's `plain` Button has no chrome; its `Text` child carries the status colour.
+const PAD = ' '
 
-// The footer button in the `SessionMode` site: ONE text button (the footer draws text buttons only:
-// no Svg, nothing floating). It sits beside whatever the engine and other plugins already put there
-// (`rest`, the result of next(e)), so the existing mode labels survive.
-// `padded`: the desktop, whose native button takes no padding prop and draws `plain` as its chip all the same (the host's
-// ButtonProps doc: "A desktop draws its native button either way"), so the label carries its own padding there.
-export function renderFooter(E: any, hd: Handlers, label: string, rest: any, padded: boolean): any {
-  const { Box, Button } = E
+export function renderFooter(E: any, hd: Handlers, label: string, tone: string | undefined, rest: any, surface: string): any {
+  const { Box, Button, Text } = E
   return (
     <Box flexDirection="row" gap={1}>
       {rest}
-      {/* DX-4420: the desktop's chip left the text touching its edges: pad the label with non-breaking spaces (a regular
-          space would collapse); the terminal draws `plain` without chrome and needs none. */}
       <Button key="footer-plan" plain onPress={() => hd.showPlan()}>
-        {padded ? `${FOOTER_PAD}${label}${FOOTER_PAD}` : label}
+        {surface === DESKTOP_SURFACE ? `${PAD}${label}${PAD}` : <Text color={tone}>{label}</Text>}
       </Button>
     </Box>
   )

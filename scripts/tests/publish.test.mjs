@@ -1,3 +1,4 @@
+import "../../danxbot/tests/designated-test-container.mjs";
 // scripts/publish.sh: its pre-flights (the general-audience scan, the hooks-module validate and
 // test), the bump commit, and the push to origin/main. Each case runs this checkout's publish.sh
 // in a throwaway clone.
@@ -28,9 +29,11 @@ function editedClone() {
 }
 
 /**
- * DX-4232: a stand-in `claude` CLI on PATH. publish.sh runs `claude plugin validate <plugin>` and
- * `claude plugin test <plugin>` for a plugin that declares hooks modules; this one appends its
- * arguments to `calls.log` and exits 1 for the subcommand named in STANDIN_FAIL, else 0.
+ * DX-4232: a stand-in `claude` CLI on PATH. publish.sh runs `claude plugin validate <plugin>` for a plugin that declares hooks
+ * modules; this one appends its arguments to `calls.log` and exits 1 when its subcommand is the one named in STANDIN_FAIL, else 0.
+ * DX-5648: a stand-in `npm` beside it, because publish.sh runs the whole suite as `npm test` (the test container's command) and a
+ * real one would start that suite from inside this one. It appends its arguments to `npm-calls.log` and exits 1 when
+ * STANDIN_FAIL is `test`.
  */
 function standInClaude() {
   // outside the clone: a file inside it would count as a change outside the target plugin
@@ -40,8 +43,16 @@ function standInClaude() {
     '#!/usr/bin/env bash\necho "$*" >> "$(dirname "$0")/calls.log"\n[ "$2" = "$STANDIN_FAIL" ] && exit 1\nexit 0\n',
     { mode: 0o755 },
   );
-  const log = path.join(bin, "calls.log");
-  return { bin, calls: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : []) };
+  fs.writeFileSync(
+    path.join(bin, "npm"),
+    '#!/usr/bin/env bash\necho "$*" >> "$(dirname "$0")/npm-calls.log"\n[ "$1" = test ] && [ "$STANDIN_FAIL" = test ] && exit 1\nexit 0\n',
+    { mode: 0o755 },
+  );
+  const lines = (name) => {
+    const log = path.join(bin, name);
+    return fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : [];
+  };
+  return { bin, calls: () => lines("calls.log"), npmCalls: () => lines("npm-calls.log") };
 }
 
 /** publish.sh patch danxbot; DANX_AGENT_WORKTREE commits the bump but skips the push and this machine's plugin delivery. */
@@ -62,8 +73,11 @@ function publish(dir, { fail = "", claudeBin } = {}) {
       ...(claudeBin ? { CLAUDE_BIN: claudeBin } : {}),
     },
   });
-  return { status: r.status, out: `${r.stdout}\n${r.stderr}`, claudeCalls: standIn.calls() };
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}`, claudeCalls: standIn.calls(), npmCalls: standIn.npmCalls() };
 }
+
+/** The npm calls a publish made, each without the ` -- <files>` that names the tests (so `test --silent` is pinned exactly). */
+const npmRuns = (r) => r.npmCalls.map((c) => c.replace(/ -- .*$/, ""));
 
 // DX-4235: the danxbot plugin keeps no file-hash manifest (its hooks are one native module, which the engine loads whole or
 // names as failed), so a publish writes none, for the plugin it bumps or for any other marketplace plugin. The file name is
@@ -278,13 +292,14 @@ function assertUntouched(dir, before) {
   assert.deepEqual(snapshot(dir), before, "a commit was made or the version bumped");
 }
 
-test("DX-4232: validate and test both pass: they run in that order, before the bump, and the publish goes through", () => {
+test("DX-4232 / DX-5648: validate and the suite both pass: they run before the bump, and the publish goes through", () => {
   const dir = editedClone();
   try {
     const before = snapshot(dir);
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
-    assert.deepEqual(r.claudeCalls, ["plugin validate danxbot", "plugin test danxbot"]);
+    assert.deepEqual(r.claudeCalls, ["plugin validate danxbot"]);
+    assert.deepEqual(npmRuns(r), ["test --silent"], "the suite runs once, as npm test, never as a host claude plugin test");
     assert.notEqual(git(dir, "rev-parse", "HEAD").trim(), before.head);
     assert.match(git(dir, "log", "-1", "--format=%s").trim(), /^danxbot v\d+\.\d+\.\d+$/);
   } finally {
@@ -293,17 +308,18 @@ test("DX-4232: validate and test both pass: they run in that order, before the b
 });
 
 for (const failing of ["validate", "test"]) {
-  test(`DX-4232: claude plugin ${failing} failing refuses the publish: no commit, no bump`, () => {
+  test(`DX-4232 / DX-5648: ${failing} failing refuses the publish: no commit, no bump`, () => {
     const dir = editedClone();
     try {
       const before = snapshot(dir);
       const r = publish(dir, { fail: failing });
       assert.notEqual(r.status, 0, r.out);
-      assert.match(r.out, new RegExp(`claude plugin ${failing} danxbot failed`));
+      assert.match(r.out, failing === "validate" ? /claude plugin validate danxbot failed/ : /npm test failed/);
       assert.match(r.out, /Nothing was bumped or pushed/);
       assertUntouched(dir, before);
-      // validate runs first: when it fails, test never runs
-      assert.deepEqual(r.claudeCalls, failing === "validate" ? ["plugin validate danxbot"] : ["plugin validate danxbot", "plugin test danxbot"]);
+      // validate runs first: when it fails, the suite never runs
+      assert.deepEqual(r.claudeCalls, ["plugin validate danxbot"]);
+      assert.deepEqual(npmRuns(r), failing === "validate" ? [] : ["test --silent"]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -338,9 +354,58 @@ for (const [what, file, line, reported] of [
       assert.match(r.out, reported);
       assert.match(r.out, /General-audience scan failed/);
       assertUntouched(dir, before);
-      assert.deepEqual(r.claudeCalls, [], "the scan runs before validate and test");
+      assert.deepEqual(r.claudeCalls, [], "the scan runs before validate");
+      assert.deepEqual(r.npmCalls, [], "the scan runs before the suite");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 }
+
+// CP-16: the test scope. A prose-only change since the last publish that no test names runs no suite at all; a change to a file
+// every suite leans on runs the whole one.
+function afterPublishClone() {
+  const dir = editedClone();
+  git(dir, "checkout", "-q", "--", "danxbot/skills/issue-workflow/SKILL.md");
+  git(dir, "commit", "-q", "--allow-empty", "-m", "danxbot v9.9.9");
+  return dir;
+}
+
+test("CP-16: a prose-only publish no test names skips the whole suite", () => {
+  const dir = afterPublishClone();
+  try {
+    fs.mkdirSync(path.join(dir, "danxbot", "cp16-unwalked"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "danxbot", "cp16-unwalked", "cp16-note.md"), "A prose note.\n");
+    const r = publish(dir);
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(r.npmCalls, []);
+    assert.match(r.out, /skipping the test suite/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CP-16: a change to a file every suite leans on runs the whole suite", () => {
+  const dir = afterPublishClone();
+  try {
+    fs.appendFileSync(path.join(dir, "danxbot", "tests", "plan-kit.tsx"), "\n// cp16\n");
+    const r = publish(dir);
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(r.npmCalls, ["test --silent"]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CP-16: a narrow change runs only the test files that name it", () => {
+  const dir = afterPublishClone();
+  try {
+    fs.appendFileSync(path.join(dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- narrow -->\n");
+    const r = publish(dir);
+    assert.equal(r.status, 0, r.out);
+    assert.equal(r.npmCalls.length, 1);
+    assert.match(r.npmCalls[0], /^test --silent -- .*danxbot\/tests\/issue-workflow-gates\.test\.mjs/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

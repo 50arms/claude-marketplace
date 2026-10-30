@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4234: on a desktop or headless startup, resume and fork the engine has not bound the session when SessionStart runs, so `$.mcp.call` and
 // `$.tool.list` throw there ("no session is bound in this process"). SessionStart therefore only records the start; the first prompt (bound)
 // tells the model the restart notice and the start-up text, once. The kit models the unbound session (`d.unbind()`), which the always-bound
@@ -121,12 +122,12 @@ for (const surface of SURFACES) {
       on('classic.SessionStart', () => ({}) as any)
       const d = dashboard(on)
       await startSession($, d, surface)
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       // the connection record on disk is for sess-own; the start is for sess-other, which holds none: a dashboard fault is silent for it
       const other = await firstPrompt($, 'startup', { session_id: OTHER_SESSION.session_id })
       expect(other.startLines).toBeUndefined()
       const own = await firstPrompt($, 'startup')
-      expect(own.startLines).toEqual([eventFailureLine('session_start', '500: plans boom')])
+      expect(own.startLines).toEqual([eventFailureLine('session_start', '500: session boom')])
     })
 
     test('work that throws after the start was taken is one warning line; the stamp stays and the prompt and the tool result go on', async ($, on) => {

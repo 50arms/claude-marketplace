@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4538: the generic full-resolution capture tool every session's agents use (the plugin ships it).
 import { test } from "node:test";
 import assert from "node:assert/strict";

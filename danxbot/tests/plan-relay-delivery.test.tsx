@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4233 / DX-4721: how a relayed event reaches the session. One decision (relay/delivery.ts), made on the server's `urgent` flag and one turn
 // fact (is a turn running now): a not-urgent event is ALWAYS a submitted prompt (it waits behind a running turn and wakes an idle session); an
 // urgent event is a note ($.session.append) in a running turn and a prompt when none runs. A refused note is a failed delivery (told once, the
@@ -95,7 +96,7 @@ for (const surface of SURFACES) {
       expect(d.stored.get('relayCursor:sess-own')?.cursor).toBe('c5')
     })
 
-    test('a refused note is a failed delivery: told once, the stored cursor does not move, and polling goes on', async ($, on) => {
+    test('a refused note is a failed delivery: told once, the event is put back for a retry (its cursor was stored at the call), and polling goes on', async ($, on) => {
       const d = dashboard(on)
       d.relay.rejectAppends('append refused')
       await startSession($, d, surface)
@@ -106,7 +107,7 @@ for (const surface of SURFACES) {
       const toasts = d.toasts.filter(t => t.startsWith('Could not tell the model'))
       expect(toasts).toHaveLength(1)
       expect(toasts[0]).toContain(`${NOTE_MARKER}${relayLine('events delayed: the session did not take the event: append refused')}`)
-      expect(d.stored.get('relayCursor:sess-own')).toBeUndefined()
+      expect(d.stored.get('relayCursor:sess-own')).toMatchObject({ cursor: 'c5' })
       await d.clock.advance(1_000)
       // DX-5398: the poll carries the refused record's cursor (it is queued for a retry, never asked for again)
       expect(d.relay.calls.at(-1)?.cursor).toBe('c5')

@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-5344: whose compaction a resume briefing follows. Claude Code's classic SessionStart input never names the agent that compacted (2.1.299: its `agent_id` is always absent),
 // so the plugin notes WHO compacts at the `session.compact` proposal that passed and reads that note when the `compact` start arrives. A sub-agent's compaction briefs THAT sub-agent
 // (once, in its next tool result, never the main agent's prompt); the main agent's own compaction briefing is unchanged.

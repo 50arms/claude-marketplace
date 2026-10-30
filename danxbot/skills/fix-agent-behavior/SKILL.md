@@ -40,18 +40,11 @@ description/frontmatter, a hook, the MCP server instructions, or a route's spec 
 reminder text. If the failure came from a description/frontmatter, fix that, not just the
 body.
 
-Pick the home by the KIND of rule, never by where the failure showed up:
-
-- **The plugin** ships to the general public: only behaviour every user of it should have,
-  in any project, on any machine. Never one user's policy (who may deploy, which
-  actions need an ask) and never machine facts (paths, accounts, hosts).
-- **The user's own policy and this machine's facts** (what needs no ask, what only the user
-  may do, deploy permission, paths, accounts) → `~/.claude/CLAUDE.md`.
-- **One repo's policy** (its deploy, test or git rules) → that repo's `.claude/CLAUDE.md`
-  or `.claude/rules/`.
-- Never a memory file (it reaches one project on one machine; no dispatched worker, other
-  repo or other machine reads it): a correction already saved as one moves to its home above
-  and the memory is deleted.
+Pick the home by the placement standard, the 50 Arms docs page
+`topic.agent-context-placement`: read it first with `docs_read` (`source: {kind: "remote",
+repo: "danxbot"}`; inside that repo itself, `{kind: "local"}`). It names every place agent
+text can live, who reads each and when, its budget and how to write it. Place by the KIND of
+text, never by where the failure showed up. Never a memory file.
 
 Apply a policy or repo edit yourself (`Edit`/`Write`).
 

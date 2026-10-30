@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4239 — the Gates section briefed every gate sub-agent to "review the card
 // against that text alone". A board's gate text can tell its reviewer to WRITE
 // to the card (the test checklists, the dependency edges), so a reviewer
@@ -14,7 +15,8 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const skill = readFileSync(path.join(here, "../skills/issue-workflow/SKILL.md"), "utf8");
-const mantra = readFileSync(path.join(here, "../mantra.md"), "utf8");
+// DX-5889 / CP-4: the mantra lives in danxbot's reminder seed, so its five rule titles are pinned here.
+const MANTRA_RULE_TITLES = ["Orchestrate.", "Evidence.", "Decide, don't wait.", "Zero context.", "Craft."];
 
 const start = skill.indexOf("## Gates");
 const end = skill.indexOf("\n## ", start + 1);
@@ -32,22 +34,20 @@ test("the brief has the sub-agent do what the gate text says, card writes includ
 test("nothing in the section frames a gate as review-only", () => {
   assert.doesNotMatch(gates, /that text alone/);
   // the `reviewed_ref` field name is the one allowed "review" word
-  assert.doesNotMatch(gates, /\breview(?!ed_ref)/i);
+  assert.doesNotMatch(gates.replaceAll("review grade", ""), /\breview(?!ed_ref)/i);
 });
 
 test("the section names no gate and copies no gate's behaviour or mantra rule", () => {
   for (const owned of ["plan-tdd", "plan-dependency", "Feature Tests", "E2E Tests", "depends_on", "conflict_on"]) {
     assert.ok(!gates.includes(owned), `"${owned}" belongs to the board's gate text, not the skill`);
   }
-  const ruleTitles = [...mantra.matchAll(/^\d+\. \*\*([^*]+)\*\*/gm)].map((m) => m[1]);
-  assert.ok(ruleTitles.length > 0, "the mantra's rule titles were found");
-  for (const title of ruleTitles) {
+  for (const title of MANTRA_RULE_TITLES) {
     assert.ok(!gates.includes(title), `the mantra rule "${title}" is not restated`);
   }
 });
 
 test("the brief still fetches the board's gate text, records the verdict and removes a gate that doesn't apply", () => {
-  assert.match(gates, /1\. Fetch the board's gate text through `danxbot_api`: `GET \/api\/quality-gates\/<gate>\/instruction\?board=<the board the card lives on, by its numeric id>`/);
+  assert.match(gates, /1\. Fetch the board's gate text through `danxbot_api`: `GET \/api\/quality-gates\/<gate>\/instruction\?board=<the board the card lives on, by its ref number>`/);
   assert.match(gates, /3\. Record the verdict through `danxbot_api`: `PATCH \/api\/issues\/<id>\/quality-gates\/<gate>` with `\{status: "pass"\|"fail", message: "<the real finding>", reviewed_ref: "<ref>"\}`/);
   assert.match(gates, /Always send `reviewed_ref`, the ref of what the verdict covers/);
   assert.match(gates, /A gate that doesn't apply to the card is removed \(`POST` the same card route with `\{action: "remove"\}`\) with an agent note saying why — never passed/);
@@ -66,36 +66,43 @@ const planWorkflow = readFileSync(path.join(here, "../skills/plan-workflow/SKILL
 const pwStart = planWorkflow.indexOf("## Sub-agents");
 const subAgents = flat(planWorkflow.slice(pwStart, planWorkflow.indexOf("\n## ", pwStart + 1)));
 const creation = flat(readFileSync(path.join(here, "../skills/issue-workflow/references/card-creation-and-reference.md"), "utf8"));
-const NEVER_SPAWNS = /It never spawns gate agents: a background agent's notice reaches only the top-level session\./;
 
-test("the builder runs its PRE gates in its own context, then pushes, reports the tip SHA and stops", () => {
-  assert.match(gates, /runs its PRE gates itself, in its own context/);
-  assert.match(gates, /pushes its card branch, reports the tip SHA and stops/);
-  assert.match(gates, NEVER_SPAWNS);
+test("the operator session runs every gate on its review grade; the builder only builds, then pushes, reports the tip SHA and stops", () => {
+  assert.match(gates, /PRE gates run before the builder starts; POST gates run on its pushed tip\. The builder only builds, at its card's build grade, and a gate never changes that grade\./);
+  assert.match(gates, /A builder pushes its card branch, reports the tip SHA and stops/);
 });
 
-test("the operator session runs and re-runs the POST gates as gate workers and says when to land", () => {
-  assert.match(gates, /The operator session runs each POST gate not yet `pass` through one gate worker per gate/);
-  assert.match(gates, /relays the findings and says when to land/);
+test("the operator session runs and re-runs the gates as gate workers, then lands the branch itself", () => {
+  assert.match(gates, /The operator session runs each gate not yet `pass` \(all but `plan-design`, below\) through its own gate worker, at the gate's review grade, which the board sets: the gate instruction route answers it with its model and effort when the worker starts/);
+  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\); the operator session sends the builder the findings to fix, and lands the branch once every gate passes \("Delivery" below\)\./);
   assert.match(gates, /the operator session re-runs a POST gate/);
 });
 
-test("outside the never-spawns sentence, the section tells no one to spawn or dispatch a gate agent", () => {
-  assert.doesNotMatch(gates.replace(NEVER_SPAWNS, ""), /\b(spawn|dispatch)/i);
+test("the section tells no one to spawn or dispatch a gate agent", () => {
+  assert.doesNotMatch(gates, /\b(spawn|dispatch)/i);
 });
 
 test("the Two callers table and Flow agree with the Gates section", () => {
   assert.doesNotMatch(callers, /one sub-agent per gate/);
-  assert.match(callers, /PRE gates: in your own context; POST gates: run by the operator session/);
-  assert.match(callers, /push the card branch, report its tip SHA, stop; when told to land/);
+  assert.match(callers, /Gates: run by the operator session, each in its own gate worker/);
+  assert.match(callers, /push the card branch, report its tip SHA, stop; the operator session lands it: push to the target branch/);
   assert.match(flow, /5\. Pass its POST gates \("Gates" below\)\./);
-  assert.match(flow, /an operator-session sub-agent, once told to land, commits and pushes to the target branch/);
+  assert.match(flow, /An operator-session sub-agent stops at its pushed card branch: it reports the tip SHA and ends, and never lands the branch, transitions `complete` or writes the retro\./);
+  assert.match(flow, /Landing is the operator session's job, for its own work and for a sub-agent's pushed card branch alike/);
+});
+
+// A builder briefed `work <CARD-ID>` runs the `work` profile, whose operator-session lines leave the landing, `complete` and the
+// retro to the orchestrator. A skill line telling the sub-agent it lands when told would contradict the profile it runs.
+test("no skill tells an operator-session sub-agent to land its own card when told", () => {
+  for (const [name, text] of [["issue-workflow", flat(skill)], ["plan-workflow Sub-agents", subAgents]]) {
+    assert.doesNotMatch(text, /told to land|says? when to land/, name);
+  }
 });
 
 test("plan-workflow's Sub-agents section carries the matching rule once", () => {
-  assert.equal([...subAgents.matchAll(/never spawns gate agents/g)].length, 1, subAgents);
-  assert.match(subAgents, /A builder runs its PRE gates itself/);
-  assert.match(subAgents, /you run its POST gates as gate workers and say when to land/);
+  assert.match(subAgents, /The builder only builds, at its card's build grade\. You run each gate not yet `pass` through its own gate worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<effort>`\./);
+  assert.match(subAgents, /Once the POST gates pass, land it and complete the card\./);
+  assert.match(subAgents, /Story points decide process \(a card, gates, splitting\), never the agent grade\./);
 });
 
 test("the creation guide points at GET /api/card-types for the parent-child rules", () => {
@@ -105,4 +112,59 @@ test("the creation guide points at GET /api/card-types for the parent-child rule
 test("the creation guide carries no hard-coded parent-child list", () => {
   assert.doesNotMatch(creation, /Epic → Feature\/Story\/Bug\/Chore\/Task/);
   assert.doesNotMatch(creation, /Feature → Story\/Bug\/Chore\/Task/);
+});
+
+// A gate that only a person's answer passes takes no recorded verdict: the server refuses its PATCH for every caller,
+// and the person's choice passes it. DX-4734 put the designer's trigger, brief and procedure in these skills; DX-5899
+// (PLAN-44) moves what a designer does into the `gate-designer` profile its brief fetches. The skills keep only who starts
+// it, when, at which agent grade, and its `gate-designer <CARD-ID>` brief, each said once.
+test("a gate only a person's answer passes is never recorded by the agent, and the builder never runs plan-design", () => {
+  assert.match(gates, /A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused for every caller\./);
+  assert.match(gates, /`plan-design` is one: the builder never runs it, the operator session starts its designer \(plan-workflow "Sub-agents"\), and only a person's choice of a design on the card passes it\./);
+  assert.match(gates, /not yet `pass` \(all but `plan-design`, below\)/);
+});
+
+test("plan-workflow starts the designer once, briefed gate-designer <CARD-ID> at the gate's review grade", () => {
+  assert.match(subAgents, /A card carrying `plan-design` goes to no builder until a person chooses a design\./);
+  assert.match(subAgents, /Once the PRE gates before it have passed and it carries no design yet, start its designer, unless one you started is still on it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route\. Run it again only for a design event above that owes it a turn\./);
+  assert.doesNotMatch(gates, /Once the PRE gates before it have passed/);
+});
+
+test("what a designer does lives only in its profile: neither skill repeats it", () => {
+  const claiming = flat(skill.slice(skill.indexOf("## Claiming"), skill.indexOf("## When to block")));
+  const designerOnly = [
+    /<CARD-ID> plan-design/,
+    /claims nothing/,
+    /mini-app usage/,
+    /design and revision numbers/,
+    /reports the designs? it published/,
+    /A design it cannot build/,
+    /handed a card id and `plan-design`/,
+  ];
+  for (const [name, text] of [["issue-workflow", flat(skill)], ["plan-workflow Sub-agents", subAgents]]) {
+    for (const re of designerOnly) assert.doesNotMatch(text, re, `${name}: ${re}`);
+  }
+  assert.doesNotMatch(flow, /designer/);
+  assert.doesNotMatch(claiming, /designer/);
+  assert.match(claiming, /A builder whose `pickup` is refused 409 `design_not_chosen` stops and reports it: the card waits on a person choosing a design\./);
+});
+
+// DX-5899 (PLAN-44 G-7): every profile-shaped job (builder, gate reviewer, designer) is briefed `<profile> <CARD-ID>`, and the
+// sub-agent's first call fetches that profile's instruction for the card.
+test("plan-workflow delegates every profile-shaped job as <profile> <CARD-ID>, never a hand-written brief", () => {
+  assert.match(subAgents, /Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and the sub-agent's first call fetches that profile's instruction for the card, which is its whole task, so the brief repeats nothing the profile or the card says\./);
+  assert.match(subAgents, /`Agent\(\{subagent_type:"danxbot:worker-<model>-<effort>", prompt:"work <CARD-ID>"\}\)`/);
+  const briefs = [...subAgents.matchAll(/`((?:work|gate-reviewer|gate-designer) <CARD-ID>[^`]*)`|prompt:"([^"]*)"/g)].map((m) => m[1] ?? m[2]);
+  assert.deepEqual([...new Set(briefs)].sort(), ["gate-designer <CARD-ID>", "gate-reviewer <CARD-ID> <gate>", "work <CARD-ID>"]);
+  assert.doesNotMatch(subAgents, /Delegate by card id/);
+});
+
+test("the creation guide lists both design gates with when to add each, and builds no designer of its own", () => {
+  assert.match(creation, /\| `plan-design` \| PRE \| changes what a person sees or does in a UI and its look is not settled/);
+  assert.match(creation, /\| `code-design` \| POST \| is a complex UI build .* that must match its approved design closely \|/);
+  assert.match(creation, /`plan-design` builds the card's designs with the repo's own mini app, and only a person choosing one passes it\./);
+  assert.match(creation, /A repo whose designs are off refuses the gate: raise that as an `action` problem/);
+  for (const gone of ["danxbot:design", "worker-designer"]) {
+    assert.ok(!creation.includes(gone), `${gone} was planned once and is not built: the board's gate text is the designer's procedure`);
+  }
 });

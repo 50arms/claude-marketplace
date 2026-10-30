@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-5385: a compaction that ends while no turn runs (the plugin's own after the agent's ready, or a typed /compact) leaves the agent idle: nothing is coming to carry
 // the briefing. The plugin starts the turn itself with ONE resume prompt (the relay's prompt path), only for the main agent of a plan-connected session.
 import { describe, expect } from 'claude-code/testing'
@@ -26,7 +27,7 @@ describe('the resume procedure (pure)', () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at)
     expect(RESUME_PROCEDURE).toContain('without asking the person')
     const ok = <T,>(value: T) => ({ ok: true as const, value })
-    expect(briefingText({ plan: null, cards: ok([]), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })).toContain(RESUME_PROCEDURE)
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })).toContain(RESUME_PROCEDURE)
   })
 })
 
@@ -110,7 +111,7 @@ for (const surface of SURFACES) {
 
     test('when the dashboard reads fail the prompt is the warning line plus the resume procedure', async ($, on) => {
       const d = await started($, on)
-      d.world.plansStatus = 500
+      d.world.sessionReadStatus = 500
       await restartMain($)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)

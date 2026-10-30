@@ -1,4 +1,4 @@
-// DX-5515 AC 1: the plugin's skills name a board by its numeric id, never by the retired repo:slug form.
+// DX-5515 AC 1: the plugin's skills name a board by its per-team ref number, never by the retired repo:slug form.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync, statSync } from 'node:fs'

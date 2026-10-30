@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4578: the danxbot plugin's own server (`plugin:danxbot:danx-dashboard`, the name `claude mcp list` shows) is the one dashboard
 // server of every session: the plan loads through it, its plan_connect / request_permission calls reach the listeners, and a
 // session where it is not connected shows the load's error (tests/plan-lifecycle.test.tsx), never a "not available" state.

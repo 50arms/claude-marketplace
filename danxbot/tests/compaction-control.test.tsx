@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4993 (PLAN-42 rule R-4): the plugin's half of an operator session's compaction handshake, as pure rules (hooks/compaction/*) and as the engine runs the
 // hooks: the agent's ready (a release in the control file the relay writes) makes the plugin run /compact itself at the next main-loop turn end, once; an automatic
 // proposal is refused while the session is under the handshake; a manual /compact and the safety valve always pass; nothing is armed for the main agent (DX-5231);
@@ -6,7 +7,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
 import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
-import type { AgentControl, ControlFile, GateControl, GateInput, LineValves } from '../hooks/compaction/control'
+import type { AgentControl, ControlFile, GateControl, GateInput, ModelValves } from '../hooks/compaction/control'
 import { CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
@@ -16,9 +17,9 @@ const WINDOW = 1_000_000
 const PASS_AT = 907_000
 
 // DX-5222: the dashboard's per-model-line valves (the sub-agent with no entry is measured against its model's line) and the sub-agents' own controls
-const VALVES = { haiku: 180_000, sonnet: 600_000, opus: 907_000 }
+const VALVES = { 'claude-haiku-5-5': 180_000, 'claude-sonnet-5-5': 600_000, 'claude-opus-4-8': 907_000 }
 // DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
-type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: LineValves }
+type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: ModelValves }
 const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
 const fileText = (control: WireControl | null, askedAt: string | null = null, sessionId: string = OWN_SESSION.session_id): string => JSON.stringify({ v: 1, sessionId, control, askedAt })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
@@ -65,7 +66,7 @@ const RELAY_SHAPES = {
   '0.1.311 (no agents, no valves)': (ms: number) => `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
   '0.1.317 (agents only)': (ms: number) => `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))},"agents":{}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
   '0.1.321 (agents and valves)': (ms: number) =>
-    `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))},"agents":{},"valves":{"opus":907000}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
+    `{"v":1,"sessionId":"${OWN_SESSION.session_id}","control":${MAIN_0_1_311.replace('RELEASE', String(ms))},"agents":{},"valves":{"claude-opus-4-8":907000}},"askedAt":"2026-10-17T12:00:00.000Z"}`,
 }
 describe('a plugin ahead of its relay (pure, DX-5314)', () => {
   for (const [relay, text] of Object.entries(RELAY_SHAPES)) {
@@ -88,7 +89,7 @@ describe('a plugin ahead of its relay (pure, DX-5314)', () => {
 // The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
 // builds the same from the dashboard's frame, and danxbot's operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
 describe('the wire shape (pure)', () => {
-  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000,"ask":{"seq":1,"at":"2026-10-14T11:58:00.000Z","text":"Prepare."},"releaseUntilMs":null,"releaseId":null}},"valves":{"haiku":180000,"sonnet":600000,"opus":907000}},"askedAt":null}'
+  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"claude-haiku-5-5":180000,"claude-sonnet-5-5":600000,"claude-opus-4-8":907000}},"askedAt":null}'
 
   test('the file the relay writes is read whole, and its pass-at size is the safety valve (the plugin has no margin of its own)', () => {
     const file = parse(RELAY_FILE)
@@ -101,7 +102,7 @@ describe('the wire shape (pure)', () => {
         releaseUntilMs: 1_800_000_000_000,
         releaseId: '2026-10-14T11:59:00.000Z',
         subagents: {
-          agents: { a1: { passAtTokens: 600_000, ask: { seq: 1, at: '2026-10-14T11:58:00.000Z', text: 'Prepare.' }, releaseUntilMs: null, releaseId: null } },
+          agents: { a1: { passAtTokens: 600_000 } },
           valves: VALVES,
         },
       },
@@ -195,13 +196,6 @@ describe('spent releases in the store (pure)', () => {
     expect(staleUsedReleaseKeys(entries.slice(2))).toEqual([])
   })
 
-  // DX-5222: a session's sub-agents' records belong to the session: its newer sub-agent records never evict its own older main record, and an old session goes whole
-  test("a session's records stay and go together, so its sub-agents never evict its own main record", () => {
-    const old = [{ key: usedReleaseKey('old'), at: 1 }, { key: usedReleaseKey('old', 'a1'), at: 2 }]
-    const sessions = Array.from({ length: USED_RELEASE_KEEP - 1 }, (_, i) => ({ key: usedReleaseKey(`s${i}`), at: 100 + i }))
-    const current = [{ key: usedReleaseKey('cur'), at: 50 }, ...Array.from({ length: 60 }, (_, i) => ({ key: usedReleaseKey('cur', `a${i}`), at: 1000 + i }))]
-    expect(staleUsedReleaseKeys([...old, ...sessions, ...current])).toEqual(old.map(e => e.key))
-  })
 })
 
 describe('the resume briefing (pure)', () => {
@@ -222,6 +216,7 @@ describe('the resume briefing (pure)', () => {
   test('names the plan, the cards in flight, the running sub-agents and the work not pushed', () => {
     const text = briefingText({
       plan: { ref: 'PLAN-23', name: 'The plugin' },
+      owed: ok([]),
       cards: ok([{ id: 'DX-9', title: 'In flight card' }]),
       agents: ok([{ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build the thing' }]),
       git: ok(GIT),
@@ -236,6 +231,7 @@ describe('the resume briefing (pure)', () => {
   test('says what is empty and what could not be read, never an empty-looking line for either', () => {
     const text = briefingText({
       plan: null,
+      owed: ok([]),
       cards: ok([]),
       agents: { ok: false, reason: 'the engine did not list this session\'s sub-agents' },
       git: { ok: false, reason: 'git status exited 128' },
@@ -248,12 +244,37 @@ describe('the resume briefing (pure)', () => {
 
   test('counts the rest past eight cards or agents, and words a clean checkout and a branch with no upstream', () => {
     const cards = Array.from({ length: 10 }, (_, i) => ({ id: `DX-${i + 1}`, title: `Card ${i + 1}` }))
-    const text = briefingText({ plan: null, cards: ok(cards), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })
+    const text = briefingText({ plan: null, owed: ok([]), cards: ok(cards), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })
     expect(text).toContain('DX-8 Card 8, and 2 more.')
     expect(text).toContain('Sub-agents running: none.')
     expect(text).toContain('(a detached checkout): no uncommitted changes, no upstream branch (nothing on it is pushed).')
-    expect(briefingText({ plan: null, cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 1, ahead: 1 }) })).toContain('1 uncommitted path, 1 unpushed commit.')
-    expect(briefingText({ plan: null, cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 0, ahead: 0 }) })).toContain('no uncommitted changes, nothing unpushed.')
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 1, ahead: 1 }) })).toContain('1 uncommitted path, 1 unpushed commit.')
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 0, ahead: 0 }) })).toContain('no uncommitted changes, nothing unpushed.')
+  })
+
+  const OWED = [
+    { cardId: 'DX-6', cardTitle: 'Other', commentId: 9, author: { name: 'Wren' }, excerpt: { text: 'ok?' }, state: 'seen' as const, waitedMs: 3 * 3_600_000 },
+    { cardId: 'DX-5075', cardTitle: 'Some card', commentId: 17031, author: { name: 'Dan' }, excerpt: { text: 'Please also cover the retry path' }, state: 'sent' as const, waitedMs: 5 * 60_000 },
+  ]
+  const EMPTY_GIT = ok({ branch: null, changed: 0, upstream: null, ahead: null })
+
+  test('lists every owed comment before the plan, oldest first, with state, wait and the two-step reply', () => {
+    const text = briefingText({ plan: { ref: 'PLAN-1', name: 'P' }, owed: ok(OWED), cards: ok([]), agents: ok([]), git: EMPTY_GIT })
+    expect(text).toContain('DX-5075 Some card, comment 17031 from Dan [Sent, waiting 5 min]: "Please also cover the retry path"')
+    expect(text).toContain('DX-6 Other, comment 9 from Wren [Seen, waiting 3 h]: "ok?"')
+    expect(text.indexOf('comment 9 ')).toBeLessThan(text.indexOf('comment 17031'))
+    expect(text.indexOf('comment 9 ')).toBeLessThan(text.indexOf('Your plan is'))
+    expect(text).toContain('POST /api/issues/<card>/comments/<commentId>/reply')
+    expect(text).toContain('phase "ack" and your short acknowledgement as body; skip this for one that is Seen')
+    expect(text).toContain('phase "reply" and the answer as body')
+  })
+
+  test('says none owed, and says a failed owed-comments read as a failure, never as none', () => {
+    const base = { plan: null, cards: ok([]), agents: ok([]), git: EMPTY_GIT }
+    expect(briefingText({ ...base, owed: ok([]) })).toContain('Comments you still owe an answer: none.')
+    const failed = briefingText({ ...base, owed: { ok: false, reason: 'http 503' } })
+    expect(failed).toContain('Comments you still owe an answer: NOT KNOWN, the read failed (http 503).')
+    expect(failed).not.toContain('owe an answer: none')
   })
 })
 
@@ -677,6 +698,22 @@ for (const surface of SURFACES) {
       const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
       expect(told).toContain('Work not pushed: not known (git status exited 128).')
       expect(told).toContain('Sub-agents running: none.')
+    })
+
+    test('a compaction briefing lists the owed comments the dashboard names, and says a failed read as a failure', async ($, on) => {
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      on('classic.SessionStart', () => ({}) as any)
+      const d = dashboard(on)
+      d.world.owedComments = [{ cardId: 'DX-5075', cardTitle: 'Some card', commentId: 17031, author: { name: 'Dan' }, excerpt: { text: 'Cover retry too' }, state: 'sent', waitedMs: 120_000 }]
+      await startSession($, d, surface)
+      await $.prompt.submit({ text: 'go' })
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
+      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
+      expect(told).toContain('DX-5075 Some card, comment 17031 from Dan [Sent, waiting 2 min]: "Cover retry too"')
+      d.world.reportReplies['GET /api/plan-sessions/me/owed-comments'] = { status: 503, body: { error: 'down' } }
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
+      const failed = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
+      expect(failed).toContain('Comments you still owe an answer: NOT KNOWN, the read failed')
     })
 
     test('a startup or resume carries no briefing', async ($, on) => {

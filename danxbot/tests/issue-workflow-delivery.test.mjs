@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4560 — a session building a card in a repo that needs review (a team's own repo) must end
 // with an open pull request, never a push to the target branch, while danxbot's own boards keep
 // pushing. The skill's "Delivery" section reads the card's resolved controls
@@ -42,8 +43,40 @@ test("a missing control key opens an action problem and stops, never guessing fa
   assert.match(delivery, /Never guess `false`/);
 });
 
-test("required false keeps the push to the target branch", () => {
-  assert.match(delivery, /\*\*`required` is `false`:\*\* commit and push to the target branch/);
+const notRequired = delivery.slice(delivery.indexOf("**`required` is `false`:**"), delivery.indexOf("**`required` is `true`:**"));
+/** The text of numbered step n of the `required` is `false` list. */
+const landStep = (n) => {
+  const from = notRequired.indexOf(` ${n}. `);
+  const to = notRequired.indexOf(` ${n + 1}. `);
+  return notRequired.slice(from, to === -1 ? undefined : to);
+};
+
+// The section is the lander's (the operator session), written in its voice, and says how a sub-agent's pushed card branch
+// reaches the target: rebase it onto the target, run the repo's finalize or push, then complete and write the retro.
+test("the section is addressed to the lander, and a sub-agent never lands", () => {
+  assert.match(delivery, /It is the lander's job: the operator session, landing its own work or an operator-session sub-agent's pushed card branch once every POST gate on it passes/);
+  assert.match(delivery, /An operator-session sub-agent never lands: it pushes its card branch, reports the tip and stops \(Flow step 6\)\./);
+  assert.doesNotMatch(delivery, /Applies to a session that lands a card/);
+});
+
+test("the order is fixed: the target branch or pull request first, then complete, then the retro", () => {
+  const order = delivery.slice(delivery.indexOf("The order is fixed:"));
+  const target = order.indexOf("reaches the target branch");
+  const complete = order.indexOf("transitions `complete`");
+  const retro = order.indexOf("the retro is written last");
+  assert.ok(target > -1 && target < complete && complete < retro, order);
+  assert.match(order, /citing the sha now on the target branch/);
+});
+
+test("required false: the lander rebases the card branch onto the target, tests, pushes, then completes", () => {
+  assert.match(notRequired, /\*\*`required` is `false`:\*\* land the card branch on the target branch yourself\./);
+  assert.ok(landStep(1).includes("git fetch origin") && landStep(1).includes("rebase origin/<target branch>"), landStep(1));
+  assert.match(landStep(1), /re-run the card's tests on the result/);
+  assert.match(landStep(2), /the repo's own finalize or land command/);
+  assert.ok(landStep(2).includes("push origin HEAD:<target branch>"), landStep(2));
+  assert.match(landStep(2), /never force it/);
+  assert.match(landStep(3), /^ 3\. Transition `complete` with a summary, then write the retro citing the sha now on the target branch/);
+  assert.doesNotMatch(notRequired, /commit and push to the target branch/);
 });
 
 test("required true: step 1 is the gh check: a secret-free login check, an action problem, then stop", () => {
@@ -99,7 +132,8 @@ test("done_on opened completes the card and writes the retro", () => {
 test("done_on merged never completes, releases the claim, and says the person completes it", () => {
   const merged = step(5).slice(step(5).indexOf("`merged`"));
   assert.match(merged, /^`merged`: do not transition `complete`/);
-  assert.match(merged, /`rollback_pickup` and `keep_assignment: true`/);
+  assert.match(merged, /`rollback_pickup` \(without\s+`keep_assignment`/);
+  assert.doesNotMatch(merged, /keep_assignment: true/);
   assert.match(merged, /the card stays open \(it shows ToDo/);
   assert.doesNotMatch(merged, /In Progress/);
   assert.match(merged, /until the pull request merges/);
@@ -112,9 +146,18 @@ test("the caller table and flow step 6 name the target branch, never main, and p
   assert.match(row, /push to the target branch \(or open a pull request when "Delivery" below says so\)/);
   assert.doesNotMatch(row, /\bmain\b/);
   const step6 = flat(skill.slice(skill.indexOf("\n6. "), skill.indexOf("## Gates")));
-  assert.match(step6, /pushes to the target branch, or opens a pull request when the card's controls require one \("Delivery" below\)/);
+  assert.match(step6, /every step of it \(merge first, then `complete`, then the retro\) is in "Delivery" below/);
   assert.doesNotMatch(step6, /origin\/main|to main/);
-  assert.match(flat(skill), /push \(to the target branch, or to the card's branch when "Delivery" says a pull request is required\)/);
+});
+
+// The Git rules once told every reader to push "to the target branch, or to the card's branch", which told an operator-session
+// sub-agent to push the target itself, against "push the card branch, stop".
+test("Git: a sub-agent pushes only its card branch; the target receives work only through Delivery", () => {
+  const from = skill.indexOf("## Git");
+  const git = flat(skill.slice(from, skill.indexOf("\n## ", from + 1)));
+  assert.match(git, /An operator-session sub-agent pushes only its card branch, never the target branch: the operator session lands it\./);
+  assert.match(git, /The target branch receives work only as "Delivery" above says\./);
+  assert.doesNotMatch(git, /push \(to the target branch, or to the card's branch/);
 });
 
 test("the section is general-audience text", () => {

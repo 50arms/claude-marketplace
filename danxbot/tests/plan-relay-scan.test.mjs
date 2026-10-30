@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4233 (R-1, R-2): the plan event relay is the module's own loop on the session's danx-dashboard MCP server. It spawns nothing
 // and writes no state file, and no trace of the deleted bridge / watchdog process design is left in the plugin's code.
 
@@ -25,7 +26,7 @@ const read = (rel) => readFileSync(path.join(root, rel), "utf8");
 /** The relay block of register.tsx: from its banner to the session.start hook that follows it. */
 function relayBlock() {
   const src = read("hooks/register.tsx");
-  const from = src.indexOf("// ---- DX-4233: the plan event relay");
+  const from = src.indexOf("// ---- the plan event relay");
   const to = src.indexOf("async function onSessionStart");
   assert.ok(from > -1 && to > from, "the relay block is found by its banner and the session.start hook after it");
   return src.slice(from, to);

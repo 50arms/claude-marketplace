@@ -1,4 +1,4 @@
-// DX-4534 / DX-4235: the ready-cards Stop check. An orchestrating plan session must keep every unblocked card moving; nothing enforced it
+// the ready-cards Stop check. An orchestrating plan session must keep every unblocked card moving; nothing enforced it
 // (on 2026-10-04 one builder ran while two readied, unblocked cards sat untouched). So a plan-connected session's stop is blocked once
 // while its plan has ready cards nobody holds. Pure: register.tsx reads `GET /api/plans/mine`, then `GET /api/issues` on each board the
 // plan spans, and asks these functions what the answers mean. This file is the plugin's ONE definition of "ready".
@@ -79,10 +79,10 @@ export function isReadyCard(card: CardRow): boolean {
 
 export type Read<T> = { ok: true; value: T } | { ok: false; reason: string }
 
-// A board id is a positive integer: the dashboard names every board by its numeric id.
+// A board id is a positive integer: the dashboard names every board by its per-team ref number.
 const isBoardId = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x) && x > 0
 
-// `GET /api/plans/mine`'s body: the plan id and the numeric ids of the boards its cards live on.
+// `GET /api/plans/mine`'s body: the plan id and the ref numbers of the boards its cards live on.
 export function planOf(body: unknown): Read<{ planId: number; boards: number[] }> {
   const b = body as { id?: unknown; boards?: unknown } | null
   if (b === null || typeof b !== 'object' || typeof b.id !== 'number' || !Array.isArray(b.boards) || !b.boards.every(isBoardId)) {

@@ -1,28 +1,44 @@
-import type { PendingEvent } from '../../types'
-import type { RelayEvent } from './answer'
+import type { AckInFlight, AckRef, PendingEvent } from '../../types'
+import { isAckList, type RelayEvent } from './answer'
 
-// DX-5398: the relay's outbox. The poll loop (plan_events_wait) takes events from the server and puts them here; a separate pump delivers them to
+// the relay's outbox. The poll loop (plan_events_wait) takes events from the server and puts them here; a separate pump delivers them to
 // the session in the order the server sent them. The loop never waits on a delivery: a plugin's `$.prompt.submit` settles only when the queued
 // prompt ENTERS the session (claude.exe 2.1.299: the call returns a promise the prompt core settles at the idle), so a prompt queued behind a long
-// foreground turn used to hold the whole loop (polls, heartbeats, the sub-agents' stats that ride them) until that turn ended (live evidence: DX-5398
-// notes). Delivery being slow is normal while a turn runs; polling stopping is never.
+// foreground turn used to hold the whole loop (polls, heartbeats, the sub-agents' stats that ride them) until that turn ended (observed live). Delivery being slow is normal while a turn runs; polling stopping is never.
 //
-// An event leaves the outbox when it is delivered, and only then does the stored resume cursor move to its cursor. The outbox is a module variable shared
-// by successive runs of one plan: a run that replaces a stuck one (the model's plan_connect, the stall watch) polls from the newest cursor still waiting
-// here, so an event in flight is neither asked for again nor delivered twice.
+// An event is DELIVERED the moment the engine call for it is made (`$.prompt.submit` / the note append): it leaves the outbox and the stored resume
+// cursor moves to its cursor then, not when the call's promise settles. The engine owns a queued prompt (measured: it survives a reload of
+// the hook module and enters as its own turn later); only the promise the old module instance awaited is lost with it. Whether the promise of a prompt
+// merged into a queued turn settles is NOT measured. Waiting for the promise kept every event in the outbox for hours and sent the whole backlog again at each
+// reload. The module instance that made the call still watches its outcome: a refusal (`drop`, or a throw) puts the event back at its place in the original
+// order (`seq`) and issues it again (`again`; its older cursor never moves the stored one back and is never polled from). The outbox is a module variable shared by successive runs
+// of one plan: a run that replaces a stuck one (the model's plan_connect, the stall watch) polls from the newest cursor still waiting here that has not
+// been delivered, else from the stored one, so a delivered event is neither asked for again nor delivered twice.
 //
-// The poll's cursor ACKNOWLEDGES: the server (danxbot plan-events-relay.ts) drops every record at or below the cursor a call presents, so an event taken
+// The poll's cursor ACKNOWLEDGES: the dashboard server drops every record at or below the cursor a call presents, so an event taken
 // and not yet delivered exists nowhere else once the next poll is made. A reload of the hook module empties the module variable, so each queued event is
-// also kept in the `relayOutbox` atom ($.state outlives a reload), written before the poll that acknowledges it and cleared when it is delivered
-// (`toPending`, `fromPending`). A reload therefore loses no event; it can issue again any event still in the atom (one issued and not yet delivered, including a note already appended behind a waiting prompt): a duplicate, never a loss. A new process has no
-// atom, and the server then resumes from the stored (delivered) cursor.
-// `done`: null until the event has been issued to the session, then the pending outcome of its delivery (null inside when delivered, else the cause).
-export type Queued = { planId: number | null; event: RelayEvent; done: Promise<string | null> | null }
+// also kept in the `relayOutbox` atom ($.state outlives a reload), written before the poll that acknowledges it and cleared when it is delivered, i.e. when
+// its engine call is made (`toPending`, `fromPending`). A reload therefore loses no event that was taken and not yet called for, and re-sends none that was:
+// the one repeat is a reload between the engine call and the end of the atom write that follows the cursor store. Delivered means handed over, not acknowledged: an event can be lost if Claude Code itself exits while its prompt is still queued behind a running turn (an event that asks to be acknowledged is sent again by the dashboard until the session acknowledges it, which covers that). A new process has no atom, and the server
+// then resumes from the stored (delivered) cursor.
+// Events are issued strictly in the order the server sent them: only the head of the outbox is ever issued. A refusal (the engine is busy or failing) hits
+// every event alike, so an event waiting behind a refused one loses nothing by waiting.
+// `seq`: the event's place in that order, ascending in the outbox and in the atom (which keeps the outbox's order, so it survives a reload).
+// `held` (always set): a put-back event waits out the backoff and is not issued until it is released.
+// `again`: it was delivered once and put back; its cursor is stored already, so issuing it again stores none.
+export type Queued = { planId: number | null; seq: number; event: RelayEvent; held: boolean; again?: true }
 
-// What a run on `planId` polls from: the cursor of the newest event of that plan still waiting for delivery, else the stored one.
+// What a run on `planId` polls from: the cursor of the newest event of that plan taken and not yet delivered, else the stored one. A put-back event
+// (`again`) was delivered already, so its cursor is older than the stored one and is never polled from; cursors are opaque and are never compared.
 export function pollCursor(outbox: readonly Queued[], planId: number | null, stored: string | null): string | null {
-  for (let i = outbox.length - 1; i >= 0; i--) if (outbox[i].planId === planId) return outbox[i].event.cursor
+  for (let i = outbox.length - 1; i >= 0; i--) if (outbox[i].planId === planId && outbox[i].again !== true) return outbox[i].event.cursor
   return stored
+}
+
+// A refused event goes back at its place in the original order: ahead of every event taken after it, behind every one taken before it.
+export function putBack(outbox: Queued[], event: Queued): void {
+  const at = outbox.findIndex(q => q.seq > event.seq)
+  outbox.splice(at === -1 ? outbox.length : at, 0, event)
 }
 
 // Events of another plan are not this plan's to deliver (the server starts clean whenever the plan changes).
@@ -34,11 +50,47 @@ export const isStalled = (now: number, beat: number, since: number, limitMs: num
 
 // The part of the outbox that survives a reload (the delivery promise does not).
 export const toPending = (outbox: readonly Queued[]): PendingEvent[] =>
-  outbox.map(q => ({ planId: q.planId, cursor: q.event.cursor, text: q.event.text, urgent: q.event.urgent }))
+  outbox.map(q => ({ planId: q.planId, cursor: q.event.cursor, text: q.event.text, urgent: q.event.urgent, acks: q.event.acks, ...(q.again === true ? { again: true as const } : {}) }))
 
-// The outbox of a run on `planId`, from what a reload found: nothing is issued yet, and another plan's events are not this run's.
-export const fromPending = (pending: readonly PendingEvent[], planId: number | null): Queued[] =>
-  pending.filter(p => p.planId === planId).map(p => ({ planId: p.planId, event: { cursor: p.cursor, text: p.text, urgent: p.urgent }, done: null }))
+// The outbox of a run on `planId`, from what a reload found: nothing is issued yet, and another plan's events are not this run's. The atom is in
+// the outbox's order, so the events get the sequence numbers `firstSeq`, `firstSeq + 1`, ... in that order.
+// an entry without `acks` was written by the previous plugin version: it throws StalePendingError, never a default (the caller stops the relay with a remedy).
+export class StalePendingError extends Error {}
+export const fromPending = (pending: readonly PendingEvent[], planId: number | null, firstSeq: number): Queued[] =>
+  pending
+    .filter(p => p.planId === planId)
+    .map((p, i) => {
+      if (!isAckList(p.acks)) throw new StalePendingError(`a queued event (cursor ${p.cursor}) has no acks list`)
+      return { planId: p.planId, seq: firstSeq + i, event: { cursor: p.cursor, text: p.text, urgent: p.urgent, acks: p.acks }, held: false, ...(p.again === true ? { again: true as const } : {}) }
+    })
+
+// the dashboard re-sends an event the session has not acknowledged, `attempt` counting the sends. A session that already holds the
+// first copy (processed it, never acknowledged) is not helped by the same prompt again while its turn runs; it is dropped here. `ackInFlight` is the events
+// issued and not yet acknowledged, oldest first, capped.
+export const ACK_IN_FLIGHT_MAX = 200
+
+// Drop a record only when it asks for acknowledgements, every one is a re-send (attempt above 1) of an event already issued, and the main turn runs now.
+// A first send (attempt 1) is never dropped; a re-send after the turn ended gets through (the session may have lost the first copy).
+export const shouldDropResend = (acks: readonly AckRef[], inFlight: AckInFlight, turnRunning: boolean): boolean =>
+  turnRunning && acks.length > 0 && acks.every(a => a.attempt > 1 && inFlight.some(([id]) => id === a.eventId))
+
+// The events a record issued: each is in flight at its attempt, the newest last; the oldest past the cap go.
+export const markInFlight = (inFlight: AckInFlight, acks: readonly AckRef[]): AckInFlight => {
+  if (acks.length === 0) return inFlight
+  const ids = new Set(acks.map(a => a.eventId))
+  return [...inFlight.filter(([id]) => !ids.has(id)), ...acks.map((a): [number, number] => [a.eventId, a.attempt])].slice(-ACK_IN_FLIGHT_MAX)
+}
+
+// An acknowledgement succeeded for `eventId` (or a delivery was refused and the event never reached the session).
+export const clearInFlight = (inFlight: AckInFlight, eventIds: readonly number[]): AckInFlight =>
+  inFlight.some(([id]) => eventIds.includes(id)) ? inFlight.filter(([id]) => !eventIds.includes(id)) : inFlight
+
+// The event id an acknowledgement call names, or null when the call is another route: POST /api/plan-sessions/me/events/<N>/ack.
+export function ackedEventId(method: unknown, path: unknown): number | null {
+  if (typeof method !== 'string' || method.toUpperCase() !== 'POST' || typeof path !== 'string') return null
+  const m = path.match(/^\/api\/plan-sessions\/me\/events\/([1-9][0-9]*)\/ack\/?(?:\?.*)?$/)
+  return m === null ? null : Number(m[1])
+}
 
 // A watch tick that ran more than twice its interval after the last one: the machine slept, and the wall clock moved while no timer did.
 export const isLateTick = (now: number, lastTickAt: number | null, intervalMs: number): boolean => lastTickAt !== null && now - lastTickAt > 2 * intervalMs

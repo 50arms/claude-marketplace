@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4534 / DX-4235: the ready-cards Stop check, as a function hook. A plan-connected main session's stop is blocked once while its plan has
 // ready cards nobody holds (GET /api/plans/mine, then GET /api/issues on each board the plan spans); with none, on a stop the hook already
 // forced, for a sub-agent, or when the read fails, the stop goes on. Checked as the engine runs the hook, on both surfaces, plus the
@@ -125,7 +126,7 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       d.world.readyRows[BOARD] = [card({ blocked: { at: 1, reason: 'r', by: 'x' } })]
       expect((await $.classic.Stop(STOP)).block).toBeUndefined()
-      expect(reads(d).map((r: any) => r.path)).toEqual(['/api/plans/mine', '/api/issues'])
+      expect(reads(d).map((r: any) => r.path)).toEqual(['/api/plans/mine', '/api/issues', '/api/plans/23/connected-session/detail'])
     })
 
     test('a stop the hook already forced (stop_hook_active) reads nothing and goes on', async ($, on) => {
@@ -268,12 +269,14 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter(t => t === OLDER_DASHBOARD_LINE)).toEqual([])
     })
 
-    test('a session not on a plan reads nothing and its stop is never blocked', async ($, on) => {
+    test('a session not on a plan finds no plan to read cards of, and its stop is never blocked', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.readyRows[BOARD] = [card()]
       expect((await $.classic.Stop(STOP)).block).toBeUndefined()
       await d.clock.settle()
-      expect(d.reports).toEqual([])
+      // DX-5593: a signed-in session on no plan is reported on like any other, so the check runs: it asks for the pause and the plan, is told there is none,
+      // and reads no card
+      expect(d.reports.map(r => `${r.method} ${r.path}`)).toEqual(['GET /api/plan-sessions/me/pause', 'GET /api/plans/mine'])
     })
   })
 }

@@ -1,9 +1,8 @@
-// DX-4144 (DX-4066 operator decisions) — ONE mantra for every agent: danxbot
-// seeds the `mantra` reminder row from this file and every reader (operator
-// session, sub-agent, dispatched worker) receives it. The operator-only rules
-// (a question is not a stop, worktrees, chat with the operator) moved into
-// `plan-workflow`, the operator session's own skill, and the mantra's rules are
-// stated once (PLN-11 R-22): a moved rule must not survive in the mantra.
+import "./designated-test-container.mjs";
+// DX-4144 / CP-4 — the mantra's text lives in danxbot's reminder seed, and its own wording is
+// pinned by danxbot's mantra-wording test. What stays here is the skill side: the operator-only
+// rules (a question is not a stop, worktrees, chat with the operator, the parked-card rule)
+// live once, in `plan-workflow`, the operator session's own skill (PLN-11 R-22).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,42 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const mantra = readFileSync(path.join(here, "../mantra.md"), "utf8");
 const planWorkflow = readFileSync(path.join(here, "../skills/plan-workflow/SKILL.md"), "utf8");
-
-const ruleTitles = [...mantra.matchAll(/^\d+\. \*\*([^*]+)\*\*/gm)].map((m) => m[1]);
-
-/** The text of one numbered rule, up to the next numbered rule. */
-function rule(n) {
-  const start = mantra.search(new RegExp(`^${n}\\. `, "m"));
-  assert.ok(start > -1, `rule ${n} exists`);
-  const rest = mantra.slice(start + 1);
-  const next = rest.search(/^\d+\. /m);
-  return next === -1 ? mantra.slice(start) : mantra.slice(start, start + 1 + next);
-}
-
-test("the mantra states exactly five rules, in order", () => {
-  assert.deepEqual(ruleTitles, ["Orchestrate.", "Evidence.", "Decide, don't wait.", "Zero context.", "Craft."]);
-});
-
-test("rule 1 holds for every agent: no main-session qualifier, and an agent that cannot spawn sub-agents works itself", () => {
-  const orchestrate = rule(1);
-  assert.doesNotMatch(orchestrate, /main session/);
-  assert.match(orchestrate, /`danxbot:worker-\*`/);
-  assert.match(orchestrate, /cannot spawn sub-agents does the work itself/);
-});
-
-// DX-5242: the person asked that feedback be offered in the thread when they voiced it there,
-// so that offer is rule 3's second named exception beside the plan sign-off.
-test("rule 3 routes a human decision to a problem on the card, with the plan sign-off and an in-thread feedback offer as the exceptions", () => {
-  const decide = rule(3);
-  assert.match(decide, /problem, with solutions, on the card it\s+concerns/);
-  assert.match(decide, /never a question in the\s+session/);
-  assert.match(
-    decide,
-    /The exceptions are the\s+plan's human sign-off and, when the person raised it in the thread, offering\s+there to send 50 Arms feedback \(`danxbot:plan-workflow`\)/,
-  );
-});
 
 const MOVED = [
   ["a question is not a stop", /A question is not a stop or a command\./],
@@ -57,9 +21,8 @@ const MOVED = [
 ];
 
 for (const [name, pattern] of MOVED) {
-  test(`"${name}" lives in plan-workflow and not in the mantra`, () => {
+  test(`"${name}" lives in plan-workflow`, () => {
     assert.match(planWorkflow, pattern);
-    assert.doesNotMatch(mantra, pattern);
   });
 }
 
@@ -68,20 +31,13 @@ for (const [name, pattern] of MOVED) {
 // rule 2 must keep saying it or the "already covered" verdict stops being true.
 const PARKED_CARD = /An archived \(Backlog\) card was parked on\s+purpose/;
 
-test("the parked-card rule lives once in plan-workflow § Actionable work and not in the mantra", () => {
+test("the parked-card rule lives once in plan-workflow § Actionable work", () => {
   const start = planWorkflow.indexOf("## Actionable work");
   const actionable = planWorkflow.slice(start, planWorkflow.indexOf("\n## ", start + 1));
   assert.match(actionable, PARKED_CARD);
   assert.match(actionable, /read why in its comments and agent notes before reopening it/);
   assert.match(actionable, /a park the user made is theirs\s+to lift/);
   assert.equal([...planWorkflow.matchAll(new RegExp(PARKED_CARD.source, "g"))].length, 1);
-  assert.doesNotMatch(mantra, PARKED_CARD);
-});
-
-test("rule 2 owns 'verified this turn, never a label or proxy'", () => {
-  const evidence = rule(2).replace(/\s+/g, " ");
-  assert.match(evidence, /only on what you verified this turn/);
-  assert.match(evidence, /never a name, label, status field or proxy/);
 });
 
 test("plan-workflow points at its own worktree rule, never the mantra's", () => {
@@ -92,8 +48,9 @@ test("plan-workflow points at its own worktree rule, never the mantra's", () => 
 // the retired `mantra.session_start` / `mantra.dispatch` keys.
 const repoClaudeMd = readFileSync(path.join(here, "../../CLAUDE.md"), "utf8");
 
-test("CLAUDE.md names the one `mantra` row and no retired key", () => {
+test("CLAUDE.md names the one `mantra` row, its home in danxbot's seed, and no retired key", () => {
   assert.doesNotMatch(repoClaudeMd, /mantra\.(session_start|dispatch)/);
   assert.match(repoClaudeMd, /`mantra` registry row|registry row `mantra`/);
   assert.match(repoClaudeMd, /\{\{reminder:mantra\}\}/);
+  assert.match(repoClaudeMd, /src\/issues\/reminders\/seed\.yaml/);
 });

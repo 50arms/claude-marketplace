@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4857: the engine's test kit raises every call with origin `engine`, so no behavioural test can raise a plugin-origin tool.call. This pins by
 // source that onToolStamp returns on `raisedByPlugin(next.origin)` right after `await next(e)`, before the session start and the stamp are taken.
 import { readFileSync } from 'node:fs'

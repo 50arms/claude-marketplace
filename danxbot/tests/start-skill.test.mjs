@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-4556 - `/danxbot:start` connects the repo a person is standing in: sign in, register
 // the repo, create its board, then the first plan. These tests pin the skill's contract with
 // the dashboard (the routes, the bodies, the order) and that its text names nothing that
@@ -131,10 +132,10 @@ test("step 5 reuses a board the repo already has, else creates one with {repo, n
   assert.match(s, /two to four capital letters/i);
 });
 
-// PLAN-50 X01 (DX-5515): the board is named by its numeric id, never a `<repo>:<slug>` text.
-test("step 5 says the board's id is a bare number and that every call naming the board takes it", () => {
+// PLAN-50 X01 (DX-5515): the board is named by its per-team ref number, never a `<repo>:<slug>` text.
+test("step 5 says the board's id is its ref number and that every call naming the board takes it", () => {
   const s = step(5);
-  assert.match(s, /The answer's `id` is the board's numeric id, a bare number such as `12`/);
+  assert.match(s, /The answer's `id` is the board's ref, its per-team number such as `12`/);
   assert.match(s, /every call that names the board takes that number/);
 });
 
@@ -163,7 +164,7 @@ test("step 6 asks what to build first, creates the plan, and hands over to plan-
 
 test("the session names its board on every card call and relearns it from its plan after a restart", () => {
   const s = step(6);
-  assert.match(s, /every call that works on a card or a plan's cards names the board, the\s+`board` argument of `danxbot_api` set to the board id from step 5 \(the bare number\)/);
+  assert.match(s, /every call that works on a card or a plan's cards names the board, the\s+`board` argument of `danxbot_api` set to the board id from step 5 \(the ref number\)/);
   assert.match(s, /`POST \/api\/issues` carries it as `board` in its body/);
   assert.match(s, /After a restart or a compaction the session relearns its board from the plan it reconnects to: `GET \/api\/plans\/mine` answers the plan's `boards`, which come from the plan's cards, so that list is empty until the plan has a card\. Until then, running `\/danxbot:start` again finds the board \(step 5\)\./);
 });

@@ -1,3 +1,4 @@
+import "../../danxbot/tests/designated-test-container.mjs";
 // scripts/measure-injection.mjs (DX-3053): it measures each hooks module's time stamp (DX-4234), the only standing text a
 // module hands the model, against the CURRENT tree, so the harness cannot bit-rot as plugin content moves. The ceiling gate
 // is scripts/tests/check-injection-budget.test.mjs.

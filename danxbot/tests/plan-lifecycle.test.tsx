@@ -1,9 +1,10 @@
+import "./run-tests-with-npm-test.generated"
 // Session lifecycle and re-entry: what session.end does by reason, the retry while the MCP server
 // connects, and what one load reports.
 import { describe, expect } from 'claude-code/testing'
 
-import { LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, PACING_POLL_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
-import { test, dashboard, expectRowCarries, problemBadgeOf, startSession } from './plan-kit'
+import { DISCONNECT_GLYPH, LOAD_DEADLINE_MS, LOAD_ORPHAN_WAIT_MS, LOCK_STALE_MS, SERVER, NOT_CONNECTED_RETRY_MS } from '../hooks/plan/config'
+import { test, bandLabelOf, dashboard, expectRowCarries, needsYouBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 // DX-4415: the band has no Refresh button; `/danx-plan` forces a load (detached from the command, which returns at once)
@@ -13,37 +14,10 @@ const ask = async ($: any, d: any) => {
 }
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 // DX-5232: the plan read is one path: a session start's probe (the relay's) and its load are both /api/plans reads; the probe is the first
-const loadsOf = (d: any) => d.api.filter((a: any) => a.path === '/api/plans').length - 1
+const loadsOf = (d: any) => d.api.filter((a: any) => a.path === '/api/plan-sessions/me').length - 1
 
 describe('session.end by reason', () => {
   // DX-4233: what the process's end does to the plan event relay is in plan-relay-lifecycle.test.tsx
-  for (const reason of ['prompt_input_exit', 'logout', 'other']) {
-    test(`${reason} ends the process: the pacing poll stops`, async ($, on) => {
-      const d = dashboard(on)
-      on('session.end', () => ({ sessionId: 's1' }) as any)
-      await startSession($, d, 'desktop')
-      await $.session.end({ reason } as any)
-      await d.clock.settle()
-      const reads = d.teamPacingReads.length
-      await d.clock.advance(PACING_POLL_MS * 2 + 1)
-      expect(d.teamPacingReads).toHaveLength(reads)
-    })
-  }
-
-  // a reason not listed keeps the timers: stopping one in a live process is the harm, a timer left in a dying one is not
-  for (const reason of ['clear', 'resume', 'some_future_reason']) {
-    test(`${reason} leaves the process running: the pacing poll goes on`, async ($, on) => {
-      const d = dashboard(on)
-      on('session.end', () => ({ sessionId: 's1' }) as any)
-      await startSession($, d, 'desktop')
-      await $.session.end({ reason } as any)
-      await d.clock.settle()
-      const reads = d.teamPacingReads.length
-      await d.clock.advance(PACING_POLL_MS + 1)
-      expect(d.teamPacingReads.length).toBeGreaterThan(reads)
-    })
-  }
-
   for (const reason of ['clear', 'resume']) {
   test(`a ${reason} refreshes at once: what the dashboard shows may have moved`, async ($, on) => {
     const d = dashboard(on)
@@ -65,7 +39,7 @@ describe('the MCP server connects after session start', () => {
     expect(await text(band)).toContain('Disconnected')
     d.setMcp('up')
     await d.clock.advance(2_000)
-    expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+    expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
   })
 
   test('the retries are bounded: one more load per wait, then the view settles on the error', async ($, on) => {
@@ -84,7 +58,7 @@ describe('the MCP server connects after session start', () => {
   })
 
   test('a first load that fails with any other error (a refusal, a 500) is not retried at session start', async ($, on) => {
-    const d = dashboard(on, { listFails: true })
+    const d = dashboard(on, { sessionReadFails: true })
     await startSession($, d, 'desktop')
     expect(d.viewClaims()).toBe(1)
     for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
@@ -106,10 +80,10 @@ describe('what one load says about what it did not read', () => {
       const d = dashboard(on, { noInProgressTotal: true })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await text(band)).toContain('Danxbot: Disconnected')
-      expect(await problemBadgeOf(band)).toBeUndefined()
+      expect(await text(band)).toContain('50 Arms: Disconnected')
+      expect(await needsYouBadgeOf(band)).toBeUndefined()
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('red')
-      const label = await band.find({ type: 'Text', text: /Danxbot: Disconnected/ })
+      const label = await band.find({ type: 'Text', text: /50 Arms: Disconnected/ })
       expect(label?.props.color).toBe('red')
       expect(label?.props.dimColor).toBeFalsy()
     })
@@ -139,19 +113,19 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // DX-4233: the deadline ends the load as an error shown now; the call that never settled still holds the lock, so a refresh in this window
     // starts no second load beside it
     await d.clock.advance(LOAD_DEADLINE_MS / 2 + 1_000)
-    expect(await text(band)).toContain('Danxbot: Disconnected')
+    expect(await text(band)).toContain('50 Arms: Disconnected')
     await ask($, d)
     expect(loadsOf(d)).toBe(1)
 
     // past the wait for it the lock is released and the refresh asked behind it runs
     await d.clock.advance(LOAD_ORPHAN_WAIT_MS)
     expect(loadsOf(d)).toBe(2)
-    expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+    expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
     // the call that never settled answering at last changes nothing
     d.release()
     await d.clock.settle()
     expect(loadsOf(d)).toBe(2)
-    expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+    expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
   })
 
   // DX-4686: the live sub-agent check is no step of the refresh (a hung one cannot hold the lock), so the step after the load that is held here is
@@ -205,11 +179,11 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await d.clock.settle()
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', ...BAND })
     await d.clock.advance(LOAD_DEADLINE_MS + 1_000)
-    expect(await text(band)).toContain('Danxbot: Disconnected')
+    expect(await text(band)).toContain('50 Arms: Disconnected')
     d.release()
     await d.clock.settle()
     expect(loadsOf(d)).toBe(1)
-    expect(await text(band)).toContain('PLAN-23 · Danxbot plugin')
+    expect(await bandLabelOf(band)).toBe('PLAN-23 · Danxbot plugin')
   })
 
   test('a busy key left by an earlier process is cleared at session.start', async ($, on) => {
@@ -225,7 +199,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // the new start frees the key
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     await d.clock.settle()
-    expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnect')
+    expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
     expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
     await d.clock.advance(60_000)
     await leaving

@@ -1,15 +1,16 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4423: a session with no dashboard key (lapsed, never approved; a key a person revoked is its own view, DX-4418). The danx-dashboard MCP answers every tool but
-// plan_connect with an error result written for the agent; the band and footer must say "Danxbot: signed out" in the
+// plan_connect with an error result written for the agent; the band and footer must say "50 Arms: signed out" in the
 // person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.
 import { describe, expect } from 'claude-code/testing'
 
 import { loadPlan } from '../hooks/plan/load'
 import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
 import { signInToast } from '../hooks/plan/approval'
-import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
+import { APPROVAL_TOAST_MS, DISCONNECT_GLYPH } from '../hooks/plan/config'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
-import { test, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
+import { test, bandLabelOf, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
@@ -44,11 +45,11 @@ describe('classification: the signed-out answer is its own state, not an error',
   })
 
   test('the first call, a later call, and the revoked wording each end the load as signed-out', async () => {
-    const list = { ok: true, status: 200, body: { plans: [], total: 0, session: { plan_id: 23, plan_name: 'x' }, dashboard_url: 'http://localhost:5555' } }
+    const list = { ok: true, status: 200, body: { session: { plan_id: 23, plan_name: 'x', card_id: null, card_title: null, agent: null }, dashboard_url: 'http://localhost:5555' } }
     expect(await loadPlan(async () => halt(SIGN_IN_HALT), 't', null)).toMatchObject({ phase: 'signed-out', error: null, connected: null, refreshedAt: 't' })
     expect(await loadPlan(async () => halt(KEY_LAPSED_HALT), 't', null)).toMatchObject({ phase: 'signed-out' })
-    // the key dropped between the plan list and the plan's own read
-    const later = await loadPlan(async (_m, path) => (path === '/api/plans' ? list : halt(KEY_LAPSED_HALT)), 't', null)
+    // the key dropped between the session read and the plan's own read
+    const later = await loadPlan(async (_m, path) => (path === '/api/plan-sessions/me' ? list : halt(KEY_LAPSED_HALT)), 't', null)
     expect(later).toMatchObject({ phase: 'signed-out', error: null })
   })
 
@@ -96,9 +97,9 @@ describe('a key a person revoked (DX-4418): the stop halt of MCP 0.1.225', () =>
   })
 
   test('the first call and a later call each end the load as key-revoked, naming who', async () => {
-    const list = { ok: true, status: 200, body: { plans: [], total: 0, session: { plan_id: 23, plan_name: 'x' }, dashboard_url: 'http://localhost:5555' } }
+    const list = { ok: true, status: 200, body: { session: { plan_id: 23, plan_name: 'x', card_id: null, card_title: null, agent: null }, dashboard_url: 'http://localhost:5555' } }
     expect(await loadPlan(async () => halt(KEY_REVOKED_HALT), 't', null)).toMatchObject({ phase: 'key-revoked', revokedBy: REVOKER, error: null, connected: null, refreshedAt: 't' })
-    const later = await loadPlan(async (_m, path) => (path === '/api/plans' ? list : halt(KEY_REVOKED_HALT)), 't', null)
+    const later = await loadPlan(async (_m, path) => (path === '/api/plan-sessions/me' ? list : halt(KEY_REVOKED_HALT)), 't', null)
     expect(later).toMatchObject({ phase: 'key-revoked', revokedBy: REVOKER })
   })
 
@@ -143,18 +144,18 @@ describe('signInNote', () => {
 for (const surface of SURFACES) {
   for (const kind of ['signed-out', 'lapsed'] as const) {
     describe(`${kind} on ${surface}`, () => {
-      test("band and footer say Danxbot: signed out in red, with a Sign in button and none of the server's words", async ($, on) => {
+      test("band and footer say 50 Arms: signed out in red, with a Sign in button and none of the server's words", async ($, on) => {
         const d = dashboard(on, { signedOut: kind })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         const footer = await mountIndicator($, surface)
 
-        const label = await band.find({ type: 'Text', text: /Danxbot: signed out/ })
+        const label = await band.find({ type: 'Text', text: /50 Arms: signed out/ })
         expect(label.props.color).toBe('red')
         expect(await buttons(band)).toContain('Sign in')
-        expect(await footerText(footer)).toBe('Danxbot: signed out')
+        expect(await footerText(footer)).toBe('50 Arms: signed out')
         for (const shown of [await texts(band), (await buttons(band)).join(' ')]) expect(shown).not.toMatch(AGENT_TEXT)
-        expect(await buttons(band)).not.toContain('Disconnect')
+        expect(await buttons(band)).not.toContain(DISCONNECT_GLYPH)
         expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
       })
     })
@@ -167,15 +168,15 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       const footer = await mountIndicator($, surface)
 
-      const label = await band.find({ type: 'Text', text: /Danxbot: access revoked by dana/ })
+      const label = await band.find({ type: 'Text', text: /50 Arms: access revoked by dana/ })
       expect(label.props.color).toBe('red')
-      expect(await footerText(footer)).toBe('Danxbot: access revoked')
+      expect(await footerText(footer)).toBe('50 Arms: access revoked')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
       for (const shown of [await texts(band), (await buttons(band)).join(' ')]) {
         expect(shown).not.toMatch(AGENT_TEXT)
         expect(shown).not.toContain('Sign in')
       }
-      expect(await buttons(band)).not.toContain('Disconnect')
+      expect(await buttons(band)).not.toContain(DISCONNECT_GLYPH)
       expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
     })
 
@@ -190,10 +191,10 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { signedOut: 'lapsed' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
-      expect(await texts(band)).toContain('Danxbot: signed out')
+      expect(await texts(band)).toContain('50 Arms: signed out')
       d.world.signedOut = 'revoked'
       await forceRefresh($, d)
-      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
+      expect(await texts(band)).toContain('50 Arms: access revoked by dana')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
     })
 
@@ -206,8 +207,8 @@ for (const surface of SURFACES) {
       d.relay.told.length = 0
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.toasts).toEqual(['Danxbot: access revoked by dana. This session must stop.'])
-      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
+      expect(d.toasts).toEqual(['50 Arms: access revoked by dana. This session must stop.'])
+      expect(await texts(band)).toContain('50 Arms: access revoked by dana')
     })
 
     test('a person revokes the key while Sign in waits: one toast, the view reads revoked, and no further call is made', async ($, on) => {
@@ -219,8 +220,8 @@ for (const surface of SURFACES) {
       d.world.signedOut = 'revoked'
       await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe('Danxbot: access revoked by dana. This session must stop.')
-      expect(await texts(band)).toContain('Danxbot: access revoked by dana')
+      expect(d.toasts.at(-1)).toBe('50 Arms: access revoked by dana. This session must stop.')
+      expect(await texts(band)).toContain('50 Arms: access revoked by dana')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
       const calls = connectCalls(d).length
       await d.clock.advance(120_000)
@@ -238,7 +239,7 @@ for (const surface of SURFACES) {
       d.world.signedOut = 'lapsed'
       // three polls while signed out: the plan it was on is still remembered after the first
       for (let i = 0; i < 3; i++) await forceRefresh($, d)
-      expect(await texts(band)).toContain('Danxbot: signed out')
+      expect(await texts(band)).toContain('50 Arms: signed out')
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
       expect(connectCalls(d)[0]!.args).toEqual({ plan_id: 23, title: 'PLAN-23: danxbot plugin' })
@@ -342,7 +343,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.toasts).toContain('Signed in')
       expect(await texts(band)).not.toContain('signed out')
-      expect(await texts(band)).toContain('PLAN-23')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
       expect(await buttons(band)).not.toContain('Sign in')
       expect(await buttons(band)).not.toContain('Signing in…')
       // not one toast of the whole sign-in carried the server's words (a "Could not tell the model" toast, which carries the model's text, aside)
@@ -364,7 +365,7 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(await texts(band)).toContain('Danxbot: not connected to a plan')
+      expect(await texts(band)).toContain('50 Arms: not connected to a plan')
       // DX-4530: told it is signed in, with no plan named (it asked for none)
       const prompts = woken(d)
       expect(d.relay.told).toEqual([])
@@ -408,7 +409,7 @@ for (const surface of SURFACES) {
         // DX-4530: nothing was signed in, so the model is told nothing
         expect([...d.relay.told, ...woken(d)]).toEqual([])
         expect(connectCalls(d)).toHaveLength(1)
-        expect(await texts(band)).toContain('Danxbot: signed out')
+        expect(await texts(band)).toContain('50 Arms: signed out')
         expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
       })
     }

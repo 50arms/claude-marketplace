@@ -1,21 +1,21 @@
-// DX-4993 (PLAN-42 rule R-4): the plugin's half of an operator session's compaction handshake. Pure: no `$`, no clock, no files. register.tsx reads the
+// the plugin's half of an operator session's compaction handshake. Pure: no `$`, no clock, no files. register.tsx reads the
 // file and the engine's answers, hands them here, and does what comes back.
 //
 // What the handshake is. 50 Arms decides when a session is worth compacting (cost saved against time lost), asks the session's agent to prepare, and only
 // after the agent says ready does a compaction run. Nothing compacts by itself. This module decides the things the plugin owns:
-//   - THE START (DX-5231): when the agent's ready is accepted, the control file carries a release (`releaseId`, `releaseUntilMs`). At the next main-loop turn end the
-//     plugin runs Claude Code's own /compact (`$.command.run({ command: 'compact' })`, verified live on 2.1.299, DX-5217 comment 15740); `readyRelease` says
+//   - THE START: when the agent's ready is accepted, the control file carries a release (`releaseId`, `releaseUntilMs`). At the next main-loop turn end the
+//     plugin runs Claude Code's own /compact (`$.command.run({ command: 'compact' })`, verified live on 2.1.299); `readyRelease` says
 //     whether one is waiting. The compaction reaches PreCompact and `session.compact` as trigger `manual`. The plugin sets NO early-proposal variable for the
 //     main agent, so the main loop proposes only at Claude Code's own threshold. It still unsets a CLAUDE_CODE_AUTO_COMPACT_WINDOW an older plugin left (that variable
-//     also becomes the window the context meter measures against, so a 1M session showed 400k as its maximum, DX-5217).
+//     also becomes the window the context meter measures against, so a 1M session showed 400k as its maximum).
 //   - THE GATE: a `classic.PreCompact` hook refuses an automatic proposal while the session is under the handshake. A person's own /compact (trigger `manual`,
 //     which the plugin's own start also is) always passes, and so does a proposal at the size where refusing would end the session (the SAFETY VALVE,
 //     `passAtTokens`): a refused proposal there ends the turn with "Context limit reached" until a manual /compact (verified live, Haiku 4.5).
 //
-// SUB-AGENTS (DX-5222): a sub-agent is gated by its own `agents[id]` entry on Claude Code's `session.compact` event, which names the proposing `agentId`. Its context
+// SUB-AGENTS: a sub-agent is gated by its own `agents[id]` entry on Claude Code's `session.compact` event, which names the proposing `agentId`. Its context
 // size is NOT in the event and `$.session.usage()` is the main conversation's, so register.tsx records each sub-agent's last model response (`turn.step`'s usage and
-// model) and hands it here as `AgentSize`. `agentVerdict` decides one automatic proposal. A sub-agent with no entry is measured against the valve of ITS model line
-// (`valves`, which the dashboard writes from the board's model capabilities: the operator-session twin of the dispatch worker's valves.json, DX-5259), never a guessed model.
+// model) and hands it here as `AgentSize`. `agentVerdict` decides one automatic proposal. A sub-agent with no entry is measured against the valve of ITS exact model id
+// (`valves`, keyed by exact model id, one entry per version Anthropic still serves, active or deprecated; the dashboard writes it from its model-version catalog: the same per-version limits a dispatched worker gets), never a guessed model.
 //
 // The control is a local file the session's danx-dashboard MCP relay writes (`~/.config/danxbot/compaction/<sessionId>.json`, shape below): the gate
 // never asks the network, because Claude Code proposes before every model request. A function hook that THROWS lets the compaction through (verified
@@ -25,20 +25,19 @@
 // limit reached" (verified live), and the only escape, the safety valve's size, lives in the very file the gate may be unable to read. So whatever the gate
 // cannot establish (a control file it cannot read, a read that throws, the MAIN agent's context size) lets Claude Code's own compaction apply and holds nothing.
 // The person is told once that the control is unreadable (register.tsx). The exception is a SUB-AGENT whose context size or model the plugin never saw
-// (DX-5222, `agentVerdict`): that proposal is refused and told, never guessed; the agent's next model response (`turn.step`) fills its size, and the next
+// (`agentVerdict`): that proposal is refused and told, never guessed; the agent's next model response (`turn.step`) fills its size, and the next
 // proposal is judged on it.
 //
-// The shapes mirror the relay's `CompactionFile` (packages/danx-dashboard-mcp/src/compaction-control.ts in danxbot): a plugin cannot import it.
+// The shapes mirror the `CompactionFile` the relay (the danx-dashboard MCP server) writes: a plugin cannot import it.
 // A file this module cannot read is `bad`, never a guess.
 
 // The safety valve's size is NOT computed here. 50 Arms computes it once, from the session's model (the model's window less Claude Code's blocking margin
 // less the largest single step seen), and the relay writes it into the file as `passAtTokens`: the gate reads that number and holds no copy of the margin,
-// so a change to the margin moves every gate (DX-4993). Pinned from both sides by the same literal (tests/compaction-control.test.tsx and, in danxbot,
-// operator-session.test.ts and packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts).
+// so a change to the margin moves every gate. Pinned by the same literal in this plugin's tests and in the relay's own tests.
 
 export const HELD_REASON = '[50 ARMS] automatic compaction is held: your agent compacts the session when it says ready'
 
-// `windowTokens` is the context window 50 Arms assumed for the session's model line (its table lists a window per line, not per session variant); the floor and
+// `windowTokens` is the context window 50 Arms assumed for the session's model (its table lists a window per exact model version); the floor and
 // the valve were computed from it, so a session whose real window is smaller must not be held (`windowFits`).
 export type GateControl = {
   floorTokens: number
@@ -46,52 +45,45 @@ export type GateControl = {
   windowTokens: number
   releaseUntilMs: number | null
   releaseId: string | null
-  // DX-5314: null when the relay that wrote the file is older than this plugin and wrote no `agents` or no `valves` (relay 0.1.311 wrote neither, 0.1.315-0.1.317 only `agents`): the
+  // null when the relay that wrote the file is older than this plugin and wrote no `agents` or no `valves` (relay 0.1.311 wrote neither, 0.1.315-0.1.317 only `agents`): the
   // MAIN agent's handshake above is complete without them, and every sub-agent feature (arming, asks, the per-agent gate) is off. Claude Code hot-loads a new plugin version into a
   // live session but the session's MCP relay keeps its version until the server restarts, so a plugin must work beside an older relay.
   subagents: SubagentControl | null
 }
 
 export type SubagentControl = {
-  // DX-5222: each sub-agent's own control by agent id; `{}` while none has been recommended
+  // each sub-agent's own control by agent id; `{}` while none has been recommended
   agents: Record<string, AgentControl>
-  // DX-5222: the safety-valve size of each model line the board has a window for: the valve of a sub-agent that has no `agents` entry
-  valves: LineValves
+  // the safety-valve size of each active model version, keyed by exact model id: the valve of a sub-agent that has no `agents` entry
+  valves: ModelValves
 }
 
-// DX-5314: the notice for a control whose relay is older than the plugin (`subagents: null`); register.tsx shows it once per session, and again if it changes.
+// the notice for a control whose relay is older than the plugin (`subagents: null`); register.tsx shows it once per session, and again if it changes.
 export const RELAY_OLDER_NOTICE =
   'The danxbot dashboard MCP relay of this session is older than the danxbot plugin, so sub-agent compaction is off (the main agent still compacts when it says ready). Reconnect the danxbot dashboard MCP server (/mcp) or start a new session to fix it.'
 
-// DX-5365: the notice for an engine release the plugin could not read; register.tsx shows it once per process, when the handshake would arm the sub-agents.
+// the notice for an engine release the plugin could not read; register.tsx shows it once per process, when the handshake would arm the sub-agents.
 export const ENGINE_VERSION_NOTICE =
   'The Claude Code release could not be read, so sub-agent compaction stays off until this session has compacted once (the main agent still compacts when it says ready).'
 
-// DX-5222: one sub-agent's control as the relay writes it: its own valve, its request (`at` names it; the plugin delivers each once) and its own single-use release
-export type AgentAsk = { seq: number; at: string; text: string }
-export type AgentControl = { passAtTokens: number; ask: AgentAsk | null; releaseUntilMs: number | null; releaseId: string | null }
+// one sub-agent's control as the relay writes it: its own safety valve and nothing else. A sub-agent is never released in place: 50 Arms proposes its
+// handover to the orchestrator, which asks the sub-agent, so the relay writes no request or release for a sub-agent. Extra keys are ignored, not rejected.
+export type AgentControl = { passAtTokens: number }
 
-// DX-5222: the model lines of danxbot's src/agent/model-lines.ts; a model id `claude-<line>-...` is in that line
-export const MODEL_LINES = ['haiku', 'sonnet', 'opus', 'fable'] as const
-export type ModelLine = (typeof MODEL_LINES)[number]
-export type LineValves = Partial<Record<ModelLine, number>>
-const MODEL_ID_LINE = /^claude-(haiku|sonnet|opus|fable)-/
-export const modelLineOf = (model: unknown): ModelLine | null => {
-  const line = typeof model === 'string' ? MODEL_ID_LINE.exec(model)?.[1] : undefined
-  return line === undefined ? null : (line as ModelLine)
-}
+// the safety-valve size by exact model id (`claude-<line>-...`, e.g. `claude-haiku-5-5`); a version not active is absent
+export type ModelValves = Record<string, number>
+const MODEL_ID = /^claude-[a-z]+-\S+$/
 
 // `absent`: no file (the relay has not written one yet). `control: null`: the session is not under the handshake.
 export type ControlFile = { kind: 'absent' } | { kind: 'control'; control: GateControl | null } | { kind: 'bad'; reason: string }
 
-// The spent releases are kept in $.store, one record per session (the main agent's release) and one per sub-agent (its own), so one agent's release never spends another's
-// (DX-5222). The newest USED_RELEASE_KEEP SESSIONS' records stay (a session's records go or stay together), so the store does not grow with every session ever held and a
-// session's own main record is never evicted by its sub-agents' newer ones.
+// The spent main-agent releases are kept in $.store, one record per session. The newest USED_RELEASE_KEEP SESSIONS' records stay, so the store does not grow with
+// every session ever held.
 export const USED_RELEASE_PREFIX = 'compaction-used-release:'
 export const USED_RELEASE_KEEP = 40
 export type UsedRelease = { releaseId: string; at: number }
-export const usedReleaseKey = (sessionId: string, agentId: string | null = null): string => `${USED_RELEASE_PREFIX}${sessionId}${agentId === null ? '' : `:${agentId}`}`
-// The session a per-session record key belongs to (a session id holds no ':'; what follows one is the agent id).
+export const usedReleaseKey = (sessionId: string): string => `${USED_RELEASE_PREFIX}${sessionId}`
+// The session a per-session record key belongs to (a session id holds no ':').
 const sessionOfKey = (key: string, prefix: string): string => key.slice(prefix.length).split(':')[0]
 export function staleSessionKeys(entries: { key: string; at: number }[], prefix: string): string[] {
   const newest = new Map<string, number>()
@@ -103,14 +95,6 @@ export function staleSessionKeys(entries: { key: string; at: number }[], prefix:
   return entries.filter(e => stale.has(sessionOfKey(e.key, prefix))).map(e => e.key)
 }
 export const staleUsedReleaseKeys = (entries: { key: string; at: number }[]): string[] => staleSessionKeys(entries, USED_RELEASE_PREFIX)
-// DX-5222: the `at` of the sub-agent request the plugin delivered last, kept the same way
-export const ASK_SENT_PREFIX = 'compaction-ask-sent:'
-export type AskSent = { at: string; sentAt: number }
-export const askSentKey = (sessionId: string, agentId: string): string => `${ASK_SENT_PREFIX}${sessionId}:${agentId}`
-export const sentAskAt = (record: unknown): string | null => {
-  const r = record as Partial<AskSent> | null | undefined
-  return r !== null && r !== undefined && typeof r === 'object' && typeof r.at === 'string' ? r.at : null
-}
 // The release a stored record spent, null for none or a record that is not one.
 export const spentReleaseId = (record: unknown): string | null => {
   const r = record as Partial<UsedRelease> | null | undefined
@@ -141,7 +125,7 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
   if (c.windowTokens <= c.passAtTokens) return { kind: 'bad', reason: 'windowTokens must be above passAtTokens' }
   const release = releaseProblem(c)
   if (release !== null) return { kind: 'bad', reason: release }
-  // DX-5314: a field that is absent means a relay older than this plugin (the main handshake stays whole); one that is present but malformed is real corruption and stays `bad`
+  // a field that is absent means a relay older than this plugin (the main handshake stays whole); one that is present but malformed is real corruption and stays `bad`
   const agents = c.agents === undefined ? null : parseAgents(c.agents)
   if (typeof agents === 'string') return { kind: 'bad', reason: agents }
   const valves = c.valves === undefined ? null : parseValves(c.valves)
@@ -167,7 +151,7 @@ function releaseProblem(c: Record<string, unknown>): string | null {
   return null
 }
 
-// DX-5222: the `agents` map, or (a string) why it cannot be read.
+// the `agents` map, or (a string) why it cannot be read.
 function parseAgents(value: unknown): Record<string, AgentControl> | string {
   if (!isRecord(value)) return 'agents must be an object keyed by agent id'
   const agents: Record<string, AgentControl> = {}
@@ -175,33 +159,29 @@ function parseAgents(value: unknown): Record<string, AgentControl> | string {
     if (id === '') return 'agents has an empty agent id'
     if (!isRecord(a)) return `agents.${id} is not an object`
     if (!isCount(a.passAtTokens)) return `agents.${id}.passAtTokens must be a whole number`
-    const ask = a.ask
-    if (ask !== null && !(isRecord(ask) && isCount(ask.seq) && typeof ask.at === 'string' && ask.at !== '' && typeof ask.text === 'string' && ask.text.trim() !== '')) return `agents.${id}.ask must be null or {seq, at, text}`
-    const release = releaseProblem(a)
-    if (release !== null) return `agents.${id}: ${release}`
-    agents[id] = { passAtTokens: a.passAtTokens, ask: ask as AgentAsk | null, releaseUntilMs: a.releaseUntilMs as number | null, releaseId: a.releaseId as string | null }
+    agents[id] = { passAtTokens: a.passAtTokens }
   }
   return agents
 }
 
-// DX-5222: the per-line valves, or (a string) why they cannot be read: known model lines only, each a positive whole number.
-function parseValves(value: unknown): LineValves | string {
-  if (!isRecord(value)) return 'valves must be an object keyed by model line'
-  const valves: LineValves = {}
-  for (const [line, tokens] of Object.entries(value)) {
-    if (!(MODEL_LINES as readonly string[]).includes(line)) return `valves names ${JSON.stringify(line)}, which is not a model line`
-    if (!isCount(tokens) || tokens === 0) return `valves.${line} must be a positive whole number`
-    valves[line as ModelLine] = tokens
+// the per-version valves, or (a string) why they cannot be read: exact model ids only (`claude-<line>-...`), each a positive whole number.
+function parseValves(value: unknown): ModelValves | string {
+  if (!isRecord(value)) return 'valves must be an object keyed by model id'
+  const valves: ModelValves = {}
+  for (const [model, tokens] of Object.entries(value)) {
+    if (!MODEL_ID.test(model)) return `valves names ${JSON.stringify(model)}, which is not an exact model id`
+    if (!isCount(tokens) || tokens === 0) return `valves.${model} must be a positive whole number`
+    valves[model] = tokens
   }
   return valves
 }
 
-// Whether the control's floor and valve can be reached in this session. 50 Arms computed them from the window it assumed for the model line; when the session's
+// Whether the control's floor and valve can be reached in this session. 50 Arms computed them from the window it assumed for the model; when the session's
 // real window (`$.session.usage().context.window`, null when the engine cannot say yet) is smaller, a proposal could come before the floor and the valve would
 // never be reached. Held only when the real window is not known to be smaller.
 export const windowFits = (control: GateControl, realWindow: number | null): boolean => realWindow === null || realWindow >= control.windowTokens
 
-// DX-5231: the session is under the handshake exactly when its file carries a control; only such a session can be given a ready.
+// the session is under the handshake exactly when its file carries a control; only such a session can be given a ready.
 export const underHandshake = (file: ControlFile): boolean => file.kind === 'control' && file.control !== null
 
 // The release waiting to be acted on: the control's release when it has not expired and the plugin has not spent it, else null. A release is acted on once.
@@ -230,7 +210,7 @@ export type Verdict = { pass: true; why: 'manual' | 'no-control' | 'unreadable' 
 //   otherwise it is refused: a ready agent is compacted by the plugin's own /compact, never by releasing a proposal.
 export function verdict(input: GateInput): Verdict {
   if (input.trigger === 'manual') return { pass: true, why: 'manual' }
-  // DX-5222: a `precompute` (a compaction computed ahead of time, installed by nothing) is judged exactly like an automatic proposal
+  // a `precompute` (a compaction computed ahead of time, installed by nothing) is judged exactly like an automatic proposal
   if (input.trigger !== 'auto' && input.trigger !== 'precompute') return { pass: false, reason: `${HELD_REASON} (unexpected PreCompact trigger ${JSON.stringify(input.trigger)})` }
   if (input.file.kind === 'bad') return { pass: true, why: 'unreadable' }
   if (input.file.kind === 'absent' || input.file.control === null) return { pass: true, why: 'no-control' }
@@ -240,16 +220,16 @@ export function verdict(input: GateInput): Verdict {
   return { pass: false, reason: HELD_REASON }
 }
 
-// ---- DX-5222: the sub-agents -----------------------------------------------------------------------------------------------------------------------------------
+// ---- the sub-agents -----------------------------------------------------------------------------------------------------------------------------------
 
 // The percent of `windowTokens` that `floorTokens` is, rounded DOWN to two decimals: the value of CLAUDE_AUTOCOMPACT_PCT_OVERRIDE that makes Claude Code propose from the floor
-// (the same rule as danxbot's floorPercent in src/agent/compaction-recommendation.ts: a proposal a little below the floor is held and costs a hook call, one above it could leave an
+// (the same rule the dashboard applies: a proposal a little below the floor is held and costs a hook call, one above it could leave an
 // agent that said ready with no proposal to release). Integer arithmetic, so 250000 of 1000000 is exactly 25.
 export const floorPercent = (floorTokens: number, windowTokens: number): number => Math.floor((floorTokens * 100 * 100) / windowTokens) / 100
 
-// DX-5365: the engine release whose `session.compact` is known to judge each sub-agent's automatic proposal by agent (verified live, Claude Code 2.1.299, DX-5222). The types of every
+// the engine release whose `session.compact` is known to judge each sub-agent's automatic proposal by agent (verified live, Claude Code 2.1.299). The types of every
 // release from 2.1.286 declare the event, but none tells whether an engine serves it per agent, and the runtime exposes no capability flag, so this floor is a verified fact, not a
-// guess: a later card can lower it once an older engine is tried. `base` is `$.session.version()`'s release (`2.1.299`, or `2.1.299-dev` for a development build of it); no `base` is no release.
+// guess: a later release can lower it once an older engine is tried. `base` is `$.session.version()`'s release (`2.1.299`, or `2.1.299-dev` for a development build of it); no `base` is no release.
 export const SESSION_COMPACT_FLOOR = [2, 1, 299] as const
 export function runsSessionCompact(base: string | undefined): boolean {
   const m = base === undefined ? null : /^(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(base)
@@ -262,7 +242,7 @@ export function runsSessionCompact(base: string | undefined): boolean {
 }
 
 // The percent the plugin arms the sub-agents with, null when the session is not under the handshake (nothing is armed, and an armed value is taken back).
-// DX-5314: also null while sub-agent control is unavailable (an older relay): nothing the plugin arms could be gated.
+// also null while sub-agent control is unavailable (an older relay): nothing the plugin arms could be gated.
 export const armedPercentOf = (file: ControlFile): number | null => (file.kind === 'control' && file.control !== null && file.control.subagents !== null ? floorPercent(file.control.floorTokens, file.control.windowTokens) : null)
 
 // A sub-agent's context as its last model response reported it: the whole prompt it was answered over (uncached, cache-read and cache-written input) and the model that answered.
@@ -273,8 +253,12 @@ export const sizeOfUsage = (usage: { input_tokens: number; cache_read_input_toke
   return tokens > 0 ? { tokens, model: usage.model } : null
 }
 
-// DX-5222: how many sub-agents' last responses the plugin keeps (the oldest goes first)
+// how many sub-agents' last responses the plugin keeps (the oldest goes first)
 export const AGENT_SIZES_KEEP = 256
+// how many distinct sub-agent faults the told-once memory holds; the oldest is forgotten past it
+export const AGENT_FAULT_TOLD_KEEP = 256
+// the told-once memory keeps this many characters of a fault, since the text can embed an id of any length
+export const AGENT_FAULT_KEY_MAX = 200
 
 export const AGENT_HELD_REASON = '[50 ARMS] automatic compaction is held: this sub-agent compacts when it says ready'
 
@@ -283,30 +267,24 @@ export type AgentGateInput = {
   file: ControlFile
   // the sub-agent's last model response; null when the plugin has seen none from it
   size: AgentSize | null
-  // the release the plugin spent last for THIS sub-agent
-  usedReleaseId: string | null
-  nowMs: number
 }
 
 // `told: true` is a refusal the person should hear once (the gate cannot establish something it needs), unlike the ordinary hold.
-export type AgentVerdict =
-  | { pass: true; why: 'no-control' | 'unreadable' | 'valve' | 'subagents-off' }
-  | { pass: true; why: 'release'; releaseId: string }
-  | { pass: false; reason: string; told: boolean }
+export type AgentVerdict = { pass: true; why: 'no-control' | 'unreadable' | 'valve' | 'subagents-off' } | { pass: false; reason: string; told: boolean }
 
 // The decision for one AUTOMATIC proposal of the sub-agent `agentId` (a person's own /compact is the main agent's and never reaches this), in order:
 //   a file with no control holds nothing, and neither does one the gate cannot read (fail open, above): there is no handshake to wait for, or none that can be kept;
-//   a control with no sub-agent control (a relay older than the plugin, DX-5314) holds nothing either;
+//   a control with no sub-agent control (a relay older than the plugin) holds nothing either;
 //   a context size the plugin never saw is refused and told: a size it cannot read is never guessed;
-//   a sub-agent with an entry passes at ITS valve (`passAtTokens`), or once on its own unexpired, unspent release, and is otherwise held;
-//   a sub-agent with no entry (not placed yet, or one the dashboard cannot place) passes at the valve of ITS model's line, read from its own responses; a model in no
-//   line, or a line the control has no valve for, is refused and told, never given a guessed model or a default valve.
+//   a sub-agent with an entry passes at ITS valve (`passAtTokens`) and is otherwise held: a sub-agent is never compacted in place, only at its valve or by a person's /compact;
+//   a sub-agent with no entry (not placed yet, or one the dashboard cannot place) passes at the valve of ITS exact model id, read from its own responses; a model
+//   the control has no valve for is refused and told, never given a line's valve, a guessed model or a default valve.
 export function agentVerdict(input: AgentGateInput): AgentVerdict {
   const { file, size, agentId } = input
   if (file.kind === 'bad') return { pass: true, why: 'unreadable' }
   if (file.kind === 'absent' || file.control === null) return { pass: true, why: 'no-control' }
   const refuse = (why: string): AgentVerdict => ({ pass: false, reason: `${AGENT_HELD_REASON} (sub-agent ${agentId}: ${why})`, told: true })
-  // DX-5314: a relay older than the plugin gives no sub-agent control. Fail open: the plugin arms nothing then, so the proposal only comes at Claude Code's own threshold
+  // a relay older than the plugin gives no sub-agent control. Fail open: the plugin arms nothing then, so the proposal only comes at Claude Code's own threshold
   // (the behaviour before the handshake), and refusing it would strand the sub-agent at its window. The person was told by RELAY_OLDER_NOTICE.
   const subagents = file.control.subagents
   if (subagents === null) return { pass: true, why: 'subagents-off' }
@@ -314,13 +292,10 @@ export function agentVerdict(input: AgentGateInput): AgentVerdict {
   const entry = subagents.agents[agentId]
   if (entry !== undefined) {
     if (size.tokens >= entry.passAtTokens) return { pass: true, why: 'valve' }
-    if (entry.releaseUntilMs !== null && entry.releaseId !== null && entry.releaseUntilMs > input.nowMs && entry.releaseId !== input.usedReleaseId) return { pass: true, why: 'release', releaseId: entry.releaseId }
     return { pass: false, reason: AGENT_HELD_REASON, told: false }
   }
-  const line = modelLineOf(size.model)
-  if (line === null) return refuse(`it has no compaction control yet and its model ${JSON.stringify(size.model)} is in no model line`)
-  const valve = subagents.valves[line]
-  if (valve === undefined) return refuse(`it has no compaction control yet and the control has no valve for the ${line} line`)
+  const valve = subagents.valves[size.model]
+  if (valve === undefined) return refuse(`it has no compaction control yet and the control has no valve for its model ${JSON.stringify(size.model)}`)
   if (size.tokens >= valve) return { pass: true, why: 'valve' }
   return { pass: false, reason: AGENT_HELD_REASON, told: false }
 }

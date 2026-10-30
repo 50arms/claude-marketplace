@@ -1,5 +1,6 @@
+import "./designated-test-container.mjs";
 // dashboard-mcp-server.mjs (DX-4555, DX-4578, DX-4235): the MCP server the plugin ships, the one dashboard server of every
-// session. It starts the server from the recorded version at once and refreshes the record in the background. A fake
+// session. It refreshes the record before it starts the server (DX-5075), waiting a bounded time, and falls back to the recorded version. A fake
 // registry (fixtures/fake-registry.mjs) stands in for npm's registry and an injected spawn for npm and the server; the
 // end-to-end cases run the real launcher process (and, DX-5314, its real detached refresh child, with fixtures/fake-npm-cli.mjs
 // standing in for npm) against a pre-installed fake package. Nothing here touches the network.
@@ -14,7 +15,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, appendRefreshLog, drainRefreshLog, refreshLogFile, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
-import { REFRESH_FLAG, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
+import { REFRESH_FLAG, START_WAIT_ENV, START_WAIT_MS, dashboardChoice, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
+import { LOCAL_DASHBOARD_FOLDER, LOCAL_DASHBOARD_MARKER_REL, LOCAL_DASHBOARD_MARKER_SCHEMA } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,14 +30,26 @@ const NPM = { command: "npm", args: [] };
 let dataDir;
 let registry;
 let env;
+const folders = [];
+/** A session folder; `settings` (when given) is written to its `.claude/settings.local.json`. */
+function sessionFolder(settings) {
+  const dir = mkdtempSync(path.join(tmpdir(), "dash-mcp-folder-"));
+  folders.push(dir);
+  if (settings !== undefined) {
+    mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    writeFileSync(path.join(dir, ".claude", "settings.local.json"), JSON.stringify(settings));
+  }
+  return dir;
+}
 beforeEach(async () => {
   dataDir = mkdtempSync(path.join(tmpdir(), "dash-mcp-data-"));
   registry = await startFakeRegistry({ version: A });
-  env = { CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_DASHBOARD_URL: "https://dash.example", [REGISTRY_BASE_URL_ENV]: registry.url };
+  env = { CLAUDE_PLUGIN_DATA: dataDir, CLAUDE_PROJECT_DIR: sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "https://dash.example" } }), [REGISTRY_BASE_URL_ENV]: registry.url };
 });
 afterEach(async () => {
   await registry.stop();
   rmSync(dataDir, { recursive: true, force: true });
+  for (const dir of folders.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 /** Records `version` the way the launcher does. */
@@ -70,10 +84,26 @@ function harness({ npmMode = "ok" } = {}) {
     child.killed = false;
     child.kill = () => (child.killed = true);
     if (args[1] === REFRESH_FLAG) {
-      // DX-5314: the detached refresh child
+      // DX-5314 / DX-5075: the detached refresh child, run in this process with the harness's seams; its exit is the child's exit
       timeline.push(`refresh ${args[2]}`);
-      refreshes.push({ command, args, options, child });
       child.unref = () => (child.unrefed = true);
+      const proc = new EventEmitter();
+      const done = new Promise((resolve) => {
+        setImmediate(() =>
+          runRefreshProcess(args[2], {
+            env: options.env,
+            fetchFn,
+            spawnFn,
+            npm: NPM,
+            proc,
+            exit: (code) => {
+              child.emit("exit", code, null);
+              resolve(code);
+            },
+          }),
+        );
+      });
+      refreshes.push({ command, args, options, child, proc, done });
     } else if (args.includes("install")) {
       const spec = args.at(-1);
       timeline.push(`npm install ${spec}`);
@@ -108,30 +138,130 @@ function harness({ npmMode = "ok" } = {}) {
   return { timeline, spawns, servers, npms, refreshes, errLines, options: { env, spawnFn, fetchFn, stderr, npm: NPM } };
 }
 
-describe("dashboardUrl", () => {
-  test("an explicit DANXBOT_DASHBOARD_URL beats the plugin's configured value, which beats nothing", () => {
-    assert.equal(dashboardUrl({ DANXBOT_DASHBOARD_URL: "https://a", DANXBOT_PLUGIN_DASHBOARD_URL: "https://b" }), "https://a");
-    assert.equal(dashboardUrl({ DANXBOT_DASHBOARD_URL: "", DANXBOT_PLUGIN_DASHBOARD_URL: "https://b" }), "https://b");
-    assert.throws(() => dashboardUrl({}), /no dashboard URL/);
+describe("dashboardUrl: chosen per session folder, never machine-wide", () => {
+  test("the folder's settings.local.json names the dashboard, beating the committed settings.json and the shell", () => {
+    const folder = sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } });
+    writeFileSync(path.join(folder, ".claude", "settings.json"), JSON.stringify({ env: { DANXBOT_DASHBOARD_URL: "https://committed" } }));
+    assert.equal(dashboardUrl({ DANXBOT_DASHBOARD_URL: "https://shell" }, folder), "http://localhost:5555");
+  });
+
+  test("the committed settings.json names the dashboard when the local file does not", () => {
+    const folder = sessionFolder();
+    mkdirSync(path.join(folder, ".claude"), { recursive: true });
+    writeFileSync(path.join(folder, ".claude", "settings.json"), JSON.stringify({ env: { DANXBOT_DASHBOARD_URL: "https://committed" } }));
+    assert.equal(dashboardUrl({}, folder), "https://committed");
+  });
+
+  test("a DANXBOT_DASHBOARD_URL from the shell or a user setting naming another dashboard, with no folder naming one, is refused: it would move every session", () => {
+    assert.throws(
+      () => dashboardUrl({ DANXBOT_DASHBOARD_URL: "http://localhost:5555", DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted.example" }, sessionFolder()),
+      /localhost:5555 is set in the shell or a user setting, which moves every session at once.*settings\.local\.json/,
+    );
+    assert.throws(
+      () => dashboardUrl({ DANXBOT_DASHBOARD_URL: "not a url", DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted.example" }, sessionFolder()),
+      /moves every session at once/,
+    );
+  });
+
+  test("DX-6392: a shell or user-setting DANXBOT_DASHBOARD_URL naming the plugin's own dashboard moves nothing and is accepted", () => {
+    const env = { DANXBOT_DASHBOARD_URL: "https://hosted.example/", DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted.example" };
+    assert.equal(dashboardUrl(env, sessionFolder()), "https://hosted.example");
+  });
+
+  test("with no folder and no shell value, the plugin's dashboard_url option (the hosted default) is used", () => {
+    assert.equal(dashboardUrl({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted" }, sessionFolder()), "https://hosted");
+  });
+
+  test("nothing configured fails loudly", () => {
+    assert.throws(() => dashboardUrl({}, sessionFolder()), /no dashboard URL/);
+  });
+
+  test("a settings file that is not JSON, or names a URL that is not http(s), fails loudly and never falls through to another dashboard", () => {
+    const broken = sessionFolder();
+    mkdirSync(path.join(broken, ".claude"), { recursive: true });
+    writeFileSync(path.join(broken, ".claude", "settings.local.json"), "{ not json");
+    assert.throws(() => dashboardUrl({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted" }, broken), /not readable JSON/);
+    assert.throws(() => dashboardUrl({}, sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "localhost:5555" } })), /not an http\(s\) URL/);
+  });
+});
+
+/** DEC-77: a local-dashboard folder carries the marker the launcher reads; `url` is what the marker names. */
+function localFolder({ settings, marker }) {
+  const dir = sessionFolder(settings);
+  if (marker !== undefined) {
+    mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    writeFileSync(path.join(dir, ".claude", "local-dashboard.json"), JSON.stringify(marker));
+  }
+  return dir;
+}
+
+/** DEC-77 cross-repo pin: this launcher mirrors the marker contract the danxbot repo owns (its src/machine-clean/local-dashboard-contract.json). */
+describe("the local-dashboard marker contract mirrors the danxbot owner", () => {
+  test("the launcher's marker path and schema are the contract file's values", () => {
+    const contract = JSON.parse(readFileSync(new URL("./local-dashboard-contract.json", import.meta.url), "utf8"));
+    assert.equal(LOCAL_DASHBOARD_MARKER_REL, contract.marker);
+    assert.equal(LOCAL_DASHBOARD_MARKER_SCHEMA, contract.schema);
+    assert.equal(LOCAL_DASHBOARD_FOLDER, contract.folder);
+  });
+});
+
+describe("dashboardChoice: a local-dashboard folder (DEC-77) is refused rather than sent to the hosted default", () => {
+  test("a marked folder whose settings name its URL uses that URL, even with the hosted URL in the shell (DEC-73)", () => {
+    const folder = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } }, marker: { schema: 1, session: "local-dashboard", url: "http://localhost:5555" } });
+    const env = { DANXBOT_DASHBOARD_URL: "https://app.50arms.ai", DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" };
+    assert.deepEqual(dashboardChoice(env, folder), { url: "http://localhost:5555", source: `${path.join(folder, ".claude", "settings.local.json")} (marked local-dashboard session)`, kind: "folder" });
+  });
+
+  test("a marked folder whose settings name NO URL is refused, even when the plugin option is set: it never falls back to hosted", () => {
+    const folder = localFolder({ settings: {}, marker: { schema: 1, session: "local-dashboard", url: "http://localhost:5555" } });
+    assert.throws(() => dashboardChoice({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" }, folder), /refusing to start on the hosted default/);
+  });
+
+  test("a marker and the folder's settings that name different dashboards are refused", () => {
+    const folder = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5600" } }, marker: { schema: 1, session: "local-dashboard", url: "http://localhost:5555" } });
+    assert.throws(() => dashboardChoice({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" }, folder), /they must agree/);
+  });
+
+  test("a marker of another schema, or without an http(s) url, is refused loudly", () => {
+    const wrongSchema = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } }, marker: { schema: 2, session: "local-dashboard", url: "http://localhost:5555" } });
+    assert.throws(() => dashboardChoice({}, wrongSchema), /schema-1 local-dashboard marker/);
+    const noUrl = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } }, marker: { schema: 1, session: "local-dashboard" } });
+    assert.throws(() => dashboardChoice({}, noUrl), /schema-1 local-dashboard marker/);
+  });
+
+  test("the launcher refuses the hosted default when CLAUDE_PROJECT_DIR is unset: it cannot tell which folder it serves (DEC-73)", async () => {
+    const project = sessionFolder();
+    const env = { CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai", [REGISTRY_BASE_URL_ENV]: registry.url };
+    await assert.rejects(() => launch({ env, cwd: project, stderr: { write() {} } }), /CLAUDE_PROJECT_DIR is unset/);
+  });
+
+  test("an unmarked folder names its source: the folder's settings file, or the plugin's hosted option", () => {
+    const folder = sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } });
+    assert.deepEqual(dashboardChoice({}, folder), { url: "http://localhost:5555", source: path.join(folder, ".claude", "settings.local.json"), kind: "folder" });
+    assert.deepEqual(dashboardChoice({ DANXBOT_PLUGIN_DASHBOARD_URL: "https://app.50arms.ai" }, sessionFolder()), {
+      url: "https://app.50arms.ai",
+      source: "the plugin's dashboard_url option (hosted default)",
+      kind: "plugin-option",
+    });
   });
 });
 
 describe("launch: the version the server starts from (DX-4235)", () => {
-  test("a recorded version starts the server at once, before any registry request; the launcher makes none at all", async () => {
+  test("DX-5075: the refresh settles before the server starts; an installed latest that is already recorded starts at once", async () => {
     recordAt(A);
     layDown(A);
     const h = harness();
     const { child, version } = await launch(h.options);
     assert.equal(version, A);
-    assert.deepEqual(h.timeline, [`server ${A}`, `refresh ${A}`], "the server came first, then the refresh child");
+    assert.deepEqual(h.timeline, [`refresh ${A}`, "registry request", `server ${A}`], "the refresh settles before the server starts");
     assert.equal(child.killed, false);
   });
 
-  test("a recorded version that is not installed is installed first, still before any registry request", async () => {
+  test("a recorded version that is not installed is installed first, then the refresh settles, then the server starts", async () => {
     recordAt(A);
     const h = harness();
     await launch(h.options);
-    assert.deepEqual(h.timeline, [`npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, `server ${A}`, `refresh ${A}`]);
+    assert.deepEqual(h.timeline, [`npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, `refresh ${A}`, "registry request", `server ${A}`]);
   });
 
   test("with no record it resolves from the registry first, installs and records that version, then starts the server", async () => {
@@ -139,10 +269,10 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     const { version } = await launch(h.options);
     assert.equal(version, A);
     assert.equal(recordedVersionOrNull(env), A);
-    assert.deepEqual(h.timeline, ["registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, `server ${A}`, `refresh ${A}`]);
+    assert.deepEqual(h.timeline, ["registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, `refresh ${A}`, "registry request", `server ${A}`]);
   });
 
-  test("DX-5314: the refresh is a DETACHED node child that outlives the launcher, started after the server, with no shell", async () => {
+  test("DX-5314: the refresh is a DETACHED node child that outlives the launcher, started before the server, with no shell", async () => {
     recordAt(A);
     layDown(A);
     const h = harness();
@@ -156,6 +286,80 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     assert.equal(options.stdio, "ignore", "it holds none of the launcher's pipes open: its failure line goes to refresh.log");
     assert.equal(options.env.CLAUDE_PLUGIN_DATA, dataDir);
     assert.equal(child.unrefed, true, "the launcher does not wait for it");
+  });
+
+  test("DX-5075: a session started after a publish runs the publish: the latest is installed and recorded BEFORE the server starts", async () => {
+    recordAt(A);
+    layDown(A);
+    registry.setVersion(B);
+    const h = harness();
+    const { child, version } = await launch(h.options);
+    assert.equal(version, B, "the release, not the version the previous refresh recorded");
+    assert.equal(recordedVersionOrNull(env), B);
+    assert.ok(existsSync(installedBin(dataDir, B)));
+    assert.deepEqual(h.timeline, [`refresh ${A}`, "registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${B}`, `server ${B}`]);
+    assert.equal(h.servers.length, 1);
+    assert.equal(child.killed, false);
+    assert.deepEqual(h.errLines, []);
+    assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp", B, ".leases")), [String(process.pid)], "the lease is on the version it runs");
+
+    const next = harness();
+    await launch(next.options);
+    assert.deepEqual(next.timeline, [`refresh ${B}`, "registry request", `server ${B}`], "the next start installs nothing");
+  });
+
+  test("DX-5075: an install not done within the start's wait starts the recorded version, and the install goes on in the background", async () => {
+    recordAt(A);
+    layDown(A);
+    registry.setVersion(B);
+    const h = harness({ npmMode: "hang" });
+    // the wait's timer is the test's: it fires only once the hanging install has been spawned, never by the clock
+    let expire;
+    const timers = { setTimeout: (fn) => (expire = fn), clearTimeout: () => {} };
+    const launching = launch({ ...h.options, timers });
+    while (h.npms.length === 0 || expire === undefined) await new Promise((resolve) => setImmediate(resolve));
+    expire();
+    const run = await launching;
+    assert.equal(run.version, A);
+    assert.deepEqual(h.timeline, [`refresh ${A}`, "registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${B}`, `server ${A}`]);
+    assert.equal(h.npms[0].killed, false, "the install is not abandoned");
+    assert.equal(h.refreshes[0].child.killed, false, "the refresh child the launcher could kill is left running");
+    assert.equal(run.refreshChild.unrefed, true, "the launcher does not wait for the refresh");
+    h.refreshes[0].proc.emit("SIGTERM");
+    assert.equal(await h.refreshes[0].done, 1, "stopped: the refresh records nothing");
+    assert.equal(recordedVersionOrNull(env), A);
+    run.release();
+  });
+
+  test("DX-5075: START_WAIT_MS stays under Claude Code's 30 s MCP start limit, and a start with no override waits exactly that long", async () => {
+    assert.ok(START_WAIT_MS < 30_000);
+    recordAt(A);
+    layDown(A);
+    const waits = [];
+    const timers = { setTimeout: (fn, ms) => waits.push(ms), clearTimeout: () => {} };
+    const h = harness();
+    await launch({ ...h.options, timers });
+    assert.deepEqual(waits, [START_WAIT_MS], "neither startWaitMs nor the env seam: the constant");
+    assert.equal(START_WAIT_ENV in h.options.env, false);
+
+    const seam = harness();
+    seam.options.env = { ...env, [START_WAIT_ENV]: "1234" };
+    await launch({ ...seam.options, timers });
+    assert.equal(waits[1], 1234, "the env seam overrides it");
+    await launch({ ...seam.options, timers, startWaitMs: 77 });
+    assert.equal(waits[2], 77, "the option beats the env seam");
+  });
+
+  test("DX-5075: a refresh whose install fails starts the recorded version, and its one line is printed at this start", async () => {
+    recordAt(A);
+    layDown(A);
+    registry.setVersion(B);
+    const h = harness({ npmMode: "fail" });
+    const { version } = await launch(h.options);
+    assert.equal(version, A, "the recorded version runs");
+    assert.equal(h.errLines.length, 1);
+    assert.match(h.errLines[0], /could not refresh .*install_failed: npm install @thehammer\/danx-dashboard-mcp@0\.1\.8 exited 1: npm error 404 Not Found\); this session keeps running 0\.1\.7\n$/);
+    assert.equal(recordedVersionOrNull(env), A);
   });
 
   test("DX-5314: a refresh child that cannot start is ONE stderr line, never a failed launch", async () => {
@@ -255,7 +459,7 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     recordAt(A);
     layDown(A);
     const h = harness();
-    h.options.env = { ...env, DANXBOT_DASHBOARD_URL: "", DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted", DANX_DASHBOARD_CREDENTIAL: "dispatch-secret" };
+    h.options.env = { ...env, CLAUDE_PROJECT_DIR: sessionFolder(), DANXBOT_PLUGIN_DASHBOARD_URL: "https://hosted", DANX_DASHBOARD_CREDENTIAL: "dispatch-secret" };
     await launch(h.options);
     const [{ options }] = h.servers;
     assert.equal(options.env.DANXBOT_DASHBOARD_URL, "https://hosted");
@@ -263,7 +467,7 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     assert.equal(options.stdio, "inherit", "the server owns the MCP stream");
 
     const none = harness();
-    none.options.env = { ...env, DANXBOT_DASHBOARD_URL: "" };
+    none.options.env = { ...env, CLAUDE_PROJECT_DIR: sessionFolder() };
     await assert.rejects(launch(none.options), /no dashboard URL/);
     assert.deepEqual(none.timeline, []);
   });
@@ -273,20 +477,20 @@ describe("runRefresh: the detached refresh (DX-4235, DX-5314)", () => {
   test("it records and installs a newer version without restarting the server; the next session starts it", async () => {
     recordAt(A);
     layDown(A);
-    registry.setVersion(B);
     const h = harness();
     const { child } = await launch(h.options);
+    registry.setVersion(B);
     assert.equal(await runRefresh(A, h.options), B);
     assert.equal(recordedVersionOrNull(env), B);
     assert.ok(existsSync(installedBin(dataDir, B)));
-    assert.deepEqual(h.timeline, [`server ${A}`, `refresh ${A}`, "registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${B}`]);
+    assert.deepEqual(h.timeline, [`refresh ${A}`, "registry request", `server ${A}`, "registry request", `npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${B}`]);
     assert.equal(h.servers.length, 1, "one server: the running one is never replaced");
     assert.equal(child.killed, false, "the running server is never restarted");
     assert.deepEqual(h.errLines, []);
 
     const next = harness();
     await launch(next.options);
-    assert.deepEqual(next.timeline, [`server ${B}`, `refresh ${B}`], "the next session start runs B at once, with no install");
+    assert.deepEqual(next.timeline, [`refresh ${B}`, "registry request", `server ${B}`], "the next session start runs B, with no install");
   });
 
   test("a refresh that cannot read the registry writes ONE stderr line naming the reason and keeps the record", async () => {
@@ -430,7 +634,7 @@ describe("runRefresh: the detached refresh (DX-4235, DX-5314)", () => {
     recordAt(A);
     registry.setVersion(B);
     await runRefresh(A, h.options);
-    assert.equal(h.spawns.length, 4, "npm A, server, refresh child, npm B");
+    assert.equal(h.spawns.length, 4, "npm A, refresh child, server, npm B");
     for (const { command, options } of h.spawns) {
       assert.doesNotMatch(command, /bash|\bsh\b|cmd\.exe/i);
       assert.equal(options.shell, undefined);
@@ -446,7 +650,7 @@ describe("the launcher process", () => {
     return spawnSync(process.execPath, [LAUNCHER], {
       input: "",
       encoding: "utf8",
-      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9", ...extraEnv },
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, CLAUDE_PROJECT_DIR: env.CLAUDE_PROJECT_DIR, [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9", [START_WAIT_ENV]: "1", ...extraEnv },
     });
   }
 
@@ -455,7 +659,7 @@ describe("the launcher process", () => {
     const bin = installedBin(dataDir, "0.1.50");
     mkdirSync(path.dirname(bin), { recursive: true });
     writeFileSync(bin, `process.stdout.write(JSON.stringify({ url: process.env.DANXBOT_DASHBOARD_URL, cred: process.env.DANX_DASHBOARD_CREDENTIAL ?? null, repo: process.env.DANX_REPO_NAME ?? null })); process.exit(4);`);
-    const result = run({ DANXBOT_DASHBOARD_URL: "", DANXBOT_PLUGIN_DASHBOARD_URL: "https://danxbot.sageus.ai", DANX_DASHBOARD_CREDENTIAL: "dispatch-secret" });
+    const result = run({ CLAUDE_PROJECT_DIR: sessionFolder(), DANXBOT_PLUGIN_DASHBOARD_URL: "https://danxbot.sageus.ai", DANX_DASHBOARD_CREDENTIAL: "dispatch-secret" });
     assert.equal(result.status, 4, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), { url: "https://danxbot.sageus.ai", cred: null, repo: null });
   });
@@ -465,28 +669,24 @@ describe("the launcher process", () => {
     const bin = installedBin(dataDir, "0.1.50");
     mkdirSync(path.dirname(bin), { recursive: true });
     writeFileSync(bin, `process.stdout.write("real-server"); process.exit(4);`);
-    const project = mkdtempSync(path.join(tmpdir(), "dash-mcp-project-"));
-    try {
-      writeFileSync(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "danx-dashboard": { command: "node", args: ["x.mjs"] } } }));
-      const result = run({ CLAUDE_PROJECT_DIR: project, DANXBOT_DASHBOARD_URL: "https://danxbot.sageus.ai" });
-      assert.equal(result.status, 4, result.stderr);
-      assert.equal(result.stdout, "real-server");
-    } finally {
-      rmSync(project, { recursive: true, force: true });
-    }
+    const project = sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "https://danxbot.sageus.ai" } });
+    writeFileSync(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "danx-dashboard": { command: "node", args: ["x.mjs"] } } }));
+    const result = run({ CLAUDE_PROJECT_DIR: project });
+    assert.equal(result.status, 4, result.stderr);
+    assert.equal(result.stdout, "real-server");
   });
 
   /** Runs the real launcher with an async spawn (a launcher that exits must not be waited out by the refresh child that holds its stderr). */
   function runAsync(extraEnv = {}) {
     const child = spawn(process.execPath, [LAUNCHER], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, DANXBOT_DASHBOARD_URL: "https://dash.example", [REGISTRY_BASE_URL_ENV]: registry.url, [NPM_CLI_ENV]: FAKE_NPM, ...extraEnv },
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PLUGIN_DATA: dataDir, CLAUDE_PROJECT_DIR: env.CLAUDE_PROJECT_DIR, [REGISTRY_BASE_URL_ENV]: registry.url, [NPM_CLI_ENV]: FAKE_NPM, [START_WAIT_ENV]: "1", ...extraEnv },
     });
     let stderr = "";
     child.stderr.on("data", (chunk) => (stderr += chunk));
     const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
     const closed = new Promise((resolve) => child.once("close", resolve));
-    return { exited, closed, stderr: () => stderr };
+    return { child, exited, closed, stderr: () => stderr };
   }
 
   /** Waits for `condition`: the test asserts what is true once it holds, never how long it took. */
@@ -525,6 +725,21 @@ describe("the launcher process", () => {
     await launcher.closed;
     assert.equal(launcher.stderr(), "", "a refresh that finishes writes no line");
     await until(() => stages().length === 0 && readdirSync(path.join(dataDir, "dashboard-mcp", A, ".leases")).length === 0, "the stage and the lease are gone");
+  });
+
+  test("DX-5075: a session started after a publish runs it: the real detached refresh child records the new version before the wait ends, and the launcher runs that version", async () => {
+    recordAt(A);
+    layExiting(A, 4);
+    registry.setVersion(B);
+    // a generous wait: the launcher stops waiting the moment the refresh child exits 0, so this bounds only a hang
+    const launcher = runAsync({ [START_WAIT_ENV]: "120000" });
+    let stdout = "";
+    launcher.child.stdout.on("data", (chunk) => (stdout += chunk));
+    assert.equal(await launcher.exited, 3, `the stub server of ${B} exited with its own code: ${launcher.stderr()}`);
+    await launcher.closed;
+    assert.equal(stdout, `ran ${B}`, "the server that ran is the newly published version, not the recorded one");
+    assert.equal(recordedVersionOrNull(env), B);
+    assert.equal(launcher.stderr(), "");
   });
 
   test("DX-5314: a refresh that fails after the launcher exited writes ONE line to refresh.log, and the NEXT launcher prints it to its stderr", async () => {

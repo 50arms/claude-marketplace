@@ -1,6 +1,6 @@
 import type { PermissionRequest } from '../../types'
 
-// The rows the operator's band actions append for the model (R-4): the model did not make
+// The rows the operator's band actions append for the model: the model did not make
 // these calls, so it is told. The person never reads them.
 // The plan left is named by ref and name: the session is on no plan now, and must not write to the
 // plan routes until it connects again.
@@ -8,7 +8,7 @@ export function disconnectNote(plan: { ref: string; name: string }): string {
   return `[danxbot plan] The operator disconnected this session from ${plan.ref} "${plan.name}" with the band's Disconnect button. This session is on no plan; do not write to /api/plans/mine routes until it connects again.`
 }
 
-// DX-4530: the band's Sign in button signed this session in: the model did not press it, so it is told, as a disconnect
+// the band's Sign in button signed this session in: the model did not press it, so it is told, as a disconnect
 // tells it. `planId` is the plan the sign-in asked to rejoin (null: none, so where it lands is the dashboard's to say); `connected`
 // is false when that connect was refused.
 export function signInNote(planId: number | null, connected: boolean): string {
@@ -18,8 +18,8 @@ export function signInNote(planId: number | null, connected: boolean): string {
   return `${head} It is back on plan_id ${planId}: call plan_connect with plan_id ${planId} yourself to read its briefing and start its events.`
 }
 
-// DX-4530: the decision on one of the model's `request_permission` requests (DX-4435), told once in its chat: the MCP only frees
-// its slot, so without this the model learns the outcome only by retrying (DX-4435 comment 10745).
+// the decision on one of the model's `request_permission` requests, told once in its chat: the MCP only frees
+// its slot, so without this the model learns the outcome only by retrying.
 type Asked = Pick<PermissionRequest, 'code' | 'permissions'>
 const askedList = (permissions: readonly string[]) => (permissions.length > 0 ? permissions.join(', ') : 'the permissions it asked for')
 
@@ -38,7 +38,7 @@ export function permissionExpiredNote(r: Asked): string {
   return `[danxbot] Permission request ${r.code} (asked: ${askedList(r.permissions)}) expired before it was decided: this session's dashboard session or key ended. Reconnect the session (call plan_connect), then call request_permission again for ${askedList(r.permissions)}.`
 }
 
-// DX-4548: the outcome of a sign-in the model itself started (its `plan_connect` answered `approval_required`), told once in its
+// the outcome of a sign-in the model itself started (its `plan_connect` answered `approval_required`), told once in its
 // chat so the person never has to type "approved". `planId` is the plan its own call asked for.
 export function signInApprovedNote(code: string, planId: number | null): string {
   const again = planId === null ? 'call plan_connect again now' : `call plan_connect again now with plan_id ${planId}`

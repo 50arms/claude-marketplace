@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4235 (PBLM-2121): the drift pin for hooks/reports/label.ts, the plugin's port of the background-shell row label.
 //
 // SOURCE: danxbot `src/agent/activity-observer.test.ts` at commit 7ed4e47fb9626cc91f61bc20f45491ce59217e91, the tests of

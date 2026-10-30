@@ -14,6 +14,10 @@ import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/rel
 export const KIT_TEST_TIMEOUT_MS = 60_000
 export const test = (name: string, body: (...args: any[]) => unknown): void => baseTest(name, { timeoutMs: KIT_TEST_TIMEOUT_MS } as any, body as any)
 
+// A path as the fixture's disk keys it: a Windows path (C:\Users\x) loses its drive letter and its backslashes, and the Linux test engine's resolution of it
+// against its own working directory (/app/danxbot/C:\Users\x) is undone, so a test holds the file at /Users/x
+const fsKey = (path: string): string => path.replace(/^(?:.*\/)?[A-Za-z]:/, '').replaceAll('\\', '/')
+
 export const SURFACES = ['terminal', 'desktop'] as const
 
 const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError: false })
@@ -24,7 +28,7 @@ export const EVENT_TEXT = (event: string) => `The ${event} text.`
 // DX-4993: a connected session's compaction is followed by the resume briefing in the same entry: here for the fixture's plan (PLAN-23 Danxbot plugin), DX-9 in
 // flight, no running sub-agent and a clean checkout of main. `TOLD(event)` is everything a session start of that event adds beside the time stamp.
 // the procedure is pinned literally (not imported): a reworded production text must fail the tests that compare against it
-export const DEFAULT_BRIEFING = "[50 ARMS] Your conversation was just compacted. Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress. Your plan is PLAN-23 Danxbot plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed."
+export const DEFAULT_BRIEFING = "[50 ARMS] Your conversation was just compacted. Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress. Comments you still owe an answer: none. Your plan is PLAN-23 Danxbot plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed."
 export const TOLD = (event: string) => (event === 'after_compaction' ? `${EVENT_TEXT(event)}
 ${DEFAULT_BRIEFING}` : EVENT_TEXT(event))
 // DX-4234: where the fixture's machine keeps the MCP server's connection record of a session (what makes a session locally known as plan-connected)
@@ -45,6 +49,11 @@ export const KEY_LAPSED_HALT = `The dashboard no longer accepts this session's k
 export const REVOKER = 'dana'
 export const REVOKED_AT = '2026-10-04T07:00:00.000Z'
 export const KEY_REVOKED_HALT = `STOP ALL WORK NOW. ${REVOKER} revoked your access to the danxbot dashboard at ${REVOKED_AT}.\n\nCommit your work in progress now (commit what you have; do not run agent-finalize.sh and do not merge). Then end this session: tell the person what you committed and stop.\n\nDo not call plan_connect or any other danxbot dashboard tool again, do not request access again and do not look for another route.`
+// DX-5549: the MCP agent gate's answer to a dashboard call while the session holds no team agent: the sign-in's own block, as JSON
+export const AGENT_GATE_HALT = (state: 'agent_needed' | 'agent_limit_reached') =>
+  state === 'agent_needed'
+    ? { state, instruction: 'You have no team agent to sign in as: none is free for this person. Propose one yourself.' }
+    : { state, cap: 'member', limit: 1, held: 1, raised_by: 'a team owner or admin', instruction: 'No team agent is free. Tell the person.' }
 export const APPROVAL_URL = 'http://localhost:5555/connect/abc123'
 export const CONFIRM_CODE = 'WXYZ2345'
 // the approval request plan_connect answers while signed out, and what its next calls answer meanwhile (instruction text as the server words it)
@@ -106,12 +115,12 @@ export function dashboard(
     connected?: boolean
     // DX-4420: PLAN-23's name, to try a name longer than the band
     planName?: string
-    // `dashboard_url` on GET /api/plans: the default DASHBOARD_URL, an override (any value, so a bad one can
+    // `dashboard_url` on GET /api/plan-sessions/me: the default DASHBOARD_URL, an override (any value, so a bad one can
     // be tried), or NO_DASHBOARD_URL for an answer without the field
     dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky' | 'refused' | 'strictKeys'
-    // `sessionListenerAttached` on GET /api/plans: a state (any string, so an unknown one can be tried; default
+    // `sessionListenerAttached` on GET /api/plan-sessions/me: a state (any string, so an unknown one can be tried; default
     // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
     // as readCallerSessionOverlay does.
     listener?: string | null
@@ -131,7 +140,7 @@ export function dashboard(
     disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected' | 'noLeftPlan'
     // the disconnect call takes this long on the fake clock
     disconnectTakesMs?: number
-    listFails?: boolean
+    sessionReadFails?: boolean
     // DX-4423: the session holds no dashboard key: every danxbot_api call is the MCP's error result (the first call after a revoke
     // answers KEY_LAPSED_HALT, a session that never signed in SIGN_IN_HALT; 'revoked' answers KEY_REVOKED_HALT to every tool and never asks) and plan_connect runs the request-and-approve dance
     // (world.signIn): approval_required, then approval_pending after `waitMs` on the fake clock, until a test sets `approved`
@@ -140,25 +149,16 @@ export function dashboard(
     // plan_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
-    // ... and more plans than the plan list returns
-    plansTotal?: number
-    // the paged routes answer no `total` at all
-    noTotal?: boolean
-    // the first /api/plans call never settles until `release()`
+    // the first /api/plan-sessions/me call never settles until `release()`
     hangFirstLoad?: boolean
-    // the plan list comes back empty although the dashboard has this many plans
-    emptyPlanListOf?: number
-    // the connected plan is not in the (capped) plan list
-    planOutsideList?: boolean
     // DX-4448: GET /api/boards fails
     boardsFail?: boolean
     // ... answers boards the plugin cannot read: none at all, or a prefix that is not capital letters
     boardsShape?: 'none' | 'badPrefix' | 'noKey'
-    // DX-4448: the plan's all-cards read fails / counts more cards than it returned
-    planCardsFail?: boolean
-    planCardsTotal?: number
-    // ... answers no total, a row with no id, no list, or a plan card_count the cards do not add up to
-    planCardsShape?: 'noTotal' | 'noId' | 'noList' | 'otherCount'
+    // DX-5933: the plan read (GET /api/plans/:id) answers no card_ids, ids that are not all strings, or no bucket_counts
+    planFieldsShape?: 'noCardIds' | 'badCardIds' | 'noNeedsYou'
+    // ... and a plan holding this many more cards than the fixture's own (a large plan: 150 would have passed the host's limit with whole card rows)
+    extraPlanCards?: number
     // DX-4458: DX-3, a needs-you card with 49 open problems (DX-4443's shape)
     bigCard?: boolean
     // DX-4458: GET /api/issues/<id> answers 500 for this card
@@ -169,6 +169,8 @@ export function dashboard(
     accountUuid?: string
     // DX-4806: the process's CLAUDE_CODE_ENTRYPOINT ('claude-desktop' for the desktop app, 'cli' for a terminal); none by default
     entrypoint?: string
+    // Further process environment variables the session starts with (the Windows or WSL markers the disk notice reads)
+    env?: Record<string, string>
     // DX-5217: CLAUDE_CODE_AUTO_COMPACT_WINDOW as the session's process starts with it (an older plugin version set it to the floor)
     autoCompactWindow?: string
     // DX-5231: a CLAUDE_AUTOCOMPACT_PCT_OVERRIDE an older plugin version left in the process
@@ -188,8 +190,8 @@ export function dashboard(
     pacingLine?: { body: unknown } | { status: number }
     // DX-4631: each pacing line read answers only after this long on the harness clock (a slow or hung dashboard); the read is counted when it starts
     pacingHoldMs?: number
-    // DX-4339: what GET /api/team/pacing answers (the team's pacing settings): a body (any shape) or an error status; unreachable by default (the usage pacing's silent, local state)
-    teamPacing?: { body: unknown } | { status: number }
+    // DX-5593 (C1): what DELETE /api/pacing/agents/claim (the claim given back) answers instead of the real release: an error status, or any body (a 200)
+    claimRelease?: { status: number } | { body: unknown }
     // DX-4952: the test puts steps before reads of $.state (`beforeNextRead`), which needs the `state.get` hook from the start
     stateSteps?: boolean
   } = {},
@@ -234,11 +236,21 @@ export function dashboard(
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card' }] as { id: string; title: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
+    // DX-5554: the team agent the session signs in as (GET /api/plan-sessions/me `session.agent`), and the stand-alone card it holds instead of a plan
+    // (`session.card_id` / `card_title`); neither by default. A session with none of a plan, a card and an agent has no session row (`session: null`).
+    agent: null as { id: number; name: string; avatar_url: string | null } | null,
+    card: null as { id: string; title: string } | null,
+    // DX-5554: what DELETE /api/plan-sessions/me/agent (the release at session exit) answers: `{released}` by default (true while an agent is held), an
+    // error status, the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock / never (`hangs`)
+    release: {} as { status?: number; deny?: string; delayMs?: number; hangs?: boolean },
+    // DX-5549 / DX-5554: the MCP's agent gate. After a plan_connect answered that no team agent is free, every danxbot_api call but the two
+    // proposal routes answers that same block (AGENT_GATE_HALT) as an error result, until a plan_connect holds an agent
+    agentGate: null as 'agent_needed' | 'agent_limit_reached' | 'agent_not_held' | null,
     // DX-4234: the context reads never answer (a hung dashboard), or answer after this many ms of the fake clock
     contextHangs: false,
     contextDelayMs: 0,
-    // DX-3421: GET /api/plans (the session-plan read) answers this status (a dashboard fault) instead of the session
-    plansStatus: undefined as number | undefined,
+    // DX-3421: GET /api/plan-sessions/me (the session-plan read) answers this status (a dashboard fault) instead of the session
+    sessionReadStatus: undefined as number | undefined,
     // DX-4234: whether the engine has bound the session. A desktop or headless startup, resume and fork run their SessionStart hook BEFORE it
     // binds (claude.exe: the session holder is empty until the session is built), where `$.mcp.call` and `$.tool.list` throw; `unbind()` /
     // `bind()` model that. Every kit session is bound unless a test unbinds it.
@@ -258,6 +270,9 @@ export function dashboard(
       delayMs: 0,
       calls: [] as string[],
     },
+    // the desktop app's session server (`ccd_session_mgmt`) as the title mark reaches it: the app's title of this session and each title the
+    // plugin set, in order
+    appSession: { title: 'Tendai: PLAN-23 Agent mode', set: [] as string[], reads: 0 },
     // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
     tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
@@ -279,8 +294,12 @@ export function dashboard(
     // its body), the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock
     planBoards: [7] as number[],
     readyRows: {} as Record<string, unknown[]>,
+    // CP-34: the cards GET /api/plans/<id>/connected-session/detail answers as `detail.cards` (each with the `activity` on it now)
+    heldRows: [] as unknown[],
     // DX-4997: what GET /api/plan-sessions/me/pause answers as `pause` (null, an agent pause, a usage pause)
     pause: null as unknown,
+    // DX-5692: what GET /api/plan-sessions/me/owed-comments answers as `owedComments` (the comments the session still owes an answer)
+    owedComments: [] as unknown[],
     reportReplies: {} as Record<string, { status?: number; body?: unknown; deny?: string; delayMs?: number }>,
     // DX-4993: the context `$.session.usage()` answers (tokens now, the model's window): none by default, a session before its first response
     context: {} as { tokens?: number; window?: number },
@@ -288,6 +307,8 @@ export function dashboard(
     files: {} as Record<string, string>,
     // DX-4993: what `git status --porcelain=v1 -b` prints in the session's directory (the resume briefing), or its exit code when it fails
     gitStatus: { exitCode: 0, stdout: '## main...origin/main\n' } as { exitCode: number; stdout: string },
+    // What a `$.process.run` answers by its program (argv[0], for example `df` or `cmd.exe`); a program with no entry answers the git status above
+    processes: {} as Record<string, { exitCode?: number; stdout: string }>,
     // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
     rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
     // DX-4423: null while the session holds a key
@@ -319,30 +340,39 @@ export function dashboard(
   }
   if (options.bigCard) world.cards.push(bigCard())
   // DX-5232: every card of the plan (any status, either board): the fixture's own cards and the others
-  const planCardIds = [...new Set([...PLAN_CARD_IDS, ...world.cards.map(c => c.id)])]
+  const planCardIds = [...new Set([...PLAN_CARD_IDS, ...world.cards.map(c => c.id), ...Array.from({ length: options.extraPlanCards ?? 0 }, (_, i) => `DX-${1000 + i}`)])]
+  // the plan's Needs You bucket counts CARDS holding an open problem, on the plan read
+  const needsYouCards = () => world.cards.filter(c => c.problems.some(p => p.open)).length
   const plans = [
-    { id: 23, ref: 'PLAN-23', name: options.planName ?? 'Danxbot plugin', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 2 } },
+    { id: 23, ref: 'PLAN-23', name: options.planName ?? 'Danxbot plugin', status: 'building', archived_at: null, get bucket_counts() { return { 'needs-you': needsYouCards() } } },
     { id: 24, ref: 'PLAN-24', name: 'Agent mode', status: 'building', archived_at: null, bucket_counts: { 'needs-you': 0 } },
     { id: 25, ref: 'PLAN-25', name: 'Archived', status: 'done', archived_at: 'x', bucket_counts: {} },
   ]
 
   function route(method: string, path: string, body: any, query: any) {
-    if (method === 'GET' && path === '/api/plans') {
-      // DX-4233: GET /api/plans answers this as its body, whatever its shape (a string makes the plugin's session read throw)
+    if (method === 'GET' && path === '/api/plan-sessions/me') {
+      // DX-4233: GET /api/plan-sessions/me answers this as its body, whatever its shape (a string makes the plugin's session read throw)
       if (world.plansBody !== undefined) return reply(world.plansBody)
-      if (world.plansStatus !== undefined) return reply({ error: 'plans boom' }, world.plansStatus)
-      if (options.listFails) return reply({ error: 'boom' }, 500)
+      if (world.sessionReadStatus !== undefined) return reply({ error: 'session boom' }, world.sessionReadStatus)
+      if (options.sessionReadFails) return reply({ error: 'boom' }, 500)
       return reply({
-        plans: options.emptyPlanListOf ? [] : options.planOutsideList ? plans.filter(p => p.id !== world.planId) : plans,
-        ...(options.noTotal ? {} : { total: options.emptyPlanListOf ?? options.plansTotal ?? plans.length }),
+        // DX-5551 / DX-5553: the session row as the plan_session resource projects it, for any registered session (on a plan, holding a card, or
+        // on neither); null only for a session with no row
         session:
-          world.planId === null
+          world.planId === null && world.card === null && world.agent === null
             ? null
-            : { plan_id: world.planId, plan_name: plans.find(p => p.id === world.planId)?.name ?? 'Far plan' },
+            : {
+                plan_id: world.planId,
+                plan_name: world.planId === null ? null : (plans.find(p => p.id === world.planId)?.name ?? 'Far plan'),
+                card_id: world.card?.id ?? null,
+                card_title: world.card?.title ?? null,
+                agent: world.agent,
+              },
+        // DX-5553: a session holding a card is bound to work and keeps its health, as one on a plan does
         sessionListenerAttached:
           options.rawListener !== undefined
             ? options.rawListener
-            : world.planId === null || world.listener === null
+            : (world.planId === null && world.card === null) || world.listener === null
             ? null
             : { attached: options.attached ?? world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
@@ -370,8 +400,11 @@ export function dashboard(
         ref: p.ref,
         name: p.name,
         status: p.status,
-        card_count: options.planCardsShape === 'otherCount' ? planCardIds.length + 1 : planCardIds.length,
+        card_count: planCardIds.length,
         ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
+        // as the real route answers: `bucket_counts` always (the needs-you bucket counts CARDS holding an open problem), `card_ids` only when `fields` names it
+        ...(options.planFieldsShape === 'noNeedsYou' ? {} : { bucket_counts: { 'needs-you': needsYouCards() } }),
+        ...(query?.fields?.card_ids && options.planFieldsShape !== 'noCardIds' ? { card_ids: options.planFieldsShape === 'badCardIds' ? [...planCardIds, 7] : planCardIds } : {}),
       })
     }
     const cards = /^\/api\/plans\/(\d+)\/cards$/.exec(path)
@@ -381,17 +414,6 @@ export function dashboard(
         cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4 })),
         ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
       })
-    }
-    // DX-4448: the plan's every card in any status and on either board, unpaged (not board-scoped): DX-30 and DX-31 are in neither the
-    // needs-you nor the in-progress bucket, SG-7 is on the gpt-manager board
-    if (method === 'GET' && cards && query?.bucket === undefined) {
-      if (options.planCardsFail) return reply({ error: 'plan cards boom' }, 500)
-      if (options.planCardsShape === 'noList') return reply({ total: 0 })
-      const rows = planCardIds.map(id => {
-        const openProblemCount = world.cards.find(c => c.id === id)?.problems.filter(p => p.open).length ?? 0
-        return options.planCardsShape === 'noId' ? { title: id, openProblemCount } : { id, openProblemCount, boardId: id.startsWith('SG') ? 9 : 7 }
-      })
-      return reply({ cards: rows, ...(options.planCardsShape === 'noTotal' ? {} : { total: options.planCardsTotal ?? rows.length }) })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)
@@ -423,7 +445,7 @@ export function dashboard(
   // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
   const server = {
     calls: [] as { plan_id: number; cursor: string | null; timeout_ms: number; transcript_path?: string }[],
-    buffer: [] as { cursor: string; text: string; urgent: boolean }[],
+    buffer: [] as { cursor: string; text: string; urgent: boolean; acks: { eventId: number; attempt: number }[] }[],
     plan: undefined as number | undefined,
     script: [] as (() => any)[],
     stopped: undefined as { reason: string; detail: string; fix: string } | undefined,
@@ -479,6 +501,8 @@ export function dashboard(
   const delivered: { text: string }[] = []
   // DX-5093: every prompt the plugin submitted, marked or not (`delivered` holds only the plan-event ones)
   const submitted: string[] = []
+  // every prompt submit the plugin made, refused ones too, with the fake-clock time it was made at (a retry is one of these; the outbox tests count them)
+  const attempts: { at: number; text: string }[] = []
   const told: string[] = []
   const deliveryFlags = {
     submitDrops: undefined as string | undefined,
@@ -498,6 +522,7 @@ export function dashboard(
   // the engine answers a turn's start with its id
   on('turn.start', () => ({ turnId: 't1' }) as any)
   on('prompt.submit', async (_$: any, e: any) => {
+    attempts.push({ at: clock.now(), text: e.text })
     await deliveryFlags.duringPrompt?.()
     // DX-5398: the engine (claude.exe 2.1.299) settles a plugin's `$.prompt.submit` only when the queued prompt ENTERS the session, which behind a
     // running turn is when the turn ends. The prompt is then recorded as submitted at that moment, not at the call.
@@ -529,10 +554,19 @@ export function dashboard(
   }
   const notConnected = () => options.mcp === 'down'
   const pacingReads: number[] = []
+  // DX-5593: the spawn claim (POST /api/pacing/agents/claim) and its give-back (DELETE ...?claim_id=): every attempt, the ids danxbot allowed, the ids given back
+  const claimAttempts = { n: 0 }
+  const claimsAllowed: string[] = []
+  const claimsReleased: string[] = []
+  // DX-5593 (N2): the body of every claim POST, to see what reading it carried
+  const claimBodies: any[] = []
+  const heldClaims = new Set<string>()
   // DX-4234: the paths of the context reads (see isContextRead), in order
   const contextReads: string[] = []
   // DX-4632: the arguments of each `restart_notice` call
   const restartCalls: unknown[] = []
+  // DX-5554: each release of the session's team agent (DELETE /api/plan-sessions/me/agent), kept out of `calls` and `api` like the context reads
+  const releaseCalls: { method: string; path: string; background: unknown }[] = []
   // DX-4997 / DX-5033: the dashboard's rule for the agent pause. A `danxbot_api` call marked `background: true` (the plugin's own work) never ends it;
   // an unmarked one (the agent's own call) does, except the route that manages the pause itself.
   const serverPauseRule = (args: any) => {
@@ -548,15 +582,19 @@ export function dashboard(
   // DX-4235: the reports' calls and the ready-cards reads, in order, kept out of `calls` and `api` like the context reads (every suite that
   // counts a load's reads or a session's writes stays about its own subject)
   const reportCalls: { method: string; path: string; body?: any; query?: any; board?: string }[] = []
+  // DX-5694: the turn activity sends, in order
+  const turnActivityCalls: { activity: string; since: string }[] = []
   // DX-4235: the report calls and the plugin server's tool calls in the order they were made (`report <METHOD> <path>`, `tool <name>`)
   const sequence: string[] = []
   const isReportCall = (a: any) =>
     (a.method === 'POST' && a.path === '/api/plan-sessions/me/activity') ||
-    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause'))
+    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause' || a.path === '/api/plan-sessions/me/owed-comments' || /^\/api\/plans\/\d+\/connected-session\/detail$/.test(a.path)))
   // ... answered as the real routes answer them (danxbot plan-sessions-routes, plans/mine, the issues list)
   function reportAnswer(a: any) {
     if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })
     if (a.path === '/api/plan-sessions/me/pause') return reply({ pause: world.pause })
+    if (/\/connected-session\/detail$/.test(a.path)) return reply({ detail: { cards: world.heldRows } })
+    if (a.path === '/api/plan-sessions/me/owed-comments') return reply({ owedComments: world.owedComments })
     if (a.path === '/api/plans/mine') return world.planId === null ? reply({ error: 'session_not_connected' }, 409) : reply({ id: world.planId, boards: world.planBoards })
     // as the issues list answers: the always-returned row, plus only the fields the `fields` tree names
     const rows = (world.readyRows[a.board] ?? []).map((row: any) =>
@@ -575,7 +613,6 @@ export function dashboard(
   }
   // ... every attempt, including the ones the MCP being down refuses
   const pacingAttempts = { n: 0 }
-  const teamPacingReads: number[] = []
   // DX-4578: the pacing reads are kept out of `calls` and `api`; the plugin's server is the one every call goes to
   const pacingPath = (e: any, path: string) => e.server === 'plugin:danxbot:danx-dashboard' && e.tool === 'danxbot_api' && e.args.path === path
   on('mcp.call', async (_$: any, e: any) => {
@@ -626,22 +663,53 @@ export function dashboard(
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       pacingReads.push(pacingReads.length + 1)
       // the answer is fixed when the read starts: a dashboard change during the hold belongs to the next read
-      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, running_agents: null, line: null, reason: 'no_usage_account' } }
+      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, main_agents: null, sub_agents: null, reserved_agents: null, line: null, reason: 'no_usage_account' } }
       if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
     }
-    // DX-4339: the team's pacing settings are read at session start and by the poll: also kept out of `calls` and `api`; `teamPacingReads` counts them
-    if (pacingPath(e, '/api/team/pacing')) {
+    // DX-5549: the agent gate closes every danxbot_api call but the proposal routes (packages/danx-dashboard-mcp agent-gate.ts); each refused call is still
+    // recorded where its suite counts it
+    if (e.server === SERVER && e.tool === 'danxbot_api' && world.agentGate !== null && !(e.args.method === 'POST' && e.args.path.startsWith('/api/team/agent-proposals'))) {
+      if (isContextRead(e.args)) contextReads.push(e.args.path)
+      else if (e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
+      else calls.push({ server: e.server, tool: e.tool, args: e.args })
+      // the dashboard's own refusal for a session whose agent was released: a 403 envelope, not the MCP's error result
+      if (world.agentGate === 'agent_not_held') return { value: reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call plan_connect to claim one.' }, 403) }
+      return { value: { content: [{ type: 'text', text: JSON.stringify(AGENT_GATE_HALT(world.agentGate)) }], isError: true } }
+    }
+    // DX-5593: the spawn claim, decided like danxbot does under its lock: refuse when the level is not on pace or the live count (the line's
+    // `sub_agents` plus the claims held) has reached the budget; unknown (a `reason`, no level) claims nothing. The answer is the line plus {claimed, claim_id}.
+    if (e.server === 'plugin:danxbot:danx-dashboard' && e.tool === 'danxbot_api' && typeof e.args.path === 'string' && e.args.path.startsWith('/api/pacing/agents/claim')) {
+      if (e.args.method === 'POST') {
+        claimAttempts.n++
+        claimBodies.push(e.args.body)
+      }
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
-      // DX-4339: a session with no key (or a revoked one) is halted on EVERY danx-dashboard tool, this read included
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
-      teamPacingReads.push(teamPacingReads.length + 1)
-      const given = options.teamPacing
-      // no `teamPacing` given: a session whose pacing settings cannot be reached at all (the silent state), so no other suite draws a pacing error
-      if (given === undefined) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
-      return { value: 'status' in given ? reply({ error: 'settings boom' }, given.status) : reply(given.body) }
+      if (e.args.method === 'DELETE') {
+        const id = new URL(e.args.path, 'http://dashboard.local').searchParams.get('claim_id') as string
+        claimsReleased.push(id)
+        if (options.claimRelease !== undefined) return { value: 'status' in options.claimRelease ? reply({ error: 'release boom' }, options.claimRelease.status) : reply(options.claimRelease.body) }
+        return { value: reply({ released: heldClaims.delete(id) }) }
+      }
+      const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, main_agents: null, sub_agents: null, reserved_agents: null, line: null, reason: 'no_usage_account' } }
+      if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
+      if ('status' in given) return { value: reply({ error: 'claim boom' }, given.status) }
+      const line = given.body as any
+      if (line === null || typeof line !== 'object') return { value: reply(line) }
+      const known = line.level !== null && line.level !== undefined
+      const live = known && Number.isInteger(line.sub_agents) ? line.sub_agents + heldClaims.size : line.sub_agents
+      // DX-5595: the slots held for woken sessions (`reserved_agents`) count as taken, as danxbot's claim counts them
+      const room = known && line.level === 'on_pace' && (line.budget === null || live + (line.reserved_agents ?? 0) < line.budget)
+      // DX-5595: the cause danxbot's `refusalOf` names, in its order: the level, the budget against the live count, then the budget against the count plus the held slots
+      const refusal = !known ? null : line.level !== 'on_pace' ? 'level' : line.budget !== null && live >= line.budget ? 'budget' : 'reserved'
+      if (!room) return { value: reply({ ...line, sub_agents: live, claimed: false, claim_id: null, refusal }) }
+      const id = `claim-${claimsAllowed.length + 1}`
+      claimsAllowed.push(id)
+      heldClaims.add(id)
+      return { value: reply({ ...line, sub_agents: live, claimed: true, claim_id: id, refusal: null }) }
     }
     // DX-4234 / DX-4632: the restart notice is the server's own tool, named without arguments; kept out of `calls` like the context reads
     if (e.server === SERVER && e.tool === 'restart_notice') {
@@ -651,6 +719,19 @@ export function dashboard(
       if (world.restart.deny !== undefined) return { deny: world.restart.deny }
       if (world.restart.raw !== undefined) return { value: world.restart.raw }
       return { value: text(world.restart.json ?? { notice: null }) }
+    }
+    // DX-5554: the release of the session's team agent at session exit, answered as the real route answers (`{released}`)
+    if (e.server === SERVER && e.tool === 'danxbot_api' && e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') {
+      releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
+      if (world.release.hangs) await hung.promise
+      if (world.release.delayMs !== undefined) await clock.sleep(world.release.delayMs)
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (world.release.deny !== undefined) return { deny: world.release.deny }
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
+      if (world.release.status !== undefined) return { value: reply({ error: 'release boom' }, world.release.status) }
+      const released = world.agent !== null
+      world.agent = null
+      return { value: reply({ released }) }
     }
     // DX-4234: the reads the context hooks make (is the session on a plan, the registry's event text, an earlier session's restart notice) are
     // kept out of `calls` and `api` like the pacing reads, so the suites that count a load's reads stay about their own subject
@@ -664,6 +745,15 @@ export function dashboard(
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       return { value: contextAnswer(e.args.path) }
     }
+    // DX-5694: the turn activity sends (PUT /api/plan-sessions/me/turn-activity), kept in their own list so every suite that asserts on `reports` stays about its own subject
+    if (e.server === SERVER && e.tool === 'danxbot_api' && e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/turn-activity') {
+      turnActivityCalls.push({ activity: e.args.body.activity, since: e.args.body.since })
+      const over = world.reportReplies[`PUT ${e.args.path}`]
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:danxbot:danx-dashboard"' }
+      if (over?.deny !== undefined) return { deny: over.deny }
+      if (over?.status !== undefined) return { value: reply(over.body ?? { error: 'turn activity boom' }, over.status) }
+      return { value: reply({ status: 'updated' }) }
+    }
     if (e.server === SERVER && e.tool === 'danxbot_api' && isReportCall(e.args)) {
       reportCalls.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query, board: e.args.board })
       sequence.push(`report ${e.args.method} ${e.args.path}`)
@@ -676,6 +766,18 @@ export function dashboard(
       if (over?.deny !== undefined) return { deny: over.deny }
       if (over?.status !== undefined) return { value: reply(over.body ?? { error: 'report boom' }, over.status) }
       return { value: reportAnswer(e.args) }
+    }
+    // the desktop app's session server, as the real one answers (kept out of `calls` and `sequence`, which are the dashboard's): get_session is one text block, the session's metadata as JSON
+    if (e.server === 'ccd_session_mgmt') {
+      const app = world.appSession
+      if (e.tool === 'get_session') app.reads++
+      if (e.tool === 'get_session') return { value: { content: [{ type: 'text', text: JSON.stringify({ sessionId: 'local_test', title: app.title }, null, 2) }], isError: false } }
+      if (e.tool === 'set_session_title') {
+        app.set.push(e.args.title)
+        const was = app.title
+        app.title = e.args.title
+        return { value: { content: [{ type: 'text', text: `Renamed this session to "${app.title}" (was "${was}").` }], isError: false } }
+      }
     }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.tool !== 'danxbot_api') sequence.push(`tool ${e.tool}`)
@@ -789,11 +891,11 @@ export function dashboard(
         return { value: text({ ok: true, status: 200, body: { session: { planId: e.args.plan_id } } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
-      if (options.hangFirstLoad && e.args.path === '/api/plans' && api.filter(a => a.path === '/api/plans').length === 2) {
+      if (options.hangFirstLoad && e.args.path === '/api/plan-sessions/me' && api.filter(a => a.path === '/api/plan-sessions/me').length === 2) {
         return hung.promise.then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
       }
       // DX-5232: the plan read is one path now (load and session probe alike), so a slow dashboard slows it as it slows a context read
-      if (e.args.path === '/api/plans' && world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
+      if (e.args.path === '/api/plan-sessions/me' && world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
       if (world.permissionClaimDelayMs > 0 && /\/claim$/.test(String(e.args.path))) await clock.sleep(world.permissionClaimDelayMs)
       // DX-4635: every danxbot_api read answers after `apiHoldMs` on the harness clock (a slow dashboard), and the card reads in flight together are counted
       const isIssueRead = String(e.args.path).startsWith('/api/issues/')
@@ -812,9 +914,9 @@ export function dashboard(
   })
   // what the plugin keeps in $.state (a test has no `$.state` of its own to read back)
   const flags = { viewWriteFails: false, refusedViewWrites: 0, apiHoldMs: 0 }
+  // keys whose next write the host refuses (once each): the way a plugin's own bookkeeping call throws after the engine call it follows worked
+  const refuseNextWrite = new Set<string>()
   const issueReads = { active: 0, max: 0 }
-  // DX-4586: a sub-agent whose stored start time is made older by the given ms as it is written, so a test reaches the 3 h bound with no 3 h of clock
-  const aged = new Map<string, number>()
   let seededPending: string[] | undefined
   let seededRelay: { phase: string; planId: number | null; detail: string | null } | undefined
   // DX-4952: a step of the test that runs exactly between two steps of the plugin, once, before the next host read / write of a $.state key
@@ -829,6 +931,7 @@ export function dashboard(
   }
   on('state.set', async (_$: any, e: any, next: any) => {
     if (beforeStateWrite.size > 0) await takeStep(beforeStateWrite, e.key)
+    if (refuseNextWrite.delete(e.key)) return { deny: `${e.key} write refused` } as any
     // a write of the plugin's view that the host refuses: the one way a refresh can throw past its own catch
     if (flags.viewWriteFails && e.key === 'view') {
       flags.refusedViewWrites++
@@ -845,7 +948,6 @@ export function dashboard(
       e = { ...e, value: seededRelay }
       seededRelay = undefined
     }
-    if (e.key === 'liveAgents' && Array.isArray(e.value)) e = { ...e, value: e.value.map((a: any) => (aged.has(a.id) ? { ...a, since: a.since - aged.get(a.id)! } : a)) }
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
     return next(e)
   })
@@ -874,8 +976,13 @@ export function dashboard(
   const stored = new Map<string, unknown>()
   let storeSetFails: string | undefined
   const storeSets: string[] = []
-  on('store.get', (_$: any, e: any) => ({ value: stored.get(e.key) }) as any)
+  // DX-5577: a broken store: every store call is refused with this reason. The runner hands the plugin a fake's refusal as `<plugin>: $.store.<op>: <reason>`, never the bare
+  // message the real program throws, so this kit can only stand in for store errors the plugin must NOT recover; the recovery itself is tested through hooks/store/recover.ts
+  let storeBroken: string | undefined
+  const storeRefusal = () => (storeBroken === undefined ? undefined : ({ deny: storeBroken } as any))
+  on('store.get', (_$: any, e: any) => storeRefusal() ?? ({ value: stored.get(e.key) }) as any)
   on('store.set', (_$: any, e: any) => {
+    if (storeBroken !== undefined) return storeRefusal()
     if (storeSetFails !== undefined && String(e.key).startsWith(RELAY_CURSOR_PREFIX)) return { deny: storeSetFails } as any
     storeSets.push(String(e.key))
     return (stored.set(e.key, e.value), { value: undefined }) as any
@@ -884,9 +991,9 @@ export function dashboard(
   let storeKeysHold: Promise<void> | undefined
   on('store.keys', async () => {
     await storeKeysHold
-    return { value: [...stored.keys()] } as any
+    return storeRefusal() ?? ({ value: [...stored.keys()] }) as any
   })
-  on('store.delete', (_$: any, e: any) => (stored.delete(e.key), { value: undefined }) as any)
+  on('store.delete', (_$: any, e: any) => storeRefusal() ?? (stored.delete(e.key), { value: undefined }) as any)
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   // the tools the session lists: the plugin's when its server is connected
   // DX-4234: how many times the session's tool list was read (a poll for the plugin's server that outlives its deadline keeps counting)
@@ -902,22 +1009,36 @@ export function dashboard(
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
   on('fs.exists', (_$: any, e: any) => {
     if (world.fsError !== undefined) return { deny: world.fsError } as any
-    const path = e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
-    return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) || path in world.files } as any
+    const path = fsKey(e.path)
+    return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) || path in world.files || Object.keys(world.files).some(file => file.startsWith(path + '/')) } as any
   })
   // DX-4993: the compaction control file, the window the plugin arms, and the git status of the resume briefing
   on('fs.read', (_$: any, e: any) => {
-    const path = e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
+    const path = fsKey(e.path)
     return (path in world.files ? { value: world.files[path] } : { deny: `ENOENT: no such file ${path}` }) as any
+  })
+  // a directory listing from the fixture's disk: the first path segment under it of every file held there. An entry is a dir when something lies deeper or its text is empty
+  on('fs.list', (_$: any, e: any) => {
+    const dir = fsKey(e.path).replace(/\/$/, '')
+    const kinds = new Map<string, 'file' | 'dir'>()
+    for (const [path, text] of Object.entries(world.files)) {
+      if (!path.startsWith(dir + '/')) continue
+      const rest = path.slice(dir.length + 1)
+      const name = rest.split('/')[0]
+      const dirLike = rest.includes('/') || text === ''
+      kinds.set(name, dirLike || kinds.get(name) === 'dir' ? 'dir' : 'file')
+    }
+    return { value: [...kinds].map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })) } as any
   })
   // a file the plugin writes lands in `world.files`
   on('fs.write', (_$: any, e: any) => {
-    world.files[e.path.replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')] = e.text
+    world.files[fsKey(e.path)] = e.text
     return { value: undefined } as any
   })
   // DX-5217: the process environment is live: a set changes what the next get answers, as in the engine (an undefined value unsets)
   const liveEnv: Record<string, string> = {
     HOME: HOME_DIR,
+    ...(options.env ?? {}),
     ...(options.entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: options.entrypoint }),
     ...(options.accountUuid === undefined ? {} : { CLAUDE_CODE_ACCOUNT_UUID: options.accountUuid }),
     ...(options.autoCompactWindow === undefined ? {} : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: options.autoCompactWindow }),
@@ -935,7 +1056,13 @@ export function dashboard(
   })
   on('env.get', (_$: any, e: any) => ({ value: liveEnv[e.name] }) as any)
   on('session.cwd', () => ({ value: '/work/repo' }) as any)
-  on('process.run', (_$: any, e: any) => ({ value: { exitCode: world.gitStatus.exitCode, stdout: world.gitStatus.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as any)
+  // Every `$.process.run` the plugin makes, as its argv
+  const runCalls: string[][] = []
+  on('process.run', (_$: any, e: any) => {
+    runCalls.push([...e.argv])
+    const answer: { exitCode?: number; stdout: string } = world.processes[e.argv[0]] ?? world.gitStatus
+    return { value: { exitCode: answer.exitCode ?? 0, stdout: answer.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as any
+  })
   on('session.id', () => ({ value: world.sessionId }) as any)
   // DX-5222: every `$.session.send` the plugin makes (the recipient as the engine spells it, and the text), and how the host answers it: delivered, refused or a rejection
   const sends: { to: string; text: string }[] = []
@@ -1014,12 +1141,14 @@ export function dashboard(
     server,
     delivered,
     submitted,
+    attempts,
     // the plan_events_wait calls the plugin made
     calls: server.calls,
     // events appear on the dashboard: a held wait answers at once
     // (DX-4721: every record the server answers carries a boolean `urgent`; a test that does not say is a not-urgent record)
-    push: (...events: { cursor: string; text: string; urgent?: boolean }[]) => {
-      server.buffer.push(...events.map(e => ({ urgent: false, ...e })))
+    // (DX-5846: so does `acks`, the events the record asks the session to acknowledge; a test that does not say asks for none)
+    push: (...events: { cursor: string; text: string; urgent?: boolean; acks?: { eventId: number; attempt: number }[] }[]) => {
+      server.buffer.push(...events.map(e => ({ urgent: false, acks: [], ...e })))
       server.wake?.()
     },
     // every key the plugin wrote to $.store, in order
@@ -1032,6 +1161,8 @@ export function dashboard(
     },
     // the relay's cursor writes to $.store are refused with this reason (a failure that is none of the relay's own)
     failCursorWrites: (reason: string) => void (storeSetFails = reason),
+    // DX-5577: every store call is refused with `reason` (see storeBroken)
+    breakStore: (reason: string) => void (storeBroken = reason),
     // runs inside the next prompt submit, before it answers: a plan move at the very moment an event is delivered
     duringPrompt: (fn: () => Promise<void>) => void (deliveryFlags.duringPrompt = fn),
     dropPrompts: (reason: string) => void (deliveryFlags.submitDrops = reason),
@@ -1068,8 +1199,23 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), reports: reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, contextReads, restartCalls, toolLists, pacingAttempts, teamPacingReads, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), setTeamPacing: (given: { body: unknown } | { status: number } | undefined) => void (options.teamPacing = given), spawns, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.listFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, turnActivity: turnActivityCalls, loadPauseReads: [] as typeof reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.sessionReadFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
+
+// DX-5605: the session's stored events warning (the text its one toast is built from): the latest value the plugin wrote, null while events flow.
+// The band draws none of it; this is where a test reads the fact that the band text used to carry.
+export const eventsWarned = (d: { stateWrites: { key: string; value: unknown }[] }): string | null =>
+  (d.stateWrites.filter(w => w.key === 'eventsWarned').at(-1)?.value as string | undefined) ?? null
+
+// DX-5605: the band draws no events or relay status, whatever the relay or the listener is doing: none of its Text mentions either.
+export const bandSilent = async (band: any): Promise<void> => {
+  const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+  if (/events|relay/i.test(all)) throw new Error(`the band drew events or relay text: ${all}`)
+}
+
+// DX-5605: the relay's stored phase ('off', 'running', 'retrying', 'stopped', ...) as the plugin last wrote it; null before its first write.
+export const relayPhase = (d: { stateWrites: { key: string; value: unknown }[] }): string | null =>
+  ((d.stateWrites.filter(w => w.key === 'relay').at(-1)?.value as { phase?: string } | undefined)?.phase) ?? null
 
 // DX-4880: the prompts the plugin submitted to the session through the plan event bridge (each carries the relay marker): what wakes an
 // idle session, as opposed to `relay.told`, the rows only a later turn reads
@@ -1100,6 +1246,15 @@ export async function startSession($: any, d: Dashboard, surface: string) {
     await leaveSession($, d, surface)
   }
   await d.clock.settle()
+  takeLoadPauseReads(d)
+}
+
+// CP-8: every plan load reads the agent pause (the title's pause mark). The reports suites count the pause reads of the hooks they test (the Stop
+// check), so the start's loads are taken out of `reports` and `sequence` and kept in `loadPauseReads`, like the context reads.
+const PAUSE_REPORT = '/api/plan-sessions/me/pause'
+export function takeLoadPauseReads(d: Dashboard) {
+  for (let i = d.reports.length - 1; i >= 0; i--) if (d.reports[i].path === PAUSE_REPORT) d.loadPauseReads.push(...d.reports.splice(i, 1))
+  for (let i = d.sequence.length - 1; i >= 0; i--) if (d.sequence[i] === `report GET ${PAUSE_REPORT}`) d.sequence.splice(i, 1)
 }
 
 export async function viewSession($: any, d: Dashboard, surface: string) {
@@ -1135,7 +1290,18 @@ export async function mountIndicator($: any, surface: string, modes: string[] = 
 // carries `N% complete` on the desktop, the text glyph on the terminal (no Svg there).
 // DX-4420: the desktop pads the footer label with non-breaking spaces (footer.tsx); the label is what is compared.
 export const FOOTER_PAD = / /g
+// DX-5605: the indicator is a plain Button keyed `footer-plan` on every surface.
 export const footerText = async (ui: any): Promise<string | undefined> => (await ui.find({ key: 'footer-plan' }))?.text?.replace(FOOTER_PAD, '')
+export const pressFooter = async (ui: any) => ui.press({ key: 'footer-plan' })
+
+// DX-5605: the team agent the model's plan_connect answer carries (PLAN-51), and the band's label read back: the plan id is the link keyed
+// `open-plan`, the name the Text after it.
+export const AGENT_NAME = 'Katya'
+export async function bandLabelOf(ui: any): Promise<string> {
+  const ref = (await linksOf(ui)).find(l => l.key === 'open-plan')?.label ?? ''
+  const name = ((await ui.find({ type: 'Text', text: /^ · / }))?.text as string | undefined) ?? ''
+  return `${ref}${name}`
+}
 
 export async function expectIndicator(band: any, surface: string, percent: number) {
   const GLYPHS: [number, string][] = [[0, '○'], [37, '◔'], [62, '◑'], [99, '◕'], [100, '●']]
@@ -1158,9 +1324,9 @@ export async function linksOf(ui: any): Promise<{ key: string | undefined; label
   })
 }
 
-// the band's open-problem count: its text, or undefined when none is drawn
-export async function problemBadgeOf(ui: any): Promise<string | undefined> {
-  return (await linksOf(ui)).find(l => l.key === 'open-problems')?.label
+// the band's Needs You badge: its text, or undefined when none is drawn
+export async function needsYouBadgeOf(ui: any): Promise<string | undefined> {
+  return (await linksOf(ui)).find(l => l.key === 'needs-you')?.label
 }
 
 // DX-4630: the plugin opens no page itself: every call the fake dashboard host saw for the in-app browser's server, which stays empty
@@ -1175,6 +1341,12 @@ export function answerPlanConnect(on: On, d: { world: { planId: number | null } 
     const text = JSON.stringify({ ok: true, status: 200, body: { session: { planId: d.world.planId } } })
     return { result: {}, text, isError: false } as any
   })
+}
+
+// DX-5605: the server holds a team agent for the session (GET /api/plan-sessions/me answers it as `session.agent`); the view is read again so the footer shows it.
+export async function holdAgent($: any, d: Dashboard) {
+  d.world.agent = { id: 7, name: AGENT_NAME, avatar_url: null }
+  await forceRefresh($, d)
 }
 
 // DX-4233: there is no polling timer any more, so a refresh a test used to wait 60 s of the fake clock for is asked for here: the

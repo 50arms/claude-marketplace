@@ -1,9 +1,10 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4346: the plan-progress figure. DX-4374: the footer is one `PLAN-NN` button with no figure (plan-footer.test.tsx);
 // the Svg donut lives in the band line.
 import { describe, expect } from 'claude-code/testing'
 
 import { donutGlyph, planPercent } from '../hooks/plan/words'
-import { test, SURFACES, dashboard, expectIndicator, footerText, mountIndicator, startSession } from './plan-kit'
+import { test, AGENT_NAME, SURFACES, answerPlanConnect, dashboard, expectIndicator, footerText, holdAgent, mountIndicator, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const counts = (o: Record<string, number>) => ({ 'In Progress': 0, ToDo: 0, Backlog: 0, Review: 0, Done: 0, Cancelled: 0, ...o })
@@ -48,11 +49,13 @@ describe('the percent mirrors the dashboard (PlanStatusSummary.tsx, DX-3766)', (
 
 for (const surface of SURFACES) {
   describe(`the progress figure on ${surface}`, () => {
-    test('it is read from the connected plan by id, even when that plan is outside the capped list', async ($, on) => {
-      const d = dashboard(on, { planOutsideList: true })
+    test('it is read from the connected plan by id', async ($, on) => {
+      const d = dashboard(on)
+      answerPlanConnect(on, d)
       await startSession($, d, surface)
+      await holdAgent($, d)
       expect(d.api.some(a => a.path === '/api/plans/23')).toBe(true)
-      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
+      expect(await footerText(await mountIndicator($, surface))).toBe(`${AGENT_NAME} · PLAN-23`)
     })
 
     for (const [name, options] of [
@@ -62,7 +65,7 @@ for (const surface of SURFACES) {
       test(`${name} is a named error: no guessed 0%`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
-        expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
+        expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
         const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
         expect(await text(band)).toContain('Disconnected')
         expect(await band.find({ type: 'Svg' })).toBeUndefined()
@@ -72,7 +75,7 @@ for (const surface of SURFACES) {
     test('a status count that is not a number is the same error', async ($, on) => {
       const d = dashboard(on, { breakdown: { ...counts({ Done: 1 }), Review: '3' } })
       await startSession($, d, surface)
-      expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot')
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
     })
 
     test('the band line draws the donut: an Svg whose alt carries N% complete on the desktop, the glyph on the terminal', async ($, on) => {
@@ -91,11 +94,11 @@ for (const surface of SURFACES) {
       await expectIndicator(band, surface, 100)
     })
 
-    test('not connected: the footer reads Plan, the band draws no donut', async ($, on) => {
+    test('not connected: the footer reads 50 Arms disconnected, the band draws no donut', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect(await footerText(footer)).toBe('Danxbot')
+      expect(await footerText(footer)).toBe('50 Arms disconnected')
       const band = await $.ui.mount({ plugin: 'danxbot', surface, ...BAND })
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await text(band)).not.toMatch(/%/)
@@ -103,10 +106,12 @@ for (const surface of SURFACES) {
 
     test('the engine\'s own mode labels survive beside the plan entry', async ($, on) => {
       const d = dashboard(on)
+      answerPlanConnect(on, d)
       await startSession($, d, surface)
+      await holdAgent($, d)
       const footer = await mountIndicator($, surface, ['focus', 'memory paused'])
-      expect(await text(footer)).toBe('focus & memory paused')
-      expect(await footerText(footer)).toBe('Danxbot · PLAN-23')
+      expect(await text(footer)).toContain('focus & memory paused')
+      expect(await footerText(footer)).toBe(`${AGENT_NAME} · PLAN-23`)
     })
 
     test('no $.ui.status call remains: the footer button replaced it (R-1)', async ($, on) => {

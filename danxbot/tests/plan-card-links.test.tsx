@@ -1,9 +1,10 @@
+import "./run-tests-with-npm-test.generated"
 // DX-4448: card ids in an assistant reply are drawn as links to the card. The stored message is never touched (a rewrite
 // changes the drawing), and the draw reads only the `view` atom, so it makes no call.
 import { describe, expect } from 'claude-code/testing'
 
 import { linkCardIds } from '../hooks/plan/card-links'
-import { test, DASHBOARD_URL, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, problemBadgeOf, startSession } from './plan-kit'
+import { test, bandLabelOf, AGENT_NAME, DASHBOARD_URL, SURFACES, answerPlanConnect, dashboard, footerText, holdAgent, forceRefresh, mountIndicator, needsYouBadgeOf, startSession } from './plan-kit'
 
 const plan = { id: 23, ref: 'PLAN-23', name: 'p', status: 'building', dashboardUrl: DASHBOARD_URL } as any
 const PREFIXES = ['DX', 'SG']
@@ -79,6 +80,13 @@ for (const surface of SURFACES) {
       expect(d.api.length).toBe(api)
     })
 
+    // DX-5933: on a 150-card plan every card id of the plan is still known, so the last one links to the plan, not the board
+    test('a 150-card plan: its last card links to the plan page', async ($, on) => {
+      const d = dashboard(on, { extraPlanCards: 150 })
+      await startSession($, d, surface)
+      expect(await drawnText(await $.ui.mount({ ...message('DX-1149 DX-1150'), surface }))).toBe(`${PLAN_URL('DX-1149')} ${BOARD_URL('DX-1150')}`)
+    })
+
     test('the other props ride along as received', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
@@ -116,39 +124,33 @@ for (const surface of SURFACES) {
       ['a boards answer with no boards', { boardsShape: 'none' }],
       ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }],
       ['a boards answer with no boards key', { boardsShape: 'noKey' }],
-      ['a plan card with no id', { planCardsShape: 'noId' }],
-      ['cards that do not add up to the plan card_count (a board missing)', { planCardsShape: 'otherCount' }],
+      ['a plan read with no card_ids', { planFieldsShape: 'noCardIds' }],
+      ['a plan read with a card id that is not a string', { planFieldsShape: 'badCardIds' }],
     ] as const) {
       test(`${name}: the plan stays ready, the reply is drawn as it is`, async ($, on) => {
         const d = dashboard(on, options as any)
+        answerPlanConnect(on, d)
         await startSession($, d, surface)
-        expect(await footerText(await mountIndicator($, surface))).toBe('Danxbot · PLAN-23')
+        await holdAgent($, d)
+        expect(await footerText(await mountIndicator($, surface))).toBe(`${AGENT_NAME} · PLAN-23`)
         expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
         expect(d.toasts.filter(t => t.startsWith('Card links unavailable: '))).toHaveLength(1)
       })
     }
 
-    // DX-5232: the open-problem count is summed from the same every-card read; one that cannot be read whole leaves the plan ready,
-    // the band with no count (never a guessed 0), and the reason told once
-    for (const [name, options] of [
-      ['the plan cards call failing', { planCardsFail: true }],
-      ['the plan cards answer counting more cards than it returned', { planCardsTotal: 9 }],
-      ['the plan cards answer with no list', { planCardsShape: 'noList' }],
-      ['the plan cards answer with no total', { planCardsShape: 'noTotal' }],
-    ] as const) {
-      test(`${name}: the plan stays ready, no count is shown, the reason is told once`, async ($, on) => {
-        const d = dashboard(on, options as any)
-        await startSession($, d, surface)
-        await forceRefresh($, d)
-        const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
-        const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
-        expect(all).not.toContain('Disconnected')
-        expect(all).toContain('PLAN-23')
-        expect(await problemBadgeOf(band)).toBeUndefined()
-        // one toast for the shared cause: the count and the links both stand on this read
-        expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23/cards (all)'))).toHaveLength(1)
-        expect(d.toasts.filter(t => t.startsWith('Card links unavailable'))).toEqual([])
-      })
-    }
+    // DX-5933: the badge's count is the plan read's own `bucket_counts["needs-you"]`; an answer without it leaves the plan ready, the band with no
+    // count (never a guessed 0), and the reason told once. The links stand on `card_ids`, a separate field, and keep working.
+    test('a plan read with no needs-you count: the plan stays ready, no count is shown, the reason is told once, the links still work', async ($, on) => {
+      const d = dashboard(on, { planFieldsShape: 'noNeedsYou' })
+      await startSession($, d, surface)
+      await forceRefresh($, d)
+      const band = await $.ui.mount({ plugin: 'danxbot', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
+      expect(all).not.toContain('Disconnected')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
+      expect(await needsYouBadgeOf(band)).toBeUndefined()
+      expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23 answered no bucket_counts["needs-you"]'))).toHaveLength(1)
+      expect(d.toasts.filter(t => t.startsWith('Card links unavailable'))).toEqual([])
+    })
   })
 }

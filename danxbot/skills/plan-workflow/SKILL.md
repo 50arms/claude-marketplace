@@ -10,28 +10,58 @@ throughout; this skill is the plan mechanics.
 
 ## Start (every new, resumed or compacted session)
 
-1. Plan link in the prompt → that plan. Else list plans; your session's plan right → step 3.
-   Else find it in the list; none → create one.
-2. Your session title is `{Name}: {plan id} {short title}` (`{Name}` your own short given name).
-   `plan_connect({plan_id})` answers `naming` with the exact title and a free name: rename the
-   thread to it (desktop `set_session_title`; terminal: ask the person to `/rename`), then
-   `plan_connect({plan_id, title})` again — the server refuses a wrong format or a name another live session holds.
-3. A session holds no dashboard key until its user approves it. `plan_connect` answering
-   `approval_required` (or `approval_pending`) is not a failure: show the user the confirm code
-   and the approval URL, and once they approve call `plan_connect` again. The plugin shows the
-   link and code at once and opens nothing: the person clicks the link, so never open the URL
-   yourself (two tabs). The same holds for `request_permission`. Every other dashboard tool
-   answers "not signed in" until then.
-4. Orient from the connect briefing, else read the plan's records, architecture and cards,
+1. Sign in: `plan_connect`, with the plan's `plan_id` when you know it (a plan link in the
+   prompt, or your session's plan in `GET /api/plans`), else with no `plan_id`. A session holds
+   no dashboard key until its user approves it: `approval_required` (or `approval_pending`) is
+   not a failure. Show the user the confirm code and the approval URL, and once they approve
+   call `plan_connect` again. The plugin shows the link and code at once and opens nothing: the
+   person clicks the link, so never open the URL yourself (two tabs). The same holds for
+   `request_permission`. Every other dashboard tool answers "not signed in" until then.
+2. Take your identity from the reply: signing in makes you one of the team's agents, and the
+   reply's `agent` and `agentInstruction` say which. Use that agent's name and personality for
+   the whole session; never choose a name yourself, and never sign what you write (the
+   dashboard already shows you as its author). When no agent can be signed in as:
+   - `agent_needed` → propose one at once, without asking in chat: `danxbot_api`
+     `POST /api/team/agent-proposals` with `{name, bio}` (a first name not taken in the team, a
+     short bio of the personality you want) answers `{public_id, url, expires_at}`. With an
+     avatar image you made (png, jpeg, webp or svg, under 1 MB), `POST
+     /api/team/agent-proposals/<public_id>/avatar` with `body_file` set to its absolute path.
+     Give the person the `url`: they review the proposal and press Create, which signs you in
+     as the new agent and connects you to the plan or card you asked for; you are woken with an
+     event saying so. Taking them needs no `plan_connect`; a naming or role step the event carries
+     makes its own call. Not woken → call `plan_connect` again: it answers the agent and plan you
+     hold.
+   - `agent_limit_reached` → tell the person the limit the reply names (`held` of `limit`, and
+     who can raise it, `raised_by`), or that ending another session frees its agent; call
+     `plan_connect` again once they say one is free.
+   Until an agent is held, every other dashboard call answers that same state: do no other
+   dashboard work. You hold the agent only while this session is connected: a revoked key, a
+   session that stopped responding for a minute (a crash) or a pause past the hold timeout frees
+   it at once, and signing in again takes the next free agent, never necessarily the same one.
+3. What you work on: a plan → `plan_connect({plan_id})`; none in the list fits → create one.
+   One card on no plan (a one-off, a quick fix, an epic that is not a plan) →
+   `card_connect({card_id})` instead; a card on a plan is refused `card_on_plan` (connect to
+   that plan). A session holds a plan or a card, never both: connecting to one lets go of the
+   other. Neither → stay signed in, on no plan.
+4. Your session title follows what you hold, `{Name}` being your agent's name: on a plan
+   `{Name}: PLAN-NNN {short title}`, on a card `{Name}: {CARD-ID} {card title}`, on neither
+   `{Name}`. The sign-in reply on no plan gives that title in `title` with `titleInstruction`; a
+   plan connect's `naming` block (status `needed`) gives the exact title. Rename the thread to it
+   (desktop `set_session_title`; terminal: ask the person to `/rename`); after a plan connect
+   asked for it, connect again with that `title`.
+5. Orient from the connect briefing, else read the plan's records, architecture and cards,
    plus one batch read of its In-Progress/open-problem cards and the newest handoff agent note
    (`agent_notes` on the card read).
-5. Follow `plan_connect`'s browser instruction as written.
+6. Follow `plan_connect`'s browser instruction as written.
 
 ## Where things go
 
 Goal record = outcome measured against; rule record = constraint; caveat record = lasting
 trade-off; architecture section (one per concern) = design; card (on the board it changes) =
-actionable work; AC item = a step finishing an existing card; agent note on the card
+actionable work; decision record on the card = a consequential decision, the default home for
+anything important about a card; card description = the background of the ask, never a
+decision or a solution detail (the card page lists the card's decisions under it); AC item = a
+step finishing an existing card; agent note on the card
 (`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
 handoffs, blockers; card comment = talking with a person (a reply to what they wrote or
 asked); problem on the card it concerns = user question; steps a person must perform (a
@@ -115,26 +145,59 @@ One writer: the main session. Sub-agent briefs say "no plan writes; return findi
 Your plan's events arrive unprompted, tagged `[danxbot plan event]` — never poll, loop or
 Monitor for them. Every line is one of these kinds.
 
+Acknowledge each flagged event right after reading it, before acting: a line starting
+`[ack-required event N]` gives the exact `danxbot_api POST /api/plan-sessions/me/events/N/ack`
+call (no body). One you already acted on is only acknowledged, never acted on twice.
+
 From the dashboard:
 
 - `has not made an MCP call …` → the dashboard's idle nudge: every card it names is workable by
   its recorded state. Work it, or record why you can't: a problem, `depends_on`/`conflict_on`, a
-  block with the real reason, or `rollback_pickup`. Never just ignore it. It is not sent while
+  block with the real reason, or `rollback_pickup`. A card it names as `Filed, not readied` was
+  filed and never readied: ready it now (its order comes from `depends_on`), or open a problem on
+  it when only a person can decide. Never just ignore it. It is not sent while
   you are paused (see "Pausing"); it is held and arrives in the message that ends the pause.
 - `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
   record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
   Recording the outcome means, in that same turn, editing every plan record, architecture
-  section and card it changes, and removing (with a note) each problem it settles or moots.
-  A new build card alone records nothing.
+  section and card it changes. A problem stays on the card as the record of what was asked and
+  decided: delete one only when it has become irrelevant (a change of direction made the question
+  pointless), with a note saying why; never because it was answered or because another answer
+  settled it. A problem a person commented on or answered is never deleted: the dashboard refuses
+  the delete. When such a question no longer applies, add a solution saying so and why, mark it
+  recommended, and ask the person to accept it. A new build card alone records nothing.
 - `commented on problem` → a follow-up: reply with a comment on that problem. A comment that
-  decides the question (for example "do it this other way") is an answer: handle it as one.
+  decides the question (for example "do it this other way") is not yet an answer: only a
+  person's accepted solution answers. Edit the problem's solutions to state what they said (change
+  one, or add one), mark that solution recommended, then tell them to accept it. Never delete the
+  problem. If they have already said the answer (in this comment, an earlier one, or in your
+  session thread with them) or told you to accept it for them, answer a question or action
+  problem yourself with `provenance` on the answer route: `source` `comment` with `source_ref`
+  the person's comment id, or `session_thread` with `source_ref` the ISO time of their message
+  in your own session, and `quote` their words verbatim. The server records them as the one who
+  decided and you as who recorded it. Do not call `request_permission` for `cards.answer` for
+  this, and never ask them to click it when they have already said it. Design and docs-review
+  problems are the person's alone: no provenance and no permission lets you answer one.
+  One that asks, thinks aloud or says it is unsure decides nothing, however concrete its idea:
+  answer what it asks in full (the exact calculation, a worked example) and leave the problem
+  open. An option you write from it names every point you added and is never marked
+  recommended until they confirm it.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
-  read it for the full text.
+  read it for the full text. A card's design problem (the one listing its designs to choose
+  from) is the person's alone: nothing to do but tell them it waits in Needs You.
+- `APPROVED revision N of design M` (then `answered` on the design problem) → a person chose
+  that design, which passes the card's design gate: the card builds from the design it holds
+  now. Nothing to record.
+- `requested changes on revision …`, a `REJECTED revision …` that closed the card's last live
+  design, or a comment starting `**Asked for another design:**` → the designer owes a turn: run
+  the designer again ("Sub-agents"), unless one you started is still on it.
+- `retracted the answer to` the design problem → the choice was withdrawn and the gate waits on
+  the person again: build nothing from that design.
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
-- a usage-pacing or auto-resume message from danxbot → follow it as written.
-- `[50 ARMS] Compaction recommendation:` → advice, not an order: judge from what is left and what
+- a usage-pacing or auto-resume message from danxbot → carry on, or stop and wait, as "Usage pacing" says.
+- `[50 ARMS] Compaction recommendation:` → advice, not an order. Never compact while a conversation with a person is still open: something they said or asked still needs an answer or action that depends on this session's context. Time is only a hint (a message within the last few minutes usually means they are still talking); once the exchange is finished and its outcome is on the cards and plan, compacting is safe at once. Then give the recommendation no answer (it comes again later) and never call compaction-ready; say ready only while you work on your own. Otherwise judge from what is left and what
   you are doing now whether compacting is worth it. If yes, load `danxbot:prepare-for-compaction`,
   run it, then call `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
   carry on and answer nothing; it comes again at the next +step of context. Nothing compacts until
@@ -175,14 +238,24 @@ From the plugin's relay (delivery itself):
 
 ## Records
 
-Changed fact → edit; no longer true → delete.
+Changed fact → edit; no longer true → delete. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3); a record or section stating a person's decision changes only on their answer.
+
+Record as you go, never in one batch at the end. Assume this session can end at any moment (a
+crash, a revoked key, a compaction) and may never sign back in: only the plan, its cards and
+origin survive it. So at every checkpoint (a gate result, a push or landing, a decision, an
+operator answer, a change in what the requirements mean), write it to the card or plan record in
+that same turn. A local file (`.junk/`, a scratchpad, a notes file) is never a record, nor a
+fallback for one.
 
 ## Card state always true
 
 Delegated pickup → tell the sub-agent its own `CLAUDE_CODE_SESSION_ID` is real (`danxbot_api`
-forwards it; a curl fallback sends it as `x-danx-session-id`). A "fresh worktree" brief →
+forwards it on every call). A "fresh worktree" brief →
 `git worktree list` first; the card may carry unpushed prior work. Nobody working a card you
-hold → `rollback_pickup` with `keep_assignment:true`. Before reporting a card in flight,
+hold → record why on the card, then release it (`DELETE /api/issues/<id>/assigned-agent`, or
+`rollback_pickup` without `keep_assignment`): a card nobody is working is assigned to no agent (DEC-116),
+and your stop is blocked while you hold one (the held-idle check; a `PUT /api/work-marks` on a card you
+work yourself counts as working it). Before reporting a card in flight,
 re-read it and confirm In Progress.
 
 ## Notes
@@ -229,20 +302,24 @@ and every card is Done or Cancelled.
 
 Every message from the dashboard starts a paid turn at your whole context size. When you have
 nothing you can do (waiting on a person's answer, a long build, a dependency), do not answer
-each reminder with "still waiting": pause.
+each reminder with "still waiting": pause. A session with nothing to do right now pauses; it
+never stays active just to wait.
 
-1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block): the
-   pause is only the signal, never the record. Waiting on a person is always an open problem
+1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block), and
+   any state not yet recorded: a pause often ends in a disconnect after which you cannot write.
+   The pause is only the signal, never the record. Waiting on a person is always an open problem
    on a card of this plan, worded for the step left now (no note or comment reaches Needs You).
+   One problem per question: put it on the work card it decides, never a container, and give every
+   other card that waits on it a `depends_on` edge to that card; never file a problem that only
+   points at another open problem, or that asks a person to restart or reassign another plan's
+   session (its card's own record and `depends_on` already show that wait). That includes a check that needs an ordinary act of theirs (a design change request, a
+   review): an `action` problem asks for it now; never wait for it to happen on its own.
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
-   what would end the wait. `waits_on` is required, the cause you pick: `pacing` when usage pacing
-   refused your account's agents (no slot to start one, the account over pace or at its agent
-   budget), so you wait for pacing to free slots; `person` for an open problem, an approval or any
-   answer only a person gives; `dependency` for another card, a build, a deploy or any other work
-   you wait on; `other` when none fits. Pick the one you actually wait on, since only a `pacing`
-   pause is woken when pacing frees slots (a pause on anything else holds that message with the
-   rest, costing no turn). The pause lasts at most `expires_in_minutes` (default 120, at most
+   what would end the wait. `waits_on` is required, the cause you pick: `person` for an open
+   problem, an approval or any answer only a person gives; `dependency` for another card, a build,
+   a deploy or any other work you wait on; `other` when none fits. Never pause for usage pacing:
+   when pacing stops you, you only stop (see "Usage pacing"). The pause lasts at most `expires_in_minutes` (default 120, at most
    720) and ends by itself then; call again to renew it. A usage-limit pause already in force
    refuses it (409): that one ends by itself when the limit resets. `reason` is at most 300
    characters. A dispatched worker cannot pause (409): only a registered non-worker session can.
@@ -254,13 +331,13 @@ While paused, the dashboard holds its nudges, plan-event digests and agent or ma
 you, and the plugin's own ready-cards reminder stays quiet. It ends when a person
 writes to you or acts on a card of yours (that message arrives at once), a critical usage-pacing
 stop, a usage-pacing change that lets your account start agents again while your pause waits on
-`pacing` (on pace, with no count cap or a budget above the agents running; the message is delivered
+`pacing` (on pace, with no count cap or a budget above the sub-agents running; the message is delivered
 at once, so a pause taken after a pacing refusal needs no manual wake; a pause on any other cause
 holds that message), your own next dashboard call (the plugin's background reads do not count) other than the pause
 calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or your session going
 silent.
 
-The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message.
+The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message. A pause that runs out with nothing held still ends in one message (`Your pause ended (your stated wait ran out). Nothing is left to deliver.`): take that turn to re-check your cards, and pause again if there is still nothing to do.
 It arrives like a card comment from 50 Arms, attached to the card of the person's event that ended
 the pause, otherwise to the plan, otherwise to `SESSION`, but it is a notice (its text begins "This
 is a notice, not a card comment"), not a card comment. Over 30
@@ -271,37 +348,52 @@ messages themselves (a held nudge still means the cards it names are workable no
 ended on your own call needs no reply. Read the plan before resuming, since the cause names what
 changed.
 
+A pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
+on Team > Agents) disconnects your session: its key is revoked, its team agent goes back to the pool and
+it leaves every session list. A session holds an agent exactly while it is connected, and nothing
+remembers the agent you had. On waking, your next dashboard call is refused as a revoked key: sign in
+again (approval as for any new key), then `plan_connect`, which takes the next free agent or answers
+`agent_limit_reached`. The pause-ended notice then says `Your agent <name> went back to the pool: this session was
+disconnected after <N> minutes paused. Sign in again with plan_connect.` Until you hold an
+agent again work calls are refused with `agent_not_held` or `agent_needed`.
+
 ## Stopping
 
 Before stopping or saying "blocked", re-read every open plan card and write each real
-blocker (card id, open problem, user action) to an agent note on that card.
+blocker (card id, open problem, user action) to an agent note on that card. A blocker only a
+person can clear is an open problem there too (see "Pausing").
 
 ## Sub-agents
 
-Delegate by card id: `Agent({subagent_type:"danxbot:worker-<tier>", prompt:"<CARD-ID>"})` is
-the whole brief — each tier loads `danxbot:issue-workflow` itself. Add the worktree rule
-below only when the card wouldn't cover it. Set `effort_level` first, by its hardest single step, never
-its breadth (issue-workflow's creation guide, § Effort), then pick the tier whose description names it;
-never `general-purpose`. A card that carries gates never goes to a `worker-haiku-*` tier.
-A builder runs its PRE gates itself and never spawns gate agents; once it reports its pushed
-tip SHA, you run its POST gates as gate workers and say when to land.
+Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and
+the sub-agent's first call fetches that profile's instruction for the card, which is its whole
+task, so the brief repeats nothing the profile or the card says. Build a card with
+`Agent({subagent_type:"danxbot:worker-<model>-<effort>", prompt:"work <CARD-ID>"})`. Add the worktree rule
+below only when the card wouldn't cover it. Set the card's build grade (`effort_level`) first, by how complex its hardest step is, never
+by how much work it is (issue-workflow's creation guide, § Build grade), then read the model and effort that grade means from the dashboard (the card read answers them) when you start the worker, and pick the
+`danxbot:worker-<model>-<effort>` agent with that model and effort; never `general-purpose`. Story points decide process (a card, gates, splitting), never the agent grade.
+The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
+worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
+gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
+on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
+A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
+have passed and it carries no design yet, start its designer, unless one you started is still on
+it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn.
+One screen or component gets ONE design on one card, showing every part that changes with its
+options, however many cards change it: the other cards build from that card's choice. Never a
+design per card or per element of the same screen.
 
-Partition files before fanning out. State a time-box; never background a long test run and
+Partition files before fanning out. Never background a long test run and
 end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits
 land. Every brief makes the sub-agent stop each background task it started before reporting,
 or name it. Stop a dispatch once its report is consumed. A report is a lead, not a finding:
 read the diff, confirm the push, check for leftover worktrees, commits or background tasks.
 
-Slice a long job into sub-agents that each end well under about 300k tokens of context. When a
-sub-agent nears that, ask it to write a `HANDOFF` agent note on its card (last item done, next item, what the next agent
-must know) and stop; relaunch a fresh one from the original brief plus that note, in the foreground: a
-background relaunch ends your turn. A fresh agent carries far less context than a compacted one, but only what the note says
-crosses, so use it when the job's state is on disk, not in half-finished reasoning, an open browser or an
-unsaved edit.
+A working sub-agent is replaced only by agreement, never by your decision alone. When its context is large, ask it (SendMessage) whether it should hand off. It answers one of three: no; later (ask again once its context has grown by the board's compaction step); or ready, after it has written a handoff agent note on its card and pushed its work. Only on ready, end it and start a fresh sub-agent from the original brief plus that note, in the foreground (a background relaunch ends your turn). Never put a context, token or time cap in a brief, and never stop a sub-agent for its size or because it is taking long; stop or redirect one only on evidence that it is doing the wrong thing (its pushes, notes or report show it off the card or looping), and say what the evidence is.
 
 Never end a turn while unblocked work could be dispatched (a running build, test or deploy
 is time to dispatch; a readied card waiting on a worker is not blocked), nor while work runs
-with no wake-up armed. Checks and reviews that de-risk waiting work (verification,
+with no wake-up armed. The one exception is a pacing stop: then you only stop ("Usage pacing"). Checks and reviews that de-risk waiting work (verification,
 cross-repo checks, a whole-change review) are dispatchable too.
 
 Worktrees you create go under the repo's git-ignored `.claude/worktrees/<name>`, never a
@@ -311,20 +403,29 @@ sibling checkout. Remove each once `git status --porcelain` and `git cherry orig
 ## Usage pacing
 
 A pacing message (`Usage pacing for your Claude account changed: …`) or a spawn refused with
-`Usage pacing: …` states the level, the agent budget of the whole account and the reset
+`Usage pacing: …` states the level, the sub-agent budget of the whole account and the reset
 time; trust those numbers, never your own estimate. Never retry a refused spawn.
 
-- **On pace**: carry on. A spawn is still refused while the account's budget is full, and
-  may be moved to haiku when the budget is nearly full.
-- **Over pace**: every new sub-agent is refused, so nothing new starts until the level drops.
-  Let running agents finish; do only cheap work yourself (verify landed commits, card writes),
-  and record anything else as paused in an agent note on its card. (This is the account's usage pause, which
-  danxbot manages; it is not the pause you make yourself, described under "Pausing".) When you have nothing left to do, pause
-  with `waits_on` `pacing`, so the change that frees slots wakes you.
-- **Critical**: every running agent makes a work-in-progress commit, pushes its branch, writes
-  an agent note on its card saying where it is, and stops; do the same for your own state,
-  write an agent note on each card saying what is paused, and go idle. A later message back to on pace means: read those cards and resume
-  what was paused.
+The budget is a strict cap on sub-agents: exactly that many sub-agents run on the account at
+once, never one more. Main threads (every session's own thread and each running worker
+dispatch's agent) are counted and shown apart, but pacing never holds one back and the budget
+never counts one. The sub-agent count is danxbot's own and is live, one for the whole account
+(every session's sub-agents and the sub-agents of running worker dispatches). Each sub-agent
+spawn takes its slot from danxbot before it starts, so there is nothing for you to count or reserve. A spawn whose slot
+cannot be taken (danxbot could not be reached or did not answer) is refused too, in the same
+`Usage pacing:` words, naming the failure.
+
+**When pacing stops you, just stop.** A refused sub-agent spawn, or a pacing message saying the account is
+over pace, critical, or at its sub-agent budget: end your turn and wait until you are told to continue. Do
+nothing else. Record nothing (no agent note, no block, no problem, no pause call, no
+work-in-progress commit), tell no one, and never do the work yourself instead. The pacer already
+knows; danxbot wakes you with the message that lets you continue, and you then carry on where you
+were. A pacing text that asks for more than this is outdated: follow this section.
+
+- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
+- **Over pace, or the budget full**: stop as above. Agents already running are left to finish.
+- **Critical**: stop as above (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused), and tell
+  each running sub-agent to stop where it is and report back; once told to continue, continue each with `SendMessage`.
 
 ## Liveness
 

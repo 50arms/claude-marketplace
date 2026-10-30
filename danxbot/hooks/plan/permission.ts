@@ -6,16 +6,16 @@ import { isSignedOut, outcomeRevokedBy } from './mcp'
 import type { ToolOutcome } from './mcp'
 import { permissionDeniedNote, permissionExpiredNote, permissionGrantedNote } from './notes'
 
-// DX-4435 (parent DX-4432): a `request_permission` call of the danx-dashboard MCP (DX-4434). It answers at once, never waiting
+// a `request_permission` call of the danx-dashboard MCP. It answers at once, never waiting
 // for the person:
 //   { state: 'approval_required' | 'approval_pending', approvalUrl, confirmCode, instruction }
 // `approval_pending` is a repeat call for a set already asked for. The page is `<dashboard>/connect/<publicId>` and the key's own
 // claim route, `POST /api/permission-requests/<publicId>/claim`, answers `{status, granted}` with status one of
 // pending | approved | claimed | denied | expired, and `granted` the subset the owner granted once approved (null otherwise).
-// DX-4530: a request has no expiry clock: it stays open until the session that asked ends (its key revoked or lapsed), when
+// a request has no expiry clock: it stays open until the session that asked ends (its key revoked or lapsed), when
 // the claim answers `expired`. Only the claim decides it, so an `expiresAt` in the answer is not read.
 
-// DX-4548: the request's id, the last segment of its approval page (`<dashboard>/connect/<publicId>`); undefined when it has none.
+// the request's id, the last segment of its approval page (`<dashboard>/connect/<publicId>`); undefined when it has none.
 export const publicIdOf = (url: string): string | undefined => new URL(url).pathname.split('/').filter(Boolean).pop()
 
 // The request a `request_permission` answer carries, with the permissions the model asked for (its call's own argument),
@@ -31,7 +31,7 @@ export function permissionRequestOf(text: string | undefined, asked: unknown): P
 
 export const claimPath = (r: PermissionRequest) => `/api/permission-requests/${r.publicId}/claim`
 
-// DX-4530: the claim's answer as the decision the model is told. `approved` (the first claim of a grant) and `claimed` (every
+// the claim's answer as the decision the model is told. `approved` (the first claim of a grant) and `claimed` (every
 // later one, the MCP's own poll may claim first) are both `granted`, with the subset granted. Anything unreadable, an approval
 // naming no grant included, is `unknown`: the request stays for the next poll.
 export type ClaimDecision =
@@ -51,7 +51,7 @@ export function claimStatus(body: any): ClaimDecision {
   return { kind: 'unknown' }
 }
 
-// DX-4530: what one claim answer means for its request: `keep` it for the next poll, or `drop` it, telling the model `note`
+// what one claim answer means for its request: `keep` it for the next poll, or `drop` it, telling the model `note`
 // (null: told nothing). A key a person revoked is dropped untold: every tool already tells the session to stop, and "ask again"
 // would contradict that. A lapsed key, or a request the dashboard no longer knows (404: gone, or this session holds another key
 // now), is the session having ended: told as expired. Any other failure keeps the request.
