@@ -312,7 +312,7 @@ never stays active just to wait.
    One problem per question: put it on the work card it decides, never a container, and give every
    other card that waits on it a `depends_on` edge to that card; never file a problem that only
    points at another open problem, or that asks a person to restart or reassign another plan's
-   session (its card's own record and `depends_on` already show that wait). That includes a check that needs an ordinary act of theirs (a design change request, a
+   session (its card's own record and `depends_on` already show that wait). That includes a check that needs an ordinary act of theirs (a
    review): an `action` problem asks for it now; never wait for it to happen on its own.
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
