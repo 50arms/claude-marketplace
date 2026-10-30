@@ -378,8 +378,7 @@ gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<
 on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
 have passed and it carries no design yet, start its designer, unless one you started is still on
-it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route (unset:
-`danxbot:worker-sonnet-high`). Run it again only for a design event above that owes it a turn.
+it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn.
 One screen or component gets ONE design on one card, showing every part that changes with its
 options, however many cards change it: the other cards build from that card's choice. Never a
 design per card or per element of the same screen.

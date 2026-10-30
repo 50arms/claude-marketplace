@@ -126,7 +126,7 @@ test("a gate only a person's answer passes is never recorded by the agent, and t
 
 test("plan-workflow starts the designer once, briefed gate-designer <CARD-ID> at the gate's review grade", () => {
   assert.match(subAgents, /A card carrying `plan-design` goes to no builder until a person chooses a design\./);
-  assert.match(subAgents, /Once the PRE gates before it have passed and it carries no design yet, start its designer, unless one you started is still on it: `gate-designer <CARD-ID>`, at the agent grade the gate's review grade names \(unset: `danxbot:worker-sonnet-high`\)\. Run it again only for a design event above that owes it a turn\./);
+  assert.match(subAgents, /Once the PRE gates before it have passed and it carries no design yet, start its designer, unless one you started is still on it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route\. Run it again only for a design event above that owes it a turn\./);
   assert.doesNotMatch(gates, /Once the PRE gates before it have passed/);
 });
 

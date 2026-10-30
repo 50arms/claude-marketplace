@@ -60,8 +60,9 @@ Which child types a parent type accepts comes from `GET /api/card-types`.
 
 ## Build grade
 
-`effort_level` is the card's build grade: the agent grade (a model and effort pair the board maps) that
-implements the card. Set it by how complex the hardest SINGLE step is once the card's plan is written, never by
+A card's build grade (its `effort_level` field) is the agent grade that implements the card. A grade is
+only a name: which model and effort it means is what the board's agent grades in the dashboard say when you
+read them, and no text fixes it. Set it by how complex the hardest SINGLE step is once the card's plan is written, never by
 file count, breadth, size or importance: a step the plan spells out is mechanical however often it repeats, and
 breadth multiplies the cost of a bigger model, so a wide mechanical change goes LOWER, not higher.
 
