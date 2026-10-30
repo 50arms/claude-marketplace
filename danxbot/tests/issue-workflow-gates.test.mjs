@@ -126,8 +126,21 @@ test("a gate only a person's answer passes is never recorded by the agent, and t
 
 test("plan-workflow starts the designer once, briefed gate-designer <CARD-ID> at the gate's review grade", () => {
   assert.match(subAgents, /A card carrying `plan-design` goes to no builder until a person chooses a design\./);
-  assert.match(subAgents, /Once the PRE gates before it have passed and it carries no design yet, start its designer, unless one you started is still on it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route\. Run it again only for a design event above that owes it a turn, or for a question about how something looks or behaves on screen while designs are on \(mantra item 3\), even when its design gate has already passed\./);
+  assert.match(subAgents, /Once the PRE gates before it have passed and it carries no design yet, start its designer, unless one you started is still on it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route\. Run it again only for a design event above that owes it a turn, or for a question about how something looks or behaves on screen while designs are on \(mantra item 3\), even when its design gate has already passed, whoever found it \(you, a builder's report, a reviewer's `fail`\)\. Write the question in an agent note on the card first: the brief is only `gate-designer <CARD-ID>`, so the designer reads it from the card\./);
   assert.doesNotMatch(gates, /Once the PRE gates before it have passed/);
+});
+
+test("a question about how something looks is a design, never a text problem, and the skills say who starts the designer", () => {
+  const human = flat(skill.slice(skill.indexOf("## Needing a human"), skill.indexOf("## Claiming")));
+  assert.match(human, /How something looks or behaves on screen is never a text problem while designs are on: it is a design on the card, even when its design gate has passed \(mantra item 3\)\./);
+  assert.match(human, /An orchestrator or a session holding the card writes the question in an agent note on the card and runs `gate-designer`; an operator-session sub-agent writes that note and reports it to the orchestrator\./);
+  assert.match(flat(skill), /is a design, never a text problem: mantra item 3\) → open a problem with solutions/);
+  assert.match(flat(planWorkflow), /problem on the card it concerns = user question \(while designs are on, a question about how something looks or behaves on screen is a design, never a text problem: mantra item 3\);/);
+  assert.match(flat(planWorkflow), /\(a point still open is a problem on that card, or a design when it is how something looks or behaves on screen while designs are on: mantra item 3\)/);
+  assert.match(flat(planWorkflow), /or open a problem on it when only a person can decide \(a design when it is how something looks or behaves on screen while designs are on: mantra item 3\)\./);
+  for (const [name, text] of [["issue-workflow", flat(skill)], ["plan-workflow", flat(planWorkflow)]]) {
+    assert.doesNotMatch(text, /is a design, never a problem|: run `gate-designer`\./, name);
+  }
 });
 
 test("what a designer does lives only in its profile: neither skill repeats it", () => {

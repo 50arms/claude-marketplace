@@ -62,7 +62,7 @@ test("Live events tells the session what each design event means and when the de
   const section = liveEvents();
   assert.match(section, /A card's design problem \(the one listing its designs to choose from\) is the person's alone/);
   assert.match(section, /`APPROVED revision N of design M` \(then `answered` on the design problem\) → a person chose that design, which passes the card's design gate/);
-  assert.match(section, /`requested changes on revision …`, a `REJECTED revision …` that closed the card's last live design, or a comment starting `\*\*Asked for another design:\*\*` → the designer owes a turn/);
+  assert.match(section, /`requested changes on revision …`, a `REJECTED revision …` that closed the card's last live design, or a comment starting `\*\*Asked for another design:\*\*`, or a comment or a problem asking how something looks or behaves on screen while designs are on \(mantra item 3\), even on a card whose design gate has passed → the designer owes a turn/);
   assert.match(section, /→ the designer owes a turn: run the designer again \("Sub-agents"\), unless one you started is still on it\./);
   assert.match(section, /`retracted the answer to` the design problem → the choice was withdrawn and the gate waits on the person again/);
 });
