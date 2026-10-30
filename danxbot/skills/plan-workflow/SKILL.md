@@ -64,7 +64,7 @@ decision or a solution detail (the card page lists the card's decisions under it
 step finishing an existing card; agent note on the card
 (`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
 handoffs, blockers; card comment = talking with a person (a reply to what they wrote or
-asked); problem on the card it concerns = user question (while designs are on, a question about how something looks or behaves on screen is a design instead, mantra item 3); steps a person must perform (a
+asked); problem on the card it concerns = user question (while designs are on, a question about how something looks or behaves on screen is a design, never a text problem: mantra item 3); steps a person must perform (a
 live check, a manual task) = an `action` problem whose solution steps are the procedure,
 each with a short title and a description saying where (exact link), what to do and what to
 look for, never an AC checklist; plan note = real milestone; remove a wrong-plan card from
@@ -155,7 +155,7 @@ From the dashboard:
   its recorded state. Work it, or record why you can't: a problem, `depends_on`/`conflict_on`, a
   block with the real reason, or `rollback_pickup`. A card it names as `Filed, not readied` was
   filed and never readied: ready it now (its order comes from `depends_on`), or open a problem on
-  it when only a person can decide. Never just ignore it. It is not sent while
+  it when only a person can decide (a design when it is how something looks or behaves on screen while designs are on: mantra item 3). Never just ignore it. It is not sent while
   you are paused (see "Pausing"); it is held and arrives in the message that ends the pause.
 - `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
   record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
@@ -189,7 +189,7 @@ From the dashboard:
   that design, which passes the card's design gate: the card builds from the design it holds
   now. Nothing to record.
 - `requested changes on revision …`, a `REJECTED revision …` that closed the card's last live
-  design, or a comment starting `**Asked for another design:**` → the designer owes a turn: run
+  design, or a comment starting `**Asked for another design:**`, or a comment or a problem asking how something looks or behaves on screen while designs are on (mantra item 3), even on a card whose design gate has passed → the designer owes a turn: run
   the designer again ("Sub-agents"), unless one you started is still on it.
 - `retracted the answer to` the design problem → the choice was withdrawn and the gate waits on
   the person again: build nothing from that design.
@@ -269,7 +269,7 @@ build it here; the plan never waits on a worker. An archived (Backlog) card was 
 purpose: read why in its comments and agent notes before reopening it; a park the user made is theirs
 to lift. A design talked through with the user is decided the moment their answers leave
 no open question: write it into the plan, slice, ready and build in that same turn, never a
-card held in Review for a "go" (a point still open is a problem on that card).
+card held in Review for a "go" (a point still open is a problem on that card, or a design when it is how something looks or behaves on screen while designs are on: mantra item 3).
 
 ## Closing a plan
 
@@ -378,7 +378,7 @@ gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<
 on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
 have passed and it carries no design yet, start its designer, unless one you started is still on
-it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn, or for a question about how something looks or behaves on screen while designs are on (mantra item 3), even when its design gate has already passed.
+it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn, or for a question about how something looks or behaves on screen while designs are on (mantra item 3), even when its design gate has already passed, whoever found it (you, a builder's report, a reviewer's `fail`). Write the question in an agent note on the card first: the brief is only `gate-designer <CARD-ID>`, so the designer reads it from the card.
 One screen or component gets ONE design on one card, showing every part that changes with its
 options, however many cards change it: the other cards build from that card's choice. Never a
 design per card or per element of the same screen.
