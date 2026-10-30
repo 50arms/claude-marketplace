@@ -64,7 +64,7 @@ decision or a solution detail (the card page lists the card's decisions under it
 step finishing an existing card; agent note on the card
 (`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
 handoffs, blockers; card comment = talking with a person (a reply to what they wrote or
-asked); problem on the card it concerns = user question; steps a person must perform (a
+asked); problem on the card it concerns = user question (while designs are on, a question about how something looks or behaves on screen is a design instead, mantra item 3); steps a person must perform (a
 live check, a manual task) = an `action` problem whose solution steps are the procedure,
 each with a short title and a description saying where (exact link), what to do and what to
 look for, never an AC checklist; plan note = real milestone; remove a wrong-plan card from
@@ -378,7 +378,7 @@ gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<
 on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
 have passed and it carries no design yet, start its designer, unless one you started is still on
-it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn.
+it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn, or for a question about how something looks or behaves on screen while designs are on (mantra item 3), even when its design gate has already passed.
 One screen or component gets ONE design on one card, showing every part that changes with its
 options, however many cards change it: the other cards build from that card's choice. Never a
 design per card or per element of the same screen.
