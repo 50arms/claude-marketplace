@@ -73,7 +73,7 @@ test("the operator session runs every gate on its review grade; the builder only
 });
 
 test("the operator session runs and re-runs the gates as gate workers, then lands the branch itself", () => {
-  assert.match(gates, /The operator session runs each gate not yet `pass` \(all but `plan-design`, below\) through its own gate worker, at the gate's review grade, which the board sets: the gate instruction route answers it with its model and effort/);
+  assert.match(gates, /The operator session runs each gate not yet `pass` \(all but `plan-design`, below\) through its own gate worker, at the gate's review grade, which the board sets: the gate instruction route answers it with its model and effort when the worker starts/);
   assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\); the operator session sends the builder the findings to fix, and lands the branch once every gate passes \("Delivery" below\)\./);
   assert.match(gates, /the operator session re-runs a POST gate/);
 });
@@ -100,7 +100,7 @@ test("no skill tells an operator-session sub-agent to land its own card when tol
 });
 
 test("plan-workflow's Sub-agents section carries the matching rule once", () => {
-  assert.match(subAgents, /The builder only builds, at its card's build grade\. You run each gate not yet `pass` through its own gate worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: the gate instruction route answers it with its model and effort\./);
+  assert.match(subAgents, /The builder only builds, at its card's build grade\. You run each gate not yet `pass` through its own gate worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<effort>`\./);
   assert.match(subAgents, /Once the POST gates pass, land it and complete the card\./);
   assert.match(subAgents, /Story points decide process \(a card, gates, splitting\), never the agent grade\./);
 });
@@ -153,7 +153,7 @@ test("what a designer does lives only in its profile: neither skill repeats it",
 // sub-agent's first call fetches that profile's instruction for the card.
 test("plan-workflow delegates every profile-shaped job as <profile> <CARD-ID>, never a hand-written brief", () => {
   assert.match(subAgents, /Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and the sub-agent's first call fetches that profile's instruction for the card, which is its whole task, so the brief repeats nothing the profile or the card says\./);
-  assert.match(subAgents, /`Agent\(\{subagent_type:"danxbot:worker-<grade>", prompt:"work <CARD-ID>"\}\)`/);
+  assert.match(subAgents, /`Agent\(\{subagent_type:"danxbot:worker-<model>-<effort>", prompt:"work <CARD-ID>"\}\)`/);
   const briefs = [...subAgents.matchAll(/`((?:work|gate-reviewer|gate-designer) <CARD-ID>[^`]*)`|prompt:"([^"]*)"/g)].map((m) => m[1] ?? m[2]);
   assert.deepEqual([...new Set(briefs)].sort(), ["gate-designer <CARD-ID>", "gate-reviewer <CARD-ID> <gate>", "work <CARD-ID>"]);
   assert.doesNotMatch(subAgents, /Delegate by card id/);

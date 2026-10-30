@@ -57,7 +57,7 @@ gates (`code-*`) on the finished diff. The card's `quality_gates` lists the ones
 carries, and each board keeps its own text for what a gate does.
 
 The operator session runs each gate not yet `pass` (all but `plan-design`, below) through its own gate worker, at the gate's review
-grade, which the board sets: the gate instruction route answers it with its model and effort. PRE gates run
+grade, which the board sets: the gate instruction route answers it with its model and effort when the worker starts, and the worker is the matching `danxbot:worker-<model>-<effort>`. PRE gates run
 before the builder starts; POST gates run on its pushed tip. The builder only builds, at its card's build
 grade, and a gate never changes that grade. A builder pushes its card branch, reports the tip SHA and stops.
 Gate workers are briefed by profile and card (plan-workflow "Sub-agents"); the operator session sends the

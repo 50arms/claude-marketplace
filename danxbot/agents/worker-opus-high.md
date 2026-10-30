@@ -1,6 +1,6 @@
 ---
 name: worker-opus-high
-description: 'Opus high. Build grade max. Planning, architecture, and skill or prose rewrites: small in text, needing the best thinking.'
+description: 'Opus, high effort. Planning, architecture, and skill or prose rewrites: small in text, needing the best thinking.'
 model: opus
 effort: high
 ---

@@ -1,6 +1,6 @@
 ---
 name: worker-haiku-low
-description: 'Haiku low. Build grade min or very_low. Fully specified mechanical edits: renames, copied values, lookups, formatting.'
+description: 'Haiku, low effort. Fully specified mechanical edits: renames, copied values, lookups, formatting.'
 model: haiku
 effort: low
 ---

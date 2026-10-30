@@ -65,7 +65,7 @@ implements the card. Set it by how complex the hardest SINGLE step is once the c
 file count, breadth, size or importance: a step the plan spells out is mechanical however often it repeats, and
 breadth multiplies the cost of a bigger model, so a wide mechanical change goes LOWER, not higher.
 
-- `max` (Opus): the work IS thinking: planning, architecture, skill or prose rewrites.
+- `max`: the work IS thinking: planning, architecture, skill or prose rewrites.
   Reviewing them is `very_high`.
 - `high`: one step needs judgment the plan could not settle (an algorithm, a concurrency or
   state invariant, debugging an unknown cause).
@@ -78,8 +78,8 @@ the component's behaviour is specified, is `medium`: only the component needs th
 card that seems to need `max` is under-planned. Broad work gets its own planning step first: a `max` card writes
 the plan onto the build cards (the pieces, and for each its files, edits and signatures). Each build card's build
 grade is then set by how complex its hardest step is, never by how much work it is: a clearly defined edit is
-`min` to `low` (Haiku) however many files it touches; a step that still needs analysis and judgment while the
-work is done is `medium` and up (Sonnet). A build card that still looks complex means the plan has not broken
+`min` to `low` however many files it touches; a step that still needs analysis and judgment while the
+work is done is `medium` and up. A build card that still looks complex means the plan has not broken
 the problem into the right pieces: plan more.
 
 ## Ordering

@@ -1,6 +1,6 @@
 ---
 name: worker-sonnet-medium
-description: 'Sonnet medium. Build grade high. Code where one step needs judgment the plan could not settle: an algorithm, an invariant, an unknown bug.'
+description: 'Sonnet, medium effort. Code where one step needs judgment the plan could not settle: an algorithm, an invariant, an unknown bug.'
 model: sonnet
 effort: medium
 ---

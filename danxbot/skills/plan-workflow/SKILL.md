@@ -368,17 +368,17 @@ person can clear is an open problem there too (see "Pausing").
 Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and
 the sub-agent's first call fetches that profile's instruction for the card, which is its whole
 task, so the brief repeats nothing the profile or the card says. Build a card with
-`Agent({subagent_type:"danxbot:worker-<grade>", prompt:"work <CARD-ID>"})`. Add the worktree rule
+`Agent({subagent_type:"danxbot:worker-<model>-<effort>", prompt:"work <CARD-ID>"})`. Add the worktree rule
 below only when the card wouldn't cover it. Set the card's build grade (`effort_level`) first, by how complex its hardest step is, never
-by how much work it is (issue-workflow's creation guide, § Build grade), then pick the agent grade whose description names it;
-never `general-purpose`. Story points decide process (a card, gates, splitting), never the agent grade.
+by how much work it is (issue-workflow's creation guide, § Build grade), then read the model and effort that grade means from the dashboard (the card read answers them) when you start the worker, and pick the
+`danxbot:worker-<model>-<effort>` agent with that model and effort; never `general-purpose`. Story points decide process (a card, gates, splitting), never the agent grade.
 The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
-worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: the gate
-instruction route answers it with its model and effort. PRE gates run before the builder starts; POST gates run
+worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
+gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
 on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
 have passed and it carries no design yet, start its designer, unless one you started is still on
-it: `gate-designer <CARD-ID>`, at the agent grade the gate's review grade names (unset:
+it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route (unset:
 `danxbot:worker-sonnet-high`). Run it again only for a design event above that owes it a turn.
 One screen or component gets ONE design on one card, showing every part that changes with its
 options, however many cards change it: the other cards build from that card's choice. Never a
