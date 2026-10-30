@@ -1,10 +1,10 @@
 # Creating and sizing a card
 
-Load before creating a card, or before choosing a card's type, slices or effort.
+Load before creating a card, or before choosing a card's type, slices or build grade.
 
 ## A decomposition drafted before this loaded is void
 
-Picked a type, slice list or effort before reading this? Discard it and re-derive from the
+Picked a type, slice list or build grade before reading this? Discard it and re-derive from the
 gates below — they are the input to the decision, never a stamp on a draft. Before creating any
 Feature/Epic, print the Slice Plan (below) in your message; no plan, no create.
 
@@ -33,7 +33,10 @@ this card lands and no sibling ever does, is the running system observably bette
 the pieces interlock and are ONE Story, however large. One slice →
 Story; a few → Feature; many or several Features → Epic. Importance, risk or "feels big" are
 not slices. Never slice by layer (schema, client, routes) or by call site; each slice carries
-its own thin schema and plumbing.
+its own thin schema and plumbing. That rule shapes product slices. Once a Story's plan is written, its build
+may be split into execution batches: a core card first, then call-site batches by directory, each at the lowest
+build grade its steps allow. Batches depend on the core, merge into one integration branch, and reach the target
+branch together as the Story's one green commit.
 
 **Combine by default.** Split only when the whole is too large for one green commit, or the
 parts differ in nature (another subsystem, separately reusable). Same for phases: every
@@ -55,12 +58,12 @@ question or action is open, recorded as a problem on it. Add children through
 child cards with `parent_id`.
 Which child types a parent type accepts comes from `GET /api/card-types`.
 
-## Effort
+## Build grade
 
-`effort_level` picks the model that implements the card. Set it by the hardest SINGLE step's
-reasoning once the card's plan is written, never by file count, breadth, size or importance:
-a step the plan spells out is mechanical however often it repeats, and breadth multiplies the
-cost of a bigger model, so a wide mechanical change goes LOWER, not higher.
+`effort_level` is the card's build grade: the agent grade (a model and effort pair the board maps) that
+implements the card. Set it by how complex the hardest SINGLE step is once the card's plan is written, never by
+file count, breadth, size or importance: a step the plan spells out is mechanical however often it repeats, and
+breadth multiplies the cost of a bigger model, so a wide mechanical change goes LOWER, not higher.
 
 - `max` (Opus): the work IS thinking: planning, architecture, skill or prose rewrites.
   Reviewing them is `very_high`.
@@ -72,7 +75,12 @@ cost of a bigger model, so a wide mechanical change goes LOWER, not higher.
 
 Example: swapping a formatter call for a new component at 40 call sites in 25 files, where
 the component's behaviour is specified, is `medium`: only the component needs thought. A code
-card that seems to need `max` is under-planned: plan more instead of raising the effort.
+card that seems to need `max` is under-planned. Broad work gets its own planning step first: a `max` card writes
+the plan onto the build cards (the pieces, and for each its files, edits and signatures). Each build card's build
+grade is then set by how complex its hardest step is, never by how much work it is: a clearly defined edit is
+`min` to `low` (Haiku) however many files it touches; a step that still needs analysis and judgment while the
+work is done is `medium` and up (Sonnet). A build card that still looks complex means the plan has not broken
+the problem into the right pieces: plan more.
 
 ## Ordering
 

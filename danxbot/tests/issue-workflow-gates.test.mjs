@@ -34,7 +34,7 @@ test("the brief has the sub-agent do what the gate text says, card writes includ
 test("nothing in the section frames a gate as review-only", () => {
   assert.doesNotMatch(gates, /that text alone/);
   // the `reviewed_ref` field name is the one allowed "review" word
-  assert.doesNotMatch(gates, /\breview(?!ed_ref)/i);
+  assert.doesNotMatch(gates.replaceAll("review grade", ""), /\breview(?!ed_ref)/i);
 });
 
 test("the section names no gate and copies no gate's behaviour or mantra rule", () => {
@@ -66,27 +66,25 @@ const planWorkflow = readFileSync(path.join(here, "../skills/plan-workflow/SKILL
 const pwStart = planWorkflow.indexOf("## Sub-agents");
 const subAgents = flat(planWorkflow.slice(pwStart, planWorkflow.indexOf("\n## ", pwStart + 1)));
 const creation = flat(readFileSync(path.join(here, "../skills/issue-workflow/references/card-creation-and-reference.md"), "utf8"));
-const NEVER_SPAWNS = /It never spawns gate agents: a background agent's notice reaches only the top-level session\./;
 
-test("the builder runs its PRE gates in its own context, then pushes, reports the tip SHA and stops", () => {
-  assert.match(gates, /runs its PRE gates itself, in its own context/);
-  assert.match(gates, /pushes its card branch, reports the tip SHA and stops/);
-  assert.match(gates, NEVER_SPAWNS);
+test("the operator session runs every gate on its review grade; the builder only builds, then pushes, reports the tip SHA and stops", () => {
+  assert.match(gates, /PRE gates run before the builder starts; POST gates run on its pushed tip\. The builder only builds, at its card's build grade, and a gate never changes that grade\./);
+  assert.match(gates, /A builder pushes its card branch, reports the tip SHA and stops/);
 });
 
-test("the operator session runs and re-runs the POST gates as gate workers, then lands the branch itself", () => {
-  assert.match(gates, /The operator session runs each POST gate not yet `pass` through one gate worker per gate/);
-  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\), sends the builder the findings to fix, and lands the branch once every one passes \("Delivery" below\)\./);
+test("the operator session runs and re-runs the gates as gate workers, then lands the branch itself", () => {
+  assert.match(gates, /The operator session runs each gate not yet `pass` \(all but `plan-design`, below\) through its own gate worker, at the gate's review grade, which the board sets: the gate instruction route answers it with its model and effort/);
+  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\); the operator session sends the builder the findings to fix, and lands the branch once every gate passes \("Delivery" below\)\./);
   assert.match(gates, /the operator session re-runs a POST gate/);
 });
 
-test("outside the never-spawns sentence, the section tells no one to spawn or dispatch a gate agent", () => {
-  assert.doesNotMatch(gates.replace(NEVER_SPAWNS, ""), /\b(spawn|dispatch)/i);
+test("the section tells no one to spawn or dispatch a gate agent", () => {
+  assert.doesNotMatch(gates, /\b(spawn|dispatch)/i);
 });
 
 test("the Two callers table and Flow agree with the Gates section", () => {
   assert.doesNotMatch(callers, /one sub-agent per gate/);
-  assert.match(callers, /PRE gates: in your own context; POST gates: run by the operator session/);
+  assert.match(callers, /Gates: run by the operator session, each in its own gate worker/);
   assert.match(callers, /push the card branch, report its tip SHA, stop; the operator session lands it: push to the target branch/);
   assert.match(flow, /5\. Pass its POST gates \("Gates" below\)\./);
   assert.match(flow, /An operator-session sub-agent stops at its pushed card branch: it reports the tip SHA and ends, and never lands the branch, transitions `complete` or writes the retro\./);
@@ -102,9 +100,9 @@ test("no skill tells an operator-session sub-agent to land its own card when tol
 });
 
 test("plan-workflow's Sub-agents section carries the matching rule once", () => {
-  assert.equal([...subAgents.matchAll(/never spawns gate agents/g)].length, 1, subAgents);
-  assert.match(subAgents, /A builder runs its PRE gates itself/);
-  assert.match(subAgents, /you run its POST gates as gate workers, each briefed `gate-reviewer <CARD-ID> <gate>` at the tier issue-workflow "Gates" names; once they pass, land it and complete the card\./);
+  assert.match(subAgents, /The builder only builds, at its card's build grade\. You run each gate not yet `pass` through its own gate worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: the gate instruction route answers it with its model and effort\./);
+  assert.match(subAgents, /Once the POST gates pass, land it and complete the card\./);
+  assert.match(subAgents, /Story points decide process \(a card, gates, splitting\), never the agent grade\./);
 });
 
 test("the creation guide points at GET /api/card-types for the parent-child rules", () => {
@@ -119,16 +117,16 @@ test("the creation guide carries no hard-coded parent-child list", () => {
 // A gate that only a person's answer passes takes no recorded verdict: the server refuses its PATCH for every caller,
 // and the person's choice passes it. DX-4734 put the designer's trigger, brief and procedure in these skills; DX-5899
 // (PLAN-44) moves what a designer does into the `gate-designer` profile its brief fetches. The skills keep only who starts
-// it, when, at which tier, and its `gate-designer <CARD-ID>` brief, each said once.
+// it, when, at which agent grade, and its `gate-designer <CARD-ID>` brief, each said once.
 test("a gate only a person's answer passes is never recorded by the agent, and the builder never runs plan-design", () => {
   assert.match(gates, /A gate that only a person's answer passes takes no recorded verdict: its `PATCH` is refused for every caller\./);
   assert.match(gates, /`plan-design` is one: the builder never runs it, the operator session starts its designer \(plan-workflow "Sub-agents"\), and only a person's choice of a design on the card passes it\./);
-  assert.match(gates, /runs its PRE gates itself, in its own context \(all but `plan-design`, below\)/);
+  assert.match(gates, /not yet `pass` \(all but `plan-design`, below\)/);
 });
 
-test("plan-workflow starts the designer once, briefed gate-designer <CARD-ID> at the gate's tier", () => {
+test("plan-workflow starts the designer once, briefed gate-designer <CARD-ID> at the gate's review grade", () => {
   assert.match(subAgents, /A card carrying `plan-design` goes to no builder until a person chooses a design\./);
-  assert.match(subAgents, /Once the PRE gates before it have passed and it carries no design yet, start its designer, unless one you started is still on it: `gate-designer <CARD-ID>`, at the tier the gate's `effort_level` on the card names \(unset: `danxbot:worker-sonnet-high`\)\. Run it again only for a design event above that owes it a turn\./);
+  assert.match(subAgents, /Once the PRE gates before it have passed and it carries no design yet, start its designer, unless one you started is still on it: `gate-designer <CARD-ID>`, at the agent grade the gate's review grade names \(unset: `danxbot:worker-sonnet-high`\)\. Run it again only for a design event above that owes it a turn\./);
   assert.doesNotMatch(gates, /Once the PRE gates before it have passed/);
 });
 
@@ -155,7 +153,7 @@ test("what a designer does lives only in its profile: neither skill repeats it",
 // sub-agent's first call fetches that profile's instruction for the card.
 test("plan-workflow delegates every profile-shaped job as <profile> <CARD-ID>, never a hand-written brief", () => {
   assert.match(subAgents, /Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and the sub-agent's first call fetches that profile's instruction for the card, which is its whole task, so the brief repeats nothing the profile or the card says\./);
-  assert.match(subAgents, /`Agent\(\{subagent_type:"danxbot:worker-<tier>", prompt:"work <CARD-ID>"\}\)`/);
+  assert.match(subAgents, /`Agent\(\{subagent_type:"danxbot:worker-<grade>", prompt:"work <CARD-ID>"\}\)`/);
   const briefs = [...subAgents.matchAll(/`((?:work|gate-reviewer|gate-designer) <CARD-ID>[^`]*)`|prompt:"([^"]*)"/g)].map((m) => m[1] ?? m[2]);
   assert.deepEqual([...new Set(briefs)].sort(), ["gate-designer <CARD-ID>", "gate-reviewer <CARD-ID> <gate>", "work <CARD-ID>"]);
   assert.doesNotMatch(subAgents, /Delegate by card id/);

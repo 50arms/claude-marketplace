@@ -6,8 +6,8 @@ import "./designated-test-container.mjs";
 // carrying them home, each stated ONCE in the skill that owns the subject:
 //   - fix-agent-behavior is where a correction goes, and it says so in the one
 //     line every session sees (its description) and in its list of homes;
-//   - a card that carries gates never goes to a haiku tier (plan-workflow,
-//     where the tier is picked).
+//   - story points never pick the agent grade (plan-workflow, where the
+//     agent grade is picked).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -36,7 +36,7 @@ function section(text, heading) {
 const count = (text, pattern) => [...flat(text).matchAll(new RegExp(pattern.source, "g"))].length;
 
 const NEVER_A_MEMORY_FILE = /Never a memory file/;
-const GATED_NEVER_HAIKU = /A card that carries gates never goes to a `worker-haiku-\*` tier\./;
+const POINTS_NEVER_GRADE = /Story points decide process \(a card, gates, splitting\), never the agent grade\./;
 
 test("the description every session sees sends a correction to the skill before it is saved anywhere", () => {
   const frontmatter = fixBehavior.slice(4, fixBehavior.indexOf("\n---", 4));
@@ -66,12 +66,12 @@ test("the memory-file rule lives in fix-agent-behavior only", () => {
   }
 });
 
-test("a gated card never goes to a haiku tier: once, where plan-workflow picks the tier", () => {
+test("story points never pick the agent grade: once, where plan-workflow picks the agent grade", () => {
   const subAgents = section(planWorkflow, "## Sub-agents");
-  assert.match(subAgents, GATED_NEVER_HAIKU);
+  assert.match(subAgents, POINTS_NEVER_GRADE);
   assert.ok(
-    subAgents.indexOf("never `general-purpose`") < subAgents.search(GATED_NEVER_HAIKU),
-    "follows the sentence that picks the tier",
+    subAgents.indexOf("never `general-purpose`") < subAgents.search(POINTS_NEVER_GRADE),
+    "follows the sentence that picks the agent grade",
   );
-  assert.equal(count(planWorkflow, GATED_NEVER_HAIKU), 1);
+  assert.equal(count(planWorkflow, POINTS_NEVER_GRADE), 1);
 });

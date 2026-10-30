@@ -15,7 +15,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 |---|---|---|
 | Worktree | prepared before you start | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
-| Gates | your dispatch instructions carry them | PRE gates: in your own context; POST gates: run by the operator session ("Gates" below) |
+| Gates | your dispatch instructions carry them | Gates: run by the operator session, each in its own gate worker ("Gates" below) |
 | Merge + end | your dispatch instructions | push the card branch, report its tip SHA, stop; the operator session lands it: push to the target branch (or open a pull request when "Delivery" below says so), then `complete` + retro |
 
 The dispatched worker's own mechanics (how it ends, halts and merges) are in the instructions its dispatch gave it.
@@ -26,14 +26,14 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    set; on a plan, read its architecture and note overlapping siblings.
    Any investigation that takes more than a few commands (understanding unread code,
    reproducing a bug, debugging a failing test, proving an idea works) goes to a foreground
-   sub-agent (`Explore` to read, a worker tier to run things) that returns only the
+   sub-agent (`Explore` to read, a worker agent grade to run things) that returns only the
    conclusion with file:line evidence; keep a single lookup inline and read directly only
    the lines you are about to edit. Everything you read stays in your context and is paid
    again on every later turn, so the larger your context and the more turns remain, the
    sooner delegating is cheaper than its ~60k-token start.
 2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip this
    step, the card is already yours.
-3. Pass its PRE gates ("Gates" below), then build test-first, to the rules under
+3. Its PRE gates have passed ("Gates" below); build test-first, to the rules under
    "Building" below.
 4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
    changes. Run only those: the touched files' own tests and their direct dependents (a prose
@@ -56,13 +56,12 @@ A quality gate is a step a card must pass: PRE gates (`plan-*`) run before the b
 gates (`code-*`) on the finished diff. The card's `quality_gates` lists the ones it
 carries, and each board keeps its own text for what a gate does.
 
-An operator-session sub-agent runs its PRE gates itself, in its own context (all but
-`plan-design`, below), then builds, pushes its card branch, reports the tip SHA and stops.
-It never spawns gate agents: a background agent's notice reaches only the top-level session.
-The operator session runs each POST gate not yet `pass` through one gate worker per gate
-(`danxbot:worker-opus-high` for an architecture gate, `danxbot:worker-sonnet-high` for the
-rest), briefed by profile and card (plan-workflow "Sub-agents"), sends the builder the findings
-to fix, and lands the branch once every one passes ("Delivery" below). Whoever runs a gate:
+The operator session runs each gate not yet `pass` (all but `plan-design`, below) through its own gate worker, at the gate's review
+grade, which the board sets: the gate instruction route answers it with its model and effort. PRE gates run
+before the builder starts; POST gates run on its pushed tip. The builder only builds, at its card's build
+grade, and a gate never changes that grade. A builder pushes its card branch, reports the tip SHA and stops.
+Gate workers are briefed by profile and card (plan-workflow "Sub-agents"); the operator session sends the
+builder the findings to fix, and lands the branch once every gate passes ("Delivery" below). Whoever runs a gate:
 
 1. Fetch the board's gate text through `danxbot_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, as repo:slug>`.
