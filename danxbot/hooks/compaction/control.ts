@@ -15,7 +15,7 @@
 // SUB-AGENTS: a sub-agent is gated by its own `agents[id]` entry on Claude Code's `session.compact` event, which names the proposing `agentId`. Its context
 // size is NOT in the event and `$.session.usage()` is the main conversation's, so register.tsx records each sub-agent's last model response (`turn.step`'s usage and
 // model) and hands it here as `AgentSize`. `agentVerdict` decides one automatic proposal. A sub-agent with no entry is measured against the valve of ITS exact model id
-// (`valves`, keyed by exact model id, one entry per active version; the dashboard writes it from the board's model capabilities: the same per-version limits a dispatched worker gets), never a guessed model.
+// (`valves`, keyed by exact model id, one entry per version Anthropic still serves, active or deprecated; the dashboard writes it from its model-version catalog: the same per-version limits a dispatched worker gets), never a guessed model.
 //
 // The control is a local file the session's danx-dashboard MCP relay writes (`~/.config/danxbot/compaction/<sessionId>.json`, shape below): the gate
 // never asks the network, because Claude Code proposes before every model request. A function hook that THROWS lets the compaction through (verified
