@@ -136,8 +136,8 @@ test("a question about how something looks is a design, never a text problem, an
   assert.match(human, /An orchestrator or a session holding the card writes the question in an agent note on the card and runs `gate-designer`; an operator-session sub-agent writes that note and reports it to the orchestrator\./);
   assert.match(flat(skill), /is a design, never a text problem: mantra item 3\) → open a problem with solutions/);
   assert.match(flat(planWorkflow), /problem on the card it concerns = user question \(while designs are on, a question about how something looks or behaves on screen is a design, never a text problem: mantra item 3\);/);
-  assert.match(flat(planWorkflow), /\(a point still open is a problem on that card, or a design when it is how something looks or behaves on screen while designs are on: mantra item 3\)/);
-  assert.match(flat(planWorkflow), /or open a problem on it when only a person can decide \(a design when it is how something looks or behaves on screen while designs are on: mantra item 3\)\./);
+  assert.match(flat(planWorkflow), /\(a point still open is a problem on that card, or a design: mantra item 3\)/);
+  assert.match(flat(planWorkflow), /or open a problem on it when only a person can decide \(or a design: mantra item 3\)\./);
   for (const [name, text] of [["issue-workflow", flat(skill)], ["plan-workflow", flat(planWorkflow)]]) {
     assert.doesNotMatch(text, /is a design, never a problem|: run `gate-designer`\./, name);
   }
