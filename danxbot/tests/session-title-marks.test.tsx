@@ -30,6 +30,32 @@ const LOADS_AT_START = 1
 const paused = (needsYou: number | null) => ({ ...on(needsYou), pausedUntil: CLOCK_START + 3_600_000 }) as any
 const agentPause = (until: number) => ({ limit: 'agent', state: 'agent_waiting', reason: 'waiting for a build', ends_when: null, since: '2026-10-03T07:00:00.000Z', until: new Date(until).toISOString(), held: 0 })
 
+const BARE = 'PLAN-18 Card plugins'
+
+describe('the agent name in the title', () => {
+  test('goes once the session holds no team agent, whatever the reason, and the connection mark and the rest stay', async () => {
+    const none = [
+      { ...on(0), phase: 'key-revoked', revokedBy: 'Dan' },
+      { ...on(0), phase: 'signed-out' },
+      { ...on(0), agentBlock: 'agent_not_held' },
+      { ...on(0), agentBlock: 'agent_needed' },
+      { ...on(0), agentBlock: 'agent_limit_reached' },
+    ]
+    for (const v of none) {
+      const out = sessionTitle(TITLE, v as any, OFF, WORKING)
+      expect(out.endsWith(BARE)).toBe(true)
+      expect(out).not.toContain('Danxbot I')
+    }
+    expect(sessionTitle(`${DOWN}${TITLE}`, { ...on(0), agentBlock: 'agent_not_held' } as any, OFF, WORKING)).toBe(`${DOWN}${BARE}`)
+  })
+
+  test('stays while the agent is held, and a title with no agent prefix is left alone', async () => {
+    expect(sessionTitle(TITLE, on(0), OFF, WORKING)).toBe(`${UP}${TITLE}`)
+    expect(sessionTitle(BARE, { ...on(0), agentBlock: 'agent_not_held' } as any, OFF, WORKING)).toBe(`${DOWN}${BARE}`)
+    expect(sessionTitle('Fix: the login page', { ...on(0), agentBlock: 'agent_not_held' } as any, OFF, WORKING)).toBe(`${DOWN}Fix: the login page`)
+  })
+})
+
 describe('the hand', () => {
   test('marks the title while the plan has cards that need a person, and only then', async () => {
     expect(sessionTitle(TITLE, on(2), OFF, WORKING)).toBe(`${HAND}${TITLE}`)
@@ -39,7 +65,7 @@ describe('the hand', () => {
   })
 
   test('a lost connection outranks the hand: the title carries the red mark alone', async () => {
-    expect(sessionTitle(TITLE, { ...on(2), agentBlock: 'agent_not_held' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(2), agentBlock: 'agent_not_held' }, OFF, WORKING)).toBe(`${DOWN}${BARE}`)
     expect(sessionTitle(TITLE, on(2), { phase: 'stopped', planId: 18, detail: 'gone' }, WORKING)).toBe(`${DOWN}${TITLE}`)
   })
 
@@ -73,7 +99,7 @@ describe('the connection mark', () => {
     expect(titleConnection({ ...EMPTY, phase: 'signed-out' } as any, OFF)).toBeNull()
     expect(titleConnection({ ...EMPTY, phase: 'error', error: 'server not connected' } as any, OFF)).toBeNull()
     expect(titleConnection({ ...EMPTY, phase: 'ready', agent: AGENT } as any, OFF)).toBeNull()
-    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, WORKING)).toBe(TITLE)
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, WORKING)).toBe(BARE)
   })
 
   test('a loading view knows nothing yet, so the title is left exactly as it is', async () => {
@@ -157,10 +183,10 @@ describe('the pause mark', () => {
     expect(sessionTitle(TITLE, paused(0), OFF, WORKING)).toBe(`${PAUSE}${TITLE}`)
     expect(sessionTitle(TITLE, paused(null), OFF, WORKING)).toBe(`${PAUSE}${TITLE}`)
     expect(sessionTitle(TITLE, paused(2), OFF, WORKING)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(TITLE, { ...paused(2), agentBlock: 'agent_not_held' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...paused(2), agentBlock: 'agent_not_held' }, OFF, WORKING)).toBe(`${DOWN}${BARE}`)
     expect(sessionTitle(TITLE, { ...paused(0), phase: 'error' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
     expect(sessionTitle(TITLE, on(0), OFF, WORKING)).toBe(`${UP}${TITLE}`)
-    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out', pausedUntil: CLOCK_START } as any, OFF, WORKING)).toBe(TITLE)
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out', pausedUntil: CLOCK_START } as any, OFF, WORKING)).toBe(BARE)
   })
 
   test('unmarkedTitle strips the pause mark with or without the selector, in any order with the others', async () => {
@@ -242,10 +268,10 @@ describe('the building mark', () => {
     expect(sessionTitle(TITLE, paused(0), OFF, SUBAGENT)).toBe(`${BUILD}${TITLE}`)
     expect(sessionTitle(TITLE, paused(0), OFF, WORKING)).toBe(`${PAUSE}${TITLE}`)
     expect(sessionTitle(TITLE, on(2), OFF, SUBAGENT)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(TITLE, { ...on(0), agentBlock: 'agent_not_held' }, OFF, SUBAGENT)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(0), agentBlock: 'agent_not_held' }, OFF, SUBAGENT)).toBe(`${DOWN}${BARE}`)
     expect(sessionTitle(TITLE, { ...on(0), phase: 'error' }, OFF, SUBAGENT)).toBe(`${DOWN}${TITLE}`)
     // a session that never connected carries no mark, sub-agents or not
-    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, SUBAGENT)).toBe(TITLE)
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, SUBAGENT)).toBe(BARE)
   })
 
   test('unmarkedTitle strips the building mark with or without the selector, in any run with the others', async () => {
@@ -355,7 +381,7 @@ describe('the waiting mark', () => {
     expect(sessionTitle(TITLE, on(0), OFF, IDLE_NOW)).toBe(`${UP}${TITLE}`)
     expect(sessionTitle(TITLE, paused(0), OFF, IDLE_NOW)).toBe(`${PAUSE}${TITLE}`)
     // red still outranks it, and a failed load hides Needs You
-    expect(sessionTitle(TITLE, { ...on(2), agentBlock: 'agent_not_held' }, OFF, IDLE_NOW)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(2), agentBlock: 'agent_not_held' }, OFF, IDLE_NOW)).toBe(`${DOWN}${BARE}`)
     expect(sessionTitle(TITLE, { ...on(2), phase: 'error' }, OFF, IDLE_NOW)).toBe(`${DOWN}${TITLE}`)
   })
 

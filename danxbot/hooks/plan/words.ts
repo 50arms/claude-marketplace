@@ -55,6 +55,17 @@ export function needsYouShown(v: PlanView): boolean {
   return v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== ''
 }
 
+// the session holds no team agent: key revoked, signed out, or an agent gate refusal (agent_not_held, agent_needed, agent_limit_reached); a failed load says nothing of the agent, so it keeps the name
+function holdsNoAgent(v: PlanView): boolean {
+  return v.phase === 'key-revoked' || v.phase === 'signed-out' || v.agentBlock !== null
+}
+
+// the title without its leading `{Agent}: ` (the agent's name, then a plan or card ref), which names an agent the session no longer holds; any other title is left alone
+const AGENT_NAME_PREFIX = /^[^:\n]{1,60}:\s+(?=(?:PLAN|[A-Z][A-Z0-9]*)-\d+\b)/u
+export function withoutAgentName(title: string): string {
+  return title.replace(AGENT_NAME_PREFIX, '')
+}
+
 // the session title with ONE mark at most (operator, 2026-10-24): red when the connection is lost (titleConnection); else, while Needs You
 // is shown (needsYouShown), the waiting mark when nothing of the session runs (no turn, no sub-agent: it has done all it can) and the hand
 // while something still does; else the building mark while a sub-agent runs, else the pause mark while the agent is in an unexpired pause
@@ -62,7 +73,8 @@ export function needsYouShown(v: PlanView): boolean {
 // app holds it, marks included or not; '' stays ''. While the view is still loading nothing is known yet, so the title is left as it is.
 export function sessionTitle(title: string, v: PlanView, relay: RelayState, activity: TitleActivity): string {
   if (v.phase === 'loading') return title
-  const base = unmarkedTitle(title)
+  const marked = unmarkedTitle(title)
+  const base = holdsNoAgent(v) ? withoutAgentName(marked) : marked
   if (base === '') return base
   const connection = titleConnection(v, relay)
   if (connection === 'down') return `${DISCONNECTED_TITLE_MARK}${base}`
