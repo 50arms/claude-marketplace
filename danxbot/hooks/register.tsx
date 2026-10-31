@@ -3290,7 +3290,7 @@ export const register: Register = (on, options) => {
   on('session.measure', onMeasure)
   // usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
-  // CP-45 / DEC-314: a spawn the guard moved to haiku says so in the Agent call's result (a pass-through after `next`, like the time stamp)
+  // a spawn the guard moved to haiku says so in the Agent call's result (a pass-through after `next`, like the time stamp)
   on('tool.call', { tool: 'Agent' }, (_$, e, next) => spawnNotice(e, next))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)

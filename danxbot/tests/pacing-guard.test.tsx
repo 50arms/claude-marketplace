@@ -771,6 +771,16 @@ describe('a moved spawn says so', () => {
     expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
   })
 
+  // a resume ignores a changed `model` (a hook can only refuse one), so nothing is rewritten and nothing is told
+  test('a resumed run is neither rewritten nor recorded as moved', async () => {
+    const seen: any[] = []
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: 'general-purpose', model: 'opus', resume: 'agent_1' })
+    await guard(e, async x => (seen.push(x), { model: x.model, agentId: 'a' }) as any)
+    expect(seen[0].model).toBe('opus')
+    expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
+  })
+
   // gate finding 5: the worker-type pattern is built from the tier list, so a tier added there is a tier a worker type can carry
   test('every tier a spawn can be placed on is a worker type model', () => {
     for (const tier of ['haiku', 'sonnet', 'opus', 'fable']) expect(workerModelOf(`danxbot:worker-${tier}-low`)).toBe(tier)

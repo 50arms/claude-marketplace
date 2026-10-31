@@ -51,11 +51,17 @@ test("there is no worker outside the pairs the grades can name", () => {
 
 const planWorkflow = readFileSync(path.join(agentsDir, "../skills/plan-workflow/SKILL.md"), "utf8").replace(/\s+/g, " ");
 
+const planWorkflowRaw = readFileSync(path.join(agentsDir, "../skills/plan-workflow/SKILL.md"), "utf8");
+
+test("the moved-spawn prefix is quoted on one line, so a grep for it finds the skill", () => {
+  assert.ok(planWorkflowRaw.includes("`Usage pacing moved this sub-agent`"));
+});
+
 test("plan-workflow says every grade has an exact worker, and what a pacing-moved worker means", () => {
   assert.match(planWorkflow, /Every model \(`haiku`, `sonnet`, `opus`, `fable`\) and effort \(`low`, `medium`, `high`, `xhigh`, `max`\) a grade can name has its worker, so the match is always exact: never a nearby effort or model\./);
   assert.match(planWorkflow, /The Agent call's result then says `Usage pacing moved this sub-agent`: it did not run at the grade you chose/);
   assert.match(planWorkflow, /Run it again at its grade only when the budget leaves more than one slot free \(a spawn that takes the last free slot is moved again\)/);
   assert.doesNotMatch(planWorkflow, /once a slot is free/);
-  assert.match(planWorkflow, /A sub-agent doing work that has no card of its own takes the grade of its hardest step, read from the same ladder/);
+  assert.match(planWorkflow, /A sub-agent doing work that has no card of its own takes the grade of its hardest step, picked from the same ladder[^.]*; with no card to read, read the grade's model and effort from the board: `GET \/api\/boards\/<board>` with `fields\.effort_ladder`\./);
   assert.doesNotMatch(planWorkflow, /nearest worker|closest worker|no worker for/i);
 });
