@@ -8,9 +8,9 @@ import "./designated-test-container.mjs";
 // line or knob danxbot adds is added here in the same release, and this test then fails until the workers exist.
 //
 // `minimal` has no sub-agent form: for a sonnet/opus/fable line it means "send no effort at all, the model's default applies" and for haiku
-// "extended thinking off", while an agent file's `effort` field takes only low..max and a file without one runs at the session's usual
-// effort, which is not the model's default. A grade stored at `minimal` therefore names a pair no worker can run; that is danxbot's to settle
-// (see the CP-45 report), not something to approximate with a nearby worker.
+// "extended thinking off", while an agent file's `effort` field takes only low..max and a file without one runs at the effort of the session
+// that starts it (measured, DEC-334), which is not the model's default. So no worker exists for it; DEC-334 settles it: a grade at `minimal`
+// starts that model's `low` worker, and plan-workflow and CLAUDE.md say so (checked at the end of this file).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -58,10 +58,17 @@ test("the moved-spawn prefix is quoted on one line, so a grep for it finds the s
 });
 
 test("plan-workflow says every grade has an exact worker, and what a pacing-moved worker means", () => {
-  assert.match(planWorkflow, /Every model \(`haiku`, `sonnet`, `opus`, `fable`\) and effort \(`low`, `medium`, `high`, `xhigh`, `max`\) a grade can name has its worker, so the match is always exact: never a nearby effort or model\./);
+  assert.match(planWorkflow, /Every model \(`haiku`, `sonnet`, `opus`, `fable`\) and effort \(`low`, `medium`, `high`, `xhigh`, `max`\) a grade can name has its worker, so the match is exact: never a nearby effort or model./);
   assert.match(planWorkflow, /The Agent call's result then says `Usage pacing moved this sub-agent`: it did not run at the grade you chose/);
   assert.match(planWorkflow, /Run it again at its grade only when the budget leaves more than one slot free \(a spawn that takes the last free slot is moved again\)/);
   assert.doesNotMatch(planWorkflow, /once a slot is free/);
   assert.match(planWorkflow, /A sub-agent doing work that has no card of its own takes the grade of its hardest step, picked from the same ladder[^.]*; with no card to read, read the grade's model and effort from the board: `GET \/api\/boards\/<board>` with `fields\.effort_ladder`\./);
-  assert.doesNotMatch(planWorkflow, /nearest worker|closest worker|no worker for/i);
+  assert.doesNotMatch(planWorkflow, /closest worker|no worker for/i);
+});
+
+test("a grade at `minimal` is told to start the model's low worker, in plan-workflow and CLAUDE.md, and every worker states its effort", () => {
+  assert.match(planWorkflow, /The one grade effort with no worker is `minimal`[^]*?for a grade at `minimal` start that model's `low` worker, the nearest pair, and say in an agent note on the card that the grade ran at `low`\./);
+  const claudeMd = readFileSync(path.join(agentsDir, "../../CLAUDE.md"), "utf8").replace(/\s+/g, " ");
+  assert.match(claudeMd, /a grade stored at `minimal`[^.]*starts that model's `low` worker, the nearest pair/);
+  for (const name of files) assert.ok(frontmatter(readFileSync(path.join(agentsDir, name), "utf8")).effort, `${name} states its effort: a file without one runs at its parent's effort`);
 });

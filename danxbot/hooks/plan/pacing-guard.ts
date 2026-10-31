@@ -8,7 +8,7 @@ import type { PacingEnv } from './pacing-line'
 // So a spawn does not read a count and decide for itself: it CLAIMS its slot from danxbot (POST /api/pacing/agents/claim, which places the
 // session on its account itself and, under one lock, reads the live count and budget and takes the slot or refuses), and the plugin acts on the
 // answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn (`decideSpawn`, pure), wires
-// the spawn handler (`spawnGuard`) and the notice handler for a moved spawn (`spawnNotice`); register.tsx only wires those two handlers in with its dashboard call.
+// the spawn handler (`spawnGuard`) and the notice handler for a moved spawn (`spawnNotice`); register.tsx only wires those two handlers in, the spawn guard with its dashboard call.
 //
 // BEHAVIOUR GUARD ONLY: nothing here denies or holds a tool call, so an agent can always save its work (commits, pushes, card writes) however tight the
 // budget. Only `agent.spawn` can be refused; the one `tool.call` hook (`spawnNotice`) is a pass-through that appends text after the call. The spawn guard FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
