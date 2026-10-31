@@ -1,6 +1,6 @@
 ---
 name: worker-sonnet-high
-description: 'Sonnet, high effort. Plan, design and quality-gate reviews, tricky test design, hard investigations.'
+description: 'Sonnet, high effort.'
 model: sonnet
 effort: high
 ---

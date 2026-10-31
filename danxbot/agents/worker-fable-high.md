@@ -1,6 +1,6 @@
 ---
 name: worker-fable-high
-description: 'Fable, high effort. Novel architecture with no prior art, where a wrong call is very expensive.'
+description: 'Fable, high effort.'
 model: fable
 effort: high
 ---

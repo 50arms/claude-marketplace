@@ -21,11 +21,22 @@ import type { PacingEnv } from './pacing-line'
 
 export type SpawnDecision = { kind: 'allow' } | { kind: 'downgrade'; model: 'haiku' }
 
+// CP-45 / DEC-314: a spawn the guard moved to haiku is told to the session that asked for it, never silent. The spawn (`agent.spawn`) and the Agent
+// tool call it belongs to (`tool.call`, `tool_use_id`) are two hooks of one call, so the first records what it changed and the second says it in
+// the call's result. Module state: both hooks run within one call, and a reload between them loses only the notice.
+const moved = new Map<string, { asked: string; to: string }>()
+
 // ---- the decision ---------------------------------------------------------------------------------------------------------------
 
 // Model tiers, cheapest first. A spawn is only ever moved DOWN this list, never up.
 const TIERS = ['haiku', 'sonnet', 'opus', 'fable'] as const
 type Tier = (typeof TIERS)[number]
+
+// The model a `danxbot:worker-<model>-<effort>` agent type runs on (its file's `model`), read from the type's name.
+const WORKER_TYPE = /^danxbot:worker-(haiku|sonnet|opus|fable)-/
+export function workerModelOf(subagentType: string): Tier | null {
+  return (WORKER_TYPE.exec(subagentType)?.[1] as Tier | undefined) ?? null
+}
 
 export function tierOf(model: string | undefined): Tier | null {
   if (model === undefined) return null
@@ -88,6 +99,30 @@ export function claimFailedReason(failure: string): string {
   )
 }
 
+// The model the spawn would run on if left alone: a fork's is its parent's; else the call's `model`; else, for a worker agent type, the model its name
+// carries (its file fixes it); else the parent's. Reading the name keeps a `worker-haiku-*` spawned from an Opus session from being judged an Opus spawn.
+export function requestedModel(e: Pick<AgentSpawnInput, 'fork' | 'model' | 'subagentType' | 'parentModel'>): string {
+  if (e.fork) return e.parentModel
+  return e.model ?? workerModelOf(e.subagentType) ?? e.parentModel
+}
+
+export function movedNotice(asked: string, to: string): string {
+  return (
+    `Usage pacing moved this sub-agent: you asked for ${asked}, and it runs on ${to} (it took the last free slot under the account's budget). ` +
+    'It does not run at the grade you chose. Count nothing it records as work done at that grade: run it again, at its grade, once a slot is free.'
+  )
+}
+
+// The `tool.call` hook on the Agent tool: a pass-through that only appends the notice after the call. It denies nothing and rewrites nothing, so it can
+// never hold a commit, push or card write.
+export async function spawnNotice<R extends { context?: readonly string[]; deny?: string }>(e: { tool_use_id: string }, next: (e: any) => Promise<R>): Promise<R> {
+  const r = await next(e)
+  const note = moved.get(e.tool_use_id)
+  moved.delete(e.tool_use_id)
+  if (note === undefined || r.deny !== undefined) return r
+  return { ...r, context: [...(r.context ?? []), movedNotice(note.asked, note.to)] }
+}
+
 // The `agent.spawn` hook.
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
@@ -99,11 +134,14 @@ export function spawnGuard(env: PacingEnv) {
     // danxbot refused the claim, so the spawn is refused, worded from danxbot's own cause whatever the plugin's reading of the verdict says
     if (claim.kind === 'refused') return { deny: denyReason(claim.pacing.verdict, claim.why) }
     let decision: SpawnDecision = { kind: 'allow' }
-    if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
+    if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, requestedModel(e))
     try {
       // a fork ignores `model`, so there is nothing to rewrite
-      const started = await next(decision.kind === 'downgrade' && !e.fork ? { ...e, model: decision.model } : e)
+      const downgraded = decision.kind === 'downgrade' && !e.fork
+      const started = await next(downgraded ? { ...e, model: decision.model } : e)
       if (claim.kind === 'claimed' && started.deny !== undefined) await releaseClaim(env, claim.claimId)
+      // only a spawn that started was moved: a refused one has no sub-agent to tell the asker about
+      if (downgraded && started.deny === undefined) moved.set(e.tool_use_id, { asked: e.subagentType, to: decision.model })
       return started
     } catch (err) {
       if (claim.kind === 'claimed') await releaseClaim(env, claim.claimId)

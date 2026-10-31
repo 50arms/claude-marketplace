@@ -1,6 +1,6 @@
 ---
 name: worker-haiku-high
-description: 'Haiku, high effort. Spelled-out mechanical work at any breadth: scripted edits, call-site swaps, single-file fixes with exact steps.'
+description: 'Haiku, high effort.'
 model: haiku
 effort: high
 ---

@@ -77,7 +77,7 @@ import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, r
 import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
-import { spawnGuard } from './plan/pacing-guard'
+import { spawnGuard, spawnNotice } from './plan/pacing-guard'
 import { pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
@@ -3290,6 +3290,8 @@ export const register: Register = (on, options) => {
   on('session.measure', onMeasure)
   // usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
+  // CP-45 / DEC-314: a spawn the guard moved to haiku says so in the Agent call's result (a pass-through after `next`, like the time stamp)
+  on('tool.call', { tool: 'Agent' }, (_$, e, next) => spawnNotice(e, next))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onClassicSessionStart)

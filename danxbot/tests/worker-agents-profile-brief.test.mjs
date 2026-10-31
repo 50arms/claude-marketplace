@@ -21,7 +21,7 @@ const PROFILE_LINE =
 const CARD_FALLBACK = "Otherwise, if the brief names a card, load `danxbot:issue-workflow` and work it.";
 
 test("there are worker agents to check", () => {
-  assert.ok(agents.length >= 7, agents.map((a) => a.name).join(", "));
+  assert.ok(agents.length >= 20, agents.map((a) => a.name).join(", "));
 });
 
 for (const { name, text } of agents) {

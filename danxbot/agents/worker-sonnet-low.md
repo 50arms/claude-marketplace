@@ -1,6 +1,6 @@
 ---
 name: worker-sonnet-low
-description: 'Sonnet, low effort. Routine code or investigation with clear AC and prior art, however many files it touches.'
+description: 'Sonnet, low effort.'
 model: sonnet
 effort: low
 ---

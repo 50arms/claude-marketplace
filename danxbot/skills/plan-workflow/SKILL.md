@@ -371,7 +371,8 @@ task, so the brief repeats nothing the profile or the card says. Build a card wi
 `Agent({subagent_type:"danxbot:worker-<model>-<effort>", prompt:"work <CARD-ID>"})`. Add the worktree rule
 below only when the card wouldn't cover it. Set the card's build grade (`effort_level`) first, by how complex its hardest step is, never
 by how much work it is (issue-workflow's creation guide, § Build grade), then read the model and effort that grade means from the dashboard (the card read answers them) when you start the worker, and pick the
-`danxbot:worker-<model>-<effort>` agent with that model and effort; never `general-purpose`. Story points decide process (a card, gates, splitting), never the agent grade.
+`danxbot:worker-<model>-<effort>` agent with that model and effort; never `general-purpose`. Every model (`haiku`, `sonnet`, `opus`, `fable`)
+and effort (`low`, `medium`, `high`, `xhigh`, `max`) a grade can name has its worker, so the match is always exact: never a nearby effort or model. Story points decide process (a card, gates, splitting), never the agent grade.
 The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
 worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
 gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
@@ -422,7 +423,9 @@ work-in-progress commit), tell no one, and never do the work yourself instead. T
 knows; danxbot wakes you with the message that lets you continue, and you then carry on where you
 were. A pacing text that asks for more than this is outdated: follow this section.
 
-- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
+- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full. The Agent call's result then says `Usage pacing moved this
+  sub-agent`: it did not run at the grade you chose, so what it reports (a gate's verdict above all) is not work at that grade. Run it again at its
+  grade once a slot is free; never record or act on its result as if it had.
 - **Over pace, or the budget full**: stop as above. Agents already running are left to finish.
 - **Critical**: stop as above (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused), and tell
   each running sub-agent to stop where it is and report back; once told to continue, continue each with `SendMessage`.

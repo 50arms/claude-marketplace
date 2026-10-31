@@ -1,6 +1,6 @@
 ---
 name: worker-haiku-low
-description: 'Haiku, low effort. Fully specified mechanical edits: renames, copied values, lookups, formatting.'
+description: 'Haiku, low effort.'
 model: haiku
 effort: low
 ---
