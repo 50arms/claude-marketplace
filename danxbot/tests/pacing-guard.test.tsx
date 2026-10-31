@@ -9,7 +9,7 @@ import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
 import type { PacingVerdict } from '../types'
-import { BLOCKED_LINE } from '../hooks/plan/config'
+import { BLOCKED_LINE, DISPATCHED_SERVER, SERVER } from '../hooks/plan/config'
 import { test, dashboard, startSession } from './plan-kit'
 import { CONNECTED_TITLE_MARK, HOURGLASS_TITLE_MARK } from '../hooks/plan/words'
 
@@ -499,6 +499,65 @@ describe('the agent.spawn hook', () => {
       await session($, on, options)
       options.mcp = 'down'
       expect((await spawn($)).deny).toMatch(/^Usage pacing:/)
+    })
+  })
+
+  // A danxbot-dispatched agent (the orchestrator profile) runs this plugin's hooks, but its clean-room MCP config (`--strict-mcp-config`) names the
+  // dashboard server `danx-dashboard` and loads no plugin server, so the claim must reach the server the session really has.
+  describe('the claim reaches the dashboard server the session has', () => {
+    const DISPATCHED = [DISPATCHED_SERVER]
+
+    test('a dispatched session (only `danx-dashboard`): the spawn is claimed through it and starts', async ($, on) => {
+      const d = await session($, on, { servers: DISPATCHED, pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+      const r = await spawn($)
+      expect(r.deny).toBeUndefined()
+      expect(d.claimsAllowed).toHaveLength(1)
+      expect(claimToasts(d)).toEqual([])
+      expect(d.serversCalled.has(DISPATCHED_SERVER)).toBe(true)
+    })
+
+    test("a dispatched session's claim is judged by danxbot like any other: a critical verdict still refuses", async ($, on) => {
+      await session($, on, { servers: DISPATCHED, pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
+      expect((await spawn($)).deny).toMatch(/critical/)
+    })
+
+    test("a dispatched session's give-back of a claim the host refused reaches the same server", async ($, on) => {
+      const d = await session($, on, { servers: DISPATCHED, pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+      expect((await spawn($, { prompt: 'refuse' })).deny).toBe('host refused')
+      expect(d.claimsAllowed).toHaveLength(1)
+      expect(d.claimsReleased).toEqual(d.claimsAllowed)
+      expect(giveBackToasts(d)).toEqual([])
+    })
+
+    test('a dispatched session whose server connects after the first look is claimed against once it is listed', async ($, on) => {
+      const options: Parameters<typeof dashboard>[1] = { servers: DISPATCHED, mcp: 'down', pacingLine: { body: wire({ level: 'critical', budget: 0 }) } }
+      const d = await session($, on, options)
+      const spawning = spawn($)
+      await d.clock.settle()
+      await d.clock.advance(1_000)
+      options.mcp = 'up'
+      await d.clock.advance(1_000)
+      expect((await spawning).deny).toMatch(/critical/)
+    })
+
+    test("an operator session (the plugin's own server) keeps calling that name only", async ($, on) => {
+      const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+      expect((await spawn($)).deny).toBeUndefined()
+      expect([...d.serversCalled]).toEqual([SERVER])
+    })
+
+    test('a session with both servers is claimed through the plugin\'s own', async ($, on) => {
+      const d = await session($, on, { servers: [DISPATCHED_SERVER, SERVER], pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+      expect((await spawn($)).deny).toBeUndefined()
+      expect(d.serversCalled.has(DISPATCHED_SERVER)).toBe(false)
+    })
+
+    test('a session with neither server is still refused, the strict cap: nothing is claimed', async ($, on) => {
+      const d = await session($, on, { servers: [], pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+      const pending = spawn($)
+      await d.clock.advance(PACING_READ_DEADLINE_MS + 1)
+      expect((await pending).deny).toMatch(/^Usage pacing: the spawn could not claim its slot from danxbot \(the danx-dashboard MCP server never connected in this session\)/)
+      expect(d.claimsAllowed).toEqual([])
     })
   })
 

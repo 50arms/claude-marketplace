@@ -30,7 +30,8 @@
 // or through `plan_connect`.
 //
 // The ONE dashboard server: no connected repo declares its own `danx-dashboard` entry any more, so Claude
-// Code lists exactly this one, named `plugin:danxbot:danx-dashboard`, in every folder.
+// Code lists exactly this one, named `plugin:danxbot:danx-dashboard`, in every folder of an operator session (a danxbot-dispatched agent's
+// clean-room config names its own server `danx-dashboard` and, being strict, loads this one not at all: hooks/plan/config.ts DASHBOARD_SERVERS).
 //
 // stdout is the MCP stream, so nothing here may print to it: every notice goes to stderr, and npm's output is captured.
 import { spawn } from "node:child_process";

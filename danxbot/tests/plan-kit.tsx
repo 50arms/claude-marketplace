@@ -4,7 +4,7 @@
 import { expect, mock, test as baseTest } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { SERVER, toolName } from '../hooks/plan/config'
+import { DASHBOARD_SERVERS, SERVER, serverToolName, toolName } from '../hooks/plan/config'
 import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/relay/config'
 
 // DX-4883: the runner's default is 5000 ms of REAL time per test, and a case that drives the mocked clock pays real time to settle every timer
@@ -120,6 +120,9 @@ export function dashboard(
     dashboardUrl?: unknown
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky' | 'refused' | 'strictKeys'
+    // the dashboard MCP servers this session really has (default: the plugin's own, the name an operator session has). A dispatched agent's clean-room
+    // config names its server `danx-dashboard` and loads no plugin server (`--strict-mcp-config`); a call to a name the session lacks is the engine's "no such server"
+    servers?: string[]
     // `sessionListenerAttached` on GET /api/plan-sessions/me: a state (any string, so an unknown one can be tried; default
     // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
     // as readCallerSessionOverlay does.
@@ -553,6 +556,9 @@ export function dashboard(
     return { deny: `${call} is not available in this mode: no session is bound in this process (the REPL has not mounted and no headless session is built); catch it and carry on` } as any
   }
   const notConnected = () => options.mcp === 'down'
+  const sessionServers = () => options.servers ?? [SERVER]
+  // every dashboard server name a hook called, whichever the session has
+  const serversCalled = new Set<string>()
   const pacingReads: number[] = []
   // DX-5593: the spawn claim (POST /api/pacing/agents/claim) and its give-back (DELETE ...?claim_id=): every attempt, the ids danxbot allowed, the ids given back
   const claimAttempts = { n: 0 }
@@ -646,6 +652,12 @@ export function dashboard(
         return { value: { content: [{ type: 'text', text: `Navigated to ${e.args.url}` }], isError: false } }
       }
       return { deny: `unknown Browser tool ${e.tool}` }
+    }
+    // the dashboard servers a session can have: a call to one it lacks is the engine's "no such server"; one it has is served by the handlers below, which key on the plugin's name
+    if (DASHBOARD_SERVERS.includes(e.server)) {
+      serversCalled.add(e.server)
+      if (!sessionServers().includes(e.server)) return { deny: `$.mcp.call: no connected MCP tool "${e.tool}" on a server named "${e.server}"` }
+      e = { ...e, server: SERVER }
     }
     // DX-4997 / DX-5033: the dashboard's rule for the agent pause, applied to every danxbot_api call the plugin makes
     if (e.server === SERVER && e.tool === 'danxbot_api') {
@@ -1001,9 +1013,9 @@ export function dashboard(
   // DX-4233: which of the plugin server's tools the session lists: all of them (default), the ones an old pinned server has (no plan_events_wait),
   // or none (the server is not connected)
   const toolListAnswer = () => {
-    const tool = (name: string) => ({ name: `mcp__plugin_danxbot_danx-dashboard__${name}`, description: '', mcp: true })
+    const tool = (server: string, name: string) => ({ name: serverToolName(server, name), description: '', mcp: true })
     if (notConnected() || world.tools === 'none') return { value: [] } as any
-    return { value: world.tools === 'old' ? [tool('danxbot_api')] : [tool('danxbot_api'), tool('plan_events_wait')] } as any
+    return { value: sessionServers().flatMap(server => (world.tools === 'old' ? [tool(server, 'danxbot_api')] : [tool(server, 'danxbot_api'), tool(server, 'plan_events_wait')])) } as any
   }
   on('tool.list', () => (toolLists.n++, world.bound ? toolListAnswer() : unboundCall('$.tool.list')))
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)
@@ -1199,7 +1211,7 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, beforeNextWrite: (key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, turnActivity: turnActivityCalls, loadPauseReads: [] as typeof reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.sessionReadFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, serversCalled, beforeNextWrite:(key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, turnActivity: turnActivityCalls, loadPauseReads: [] as typeof reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.sessionReadFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-5605: the session's stored events warning (the text its one toast is built from): the latest value the plugin wrote, null while events flow.

@@ -55,6 +55,7 @@ import {
   busyKey,
   DESKTOP_SURFACE,
 } from './plan/config'
+import { serverOf } from './plan/server'
 import { errText, loadPlan } from './plan/load'
 import { blockedOrigin, optionDashboardUrl } from './plan/origin'
 import type { Api } from './plan/load'
@@ -223,14 +224,14 @@ let permissionTickBusy = false
 // a dashboard call has succeeded in this session. Module state, cleared at every session start.
 let dashboardAnswered = false
 
-// One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER): same credential, same
+// One dashboard call through the session's own danx-dashboard MCP server (the plugin's, SERVER, unless a caller names the one its session has: the pacing calls do, liveServer): same credential, same
 // x-danx-session-id header. EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
 // the agent acting, which would end the agent's pause. The agent's own danxbot_api calls never pass through here. Any rejection (including the engine's "no such server") is an error shown as one.
-async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}): Promise<Api> {
+async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: string } = {}, server: string = SERVER): Promise<Api> {
   let res
   try {
-    res = await $.mcp.call(SERVER, 'danxbot_api', { method, path, ...extra, background: true })
+    res = await $.mcp.call(server, 'danxbot_api', { method, path, ...extra, background: true })
   } catch (err: any) {
     const message = String(err?.message ?? err)
     // `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
@@ -2596,12 +2597,24 @@ async function drawAssistantMessage($: any, e: any, next: any) {
   return next(text === e.props.text ? e : { ...e, props: { ...e.props, text } })
 }
 
+// The dashboard server this session has now (serverOf, hooks/plan/server.ts, reads the session's tool list). A session with neither name, or a list
+// that cannot be read (the engine has not bound the session yet), is the plugin's own name: the call then fails as the engine's "no such server",
+// which the pacing claim waits out and then refuses (the strict cap). Nothing is remembered: the list is the live state.
+async function liveServer($: any): Promise<string> {
+  try {
+    return serverOf((await $.tool.list()).map((t: any) => t.name)) ?? SERVER
+  } catch {
+    return SERVER
+  }
+}
+
 // the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
 function pacingEnv($: any) {
   return {
     now: () => $.clock.now(),
     within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
-    call: (method: string, path: string, body?: object) => api($, method, path, body === undefined ? {} : { body }),
+    // the pacing calls go to the server the session has: a dispatched agent's is `danx-dashboard`, not the plugin's (DASHBOARD_SERVERS)
+    call: async (method: string, path: string, body?: object) => api($, method, path, body === undefined ? {} : { body }, await liveServer($)),
     reading: () => currentUsageBody($),
     signedIn: async () => dashboardAnswered || isSignedIn(await read($, view)),
     sleep: (ms: number) => $.clock.sleep(ms),
