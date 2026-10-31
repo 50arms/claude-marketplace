@@ -1853,14 +1853,17 @@ async function onAckCall($: any, e: any, next: any) {
     detach($, 'Plan refresh', refresh($, true))
   }
   await touchRecordClock($, e, next)
+  // a manual pickup by a session holding nothing connects it, as card_connect does, so the dashboard gets its activity at once
+  const answer = answerOf(ran)
+  if (answer.ok && answer.body?.connectedByPickup === true) await reportActivityOnConnect($)
   // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
-  if (e.agentId === undefined && !raisedByPlugin(next.origin) && answerOf(ran).ok) {
+  if (e.agentId === undefined && !raisedByPlugin(next.origin) && answer.ok) {
     const now = await $.clock.now()
     await update($, workMarks, cur => marksAfter(cur, e.method, e.path, e.body, now))
   }
   const id = ackedEventId(e.method, e.path)
   if (id === null) return ran
-  if (answerOf(ran).ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
+  if (answer.ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
   return ran
 }
 

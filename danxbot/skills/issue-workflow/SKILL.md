@@ -107,8 +107,14 @@ Transition `pickup` with `manual:true`, which stops anything auto-transitioning 
 server stamps your session id (`$CLAUDE_CODE_SESSION_ID`) as `assigned_agent` and ignores
 any name you send. Read `assigned_agent` back — anything but your session id (incl.
 `null`) is a failed claim: retry once, then stop. The hold clears only by an
-explicit transition from your session (`complete`/`cancel`/`block`/`rollback_pickup`). A
+explicit transition from your session (`complete`/`cancel`/`block`/`rollback_pickup`), or,
+after a connecting pickup (below), when the session connects elsewhere or leaves. A
 sub-agent you run is still your card: pickup first, drive the terminal transition yourself.
+
+A session holding no plan and no card that picks up a card on no plan also connects to it, as
+`card_connect` does: the reply carries `connectedByPickup: true` and `card_connect`'s answer
+(`owedComments`, `missedEvents`, `naming`, the role text), so act on it as on a connect. `card_held`
+refuses the pickup. A session holding a plan or another card, a card on a plan and a worker only claim.
 
 ## When to block
 

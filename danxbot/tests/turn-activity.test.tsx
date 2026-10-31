@@ -30,6 +30,16 @@ function answerCardConnect(on: any, d: any) {
   })
 }
 
+// DX-6556: the dashboard's answer to a manual pickup, connecting when the world says this session holds nothing to keep it from connecting
+function answerPickup(on: any, d: any) {
+  on('tool.call', { tool: toolName('danxbot_api') }, (_$: any, e: any) => {
+    if (d.world.pickupRefused) return { result: {}, text: JSON.stringify({ ok: false, status: 409, error: 'card_held' }), isError: true } as any
+    if (d.world.pickupConnects !== true) return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { issue: { id: CARD_ID } } }), isError: false } as any
+    d.world.card = { id: CARD_ID, title: CARD_TITLE }
+    return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { issue: { id: CARD_ID }, connectedByPickup: true, session: { cardId: CARD_ID } } }), isError: false } as any
+  })
+}
+
 describe('the turn activity body (pure)', () => {
   test('since is an ISO-8601 UTC instant as Date#toISOString writes it', () => {
     expect(turnActivityBody('in_turn', Date.parse('2026-10-24T11:00:00.123Z'))).toEqual({ activity: 'in_turn', since: '2026-10-24T11:00:00.123Z' })
@@ -58,6 +68,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       answerPlanConnect(on, d)
       answerCardConnect(on, d)
+      answerPickup(on, d)
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       if (!onPlan) d.world.planId = null
       if (onCard) d.world.card = { id: CARD_ID, title: CARD_TITLE }
@@ -241,6 +252,36 @@ for (const surface of SURFACES) {
         d.world.cardRefused = true
         await $.turn.start(START)
         await $.tool.call(CARD_CONNECT)
+        await d.clock.settle()
+        expect(sent(d)).toEqual([])
+      })
+    })
+
+    describe('a manual pickup reports the current activity only when it connected (DX-6556)', () => {
+      const PICKUP = { tool: toolName('danxbot_api'), method: 'POST', path: `/api/issues/${CARD_ID}/transition`, body: { action: 'pickup', manual: true } } as any
+
+      test('a pickup that connected mid-turn sends in_turn at once', async ($, on) => {
+        const d = await started($, on, () => COMPACTED, false)
+        d.world.pickupConnects = true
+        await $.turn.start(START)
+        await $.tool.call(PICKUP)
+        await d.clock.settle()
+        expect(sent(d)).toEqual(['in_turn'])
+      })
+
+      test('a pickup that only claimed sends nothing', async ($, on) => {
+        const d = await started($, on, () => COMPACTED, false)
+        await $.turn.start(START)
+        await $.tool.call(PICKUP)
+        await d.clock.settle()
+        expect(sent(d)).toEqual([])
+      })
+
+      test('a refused pickup sends nothing', async ($, on) => {
+        const d = await started($, on, () => COMPACTED, false)
+        d.world.pickupRefused = true
+        await $.turn.start(START)
+        await $.tool.call(PICKUP)
         await d.clock.settle()
         expect(sent(d)).toEqual([])
       })
