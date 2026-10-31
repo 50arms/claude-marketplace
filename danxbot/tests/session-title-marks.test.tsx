@@ -6,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
 import { RELAY_OFF } from '../hooks/relay/config'
-import { BUILDING_TITLE_MARK, CONNECTED_TITLE_MARK, DISCONNECTED_TITLE_MARK, NEEDS_YOU_TITLE_MARK, PAUSED_TITLE_MARK, WAITING_TITLE_MARK, sessionTitle, titleConnection, unmarkedTitle } from '../hooks/plan/words'
+import { BUILDING_TITLE_MARK, CONNECTED_TITLE_MARK, DISCONNECTED_TITLE_MARK, HOURGLASS_TITLE_MARK, NEEDS_YOU_TITLE_MARK, PAUSED_TITLE_MARK, WAITING_TITLE_MARK, sessionTitle, titleConnection, unmarkedTitle } from '../hooks/plan/words'
 import { test, CLOCK_START, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
 
 const TITLE = 'Danxbot I: PLAN-18 Card plugins'
@@ -21,9 +21,10 @@ const PAUSE = PAUSED_TITLE_MARK
 const BUILD = BUILDING_TITLE_MARK
 const WAIT = WAITING_TITLE_MARK
 // what the session is doing (TitleActivity): its turn running with no sub-agent, with one, or nothing running at all
-const WORKING = { subAgents: false, turnRunning: true }
-const SUBAGENT = { subAgents: true, turnRunning: true }
-const IDLE_NOW = { subAgents: false, turnRunning: false }
+// `slotRefused`: the session's last sub-agent spawn was refused by usage pacing and no spawn since was admitted (the hourglass)
+const WORKING = { subAgents: false, turnRunning: true, slotRefused: false }
+const SUBAGENT = { subAgents: true, turnRunning: true, slotRefused: false }
+const IDLE_NOW = { subAgents: false, turnRunning: false, slotRefused: false }
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const PAUSE_PATH = '/api/plan-sessions/me/pause'
 const LOADS_AT_START = 1
@@ -376,7 +377,7 @@ describe('the waiting mark', () => {
     expect(sessionTitle(TITLE, on(2), OFF, IDLE_NOW)).toBe(`${WAIT}${TITLE}`)
     expect(sessionTitle(TITLE, paused(2), OFF, IDLE_NOW)).toBe(`${WAIT}${TITLE}`)
     expect(sessionTitle(TITLE, on(2), OFF, WORKING)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(TITLE, on(2), OFF, { subAgents: true, turnRunning: false })).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(TITLE, on(2), OFF, { subAgents: true, turnRunning: false, slotRefused: false })).toBe(`${HAND}${TITLE}`)
     // with nothing waiting on a person, an idle session keeps its other marks
     expect(sessionTitle(TITLE, on(0), OFF, IDLE_NOW)).toBe(`${UP}${TITLE}`)
     expect(sessionTitle(TITLE, paused(0), OFF, IDLE_NOW)).toBe(`${PAUSE}${TITLE}`)
@@ -425,5 +426,58 @@ describe('the waiting mark', () => {
     for (const c of d.world.cards) for (const p of c.problems) p.open = false
     await forceRefresh($, d)
     expect(await reads($.turn.start({ turnId: 't3' } as any))).toBe(0)
+  })
+})
+
+describe('the hourglass mark', () => {
+  const HOURGLASS = HOURGLASS_TITLE_MARK
+  // the session's last sub-agent spawn was refused by usage pacing: the title's slot-refused state (pacing-line)
+  const REFUSED = { subAgents: false, turnRunning: true, slotRefused: true }
+  const REFUSED_IDLE = { subAgents: false, turnRunning: false, slotRefused: true }
+  const REFUSED_SUBAGENT = { subAgents: true, turnRunning: true, slotRefused: true }
+  // a pause the dashboard says waits on usage pacing (`waits_on`, read with the pause)
+  const pacingPaused = (needsYou: number | null) => ({ ...paused(needsYou), pausedWaitsOn: 'pacing' }) as any
+
+  test('a connected session whose spawn was refused shows the hourglass in place of green', async () => {
+    expect(sessionTitle(TITLE, on(0), OFF, REFUSED)).toBe(`${HOURGLASS}${TITLE}`)
+    expect(sessionTitle(TITLE, on(0), OFF, REFUSED_IDLE)).toBe(`${HOURGLASS}${TITLE}`)
+  })
+
+  test('a pause that waits on pacing shows the hourglass in place of the pause mark; another pause keeps the pause mark', async () => {
+    expect(sessionTitle(TITLE, pacingPaused(0), OFF, WORKING)).toBe(`${HOURGLASS}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...paused(0), pausedWaitsOn: 'person' }, OFF, WORKING)).toBe(`${PAUSE}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...paused(0), pausedWaitsOn: null }, OFF, WORKING)).toBe(`${PAUSE}${TITLE}`)
+  })
+
+  test('the hammer, the hand, the waiting mark and red keep their place ahead of the hourglass', async () => {
+    expect(sessionTitle(TITLE, on(0), OFF, REFUSED_SUBAGENT)).toBe(`${BUILD}${TITLE}`)
+    expect(sessionTitle(TITLE, pacingPaused(0), OFF, REFUSED_SUBAGENT)).toBe(`${BUILD}${TITLE}`)
+    expect(sessionTitle(TITLE, on(2), OFF, REFUSED)).toBe(`${HAND}${TITLE}`)
+    expect(sessionTitle(TITLE, on(2), OFF, REFUSED_IDLE)).toBe(`${WAIT}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(0), agentBlock: 'agent_not_held' }, OFF, REFUSED)).toBe(`${DOWN}${BARE}`)
+  })
+
+  test('a session that never connected carries no hourglass, refused or not', async () => {
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, REFUSED)).toBe(BARE)
+  })
+
+  test('unmarkedTitle strips the hourglass with or without the selector, in any run with the others', async () => {
+    expect(unmarkedTitle(`${HOURGLASS}${TITLE}`)).toBe(TITLE)
+    expect(unmarkedTitle(`⏳ ${TITLE}`)).toBe(TITLE)
+    expect(unmarkedTitle(`⏳️ 🔨 ⏳ 🟢 ${TITLE}`)).toBe(TITLE)
+    expect(sessionTitle(`${HOURGLASS}${TITLE}`, on(0), OFF, WORKING)).toBe(`${UP}${TITLE}`)
+    expect(sessionTitle(`Say ⏳ ${TITLE}`, on(0), OFF, WORKING)).toBe(`${UP}Say ⏳ ${TITLE}`)
+  })
+
+  test('a load of a session paused on pacing shows the hourglass from the pause read', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    d.world.pause = { ...agentPause(CLOCK_START + 3_600_000), waits_on: 'pacing' }
+    await startSession($, d, 'desktop')
+    expect(d.world.appSession.title).toBe(`${HOURGLASS}Tendai: PLAN-23 Agent mode`)
+    d.world.pause = { ...agentPause(CLOCK_START + 3_600_000), waits_on: 'person' }
+    await forceRefresh($, d)
+    expect(d.world.appSession.title).toBe(`${PAUSE}Tendai: PLAN-23 Agent mode`)
   })
 })

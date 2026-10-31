@@ -40,6 +40,8 @@ export type PacingEnv = {
   // the wait between looks for a server that has not connected yet; rejects when the plugin is unloaded
   sleep: (ms: number) => Promise<void>
   toast: (text: string) => void
+  // called when the slot-refused state (slotWaiting) changes, so the session title is redrawn at once; a host that draws no title leaves it out
+  onSlotChange?: () => void
 }
 
 export const LINE_PATH = '/api/pacing/line'
@@ -85,6 +87,9 @@ let lastClaimError: string | null = null
 // and for the give-back's failures, in a slot of their own: a successful claim clears lastClaimError, and every give-back follows one
 let lastReleaseError: string | null = null
 let inflight: Promise<void> | null = null
+// the slot-refused state: the last claim was refused by usage pacing, and no claim since was admitted and no read showed a free slot. It is
+// the title's hourglass (slotWaiting); it is set and cleared only by the claim's answer and the pacing read, never by a failed one.
+let slotRefused = false
 // bumped by every reset: a read that was in flight across one must not write the new session's state
 let generation = 0
 
@@ -97,6 +102,24 @@ export function resetPacing(): void {
   lastClaimError = null
   lastReleaseError = null
   inflight = null
+  slotRefused = false
+}
+
+// whether the session's last sub-agent spawn was refused by usage pacing and no spawn has been admitted since (the title's hourglass)
+export function slotWaiting(): boolean {
+  return slotRefused
+}
+
+// sets the slot-refused state, telling the host once per change so the title is redrawn
+function setSlotRefused(env: PacingEnv, next: boolean): void {
+  if (slotRefused === next) return
+  slotRefused = next
+  env.onSlotChange?.()
+}
+
+// a verdict with a slot free for a sub-agent: on pace, and a budget that is null (no cap) or above the sub-agents running plus the slots held back
+function slotFree(v: PacingVerdict): boolean {
+  return v.level === 'on_pace' && (v.budget === null || v.budget > v.subAgents + v.reservedAgents)
 }
 
 // One toast per distinct failure text, for every failure pacing has (a read, the clock, a hook error).
@@ -142,6 +165,8 @@ async function fetchPacing(env: PacingEnv, ms: number): Promise<void> {
     hasSucceeded = true
     // a good read clears the failure, so the same failure is told again if it comes back
     lastError = null
+    // a read that shows a free slot ends the wait, whatever the last refusal said
+    if (parsed !== null && slotFree(parsed.verdict)) setSlotRefused(env, false)
   } catch (err: any) {
     if (gen === generation) failRead(env, String(err?.message ?? err))
   }
@@ -251,6 +276,8 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
         hasSucceeded = true
         lastError = null
         lastClaimError = null
+        // a refused claim waits for a slot; an admitted one is the spawn that takes it
+        setSlotRefused(env, claim.kind === 'refused')
       }
       return claim
     }

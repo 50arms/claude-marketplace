@@ -77,7 +77,7 @@ import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERV
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
 import { spawnGuard } from './plan/pacing-guard'
-import { pacingLine, refreshPacing, resetPacing, withLine } from './plan/pacing-line'
+import { pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
@@ -1866,7 +1866,7 @@ async function onAckCall($: any, e: any, next: any) {
 
 // what the session is doing now, for its title's mark: any sub-agent running, and the main loop's turn
 async function titleActivity($: any): Promise<TitleActivity> {
-  return { subAgents: (await read($, runningAgents)).length > 0, turnRunning: (await read($, turn)).isRunning }
+  return { subAgents: (await read($, runningAgents)).length > 0, turnRunning: (await read($, turn)).isRunning, slotRefused: slotWaiting() }
 }
 
 // the main loop's turn started or ended: the hand and the waiting mark trade places only while Needs You is shown, so the title is
@@ -2603,6 +2603,8 @@ function pacingEnv($: any) {
     signedIn: async () => dashboardAnswered || isSignedIn(await read($, view)),
     sleep: (ms: number) => $.clock.sleep(ms),
     toast: (text: string) => $.ui.toast(text),
+    // the hourglass is the title's: a change of the slot-refused state redraws it (desktop; a terminal's title follows at each prompt)
+    onSlotChange: () => detach($, 'The session title mark', syncTitleMark($)),
   }
 }
 

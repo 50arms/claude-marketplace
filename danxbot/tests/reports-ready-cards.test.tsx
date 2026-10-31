@@ -73,8 +73,13 @@ describe('the pause (pure)', () => {
   const NOW = Date.parse('2026-10-13T21:00:00.000Z')
   const agent = (until: string) => ({ pause: { limit: 'agent', state: 'agent_waiting', reason: 'r', until } })
 
+  test('a pause carries what it waits on (waits_on), null when it names none', () => {
+    const waiting = { pause: { limit: 'agent', state: 'agent_waiting', reason: 'r', until: '2026-10-13T22:00:00.000Z', waits_on: 'pacing' } }
+    expect(pauseOf(waiting, NOW)).toMatchObject({ kind: 'paused', waitsOn: 'pacing' })
+  })
+
   test('only an unexpired agent pause is paused', () => {
-    expect(pauseOf(agent('2026-10-13T22:00:00.000Z'), NOW)).toEqual({ kind: 'paused', reason: 'r', until: Date.parse('2026-10-13T22:00:00.000Z') })
+    expect(pauseOf(agent('2026-10-13T22:00:00.000Z'), NOW)).toEqual({ kind: 'paused', reason: 'r', until: Date.parse('2026-10-13T22:00:00.000Z'), waitsOn: null })
     expect(pauseOf(agent('2026-10-13T21:00:00.000Z'), NOW)).toEqual({ kind: 'free' })
     expect(pauseOf({ pause: null }, NOW)).toEqual({ kind: 'free' })
     expect(pauseOf({ pause: { limit: 'weekly', until: '2026-10-14T00:00:00.000Z' } }, NOW)).toEqual({ kind: 'free' })

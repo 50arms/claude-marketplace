@@ -73,6 +73,8 @@ export type PlanView = {
   // when the agent's own pause ends (epoch ms), read at each load by the one call that does not end a pause; null when it is not paused,
   // its pause has expired, or the pause read gave no usable answer (the mark is display only). Only the title's pause mark reads it.
   pausedUntil: number | null
+  // what the pause waits on (its `waits_on`, e.g. `pacing` while a sub-agent slot is held back by usage pacing); null when not paused or the pause names none.
+  pausedWaitsOn: string | null
   // what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready`, shows one toast, and replies are then drawn as written.
   links: CardLinks

@@ -99,8 +99,10 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   if ('error' in holds) return { ...EMPTY, phase: 'error', error: holds.error }
   // a session on nothing has no pause to show; one on a plan or a card reads it with the load
   const onNothing = connectedId === null && holds.card === null
-  const pausedUntil = onNothing ? null : await readPausedUntil(call, Date.parse(refreshedAt))
-  const noPlan = { dashboardUrl, connected: null, listener, pausedUntil, ...holds }
+  const pause = onNothing ? null : await readPause(call, Date.parse(refreshedAt))
+  const pausedUntil = pause?.until ?? null
+  const pausedWaitsOn = pause?.waitsOn ?? null
+  const noPlan = { dashboardUrl, connected: null, listener, pausedUntil, pausedWaitsOn, ...holds }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
   // One load of everything about the connected plan: the plan itself (its status counts, bucket counts and card ids),
@@ -125,7 +127,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, listener, pausedUntil, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
+  const base = { dashboardUrl, connected, listener, pausedUntil, pausedWaitsOn, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
 
   // The in-progress bucket: its list is only as complete as the total says, so an answer without a numeric total is an error.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
@@ -149,13 +151,13 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
 }
 
-// When the agent's pause ends, or null. The plugin's call carries `background: true` (register.tsx `api`), so this GET never ends the pause it reads.
+// When the agent's pause ends and what it waits on, or null. The plugin's call carries `background: true` (register.tsx `api`), so this GET never ends the pause it reads.
 // An unexpired agent pause is the only one that counts (pauseOf); a failed or malformed answer is no mark, never a failed load, since the mark is display only.
-async function readPausedUntil(call: Call, now: number): Promise<number | null> {
+async function readPause(call: Call, now: number): Promise<{ until: number; waitsOn: string | null } | null> {
   const r = await call('GET', PAUSE_PATH)
   if (!r.ok) return null
   const read = pauseOf(r.body, now)
-  return read.kind === 'paused' ? read.until : null
+  return read.kind === 'paused' ? { until: read.until, waitsOn: read.waitsOn } : null
 }
 
 // the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays

@@ -11,6 +11,7 @@ import type { PacingEnv } from '../hooks/plan/pacing-line'
 import type { PacingVerdict } from '../types'
 import { BLOCKED_LINE } from '../hooks/plan/config'
 import { test, dashboard, startSession } from './plan-kit'
+import { CONNECTED_TITLE_MARK, HOURGLASS_TITLE_MARK } from '../hooks/plan/words'
 
 const RESET = '2026-10-08T12:00:00.000Z'
 const v = (over: Partial<PacingVerdict> = {}): PacingVerdict => ({ level: 'on_pace', budget: null, resetsAt: RESET, mainAgents: 0, subAgents: 0, reservedAgents: 0, ...over })
@@ -672,5 +673,33 @@ describe('what register wires', () => {
     // DX-5846: danxbot_api carries every card write, so exactly ONE handler may sit on it: onAckCall, a pass-through that acts only on the acknowledgement route
     // (POST /api/plan-sessions/me/events/<N>/ack); a second one would reach every card write, push and commit the guard must stay off
     expect(matched.filter(w => /__danxbot_api$/.test(toolOf(w)))).toHaveLength(1)
+  })
+})
+
+describe('the hourglass on the desktop title', () => {
+  const HOURGLASS = HOURGLASS_TITLE_MARK
+  const GREEN = CONNECTED_TITLE_MARK
+
+  test('a refused spawn shows the hourglass at once; an admitted spawn after a free slot clears it', async ($, on) => {
+    resetPacing()
+    on('agent.spawn', async (_$: any, e: any) => ({ model: e.model ?? 'parent-model', agentId: 'new' }) as any)
+    on('tool.call', () => ({ result: {}, text: 'ran', isError: false }) as any)
+    on('classic.SubagentStart', () => ({}) as any)
+    const d = dashboard(on, { pacingLine: { body: wire({ level: 'over_pace', budget: 0 }) } })
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    await startSession($, d, 'desktop')
+    const app = d.world.appSession
+    expect(app.title).toBe(`${GREEN}Tendai: PLAN-23 Agent mode`)
+    const refused = await $.agent.spawn({ prompt: 'work', subagentType: 'general-purpose' })
+    await d.clock.settle()
+    expect(refused.deny).toMatch(/Usage pacing/)
+    expect(app.title).toBe(`${HOURGLASS}Tendai: PLAN-23 Agent mode`)
+    // the account gets a free slot: the next spawn is admitted, and the title drops the hourglass for green
+    d.setPacingLine({ body: wire({ budget: null, sub_agents: 0 }) })
+    const admitted = await $.agent.spawn({ prompt: 'work', subagentType: 'general-purpose' })
+    await d.clock.settle()
+    expect(admitted.deny).toBeUndefined()
+    expect(app.title).toBe(`${GREEN}Tendai: PLAN-23 Agent mode`)
   })
 })

@@ -102,6 +102,7 @@ export const EMPTY: PlanView = {
   needsYou: 0,
   needsYouError: null,
   pausedUntil: null,
+  pausedWaitsOn: null,
   // nothing to link until a load reads the boards and the plan's cards
   links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,
