@@ -10,21 +10,22 @@ import type { PacingEnv } from './pacing-line'
 // answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn (`decideSpawn`, pure) and wires
 // the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
 //
-// BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
-// writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
+// BEHAVIOUR GUARD ONLY: nothing here denies or holds a tool call, so an agent can always save its work (commits, pushes, card writes) however tight the
+// budget. Only `agent.spawn` can be refused; the one `tool.call` hook (`spawnNotice`, CP-45) is a pass-through that appends text after the call. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
 // answer) REFUSES the spawn, because an allowed spawn there would be an agent nobody counted (the failure is toasted once per text). The allows
 // without a claim are danxbot's own answer that it sees no account to cap (no usage report, no verdict, pacing off) and a signed-out session:
 // danxbot counts none of its agents. A danx-dashboard MCP server that never connected is refused like any failed claim.
 //
-// These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn): a change to the refusal text must update
+// These are the prefixes the plan-workflow skill quotes (`Usage pacing:` on a refused spawn, `Usage pacing moved this sub-agent` on a moved one): a change to either text must update
 // danxbot/skills/plan-workflow/SKILL.md in the same change.
 
 export type SpawnDecision = { kind: 'allow' } | { kind: 'downgrade'; model: 'haiku' }
 
 // CP-45 / DEC-314: a spawn the guard moved to haiku is told to the session that asked for it, never silent. The spawn (`agent.spawn`) and the Agent
 // tool call it belongs to (`tool.call`, `tool_use_id`) are two hooks of one call, so the first records what it changed and the second says it in
-// the call's result. Module state: both hooks run within one call, and a reload between them loses only the notice.
-const moved = new Map<string, { asked: string; to: string }>()
+// the call's result. Module state: both hooks run within one call, and a reload between them loses only the notice. A workflow script's agent has no
+// Agent call (its `tool_use_id` is the Workflow call's, shared by the run's agents), so a move there is made but NOT told.
+const moved = new Map<string, { type: string; asked: string; to: string }>()
 
 // ---- the decision ---------------------------------------------------------------------------------------------------------------
 
@@ -33,9 +34,9 @@ const TIERS = ['haiku', 'sonnet', 'opus', 'fable'] as const
 type Tier = (typeof TIERS)[number]
 
 // The model a `danxbot:worker-<model>-<effort>` agent type runs on (its file's `model`), read from the type's name.
-const WORKER_TYPE = /^danxbot:worker-(haiku|sonnet|opus|fable)-/
+const WORKER_TYPE = new RegExp(`^danxbot:worker-(${TIERS.join('|')})-`)
 export function workerModelOf(subagentType: string): Tier | null {
-  return (WORKER_TYPE.exec(subagentType)?.[1] as Tier | undefined) ?? null
+  return tierOf(WORKER_TYPE.exec(subagentType)?.[1])
 }
 
 export function tierOf(model: string | undefined): Tier | null {
@@ -78,8 +79,7 @@ export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved
 }
 
 // The budget's unit is the ACCOUNT's running sub-agents (main threads and worker dispatches are counted as `mainAgents` but never compared), which the claim's
-// answer carries as `subAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone: the call's
-// `model`, else the parent's (a fork always inherits the parent's). A refusal never reaches here (danxbot refuses the claim itself); this picks the haiku
+// answer carries as `subAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone (`requestedModel`). A refusal never reaches here (danxbot refuses the claim itself); this picks the haiku
 // downgrade for a claimed spawn taking the last free slot.
 export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined): SpawnDecision {
   if (verdict === null) return { kind: 'allow' }
@@ -106,10 +106,15 @@ export function requestedModel(e: Pick<AgentSpawnInput, 'fork' | 'model' | 'suba
   return e.model ?? workerModelOf(e.subagentType) ?? e.parentModel
 }
 
-export function movedNotice(asked: string, to: string): string {
+// What the plan-workflow skill quotes (see the header): the notice a moved spawn's Agent call carries starts with this.
+export const MOVED_PREFIX = 'Usage pacing moved this sub-agent'
+
+// `isTight` moves a spawn that takes the last free slot, so a re-run is only worth it with MORE than one slot free; whether a gate should instead wait for a
+// slot when the budget never gives that is DEC-314's open part, not worded here.
+export function movedNotice(type: string, asked: string, to: string): string {
   return (
-    `Usage pacing moved this sub-agent: you asked for ${asked}, and it runs on ${to} (it took the last free slot under the account's budget). ` +
-    'It does not run at the grade you chose. Count nothing it records as work done at that grade: run it again, at its grade, once a slot is free.'
+    `${MOVED_PREFIX}: you asked for ${type} on ${asked}, and it runs on ${to} (it took the last free slot under the account's budget). ` +
+    'It does not run at the grade you chose. Count nothing it records as work done at that grade. Run it again at its grade only when the budget leaves more than one slot free: a spawn that takes the last free slot is moved again.'
   )
 }
 
@@ -120,7 +125,7 @@ export async function spawnNotice<R extends { context?: readonly string[]; deny?
   const note = moved.get(e.tool_use_id)
   moved.delete(e.tool_use_id)
   if (note === undefined || r.deny !== undefined) return r
-  return { ...r, context: [...(r.context ?? []), movedNotice(note.asked, note.to)] }
+  return { ...r, context: [...(r.context ?? []), movedNotice(note.type, note.asked, note.to)] }
 }
 
 // The `agent.spawn` hook.
@@ -137,11 +142,11 @@ export function spawnGuard(env: PacingEnv) {
     if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, requestedModel(e))
     try {
       // a fork ignores `model`, so there is nothing to rewrite
-      const downgraded = decision.kind === 'downgrade' && !e.fork
-      const started = await next(downgraded ? { ...e, model: decision.model } : e)
+      const movedTo = decision.kind === 'downgrade' && !e.fork ? decision.model : null
+      const started = await next(movedTo !== null ? { ...e, model: movedTo } : e)
       if (claim.kind === 'claimed' && started.deny !== undefined) await releaseClaim(env, claim.claimId)
-      // only a spawn that started was moved: a refused one has no sub-agent to tell the asker about
-      if (downgraded && started.deny === undefined) moved.set(e.tool_use_id, { asked: e.subagentType, to: decision.model })
+      // only a spawn that started was moved: a refused one has no sub-agent to tell the asker about. A workflow agent's move is not told (see `moved`)
+      if (movedTo !== null && e.workflow === undefined && started.deny === undefined) moved.set(e.tool_use_id, { type: e.subagentType, asked: requestedModel(e), to: movedTo })
       return started
     } catch (err) {
       if (claim.kind === 'claimed') await releaseClaim(env, claim.claimId)

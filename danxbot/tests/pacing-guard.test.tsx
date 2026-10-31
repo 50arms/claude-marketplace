@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { PACED_STOP, REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, movedNotice, requestedModel, spawnGuard, spawnNotice, tierOf, workerModelOf } from '../hooks/plan/pacing-guard'
+import { MOVED_PREFIX, PACED_STOP, REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, movedNotice, requestedModel, spawnGuard, spawnNotice, tierOf, workerModelOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -727,7 +727,8 @@ describe('a moved spawn says so', () => {
   const toolCall = (ran: Record<string, unknown> = {}) => async () => ({ result: {}, text: 'ran', isError: false, ...ran }) as any
 
   test('the notice begins with the words plan-workflow quotes', () => {
-    expect(movedNotice('danxbot:worker-opus-high', 'haiku').startsWith('Usage pacing moved this sub-agent')).toBe(true)
+    expect(MOVED_PREFIX).toBe('Usage pacing moved this sub-agent')
+    expect(movedNotice('danxbot:worker-opus-high', 'opus', 'haiku').startsWith(MOVED_PREFIX)).toBe(true)
   })
 
   test('a worker agent type is placed by the model its name carries, never by its parent', () => {
@@ -738,6 +739,42 @@ describe('a moved spawn says so', () => {
     expect(requestedModel({ fork: false, model: 'sonnet', subagentType: 'danxbot:worker-haiku-low', parentModel: 'opus' })).toBe('sonnet')
     expect(requestedModel({ fork: false, model: undefined, subagentType: 'general-purpose', parentModel: 'opus' })).toBe('opus')
     expect(requestedModel({ fork: true, model: 'haiku', subagentType: 'fork', parentModel: 'opus' })).toBe('opus')
+  })
+
+  // gate finding 3: a spawn with exactly one free slot is moved (isTight), so the retry text must not promise that 'a slot free' is enough
+  test('the notice says a re-run needs more than one free slot, because a spawn taking the last free slot is moved again', () => {
+    const text = movedNotice('danxbot:worker-opus-high', 'opus', 'haiku')
+    expect(text).toContain('only when the budget leaves more than one slot free')
+    expect(text).toContain('a spawn that takes the last free slot is moved again')
+    expect(text).not.toMatch(/once a slot is free/)
+    // the claim the text rests on: one free slot is tight and moves an Opus spawn, two do not
+    expect(decideSpawn(v({ budget: 1, subAgents: 0 }), 'opus')).toEqual({ kind: 'downgrade', model: 'haiku' })
+    expect(decideSpawn(v({ budget: 2, subAgents: 0 }), 'opus')).toEqual({ kind: 'allow' })
+  })
+
+  // gate finding 7: a call that is not a worker names the model it asked for, never just 'general-purpose'
+  test('a non-worker spawn asked on opus says what it asked for: its type and its model', async () => {
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: 'general-purpose', model: 'opus' })
+    await guard(e, async x => ({ model: x.model, agentId: 'a' }) as any)
+    const r = await spawnNotice(e, toolCall())
+    expect(r.context?.[0]).toContain('you asked for general-purpose on opus')
+  })
+
+  // gate finding 4: a workflow agent's tool_use_id is the Workflow call's, so nothing would ever read (or delete) its entry
+  test('a workflow agent is moved but not recorded, so no entry is left behind and its Workflow call is not told', async () => {
+    const seen: any[] = []
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: 'general-purpose', model: 'opus', workflow: { runId: 'wf_1', agentIndex: 1 } })
+    await guard(e, async x => (seen.push(x), { model: x.model, agentId: 'a' }) as any)
+    expect(seen[0].model).toBe('haiku')
+    expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
+  })
+
+  // gate finding 5: the worker-type pattern is built from the tier list, so a tier added there is a tier a worker type can carry
+  test('every tier a spawn can be placed on is a worker type model', () => {
+    for (const tier of ['haiku', 'sonnet', 'opus', 'fable']) expect(workerModelOf(`danxbot:worker-${tier}-low`)).toBe(tier)
+    expect(workerModelOf('danxbot:worker-mystery-low')).toBeNull()
   })
 
   test('a haiku worker taking the last free slot is not moved (it is already on haiku), and says nothing', async () => {
@@ -757,9 +794,9 @@ describe('a moved spawn says so', () => {
     await guard(e, async x => (seen.push(x), { model: x.model, agentId: 'a' }) as any)
     expect(seen[0].model).toBe('haiku')
     const r = await spawnNotice(e, toolCall({ context: ['earlier'] }))
-    expect(r.context).toEqual(['earlier', movedNotice('danxbot:worker-opus-medium', 'haiku')])
-    expect(r.context?.[1]).toContain('danxbot:worker-opus-medium')
-    expect(r.context?.[1]).toContain('runs on haiku')
+    expect(r.context).toEqual(['earlier', movedNotice('danxbot:worker-opus-medium', 'opus', 'haiku')])
+    expect(r.context?.[1]).toContain('you asked for danxbot:worker-opus-medium on opus')
+    expect(r.context?.[1]).toContain('it runs on haiku')
     // told once: the same call asked again has nothing to say
     expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
   })
