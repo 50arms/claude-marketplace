@@ -124,8 +124,11 @@ found while working goes to the plan whose goal it serves, or none. Enabling wor
 blocks a goal today. Drift audit at start, after each card lands and in every status report:
 idle goal cards while side work got effort → stop the side work; a goalless cluster → split
 the plan. Review rounds repeat until a clean pass or only minor findings; the round count is
-never a question for the user. A finding that is new scope rather than a defect in the
-change → split it into its own card. Report goal by goal. Said "stop if X" → stop when X.
+never a question for the user. Before acting on a finding, check whether a plan already covers it
+(`GET /api/plans`, then the architecture of any plan that touches it): a covered case gets no
+card and no stopgap, and is added to that plan if its text does not name it (mantra item 1). A
+finding no plan covers that is new scope rather than a defect in the change → split it into its
+own card. Report goal by goal. Said "stop if X" → stop when X.
 
 **Your lane only.** Never monitor, investigate or unstick another plan's cards or another
 session unless the user asks. Their work goes to them as a card on the right plan
