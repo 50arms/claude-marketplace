@@ -1,0 +1,32 @@
+// A sub-agent of type `danxbot:worker` has no model or effort of its own: the Agent call passes both, as the dashboard answers them for the card or
+// gate. A call that leaves one out is refused at the `tool.call` hook of the Agent tool, because `agent.spawn` cannot see `effort` and a left-out
+// effort silently follows the session that starts the worker, so a gate would run at an effort nobody chose.
+//
+// This is the only refusal here and it is of the Agent tool alone (starting a sub-agent), never of a tool that saves work. It runs before the usage-pacing
+// claim, so a refused call takes no slot.
+
+export const WORKER_REFUSAL_PREFIX = 'danxbot:worker was started without'
+
+const WORKER_TYPE = /^(danxbot:)?worker$/
+
+export const MODELS = ['haiku', 'sonnet', 'opus', 'fable'] as const
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
+type AgentCall = { subagent_type?: string; model?: string; effort?: string }
+
+// null when the call is not a worker start or passes both; else the refusal naming what to pass.
+export function workerStartRefusal(e: AgentCall): string | null {
+  if (e.subagent_type === undefined || !WORKER_TYPE.test(e.subagent_type)) return null
+  const missing = [e.model ? null : 'model', e.effort ? null : 'effort'].filter((m): m is string => m !== null)
+  if (missing.length === 0) return null
+  return (
+    `${WORKER_REFUSAL_PREFIX} its ${missing.join(' and ')}. Start it again with both in the Agent call: model (${MODELS.join(', ')}) and effort (${EFFORTS.join(', ')}), ` +
+    'exactly as the dashboard answers them for the card or gate (the card read for a builder, the gate instruction route for a gate). A left-out effort would follow this session\'s own, not the grade\'s.'
+  )
+}
+
+// The Agent tool's `tool.call` hook: a refused worker start is `{ deny }`; every other call goes on to `next`.
+export async function workerStartGuard<E extends AgentCall, R extends { deny?: string }>(e: E, next: (e: E) => Promise<R>): Promise<R | { deny: string }> {
+  const refusal = workerStartRefusal(e)
+  return refusal === null ? next(e) : { deny: refusal }
+}

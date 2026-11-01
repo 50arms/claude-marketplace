@@ -33,12 +33,6 @@ const moved = new Map<string, { type: string; asked: string; to: string }>()
 const TIERS = ['haiku', 'sonnet', 'opus', 'fable'] as const
 type Tier = (typeof TIERS)[number]
 
-// The model a `danxbot:worker-<model>-<effort>` agent type runs on (its file's `model`), read from the type's name.
-const WORKER_TYPE = new RegExp(`^danxbot:worker-(${TIERS.join('|')})-`)
-export function workerModelOf(subagentType: string): Tier | null {
-  return tierOf(WORKER_TYPE.exec(subagentType)?.[1])
-}
-
 export function tierOf(model: string | undefined): Tier | null {
   if (model === undefined) return null
   const lower = model.toLowerCase()
@@ -99,11 +93,10 @@ export function claimFailedReason(failure: string): string {
   )
 }
 
-// The model the spawn would run on if left alone: a fork's is its parent's; else the call's `model`; else, for a worker agent type, the model its name
-// carries (its file fixes it); else the parent's. Reading the name keeps a `worker-haiku-*` spawned from an Opus session from being judged an Opus spawn.
-export function requestedModel(e: Pick<AgentSpawnInput, 'fork' | 'model' | 'subagentType' | 'parentModel'>): string {
-  if (e.fork) return e.parentModel
-  return e.model ?? workerModelOf(e.subagentType) ?? e.parentModel
+// The model the spawn would run on if left alone: a fork's is its parent's; else the call's `model` (a `danxbot:worker` start always passes one, see
+// worker-start.ts, so a haiku worker started from an Opus session is judged a haiku spawn); else the parent's.
+export function requestedModel(e: Pick<AgentSpawnInput, 'fork' | 'model' | 'parentModel'>): string {
+  return e.fork ? e.parentModel : (e.model ?? e.parentModel)
 }
 
 // What the plan-workflow skill quotes (see the header): the notice a moved spawn's Agent call carries starts with this.

@@ -9,15 +9,15 @@ import { SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
-const AGENT = { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'build the thing', status: 'running' }
+const AGENT = { id: 'a1', type: 'danxbot:worker', description: 'build the thing', status: 'running' }
 // the line only the main agent's briefing carries (a sub-agent's opens with the same words but names no plan; the running AGENT is listed in the main one, so the whole text is not pinned)
 const MAIN = 'Your plan is PLAN-23 Danxbot plugin.'
 
 describe('the sub-agent briefing text (pure)', () => {
   test('names the agent and its task, points at its own summary and progress notes, and carries no plan or card', () => {
-    const text = subagentBriefingText({ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'build the thing' })
+    const text = subagentBriefingText({ id: 'a1', type: 'danxbot:worker', description: 'build the thing' })
     expect(text).toMatch(/^\[50 ARMS\] Your conversation was just compacted\./)
-    expect(text).toContain('a1 (danxbot:worker-sonnet-high) build the thing')
+    expect(text).toContain('a1 (danxbot:worker) build the thing')
     expect(text).toMatch(/progress notes/)
     expect(text).not.toMatch(/Cards in flight|Your plan is/)
   })

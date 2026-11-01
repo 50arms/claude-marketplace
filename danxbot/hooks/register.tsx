@@ -78,6 +78,7 @@ import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERV
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
 import { spawnGuard, spawnNotice } from './plan/pacing-guard'
+import { workerStartGuard } from './plan/worker-start'
 import { pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
@@ -3290,8 +3291,9 @@ export const register: Register = (on, options) => {
   on('session.measure', onMeasure)
   // usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
-  // a spawn the guard moved to haiku says so in the Agent call's result (a pass-through after `next`, like the time stamp)
-  on('tool.call', { tool: 'Agent' }, (_$, e, next) => spawnNotice(e, next))
+  // the Agent tool's one tool.call handler: a `danxbot:worker` start with no model or no effort is refused (worker-start.ts); every other call goes on, and a spawn the
+  // pacing guard moved to haiku says so in the call's result (a pass-through after `next`, like the time stamp)
+  on('tool.call', { tool: 'Agent' }, (_$, e, next) => workerStartGuard(e, ev => spawnNotice(ev, next)))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onClassicSessionStart)

@@ -218,13 +218,13 @@ describe('the resume briefing (pure)', () => {
       plan: { ref: 'PLAN-23', name: 'The plugin' },
       owed: ok([]),
       cards: ok([{ id: 'DX-9', title: 'In flight card' }]),
-      agents: ok([{ id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build the thing' }]),
+      agents: ok([{ id: 'a1', type: 'danxbot:worker', description: 'Build the thing' }]),
       git: ok(GIT),
     })
     expect(text).toContain('[50 ARMS] Your conversation was just compacted.')
     expect(text).toContain('Your plan is PLAN-23 The plugin.')
     expect(text).toContain('Cards in flight on your plan: DX-9 In flight card.')
-    expect(text).toContain('Sub-agents still running (they carried on through the compaction): a1 (danxbot:worker-sonnet-high) Build the thing.')
+    expect(text).toContain('Sub-agents still running (they carried on through the compaction): a1 (danxbot:worker) Build the thing.')
     expect(text).toContain("Work not pushed, in the session's own checkout (branch card/x): 3 uncommitted paths, 2 unpushed commits.")
   })
 
@@ -667,7 +667,7 @@ for (const surface of SURFACES) {
       on('classic.SessionStart', () => ({}) as any)
       const d = dashboard(on)
       d.world.agents = [
-        { id: 'a1', type: 'danxbot:worker-sonnet-high', description: 'Build the thing', status: 'running' },
+        { id: 'a1', type: 'danxbot:worker', description: 'Build the thing', status: 'running' },
         { id: 'a2', type: 'Explore', description: 'Done already', status: 'completed' },
       ]
       d.world.gitStatus = { exitCode: 0, stdout: '## card/x...origin/card/x [ahead 2]\n M a.ts\n' }
@@ -680,7 +680,7 @@ for (const surface of SURFACES) {
       const [registry, briefing] = told[0]!.split('\n')
       expect(registry).toBe(EVENT_TEXT('after_compaction'))
       expect(briefing).toContain('[50 ARMS] Your conversation was just compacted.')
-      expect(briefing).toContain('Sub-agents still running (they carried on through the compaction): a1 (danxbot:worker-sonnet-high) Build the thing.')
+      expect(briefing).toContain('Sub-agents still running (they carried on through the compaction): a1 (danxbot:worker) Build the thing.')
       expect(briefing).not.toContain('a2')
       expect(briefing).toContain('(branch card/x): 1 uncommitted path, 2 unpushed commits.')
       // told once

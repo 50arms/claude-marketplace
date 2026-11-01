@@ -8,7 +8,7 @@ import { describe, expect } from 'claude-code/testing'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine } from '../hooks/context/events'
 import { test, EVENT_TEXT, TOLD, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
-const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' }
+const START = { agent_id: 'a1', agent_type: 'danxbot:worker' }
 const EVENT_PATHS = (reads: string[]) => reads.filter(p => p.startsWith('/api/reminders/event/'))
 
 for (const surface of SURFACES) {

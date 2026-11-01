@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { MOVED_PREFIX, PACED_STOP, REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, movedNotice, requestedModel, spawnGuard, spawnNotice, tierOf, workerModelOf } from '../hooks/plan/pacing-guard'
+import { MOVED_PREFIX, PACED_STOP, REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, movedNotice, requestedModel, spawnGuard, spawnNotice, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -93,7 +93,7 @@ describe('decideSpawn (the decision table)', () => {
 describe('the agent.spawn hook', () => {
   // what the cache holds, as a new sub-agent sees it: the line of the last answer, as an UNFORCED read serves it inside the minute after any read
   const subagentLine = async ($: any, d: any): Promise<string | null> => {
-    const r = await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' } as any)
+    const r = await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'danxbot:worker' } as any)
     // DX-4686: the start's live check is detached from the hook; let it end before the test does
     await d.clock.settle()
     return (r.additionalContext ?? []).find((t: string) => t === 'Pacing line.') ?? null
@@ -728,22 +728,19 @@ describe('a moved spawn says so', () => {
 
   test('the notice begins with the words plan-workflow quotes', () => {
     expect(MOVED_PREFIX).toBe('Usage pacing moved this sub-agent')
-    expect(movedNotice('danxbot:worker-opus-high', 'opus', 'haiku').startsWith(MOVED_PREFIX)).toBe(true)
+    expect(movedNotice('danxbot:worker', 'opus', 'haiku').startsWith(MOVED_PREFIX)).toBe(true)
   })
 
-  test('a worker agent type is placed by the model its name carries, never by its parent', () => {
-    expect(workerModelOf('danxbot:worker-opus-medium')).toBe('opus')
-    expect(workerModelOf('danxbot:worker-haiku-max')).toBe('haiku')
-    expect(workerModelOf('general-purpose')).toBeNull()
-    expect(requestedModel({ fork: false, model: undefined, subagentType: 'danxbot:worker-haiku-low', parentModel: 'opus' })).toBe('haiku')
-    expect(requestedModel({ fork: false, model: 'sonnet', subagentType: 'danxbot:worker-haiku-low', parentModel: 'opus' })).toBe('sonnet')
-    expect(requestedModel({ fork: false, model: undefined, subagentType: 'general-purpose', parentModel: 'opus' })).toBe('opus')
-    expect(requestedModel({ fork: true, model: 'haiku', subagentType: 'fork', parentModel: 'opus' })).toBe('opus')
+  test("a spawn is placed by the call's model, never by its parent's; a fork and a call without one take the parent's", () => {
+    expect(requestedModel({ fork: false, model: 'haiku', parentModel: 'opus' })).toBe('haiku')
+    expect(requestedModel({ fork: false, model: 'sonnet', parentModel: 'opus' })).toBe('sonnet')
+    expect(requestedModel({ fork: false, model: undefined, parentModel: 'opus' })).toBe('opus')
+    expect(requestedModel({ fork: true, model: 'haiku', parentModel: 'opus' })).toBe('opus')
   })
 
   // gate finding 3: a spawn with exactly one free slot is moved (isTight), so the retry text must not promise that 'a slot free' is enough
   test('the notice says a re-run needs more than one free slot, because a spawn taking the last free slot is moved again', () => {
-    const text = movedNotice('danxbot:worker-opus-high', 'opus', 'haiku')
+    const text = movedNotice('danxbot:worker', 'opus', 'haiku')
     expect(text).toContain('only when the budget leaves more than one slot free')
     expect(text).toContain('a spawn that takes the last free slot is moved again')
     expect(text).not.toMatch(/once a slot is free/)
@@ -781,18 +778,12 @@ describe('a moved spawn says so', () => {
     expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
   })
 
-  // gate finding 5: the worker-type pattern is built from the tier list, so a tier added there is a tier a worker type can carry
-  test('every tier a spawn can be placed on is a worker type model', () => {
-    for (const tier of ['haiku', 'sonnet', 'opus', 'fable']) expect(workerModelOf(`danxbot:worker-${tier}-low`)).toBe(tier)
-    expect(workerModelOf('danxbot:worker-mystery-low')).toBeNull()
-  })
-
   test('a haiku worker taking the last free slot is not moved (it is already on haiku), and says nothing', async () => {
     const seen: any[] = []
     const guard = guardOn(claimed)
-    const e = spawnE({ subagentType: 'danxbot:worker-haiku-high' })
+    const e = spawnE({ subagentType: 'danxbot:worker', model: 'haiku' })
     await guard(e, async x => (seen.push(x), { model: 'haiku', agentId: 'a' }) as any)
-    expect(seen[0].model).toBeUndefined()
+    expect(seen[0]).toBe(e)
     const r = await spawnNotice(e, toolCall())
     expect(r.context).toBeUndefined()
   })
@@ -800,12 +791,12 @@ describe('a moved spawn says so', () => {
   test("an opus worker taking the last free slot runs on haiku, and the Agent call's result says it was moved", async () => {
     const seen: any[] = []
     const guard = guardOn(claimed)
-    const e = spawnE({ subagentType: 'danxbot:worker-opus-medium' })
+    const e = spawnE({ subagentType: 'danxbot:worker', model: 'opus' })
     await guard(e, async x => (seen.push(x), { model: x.model, agentId: 'a' }) as any)
     expect(seen[0].model).toBe('haiku')
     const r = await spawnNotice(e, toolCall({ context: ['earlier'] }))
-    expect(r.context).toEqual(['earlier', movedNotice('danxbot:worker-opus-medium', 'opus', 'haiku')])
-    expect(r.context?.[1]).toContain('you asked for danxbot:worker-opus-medium on opus')
+    expect(r.context).toEqual(['earlier', movedNotice('danxbot:worker', 'opus', 'haiku')])
+    expect(r.context?.[1]).toContain('you asked for danxbot:worker on opus')
     expect(r.context?.[1]).toContain('it runs on haiku')
     // told once: the same call asked again has nothing to say
     expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
@@ -813,7 +804,7 @@ describe('a moved spawn says so', () => {
 
   test('a spawn the engine refused after the move has no notice to give, and a call that was denied is returned as it came', async () => {
     const guard = guardOn(claimed)
-    const e = spawnE({ subagentType: 'danxbot:worker-opus-high' })
+    const e = spawnE({ subagentType: 'danxbot:worker', model: 'opus' })
     await guard(e, async () => ({ deny: 'host refused' }) as any)
     expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
     const denied = { deny: 'no' } as any
@@ -822,7 +813,7 @@ describe('a moved spawn says so', () => {
 
   test('a spawn with room is not moved and its call result is untouched', async () => {
     const guard = guardOn({ ...claimed, budget: 9 })
-    const e = spawnE({ subagentType: 'danxbot:worker-opus-high' })
+    const e = spawnE({ subagentType: 'danxbot:worker', model: 'opus' })
     await guard(e, async x => ({ model: x.model ?? 'opus', agentId: 'a' }) as any)
     const ran = await toolCall()()
     expect(await spawnNotice(e, async () => ran)).toBe(ran)
@@ -842,7 +833,7 @@ describe('what register wires', () => {
     expect(matched.length).toBeGreaterThan(0)
     const toolOf = (w: { matcher: unknown }) => (w.matcher as { tool?: string })?.tool ?? ''
     // `Write` is the one other tool: onHandoffWrite is a pass-through that only appends a reminder after `next`, so the guard never sits on it
-    // CP-45: `Agent` is the other: spawnNotice is a pass-through that only appends the moved-spawn notice after `next`, and denies nothing
+    // `Agent` is the other: the one handler there refuses only a `danxbot:worker` start with no model or effort (worker-start.test.tsx) and otherwise only appends the moved-spawn notice after `next`; it never denies a save
     for (const w of matched.filter(w => !/__danxbot_api$/.test(toolOf(w)) && toolOf(w) !== 'Write' && toolOf(w) !== 'Agent')) expect(toolOf(w)).toMatch(/^mcp__(plugin_danxbot_)?danx-dashboard__(plan_connect|request_permission|card_connect)$/)
     // DX-5846: danxbot_api carries every card write, so exactly ONE handler may sit on it: onAckCall, a pass-through that acts only on the acknowledgement route
     // (POST /api/plan-sessions/me/events/<N>/ack); a second one would reach every card write, push and commit the guard must stay off

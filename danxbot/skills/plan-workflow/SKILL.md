@@ -368,14 +368,12 @@ person can clear is an open problem there too (see "Pausing").
 Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and
 the sub-agent's first call fetches that profile's instruction for the card, which is its whole
 task, so the brief repeats nothing the profile or the card says. Build a card with
-`Agent({subagent_type:"danxbot:worker-<model>-<effort>", prompt:"work <CARD-ID>"})`. Add the worktree rule
+`Agent({subagent_type:"danxbot:worker", model:"<model>", effort:"<effort>", prompt:"work <CARD-ID>"})`. Add the worktree rule
 below only when the card wouldn't cover it. Set the card's build grade (`effort_level`) first, by how complex its hardest step is, never
-by how much work it is (issue-workflow's creation guide, § Build grade), then read the model and effort that grade means from the dashboard (the card read answers them) when you start the worker, and pick the
-`danxbot:worker-<model>-<effort>` agent with that model and effort; never `general-purpose`. Every model (`haiku`, `sonnet`, `opus`, `fable`)
-and effort (`low`, `medium`, `high`, `xhigh`, `max`) a grade can name has its worker, so the match is exact: never a nearby effort or model. The one grade effort with no worker is `minimal` (it means send no effort at all, which an agent file cannot say: a file without an effort runs at the effort of the session that starts it, measured); for a grade at `minimal` start that model's `low` worker, the nearest pair, and say in an agent note on the card that the grade ran at `low`. A sub-agent doing work that has no card of its own takes the grade of its hardest step, picked from the same ladder (issue-workflow's creation guide, § Build grade); with no card to read, read the grade's model and effort from the board: `GET /api/boards/<board>` with `fields.effort_ladder`. Story points decide process (a card, gates, splitting), never the agent grade.
+by how much work it is (issue-workflow's creation guide, § Build grade), then start the worker with the model and effort the dashboard answers for it (the card read answers them for a builder), passing both in the Agent call exactly as answered; never `general-purpose`, and never a model or effort you chose yourself. A `danxbot:worker` start with no model or no effort is refused, and the refusal names what to pass. A sub-agent doing work that has no card of its own takes the grade of its hardest step, picked from the same ladder (issue-workflow's creation guide, § Build grade); with no card to read, read the grade's model and effort from the board: `GET /api/boards/<board>` with `fields.effort_ladder`. Story points decide process (a card, gates, splitting), never the agent grade.
 The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
-worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
-gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
+worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: when you start its `danxbot:worker`, pass the model and effort the
+gate instruction route answers in the Agent call. PRE gates run before the builder starts; POST gates run
 on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
 have passed and it carries no design yet, start its designer, unless one you started is still on
