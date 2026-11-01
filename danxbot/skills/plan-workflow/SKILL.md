@@ -82,6 +82,11 @@ card id, and the problem itself stands alone, with plain background and a concre
 newcomer to the subject can follow. Every card id in chat is a markdown link to that card
 (`[<card id>](<dashboard>/plans/<plan id>/cards/<card id>)`), never a plan or board page.
 
+A problem never sends a person to other problems: no index, checklist or "answer X first"
+problem, since Needs You already lists them. A person's answer never spawns a follow-up
+problem either: read it to its reasonable end, decide what it leaves open, and record that as
+a decision record they can review.
+
 A question is not a stop or a command. "Why X?" gets an answer: running work keeps running
 and nothing new starts. Stop, redirect or act only on an explicit verb.
 
