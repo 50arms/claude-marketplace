@@ -124,7 +124,7 @@ found while working goes to the plan whose goal it serves, or none. Enabling wor
 blocks a goal today. Drift audit at start, after each card lands and in every status report:
 idle goal cards while side work got effort → stop the side work; a goalless cluster → split
 the plan. Review rounds repeat until a clean pass or only minor findings; the round count is
-never a question for the user. Before acting on a finding, check whether a plan already covers it:
+never a question for the user. Before acting on a finding that is new scope, check whether a plan already covers it:
 `GET /api/plans?content=<one keyword>&fields={"status":true}` per keyword (`content` matches one literal phrase), skipping
 `complete` and `awaiting-sign-off` plans, then `GET /api/plans/<id>/architecture/sections?q=<keyword>` and
 `GET /api/plans/<id>/records?kind=goal&q=<keyword>` for each hit. A covered case gets no stopgap and no card
