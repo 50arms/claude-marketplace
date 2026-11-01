@@ -3,11 +3,13 @@ import "./run-tests-with-npm-test.generated"
 // that leaves either out, because `agent.spawn` cannot see `effort` and a left-out effort follows the starting session's own.
 //
 // WHAT THESE TESTS ARE NOT: they run against the kit's stand-in for the engine (`claude-code/testing`). The event reaching the hook is whatever the test
-// hands `$.tool.call`; nothing here shows that a real engine puts the Agent call's `model` and `effort` on the `tool.call` event. That is checked live
-// (the agent-input probe mod), and until then the refusal is unproven on a real engine.
+// hands `$.tool.call`; nothing here shows that a real engine puts the Agent call's `model` and `effort` on the `tool.call` event. The live check is a
+// session in which a small hook records the keys of an Agent call's `tool.call` event, then one Agent call that passes a model and an effort; until it has been
+// made, the refusal is unproven on a real engine.
 import { describe, expect } from 'claude-code/testing'
 
-import { EFFORTS, MODELS, WORKER_REFUSAL_PREFIX, workerStartGuard, workerStartRefusal } from '../hooks/plan/worker-start'
+import { TIERS } from '../hooks/plan/pacing-guard'
+import { EFFORTS, WORKER_REFUSAL_PREFIX, workerStartGuard, workerStartRefusal } from '../hooks/plan/worker-start'
 import { test } from './plan-kit'
 
 const call = { description: 'build the card', prompt: 'work CP-1' }
@@ -25,17 +27,18 @@ describe('workerStartRefusal', () => {
 
   test('the refusal names every value that can be passed and says where the dashboard answers them', () => {
     const text = workerStartRefusal({ subagent_type: 'danxbot:worker' })!
-    for (const v of [...MODELS, ...EFFORTS]) expect(text).toContain(v)
+    for (const v of [...TIERS, ...EFFORTS]) expect(text).toContain(v)
     expect(text).toContain('the card read for a builder')
     expect(text).toContain('the gate instruction route for a gate')
+    expect(text).toContain('`GET /api/boards/<board>` with `fields.effort_ladder` for a sub-agent with no card')
   })
 
   test('every agent type other than the worker passes, with or without a model and effort', () => {
     for (const subagent_type of [undefined, 'general-purpose', 'Explore', 'fork', 'danxbot:other']) expect(workerStartRefusal({ subagent_type })).toBeNull()
   })
 
-  test('the plugin-less name of the worker is held to the same rule', () => {
-    expect(workerStartRefusal({ subagent_type: 'worker' })).not.toBeNull()
+  test("only this plugin's type is the worker: a team's own agent named `worker` is left alone", () => {
+    expect(workerStartRefusal({ subagent_type: 'worker' })).toBeNull()
   })
 })
 

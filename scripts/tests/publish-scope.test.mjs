@@ -122,8 +122,8 @@ test("on the real tests, a hooks source file runs the scans that walk the hooks 
 });
 
 test("on the real tests, an agent profile file runs the test that reads the agents folder", () => {
-  const agent = fs.readdirSync(path.join(REPO_ROOT, "danxbot", "agents")).find((n) => n.startsWith("worker-") && n.endsWith(".md"));
-  const scope = publishScope([`danxbot/agents/${agent}`], real);
+  assert.ok(fs.existsSync(path.join(REPO_ROOT, "danxbot", "agents", "worker.md")), "the agent file this test names exists");
+  const scope = publishScope(["danxbot/agents/worker.md"], real);
   assert.equal(scope.kind, "files");
   assert.ok(scope.files.includes("danxbot/tests/worker-agents-profile-brief.test.mjs"));
 });

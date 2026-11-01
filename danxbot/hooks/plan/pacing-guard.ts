@@ -30,7 +30,7 @@ const moved = new Map<string, { type: string; asked: string; to: string }>()
 // ---- the decision ---------------------------------------------------------------------------------------------------------------
 
 // Model tiers, cheapest first. A spawn is only ever moved DOWN this list, never up.
-const TIERS = ['haiku', 'sonnet', 'opus', 'fable'] as const
+export const TIERS = ['haiku', 'sonnet', 'opus', 'fable'] as const
 type Tier = (typeof TIERS)[number]
 
 export function tierOf(model: string | undefined): Tier | null {
