@@ -125,8 +125,9 @@ blocks a goal today. Drift audit at start, after each card lands and in every st
 idle goal cards while side work got effort → stop the side work; a goalless cluster → split
 the plan. Review rounds repeat until a clean pass or only minor findings; the round count is
 never a question for the user. Before acting on a finding, check whether a plan already covers it
-(`GET /api/plans`, then the architecture of any plan that touches it): a covered case gets no
-card and no stopgap, and is added to that plan if its text does not name it (mantra item 1). A
+(`GET /api/plans?content=<a keyword or two from the finding>`, then
+`GET /api/plans/<id>?fields={"records":true,"architecture_sections":true}` for each hit): a covered case gets no stopgap and no card
+outside that plan, and is added to that plan if its text does not name it (mantra item 1). A
 finding no plan covers that is new scope rather than a defect in the change → split it into its
 own card. Report goal by goal. Said "stop if X" → stop when X.
 

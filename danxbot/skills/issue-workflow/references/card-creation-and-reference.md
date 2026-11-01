@@ -99,7 +99,7 @@ A card carries its board's default gates for its type; `quality_gates` adds more
 
 | Gate | Phase | …when the card |
 |---|---|---|
-| `plan-dependency` | PRE | likely overlaps in-flight work on the same surface |
+| `plan-dependency` | PRE | likely overlaps in-flight work on the same surface, or may ask for something an open plan's design already covers |
 | `plan-design` | PRE | changes what a person sees or does in a UI and its look is not settled (a new screen, panel, dialog or flow; a changed layout); not when an approved design or an existing screen already shows it |
 | `plan-architecture` | PRE | is non-trivial design: new module boundaries, core invariants |
 | `plan-tdd` | PRE | has behaviour to pin test-first |
