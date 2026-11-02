@@ -264,6 +264,7 @@ declare module 'claude-code' {
       workMarks: Record<string, number>
       // the interim sub-agent notices held back from the model, each with the task id it names and the epoch ms it was first held (see hooks/context/interim-notice.ts).
       heldNotices: { taskId: string; text: string; heldAt: number }[]
+      agentBriefs: { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
     }
   }
 }
