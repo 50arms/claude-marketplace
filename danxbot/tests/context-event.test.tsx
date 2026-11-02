@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine } from '../hooks/context/events'
-import { test, EVENT_TEXT, TOLD, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, EVENT_TEXT, TOLD, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: 'danxbot:worker-sonnet-high' }
 const EVENT_PATHS = (reads: string[]) => reads.filter(p => p.startsWith('/api/reminders/event/'))
@@ -121,6 +121,15 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
       await d.clock.settle()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
+    })
+
+    test('a session whose id is not a plain id has no connection record, even with one at the path such an id would name: a failed plans read is quiet at a sub-agent start', async ($, on) => {
+      const d = await started($, on)
+      d.world.sessionId = BAD_SESSION_ID
+      // a record at the path such an id would name, as the runtime resolves it, so a check that built the path would find it
+      d.world.files[BAD_SESSION_ID_PATH] = '{}'
+      d.world.sessionReadStatus = 500
+      expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
     })
 
     test('a connected session whose call is rejected (the dashboard times out) is told the one warning line too', async ($, on) => {

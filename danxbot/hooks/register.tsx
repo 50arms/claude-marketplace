@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
+import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -12,11 +12,14 @@ import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeS
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from './compaction/briefing'
-import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, controlPath, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
+import { CLEAR_SPENT_PREFIX, READY_COMMAND, READY_DESCRIPTION, READY_DISCONNECTED, READY_JOINING, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
+import type { GithubOrigin, MarkAnswer, ServerLoop } from './ready/loop'
+import { sessionFilePath } from './relay/session-file'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
 import { linkCardIds } from './plan/card-links'
 import { settleDetached } from './plan/detached'
@@ -59,11 +62,11 @@ import { serverOf } from './plan/server'
 import { errText, loadPlan } from './plan/load'
 import { blockedOrigin, optionDashboardUrl } from './plan/origin'
 import type { Api } from './plan/load'
-import { agentBlockOf, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
+import { agentBlockOf, connectToolOutcome, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
 import { AGENT_RELEASE_DEADLINE_MS, AGENT_RELEASE_PATH, AGENT_RELEASE_TIMEOUT_REASON, releaseFailureToast } from './plan/agent'
 import type { ToolOutcome } from './plan/mcp'
 import { disconnectNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
-import { signInStep } from './plan/sign-in'
+import { NO_AGENT, signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
@@ -119,6 +122,9 @@ const usageError = atom({ plugin: 'danxbot', key: 'usageError' } as const, null 
 const measuredAt = atom({ plugin: 'danxbot', key: 'measuredAt' } as const, null as number | null)
 // the plan event relay's state (what the events warning is built from). And the main loop's turn (TurnState).
 const relay = atom({ plugin: 'danxbot', key: 'relay' } as const, RELAY_OFF as RelayState)
+// the session's place in the ready-agent loop. $.state, so a module reload keeps it; a new process starts without, and takes the loop up again from the mark or the dashboard loop its row still holds (adoptReadyMark).
+const readyLoop = atom({ plugin: 'danxbot', key: 'readyLoop' } as const, null as ReadyLoop | null)
+const readyShells = atom({ plugin: 'danxbot', key: 'readyShells' } as const, [] as string[])
 // the events warning last stored (null: none), so its reason is told once on the transition into it.
 const eventsWarned = atom({ plugin: 'danxbot', key: 'eventsWarned' } as const, null as string | null)
 // the start (epoch ms) of the last turn activity sent to the dashboard, so the next one starts strictly later (it keeps only the newest start). $.state, so a reload keeps it.
@@ -233,26 +239,50 @@ async function api($: any, method: string, path: string, extra: { query?: object
   try {
     res = await $.mcp.call(server, 'danxbot_api', { method, path, ...extra, background: true })
   } catch (err: any) {
-    const message = String(err?.message ?? err)
-    // `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
-    // load carries it on its error view (`serverNotConnected`, which the session-start retry waits out); the pacing and usage readers
-    // stay quiet about it until a read has succeeded.
-    const notConnected = isServerNotConnected(message)
-    // a classifier refusal shows the person's sentence and fix wherever the error is shown (toasts, lines), never the engine's raw words; those are kept whole on `refusal` for the relay's start and the load's blocked view
-    const refusal = classifierRefusal(message)
-    // a danxbot MCP older than the plugin refuses a key the hooks send; its failure is one whole sentence naming the fix (`sentence`, so errText adds no prefix)
-    const failed: Api =
-      refusal !== null ? { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal, sentence: true }
-      : isStaleMcpRefusal(message) ? { ok: false, status: 0, body: { error: STALE_MCP_LINE }, sentence: true }
-      : { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
-    if (!notConnected) return failed
-    failed.unreachable = true
-    return failed
+    return failedCall(err)
   }
-  const outcome = toolOutcome(res)
+  const outcome = await wholeAnswer($, toolOutcome(res))
   // a dashboard call that succeeded proves the session signed in; the spawn claim then refuses when the server is later unreachable
   if (outcome.ok) dashboardAnswered = true
   return outcome
+}
+
+// A danxbot_api answer over the MCP's 100,000-character limit comes as `reply_file` with no body: its body is read from that file, so every reader of an answer reads the whole of it. A file that cannot
+// be read is a failure that names it, never an answer with no body.
+async function wholeAnswer($: any, outcome: Api): Promise<Api> {
+  if (outcome.replyFile === undefined) return outcome
+  const failed = (why: string): Api => ({ ok: false, status: outcome.status, body: { error: `the answer's reply file ${outcome.replyFile} could not be read (${why})` } })
+  let text: string | null
+  try {
+    text = await $.fs.read(outcome.replyFile)
+  } catch (err: any) {
+    return failed(errMessage(err))
+  }
+  if (typeof text !== 'string') return failed('no such file')
+  try {
+    return { ok: outcome.ok, status: outcome.status, body: JSON.parse(text) }
+  } catch {
+    return failed('not JSON')
+  }
+}
+
+// what a thrown call to the plugin's server means, never in the engine's raw words
+function failedCall(err: any): Api {
+  const message = String(err?.message ?? err)
+  // `unreachable` is the engine's "no such server" and nothing else: the plugin's own server is not connected (yet). The plan
+  // load carries it on its error view (`serverNotConnected`, which the session-start retry waits out); the pacing and usage readers
+  // stay quiet about it until a read has succeeded.
+  const notConnected = isServerNotConnected(message)
+  // a classifier refusal shows the person's sentence and fix wherever the error is shown (toasts, lines), never the engine's raw words; those are kept whole on `refusal` for the relay's start and the load's blocked view
+  const refusal = classifierRefusal(message)
+  // a danxbot MCP older than the plugin refuses a key the hooks send; its failure is one whole sentence naming the fix (`sentence`, so errText adds no prefix)
+  const failed: Api =
+    refusal !== null ? { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal, sentence: true }
+    : isStaleMcpRefusal(message) ? { ok: false, status: 0, body: { error: STALE_MCP_LINE }, sentence: true }
+    : { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
+  if (!notConnected) return failed
+  failed.unreachable = true
+  return failed
 }
 
 const DASHBOARD_ORIGIN_KEY = 'dashboardOrigin'
@@ -413,9 +443,11 @@ async function refresh($: any, force = false): Promise<void> {
 // poll: a request has no expiry clock of its own. The model is told each decision once, waking it when it is idle (tellModelAwake).
 async function settlePermissionRequests($: any): Promise<void> {
   const notes = new Map<string, string | null>()
+  const granted = new Map<string, string[]>()
   for (const r of await read($, permissionRequests)) {
     const settled = settle(r, await api($, 'POST', claimPath(r)))
     if (settled.kind === 'drop') notes.set(r.publicId, settled.note)
+    if (settled.kind === 'drop' && settled.granted !== undefined) granted.set(r.publicId, settled.granted)
   }
   // only what this run takes out of the list is told by it: a settle running beside it (the fast poll and a refresh) takes
   // none of the same requests
@@ -424,7 +456,14 @@ async function settlePermissionRequests($: any): Promise<void> {
     taken = cur.filter(r => notes.has(r.publicId))
     return cur.filter(r => !notes.has(r.publicId))
   })
+  const readyPermission = (await read($, readyLoop))?.permissionId
   for (const r of taken) {
+    // the ready-agent loop's own request: the model made no such call, so the decision is the loop's
+    if (r.publicId === readyPermission) {
+      if (granted.get(r.publicId)?.includes(REPOS_PERMISSION) === true) detach($, 'Ready list', syncReady($))
+      else await leaveReady($, READY_PERMISSION_ENDED)
+      continue
+    }
     const note = notes.get(r.publicId)
     if (typeof note === 'string' && (await markToldOnce($, r.publicId))) await tellModelAwake($, note)
   }
@@ -573,10 +612,9 @@ function leftView(cur: any): any {
   return { ...planIndependent(cur), phase: 'ready', refreshedAt: cur.refreshedAt }
 }
 
-// Takes the session OFF its plan (plan_connect with disconnect: true, guarded by the plan we think we
-// are on). A refusal is shown, never swallowed: a 409 means the band was stale (the server names the
-// plan the session is really on, or says it is on none), so it also refreshes; a 404 or any other
-// failure carries its status and message. No confirm: the model can ask plan_connect for the plan again to undo it.
+// The band's Disconnect: takes the session OFF its plan (plan_connect with disconnect: true, guarded by the plan we think we are on), under the plan's busy key, so nothing runs while
+// another leave holds it. A refusal is shown, never swallowed: a 409 means the band was stale (the server names the plan the session is really on, or says it is on none), so it also
+// refreshes; a 404 or any other failure carries its status and message. No confirm: the model can ask plan_connect for the plan again to undo it.
 function disconnect($: any, plan: ConnectedPlan): Promise<void> {
   return withBusy($, busyKey.disconnect(plan.id), async () => {
     // the leave closes what the session opened under the plan first; a leave that does not happen takes that back
@@ -590,7 +628,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
       toastCallFailedAndReload($, 'Disconnect failed', err)
       return
     }
-    const outcome = toolOutcome(r)
+    const outcome = connectToolOutcome(r)
     await settleLeave($, closes, outcome.ok, why)
     if (await accessEnded($, outcome)) return
     if (!outcome.ok) {
@@ -605,6 +643,7 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
       detach($, 'Plan refresh', refresh($, true))
       return
     }
+    // the person is told in a toast and the model, which did not make the call, in its chat. The band goes to no work at once, then reads the truth.
     $.ui.toast(`Disconnected from ${plan.ref}`)
     await update($, view, leftView)
     detach($, 'Plan update', tellModel($, disconnectNote({ ref: plan.ref, name: left.name })).then(() => refresh($, true)))
@@ -627,7 +666,8 @@ function disconnect($: any, plan: ConnectedPlan): Promise<void> {
 // never calls plan_connect with the old conversation's arguments or tells the new conversation about a request it never made
 let signInGeneration = 0
 
-type SignInWatch = { args: object } & ({ byPress: true } | { byPress: false; known: ApprovalRequest })
+// `forReadyLoop`: the ready-agent loop's own sign-in. The model did not ask for it and is told nothing; a sign-in that ends without a key takes the session off the list.
+type SignInWatch = { args: object } & ({ byPress: true; forReadyLoop?: true } | { byPress: false; known: ApprovalRequest })
 
 async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
   const generation = signInGeneration
@@ -640,6 +680,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
     // told as a waking prompt (tellModelAwake), on both paths: the session sits idle while the person approves, and an
     // appended row is read only on a turn nobody starts, so the person had to type "approved" for the model to go on.
     const tell = async (request: ApprovalRequest | null, text: string) => {
+      if ('forReadyLoop' in watch) return
       const key = request === null ? undefined : publicIdOf(request.url)
       if (key === undefined ? watch.byPress : await markToldOnce($, key)) await tellModelAwake($, text)
     }
@@ -679,16 +720,25 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         }
         if (step.kind === 'revoked') {
           $.ui.toast(`${keyRevokedLabel(step.by)}. This session must stop.`)
+          if ('forReadyLoop' in watch) await leaveReady($, readyRevoked(step.by))
           await refresh($, true)
           return
         }
         if (step.kind === 'denied') {
           $.ui.toast(SIGN_IN_DENIED_TOAST)
+          if ('forReadyLoop' in watch) await leaveReady($, READY_SIGN_IN_ENDED)
           if (!watch.byPress) await tell(shown, signInDeniedNote(shownRequest().code))
           return
         }
         if (step.kind === 'stop') {
+          // the key exists and only an agent is missing: the loop stays, and only another /50arms-ready can claim one, since the MCP's own gate is closed now
+          if ('forReadyLoop' in watch && step.signedIn === true) {
+            await tellReadyOnce($, readyNoAgentYet(step.message))
+            await refresh($, true)
+            return
+          }
           $.ui.toast(step.message)
+          if ('forReadyLoop' in watch) await leaveReady($, READY_SIGN_IN_ENDED)
           return
         }
         // signed in (even if the plan was refused): the view reads the truth
@@ -697,6 +747,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         const planId = typeof (watch.args as any).plan_id === 'number' ? (watch.args as any).plan_id : null
         await tell(shown, watch.byPress ? signInNote(planId, step.kind === 'done') : signInApprovedNote(shownRequest().code, planId))
         await refresh($, true)
+        if ('forReadyLoop' in watch) detach($, 'Ready list', syncReady($))
         return
       }
     } finally {
@@ -740,7 +791,7 @@ function handlers($: any): Handlers {
   return {
     showPlan: () => showPlan($),
     dismissBand: () => dismissBand($),
-    disconnect: plan => disconnect($, plan),
+    disconnect: plan => personDisconnect($, plan),
     signIn: () => startSignIn($),
   }
 }
@@ -1482,6 +1533,8 @@ async function settleOutbox($: any, event: Queued, outcome: Promise<string | nul
   // reads nothing until then and would get each repeat at once when it resumes
   if (live !== null && heldForInput(failure)) await setRelay($, live, 'held', HELD_FOR_INPUT_NOTICE)
   else if (live !== null) await relayFailed($, live, 'retrying', failure, delayedLine(failure))
+  // a session held by a person's Stop can take no work, so it must not wait on the list
+  if (heldForInput(failure) && (await read($, readyLoop)) !== null) await leaveReady($, READY_STOPPED)
   await $.clock.sleep(backoffMs(outboxRefusals))
   // a move to another plan dropped it while it waited
   if (!outbox.includes(held)) return
@@ -1678,6 +1731,7 @@ async function onSessionStart($: any, e: any, next: any) {
   }
   await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan band (connection + cards that need you)' })
+  await $.command.register({ name: READY_COMMAND, description: READY_DESCRIPTION })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
   await update($, modelPlan, () => null)
@@ -1693,11 +1747,15 @@ async function onSessionStart($: any, e: any, next: any) {
   permissionTicker?.cancel()
   permissionTicker = null
   await syncPermissionPoll($)
+  // a reload starts with no ready-list ticker; a session still in the loop needs it again, and no sign-in watch survives it
+  stopReadyTicker()
+  await update($, readyLoop, cur => (cur === null ? null : { ...cur, signInAsked: false }))
+  if ((await read($, readyLoop)) !== null) startReadyTicker($)
   // a new session starts with no pacing state (never the previous session's last good answer) and reads the verdict now; later reads are a sub-agent start when the cache is a minute old, and every spawn
   resetPacing()
   dashboardAnswered = false
   detach($, 'Usage pacing', primePacing($))
-  detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => retryWhileNotConnected($)))
+  detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => adoptReadyMark($)).then(() => retryWhileNotConnected($)).then(() => adoptReadyMark($)))
   // the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
   detach($, 'Plan event relay start', startRelayWhenKnown($))
   return next(e)
@@ -1744,6 +1802,7 @@ async function onSessionEnd($: any, e: any, next: any) {
     compactionTicker = null
     permissionTicker?.cancel()
     permissionTicker = null
+    stopReadyTicker()
   } else if (e.reason === 'clear' || e.reason === 'resume') {
     // another conversation: its sub-agents and transcript are not this one's
     // nor is the plan its model named
@@ -1757,11 +1816,533 @@ async function onSessionEnd($: any, e: any, next: any) {
   return next(e)
 }
 
+// ---- the ready list ----------------------------------------------------------------------------------------------------------------------------------------------
+//
+// `/50arms-ready` signs the session in and joins the team's list of ready agents for its folder's repo, and tells the model nothing: the join is the plugin's own. The server hands the session work; the model connects to it and works it.
+// The dashboard keeps the session's ready loop: the job it took, and whether that job has ended, by its one rule. Once the job has ended the clear is a handshake, so a person still talking keeps the session: 50 Arms
+// asks the model to wrap up (the ask reaches it through the MCP's urgent record, in 50 Arms' own words), the model says ready, and 50 Arms releases the clear into the session's clear file. This loop
+// runs that /clear (Claude Code's own command, which a plugin may run once no turn is running) and marks the session ready again (`PUT /api/plan-sessions/me/ready`, which also leaves the ended job):
+// the back of the list, with no context from the job. Every exit from the loop ends the dashboard's loop too (`DELETE /api/plan-sessions/me/ready`). A person's Stop takes the session off the list,
+// since Claude Code drops the plugin's prompts until they send a message.
+// A plugin's /clear changes `$.session.id()` and keeps the MCP server and the session id it booted with (measured, claude.exe 2.1.309), so the dashboard sees one session and its agent stays held.
+let readyTicker: { cancel: () => void } | null = null
+// a look's identity. `turns`: the count of main-loop turns started when the look began (or its own clear ended); a higher count now means the session may have moved (the model connects to work only in
+// a turn), so the look acts on nothing it read before
+type LookToken = { turns: number }
+// the look in flight (`syncReady`): `token` is its identity, `at` when it started or its clear ended
+let readySyncing: { token: LookToken; at: number; look: Promise<void> } | null = null
+// a clear's commands wait on Claude Code, not the dashboard: no look takes over while one runs
+let readyResetting = false
+// main-loop turns started, counted for LookToken
+let readyTurns = 0
+// the loop's newest sign-in watch
+let readyWatchId = 0
+// the person was told that the session's MCP server is too old to bring a clear (READY_RELAY_OLDER): once per process
+let readyRelayOlderTold = false
+// the session id whose last look found its compaction file with no clear file beside it (`clearRelease`'s `olderSign`), or null: only a later look that finds the same tells
+let readyRelayOlderSeen: string | null = null
+// the last unreadable dashboard loop a new process was told it could not take up (adoptReadyMark), so the same fault is told once
+let readyLoopFaultTold: string | null = null
+
+function startReadyTicker($: any): void {
+  if (readyTicker === null) readyTicker = $.clock.every(READY_TICK_MS, () => detach($, 'Ready list', syncReady($)))
+}
+
+function stopReadyTicker(): void {
+  readyTicker?.cancel()
+  readyTicker = null
+}
+
+async function onReadyCommand($: any, e: any) {
+  const arg = typeof e.args === 'string' ? e.args.trim() : ''
+  if (arg === 'off') {
+    detach($, 'Ready list', leaveReady($, null))
+    return { text: READY_OFF }
+  }
+  if (arg !== '') return { text: READY_USAGE }
+  // running it again starts the told-once memory afresh and keeps the rest: the phase the session is in, and an approval still open
+  await update($, readyLoop, cur => (cur === null ? joiningLoop() : { ...cur, told: null, claimAsked: true }))
+  startReadyTicker($)
+  detach($, 'Ready list', syncReady($))
+  return { text: READY_JOINING }
+}
+
+// Off the list, for the reason `told` (null: the person asked, and the command's answer said so). Every exit from the loop comes here, and ends the dashboard's loop with the mark: a loop left running there
+// would have 50 Arms ask a session that left to clear. The loop goes first, so a sync in flight sees it gone.
+async function leaveReady($: any, told: string | null): Promise<void> {
+  // its open approvals go with it: a decision that came later would reach someone who left, or the model, which never asked
+  const loop = await read($, readyLoop)
+  await update($, readyLoop, () => null)
+  if (typeof loop?.permissionId === 'string') {
+    await update($, permissionRequests, cur => cur.filter(r => r.publicId !== loop.permissionId))
+    await syncPermissionPoll($)
+  }
+  if (loop?.signInAsked === true) {
+    signInGeneration++
+    await update($, signInRequest, () => null)
+    await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
+  }
+  stopReadyTicker()
+  if (told !== null) $.ui.toast(told)
+  const r = await api($, 'DELETE', READY_PATH)
+  if (!r.ok && !isSignedOut(r) && outcomeRevokedBy(r) === null && agentBlockOf(r) === null) $.ui.toast(`Could not take this session off the ready list: ${errText(r)}`.slice(0, FAILURE_TOAST_MAX))
+}
+
+// a failure the next tick retries, shown once until it changes or the loop moves on
+async function tellReadyOnce($: any, text: string): Promise<void> {
+  let changed = false
+  await update($, readyLoop, cur => {
+    if (cur === null) return null
+    changed = cur.told !== text
+    return { ...cur, told: text }
+  })
+  if (changed) $.ui.toast(text.slice(0, FAILURE_TOAST_MAX))
+}
+
+// what a call says about the session's access: true when it ended the sync
+async function readyAccessStop($: any, r: Api): Promise<boolean> {
+  const by = outcomeRevokedBy(r)
+  if (by !== null) {
+    await leaveReady($, readyRevoked(by))
+    detach($, 'Plan refresh', refresh($, true))
+    return true
+  }
+  if (!isSignedOut(r)) return false
+  // a key that lapsed needs a person's approval again: one watch at a time waits for it, and the next ticks mark the session once it is signed in
+  const loop = await read($, readyLoop)
+  if (loop === null || loop.signInAsked) return true
+  await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: cur.phase === 'waiting' ? 'joining' : cur.phase, signInAsked: true }))
+  // the band draws the approval link and the Sign in button only for a view that knows the session is signed out
+  detach($, 'Plan refresh', refresh($, true))
+  await startReadySignIn($)
+  return true
+}
+
+// The loop's own sign-in. A watch that ends with no key and no answer (a /clear during the wait, a thrown call) lets the next look ask again.
+async function startReadySignIn($: any): Promise<void> {
+  const mine = ++readyWatchId
+  await update($, readyLoop, cur => (cur === null ? null : { ...cur, signInAsked: true }))
+  const watched = watchSignIn($, { args: await readySignInArgs($), byPress: true, forReadyLoop: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
+  // an old watch returning late must not clear the flag of the watch started after it, or the next leave would leave that one running. By its own id: `signInGeneration` moves at a /clear too, and a watch a /clear ended must be asked again.
+  detach($, 'Ready list', watched.then(() => (mine === readyWatchId ? update($, readyLoop, cur => (cur === null ? null : { ...cur, signInAsked: false })) : undefined)))
+}
+
+// a sign-in for the list connects no plan, so never the plan the band's Sign in would resume
+async function readySignInArgs($: any): Promise<object> {
+  const sessionTitle = await read($, title)
+  return sessionTitle ? { title: sessionTitle } : {}
+}
+
+// One look at where the session stands, and the step that follows. At most one runs; a trigger during one is answered by the next tick. Nothing moves while a turn or a sub-agent runs.
+// A look held past LOCK_STALE_MS outside a clear waits on a call that has not settled (the plugin puts no time limit on a dashboard call, and whether the engine bounds one is UNVERIFIED), so the next
+// trigger takes over, as the refresh lock does, and the loop goes on. The look taken over acts on no answer it gets after that (lookGoesOn), and a clear runs one at a time (resetSession).
+async function syncReady($: any): Promise<void> {
+  const now = await $.clock.now()
+  const held = readySyncing
+  if (held !== null && (readyResetting || now - held.at <= LOCK_STALE_MS)) return held.look
+  const token: LookToken = { turns: readyTurns }
+  readySyncing = {
+    token,
+    at: now,
+    look: syncReadyOnce($, token)
+      .catch(err => {
+        if (!(err instanceof LookTakenOver)) throw err
+      })
+      .finally(() => {
+        // a look taken over must not free the slot of the one that took over
+        if (readySyncing?.token === token) readySyncing = null
+      }),
+  }
+  return readySyncing.look
+}
+
+// control flow only: thrown by lookGoesOn, caught by syncReady, never seen outside the look
+class LookTakenOver extends Error {}
+
+// Checked after every call a look makes. A look acts on no answer it gets once another look took it over (that look reads the session for itself), or once a main-loop turn started since it began: the
+// model connects to work, leaves it or agrees to a clear only in a turn, so what the look read may no longer be where the session stands, and the look after that turn judges it. It ends there, with one
+// exception: `take-back`, a mark of its own that landed after the loop ended (the person left the list, a Stop), which must not stay on a list the session has left, whatever ran meanwhile.
+async function lookGoesOn($: any, token: LookToken, owes: 'take-back' | null = null): Promise<void> {
+  if (owes === 'take-back' && (await read($, readyLoop)) === null) return
+  if (readySyncing?.token === token && readyTurns === token.turns) return
+  throw new LookTakenOver()
+}
+
+const readyIsIdle = async ($: any): Promise<boolean> => !(await read($, turn)).isRunning && (await read($, runningAgents)).length === 0
+
+// `token`: the look's identity in `readySyncing`. `again`: a mark refused because the session's state moved (it lost its agent, or its repo's name is gone: markReady), the rejoin after a clear included,
+// looks once more at once instead of waiting a minute; once, so a dashboard that keeps refusing is not a tight loop. A session that holds work is never refused: its mark joins the loop on that work.
+async function syncReadyOnce($: any, token: LookToken, again = true): Promise<void> {
+  const first = await read($, readyLoop)
+  if (first === null || !(await readyIsIdle($))) return
+  // only the look that follows a person's `/50arms-ready` may call `plan_connect`
+  const asked = first.claimAsked
+  if (asked) await update($, readyLoop, cur => (cur === null ? null : { ...cur, claimAsked: false }))
+  let look = await readyLook($, token)
+  if (look === null) return
+  // a look the hold gate answered says nothing of the row, which keeps its work: only a row read after the claim decides what follows
+  if (look.blocked || look.session === null || look.session.agent === null) {
+    await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: cur.phase === 'waiting' ? 'joining' : cur.phase }))
+    if (!(await claimReadyAgent($, asked, token))) return
+    look = await readyLook($, token)
+    if (look === null || look.blocked || look.session === null || look.session.agent === null) return
+  }
+  const { session, server } = look
+  let holds: boolean
+  let ownId: string
+  let release: ClearRelease
+  try {
+    holds = holdsWork(session)
+    ownId = sessionIdOf(session)
+  } catch (err: any) {
+    await tellReadyOnce($, readyFailed('reading this session', errMessage(err)))
+    return
+  }
+  try {
+    release = await clearRelease($, ownId)
+  } catch (err: any) {
+    await tellReadyOnce($, readyFailed('reading the clear file', errMessage(err)))
+    return
+  }
+  await lookGoesOn($, token)
+  // an MCP server older than the clear handshake never brings 50 Arms' ask or release. The person is told once, whether or not the session holds work, and the loop goes on, since a
+  // reconnect of the server fixes it. A current server's first connect writes the compaction file before the clear file, so one look can land between the two: only a later look that
+  // still finds no clear file tells.
+  const olderSeenBefore = readyRelayOlderSeen === ownId
+  readyRelayOlderSeen = release.olderSign ? ownId : null
+  if (release.olderSign && olderSeenBefore && !readyRelayOlderTold) {
+    readyRelayOlderTold = true
+    $.ui.toast(READY_RELAY_OLDER)
+  }
+  // 50 Arms released a clear this loop has not run, and still stands behind it: the job has ended, and the model said ready (a release the server no longer judges ended is the file lagging a
+  // job that reopened, and clears nothing)
+  if (release.id !== null && release.id !== release.spent && server?.ended === true) {
+    if (!(await resetSession($, token, ownId, release.id))) return
+    // the clear's own turn count is the look's from here
+    token.turns = readyTurns
+    return markAfter($, token, again)
+  }
+  // the release was run, and the rejoin that follows it is still owed (it failed, or a Stop of the mark): the mark leaves the ended job the session holds, with no second /clear
+  const owesRejoin = release.id !== null && release.id === release.spent && server?.ended === true
+  if (!owesRejoin && server?.job != null && !holds && !server.ended) {
+    // the server took the job while it was still open (a card added to a plan, another session connecting while this one was quiet): the session keeps its conversation and leaves the loop
+    await leaveReady($, readyWorkTaken(server.job))
+    return
+  }
+  if (!owesRejoin && server?.job != null) {
+    // on the job, or past it and waiting for 50 Arms to ask for and release the clear: the model wraps up in turns of its own, and nothing here acts until the release
+    await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'working' }))
+    // a claim can hand another agent, and a model carrying on with a job would go on signing as the old one. Not on a job about to clear. Detached: a prompt's promise is not known to settle when it merges into a queued turn
+    const last = (await read($, readyLoop))?.agentName ?? null
+    if (holds && server?.ended !== true && last !== null && last !== session.agent.name) detach($, 'Ready list', tellModelAwake($, readyAgentChanged(session.agent.name)))
+    await update($, readyLoop, cur => (cur === null ? null : { ...cur, agentName: session.agent.name }))
+    return
+  }
+  // no loop job on the server: a session on no work is marked ready, and one that holds work (`/50arms-ready` run on a plan or card, or again after a Stop ended the loop) joins the loop with
+  // that work as its job through the same call (markReady)
+  await update($, readyLoop, cur => (cur === null ? null : { ...cur, agentName: session.agent.name }))
+  const now = await read($, readyLoop)
+  if (now === null) return
+  // a mark that stands is left alone: it keeps its place, and a write would tell every open tab of the team
+  if (now.phase === 'waiting' && now.repo !== null && session?.ready?.repo === now.repo) return
+  return markAfter($, token, again)
+}
+
+// the mark, and, when the mark was refused because the session's state moved, one more look at once
+async function markAfter($: any, token: LookToken, again: boolean): Promise<void> {
+  if ((await markReady($, token)) && again) await syncReadyOnce($, token, false)
+}
+
+// The session's row and the dashboard's ready loop, or null when the look ended here (told, or the access stopped it). `blocked`: the hold gate answered instead of the row.
+type ReadyLookAnswer = { blocked: true } | { blocked: false; session: any; server: ServerLoop | null }
+async function readyLook($: any, token: LookToken): Promise<ReadyLookAnswer | null> {
+  const me = await api($, 'GET', '/api/plan-sessions/me')
+  await lookGoesOn($, token)
+  if (me.unreachable === true || (await readyAccessStop($, me))) return null
+  if (agentBlockOf(me) !== null) return { blocked: true }
+  if (!me.ok) {
+    await tellReadyOnce($, readyFailed('reading this session', errText(me)))
+    return null
+  }
+  if (me.body?.session === undefined) {
+    await tellReadyOnce($, readyFailed('reading this session', 'bad_response: GET /api/plan-sessions/me answered no session field'))
+    return null
+  }
+  try {
+    return { blocked: false, session: me.body.session, server: serverLoopOf(me.body, 'GET /api/plan-sessions/me') }
+  } catch (err: any) {
+    await tellReadyOnce($, readyFailed('reading this session', errMessage(err)))
+    return null
+  }
+}
+
+// The session's clear file: the release 50 Arms agreed to in it (`id`, null for none), and the one this loop last ran (`spent`). The file is the one of the session's dashboard id, which the
+// MCP writes it under; never `$.session.id()`, which a /clear changes. Throws on a file it cannot read, or one written for another session.
+// `olderSign`: the sign of an MCP server older than the clear handshake. Every MCP server the plugin serves writes the session's compaction file at each connect of its event stream, and a
+// current one writes the clear file after it (the stream sends the compaction control, then the clear control). A compaction file with no clear file is a stream that connected through an
+// older server, whatever work the session holds, or a current server's first connect caught between its two frames, which a later look tells apart (syncReadyOnce). No file at all is a
+// stream not up yet, which says nothing of the server. The compaction file is read first, so both frames landing between the two reads read as a current server.
+type ClearRelease = { id: string | null; spent: string | null; olderSign: boolean }
+async function clearRelease($: any, sessionId: string): Promise<ClearRelease> {
+  const home = await homeDir($)
+  if (home === null) throw new Error('no home directory')
+  const path = sessionFilePath(home, 'clear', sessionId)
+  const compaction = sessionFilePath(home, 'compaction', sessionId)
+  if (path === null || compaction === null) throw new Error(`the session id ${JSON.stringify(sessionId)} names no file`)
+  const compactionWritten = await $.fs.exists(compaction)
+  if (!(await $.fs.exists(path))) return { id: null, spent: null, olderSign: compactionWritten }
+  const id = releaseOfClearFile(await $.fs.read(path), sessionId)
+  return { id, spent: id === null ? null : spentReleaseId(await storeOp($, { op: 'get', key: clearSpentKey(sessionId) })), olderSign: false }
+}
+
+// The plan-less claim, as the plugin's background call: a session that cannot get an agent must not count as working, or its key would never lapse. True once the session holds one.
+async function claimReadyAgent($: any, asked: boolean, token: LookToken): Promise<boolean> {
+  const claimed = await api($, 'POST', '/api/plan-sessions/me/agent')
+  await lookGoesOn($, token)
+  if (await readyAccessStop($, claimed)) return false
+  if (claimed.ok && claimed.body?.state === 'agent_held') {
+    detach($, 'Plan refresh', refresh($, true))
+    return true
+  }
+  if (claimed.ok && typeof claimed.body?.state === 'string' && claimed.body.state in NO_AGENT) {
+    await tellReadyOnce($, NO_AGENT[claimed.body.state])
+    return false
+  }
+  if (agentBlockOf(claimed) === null) {
+    await tellReadyOnce($, readyFailed('claiming a team agent', errText(claimed)))
+    return false
+  }
+  return claimThroughConnect($, asked)
+}
+
+// An earlier `plan_connect` found no agent, so the MCP answers every other call with that until a later `plan_connect` finds one, and only that lifts it. No timer may call it: a session idle on no agent work must
+// lapse like any other. So only a person's `/50arms-ready` does, through the sign-in watch, which also draws an approval the call turns up. A session refused an agent does not join by itself when one frees.
+async function claimThroughConnect($: any, asked: boolean): Promise<boolean> {
+  const loop = await read($, readyLoop)
+  if (loop === null || loop.signInAsked) return false
+  if (asked) {
+    // the band draws an approval only for a view that knows the gate is closed
+    detach($, 'Plan refresh', refresh($, true))
+    await startReadySignIn($)
+  } else if (loop.told === null) await tellReadyOnce($, READY_NO_AGENT_AGAIN)
+  return false
+}
+
+// The released clear: /clear alone, only while nothing still runs in the session (a /compact first would only pay for a summary the /clear throws away). A /clear proves itself by the session's id
+// changing; one that did not keeps the session off the list, because a session must not rejoin holding its last job, and leaves the release unspent so the next look tries again. A /clear a person's
+// Stop rejected takes the session off the list. One clear at a time: no look takes over the look that clears, and a look taken over starts none.
+async function resetSession($: any, token: LookToken, sessionId: string, releaseId: string): Promise<boolean> {
+  if (readySyncing?.token !== token) return false
+  readyResetting = true
+  try {
+    return await runReset($, sessionId, releaseId)
+  } finally {
+    readyResetting = false
+    // the /clear waited on Claude Code, not the dashboard: the look in flight is timed from here, so its mark after a long /clear is not taken over at once
+    if (readySyncing !== null) readySyncing.at = await $.clock.now()
+  }
+}
+
+async function runReset($: any, sessionId: string, releaseId: string): Promise<boolean> {
+  const goesOn = async (): Promise<boolean> => (await read($, readyLoop)) !== null && (await readyIsIdle($)) && (await read($, readyShells)).length === 0
+  if (!(await goesOn())) {
+    if ((await read($, readyShells)).length > 0) await tellReadyOnce($, READY_SHELL_HOLDS_RESET)
+    return false
+  }
+  await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'resetting', rejoining: true }))
+  const before = await $.session.id()
+  let refused: string | null = null
+  try {
+    await $.command.run({ command: 'clear' })
+  } catch (err: any) {
+    refused = errMessage(err)
+  }
+  if (refused !== null && stoppedByPerson(refused)) {
+    await leaveReady($, READY_STOPPED)
+    return false
+  }
+  const failure = refused ?? (before === (await $.session.id()) ? 'the session id did not change' : null)
+  if (failure !== null) {
+    await tellReadyOnce($, readyFailed('resetting this session', failure))
+    return false
+  }
+  // spent once the /clear has run: the release is acted on once, by this process or the next
+  const now = await $.clock.now()
+  await storeOp($, { op: 'set', key: clearSpentKey(sessionId), value: { releaseId, at: now } })
+  await pruneSpentReleases($, CLEAR_SPENT_PREFIX)
+  await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'joining', told: null }))
+  return true
+}
+
+// The folder's repo as the team registered it. The names `danxbot:start` gives are read one by one, which the key may do as it stands; only a repo registered under another name needs the team's list, and so a person's
+// approval. A failure that retrying cannot fix takes the session off the list and says why.
+async function readyRepo($: any, token: LookToken): Promise<string | null> {
+  const out = await $.process.run(['git', 'remote', 'get-url', 'origin'], { cwd: await $.session.cwd(), timeoutMs: GIT_STATUS_TIMEOUT_MS })
+  await lookGoesOn($, token)
+  if (out.exitCode !== 0) {
+    await leaveReady($, READY_NO_ORIGIN)
+    return null
+  }
+  const origin = parseGithubOrigin(out.stdout)
+  if (origin === null) {
+    await leaveReady($, READY_NOT_GITHUB)
+    return null
+  }
+  for (const candidate of repoNameCandidates(origin)) {
+    const one = await api($, 'GET', `/api/repos/${candidate}`, { query: { fields: { github_remote: true } } })
+    await lookGoesOn($, token)
+    if (one.ok && remoteIs(one.body, origin)) return candidate
+    if (!one.ok && one.status !== 404) {
+      await tellReadyOnce($, readyFailed("looking up this folder's repo", errText(one)))
+      return null
+    }
+  }
+  return readyRepoFromList($, origin, token)
+}
+
+async function readyRepoFromList($: any, origin: GithubOrigin, token: LookToken): Promise<string | null> {
+  for (let offset = 0; ; ) {
+    const page = await api($, 'GET', '/api/repos', { query: { fields: { github_remote: true }, limit: READY_REPOS_PAGE, offset } })
+    await lookGoesOn($, token)
+    if (page.status === 403 && page.body?.permission === REPOS_PERMISSION) {
+      await askReposPermission($, token)
+      return null
+    }
+    if (!page.ok) {
+      await tellReadyOnce($, readyFailed("looking up this folder's repo", errText(page)))
+      return null
+    }
+    let name: string | null
+    try {
+      name = repoNameFor(page.body?.repos, origin)
+    } catch (err: any) {
+      await tellReadyOnce($, readyFailed("looking up this folder's repo", errMessage(err)))
+      return null
+    }
+    if (name !== null) return name
+    offset += page.body.repos.length
+    if (page.body.repos.length === 0 || offset >= page.body.total) break
+  }
+  await leaveReady($, READY_NOT_REGISTERED)
+  return null
+}
+
+// a person approves the list once, through the band's approval link. The decision is the loop's alone (settlePermissionRequests): the model made no such call, so it is told nothing.
+async function askReposPermission($: any, token: LookToken): Promise<void> {
+  const loop = await read($, readyLoop)
+  if (loop === null) return
+  if (loop.permissionId !== null) {
+    // still open: the band shows it. Decided and the list still refuses: a person's role does not reach the list, and asking again cannot help
+    if (!(await read($, permissionRequests)).some(r => r.publicId === loop.permissionId)) await leaveReady($, READY_PERMISSION_ENDED)
+    return
+  }
+  let asked
+  try {
+    asked = await $.mcp.call(SERVER, 'request_permission', { permissions: [REPOS_PERMISSION], reason: REPOS_PERMISSION_REASON })
+  } catch (err: any) {
+    await lookGoesOn($, token)
+    if ((await read($, readyLoop)) !== null) await leaveReady($, readyPermissionRefused(errMessage(err)))
+    return
+  }
+  await lookGoesOn($, token)
+  // the person left while the ask was on its way: neither its approval nor its refusal is theirs to see
+  if ((await read($, readyLoop)) === null) return
+  const request = permissionRequestOf(mcpText(asked), [REPOS_PERMISSION])
+  if (request === null) {
+    await leaveReady($, readyPermissionRefused(refusalText(toolOutcome(asked)).slice(0, CALL_ERROR_MAX)))
+    return
+  }
+  await update($, readyLoop, cur => (cur === null ? null : { ...cur, permissionId: request.publicId }))
+  await showPermissionRequest($, request)
+}
+
+// True when the mark was refused because the session's state moved, so a look at it decides the next step. After a released clear the mark is the rejoin, and the dashboard leaves the ended job in
+// the same call. For a session that holds work the same call marks nothing: it joins the dashboard's loop with that work as the loop's job.
+async function markReady($: any, token: LookToken): Promise<boolean> {
+  const before = await read($, readyLoop)
+  if (before === null) return false
+  const repo = before.repo ?? (await readyRepo($, token))
+  if (repo === null || (await read($, readyLoop)) === null) return false
+  const r = await api($, 'PUT', READY_PATH, { body: { repo } })
+  await lookGoesOn($, token, 'take-back')
+  if (await readyAccessStop($, r)) return false
+  // the person left while the mark was on its way: it must not stay
+  if ((await read($, readyLoop)) === null) {
+    if (r.ok) await api($, 'DELETE', READY_PATH)
+    return false
+  }
+  if (r.ok) {
+    let answer: MarkAnswer
+    try {
+      answer = markAnswerOf(r.body)
+    } catch (err: any) {
+      await tellReadyOnce($, readyFailed('marking this session ready', errMessage(err)))
+      return false
+    }
+    if (answer.kind === 'joined') {
+      // on its job as a session handed one is: it waits for 50 Arms to ask for and release the clear, then clears and rejoins
+      await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'working', repo, told: null, signInAsked: false, permissionId: null }))
+      if (before.phase !== 'working') $.ui.toast(readyJoinedOnWork(repo, answer.job))
+      return false
+    }
+    await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'waiting', repo, rejoining: false, told: null, signInAsked: false, permissionId: null }))
+    if (before.phase !== 'waiting') $.ui.toast(before.rejoining ? readyRejoined(repo) : readyJoined(repo))
+    // a rejoin may have left the plan the band shows
+    if (before.rejoining) detach($, 'Plan refresh', refresh($, true))
+    return false
+  }
+  // the session lost its agent between the look and the mark: the gate answers before the route does, or the route's own `no_agent` when the gate let it through. Either clears by a claim, so the next look makes one
+  if (agentBlockOf(r) !== null || (r.status === 409 && r.body?.error === 'no_agent')) {
+    await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'joining' }))
+    return true
+  }
+  const code = r.body?.error
+  // the repo left the team: the name is looked up again, once, and a repo that is really gone takes the session off the list there
+  if (r.status === 404 && code === 'repo_not_found') {
+    await update($, readyLoop, cur => (cur === null ? null : { ...cur, repo: null, phase: 'joining' }))
+    return true
+  }
+  // any other refusal cannot pass by itself (a role that may not mark, say): retried every minute it would only repeat
+  if (r.status >= 400 && r.status < 500) {
+    await leaveReady($, readyMarkRefused(refusalText(r)))
+    return false
+  }
+  await tellReadyOnce($, readyFailed('marking this session ready', errText(r)))
+  return false
+}
+
+// A process restarted while the dashboard still keeps its loop (a mark, or a job the loop took: the view's `readyRepo`) is in that loop without the plugin's half, and would take work and never clear:
+// it takes up the loop the row says it was in, since a session that never left the list rejoins it by default. The next look reads where in the loop the session is.
+// A row whose dashboard loop it cannot read (the view's `readyLoopFault`) leaves a process with no mark unable to tell whether it was in a loop: it takes none up and says so, once per fault.
+// A process already in the loop hears the fault from its own look instead.
+async function adoptReadyMark($: any): Promise<void> {
+  const loaded = await read($, view)
+  const repo = loaded.readyRepo
+  if ((await read($, readyLoop)) !== null) return
+  if (repo === null) {
+    if (loaded.readyLoopFault !== null && readyLoopFaultTold !== loaded.readyLoopFault) $.ui.toast(readyLoopUnread(loaded.readyLoopFault).slice(0, FAILURE_TOAST_MAX))
+    readyLoopFaultTold = loaded.readyLoopFault
+    return
+  }
+  await update($, readyLoop, () => ({ ...joiningLoop(), phase: 'waiting', repo, claimAsked: false }))
+  startReadyTicker($)
+  $.ui.toast(readyAdopted(repo))
+}
+
+// A person's own Disconnect of a plan: they have taken the session back, so the loop ends first and nothing clears. Rejoining without a clear would carry this job into the next.
+async function personDisconnect($: any, plan: ConnectedPlan): Promise<void> {
+  if ((await read($, readyLoop)) !== null) await leaveReady($, READY_DISCONNECTED)
+  await disconnect($, plan)
+}
+
 async function onCommand($: any) {
   await showPlan($)
   detach($, 'Plan refresh', refresh($, true))
   return { text: 'Plan band shown.' }
 }
+
+// the model's own pickup of a card (`POST /api/issues/<id>/transition` with `action: pickup`)
+const isPickup = (e: any): boolean => typeof e.method === 'string' && e.method.toUpperCase() === 'POST' && typeof e.path === 'string' && /^\/api\/issues\/[^/]+\/transition$/.test(e.path) && e.body?.action === 'pickup'
 
 // what a tool call's answer says happened: its text, read as a refusal when the call errored or was denied
 function answerOf(ran: any) {
@@ -1798,12 +2379,12 @@ async function onPlanConnect($: any, e: any, next: any) {
     throw err
   }
   const answer = answerOf(ran)
-  await settleLeave($, closes, leaving ? answer.ok : answer.ok && answer.body?.session?.planId === e.plan_id, why)
+  // the plan the answer says the session is on now, read once: whether the move happened, the relay, the loop's job, and what the blocked view names when the plugin's own reads are refused
+  const modelConnected = connectedPlanOf(answer)
+  await settleLeave($, closes, leaving ? answer.ok : modelConnected !== null && modelConnected.id === e.plan_id, why)
   // the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
   relayHalted = null
-  // parsed once; what the blocked view names when the plugin's own reads are refused
-  const modelConnected = connectedPlanOf(ran.text)
   if (modelConnected !== null) startRelay($, modelConnected.id)
   // connected mid-turn or mid-compaction, the dashboard must not read idle until the next change
   if (modelConnected !== null) await reportActivityOnConnect($)
@@ -1836,11 +2417,16 @@ async function onRequestPermission($: any, e: any, next: any) {
   const ran = await next(e)
   const request = permissionRequestOf(ran.text, e.permissions)
   if (request === null) return ran
+  return withPermissionNote(ran, await showPermissionRequest($, request))
+}
+
+// a permission request is kept for the band, which draws its approval link and code at once, and toasted
+async function showPermissionRequest($: any, request: PermissionRequest) {
   await update($, permissionRequests, cur => [...cur.filter(r => r.publicId !== request.publicId), request])
   await syncPermissionPoll($)
   const approval = asApproval(request)
   toastPermission($, approval)
-  return withPermissionNote(ran, approval)
+  return approval
 }
 
 // the session acknowledged an event (POST /api/plan-sessions/me/events/<N>/ack): it is no longer in flight. A refusal comes back as a normal result with
@@ -1854,9 +2440,10 @@ async function onAckCall($: any, e: any, next: any) {
     detach($, 'Plan refresh', refresh($, true))
   }
   await touchRecordClock($, e, next)
-  // a manual pickup by a session holding nothing connects it, as card_connect does, so the dashboard gets its activity at once
   const answer = answerOf(ran)
-  if (answer.ok && answer.body?.connectedByPickup === true) await reportActivityOnConnect($)
+  // a manual pickup by a session holding nothing connects it, as card_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
+  // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
+  if (answer.ok && isPickup(e) && (await wholeAnswer($, answer)).body?.connectedByPickup === true) await reportActivityOnConnect($)
   // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
   if (e.agentId === undefined && !raisedByPlugin(next.origin) && answer.ok) {
     const now = await $.clock.now()
@@ -2100,6 +2687,11 @@ async function onToolStamp($: any, e: any, next: any) {
   // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (probed against the real engine). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
   // Returning here also skips the lastStamp bookkeeping. A test pins that it is seated.
   if (raisedByPlugin(next.origin)) return r
+  // a background shell a ready-agent loop must not reset under, whether or not the loop is on yet: `reportShellEnds` clears the list
+  if (r.deny === undefined && typeof r.result?.backgroundTaskId === 'string') {
+    const started = r.result.backgroundTaskId as string
+    await update($, readyShells, cur => (cur.includes(started) ? cur : [...cur, started]))
+  }
   // the main loop's result carries the notes appended so far: they are read (a sub-agent's or a fork's result is not the main loop's)
   if (e.agentId === undefined && (await read($, turn)).pending.length > 0) await update($, turn, cur => toolResultSent(cur))
   // a background shell's start, and a working sub-agent's liveness
@@ -2135,16 +2727,20 @@ async function sessionPlan($: any): Promise<SessionPlan> {
   return typeof planId === 'number' ? { kind: 'connected', planId } : { kind: 'failed', reason: 'bad_response: GET /api/plan-sessions/me answered a session whose plan_id is neither a plan id nor null' }
 }
 
-// guards a session id used as a file name (the connection record's path), not a sub-agent id
-const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
-
 // Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the danx-dashboard MCP server writes
 // at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, only its existence is
 // read). It decides who a dashboard fault speaks to: a connected session gets one warning line, any other stays silent.
 async function isPlanConnected($: any, id: string): Promise<boolean> {
+  const home = await homeDir($)
+  const path = home === null ? null : sessionFilePath(home, 'plan-sessions', id)
+  // an id that names no file has no connection record
+  return path !== null && $.fs.exists(path)
+}
+
+// The home directory the session's MCP server keeps its per-session files under (`sessionFilePath`): HOME, else Windows' USERPROFILE; null when neither names one.
+async function homeDir($: any): Promise<string | null> {
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-  if (typeof home !== 'string' || home === '' || !SESSION_ID_PATTERN.test(id)) return false
-  return $.fs.exists(`${home}/.config/danxbot/plan-sessions/${id}.json`)
+  return typeof home === 'string' && home !== '' ? home : null
 }
 
 // What a session start's wait for the plugin's server came to: it is there, its environment was unloaded, or the deadline came first.
@@ -2177,7 +2773,7 @@ async function serverState($: any, deadlineAt: number): Promise<ServerState> {
 }
 
 // ONE deadline over the plugin's own work in a context lookup, as the bash hook's `timeout 8s` was: a hung dashboard answers `late()` instead of
-// holding the start, however many reads the work makes (the engine's own per-call limit bounds each, not their sum).
+// holding the start, however many reads the work makes (the plugin puts no time limit on one read, and whether the engine bounds one is UNVERIFIED).
 async function withinDeadline<T>($: any, ms: number, work: Promise<T>, late: () => T): Promise<T> {
   let cancel = () => {}
   const timedOut = new Promise<T>(resolve => {
@@ -2242,11 +2838,12 @@ async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<st
 // the plan read answers, a session KNOWN to be on a plan (its record on disk) is told in one warning line; any other stays silent and, on a start
 // or resume, still asks the restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
-  const event = sessionEvent(start.source)
+  // the ready-agent loop's reset opens a fresh conversation in a session that is still working: it is told what a new session is told
+  const event = start.loopReset === true ? 'session_start' : sessionEvent(start.source)
   if (event === null) return start.source === 'clear' ? clearNotice($, start) : null
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
   const connected = await isPlanConnected($, start.sessionId)
-  const askRestart = start.source !== 'compact'
+  const askRestart = start.source !== 'compact' && start.loopReset !== true
   const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return null
@@ -2363,7 +2960,8 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   await update($, diskTold, () => ({}))
   await update($, diskMeasured, () => null)
   if (!restart.briefsMain) return below
-  const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended }
+  const loopResetting = (await read($, readyLoop))?.phase === 'resetting'
+  const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended, ...(loopResetting && e.source === 'clear' ? { loopReset: true as const } : {}) }
   await update($, pendingStart, () => start)
   // a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
   // the main agent's OWN compaction (`restart.own`). A restart with no entry at all (an unattributed sub-agent compaction, a host without session.compact) is briefed passively and starts no turn.
@@ -2483,6 +3081,9 @@ async function onTurnComplete($: any, e: any, next: any) {
     await armKeepalive($, false)
     // the agent's ready, said during this turn, starts the compaction now that the turn is over
     await syncCompaction($, { start: true })
+    // a person's Stop takes the session off the ready list; any other turn's end is when finished work is noticed
+    if (e.isAborted === true && (await read($, readyLoop)) !== null) detach($, 'Ready list', leaveReady($, READY_STOPPED))
+    else detach($, 'Ready list', syncReady($))
     await syncTitleOnTurn($)
     await remindToRecord($)
   } else {
@@ -2499,6 +3100,8 @@ async function onTurnComplete($: any, e: any, next: any) {
 // turn.complete clears the turn state, so a sub-agent's start is no part of the main loop's state: it would leave isRunning true and the resume prompt unsent.
 async function onTurnStart($: any, e: any, next: any) {
   if (e.agentId !== undefined) return next(e)
+  // a look of the ready loop acts on nothing it read before a turn began (lookGoesOn)
+  readyTurns++
   cancelKeepalive()
   const since = await read($, idleSince)
   const now = await $.clock.now()
@@ -2819,6 +3422,10 @@ async function reportSubagentAlive($: any, agentId: string): Promise<void> {
 // session opened that the list no longer shows running (every start the reports open gets its end). A snapshot that is not
 // a list is one toast.
 async function reportShellEnds($: any, event: 'Stop' | 'SubagentStop', e: any): Promise<void> {
+  if (Array.isArray(e.background_tasks)) {
+    const ended = endedShells(await read($, readyShells), e.background_tasks)
+    if (ended.length > 0) await update($, readyShells, cur => cur.filter(s => !ended.includes(s)))
+  }
   const state = await reportingState($)
   if (state === 'off') return forgetReports($)
   const tasks = e.background_tasks
@@ -2934,9 +3541,10 @@ const GIT_STATUS_TIMEOUT_MS = 5000
 const COMPACTION_IDLE_CHECK_MS = 5000
 
 async function compactionControl($: any): Promise<ControlFile> {
-  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-  if (home === undefined || home === null) return { kind: 'bad', reason: 'no home directory' }
-  const path = controlPath(String(home), await $.session.id())
+  const home = await homeDir($)
+  if (home === null) return { kind: 'bad', reason: 'no home directory' }
+  const path = sessionFilePath(home, 'compaction', await $.session.id())
+  if (path === null) return { kind: 'bad', reason: `the session id ${JSON.stringify(await $.session.id())} names no file` }
   if (!(await $.fs.exists(path))) return { kind: 'absent' }
   return parseControlFile(await $.fs.read(path), String(await $.session.id()))
 }
@@ -2948,15 +3556,15 @@ async function contextReading($: any): Promise<{ tokens: number | null; window: 
   return { tokens: count(context?.tokens), window: count(context?.window) }
 }
 
-// The store keeps the spent-release records of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
-async function pruneUsedReleases($: any): Promise<void> {
+// The store keeps the spent-release records under `prefix` (a compaction's, or the ready loop's clear) of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
+async function pruneSpentReleases($: any, prefix: string): Promise<void> {
   const entries: { key: string; at: number }[] = []
   for (const key of await storeOp($, { op: 'keys' })) {
-    if (!key.startsWith(USED_RELEASE_PREFIX)) continue
+    if (!key.startsWith(prefix)) continue
     const rec: any = await storeOp($, { op: 'get', key })
     entries.push({ key, at: typeof rec?.at === 'number' ? rec.at : 0 })
   }
-  for (const key of staleSessionKeys(entries, USED_RELEASE_PREFIX)) await storeOp($, { op: 'delete', key })
+  for (const key of staleSessionKeys(entries, prefix)) await storeOp($, { op: 'delete', key })
 }
 
 // one read of the control file per main-loop moment (a turn's start, its end, the idle check) serves everything the plugin does with it: telling the person the
@@ -3065,7 +3673,7 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
   })
   if (!won) return null
   await storeOp($, { op: 'set', key, value: { releaseId, at: now } })
-  await pruneUsedReleases($)
+  await pruneSpentReleases($, USED_RELEASE_PREFIX)
   return releaseId
 }
 
@@ -3269,6 +3877,7 @@ export const register: Register = (on, options) => {
   on('session.attach', onSessionAttach)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
+  on('command.run', { command: READY_COMMAND }, onReadyCommand)
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
   on('tool.check', (_$, e, next) => ownServerCheck(e, next))
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)

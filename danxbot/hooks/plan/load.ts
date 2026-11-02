@@ -4,12 +4,13 @@ import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './
 import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
 import { PAUSE_PATH, pauseOf } from '../reports/pause'
+import { serverLoopOf, type ServerLoop } from '../ready/loop'
 
 // `$` cannot be passed across an import (`claude plugin validate`), so everything here is pure:
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
 // `refusal`: the call was refused by auto mode's classifier (its words and the fix); `body.error` carries both.
 // `sentence`: `body.error` is already one whole sentence for a person (a classifier refusal; an MCP older than the plugin)
-export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean; refusal?: Refusal; sentence?: true }
+export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean; refusal?: Refusal; sentence?: true; replyFile?: string }
 export type Call = (method: string, path: string, extra?: { query?: object; body?: object }) => Promise<Api>
 
 // the host's notice for a result over its size limit (written for the model, never shown to a person).
@@ -102,7 +103,17 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const pause = onNothing ? null : await readPause(call, Date.parse(refreshedAt))
   const pausedUntil = pause?.until ?? null
   const pausedWaitsOn = pause?.waitsOn ?? null
-  const noPlan = { dashboardUrl, connected: null, listener, pausedUntil, pausedWaitsOn, ...holds }
+  // the repo a new process takes the ready loop up for: the mark's, or the dashboard loop's, since a session on a job holds no mark. A loop it cannot read is no part of the band: it is
+  // carried as `readyLoopFault` for the loop's own reader to tell, so a fault there never turns the band of a session that was never in a loop into an error
+  let serverLoop: ServerLoop | null = null
+  let readyLoopFault: string | null = null
+  try {
+    serverLoop = serverLoopOf(list.body, 'GET /api/plan-sessions/me')
+  } catch (err: any) {
+    readyLoopFault = String(err?.message ?? err)
+  }
+  const readyRepo = typeof session?.ready?.repo === 'string' ? session.ready.repo : (serverLoop?.repo ?? null)
+  const noPlan = { dashboardUrl, connected: null, listener, pausedUntil, pausedWaitsOn, readyRepo, readyLoopFault, ...holds }
   if (connectedId === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
 
   // One load of everything about the connected plan: the plan itself (its status counts, bucket counts and card ids),
@@ -127,7 +138,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, listener, pausedUntil, pausedWaitsOn, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
+  const base = { dashboardUrl, connected, listener, pausedUntil, pausedWaitsOn, readyRepo, readyLoopFault, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
 
   // The in-progress bucket: its list is only as complete as the total says, so an answer without a numeric total is an error.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }

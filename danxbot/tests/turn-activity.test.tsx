@@ -5,7 +5,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { afterCompaction, nextSince, turnActivityBody } from '../hooks/reports/turn-activity'
 import { toolName } from '../hooks/plan/config'
-import { SURFACES, answerPlanConnect, dashboard, startSession, test } from './plan-kit'
+import { HOME_DIR, SURFACES, answerPlanConnect, dashboard, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
@@ -30,13 +30,20 @@ function answerCardConnect(on: any, d: any) {
   })
 }
 
-// DX-6556: the dashboard's answer to a manual pickup, connecting when the world says this session holds nothing to keep it from connecting
+// DX-6556: the dashboard's answer to a manual pickup, connecting when the world says this session holds nothing to keep it from connecting. `replyAsFile`: the MCP sends the answer as a
+// reply file (DX-4400, over its size limit), the body written whole to that file
+const REPLY_FILE = `${HOME_DIR}/tmp/api-reply.json`
 function answerPickup(on: any, d: any) {
+  const answered = (body: object) => {
+    if (d.world.replyAsFile !== true) return { result: {}, text: JSON.stringify({ ok: true, status: 200, body }), isError: false } as any
+    d.world.files[REPLY_FILE] = JSON.stringify(body)
+    return { result: {}, text: JSON.stringify({ ok: true, status: 200, reply_file: { path: REPLY_FILE, bytes: 1, chars: 1, instruction: 'The reply is this file.' } }), isError: false } as any
+  }
   on('tool.call', { tool: toolName('danxbot_api') }, (_$: any, e: any) => {
     if (d.world.pickupRefused) return { result: {}, text: JSON.stringify({ ok: false, status: 409, error: 'card_held' }), isError: true } as any
-    if (d.world.pickupConnects !== true) return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { issue: { id: CARD_ID } } }), isError: false } as any
+    if (d.world.pickupConnects !== true) return answered({ issue: { id: CARD_ID } })
     d.world.card = { id: CARD_ID, title: CARD_TITLE }
-    return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { issue: { id: CARD_ID }, connectedByPickup: true, session: { cardId: CARD_ID } } }), isError: false } as any
+    return answered({ issue: { id: CARD_ID }, connectedByPickup: true, session: { cardId: CARD_ID } })
   })
 }
 
@@ -267,6 +274,27 @@ for (const surface of SURFACES) {
         await $.tool.call(PICKUP)
         await d.clock.settle()
         expect(sent(d)).toEqual(['in_turn'])
+      })
+
+      test("a pickup that connected, whose answer the MCP sent as a file, is read from that file whole and sends in_turn at once", async ($, on) => {
+        const d = await started($, on, () => COMPACTED, false)
+        d.world.pickupConnects = true
+        d.world.replyAsFile = true
+        await $.turn.start(START)
+        await $.tool.call(PICKUP)
+        await d.clock.settle()
+        expect(d.world.fsReads).toContain(REPLY_FILE)
+        expect(sent(d)).toEqual(['in_turn'])
+      })
+
+      test("any other call's answer sent as a file is never read: only a pickup's body is needed", async ($, on) => {
+        const d = await started($, on, () => COMPACTED, false)
+        d.world.replyAsFile = true
+        await $.turn.start(START)
+        await $.tool.call({ tool: toolName('danxbot_api'), method: 'GET', path: `/api/issues/${CARD_ID}` } as any)
+        await $.tool.call({ ...PICKUP, body: { action: 'complete' } })
+        await d.clock.settle()
+        expect(d.world.fsReads).not.toContain(REPLY_FILE)
       })
 
       test('a pickup that only claimed sends nothing', async ($, on) => {

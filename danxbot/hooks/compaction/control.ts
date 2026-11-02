@@ -101,8 +101,6 @@ export const spentReleaseId = (record: unknown): string | null => {
   return r !== null && r !== undefined && typeof r === 'object' && typeof r.releaseId === 'string' ? r.releaseId : null
 }
 
-export const controlPath = (home: string, sessionId: string): string => `${home}/.config/danxbot/compaction/${sessionId}.json`
-
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
 

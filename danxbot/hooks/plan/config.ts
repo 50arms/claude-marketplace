@@ -98,6 +98,8 @@ export const DANGER = 'red'
 export const WARNING = 'yellow'
 
 export const EMPTY: PlanView = {
+  readyRepo: null,
+  readyLoopFault: null,
   phase: 'loading',
   error: null,
   serverNotConnected: false,
@@ -165,8 +167,8 @@ export const DONUT_BAND_PX = 16
 // (`sessionListenerAttached` null): the plugin knows only that no status came, so it says that; never green, never silent.
 export const NO_EVENT_STATUS = 'the dashboard sent no event status for this session'
 
-// a session with no dashboard key. The danx-dashboard MCP answers every tool but `plan_connect` with an error
-// result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key lapsed (KEY_LAPSED_HALT
+// a session with no dashboard key. The danx-dashboard MCP answers every tool but the two connect tools (they answer an approval
+// request, see `connectToolOutcome`) with an error result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key lapsed (KEY_LAPSED_HALT
 // ends with it): the dashboard's answer when the session has no usable key. A key a PERSON revoked is not this: it is the stop halt below.
 // The text is for the agent: the person only ever reads the words below.
 export const SIGNED_OUT_MARK = 'Not signed in to the danxbot dashboard'

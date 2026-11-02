@@ -12,7 +12,25 @@ import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/rel
 // 25-minute keepalive case takes 2-3.5 s on a quiet machine and crossed 5 s under load, refusing a publish. Every case built on this kit gets
 // this bounded ceiling instead; it is a ceiling on machine load, not an assertion about speed (R-48), and a real hang still fails.
 export const KIT_TEST_TIMEOUT_MS = 60_000
-export const test = (name: string, body: (...args: any[]) => unknown): void => baseTest(name, { timeoutMs: KIT_TEST_TIMEOUT_MS } as any, body as any)
+// The fixtures each test built, keyed by the `on` it was given: a test whose body returns with a one-shot hold (`apiHolds`, `processHolds`) never used fails, since a hold whose method, path or
+// command no longer matches the plugin's call holds nothing, and the test would pass while testing nothing. A body that takes no `on` builds no fixture, so it runs as given.
+const fixturesOf = new WeakMap<object, { apiHolds: { method: string; path: string }[]; processHolds: { command: string }[] }[]>()
+export function assertHoldsUsed(on: object): void {
+  const unused = (fixturesOf.get(on) ?? []).flatMap(world => [...world.apiHolds.map(h => `${h.method} ${h.path}`), ...world.processHolds.map(h => h.command)])
+  if (unused.length > 0) throw new Error(`a one-shot hold the test set was never used, so it held nothing: ${unused.join(', ')}`)
+}
+// the body the kit's `test` runs: one that takes `on` ends with assertHoldsUsed
+const kitBody = (body: (...args: any[]) => unknown): ((...args: any[]) => unknown) =>
+  body.length < 2 ? body : async ($: any, on: any) => {
+    await body($, on)
+    assertHoldsUsed(on)
+  }
+// the kit's `test` on top of a runner's `test`: every body it is given runs as kitBody makes it
+export const makeTest =
+  (base: (name: string, options: object, body: (...args: any[]) => unknown) => void) =>
+  (name: string, body: (...args: any[]) => unknown): void =>
+    base(name, { timeoutMs: KIT_TEST_TIMEOUT_MS }, kitBody(body))
+export const test = makeTest(baseTest as any)
 
 // A path as the fixture's disk keys it: a Windows path (C:\Users\x) loses its drive letter and its backslashes, and the Linux test engine's resolution of it
 // against its own working directory (/app/danxbot/C:\Users\x) is undone, so a test holds the file at /Users/x
@@ -34,11 +52,15 @@ ${DEFAULT_BRIEFING}` : EVENT_TEXT(event))
 // DX-4234: where the fixture's machine keeps the MCP server's connection record of a session (what makes a session locally known as plan-connected)
 export const HOME_DIR = '/home/u'
 export const RECORD_PATH = (sessionId: string) => `${HOME_DIR}/.config/danxbot/plan-sessions/${sessionId}.json`
+// CP-43: a session id that is not plain, and the one file every per-session kind would name for it. The runtime resolves `..` before a path reaches the fs hooks, so
+// `<kind>/../other.json` arrives as `${HOME_DIR}/.config/danxbot/other.json`: a file a test plants for such an id must sit at this resolved path, or no read could ever find it
+export const BAD_SESSION_ID = '../other'
+export const BAD_SESSION_ID_PATH = `${HOME_DIR}/.config/danxbot/other.json`
 export const DASHBOARD_URL = 'http://localhost:5555'
 // `dashboardUrl: NO_DASHBOARD_URL` leaves the field out of the answer (a JSON null is sent as one)
 export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
 // DX-4423 / DX-4418: what the danx-dashboard MCP (0.1.225, session-access.ts and key-revoked-halt.ts) answers every tool but
-// plan_connect while the session holds no key: an error result. SIGN_IN_HALT is a session that never signed in, KEY_LAPSED_HALT
+// the connect tools while the session holds no key: an error result (the connect tools answer an approval request instead). SIGN_IN_HALT is a session that never signed in, KEY_LAPSED_HALT
 // what the first call after a lapsed key's 401 answers (it ends in the sign-in sentence), and KEY_REVOKED_HALT the one stop halt
 // for a key a PERSON revoked, which EVERY tool answers, plan_connect included, with no access request. These are the server's
 // words, for the agent: the plugin must never show them to the person.
@@ -62,7 +84,8 @@ export const APPROVAL_PENDING = { ...APPROVAL_REQUIRED, state: 'approval_pending
 
 // the connected plan's counts: 4 / (3 + 5 + 1 + 3 + 4) = 25%; Cancelled (2) is not counted
 export const DEFAULT_BREAKDOWN = { 'In Progress': 3, ToDo: 5, Backlog: 1, Review: 3, Done: 4, Cancelled: 2 }
-const SESSION_ID = '41365fb5-6b43-443b-a01b-81245574f648'
+// the dashboard's id of the session under test: its own row's `session_id`, and `session.sessionId` in a connect's answer
+export const SESSION_ID = '41365fb5-6b43-443b-a01b-81245574f648'
 const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, body })
 
 // DX-4458: the host refuses a tool result past its size limit, with a notice written for the model (captured 2026-10-04 from the
@@ -131,6 +154,8 @@ export function dashboard(
     attached?: boolean
     // ... or the raw `sessionListenerAttached` value as sent, whatever its shape (overrides the two above)
     rawListener?: unknown
+    // CP-43: the session's MCP relay is older than the clear handshake from its start (world.olderRelay)
+    olderRelay?: boolean
     // the connected plan's status counts: the default, an override, or none at all
     breakdown?: Record<string, unknown>
     noBreakdown?: boolean
@@ -145,7 +170,7 @@ export function dashboard(
     disconnectTakesMs?: number
     sessionReadFails?: boolean
     // DX-4423: the session holds no dashboard key: every danxbot_api call is the MCP's error result (the first call after a revoke
-    // answers KEY_LAPSED_HALT, a session that never signed in SIGN_IN_HALT; 'revoked' answers KEY_REVOKED_HALT to every tool and never asks) and plan_connect runs the request-and-approve dance
+    // answers KEY_LAPSED_HALT, a session that never signed in SIGN_IN_HALT; 'revoked' answers KEY_REVOKED_HALT to every tool and never asks) and the connect tools run the request-and-approve dance
     // (world.signIn): approval_required, then approval_pending after `waitMs` on the fake clock, until a test sets `approved`
     // (then the key is stored: the tools work again and plan_connect connects to the plan it is given) or `answer`
     signedOut?: 'signed-out' | 'lapsed' | 'revoked'
@@ -234,8 +259,72 @@ export function dashboard(
   // DX-5231: the arguments of each `/compact` the plugin ran itself
   const compactRuns: unknown[] = []
   const world = {
+    // CP-43: the session's ready mark, every repo a PUT named, how many DELETEs came, a scripted answer to the repo list, the team's repos (GET /api/repos with github_remote),
+    // the status a card read answers, what the plan read adds to its answer, and what the /clear command does
+    readyMark: null as string | null,
+    loseAgentAtMark: false,
+    agentClaim: null as object | null,
+    readyMarks: [] as string[],
+    readyCleared: 0,
+    // what happens between the session's look and its mark: the card it took, a hold of the write
+    cardAtMark: null as { id: string; title: string } | null,
+    markHold: null as Promise<void> | null,
+    // a hold of the ready DELETE, so a person's leave of the list can be slower than the loop's own leave
+    readyClearHold: null as Promise<void> | null,
+    // the agent the next plan-less claim hands out, when not the one it held
+    agentNext: null as { id: number; name: string; avatar_url: null } | null,
+    // how many claims went through `plan_connect`; a leave that throws in the engine; what refuses the mark; what holds the plan read and the card read
+    leaveDeny: null as string | null,
+    markRefusal: null as { status: number; body: any } | null,
+    planReadHold: null as Promise<void> | null,
+    cardReadHold: null as Promise<void> | null,
+    // what the card leave and the plan leave answer instead, as the MCP's tool result; what holds `request_permission` and the card leave on their way
+    cardLeaveAnswer: null as { text: string; isError: boolean; then?: () => void } | null,
+    planLeaveAnswer: null as { text: string; isError: boolean } | null,
+    permissionAskHold: null as Promise<void> | null,
+    cardLeaveHold: null as Promise<void> | null,
+    // a `request_permission` that throws in the engine (a classifier refusal, say), after its hold
+    permissionAskDeny: null as string | null,
+    cardLeaves: 0,
+    // what `request_permission` answers instead of an approval request, and how many were asked
+    permissionAskRefused: null as string | null,
+    permissionAsks: 0,
+    claimsByConnect: 0,
+    reposAnswer: null as { status: number; body: any } | null,
+    repos: [] as { name: string; github_remote: { owner: string; repo: string } | null }[],
+    cardStatus: {} as Record<string, string>,
+    planRead: {} as Record<string, unknown>,
+    clearFails: undefined as string | undefined,
+    // a /clear that answers but changes nothing
+    clearDoesNothing: false,
+    // a test can hold the reset's /clear (it waits for the session to be idle, and then runs) and act meanwhile; `clearsStarted` counts the /clears begun, held or not
+    clearHold: null as Promise<void> | null,
+    clearsStarted: 0,
+    // one-shot holds: the next danxbot_api call of that method and path, and the next `$.process.run` of that command line, waits on `hold`; and what holds the plan leave on its way
+    // `early`: the answer is made when the call arrives and held on its way back, so it says what the dashboard held then
+    apiHolds: [] as { method: string; path: string; hold: Promise<void>; early?: boolean }[],
+    processHolds: [] as { command: string; hold: Promise<void> }[],
+    planLeaveHold: null as Promise<void> | null,
+    // every step of a job's end, in the order the plugin took it: `leave <card>`, `clear`, and `mark <repo>` for a mark the dashboard took (a /compact the plugin ran shows here too, as `compact`)
+    readySteps: [] as string[],
     // the session id the engine answers: another one after a /clear or a resume
     sessionId: OWN_SESSION.session_id,
+    // CP-43 / DX-6692: the server's ready loop as `GET /api/plan-sessions/me` answers it (`ready_loop`), and whether the session agreed to clear (`POST /api/plan-sessions/me/clear-ready`), which lets the
+    // rejoin's `PUT /api/plan-sessions/me/ready` leave the ended job the session still holds
+    readyLoop: null as { repo: string; job: { kind: 'card'; id: string } | { kind: 'plan'; id: number } | null; ended: boolean } | null,
+    clearAgreed: false,
+    // DX-4400: the danxbot_api paths whose answer the MCP sends as `reply_file` (over its 100,000-character limit), with the body written whole to a local file
+    replyFilePaths: [] as string[],
+    // the reply file is gone before the plugin reads it (a cleaned temp folder, say)
+    replyFileLost: false,
+    // the session's MCP relay is older than the clear handshake (0.1.426 or older): it writes no clear file. A current one writes it at every stream connect, nothing released included
+    olderRelay: options.olderRelay === true,
+    // every file path the plugin read, in order
+    fsReads: [] as string[],
+    // every file path the plugin checked for existence, in order
+    fsExists: [] as string[],
+    // CP-43: runs after each existence check is answered, so a test can land a write between two checks of one look
+    afterExists: undefined as ((path: string) => void) | undefined,
     listener: (options.listener === undefined ? 'healthy' : options.listener) as string | null,
     inProgress: [{ id: 'DX-9', title: 'In flight card' }] as { id: string; title: string }[],
     planId: options.connected === false ? (null as number | null) : 23,
@@ -352,6 +441,8 @@ export function dashboard(
     { id: 25, ref: 'PLAN-25', name: 'Archived', status: 'done', archived_at: 'x', bucket_counts: {} },
   ]
 
+  fixturesOf.set(on, [...(fixturesOf.get(on) ?? []), world])
+
   function route(method: string, path: string, body: any, query: any) {
     if (method === 'GET' && path === '/api/plan-sessions/me') {
       // DX-4233: GET /api/plan-sessions/me answers this as its body, whatever its shape (a string makes the plugin's session read throw)
@@ -365,11 +456,13 @@ export function dashboard(
           world.planId === null && world.card === null && world.agent === null
             ? null
             : {
+                session_id: SESSION_ID,
                 plan_id: world.planId,
                 plan_name: world.planId === null ? null : (plans.find(p => p.id === world.planId)?.name ?? 'Far plan'),
                 card_id: world.card?.id ?? null,
                 card_title: world.card?.title ?? null,
                 agent: world.agent,
+                ready: world.readyMark === null ? null : { repo: world.readyMark, since: '2026-10-03T08:00:00.000Z' },
               },
         // DX-5553: a session holding a card is bound to work and keeps its health, as one on a plan does
         sessionListenerAttached:
@@ -378,6 +471,8 @@ export function dashboard(
             : (world.planId === null && world.card === null) || world.listener === null
             ? null
             : { attached: options.attached ?? world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
+        // DX-6692: the session's ready loop and whether its job has ended, as the server judges it
+        ready_loop: world.readyLoop,
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
       })
     }
@@ -407,6 +502,7 @@ export function dashboard(
         ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
         // as the real route answers: `bucket_counts` always (the needs-you bucket counts CARDS holding an open problem), `card_ids` only when `fields` names it
         ...(options.planFieldsShape === 'noNeedsYou' ? {} : { bucket_counts: { 'needs-you': needsYouCards() } }),
+        ...world.planRead,
         ...(query?.fields?.card_ids && options.planFieldsShape !== 'noCardIds' ? { card_ids: options.planFieldsShape === 'badCardIds' ? [...planCardIds, 7] : planCardIds } : {}),
       })
     }
@@ -425,7 +521,7 @@ export function dashboard(
       const c = world.cards.find(x => x.id === issue[1])
       if (!c) return reply({ error: 'nope' }, 404)
       // as the real route answers: scalars always, a relation only when `fields` names it
-      return reply({ id: c.id, title: c.title, ...(query?.fields?.problems ? { problems: c.problems } : {}), ...(query?.fields?.open_problem_count ? { open_problem_count: c.problems.filter(p => p.open).length } : {}) })
+      return reply({ id: c.id, title: c.title, ...(world.cardStatus[c.id] === undefined ? {} : { status: world.cardStatus[c.id] }), ...(query?.fields?.problems ? { problems: c.problems } : {}), ...(query?.fields?.open_problem_count ? { open_problem_count: c.problems.filter(p => p.open).length } : {}) })
     }
     // DX-4336: the usage route as it answers a report (danxbot handleUsage's view)
     if (method === 'PUT' && path === '/api/plan-sessions/me/usage') {
@@ -439,6 +535,82 @@ export function dashboard(
       if (world.permissionClaim === 'boom') return reply({ error: 'boom' }, 500)
       const decided = world.permissionClaim === 'approved' || world.permissionClaim === 'claimed'
       return reply({ status: world.permissionClaim, granted: decided ? world.permissionGranted : null })
+    }
+    // CP-43: the ready list (danxbot DX-6610, plan-sessions-routes handleMarkReady / handleClearReady) and the team's repos
+    if (method === 'PUT' && path === '/api/plan-sessions/me/ready') {
+      world.readyMarks.push(body.repo)
+      if (world.markRefusal !== null) return reply(world.markRefusal.body, world.markRefusal.status)
+      // the agent lapses between the session's look and its mark: from here the hold gate refuses every gated route
+      if (world.loseAgentAtMark) {
+        world.loseAgentAtMark = false
+        world.agent = null
+        world.agentGate = 'agent_not_held'
+        return reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call plan_connect to claim one.' }, 403)
+      }
+      if (world.cardAtMark !== null) {
+        world.card = world.cardAtMark
+        world.cardAtMark = null
+      }
+      if (!world.repos.some(r => r.name === body.repo)) return reply({ error: 'repo_not_found' }, 404)
+      // DX-6692: the rejoin after an agreed clear leaves the ended job the session still holds, as its own leave (the agent is kept), in the same transaction as the mark. DX-6697: decided
+      // before anything is written, so a job that reopened (or an agreement emptied) since is no leave: nothing is undone, and the call joins as below
+      const heldJob = () => (world.planId !== null ? { kind: 'plan' as const, id: world.planId } : world.card !== null ? { kind: 'card' as const, id: world.card.id } : null)
+      const held = heldJob()
+      const job = world.readyLoop?.job ?? null
+      if (held !== null && world.clearAgreed && world.readyLoop?.ended === true && job?.kind === held.kind && job.id === held.id) {
+        world.readySteps.push(`leave ${held.id}`)
+        world.planId = null
+        world.card = null
+      }
+      // DX-6697: a session that holds work is marked nothing: it joins the ready loop with that work as its job (a card Done or Cancelled has ended at once), and joining again on the same job
+      // and repo changes nothing
+      const work = heldJob()
+      if (work !== null) {
+        const same = world.readyLoop !== null && world.readyLoop.repo === body.repo && world.readyLoop.job?.kind === work.kind && world.readyLoop.job.id === work.id
+        if (!same) {
+          world.readyLoop = { repo: body.repo, job: work, ended: work.kind === 'card' && ['Done', 'Cancelled'].includes(world.cardStatus[work.id]) }
+          world.clearAgreed = false
+        }
+        // DX-6697 (danxbot readJoinedReadyLoop): a join on the loop's own job while it has not ended empties the handshake, so a job that reopened after an agreement starts a fresh one
+        // instead of riding that agreement into the next rejoin. On an ended job an agreement stays
+        if (!world.readyLoop!.ended) world.clearAgreed = false
+        world.readySteps.push(`join ${work.id}`)
+        return reply({ ready: null, repo: body.repo, since: null, ready_loop: world.readyLoop })
+      }
+      world.readyMark = body.repo
+      // the rejoin ends the handshake: the loop keeps its repo and has no job
+      world.clearAgreed = false
+      if (world.readyLoop !== null) world.readyLoop = { repo: body.repo, job: null, ended: false }
+      world.readySteps.push(`mark ${body.repo}`)
+      return reply({ ready: true, repo: body.repo, since: '2026-10-03T08:00:00.000Z', ready_loop: world.readyLoop })
+    }
+    // the plan-less claim: an open route, so the hold gate lets it through, and a no-agent answer is a 200
+    if (method === 'POST' && path === '/api/plan-sessions/me/agent') {
+      if (world.agentClaim !== null) return reply(world.agentClaim)
+      world.agent = world.agentNext ?? world.agent ?? { id: 6, name: 'Tendai', avatar_url: null }
+      world.agentGate = null
+      return reply({ state: 'agent_held', agent: world.agent, instruction: 'Use this name.' })
+    }
+    if (method === 'DELETE' && path === '/api/plan-sessions/me/ready') {
+      const cleared = world.readyMark !== null || world.readyLoop !== null
+      world.readyMark = null
+      // DX-6692: the one way the server's loop ends
+      world.readyLoop = null
+      world.clearAgreed = false
+      world.readyCleared++
+      return reply({ cleared })
+    }
+    // as the real routes answer: the list pages (50 by default), one repo by name is its bare row, and `github_remote` is opt-in on both: a read whose `fields` does not name it gets none
+    const repoRow = (r: (typeof world.repos)[number]) => (query?.fields?.github_remote === true ? r : { name: r.name })
+    if (method === 'GET' && path === '/api/repos') {
+      if (world.reposAnswer !== null) return reply(world.reposAnswer.body, world.reposAnswer.status)
+      const from = query?.offset ?? 0
+      return reply({ repos: world.repos.slice(from, from + (query?.limit ?? 50)).map(repoRow), total: world.repos.length })
+    }
+    const repoOne = /^\/api\/repos\/([^/]+)$/.exec(path)
+    if (method === 'GET' && repoOne) {
+      const row = world.repos.find(r => r.name === repoOne[1])
+      return row === undefined ? reply({ error: 'Not found' }, 404) : reply(repoRow(row))
     }
     return reply({ error: `unrouted ${method} ${path}` }, 404)
   }
@@ -473,6 +645,14 @@ export function dashboard(
   }
   async function planEventsWaitOnce(args: any) {
     server.calls.push(args)
+    // DX-4993 / DX-6692: the stream's first frames on a connect are the session's compaction control, then its clear control. Every relay the plugin serves writes the compaction file, and
+    // only a current one the clear file, each `control: null` while nothing is asked. Neither is written while the stream is not up (`world.listener`)
+    if (world.listener === 'healthy') {
+      const compactionFile = `${HOME_DIR}/.config/danxbot/compaction/${SESSION_ID}.json`
+      if (!(compactionFile in world.files)) world.files[compactionFile] = JSON.stringify({ v: 1, sessionId: SESSION_ID, control: null, askedAt: null })
+      const clearFile = `${HOME_DIR}/.config/danxbot/clear/${SESSION_ID}.json`
+      if (!world.olderRelay && !(clearFile in world.files)) world.files[clearFile] = JSON.stringify({ v: 1, sessionId: SESSION_ID, control: null, askedAt: null })
+    }
     const scripted = server.script.shift()
     if (scripted) return scripted()
     if (server.stopped) return { value: text({ stopped: server.stopped }) }
@@ -681,7 +861,7 @@ export function dashboard(
     }
     // DX-5549: the agent gate closes every danxbot_api call but the proposal routes (packages/danx-dashboard-mcp agent-gate.ts); each refused call is still
     // recorded where its suite counts it
-    if (e.server === SERVER && e.tool === 'danxbot_api' && world.agentGate !== null && !(e.args.method === 'POST' && e.args.path.startsWith('/api/team/agent-proposals'))) {
+    if (e.server === SERVER && e.tool === 'danxbot_api' && world.agentGate !== null && !(e.args.method === 'POST' && e.args.path.startsWith('/api/team/agent-proposals')) && !(world.agentGate === 'agent_not_held' && e.args.method === 'POST' && e.args.path === '/api/plan-sessions/me/agent')) {
       if (isContextRead(e.args)) contextReads.push(e.args.path)
       else if (e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
       else calls.push({ server: e.server, tool: e.tool, args: e.args })
@@ -802,6 +982,8 @@ export function dashboard(
       // DX-4233: a scripted wait answer is the engine's own (a refusal it makes before the server sees the call: not connected, not bound), so it
       // comes first, whatever the key's state
       if (e.tool === 'plan_events_wait' && server.script.length > 0) return planEventsWait(e.args)
+      // on a key the dashboard stopped accepting, card_connect answers a new approval request, as plan_connect does (the MCP's accessReply), never the halt
+      if (world.signedOut !== null && world.signedOut !== 'revoked' && e.tool === 'card_connect') return { value: text(APPROVAL_REQUIRED) }
       // a revoked key stops EVERY tool, plan_connect included, and asks for nothing
       if (world.signedOut === 'revoked' || (world.signedOut !== null && e.tool !== 'plan_connect')) {
         return { value: { content: [{ type: 'text', text: haltText() }], isError: true } }
@@ -835,7 +1017,30 @@ export function dashboard(
         return { value: text(APPROVAL_PENDING) }
       }
       if (e.tool === 'plan_events_wait') return planEventsWait(e.args)
+      // CP-43: the model's card_connect leave and the plugin's request_permission, as the MCP answers them
+      if (e.tool === 'card_connect' && e.args.disconnect) {
+        if (world.leaveDeny !== null) return { deny: world.leaveDeny }
+        world.cardLeaves++
+        if (world.cardLeaveHold !== null) await world.cardLeaveHold
+        if (world.cardLeaveAnswer !== null) {
+          const answer = world.cardLeaveAnswer
+          answer.then?.()
+          return { value: { content: [{ type: 'text', text: answer.text }], isError: answer.isError } }
+        }
+        world.readySteps.push(`leave ${e.args.card_id}`)
+        world.card = null
+        return { value: text({ ok: true, status: 200, body: { session: { sessionId: SESSION_ID, cardId: null }, leftCard: { id: e.args.card_id, title: 'x' } } }) }
+      }
+      if (e.tool === 'request_permission') {
+        world.permissionAsks++
+        if (world.permissionAskHold !== null) await world.permissionAskHold
+        if (world.permissionAskDeny !== null) return { deny: world.permissionAskDeny }
+        return { value: text(world.permissionAskRefused === null ? APPROVAL_REQUIRED : { ok: false, status: 403, body: { error: world.permissionAskRefused } }) }
+      }
       if (e.tool === 'plan_connect' && e.args.disconnect) {
+        if (world.leaveDeny !== null) return { deny: world.leaveDeny }
+        if (world.planLeaveHold !== null) await world.planLeaveHold
+        if (world.planLeaveAnswer !== null) return { value: { content: [{ type: 'text', text: world.planLeaveAnswer.text }], isError: world.planLeaveAnswer.isError } }
         if (options.disconnect === 'rejected') return { deny: 'plan_connect is not available' }
         if (options.disconnectTakesMs) await clock.sleep(options.disconnectTakesMs)
         // the real envelope (packages/danx-dashboard-mcp jsonResult, the server's handleLeavePlan): pretty-printed
@@ -864,6 +1069,11 @@ export function dashboard(
         if (options.disconnect === 'notFound') return envelope(false, 404, { error: 'Not found' })
         const left = plans.find(p => p.id === world.planId)
         world.planId = null
+        // as the real route: a leave frees the session's agent in its own transaction, so the hold gate answers what follows
+        if (world.agent !== null) {
+          world.agent = null
+          world.agentGate = 'agent_not_held'
+        }
         if (options.disconnect === 'noLeftPlan') return envelope(true, 200, { session: { sessionId: SESSION_ID, planId: null } })
         return envelope(true, 200, {
           session: { sessionId: SESSION_ID, planId: null },
@@ -898,11 +1108,33 @@ export function dashboard(
             },
           }
         }
+        // CP-43: a plan-less plan_connect claims a team agent and connects nothing (the agent gate's answers are the kit's `agentClaim`)
+        if (e.args.plan_id === undefined) {
+          world.claimsByConnect++
+          if (world.agentClaim !== null) return { value: text(world.agentClaim) }
+          world.agent = world.agentNext ?? world.agent ?? { id: 6, name: 'Tendai', avatar_url: null }
+          world.agentGate = null
+          return { value: text({ state: 'agent_held', agent: world.agent, instruction: 'Use this name.' }) }
+        }
         world.planId = e.args.plan_id
         world.titleSeen = e.args.title
         return { value: text({ ok: true, status: 200, body: { session: { planId: e.args.plan_id } } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
+      const apiHold = world.apiHolds.findIndex(h => h.method === e.args.method && h.path === e.args.path)
+      if (apiHold !== -1) {
+        const h = world.apiHolds.splice(apiHold, 1)[0]
+        if (h.early) {
+          const answered = route(e.args.method, e.args.path, e.args.body, e.args.query)
+          await h.hold
+          return { value: hostLimited(answered) }
+        }
+        await h.hold
+      }
+      if (e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/ready' && world.markHold !== null) await world.markHold
+      if (e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/ready' && world.readyClearHold !== null) await world.readyClearHold
+      if (e.args.method === 'GET' && /^\/api\/plans\/\d+$/.test(String(e.args.path)) && world.planReadHold !== null) await world.planReadHold
+      if (e.args.method === 'GET' && /^\/api\/issues\/[^/]+$/.test(String(e.args.path)) && world.cardReadHold !== null) await world.cardReadHold
       if (options.hangFirstLoad && e.args.path === '/api/plan-sessions/me' && api.filter(a => a.path === '/api/plan-sessions/me').length === 2) {
         return hung.promise.then(() => ({ value: route(e.args.method, e.args.path, e.args.body, e.args.query) }))
       }
@@ -920,7 +1152,17 @@ export function dashboard(
       } finally {
         if (isIssueRead) issueReads.active--
       }
-      return { value: hostLimited(route(e.args.method, e.args.path, e.args.body, e.args.query)) }
+      const answered = route(e.args.method, e.args.path, e.args.body, e.args.query)
+      // DX-4400: an answer the MCP sends as a file: `{ok, status, reply_file}` and no body, the body written whole where the file names
+      if (world.replyFilePaths.includes(e.args.path)) {
+        const whole = JSON.parse(answered.content[0].text)
+        const body = JSON.stringify(whole.body)
+        // named by its content, as the MCP names it: the same body is the same file
+        const file = `${HOME_DIR}/tmp/danx-api/${[...body].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16)}.json`
+        if (!world.replyFileLost) world.files[file] = body
+        return { value: text({ ok: whole.ok, status: whole.status, reply_file: { path: file, bytes: body.length, chars: body.length, instruction: 'The reply was over the inline limit, so its body is this file, whole.' } }) }
+      }
+      return { value: hostLimited(answered) }
     }
     return { deny: `no stand-in for ${e.server}` }
   })
@@ -1022,11 +1264,15 @@ export function dashboard(
   on('fs.exists', (_$: any, e: any) => {
     if (world.fsError !== undefined) return { deny: world.fsError } as any
     const path = fsKey(e.path)
-    return { value: (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) || path in world.files || Object.keys(world.files).some(file => file.startsWith(path + '/')) } as any
+    world.fsExists.push(path)
+    const value = (world.localRecord && path === RECORD_PATH(world.sessionId)) || world.records.some(id => path === RECORD_PATH(id)) || path in world.files || Object.keys(world.files).some(file => file.startsWith(path + '/'))
+    world.afterExists?.(path)
+    return { value } as any
   })
   // DX-4993: the compaction control file, the window the plugin arms, and the git status of the resume briefing
   on('fs.read', (_$: any, e: any) => {
     const path = fsKey(e.path)
+    world.fsReads.push(path)
     return (path in world.files ? { value: world.files[path] } : { deny: `ENOENT: no such file ${path}` }) as any
   })
   // a directory listing from the fixture's disk: the first path segment under it of every file held there. An entry is a dir when something lies deeper or its text is empty
@@ -1070,8 +1316,10 @@ export function dashboard(
   on('session.cwd', () => ({ value: '/work/repo' }) as any)
   // Every `$.process.run` the plugin makes, as its argv
   const runCalls: string[][] = []
-  on('process.run', (_$: any, e: any) => {
+  on('process.run', async (_$: any, e: any) => {
     runCalls.push([...e.argv])
+    const processHold = world.processHolds.findIndex(h => h.command === e.argv.join(' '))
+    if (processHold !== -1) await world.processHolds.splice(processHold, 1)[0].hold
     const answer: { exitCode?: number; stdout: string } = world.processes[e.argv[0]] ?? world.gitStatus
     return { value: { exitCode: answer.exitCode ?? 0, stdout: answer.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as any
   })
@@ -1139,10 +1387,24 @@ export function dashboard(
     statuses.push(e.text)
     return { value: undefined }
   })
-  on('command.run', { command: 'compact' }, (_$: any, e: any) => {
+  on('command.run', { command: 'compact' }, async (_$: any, e: any) => {
+    world.readySteps.push('compact')
     compactRuns.push(e.args ?? null)
     if (options.compactRunFails !== undefined) throw new Error(options.compactRunFails)
     return { value: undefined } as any
+  })
+  // CP-43: the plugin's /clear, only as far as another session id answers afterwards (measured, claude.exe 2.1.309). The engine also raises `session.end` and `classic.SessionStart` and empties the
+  // conversation; a kit fake's `$` cannot raise an event, and the kit keeps no conversation, so none of that is modelled here.
+  const clearRuns: string[] = []
+  on('command.run', { command: 'clear' }, async (_$: any, _e: any) => {
+    world.clearsStarted++
+    if (world.clearHold !== null) await world.clearHold
+    if (world.clearFails !== undefined) throw new Error(world.clearFails)
+    if (world.clearDoesNothing) return { value: { text: '' } } as any
+    world.readySteps.push('clear')
+    clearRuns.push(world.sessionId)
+    world.sessionId = `${OWN_SESSION.session_id}-cleared-${clearRuns.length}`
+    return { value: { text: '' } } as any
   })
   on('command.register', (_$: any, e: any) => {
     commands.push(e.name)
@@ -1201,7 +1463,7 @@ export function dashboard(
       deliveryFlags.submitRejects = undefined
     },
   }
-  return { envSets, envClearedAtSet, sends, failSendsTo: (id: string) => void sendFails.add(id), setSendMode: (mode: 'delivered' | 'refused' | 'throws') => void (sendMode.current = mode), holdSends: () => {
+  return { clearRuns, envSets, envClearedAtSet, sends, failSendsTo: (id: string) => void sendFails.add(id), setSendMode: (mode: 'delivered' | 'refused' | 'throws') => void (sendMode.current = mode), holdSends: () => {
       let release!: () => void
       let entered!: () => void
       sendHold.gate = new Promise<void>(r => (release = r))

@@ -1,3 +1,4 @@
+import { approvalRequestOf } from './approval'
 import { ERROR_BODY_MAX, KEY_REVOKED_HALT, SIGNED_OUT_MARK } from './config'
 
 // What `$.mcp.call` rejects with, as the engine words it.
@@ -19,9 +20,7 @@ export function mcpText(r: any): string {
 // else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
 // the plan with its name (`session.planName`, '' when the answer has none): what the band names while the plugin's own
 // reads are refused by auto mode's classifier and the model's own successful plan_connect is all that is known of the plan.
-export function connectedPlanOf(text: unknown): { id: number; name: string } | null {
-  if (typeof text !== 'string') return null
-  const outcome = textOutcome(text, false)
+export function connectedPlanOf(outcome: ToolOutcome): { id: number; name: string } | null {
   const session = outcome.ok ? outcome.body?.session : undefined
   return typeof session?.planId === 'number' ? { id: session.planId, name: typeof session.planName === 'string' ? session.planName : '' } : null
 }
@@ -30,12 +29,24 @@ export function connectedPlanOf(text: unknown): { id: number; name: string } | n
 // where a server refusal is `ok: false` and is NEVER an error result. Only a thrown call is an error:
 // argument validation, an outdated MCP, a 5xx. So an `isError` result carries plain text, and anything
 // that is not an envelope is a failure here, never a success.
-export type ToolOutcome = { ok: boolean; status: number; body: any }
+// `replyFile`: the MCP sent danxbot_api's answer as a file (over its 100,000-character limit: `{ok, status, reply_file: {path, ...}}` and no `body`); `body` is then undefined until a reader reads that file.
+export type ToolOutcome = { ok: boolean; status: number; body: any; replyFile?: string }
 
 // An MCP tool result's envelope: api() and the band's plan_connect calls use it.
 export function toolOutcome(r: any): ToolOutcome {
   if (r === null || r === undefined) return { ok: false, status: 0, body: { error: 'the tool answered no result' } }
   return textOutcome(mcpText(r), r.isError === true)
+}
+
+// A connect tool's result (`plan_connect`, `card_connect`). On a key the dashboard stopped accepting, these two answer the MCP's access
+// request (its `accessReply`: `approval_required` or `approval_pending` with a link and code), never the envelope and never the signed-out
+// halt, so that answer reads here as signed out. Only from these two tools: `request_permission` answers the same shape for a
+// permission on a key that works, so the shared parser below never reads an approval as signed out.
+export function connectToolOutcome(r: any): ToolOutcome {
+  if (r !== null && r !== undefined && r.isError !== true && approvalRequestOf(mcpText(r), ['approval_required', 'approval_pending']) !== null) {
+    return { ok: false, status: 0, body: { error: SIGNED_OUT_MARK } }
+  }
+  return toolOutcome(r)
 }
 
 // THE one parser of that envelope, from a result's text (`isError`: the call threw): toolOutcome, connectedPlanOf, and the model's own
@@ -51,7 +62,9 @@ export function textOutcome(text: string, isError: boolean): ToolOutcome {
   if (parsed === null || typeof parsed !== 'object' || typeof parsed.ok !== 'boolean') {
     return { ok: false, status: 0, body: { error: `the tool answered no {ok, status, body}: ${text.slice(0, ERROR_BODY_MAX)}` } }
   }
-  return { ok: parsed.ok, status: typeof parsed.status === 'number' ? parsed.status : 0, body: parsed.body }
+  const status = typeof parsed.status === 'number' ? parsed.status : 0
+  if (parsed.body === undefined && typeof parsed.reply_file?.path === 'string') return { ok: parsed.ok, status, body: undefined, replyFile: parsed.reply_file.path }
+  return { ok: parsed.ok, status, body: parsed.body }
 }
 
 // What a refusal says: the server's own message (or error), and for plan_mismatch which plan the

@@ -53,8 +53,8 @@ export function renderBand(
   const showBadge = plan !== null && badge !== ''
   // a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
   const signedOut = v.phase === 'signed-out'
-  // the sign-in request's link and code show while signed out
-  const approve = signedOut ? signIn : null
+  // the sign-in request's link and code show while signed out, and while the MCP's own gate answers for a key that may have lapsed behind it
+  const approve = signedOut || v.agentBlock !== null ? signIn : null
   // a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
