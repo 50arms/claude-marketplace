@@ -230,6 +230,7 @@ declare module 'claude-code' {
       recordClock: { since: number | null }
       // the cards this session marked as its own work (PUT /api/work-marks), card id to the epoch ms the mark was set; the held-idle Stop check counts them as worked.
       workMarks: Record<string, number>
+      agentBriefs: { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
     }
   }
 }
