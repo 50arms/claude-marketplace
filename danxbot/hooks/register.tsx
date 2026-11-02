@@ -2014,9 +2014,9 @@ async function syncReadyOnce($: any, token: LookToken, again = true): Promise<vo
     readyRelayOlderTold = true
     $.ui.toast(READY_RELAY_OLDER)
   }
-  // 50 Arms released a clear this loop has not run, and still stands behind it: the job has ended, and the model said ready (a release the server no longer judges ended is the file lagging a
-  // job that reopened, and clears nothing)
-  if (release.id !== null && release.id !== release.spent && server?.ended === true) {
+  // 50 Arms released a clear this loop has not run, and still stands behind it: the job has ended, the model said ready, and the server's own `release_id` is the file's release (CP-55: a file
+  // naming an older release is the stream lagging a job that reopened and ended again, and clears nothing until the file names the release the server stands behind)
+  if (release.id !== null && release.id !== release.spent && server?.ended === true && server.releaseId === release.id) {
     if (!(await resetSession($, token, ownId, release.id))) return
     // the clear's own turn count is the look's from here
     token.turns = readyTurns
