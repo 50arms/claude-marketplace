@@ -132,8 +132,9 @@ export type ReadyLoop = { phase: 'joining' | 'waiting' | 'working' | 'resetting'
 // the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
 export type StampState = { at: number; day: string } | null
 
-// when (epoch ms) each agent (the main thread is 'main', a sub-agent its id) was last handed a time stamp: a tool call's stamp is sent again only after a stretch (hooks/context/stamp.ts). An agent never stamped has no entry.
-export type StampTold = Record<string, number>
+// the last time stamp handed to each agent (the main thread is 'main', a sub-agent its id): a tool call's stamp is sent again only after a stretch, and +delta and the date count from the agent's own
+// last one (hooks/context/stamp.ts). An agent never stamped has no entry.
+export type StampTold = Record<string, NonNullable<StampState>>
 
 // the disk notice last handed to each agent (the main thread is 'main', a sub-agent its id): its text and when (epoch ms). An agent with nothing to be told has no entry.
 export type DiskTold = Record<string, { text: string; at: number }>
@@ -208,9 +209,7 @@ declare module 'claude-code' {
       readyLoop: ReadyLoop | null
       // the background shells the session started and the engine still lists as running: the ready loop's clear waits for them
       readyShells: string[]
-      // the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
-      lastStamp: StampState
-      // when each agent was last handed a time stamp (see StampTold), so a tool call stamps only after a stretch since its agent's last one.
+      // the last time stamp handed to each agent (see StampTold): a tool call stamps only after a stretch since its agent's last one, which the next counts its +delta and its date from.
       stampTold: StampTold
       // how many sub-agents have finished whose reminder to record their result has not yet reached the main session (it rides the main loop's next tool result or prompt).
       subagentsDone: number
