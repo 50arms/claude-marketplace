@@ -340,16 +340,16 @@ never stays active just to wait.
 2. Call `50arms_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    cards?, expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when`
    says what would end the wait. `waits_on` is required, the event you wait for:
-   - `pacing`: usage pacing refused your account's agents; ends when pacing lets the account start agents again.
    - `person`: an open problem, an approval or any answer only a person gives (409
      `person_wait_without_problem` without an open problem on your plan or card: file it first).
    - `dependency`: other cards, their ids in `cards` (required); ends when every one is Done or
      Cancelled, or one is blocked or has its landing returned (409 `pause_cards_finished` when all are already finished).
    - `other`: none of these (a build or deploy with no card). It needs `expires_in_minutes` (at most
      720) and ends by itself then.
-   A pause on `pacing`, `person` or `dependency` has no time limit (`expires_in_minutes` is refused):
+   A pause on `person` or `dependency` has no time limit (`expires_in_minutes` is refused):
    it ends only on its event, you stay connected however long it lasts, and it never needs renewing.
-   Pick the cause you actually wait on. A usage-limit pause already in force refuses it (409): that
+   Pick the cause you actually wait on. Never pause for usage pacing: when pacing stops you, you only
+   stop (see "Usage pacing"). A usage-limit pause already in force refuses it (409): that
    one ends by itself when the limit resets. `reason` is at most 300 characters. A dispatched worker
    cannot pause (409): only a registered non-worker session can.
 3. Then go idle. A pause is not a `block` (nothing on a card changes), not a stop, and not a
@@ -378,7 +378,7 @@ ended on your own call needs no reply. Read the plan before resuming, since the 
 changed.
 
 An `other` pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
-on Team > Agents) disconnects your session; a pause on `pacing`, `person` or `dependency` never does. A disconnect revokes its key: its team agent goes back to the pool and
+on Team > Agents) disconnects your session; a pause on `person` or `dependency` never does. A disconnect revokes its key: its team agent goes back to the pool and
 it leaves every session list. A session holds an agent exactly while it is connected, and nothing
 remembers the agent you had. On waking, your next dashboard call is refused as a revoked key: sign in
 again (approval as for any new key), then `session_connect`, which takes the next free agent or answers
