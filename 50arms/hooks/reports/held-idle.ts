@@ -44,7 +44,7 @@ export function liveMarks(marks: WorkMarks, now: number): Set<string> {
   return new Set(Object.entries(marks).filter(([, at]) => now - at < WORK_MARK_TTL_MS).map(([id]) => id))
 }
 
-// The sub-agents' briefs (CP-49 / DEC-304). A running sub-agent of the session that was briefed on a card is working it, even before it has
+// The sub-agents' briefs. A running sub-agent of the session that was briefed on a card is working it, even before it has
 // claimed it or between its tool calls, when the dashboard shows no activity on the card. The plugin sees a spawn's prompt (`agent.spawn`) but
 // not which agent id it gets, so each admitted spawn's card ids wait in `pending` (oldest first) and the next sub-agent start takes the oldest.
 export const BRIEF_PENDING_TTL_MS = 5 * 60_000
