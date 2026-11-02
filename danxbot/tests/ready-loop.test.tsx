@@ -733,6 +733,13 @@ describe('the ready-agent loop', () => {
       expect(d.clearRuns).toHaveLength(0)
       expect(d.world.readySteps).toEqual([])
       expect(d.calls.slice(calls).filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'PUT')).toEqual([])
+      // the view names a newer release than the file (r2 against r1) with the agreement standing: still nothing
+      d.world.releaseId = 'r2'
+      d.world.clearAgreed = true
+      await tick(d)
+      expect(d.clearRuns).toHaveLength(0)
+      expect(d.world.readySteps).toEqual([])
+      expect(d.calls.slice(calls).filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'PUT')).toEqual([])
       released(d, 'r2')
       await tick(d)
       expect(d.clearRuns).toHaveLength(1)
