@@ -2884,7 +2884,9 @@ async function readReadyCards($: any): Promise<ReadyRead> {
     if (idle.ok) held = idle.value
     else heldSkipped = idle.reason
   }
-  return { kind: 'cards', cards, held, heldSkipped }
+  // a ready card a running sub-agent of the session was briefed on is being worked (CP-49): it is left out, and with every card left out the report says nothing
+  const worked = briefedCards(await read($, agentBriefs), await read($, runningAgents))
+  return { kind: 'cards', cards: cards.filter(c => !worked.has(c.id)), held, heldSkipped }
 }
 
 // the main session's stop. Reports the shells' ends, then blocks the stop once while the plan has ready cards nobody holds.

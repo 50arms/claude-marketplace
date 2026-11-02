@@ -123,6 +123,20 @@ for (const surface of SURFACES) {
       expect((await $.classic.Stop(STOP)).block).toBe(heldIdleReason([{ id: 'DX-1', title: 'Card DX-1' }, { id: 'DX-2', title: 'Card DX-2' }]))
     })
 
+    test('the ready-cards report leaves out a card a running sub-agent was briefed on, and says nothing when none is left; once none runs it names it (CP-49)', async ($, on) => {
+      on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
+      const d = await started($, on)
+      const row = (id: string) => ({ id, type: 'Story', title: `Ready ${id}`, assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0 })
+      d.world.readyRows[BOARD] = [row('DX-9'), row('DX-8')]
+      await $.agent.spawn({ prompt: 'gate-reviewer DX-9 code-quality', subagentType: 'general-purpose' })
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
+      expect((await $.classic.Stop(STOP)).block).toBe(blockReason([{ id: 'DX-8', title: 'Ready DX-8' }]))
+      d.world.readyRows[BOARD] = [row('DX-9')]
+      expect((await $.classic.Stop(STOP)).block).toBeUndefined()
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] })
+      expect((await $.classic.Stop(STOP)).block).toBe(blockReason([{ id: 'DX-9', title: 'Ready DX-9' }]))
+    })
+
     test('a mark past its 30 minutes no longer counts', async ($, on) => {
       const d = await started($, on)
       d.world.heldRows = [held('DX-1', null)]
