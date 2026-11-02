@@ -93,8 +93,8 @@ export function claimFailedReason(failure: string): string {
   )
 }
 
-// The model the spawn would run on if left alone: a fork's is its parent's; else the call's `model` (a `danxbot:worker` start always passes one, see
-// worker-start.ts, so a haiku worker started from an Opus session is judged a haiku spawn); else the parent's.
+// The model the spawn would run on if left alone: a fork's is its parent's; else the call's `model` (a `danxbot:worker` start from an Agent call always passes one, see
+// worker-start.ts; a workflow-script start is the exception, so a haiku worker started from an Opus session is judged a haiku spawn); else the parent's.
 export function requestedModel(e: Pick<AgentSpawnInput, 'fork' | 'model' | 'parentModel'>): string {
   return e.fork ? e.parentModel : (e.model ?? e.parentModel)
 }

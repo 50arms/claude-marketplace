@@ -10,9 +10,9 @@ import { TIERS } from './pacing-guard'
 // LIMIT: only an Agent tool call is checked. A `danxbot:worker` started from a workflow script makes no Agent call, so it is never refused and takes its
 // parent's effort. The type is matched exactly: a team's own agent that is merely named `worker` is not this plugin's and is left alone.
 
-export const WORKER_REFUSAL_PREFIX = 'danxbot:worker was started without'
-
 const WORKER_TYPE = 'danxbot:worker'
+
+export const WORKER_REFUSAL_PREFIX = `${WORKER_TYPE} was started without`
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
@@ -21,7 +21,7 @@ type AgentCall = { subagent_type?: string; model?: string; effort?: string }
 // null when the call is not a worker start or passes both; else the refusal naming what to pass.
 export function workerStartRefusal(e: AgentCall): string | null {
   if (e.subagent_type !== WORKER_TYPE) return null
-  const missing = [e.model ? null : 'model', e.effort ? null : 'effort'].filter((m): m is string => m !== null)
+  const missing = (['model', 'effort'] as const).filter(k => !e[k])
   if (missing.length === 0) return null
   return (
     `${WORKER_REFUSAL_PREFIX} its ${missing.join(' and ')}. Start it again with both in the Agent call: model (${TIERS.join(', ')}) and effort (${EFFORTS.join(', ')}), ` +
