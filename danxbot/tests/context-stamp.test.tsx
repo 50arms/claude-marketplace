@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // (hooks/context/stamp.ts, exact here with an explicit UTC offset); the hooks are checked as the engine runs them, on both surfaces.
 import { describe, expect } from 'claude-code/testing'
 
-import { TOOL_STAMP_EVERY_MS, stamp, toolStampDue } from '../hooks/context/stamp'
+import { TOOL_STAMP_EVERY_MS, stamp, stampDecision, stampForgotten, toolStampDue } from '../hooks/context/stamp'
 import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 // 2026-09-28 07:12:03 UTC is 01:12:03 at -06:00
@@ -65,6 +65,45 @@ describe('toolStampDue (CP-52)', () => {
   })
 })
 
+describe('stampDecision (per agent)', () => {
+  const MAIN = 'main'
+  test('the first stamp of an agent carries the full date and +0, and is remembered for that agent only', () => {
+    const d = stampDecision({}, MAIN, T0, MINUS_SIX, 'tool')
+    expect(d.line).toBe('09/28/2026 01:12:03 -06:00 +0')
+    expect(d.told).toEqual({ [MAIN]: { at: T0, day: '20260928' } })
+  })
+
+  test('a tool call within the stretch is not stamped and changes nothing', () => {
+    const told = { [MAIN]: { at: T0, day: '20260928' } }
+    const d = stampDecision(told, MAIN, T0 + TOOL_STAMP_EVERY_MS - 1, MINUS_SIX, 'tool')
+    expect(d.line).toBeNull()
+    expect(d.told).toBe(told)
+  })
+
+  test("a tool call after the stretch is stamped, and +Δ is that agent's own gap, not the gap to another agent's stamp", () => {
+    const told = { [MAIN]: { at: T0, day: '20260928' }, a1: { at: T0 + 57_000, day: '20260928' } }
+    const d = stampDecision(told, MAIN, T0 + TOOL_STAMP_EVERY_MS, MINUS_SIX, 'tool')
+    expect(d.line).toBe('01:13:03 -06:00 +1m')
+    expect(d.told).toEqual({ ...told, [MAIN]: { at: T0 + TOOL_STAMP_EVERY_MS, day: '20260928' } })
+  })
+
+  test('a prompt is stamped however recent the last stamp', () => {
+    const told = { [MAIN]: { at: T0, day: '20260928' } }
+    expect(stampDecision(told, MAIN, T0 + 2_000, MINUS_SIX, 'prompt').line).toBe('01:12:05 -06:00 +2s')
+  })
+
+  test('a clock that went back is stamped', () => {
+    const told = { [MAIN]: { at: T0, day: '20260928' } }
+    expect(stampDecision(told, MAIN, T0 - 5_000, MINUS_SIX, 'tool').line).toBe('01:11:58 -06:00 +0s')
+  })
+
+  test('a forgotten agent has no entry, and the others keep theirs', () => {
+    const told = { [MAIN]: { at: T0, day: '20260928' }, a1: { at: T0, day: '20260928' } }
+    expect(stampForgotten(told, 'a1')).toEqual({ [MAIN]: told[MAIN] })
+    expect(stampForgotten(told, 'a2')).toEqual(told)
+  })
+})
+
 const FULL = /^\d\d\/\d\d\/\d{4} \d\d:\d\d:\d\d [+-]\d\d:\d\d \+0$/
 const TIME_ONLY = /^\d\d:\d\d:\d\d [+-]\d\d:\d\d \+(\d+s|\d+m( \d+s)?|\d+h \d+m( \d+s)?)$/
 
@@ -115,9 +154,25 @@ for (const surface of SURFACES) {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       await startSession($, d, surface)
       expect((await $.tool.call({ tool: 'Bash', command: 'a' } as any)).context).toHaveLength(1)
-      expect((await $.tool.call({ tool: 'Bash', command: 'b', agentId: 'a1' } as any)).context).toHaveLength(1)
+      const sub = await $.tool.call({ tool: 'Bash', command: 'b', agentId: 'a1' } as any)
+      expect(sub.context).toHaveLength(1)
+      expect(sub.context![0]).toMatch(FULL)
       expect((await $.tool.call({ tool: 'Bash', command: 'c', agentId: 'a1' } as any)).context).toHaveLength(0)
       expect((await $.tool.call({ tool: 'Bash', command: 'd' } as any)).context).toHaveLength(0)
+    })
+
+    test("tool.call: +Δ is the agent's own gap, so a stamp after a minute of silence never reads the few seconds since another agent's", async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      await startSession($, d, surface)
+      await $.tool.call({ tool: 'Bash', command: 'a' } as any)
+      await d.clock.advance(TOOL_STAMP_EVERY_MS - 3_000)
+      await $.tool.call({ tool: 'Bash', command: 'b', agentId: 'a1' } as any)
+      await d.clock.advance(3_000)
+      const main = await $.tool.call({ tool: 'Bash', command: 'c' } as any)
+      expect(main.context).toHaveLength(1)
+      expect(main.context![0]).toMatch(TIME_ONLY)
+      expect(main.context![0].endsWith(' +1m')).toBe(true)
     })
 
     test('tool.call: a prompt is stamped every time and restarts the main thread\'s stretch', async ($, on) => {
@@ -139,11 +194,17 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await $.tool.call({ tool: 'Bash', command: 'a', agentId: 'a1' } as any)
       await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
-      expect((await $.tool.call({ tool: 'Bash', command: 'b', agentId: 'a1' } as any)).context).toHaveLength(1)
+      const again = await $.tool.call({ tool: 'Bash', command: 'b', agentId: 'a1' } as any)
+      expect(again.context).toHaveLength(1)
+      expect(again.context![0]).toMatch(FULL)
       await $.tool.call({ tool: 'Bash', command: 'c' } as any)
       await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: 's2', transcript_path: '/work/main.jsonl' })
-      expect((await $.tool.call({ tool: 'Bash', command: 'd', agentId: 'a1' } as any)).context).toHaveLength(1)
-      expect((await $.tool.call({ tool: 'Bash', command: 'e' } as any)).context).toHaveLength(1)
+      const sub = await $.tool.call({ tool: 'Bash', command: 'd', agentId: 'a1' } as any)
+      expect(sub.context).toHaveLength(1)
+      expect(sub.context![0]).toMatch(FULL)
+      const main = await $.tool.call({ tool: 'Bash', command: 'e' } as any)
+      expect(main.context).toHaveLength(1)
+      expect(main.context![0]).toMatch(FULL)
     })
 
     test('tool.call: an errored result carries it too (every stamped call), a denied call does not', async ($, on) => {

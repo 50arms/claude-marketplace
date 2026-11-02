@@ -53,11 +53,13 @@ describe('the record clock (pure)', () => {
 
 for (const surface of SURFACES) {
   describe(`the record reminders on ${surface}`, () => {
+    let toolAnswer: any
     async function started($: any, on: any) {
       on('classic.SessionStart', () => ({}) as any)
       on('classic.SubagentStop', () => ({}) as any)
       on('turn.complete', () => ({ text: 'done' }) as any)
-      on('tool.call', () => ({ result: {}, text: '{"ok":true,"status":200,"body":{}}' }) as any)
+      toolAnswer = { result: {}, text: '{"ok":true,"status":200,"body":{}}' }
+      on('tool.call', () => toolAnswer as any)
       const d = dashboard(on)
       await startSession($, d, surface)
       return d
@@ -101,6 +103,16 @@ for (const surface of SURFACES) {
       await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
       await d.clock.settle()
       expect(doneReminders((await tool($, 'a2')).context)).toEqual([])
+      expect(doneReminders((await tool($)).context)).toEqual([subagentDoneReminder(1)])
+    })
+
+    test('a denied main tool call leaves it for the next result', async ($, on) => {
+      const d = await started($, on)
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
+      await d.clock.settle()
+      toolAnswer = { deny: 'not allowed' }
+      expect(doneReminders((await tool($)).context)).toEqual([])
+      toolAnswer = { result: {}, text: 'done' }
       expect(doneReminders((await tool($)).context)).toEqual([subagentDoneReminder(1)])
     })
 

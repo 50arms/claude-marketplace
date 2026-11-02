@@ -1,10 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampState, StampTold, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
+import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, RefreshGate, RelayState, ReportState, StampTold, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DanxEvent, RestartAsk, Told } from './context/events'
-import { stamp as nextStamp, toolStampDue } from './context/stamp'
+import { stampDecision, stampForgotten } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, subagentDoneReminder, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
@@ -124,9 +124,8 @@ const eventsWarned = atom({ plugin: 'danxbot', key: 'eventsWarned' } as const, n
 // the start (epoch ms) of the last turn activity sent to the dashboard, so the next one starts strictly later (it keeps only the newest start). $.state, so a reload keeps it.
 const turnReportedAt = atom({ plugin: 'danxbot', key: 'turnReportedAt' } as const, null as number | null)
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
-// the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
-const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
-// when each agent (the main thread and each sub-agent) was last handed a stamp: a tool call is stamped only after TOOL_STAMP_EVERY_MS since its agent's last one. Cleared at every session start (the model lost what it was told).
+// the last time stamp handed to each agent (the main thread and each sub-agent; prompt or tool call), which the agent's next one counts its +delta and its date from: a tool call is stamped only
+// after TOOL_STAMP_EVERY_MS since its agent's last one. Cleared at every session start (the model lost what it was told).
 const stampTold = atom({ plugin: 'danxbot', key: 'stampTold' } as const, {} as StampTold)
 // the sub-agents that finished whose reminder to record their result the main session has not been handed yet: it rides the main loop's next tool result or prompt.
 const subagentsDone = atom({ plugin: 'danxbot', key: 'subagentsDone' } as const, 0)
@@ -1907,23 +1906,17 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   return r
 }
 
-// the time line, counted from the last one sent (any hook, any agent: one session, one clock). A prompt is always stamped (`force`); a tool call only
-// when its agent's last stamp is a stretch old, else null.
-async function timeLine($: any, force: boolean, agent: string): Promise<string | null> {
+// the time line for `agent`, counted from the last one that agent was handed (each agent reads its own context, so +delta is its own gap). A prompt is always stamped; a tool call only
+// when the agent's last stamp is a stretch old, else null (hooks/context/stamp.ts, stampDecision).
+async function timeLine($: any, trigger: 'prompt' | 'tool', agent: string): Promise<string | null> {
   const now = await $.clock.now()
-  let due = false
-  await update($, stampTold, told => {
-    due = force || toolStampDue(told[agent], now)
-    return due ? { ...told, [agent]: now } : told
-  })
-  if (!due) return null
   const offsetMinutes = -new Date(now).getTimezoneOffset()
-  // the line is set inside the updater, which sees the last stamp as it is when the write happens
-  let line = ''
-  await update($, lastStamp, last => {
-    const next = nextStamp(now, offsetMinutes, last)
-    line = next.line
-    return next.state
+  // the line is set inside the updater, which sees the stamps as they are when the write happens
+  let line: string | null = null
+  await update($, stampTold, told => {
+    const d = stampDecision(told, agent, now, offsetMinutes, trigger)
+    line = d.line
+    return d.told
   })
   return line
 }
@@ -1975,14 +1968,14 @@ async function renderStart($: any, start: NonNullable<PendingStart>): Promise<st
   }
 }
 
-// the stamp and, when there is one, the session start line: the entries a hook adds to the model's context.
+// the stamp (a prompt's always, a tool call's only after a stretch), the disk notice and, when there is one, the session start line: the entries a hook adds to the model's context.
 // the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
 // (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
 // the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
 async function stampEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
   const pending = takeStart ? await takePendingStart($) : null
-  // the stamp beside a session start is the first the model reads after it, so a start always carries one
-  const line = await timeLine($, trigger === 'prompt' || pending !== null, agent)
+  // the stamp beside a session start is the first the model reads after it, so a start is stamped like a prompt
+  const line = await timeLine($, pending === null ? trigger : 'prompt', agent)
   const disk = await diskLine($, trigger, agent)
   const head = [...(line === null ? [] : [line]), ...(disk === null ? [] : [disk])]
   if (pending === null) return head
@@ -2125,7 +2118,7 @@ async function onToolStamp($: any, e: any, next: any) {
   // a plugin's own `$.mcp.call` (this one's dashboard reads) is raised as a `tool.call` too, with no agentId. Its result goes to the plugin,
   // never the model, so a stamp or the start text put beside it is lost, and the stamp would move the clock the model reads. The signal is the
   // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (probed against the real engine). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
-  // Returning here also skips the lastStamp bookkeeping. A test pins that it is seated.
+  // Returning here also skips the stampTold bookkeeping. A test pins that it is seated.
   if (raisedByPlugin(next.origin)) return r
   // the main loop's result carries the notes appended so far: they are read (a sub-agent's or a fork's result is not the main loop's)
   if (e.agentId === undefined && (await read($, turn)).pending.length > 0) await update($, turn, cur => toolResultSent(cur))
@@ -2455,7 +2448,7 @@ async function onSubagentStop($: any, e: any, next: any) {
   // its own to the main session costs a turn per sub-agent. It is counted here and handed with the main session's next tool result or prompt (subagentDoneEntries).
   await update($, subagentsDone, n => n + 1)
   // the stopped sub-agent is stamped afresh if the same id ever calls again
-  await update($, stampTold, told => Object.fromEntries(Object.entries(told).filter(([agent]) => agent !== e.agent_id)))
+  await update($, stampTold, told => stampForgotten(told, e.agent_id))
   return r
 }
 

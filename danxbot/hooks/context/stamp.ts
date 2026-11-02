@@ -1,4 +1,4 @@
-import type { StampState } from '../../types'
+import type { StampState, StampTold } from '../../types'
 
 // the model's only clock. One line per prompt and per finished tool call: wall-clock time with its UTC offset, then the time
 // since the previous stamp.
@@ -8,7 +8,8 @@ import type { StampState } from '../../types'
 // measure (the injection measurement script) run exactly the text a session gets.
 //
 // A prompt is always stamped. A tool call is stamped only when the agent's last stamp is TOOL_STAMP_EVERY_MS old (or it has none, or the clock went back): the
-// stamps between told the model no more than the one before, and each was re-read by every later model call.
+// stamps between told the model no more than the one before, and each was re-read by every later model call. The last stamp is kept PER AGENT (the main thread and each
+// sub-agent read their own context), so +delta is that agent's own gap and never the seconds since another agent's stamp.
 export const TOOL_STAMP_EVERY_MS = 60_000
 
 /** Whether a tool call at `now` is stamped, given when its agent was last stamped (undefined: never). */
@@ -45,4 +46,20 @@ export function stamp(now: number, offsetMinutes: number, last: StampState): { l
   // the first stamp is `+0`, never a unit
   const since = last === null ? '+0' : elapsed(now - last.at)
   return { line: `${head} ${since}`, state: { at: now, day } }
+}
+
+/**
+ * The stamp for `agent` at `now`: its line (null when none is due) and the stamps told after it. A `prompt` (a session start counts as one) is always stamped; a `tool` call
+ * only when `toolStampDue`. An unstamped call changes nothing.
+ */
+export function stampDecision(told: StampTold, agent: string, now: number, offsetMinutes: number, trigger: 'prompt' | 'tool'): { line: string | null; told: StampTold } {
+  const last = told[agent] ?? null
+  if (trigger === 'tool' && !toolStampDue(last?.at, now)) return { line: null, told }
+  const next = stamp(now, offsetMinutes, last)
+  return { line: next.line, told: { ...told, [agent]: next.state! } }
+}
+
+/** `told` without `agent`: a stopped sub-agent is stamped afresh if its id ever calls again. */
+export function stampForgotten(told: StampTold, agent: string): StampTold {
+  return Object.fromEntries(Object.entries(told).filter(([id]) => id !== agent))
 }
