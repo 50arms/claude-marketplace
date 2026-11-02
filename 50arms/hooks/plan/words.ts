@@ -94,7 +94,7 @@ function namedForConnection(title: string, v: PlanView): string {
 // is shown (needsYouShown), the waiting mark when nothing of the session runs (no turn, no sub-agent: it has done all it can) and the hand
 // while something still does; else the building mark while a sub-agent runs; else the hourglass while the session waits for a sub-agent slot
 // (`slotRefused`, or an unexpired pause that waits on pacing: `pausedWaitsOn`); else the pause mark while the agent is in an unexpired pause
-// (`pausedUntil`, which the load already left null for an expired one), else green when connected, else none. `title` is the title as the
+// (`paused`, which the load already left false for an expired one; an untimed pause has no `pausedUntil`), else green when connected, else none. `title` is the title as the
 // app holds it, marks included or not; '' stays ''. While the view is still loading nothing is known yet, so the title is left as it is.
 export function sessionTitle(title: string, v: PlanView, relay: RelayState, activity: TitleActivity): string {
   if (v.phase === 'loading') return title
@@ -105,8 +105,8 @@ export function sessionTitle(title: string, v: PlanView, relay: RelayState, acti
   if (connection === 'down') return `${DISCONNECTED_TITLE_MARK}${base}`
   if (needsYouShown(v)) return `${activity.subAgents || activity.turnRunning ? NEEDS_YOU_TITLE_MARK : WAITING_TITLE_MARK}${base}`
   if (connection === 'up' && activity.subAgents) return `${BUILDING_TITLE_MARK}${base}`
-  if (connection === 'up' && (activity.slotRefused || (v.pausedUntil !== null && v.pausedWaitsOn === 'pacing'))) return `${HOURGLASS_TITLE_MARK}${base}`
-  if (connection === 'up' && v.pausedUntil !== null) return `${PAUSED_TITLE_MARK}${base}`
+  if (connection === 'up' && (activity.slotRefused || (v.paused && v.pausedWaitsOn === 'pacing'))) return `${HOURGLASS_TITLE_MARK}${base}`
+  if (connection === 'up' && v.paused) return `${PAUSED_TITLE_MARK}${base}`
   return connection === 'up' ? `${CONNECTED_TITLE_MARK}${base}` : base
 }
 

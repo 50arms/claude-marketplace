@@ -76,8 +76,11 @@ export type PlanView = {
   // null when the plan read gave no count (the band then shows none); `needsYouError` says why.
   needsYou: number | null
   needsYouError: string | null
-  // when the agent's own pause ends (epoch ms), read at each load by the one call that does not end a pause; null when it is not paused,
-  // its pause has expired, or the pause read gave no usable answer (the mark is display only). Only the title's pause mark reads it.
+  // whether the agent is in an unexpired or untimed pause (DX-6631: a pause on an event has no end time), read at each load; false when it is not paused,
+  // its pause has expired, or the pause read gave no usable answer. The title's pause mark reads it.
+  paused: boolean
+  // when the agent's own pause ends (epoch ms), read at each load by the one call that does not end a pause; null when it is not paused, its pause has no end time (it waits on an event),
+  // its pause has expired, or the pause read gave no usable answer (the mark is display only).
   pausedUntil: number | null
   // what the pause waits on (its `waits_on`, e.g. `pacing` while a sub-agent slot is held back by usage pacing); null when not paused or the pause names none.
   pausedWaitsOn: string | null

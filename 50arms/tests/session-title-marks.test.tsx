@@ -28,8 +28,8 @@ const IDLE_NOW = { subAgents: false, turnRunning: false, slotRefused: false }
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const PAUSE_PATH = '/api/plan-sessions/me/pause'
 const LOADS_AT_START = 1
-const paused = (needsYou: number | null) => ({ ...on(needsYou), pausedUntil: CLOCK_START + 3_600_000 }) as any
-const agentPause = (until: number) => ({ limit: 'agent', state: 'agent_waiting', reason: 'waiting for a build', ends_when: null, since: '2026-10-03T07:00:00.000Z', until: new Date(until).toISOString(), held: 0 })
+const paused = (needsYou: number | null) => ({ ...on(needsYou), paused: true, pausedUntil: CLOCK_START + 3_600_000 }) as any
+const agentPause = (until: number | null) => ({ limit: 'agent', state: 'agent_waiting', reason: 'waiting for a build', ends_when: null, since: '2026-10-03T07:00:00.000Z', until: until === null ? null : new Date(until).toISOString(), held: 0 })
 
 const BARE = 'PLAN-18 Card plugins'
 
@@ -402,7 +402,7 @@ describe('the pause mark', () => {
     expect(sessionTitle(TITLE, { ...paused(2), agentBlock: 'agent_not_held' }, OFF, WORKING)).toBe(`${DOWN}${BARE}`)
     expect(sessionTitle(TITLE, { ...paused(0), phase: 'error' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
     expect(sessionTitle(TITLE, on(0), OFF, WORKING)).toBe(`${UP}${TITLE}`)
-    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out', pausedUntil: CLOCK_START } as any, OFF, WORKING)).toBe(BARE)
+    expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out', paused: true, pausedUntil: CLOCK_START } as any, OFF, WORKING)).toBe(BARE)
   })
 
   test('unmarkedTitle strips the pause mark with or without the selector, in any order with the others', async () => {
@@ -427,6 +427,18 @@ describe('the pause mark', () => {
     await forceRefresh($, d)
     expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
     d.world.pause = { ...agentPause(CLOCK_START + 3_600_000), limit: 'usage' }
+    await forceRefresh($, d)
+    expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
+  })
+
+  test('a load shows the mark for an untimed agent pause (until null), which ends only on its event', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    d.world.pause = { ...agentPause(null), waits_on: 'person' }
+    await startSession($, d, 'desktop')
+    expect(d.world.appSession.title).toBe(`${PAUSE}Tendai: PLAN-23 Agent mode`)
+    d.world.pause = null
     await forceRefresh($, d)
     expect(d.world.appSession.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
   })
