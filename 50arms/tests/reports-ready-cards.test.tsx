@@ -72,7 +72,7 @@ describe('ready (pure)', () => {
 
 describe('the pause (pure)', () => {
   const NOW = Date.parse('2026-10-13T21:00:00.000Z')
-  const agent = (until: string) => ({ pause: { limit: 'agent', state: 'agent_waiting', reason: 'r', until } })
+  const agent = (until: string | null) => ({ pause: { limit: 'agent', state: 'agent_waiting', reason: 'r', until } })
 
   test('a pause carries what it waits on (waits_on), null when it names none', () => {
     const waiting = { pause: { limit: 'agent', state: 'agent_waiting', reason: 'r', until: '2026-10-13T22:00:00.000Z', waits_on: 'pacing' } }
@@ -84,6 +84,12 @@ describe('the pause (pure)', () => {
     expect(pauseOf(agent('2026-10-13T21:00:00.000Z'), NOW)).toEqual({ kind: 'free' })
     expect(pauseOf({ pause: null }, NOW)).toEqual({ kind: 'free' })
     expect(pauseOf({ pause: { limit: 'weekly', until: '2026-10-14T00:00:00.000Z' } }, NOW)).toEqual({ kind: 'free' })
+  })
+
+  test('an untimed agent pause (until null, DX-6631) is paused with no end time, however long it lasts', () => {
+    expect(pauseOf(agent(null), NOW)).toEqual({ kind: 'paused', reason: 'r', until: null, waitsOn: null })
+    expect(pauseOf({ pause: { ...agent(null).pause, waits_on: 'dependency' } }, NOW)).toEqual({ kind: 'paused', reason: 'r', until: null, waitsOn: 'dependency' })
+    expect(pauseOf({ pause: { limit: 'agent', until: null } }, NOW)).toMatchObject({ kind: 'failed', reason: expect.stringMatching(/^bad_response/) })
   })
 
   test('a malformed answer is a failure, never a guess', () => {
