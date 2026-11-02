@@ -94,8 +94,8 @@ import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
 import type { ReadyCard } from './reports/ready-cards'
-import { detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
-import type { HeldCard, WorkMarks } from './reports/held-idle'
+import { NO_BRIEFS, briefClaimed, briefEnded, briefSpawned, briefedCards, detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
+import type { Briefs, HeldCard, WorkMarks } from './reports/held-idle'
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
 import type { PauseRead } from './reports/pause'
 import { storeDoor, type StoreCall, type StoreIo } from './store/recover'
@@ -196,6 +196,8 @@ const reports = atom({ plugin: '50arms', key: 'reports' } as const, { agents: {}
 // the cards this session marked as its own work (PUT /api/work-marks), by card id with the time set; the held-idle Stop check counts them as worked (reports/held-idle.ts).
 const workMarks = atom({ plugin: '50arms', key: 'workMarks' } as const, {} as WorkMarks)
 // the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
+// the card ids each admitted sub-agent spawn was briefed on, claimed by the sub-agent that starts (reports/held-idle.ts); the held-idle Stop check counts a card a running sub-agent was briefed on as worked.
+const agentBriefs = atom({ plugin: '50arms', key: 'agentBriefs' } as const, NO_BRIEFS as Briefs)
 const relayOutbox = atom({ plugin: '50arms', key: 'relayOutbox' } as const, [] as PendingEvent[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] as AckInFlight)
@@ -253,6 +255,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     runningAgents: read($, runningAgents),
     reports: read($, reports),
     workMarks: read($, workMarks),
+    agentBriefs: read($, agentBriefs),
     relayOutbox: read($, relayOutbox),
     ackInFlight: read($, ackInFlight),
     recordClock: read($, recordClock),
@@ -306,6 +309,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, runningAgents, () => carried.runningAgents),
     update($, reports, () => carried.reports),
     update($, workMarks, () => carried.workMarks),
+    update($, agentBriefs, () => carried.agentBriefs),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
     update($, recordClock, () => carried.recordClock),
@@ -3294,6 +3298,10 @@ async function restoreStart($: any, start: NonNullable<PendingStart>): Promise<v
 // and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
   await noteRunningAgent($, e.agent_id, true)
+  if (typeof e.agent_id === 'string' && e.agent_id !== '') {
+    const now = await $.clock.now()
+    await update($, agentBriefs, cur => briefClaimed(cur, e.agent_id, now))
+  }
   const r = await onSubagentChange($, e, next, true)
   // its activity row opens
   detach($, '50 Arms activity report', reportSubagentStart($, e))
@@ -3304,6 +3312,7 @@ async function onSubagentStart($: any, e: any, next: any) {
 
 async function onSubagentStop($: any, e: any, next: any) {
   await noteRunningAgent($, e.agent_id, false)
+  if (typeof e.agent_id === 'string') await update($, agentBriefs, cur => briefEnded(cur, e.agent_id))
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
@@ -3769,7 +3778,7 @@ async function readReadyCards($: any): Promise<ReadyRead> {
   let heldSkipped: string | null = null
   if (!detail.ok) heldSkipped = errText(detail)
   else {
-    const idle = heldIdleOf(detail.body, liveMarks(await read($, workMarks), await $.clock.now()))
+    const idle = heldIdleOf(detail.body, new Set([...liveMarks(await read($, workMarks), await $.clock.now()), ...briefedCards(await read($, agentBriefs), await read($, runningAgents))]))
     if (idle.ok) held = idle.value
     else heldSkipped = idle.reason
   }
@@ -4193,7 +4202,14 @@ export const register: Register = (on, options) => {
   on('turn.step', { agentId: /.+/ }, noteAgentStep)
   on('session.measure', onMeasure)
   // usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
-  on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
+  on('agent.spawn', async ($, e, next) => {
+    const started = await spawnGuard(pacingEnv($))(e, next)
+    if (started.deny === undefined) {
+      const now = await $.clock.now()
+      await update($, agentBriefs, cur => briefSpawned(cur, e.prompt, now))
+    }
+    return started
+  })
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onClassicSessionStart)
