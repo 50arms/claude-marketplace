@@ -43,7 +43,7 @@ result the moment it completes, and delegate the new work 50 Arms sends.
      `session_connect` again once they say one is free.
    Until an agent is held, every other dashboard call answers that same state: do no other
    dashboard work. You hold the agent only while this session is connected: a revoked key, a
-   session that stopped responding for a minute (a crash) or a pause past the hold timeout frees
+   session that stopped responding for a minute (a crash) or an `other` pause past the hold timeout frees
    it at once, and signing in again takes the next free agent, never necessarily the same one.
 3. What you work on: a plan → `session_connect({target: "PLAN-n"})`; none in the list fits → create one.
    One card on no plan (a one-off, a quick fix, an epic that is not a plan) →
@@ -329,7 +329,7 @@ each reminder with "still waiting": pause. A session with nothing to do right no
 never stays active just to wait.
 
 1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block), and
-   any state not yet recorded: a pause often ends in a disconnect after which you cannot write.
+   any state not yet recorded: an `other` pause can end in a disconnect after which you cannot write.
    The pause is only the signal, never the record. Waiting on a person is always an open problem
    on a card of this plan, worded for the step left now (no note or comment reaches Needs You).
    One problem per question: put it on the work card it decides, never a container, and give every
@@ -338,14 +338,20 @@ never stays active just to wait.
    session (its card's own record and `depends_on` already show that wait). That includes a check that needs an ordinary act of theirs (a
    review): an `action` problem asks for it now; never wait for it to happen on its own.
 2. Call `50arms_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
-   expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
-   what would end the wait. `waits_on` is required, the cause you pick: `person` for an open
-   problem, an approval or any answer only a person gives; `dependency` for another card, a build,
-   a deploy or any other work you wait on; `other` when none fits. Never pause for usage pacing:
-   when pacing stops you, you only stop (see "Usage pacing"). The pause lasts at most `expires_in_minutes` (default 120, at most
-   720) and ends by itself then; call again to renew it. A usage-limit pause already in force
-   refuses it (409): that one ends by itself when the limit resets. `reason` is at most 300
-   characters. A dispatched worker cannot pause (409): only a registered non-worker session can.
+   cards?, expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when`
+   says what would end the wait. `waits_on` is required, the event you wait for:
+   - `pacing`: usage pacing refused your account's agents; ends when pacing lets the account start agents again.
+   - `person`: an open problem, an approval or any answer only a person gives (409
+     `person_wait_without_problem` without an open problem on your plan or card: file it first).
+   - `dependency`: other cards, their ids in `cards` (required); ends when every one is Done or
+     Cancelled, or one is blocked or has its landing returned (409 `pause_cards_finished` when all are already finished).
+   - `other`: none of these (a build or deploy with no card). It needs `expires_in_minutes` (at most
+     720) and ends by itself then.
+   A pause on `pacing`, `person` or `dependency` has no time limit (`expires_in_minutes` is refused):
+   it ends only on its event, you stay connected however long it lasts, and it never needs renewing.
+   Pick the cause you actually wait on. A usage-limit pause already in force refuses it (409): that
+   one ends by itself when the limit resets. `reason` is at most 300 characters. A dispatched worker
+   cannot pause (409): only a registered non-worker session can.
 3. Then go idle. A pause is not a `block` (nothing on a card changes), not a stop, and not a
    place to hide: never pause while an unclaimed ready card exists, and never as a way to leave
    work undone.
@@ -357,10 +363,10 @@ stop, a usage-pacing change that lets your account start agents again while your
 `pacing` (on pace, with no count cap or a budget above the sub-agents running; the message is delivered
 at once, so a pause taken after a pacing refusal needs no manual wake; a pause on any other cause
 holds that message), your own next dashboard call (the plugin's background reads do not count) other than the pause
-calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or your session going
+calls themselves, your own `DELETE /api/plan-sessions/me/pause`, an `other` pause's expiry, or your session going
 silent.
 
-The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message. A pause that runs out with nothing held still ends in one message (`Your pause ended (your stated wait ran out). Nothing is left to deliver.`): take that turn to re-check your cards, and pause again if there is still nothing to do.
+The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message. A pause that ends on its event or its expiry with nothing held still ends in one message (`Your pause ended (<cause>). Nothing is left to deliver.`): take that turn to re-check your cards, and pause again if there is still nothing to do.
 It arrives like a card comment from 50 Arms, attached to the card of the person's event that ended
 the pause, otherwise to the plan, otherwise to `SESSION`, but it is a notice (its text begins "This
 is a notice, not a card comment"), not a card comment. Over 30
@@ -371,8 +377,8 @@ messages themselves (a held nudge still means the cards it names are workable no
 ended on your own call needs no reply. Read the plan before resuming, since the cause names what
 changed.
 
-A pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
-on Team > Agents) disconnects your session: its key is revoked, its team agent goes back to the pool and
+An `other` pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
+on Team > Agents) disconnects your session; a pause on `pacing`, `person` or `dependency` never does. A disconnect revokes its key: its team agent goes back to the pool and
 it leaves every session list. A session holds an agent exactly while it is connected, and nothing
 remembers the agent you had. On waking, your next dashboard call is refused as a revoked key: sign in
 again (approval as for any new key), then `session_connect`, which takes the next free agent or answers
