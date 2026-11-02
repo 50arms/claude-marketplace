@@ -2,7 +2,7 @@ import "./run-tests-with-npm-test.generated"
 // CP-15: the three reminders to record state: a sub-agent finished, a stretch of work with no plan or card write, a handoff-like local file written.
 import { describe, expect } from 'claude-code/testing'
 
-import { HANDOFF_FILE_REMINDER, NO_RECENT_RECORD_REMINDER, RECORD_AFTER_MS, SIDE_SESSION_DONE_REMINDER, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue } from '../hooks/context/record'
+import { HANDOFF_FILE_REMINDER, NO_RECENT_RECORD_REMINDER, RECORD_AFTER_MS, SIDE_SESSION_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue, subagentDoneReminder } from '../hooks/context/record'
 import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 const API = 'mcp__plugin_50arms_platform__50arms_api'
@@ -16,6 +16,16 @@ describe('the side-session notice (pure)', () => {
   test("the app's note and its event message are notices; a person's prompt is not", () => {
     for (const t of [NOTE, WAITING, EVENT, `${NOTE}\n${EVENT}`]) expect(isSideSessionNotice(t)).toBe(true)
     for (const t of ['hello', 'archive the session you started', 'The session you started finished a turn', '', undefined, 3]) expect(isSideSessionNotice(t)).toBe(false)
+  })
+})
+
+describe('the finished-sub-agent reminder (pure)', () => {
+  test('one sub-agent is named singly, several share one reminder that counts them', () => {
+    expect(subagentDoneReminder(1)).toMatch(/^A sub-agent you started just finished\. Put its result on its card/)
+    expect(subagentDoneReminder(3)).toMatch(/^3 sub-agents you started just finished\. Put each result on its card/)
+  })
+  test('it asks for the note in the same step as the next action, never a turn of its own', () => {
+    expect(subagentDoneReminder(1)).toMatch(/in the same step as your next action, not in a turn of its own/)
   })
 })
 
@@ -70,12 +80,47 @@ for (const surface of SURFACES) {
     }
     const reminders = (d: any) => d.relay.told.filter((t: string) => t === NO_RECENT_RECORD_REMINDER)
 
-    test('a sub-agent that stops tells the main session, never the stopping sub-agent', async ($, on) => {
+    const doneReminders = (context: string[] | undefined) => (context ?? []).filter(line => line.includes('just finished'))
+    const tool = ($: any, agentId?: string) => $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)
+
+    test('a sub-agent that stops sends the main session no message of its own (that cost a turn) and tells the stopping sub-agent nothing', async ($, on) => {
       const d = await started($, on)
       const r = await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
       await d.clock.settle()
-      expect(r.additionalContext ?? []).not.toContain(SUBAGENT_DONE_REMINDER)
-      expect(d.relay.told).toContain(SUBAGENT_DONE_REMINDER)
+      expect(JSON.stringify(r.additionalContext ?? [])).not.toContain('just finished')
+      expect(d.relay.told.filter((t: string) => t.includes('just finished'))).toEqual([])
+      expect(d.relay.submitted).toEqual([])
+    })
+
+    test('the main session reads the reminder with its next tool result, once', async ($, on) => {
+      const d = await started($, on)
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
+      await d.clock.settle()
+      expect(doneReminders((await tool($)).context)).toEqual([subagentDoneReminder(1)])
+      expect(doneReminders((await tool($)).context)).toEqual([])
+    })
+
+    test('sub-agents that finish together share one reminder that counts them', async ($, on) => {
+      const d = await started($, on)
+      for (const id of ['a1', 'a2', 'a3']) await $.classic.SubagentStop({ agent_id: id, agent_type: 'x' })
+      await d.clock.settle()
+      expect(doneReminders((await tool($)).context)).toEqual([subagentDoneReminder(3)])
+    })
+
+    test("a sub-agent's own tool result leaves it for the main session's next result", async ($, on) => {
+      const d = await started($, on)
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
+      await d.clock.settle()
+      expect(doneReminders((await tool($, 'a2')).context)).toEqual([])
+      expect(doneReminders((await tool($)).context)).toEqual([subagentDoneReminder(1)])
+    })
+
+    test('with no tool result before the next prompt, the prompt carries it', async ($, on) => {
+      const d = await started($, on)
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
+      await d.clock.settle()
+      expect(doneReminders((await $.prompt.submit({ text: 'next' })).context)).toEqual([subagentDoneReminder(1)])
+      expect(doneReminders((await tool($)).context)).toEqual([])
     })
 
     test("the app's side-session notice carries the archive reminder, an ordinary prompt does not", async ($, on) => {

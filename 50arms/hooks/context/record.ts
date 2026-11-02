@@ -1,8 +1,13 @@
 // a session can end at any time and only the dashboard and git survive, so the plugin reminds it to record state at three moments no API call marks.
 // This is the pure half: the texts, the thresholds and the questions the handlers ask. Nothing here reads a clock, a file or a session.
 
-export const SUBAGENT_DONE_REMINDER =
-  'A sub-agent you started just finished. Before doing anything else, put its result on its card (an agent note with what it did, the evidence and the commit), so it survives this session ending.'
+// the reminder rides the main session's next tool result or prompt (never a message of its own, which cost a turn per sub-agent), so it asks for the note in the same
+// step as the next action, and sub-agents that finish together share one reminder.
+export function subagentDoneReminder(count: number): string {
+  const who = count === 1 ? 'A sub-agent you started just finished' : `${count} sub-agents you started just finished`
+  const what = count === 1 ? 'its result' : 'each result'
+  return `${who}. Put ${what} on its card (an agent note with what it did, the evidence and the commit), so it survives this session ending: write the note in the same step as your next action, not in a turn of its own.`
+}
 
 export const SIDE_SESSION_DONE_REMINDER =
   'A side session you started just ended a turn. Once its work is finished (its card Done or its branch landed, nothing of its own still open), archive it now with archive_session: a finished side session is never left idle. If its work is not finished, leave it running.'

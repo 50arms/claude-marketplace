@@ -818,7 +818,7 @@ for (const surface of SURFACES) {
       expect(briefing).not.toContain('a2')
       expect(briefing).toContain('(branch card/x): 1 uncommitted path, 2 unpushed commits.')
       // told once
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
     })
 
     test('a briefing source that fails is named in the briefing and takes nothing else with it', async ($, on) => {

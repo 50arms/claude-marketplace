@@ -30,7 +30,9 @@ function wslMachine(d: any, over: { freeGiB?: number; optedIn?: boolean; floors?
 }
 
 const runsOf = (d: any, program: string) => d.runCalls.filter((argv: string[]) => argv[0] === program)
-const noticeOf = (context: string[] | undefined) => (context ?? []).slice(1).join('\n')
+// CP-52: a tool call is stamped only after a stretch, so the notice is whatever is not the time stamp line
+const STAMP_LINE = /^(\d\d\/\d\d\/\d{4} )?\d\d:\d\d:\d\d [+-]\d\d:\d\d \+\S/
+const noticeOf = (context: string[] | undefined) => (context ?? []).filter(line => !STAMP_LINE.test(line)).join('\n')
 
 for (const surface of SURFACES) {
   describe(`the disk notice hooks on ${surface}`, () => {
@@ -56,7 +58,7 @@ for (const surface of SURFACES) {
     test('an autonomous tool call tells once, stays quiet, and tells again after the repeat interval', async ($, on) => {
       const d = await started($, on, WSL, wslMachine)
       expect(noticeOf(await tool($))).toMatch(LOW)
-      expect(await tool($)).toHaveLength(1)
+      expect(noticeOf(await tool($))).toBe('')
       await d.clock.advance(DISK_REPEAT_MS)
       expect(noticeOf(await tool($))).toMatch(LOW)
     })
@@ -67,7 +69,7 @@ for (const surface of SURFACES) {
       d.world.processes['df'] = { stdout: `Avail\n${10 * GIB}\n` }
       await d.clock.advance(DISK_MEASURE_MS)
       // the stale answer comes back at once and the measurement refreshes behind it
-      expect(await tool($)).toHaveLength(1)
+      expect(noticeOf(await tool($))).toBe('')
       await d.clock.settle()
       expect(noticeOf(await tool($))).toMatch(/Under the 15\.0 GB hard minimum: host test runs refuse/)
     })
@@ -76,8 +78,8 @@ for (const surface of SURFACES) {
       await started($, on, WSL, wslMachine)
       expect(noticeOf(await tool($))).toMatch(LOW)
       expect(noticeOf(await tool($, 'a1'))).toMatch(LOW)
-      expect(await tool($, 'a1')).toHaveLength(1)
-      expect(await tool($)).toHaveLength(1)
+      expect(noticeOf(await tool($, 'a1'))).toBe('')
+      expect(noticeOf(await tool($))).toBe('')
     })
 
     test('a session start clears what was told, so the next tool call tells again', async ($, on) => {
@@ -112,7 +114,7 @@ for (const surface of SURFACES) {
       const d = await started($, on, WSL, wslMachine)
       await tool($)
       await d.clock.advance(DISK_MEASURE_MS)
-      expect(await tool($)).toHaveLength(1)
+      expect(noticeOf(await tool($))).toBe('')
       await d.clock.settle()
       expect(runsOf(d, 'df')).toHaveLength(2)
     })
@@ -144,7 +146,7 @@ for (const surface of SURFACES) {
       })
       const prompt = await $.prompt.submit({ text: 'hello' })
       expect(prompt.context).toHaveLength(1)
-      expect(await tool($)).toHaveLength(1)
+      expect(noticeOf(await tool($))).toBe('')
       expect(runsOf(d, 'df')).toEqual([])
       expect(runsOf(d, 'cmd.exe')).toEqual([])
       expect(runsOf(d, 'wslpath')).toEqual([])
@@ -160,7 +162,7 @@ for (const surface of SURFACES) {
     test('enough free space is silent', async ($, on) => {
       await started($, on, WSL, m => wslMachine(m, { freeGiB: 100 }))
       expect((await $.prompt.submit({ text: 'hello' })).context).toHaveLength(1)
-      expect(await tool($)).toHaveLength(1)
+      expect(noticeOf(await tool($))).toBe('')
     })
 
     test('an open compaction window tells the session to pause', async ($, on) => {
@@ -215,7 +217,7 @@ for (const surface of SURFACES) {
     test('a host with neither marker (no C:) is told nothing and nothing is run', async ($, on) => {
       const d = await started($, on, {}, m => wslMachine(m))
       expect((await $.prompt.submit({ text: 'hello' })).context).toHaveLength(1)
-      expect(await tool($)).toHaveLength(1)
+      expect(noticeOf(await tool($))).toBe('')
       expect(runsOf(d, 'df')).toEqual([])
       expect(runsOf(d, 'cmd.exe')).toEqual([])
     })

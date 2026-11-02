@@ -6,6 +6,16 @@ import type { StampState } from '../../types'
 //   01:12:08 -06:00 +5s                the same day: time only
 // Pure: the clock, the offset and the last stamp arrive as arguments (register.tsx holds the `$` calls), so a test and the injection
 // measure (the injection measurement script) run exactly the text a session gets.
+//
+// A prompt is always stamped. A tool call is stamped only when the agent's last stamp is TOOL_STAMP_EVERY_MS old (or it has none, or the clock went back): the
+// stamps between told the model no more than the one before, and each was re-read by every later model call.
+export const TOOL_STAMP_EVERY_MS = 60_000
+
+/** Whether a tool call at `now` is stamped, given when its agent was last stamped (undefined: never). */
+export function toolStampDue(toldAt: number | undefined, now: number): boolean {
+  return toldAt === undefined || now < toldAt || now - toldAt >= TOOL_STAMP_EVERY_MS
+}
+
 const two = (n: number) => String(n).padStart(2, '0')
 
 // `+5s`, `+3m 7s`, `+3m`, `+2h 0m 5s`, `+2h 0m`: seconds are dropped only when zero past a minute, minutes never past an hour, as the bash hook this replaced printed them
