@@ -54,28 +54,30 @@ describe('reading a folder repo, a session row and a clear file', () => {
 
   test("the server's ready loop reads as it answers it: no loop, a loop between jobs, or a job with the server's verdict; anything else is a failure, never no loop", () => {
     expect(serverLoopOf({ ready_loop: null }, ME)).toBe(null)
-    expect(serverLoopOf({ ready_loop: { repo: REPO, job: null, ended: false } }, ME)).toEqual({ repo: REPO, job: null, ended: false })
-    expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: true } }, ME)).toEqual({ repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: true })
-    expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'plan', id: 23 }, ended: false } }, ME)).toEqual({ repo: REPO, job: { kind: 'plan', id: 23 }, ended: false })
+    expect(serverLoopOf({ ready_loop: { repo: REPO, job: null, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: null, ended: false, releaseId: null })
+    expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: true, release_id: 'r1' } }, ME)).toEqual({ repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: true, releaseId: 'r1' })
+    expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'plan', id: 23 }, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: { kind: 'plan', id: 23 }, ended: false, releaseId: null })
     for (const body of [
       {},
       undefined,
       { ready_loop: 'x' },
       { ready_loop: { job: null, ended: false } },
       { ready_loop: { repo: REPO, job: null } },
+      { ready_loop: { repo: REPO, job: null, ended: false } },
+      { ready_loop: { repo: REPO, job: null, ended: false, release_id: 7 } },
       { ready_loop: { repo: REPO, job: null, ended: 'no' } },
-      { ready_loop: { repo: REPO, job: { kind: 'card', id: 7 }, ended: true } },
-      { ready_loop: { repo: REPO, job: { kind: 'plan', id: '23' }, ended: true } },
-      { ready_loop: { repo: REPO, job: { kind: 'epic', id: 'DX-1' }, ended: true } },
+      { ready_loop: { repo: REPO, job: { kind: 'card', id: 7 }, ended: true, release_id: null } },
+      { ready_loop: { repo: REPO, job: { kind: 'plan', id: '23' }, ended: true, release_id: null } },
+      { ready_loop: { repo: REPO, job: { kind: 'epic', id: 'DX-1' }, ended: true, release_id: null } },
     ]) expect(() => serverLoopOf(body, ME)).toThrow(`bad_response: ${ME} answered`)
   })
 
   test('a mark answers that the session waits on the list, or, for a session on work, the loop it joined with that work as its job; anything else is a failure, never a mark', () => {
     const route = 'PUT /api/plan-sessions/me/ready'
     expect(markAnswerOf({ ready: true, repo: REPO, since: 'x', ready_loop: null })).toEqual({ kind: 'marked' })
-    expect(markAnswerOf({ ready: null, repo: REPO, since: null, ready_loop: { repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: false } })).toEqual({ kind: 'joined', job: { kind: 'card', id: 'DX-1' } })
-    expect(markAnswerOf({ ready: null, repo: REPO, since: null, ready_loop: { repo: REPO, job: { kind: 'plan', id: 23 }, ended: true } })).toEqual({ kind: 'joined', job: { kind: 'plan', id: 23 } })
-    for (const body of [{}, undefined, { ready: false }, { ready: 'yes' }, { ready: null, ready_loop: null }, { ready: null }, { ready: null, ready_loop: { repo: REPO, job: null, ended: false } }, { ready: null, ready_loop: { repo: REPO, job: { kind: 'card', id: 7 }, ended: false } }]) {
+    expect(markAnswerOf({ ready: null, repo: REPO, since: null, ready_loop: { repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: false, release_id: null } })).toEqual({ kind: 'joined', job: { kind: 'card', id: 'DX-1' } })
+    expect(markAnswerOf({ ready: null, repo: REPO, since: null, ready_loop: { repo: REPO, job: { kind: 'plan', id: 23 }, ended: true, release_id: null } })).toEqual({ kind: 'joined', job: { kind: 'plan', id: 23 } })
+    for (const body of [{}, undefined, { ready: false }, { ready: 'yes' }, { ready: null, ready_loop: null }, { ready: null }, { ready: null, ready_loop: { repo: REPO, job: null, ended: false, release_id: null } }, { ready: null, ready_loop: { repo: REPO, job: { kind: 'card', id: 7 }, ended: false, release_id: null } }]) {
       expect(() => markAnswerOf(body)).toThrow(`bad_response: ${route} answered`)
     }
   })
@@ -213,6 +215,7 @@ describe('the ready-agent loop', () => {
   const released = (d: any, releaseId = 'r1') => {
     d.world.readyLoop = { ...d.world.readyLoop, ended: true }
     d.world.clearAgreed = true
+    d.world.releaseId = releaseId
     clearFile(d, releaseId)
   }
   const readyDeletes = (d: any) => d.calls.filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'DELETE' && c.args.path === '/api/plan-sessions/me/ready').length
@@ -711,6 +714,38 @@ describe('the ready-agent loop', () => {
       await tick(d)
       await turnEnds($, d)
       expect(d.world.readySteps).toEqual(['clear', `leave ${CARD.id}`, `mark ${REPO}`])
+    })
+
+    // CP-55: the clear file names a release the server no longer stands behind (the job reopened and ended again while the stream was down): nothing clears and nothing is sent, until the
+    // view names the release the file names
+    test('a clear file naming a release the view no longer names clears nothing and sends nothing; once the view names the new release, it clears once and rejoins', async ($, on) => {
+      const d = await started($, on)
+      await ready($, d)
+      handCard(d, 'Done')
+      released(d)
+      d.world.releaseId = null
+      d.world.clearAgreed = false
+      d.world.readySteps.length = 0
+      const calls = d.calls.length
+      await tick(d)
+      await turnEnds($, d)
+      await tick(d)
+      expect(d.clearRuns).toHaveLength(0)
+      expect(d.world.readySteps).toEqual([])
+      expect(d.calls.slice(calls).filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'PUT')).toEqual([])
+      // the view names a newer release than the file (r2 against r1) with the agreement standing: still nothing
+      d.world.releaseId = 'r2'
+      d.world.clearAgreed = true
+      await tick(d)
+      expect(d.clearRuns).toHaveLength(0)
+      expect(d.world.readySteps).toEqual([])
+      expect(d.calls.slice(calls).filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'PUT')).toEqual([])
+      released(d, 'r2')
+      await tick(d)
+      expect(d.clearRuns).toHaveLength(1)
+      expect(d.world.readySteps).toEqual(['clear', `leave ${CARD.id}`, `mark ${REPO}`])
+      await tick(d)
+      expect(d.clearRuns).toHaveLength(1)
     })
 
     test('a job on a plan goes the same way: kept while the server says it goes on, cleared and rejoined once 50 Arms releases the clear', async ($, on) => {
@@ -1240,7 +1275,7 @@ describe('the ready-agent loop', () => {
       // the row now names another dashboard id, whose stream also came up through the older server
       const otherId = 'second-session'
       d.world.files[`${HOME_DIR}/.config/danxbot/compaction/${otherId}.json`] = streamFile(otherId)
-      d.world.plansBody = { dashboard_url: DASHBOARD_URL, session: { session_id: otherId, plan_id: null, card_id: CARD.id, card_title: CARD.title, agent: AGENT, ready: null }, ready_loop: { repo: REPO, job: { kind: 'card', id: CARD.id }, ended: false } }
+      d.world.plansBody = { dashboard_url: DASHBOARD_URL, session: { session_id: otherId, plan_id: null, card_id: CARD.id, card_title: CARD.title, agent: AGENT, ready: null }, ready_loop: { repo: REPO, job: { kind: 'card', id: CARD.id }, ended: false, release_id: null } }
       await tick(d)
       expect(looks(d, otherId)).toBe(1)
       expect(olderTold(d)).toBe(0)
@@ -1286,7 +1321,7 @@ describe('the ready-agent loop', () => {
   })
 
   describe("what the session's row says that it cannot read", () => {
-    const row = (over: object) => ({ dashboard_url: DASHBOARD_URL, session: { session_id: SESSION_ID, plan_id: null, card_id: CARD.id, card_title: CARD.title, agent: AGENT, ready: null }, ready_loop: { repo: REPO, job: { kind: 'card', id: CARD.id }, ended: true }, ...over })
+    const row = (over: object) => ({ dashboard_url: DASHBOARD_URL, session: { session_id: SESSION_ID, plan_id: null, card_id: CARD.id, card_title: CARD.title, agent: AGENT, ready: null }, ready_loop: { repo: REPO, job: { kind: 'card', id: CARD.id }, ended: true, release_id: 'r1' }, ...over })
 
     test('a row with no session_id is told once and clears nothing, since the clear file is named by that id', async ($, on) => {
       const d = await started($, on)

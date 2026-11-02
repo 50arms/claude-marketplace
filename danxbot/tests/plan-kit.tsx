@@ -313,6 +313,8 @@ export function dashboard(
     // rejoin's `PUT /api/plan-sessions/me/ready` leave the ended job the session still holds
     readyLoop: null as { repo: string; job: { kind: 'card'; id: string } | { kind: 'plan'; id: number } | null; ended: boolean } | null,
     clearAgreed: false,
+    // CP-55: the release 50 Arms stands behind (`ready_loop.release_id`); the answers name it only while the job has ended
+    releaseId: null as string | null,
     // DX-4400: the danxbot_api paths whose answer the MCP sends as `reply_file` (over its 100,000-character limit), with the body written whole to a local file
     replyFilePaths: [] as string[],
     // the reply file is gone before the plugin reads it (a cleaned temp folder, say)
@@ -431,6 +433,8 @@ export function dashboard(
     ] as Card[],
   }
   if (options.bigCard) world.cards.push(bigCard())
+  // CP-55: the ready loop as the server answers it, with the release it stands behind only while the job has ended
+  const readyLoopView = () => (world.readyLoop === null ? null : { ...world.readyLoop, release_id: world.readyLoop.ended ? world.releaseId : null })
   // DX-5232: every card of the plan (any status, either board): the fixture's own cards and the others
   const planCardIds = [...new Set([...PLAN_CARD_IDS, ...world.cards.map(c => c.id), ...Array.from({ length: options.extraPlanCards ?? 0 }, (_, i) => `DX-${1000 + i}`)])]
   // the plan's Needs You bucket counts CARDS holding an open problem, on the plan read
@@ -472,7 +476,7 @@ export function dashboard(
             ? null
             : { attached: options.attached ?? world.listener === 'healthy', state: world.listener, nextStep: world.listener === 'healthy' ? null : NEXT_STEP(world.listener) },
         // DX-6692: the session's ready loop and whether its job has ended, as the server judges it
-        ready_loop: world.readyLoop,
+        ready_loop: readyLoopView(),
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
       })
     }
@@ -575,14 +579,14 @@ export function dashboard(
         // instead of riding that agreement into the next rejoin. On an ended job an agreement stays
         if (!world.readyLoop!.ended) world.clearAgreed = false
         world.readySteps.push(`join ${work.id}`)
-        return reply({ ready: null, repo: body.repo, since: null, ready_loop: world.readyLoop })
+        return reply({ ready: null, repo: body.repo, since: null, ready_loop: readyLoopView() })
       }
       world.readyMark = body.repo
       // the rejoin ends the handshake: the loop keeps its repo and has no job
       world.clearAgreed = false
       if (world.readyLoop !== null) world.readyLoop = { repo: body.repo, job: null, ended: false }
       world.readySteps.push(`mark ${body.repo}`)
-      return reply({ ready: true, repo: body.repo, since: '2026-10-03T08:00:00.000Z', ready_loop: world.readyLoop })
+      return reply({ ready: true, repo: body.repo, since: '2026-10-03T08:00:00.000Z', ready_loop: readyLoopView() })
     }
     // the plan-less claim: an open route, so the hold gate lets it through, and a no-agent answer is a 200
     if (method === 'POST' && path === '/api/plan-sessions/me/agent') {

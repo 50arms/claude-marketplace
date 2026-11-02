@@ -103,7 +103,8 @@ export function holdsWork(session: any): boolean {
 
 // The session's ready loop as the dashboard keeps it: the repo it rejoins, the job it took (null between jobs), and whether that job has ended, by the dashboard's one rule for that
 // (a card Done or Cancelled, a plan whose work is finished, or work the session left). null: the session is in no loop on the server (one only marked ready, that never took a job, included).
-export type ServerLoop = { repo: string; job: ReadyJob | null; ended: boolean }
+// `releaseId`: the clear release 50 Arms stands behind right now, set only while the job has ended and an agreement answers its current ending; the clear file may name an older one.
+export type ServerLoop = { repo: string; job: ReadyJob | null; ended: boolean; releaseId: string | null }
 
 // The `ready_loop` of an answer of `route` (`GET /api/plan-sessions/me`, or the mark's `PUT`). Anything else is a failure, never "no loop": no loop is what lets a look mark the session, and a
 // missed job would carry its conversation into the next.
@@ -113,10 +114,12 @@ export function serverLoopOf(body: any, route: string): ServerLoop | null {
   const bad = (why: string) => new Error(`bad_response: ${route} answered a ready_loop ${why}`)
   if (typeof loop !== 'object' || loop === undefined) throw bad('that is not an object or null')
   if (typeof loop.repo !== 'string' || typeof loop.ended !== 'boolean') throw bad('with no repo or no ended')
+  if (loop.release_id !== null && (typeof loop.release_id !== 'string' || loop.release_id === '')) throw bad('with no release_id')
+  const releaseId: string | null = loop.release_id
   const job = loop.job
-  if (job === null) return { repo: loop.repo, job: null, ended: loop.ended }
-  if (job?.kind === 'card' && typeof job.id === 'string') return { repo: loop.repo, job: { kind: 'card', id: job.id }, ended: loop.ended }
-  if (job?.kind === 'plan' && typeof job.id === 'number') return { repo: loop.repo, job: { kind: 'plan', id: job.id }, ended: loop.ended }
+  if (job === null) return { repo: loop.repo, job: null, ended: loop.ended, releaseId }
+  if (job?.kind === 'card' && typeof job.id === 'string') return { repo: loop.repo, job: { kind: 'card', id: job.id }, ended: loop.ended, releaseId }
+  if (job?.kind === 'plan' && typeof job.id === 'number') return { repo: loop.repo, job: { kind: 'plan', id: job.id }, ended: loop.ended, releaseId }
   throw bad('whose job is not a card or a plan')
 }
 
