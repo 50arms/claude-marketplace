@@ -90,7 +90,7 @@ for (const surface of SURFACES) {
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
       expect(tool.context!.slice(1)).toEqual([TOLD('after_compaction')])
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
     })
 
@@ -103,7 +103,7 @@ for (const surface of SURFACES) {
       const sub = await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)
       expect(sub.context).toHaveLength(1)
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([TOLD('after_compaction')])
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
     })
 
     test('a denied tool call leaves the pending start for the next result', async ($, on) => {

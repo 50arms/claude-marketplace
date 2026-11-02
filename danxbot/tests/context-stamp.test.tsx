@@ -1,9 +1,9 @@
 import "./run-tests-with-npm-test.generated"
-// DX-4234: the model's time stamp, on each prompt and after each tool call (PBLM-1915: both, as the bash hook did). The text is pure
+// DX-4234: the model's time stamp, on each prompt and after a tool call once a stretch has passed since the last (PBLM-1915: both, as the bash hook did; CP-52: not every call). The text is pure
 // (hooks/context/stamp.ts, exact here with an explicit UTC offset); the hooks are checked as the engine runs them, on both surfaces.
 import { describe, expect } from 'claude-code/testing'
 
-import { stamp } from '../hooks/context/stamp'
+import { TOOL_STAMP_EVERY_MS, stamp, toolStampDue } from '../hooks/context/stamp'
 import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 // 2026-09-28 07:12:03 UTC is 01:12:03 at -06:00
@@ -52,6 +52,19 @@ describe('stamp (the line)', () => {
   })
 })
 
+describe('toolStampDue (CP-52)', () => {
+  test('a never-stamped agent is due, one stamped less than the stretch ago is not, one stamped the stretch ago is', () => {
+    expect(toolStampDue(undefined, T0)).toBe(true)
+    expect(toolStampDue(T0, T0)).toBe(false)
+    expect(toolStampDue(T0, T0 + TOOL_STAMP_EVERY_MS - 1)).toBe(false)
+    expect(toolStampDue(T0, T0 + TOOL_STAMP_EVERY_MS)).toBe(true)
+  })
+
+  test('a clock that went back is due', () => {
+    expect(toolStampDue(T0, T0 - 1)).toBe(true)
+  })
+})
+
 const FULL = /^\d\d\/\d\d\/\d{4} \d\d:\d\d:\d\d [+-]\d\d:\d\d \+0$/
 const TIME_ONLY = /^\d\d:\d\d:\d\d [+-]\d\d:\d\d \+(\d+s|\d+m( \d+s)?|\d+h \d+m( \d+s)?)$/
 
@@ -81,7 +94,59 @@ for (const surface of SURFACES) {
       expect(r.context![0]).toMatch(FULL)
     })
 
-    test('tool.call: an errored result carries it too (every tool call), a denied call does not', async ($, on) => {
+    test('tool.call: a call within the stretch since the last stamp carries none, the first after it carries one counted from the last stamp sent', async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      await startSession($, d, surface)
+      expect((await $.tool.call({ tool: 'Bash', command: 'a' } as any)).context).toHaveLength(1)
+      await d.clock.advance(TOOL_STAMP_EVERY_MS - 1_000)
+      const quiet = await $.tool.call({ tool: 'Bash', command: 'b' } as any)
+      expect(quiet.text).toBe('done')
+      expect(quiet.context).toHaveLength(0)
+      await d.clock.advance(1_000)
+      const due = await $.tool.call({ tool: 'Bash', command: 'c' } as any)
+      expect(due.context).toHaveLength(1)
+      expect(due.context![0]).toMatch(TIME_ONLY)
+      expect(due.context![0].endsWith(' +1m')).toBe(true)
+    })
+
+    test('tool.call: each agent has its own stretch, so a sub-agent is stamped on its first call and the main thread is not stamped again for it', async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      await startSession($, d, surface)
+      expect((await $.tool.call({ tool: 'Bash', command: 'a' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'b', agentId: 'a1' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'c', agentId: 'a1' } as any)).context).toHaveLength(0)
+      expect((await $.tool.call({ tool: 'Bash', command: 'd' } as any)).context).toHaveLength(0)
+    })
+
+    test('tool.call: a prompt is stamped every time and restarts the main thread\'s stretch', async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      await startSession($, d, surface)
+      await $.tool.call({ tool: 'Bash', command: 'a' } as any)
+      await d.clock.advance(TOOL_STAMP_EVERY_MS - 1_000)
+      expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
+      await d.clock.advance(TOOL_STAMP_EVERY_MS - 1_000)
+      expect((await $.tool.call({ tool: 'Bash', command: 'b' } as any)).context).toHaveLength(0)
+    })
+
+    test('tool.call: a stopped sub-agent forgets its stretch, and a session start gives every agent a stamp on its next call', async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      on('classic.SessionStart', () => ({}) as any)
+      on('classic.SubagentStop', () => ({}) as any)
+      await startSession($, d, surface)
+      await $.tool.call({ tool: 'Bash', command: 'a', agentId: 'a1' } as any)
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
+      expect((await $.tool.call({ tool: 'Bash', command: 'b', agentId: 'a1' } as any)).context).toHaveLength(1)
+      await $.tool.call({ tool: 'Bash', command: 'c' } as any)
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: 's2', transcript_path: '/work/main.jsonl' })
+      expect((await $.tool.call({ tool: 'Bash', command: 'd', agentId: 'a1' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'e' } as any)).context).toHaveLength(1)
+    })
+
+    test('tool.call: an errored result carries it too (every stamped call), a denied call does not', async ($, on) => {
       const d = dashboard(on, { connected: false })
       let answer: any = { result: undefined, isError: true, text: 'boom' }
       on('tool.call', () => answer)
@@ -99,10 +164,10 @@ for (const surface of SURFACES) {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       await startSession($, d, surface)
       await $.prompt.submit({ text: 'go' })
-      await d.clock.advance(12_000)
+      await d.clock.advance(TOOL_STAMP_EVERY_MS + 12_000)
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
       expect(tool.context![0]).toMatch(TIME_ONLY)
-      expect(tool.context![0].endsWith(' +12s')).toBe(true)
+      expect(tool.context![0].endsWith(' +1m 12s')).toBe(true)
       await d.clock.advance(3_000)
       const next = await $.prompt.submit({ text: 'more' })
       expect(next.context![0].endsWith(' +3s')).toBe(true)
@@ -148,8 +213,7 @@ for (const surface of SURFACES) {
       const [first, second] = await Promise.all([$.tool.call({ tool: 'Bash', command: 'a' } as any), $.tool.call({ tool: 'Bash', command: 'b' } as any)])
       expect(first.context).toHaveLength(2)
       expect(first.context![0]).toMatch(FULL)
-      expect(second.context).toHaveLength(1)
-      expect(second.context![0]).toMatch(TIME_ONLY)
+      expect(second.context).toHaveLength(0)
     })
   })
 }

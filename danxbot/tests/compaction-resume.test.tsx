@@ -59,7 +59,7 @@ for (const surface of SURFACES) {
       expect(prompt).toContain('Sub-agents still running (they carried on through the compaction): a1 (danxbot:worker-sonnet-high) build the thing.')
       expect(prompt).toContain('Work not pushed')
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
       expect(resumes(d)).toHaveLength(1)
     })
 
@@ -82,7 +82,7 @@ for (const surface of SURFACES) {
       expect(told).toHaveLength(1)
       expect(told[0]).toContain(TOLD('after_compaction').split('\n')[0])
       expect(told[0]).toContain(RESUME_PROCEDURE)
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
       await $.turn.complete(TURN)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(0)
