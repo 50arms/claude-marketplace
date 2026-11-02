@@ -110,6 +110,7 @@ export const EMPTY: PlanView = {
   inProgress: [],
   needsYou: 0,
   needsYouError: null,
+  paused: false,
   pausedUntil: null,
   pausedWaitsOn: null,
   // nothing to link until a load reads the boards and the plan's cards
