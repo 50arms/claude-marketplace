@@ -8,6 +8,8 @@ import { stamp as nextStamp } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
+import { heldReason, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
+import type { HeldNotice } from './context/interim-notice'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -148,6 +150,8 @@ const lastStamp = atom({ plugin: '50arms', key: 'lastStamp' } as const, null as 
 // session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
 // prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
 const pendingStart = atom({ plugin: '50arms', key: 'pendingStart' } as const, null as PendingStart)
+// the interim sub-agent notices held back from the model (hooks/context/interim-notice.ts), kept by $.state across a reload of the module
+const heldNotices = atom({ plugin: '50arms', key: 'heldNotices' } as const, [] as HeldNotice[])
 // The machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
 // notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home found once per session.
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
@@ -253,6 +257,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     runningAgents: read($, runningAgents),
     reports: read($, reports),
     workMarks: read($, workMarks),
+    heldNotices: read($, heldNotices),
     relayOutbox: read($, relayOutbox),
     ackInFlight: read($, ackInFlight),
     recordClock: read($, recordClock),
@@ -306,6 +311,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, runningAgents, () => carried.runningAgents),
     update($, reports, () => carried.reports),
     update($, workMarks, () => carried.workMarks),
+    update($, heldNotices, () => carried.heldNotices),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
     update($, recordClock, () => carried.recordClock),
@@ -2904,7 +2910,57 @@ async function wslHome($: any): Promise<string | null> {
 
 // the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
 async function onPromptStamp($: any, e: any, next: any) {
+  const held = await holdInterimNotice($, e)
+  if (held !== null) return { drop: held }
   return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT))] })
+}
+
+// An interim sub-agent notice (the sub-agent ended a turn with a command of its own still running) is kept from the model: it notifies again with its
+// result, and a wake-up for every interim one is a paid turn. The result for the same task, or the wait running out (releaseDueNotices), settles it.
+// Returns the reason shown to the person when the notice is held, else null (the prompt goes on). A reload cancels the timer, so each prompt re-arms it.
+async function holdInterimNotice($: any, e: any): Promise<string | null> {
+  const notice = taskNoticeOf(e.origin, e.text)
+  if (notice === null) {
+    await armNoticeRelease($)
+    return null
+  }
+  const now = await $.clock.now()
+  let holds = false
+  await update($, heldNotices, cur => {
+    const r = receive(cur, notice, e.text, now)
+    holds = r.holds
+    return r.held
+  })
+  await armNoticeRelease($)
+  return holds ? heldReason(notice.taskId) : null
+}
+
+let noticeTimer: { cancel: () => void } | null = null
+
+// One pending timer, a slice of the wait for the soonest held notice (a handle, so a module variable).
+async function armNoticeRelease($: any): Promise<void> {
+  const held = await read($, heldNotices)
+  const wait = nextWakeMs(held, await $.clock.now())
+  noticeTimer?.cancel()
+  noticeTimer = wait === null ? null : $.clock.after(wait, () => detach($, 'Held sub-agent notice', releaseDueNotices($)))
+}
+
+// The held notices whose wait is over are told to the model, as a prompt a plugin sends (it wakes an idle session and queues behind a running turn).
+async function releaseDueNotices($: any): Promise<void> {
+  noticeTimer = null
+  const now = await $.clock.now()
+  let due: HeldNotice[] = []
+  await update($, heldNotices, cur => {
+    const split = splitDue(cur, now)
+    due = split.due
+    return split.rest
+  })
+  await armNoticeRelease($)
+  for (const h of due) {
+    const text = releasedText(h, now)
+    const failure = await submitEvent($, text)
+    if (failure !== null) notToldToast($, failure, text)
+  }
 }
 
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
