@@ -398,7 +398,12 @@ by how much work it is (issue-workflow's creation guide, § Build grade), then r
 The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
 worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate (`GET /api/board-task-profiles?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e.g. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`), at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
 gate instruction route's answer, and pick the matching `50arms:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
-on its pushed tip; a gate never changes the build grade. Once the POST gates pass, a lander sub-agent lands it (brief `work <CARD-ID>` plus "land it by
+on its pushed tip; a gate never changes the build grade. When a gate finds something to fix, send the builder
+the findings. Set each fix pass's grade from the hardest single finding it fixes, never the card's build grade
+and never the number of findings, using the same build grade scale (issue-workflow's creation guide, § Build
+grade), and read that grade's model and effort from the board's agent grades. A builder keeps its own model, so
+a fix pass graded above or below the build goes to a fresh agent at its grade, briefed with the findings and the
+builder's handoff note. A gate's own review grade is unchanged. Once the POST gates pass, a lander sub-agent lands it (brief `work <CARD-ID>` plus "land it by
 issue-workflow's Delivery and report the sha; do not complete it"), and you complete the card and write
 the retro from its report.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
