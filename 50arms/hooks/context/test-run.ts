@@ -26,5 +26,3 @@ export function testRunPost(fileText: string): TestRunPost | { error: string } {
   if (typeof record.text !== 'string' || record.text === '' || metadata?.kind !== 'test_run') return { error: 'the record is not a test_run note' }
   return { path: `/api/issues/${record.card}/notes`, body: { text: record.text, metadata } }
 }
-
-export { RECORDER_VAR, recorderPath, withRecorderVar } from '../../scripts/lib/recorder-var.mjs'

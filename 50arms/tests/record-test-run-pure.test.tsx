@@ -3,7 +3,8 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect, test } from 'claude-code/testing'
 
 import { RECORD_MARKER as SCRIPT_MARKER } from '../scripts/lib/test-run.mjs'
-import { RECORD_MARKER, recorderPath, testRunPost, withRecorderVar, testRunRecordPath } from '../hooks/context/test-run'
+import { pathOfFileUrl, recorderPath, withRecorderVar } from '../scripts/lib/recorder-var.mjs'
+import { RECORD_MARKER, testRunPost, testRunRecordPath } from '../hooks/context/test-run'
 
 const record = (over: object = {}) => JSON.stringify({ card: 'DX-9', text: 'Tests passed.', metadata: { kind: 'test_run', commit_sha: 'a'.repeat(40) }, ...over })
 
@@ -28,11 +29,18 @@ describe('testRunPost', () => {
   })
 })
 
-describe('recorderPath', () => {
+describe('pathOfFileUrl', () => {
   test('a Windows file URL becomes a drive path with forward slashes and decoded spaces', () => {
-    expect(recorderPath('file:///C:/Users/a%20b/plugin/hooks/register.tsx')).toBe('C:/Users/a b/plugin/scripts/record-test-run.mjs')
+    expect(pathOfFileUrl('file:///C:/Users/a%20b/plugin/scripts/record-test-run.mjs')).toBe('C:/Users/a b/plugin/scripts/record-test-run.mjs')
   })
-  test('a POSIX file URL keeps its path', () => expect(recorderPath('file:///app/danxbot/hooks/register.tsx')).toBe('/app/danxbot/scripts/record-test-run.mjs'))
+  test('a POSIX file URL keeps its path', () => expect(pathOfFileUrl('file:///app/danxbot/scripts/x.mjs')).toBe('/app/danxbot/scripts/x.mjs'))
+})
+
+describe('recorderPath', () => {
+  test('names the recorder script in the scripts folder beside lib, decoded', () => {
+    expect(recorderPath()).toMatch(/\/scripts\/record-test-run\.mjs$/)
+    expect(recorderPath()).not.toContain('%')
+  })
 })
 
 describe('withRecorderVar', () => {
