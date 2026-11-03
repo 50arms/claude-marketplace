@@ -57,11 +57,12 @@ export function parseArgs(argv) {
 export function withPipefail(argv) {
   const name = (argv[0] ?? "").split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, "");
   if (name !== "bash" && name !== "zsh") return argv;
-  // the leading options end at the first word that is not one; -c is a lone -c or a short group containing c, wherever it sits among them
+  // the leading options end at `--` or the first word that is not one (an option's own argument is skipped); -c is a lone -c or a short group containing c, wherever it sits among them
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i] ?? "";
     if (/^-[A-Za-z]*c[A-Za-z]*$/.test(a)) return [argv[0], "-o", "pipefail", ...argv.slice(1)];
-    if (a === "-o" || a === "+o" || a === "-O" || a === "+O") i += 1;
+    if (a === "--") break;
+    if (["-o", "+o", "-O", "+O", "--rcfile", "--init-file"].includes(a)) i += 1;
     else if (!/^[-+]/.test(a)) break;
   }
   return argv;
