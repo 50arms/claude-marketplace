@@ -3,7 +3,11 @@
 //
 //   node "${CLAUDE_PLUGIN_ROOT}/scripts/record-test-run.mjs" --report <file outside the repo> [--format vitest-json|junit] [--card <ID>] -- <test command...>
 //
-// The command runs exactly as typed (output and exit code untouched). It must write the runner's own report to `$DANXBOT_TEST_REPORT`
+// The command runs as an argv with NO shell (output and exit code untouched), so a quoted argument stays one argument. A command that needs a shell
+// (a Windows `npm.cmd` shim, a pipe, a variable) is wrapped, for example:
+//   -- bash -c 'npm test -- --reporter=json --outputFile.json="$DANXBOT_TEST_REPORT"'
+// Single-quote the whole command so the outer shell does not expand `$DANXBOT_TEST_REPORT` early. From a PowerShell-started node, `bash` can resolve to
+// `System32\bash.exe`, which is WSL: name Git Bash's bash by its full path there. The command must write the runner's own report to `$DANXBOT_TEST_REPORT`
 // (the wrapper sets it to the --report path), e.g. vitest `--reporter=default --reporter=json --outputFile.json="$DANXBOT_TEST_REPORT"`.
 // After an exit-0 run on a clean tree whose HEAD and tree did not move, it writes a record file and prints `DANXBOT_TEST_RUN_RECORD <file>`;
 // the plugin's tool hook posts it as a `test_run` agent note on the card with the session's own key. This script holds no
@@ -32,7 +36,7 @@ export function gitState(cwd) {
 
 export function parseArgs(argv) {
   const split = argv.indexOf("--");
-  if (split === -1 || split === argv.length - 1) throw new Error("usage: record-test-run.mjs --report <file> [--format vitest-json|junit] [--card <ID>] -- <test command...>");
+  if (split === -1 || split === argv.length - 1) throw new Error("usage: record-test-run.mjs --report <file> [--format vitest-json|junit] [--card <ID>] -- <test command...>. Note: " + SHELL_HINT);
   const opts = { format: "vitest-json" };
   const own = argv.slice(0, split);
   for (let i = 0; i < own.length; i += 2) {
@@ -45,7 +49,10 @@ export function parseArgs(argv) {
 }
 
 /** One argv word written so a shell would read it back as that one word. */
-export const shellWord = (word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\''")}'`);
+export const shellWord = (word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : "'" + word.split("'").join("'\\''") + "'");
+
+export const SHELL_HINT =
+  "a command that needs a shell (a Windows npm.cmd shim, a pipe, a variable) is wrapped, for example: -- bash -c 'npm test -- --reporter=json --outputFile.json=\"$DANXBOT_TEST_REPORT\"'; single-quote it so $DANXBOT_TEST_REPORT is not expanded early (from PowerShell, bash can resolve to System32\\bash.exe, which is WSL: use Git Bash by its full path)";
 
 const say = (message) => process.stderr.write(`[record-test-run] ${message}\n`);
 
@@ -83,7 +90,11 @@ async function main() {
   const exitCode = await new Promise((resolve) => {
     const child = spawn(args.command[0], args.command.slice(1), { cwd, stdio: "inherit", windowsHide: true, env: { ...process.env, DANXBOT_TEST_REPORT: report } });
     child.on("close", (code) => resolve(code ?? 1));
-    child.on("error", () => resolve(1));
+    child.on("error", (err) => {
+      say(`could not start ${JSON.stringify(args.command[0])}: ${err.message}`);
+      if (err.code === "ENOENT" || err.code === "EINVAL") say(SHELL_HINT);
+      resolve(1);
+    });
   });
   if (skip !== null) {
     say(`not recorded: ${skip}`);
@@ -101,12 +112,38 @@ async function main() {
     say(`not recorded: ${decision.reason}`);
     return exitCode;
   }
+  const body = JSON.stringify({ card, text: decision.text, metadata: decision.metadata });
+  const url = process.env.DANXBOT_TEST_RUN_URL;
+  const token = process.env.DANX_AGENT_TOKEN;
+  // a dispatched agent: no hook runs there, so the script posts the record itself, to the worker route the dispatch names; no marker is printed
+  if (url && token) {
+    await postRecord(url, token, body);
+    return exitCode;
+  }
   const dir = path.join(os.tmpdir(), "danxbot-test-runs");
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${card}-${decision.metadata.commit_sha}-${Date.now()}.json`);
-  writeFileSync(file, JSON.stringify({ card, text: decision.text, metadata: decision.metadata }), "utf8");
+  writeFileSync(file, body, "utf8");
   process.stdout.write(`${RECORD_MARKER} ${file}\n`);
   return exitCode;
+}
+
+/** POST the record body as the dispatch's agent. Anything but a 201 is said on stderr; the run's exit code is never changed. */
+export async function postRecord(url, token, body) {
+  try {
+    const res = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body });
+    if (res.status === 201) return true;
+    let error = "";
+    try {
+      error = (await res.json())?.error ?? "";
+    } catch {
+      error = "";
+    }
+    say(`the test run was not stored: HTTP ${res.status}${error ? ` ${error}` : ""}`);
+  } catch (err) {
+    say(`the test run was not stored: ${err.message}`);
+  }
+  return false;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

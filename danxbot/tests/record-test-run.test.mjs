@@ -1,11 +1,13 @@
 import "./designated-test-container.mjs";
 // CP-57 (DEC-435): the test-run recorder. The pure decision (report in, `test_run` metadata out) and the wrapper run against a real temp git repo.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import http from "node:http";
 import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { shellWord } from "../scripts/record-test-run.mjs";
 import assert from "node:assert/strict";
 import { decideRecord, parseJsonReport, parseJunitReport, RECORD_MARKER } from "../scripts/lib/test-run.mjs";
 
@@ -57,17 +59,15 @@ test("a document with no suite gives no counts", () => {
   assert.equal(parseJunitReport("<nothing/>"), null);
 });
 
-test("nothing is recorded for a failure, a missing report, a dirty tree, a moved HEAD or an empty run", () => {
-  assert.match(decide({ exitCode: 1 }).reason, /exited 1/);
-  assert.match(decide({ parsed: null }).reason, /no per-test counts/);
-  assert.match(decide({ parsed: parseJsonReport(vitestReport({ numFailedTests: 1 })) }).reason, /failure/);
-  assert.match(decide({ parsed: parseJsonReport(vitestReport({ numTotalTests: 0, numPassedTests: 0, numPendingTests: 0 })) }).reason, /no tests ran/);
-  assert.match(decide({ before: { ...clean, dirty: true } }).reason, /not clean when/);
-  assert.match(decide({ after: { ...clean, dirty: true } }).reason, /not clean after/);
-  assert.match(decide({ after: { ...clean, head: "c".repeat(40) } }).reason, /HEAD moved/);
-  assert.match(decide({ after: { ...clean, tree: "c".repeat(40) } }).reason, /HEAD moved/);
-  assert.equal(parseJsonReport("not json"), null);
-});
+test("nothing is recorded for a failing exit", () => assert.match(decide({ exitCode: 1 }).reason, /exited 1/));
+test("nothing is recorded when the runner gave no report", () => assert.match(decide({ parsed: null }).reason, /no per-test counts/));
+test("nothing is recorded when the report shows a failure", () => assert.match(decide({ parsed: parseJsonReport(vitestReport({ numFailedTests: 1 })) }).reason, /failure/));
+test("nothing is recorded for a run with no tests", () => assert.match(decide({ parsed: parseJsonReport(vitestReport({ numTotalTests: 0, numPassedTests: 0, numPendingTests: 0 })) }).reason, /no tests ran/));
+test("nothing is recorded when the tree was dirty at the start", () => assert.match(decide({ before: { ...clean, dirty: true } }).reason, /not clean when/));
+test("nothing is recorded when the tree is dirty at the end", () => assert.match(decide({ after: { ...clean, dirty: true } }).reason, /not clean after/));
+test("nothing is recorded when HEAD moved", () => assert.match(decide({ after: { ...clean, head: "c".repeat(40) } }).reason, /HEAD moved/));
+test("nothing is recorded when the tree id moved", () => assert.match(decide({ after: { ...clean, tree: "c".repeat(40) } }).reason, /HEAD moved/));
+test("text that is not JSON is no report", () => assert.equal(parseJsonReport("not json"), null));
 
 // ---- the wrapper, against a real repo
 const SCRIPT = fileURLToPath(new URL("../scripts/record-test-run.mjs", import.meta.url));
@@ -171,4 +171,107 @@ test("a commit made while the command runs records nothing", () => {
 
 test("usage errors exit 2", () => {
   assert.equal(run(os.tmpdir(), ["--report", "x"]).status, 2);
+});
+
+test("a word with an apostrophe is written so a shell reads it back unchanged", () => {
+  for (const word of ["it's", "'", "a'b'c", "two words", "plain"]) {
+    const r = spawnSync("sh", ["-c", `printf %s ${shellWord(word)}`], { encoding: "utf8" });
+    assert.equal(r.stdout, word);
+  }
+  assert.equal(shellWord("it's"), "'it'\\''s'");
+});
+
+test("a command that cannot start is reported with the shell-wrapping hint, and the run fails", () => {
+  const { dir } = repo();
+  const r = run(dir, ["--report", reportIn(), "--", "no-such-command-xyz"]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /could not start "no-such-command-xyz"/);
+  assert.match(r.stderr, /bash -c '/);
+  assert.match(r.stderr, /System32\\bash\.exe/);
+});
+
+test("the usage error carries the shell-wrapping hint", () => {
+  assert.match(run(os.tmpdir(), ["--report", "x"]).stderr, /bash -c '/);
+});
+
+// ---- the dispatched-agent branch: the wrapper posts the record itself
+async function stub(status, reply) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => {
+      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization, type: req.headers["content-type"], body: data });
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(reply));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return { seen, url: `http://127.0.0.1:${server.address().port}/api/worker/test-run`, close: () => server.close() };
+}
+const runAsync = (dir, args, env) =>
+  new Promise((resolve) => {
+    const child = spawn("node", [SCRIPT, ...args], { cwd: dir, env: { ...process.env, ...env } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+const dispatched = async (status, reply, command = writer(vitestReport())) => {
+  const s = await stub(status, reply);
+  const { dir } = repo();
+  const r = await runAsync(dir, ["--report", reportIn(), "--", ...command], { DANX_AGENT_TOKEN: "tok", DANXBOT_TEST_RUN_URL: s.url });
+  s.close();
+  return { r, seen: s.seen };
+};
+
+test("a dispatched agent's wrapper posts exactly the record with the bearer token and prints no marker", async () => {
+  const { r, seen } = await dispatched(201, { note_id: 7 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, MARK);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].method, "POST");
+  assert.equal(seen[0].url, "/api/worker/test-run");
+  assert.equal(seen[0].auth, "Bearer tok");
+  assert.equal(seen[0].type, "application/json");
+  const body = JSON.parse(seen[0].body);
+  assert.deepEqual(Object.keys(body).sort(), ["card", "metadata", "text"]);
+  assert.equal(body.card, "XX-1");
+  assert.equal(body.metadata.kind, "test_run");
+});
+
+test("a refused post (400 with an error) is said on stderr and the run's exit code is unchanged", async () => {
+  const { r } = await dispatched(400, { error: "bad metadata" });
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /HTTP 400 bad metadata/);
+});
+
+test("a 403 is said on stderr and the run's exit code is unchanged", async () => {
+  const { r, seen } = await dispatched(403, { error: "forbidden" });
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /HTTP 403 forbidden/);
+  assert.equal(seen.length, 1);
+});
+
+test("a failing test run posts nothing even in a dispatch", async () => {
+  const { r, seen } = await dispatched(201, { note_id: 1 }, ["node", "-e", "process.exit(4)"]);
+  assert.equal(r.status, 4);
+  assert.equal(seen.length, 0);
+});
+
+test("with the token unset the marker path is kept and nothing is posted", async () => {
+  const s = await stub(201, { note_id: 1 });
+  const { dir } = repo();
+  const env = { ...process.env, DANXBOT_TEST_RUN_URL: s.url };
+  delete env.DANX_AGENT_TOKEN;
+  const r = await new Promise((resolve) => {
+    const child = spawn("node", [SCRIPT, "--report", reportIn(), "--", ...writer(vitestReport())], { cwd: dir, env });
+    let stdout = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.on("close", () => resolve({ stdout }));
+  });
+  s.close();
+  assert.match(r.stdout, MARK);
+  assert.equal(s.seen.length, 0);
 });
