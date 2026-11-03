@@ -86,7 +86,7 @@ for (const surface of SURFACES) {
         await d.clock.settle()
         return seen
       }
-      const SCRIPT = /^DANXBOT_TEST_RECORDER='[^']*\/scripts\/record-test-run\.mjs' /
+      const SCRIPT = /^export DANXBOT_TEST_RECORDER='?[^;]*\/scripts\/record-test-run\.mjs'?; /
 
       test('a command naming $DANXBOT_TEST_RECORDER runs with the variable defined as the plugin script', async ($, on) => {
         const [seen] = await ran($, on, 'node "$DANXBOT_TEST_RECORDER" --report /tmp/r -- npm test')
@@ -100,6 +100,16 @@ for (const surface of SURFACES) {
 
       test('a longer variable name runs unchanged', async ($, on) => {
         expect(await ran($, on, 'echo $DANXBOT_TEST_RECORDER_OTHER')).toEqual(['echo $DANXBOT_TEST_RECORDER_OTHER'])
+      })
+
+      test('a call of another tool is never rewritten, even with a command field naming the variable', async ($, on) => {
+        const seen: string[] = []
+        on('tool.call', (_$: any, e: any) => (seen.push(e.command), { result: { stdout: '' }, text: '' }) as any)
+        const d = dashboard(on, { connected: false })
+        await startSession($, d, surface)
+        await $.tool.call({ tool: 'Read', command: 'node "$DANXBOT_TEST_RECORDER"' } as any)
+        await d.clock.settle()
+        expect(seen).toEqual(['node "$DANXBOT_TEST_RECORDER"'])
       })
 
       test('a command that does not name the variable runs unchanged', async ($, on) => {

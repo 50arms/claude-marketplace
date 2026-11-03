@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect, test } from 'claude-code/testing'
 
 import { RECORD_MARKER as SCRIPT_MARKER } from '../scripts/lib/test-run.mjs'
-import { RECORD_MARKER, testRunPost, testRunRecordPath } from '../hooks/context/test-run'
+import { RECORD_MARKER, recorderPath, testRunPost, withRecorderVar, testRunRecordPath } from '../hooks/context/test-run'
 
 const record = (over: object = {}) => JSON.stringify({ card: 'DX-9', text: 'Tests passed.', metadata: { kind: 'test_run', commit_sha: 'a'.repeat(40) }, ...over })
 
@@ -26,4 +26,20 @@ describe('testRunPost', () => {
     expect(testRunPost(record({ card: '../x' }))).toHaveProperty('error')
     expect(testRunPost(record({ metadata: { kind: 'other' } }))).toHaveProperty('error')
   })
+})
+
+describe('recorderPath', () => {
+  test('a Windows file URL becomes a drive path with forward slashes and decoded spaces', () => {
+    expect(recorderPath('file:///C:/Users/a%20b/plugin/hooks/register.tsx')).toBe('C:/Users/a b/plugin/scripts/record-test-run.mjs')
+  })
+  test('a POSIX file URL keeps its path', () => expect(recorderPath('file:///app/danxbot/hooks/register.tsx')).toBe('/app/danxbot/scripts/record-test-run.mjs'))
+})
+
+describe('withRecorderVar', () => {
+  const CMD = 'node "$DANXBOT_TEST_RECORDER" -- true'
+  test('exports the variable first, quoting a path with a space and an apostrophe', () => {
+    expect(withRecorderVar(CMD, "/p/it's here.mjs", false)).toBe(`export DANXBOT_TEST_RECORDER='/p/it'\\''s here.mjs'; ${CMD}`)
+  })
+  test('a non-string command comes back as it is', () => expect(withRecorderVar(undefined, '/p.mjs', false)).toBeUndefined())
+  test('a session that has the variable is left alone', () => expect(withRecorderVar(CMD, '/p.mjs', true)).toBe(CMD))
 })

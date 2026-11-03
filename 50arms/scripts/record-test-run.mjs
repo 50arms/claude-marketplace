@@ -18,6 +18,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { shellWord } from "./lib/shell-quote.mjs";
 import { decideRecord, parseReport, RECORD_MARKER } from "./lib/test-run.mjs";
 
 const git = (cwd, args) => {
@@ -48,9 +49,7 @@ export function parseArgs(argv) {
   if (!opts.report) throw new Error("--report <file> is required: the runner's own report is the only source of counts");
   return { ...opts, command: argv.slice(split + 1) };
 }
-
-/** One argv word written so a shell would read it back as that one word. */
-export const shellWord = (word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : "'" + word.split("'").join("'\\''") + "'");
+export { shellWord };
 
 export const SHELL_HINT =
   "a command that needs a shell (a Windows npm.cmd shim, a pipe, a variable) is wrapped, for example: -- bash -c 'npm test -- --reporter=json --outputFile.json=\"$DANXBOT_TEST_REPORT\"'; single-quote it so $DANXBOT_TEST_REPORT is not expanded early (from PowerShell, bash can resolve to System32\\bash.exe, which is WSL: use Git Bash by its full path)";

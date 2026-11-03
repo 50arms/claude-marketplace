@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { postRecord, shellWord } from "../scripts/record-test-run.mjs";
+import { withRecorderVar } from "../scripts/lib/recorder-var.mjs";
 import assert from "node:assert/strict";
 import { decideRecord, parseJsonReport, parseJunitReport, RECORD_MARKER } from "../scripts/lib/test-run.mjs";
 
@@ -241,16 +242,7 @@ test("a failed dispatched post says the record is not kept", async () => {
 
 test("with the URL unset and a token set the marker path is kept and one line says why", async () => {
   const { dir } = repo();
-  const env = { ...process.env, DANX_AGENT_TOKEN: "tok" };
-  delete env.DANXBOT_TEST_RUN_URL;
-  const r = await new Promise((resolve) => {
-    const child = spawn("node", [SCRIPT, "--report", reportIn(), "--", ...writer(vitestReport())], { cwd: dir, env });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c) => (stdout += c));
-    child.stderr.on("data", (c) => (stderr += c));
-    child.on("close", () => resolve({ stdout, stderr }));
-  });
+  const r = await runAsync(dir, ["--report", reportIn(), "--", ...writer(vitestReport())], { DANX_AGENT_TOKEN: "tok", DANXBOT_TEST_RUN_URL: undefined });
   assert.match(r.stdout, MARK);
   assert.match(r.stderr, /only DANX_AGENT_TOKEN is set/);
 });
@@ -272,7 +264,7 @@ async function stub(status, reply) {
 }
 const runAsync = (dir, args, env) =>
   new Promise((resolve) => {
-    const child = spawn("node", [SCRIPT, ...args], { cwd: dir, env: { ...process.env, ...env } });
+    const child = spawn("node", [SCRIPT, ...args], { cwd: dir, env: Object.fromEntries(Object.entries({ ...process.env, ...env }).filter(([, v]) => v !== undefined)) });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (c) => (stdout += c));
@@ -321,18 +313,21 @@ test("a failing test run posts nothing even in a dispatch", async () => {
   assert.equal(seen.length, 0);
 });
 
-test("with the token unset the marker path is kept and nothing is posted", async () => {
+test("with the token unset the marker path is kept, nothing is posted and one line says why", async () => {
   const s = await stub(201, { note_id: 1 });
   const { dir } = repo();
-  const env = { ...process.env, DANXBOT_TEST_RUN_URL: s.url };
-  delete env.DANX_AGENT_TOKEN;
-  const r = await new Promise((resolve) => {
-    const child = spawn("node", [SCRIPT, "--report", reportIn(), "--", ...writer(vitestReport())], { cwd: dir, env });
-    let stdout = "";
-    child.stdout.on("data", (c) => (stdout += c));
-    child.on("close", () => resolve({ stdout }));
-  });
+  const r = await runAsync(dir, ["--report", reportIn(), "--", ...writer(vitestReport())], { DANXBOT_TEST_RUN_URL: s.url, DANX_AGENT_TOKEN: undefined });
   s.close();
   assert.match(r.stdout, MARK);
+  assert.match(r.stderr, /only DANXBOT_TEST_RUN_URL is set/);
   assert.equal(s.seen.length, 0);
+});
+
+test("the rewritten command, run through sh, reaches the script its argument names (path with an apostrophe and a space)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "it's rec "));
+  const stubScript = path.join(dir, "stub.mjs");
+  writeFileSync(stubScript, "console.log('stub ran with ' + process.argv.slice(2).join(','))\n");
+  const command = withRecorderVar('node "$DANXBOT_TEST_RECORDER" a b', stubScript, false);
+  assert.match(command, /^export DANXBOT_TEST_RECORDER=/);
+  assert.equal(spawnSync("sh", ["-c", command], { encoding: "utf8" }).stdout.trim(), "stub ran with a,b");
 });
