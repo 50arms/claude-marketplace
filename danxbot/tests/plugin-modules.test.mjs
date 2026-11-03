@@ -41,6 +41,8 @@ test("DX-4235: scripts/ holds only the MCP server launcher, the screenshot tool 
     "lib/dashboard-mcp-package.mjs",
     "lib/page-errors.mjs",
     "lib/page-programs.mjs",
+    "lib/recorder-var.mjs",
+    "lib/shell-quote.mjs",
     "lib/test-run.mjs",
     "record-test-run.mjs",
   ]);

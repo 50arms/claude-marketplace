@@ -27,21 +27,4 @@ export function testRunPost(fileText: string): TestRunPost | { error: string } {
   return { path: `/api/issues/${record.card}/notes`, body: { text: record.text, metadata } }
 }
 
-export const RECORDER_VAR = 'DANXBOT_TEST_RECORDER'
-
-const RECORDER_USE = /\$(?:\{DANXBOT_TEST_RECORDER\}|DANXBOT_TEST_RECORDER(?![A-Za-z0-9_]))/
-
-/** One word written so a POSIX shell reads it back as that word. */
-const quoted = (word: string): string => `'${word.split("'").join("'\''")}'`
-
-/** The recorder script's absolute path, from the URL of a file beside it (this module's own location), in the forward-slash form bash and node both read. */
-export function recorderPath(moduleUrl: string): string {
-  const path = decodeURIComponent(new URL('../scripts/record-test-run.mjs', moduleUrl).pathname)
-  return path.replace(/^\/([A-Za-z]:)/, '$1')
-}
-
-/** The Bash command with the recorder variable defined for it, when it names the variable and the session has not set it; every other command comes back unchanged. */
-export function withRecorderVar(command: unknown, scriptPath: string, alreadySet: boolean): unknown {
-  if (typeof command !== 'string' || alreadySet || !RECORDER_USE.test(command)) return command
-  return `${RECORDER_VAR}=${quoted(scriptPath)} ${command}`
-}
+export { RECORDER_VAR, recorderPath, withRecorderVar } from '../../scripts/lib/recorder-var.mjs'
