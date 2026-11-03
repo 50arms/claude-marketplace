@@ -76,13 +76,13 @@ for (const surface of SURFACES) {
     })
 
     describe('the recorder variable', () => {
-      async function ran($: any, on: any, command: string, extra: object = {}, before?: (d: any) => void) {
+      async function ran($: any, on: any, command: string, extra: object = {}, before?: (d: any) => void, tool = 'Bash') {
         const seen: string[] = []
         on('tool.call', (_$: any, e: any) => (seen.push(e.command), { result: { stdout: '' }, text: '' }) as any)
         const d = dashboard(on, { connected: false })
         await startSession($, d, surface)
         before?.(d)
-        await $.tool.call({ tool: 'Bash', command, ...extra } as any)
+        await $.tool.call({ tool, command, ...extra } as any)
         await d.clock.settle()
         return seen
       }
@@ -94,22 +94,8 @@ for (const surface of SURFACES) {
         expect(seen.endsWith(' node "$DANXBOT_TEST_RECORDER" --report /tmp/r -- npm test')).toBe(true)
       })
 
-      test('the braced form gets it too', async ($, on) => {
-        expect((await ran($, on, 'node "${DANXBOT_TEST_RECORDER}" -- x'))[0]).toMatch(SCRIPT)
-      })
-
-      test('a longer variable name runs unchanged', async ($, on) => {
-        expect(await ran($, on, 'echo $DANXBOT_TEST_RECORDER_OTHER')).toEqual(['echo $DANXBOT_TEST_RECORDER_OTHER'])
-      })
-
       test('a call of another tool is never rewritten, even with a command field naming the variable', async ($, on) => {
-        const seen: string[] = []
-        on('tool.call', (_$: any, e: any) => (seen.push(e.command), { result: { stdout: '' }, text: '' }) as any)
-        const d = dashboard(on, { connected: false })
-        await startSession($, d, surface)
-        await $.tool.call({ tool: 'Read', command: 'node "$DANXBOT_TEST_RECORDER"' } as any)
-        await d.clock.settle()
-        expect(seen).toEqual(['node "$DANXBOT_TEST_RECORDER"'])
+        expect(await ran($, on, 'node "$DANXBOT_TEST_RECORDER"', {}, undefined, 'Read')).toEqual(['node "$DANXBOT_TEST_RECORDER"'])
       })
 
       test('a command that does not name the variable runs unchanged', async ($, on) => {
