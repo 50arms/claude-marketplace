@@ -402,7 +402,44 @@ test("a bash -lc wrapper gets pipefail too: a failing suite behind a pipe is not
 
 test("a suite-level error or failure beside passing cases counts as failed, never a pass", () => {
   const xml = '<testsuites><testsuite name="s" tests="2" failures="0" errors="1"><testcase name="a"/><testcase name="b"/></testsuite></testsuites>';
-  assert.deepEqual(parseJunitReport(xml).tests, { passed: 1, failed: 1, skipped: 0, total: 2 });
+  assert.deepEqual(parseJunitReport(xml).tests, { passed: 2, failed: 1, skipped: 0, total: 3 });
   assert.match(decide({ parsed: parseJunitReport(xml) }).reason, /failure/);
-  assert.equal(parseJunitReport(xml.replace('failures="0" errors="1"', 'failures="9" errors="0"')).tests.failed, 2, "never more failed than counted tests");
+  assert.equal(parseJunitReport(xml.replace('failures="0" errors="1"', 'failures="9" errors="0"')).tests.failed, 9, "every declared failure counts");
+});
+
+// ---- fix pass 3: three more ways a failing run was stored as a pass
+test("a suite-level error beside only skipped cases is still a failure", () => {
+  const xml = '<testsuite tests="2" failures="0" errors="1" skipped="2"><testcase name="a"><skipped/></testcase><testcase name="b"><skipped/></testcase></testsuite>';
+  const parsed = parseJunitReport(xml);
+  assert.equal(parsed.tests.failed, 1);
+  assert.equal(parsed.tests.total, parsed.tests.passed + parsed.tests.failed + parsed.tests.skipped);
+  assert.match(decide({ parsed }).reason, /failure/);
+});
+
+test("a failures or errors attribute on the root testsuites element counts when no child suite shows it", () => {
+  const xml = '<testsuites failures="0" errors="2"><testsuite tests="2"><testcase name="a"/><testcase name="b"/></testsuite></testsuites>';
+  const parsed = parseJunitReport(xml);
+  assert.equal(parsed.tests.failed, 2);
+  assert.equal(parsed.tests.total, parsed.tests.passed + parsed.tests.failed + parsed.tests.skipped);
+  assert.match(decide({ parsed }).reason, /failure/);
+});
+
+test("a failure the cases and the suite both show is counted once", () => {
+  const xml = '<testsuites failures="1"><testsuite tests="2" failures="1"><testcase name="a"><failure/></testcase><testcase name="b"/></testsuite></testsuites>';
+  assert.deepEqual(parseJunitReport(xml).tests, { passed: 1, failed: 1, skipped: 0, total: 2 });
+});
+
+test("withPipefail finds -c wherever it sits among the leading options of bash and zsh, and leaves sh alone", () => {
+  for (const argv of [["bash", "-l", "-c", "x"], ["bash", "-o", "errexit", "-c", "x"], ["bash", "-ce", "x"], ["zsh", "-i", "-lc", "x"], ["bash", "--norc", "-c", "x"]]) {
+    assert.deepEqual(withPipefail(argv), [argv[0], "-o", "pipefail", ...argv.slice(1)], argv.join(" "));
+  }
+  for (const argv of [["sh", "-l", "-c", "x"], ["bash", "script.sh", "-c"], ["bash", "-o", "errexit", "x"], ["bash", "-x"]]) assert.deepEqual(withPipefail(argv), argv, argv.join(" "));
+});
+
+test("a failing suite behind a pipe under bash -l -c is not recorded", { skip: !BASH }, () => {
+  const { dir } = repo();
+  const [, , cmd] = pipedFailure("| tail -3");
+  const r = run(dir, ["--report", reportIn(), "--", "bash", "-l", "-c", cmd]);
+  assert.equal(r.status, 1);
+  assert.doesNotMatch(r.stdout, MARK);
 });
