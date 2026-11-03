@@ -44,7 +44,7 @@ export function isTight(budget: number | null, running: number, reserved: number
 export const REFUSAL_PREFIX = 'Usage pacing:'
 
 // What a paced session does (CP-50, DEC-425): record its state on its card, pause on `pacing`, and wait; no work of its own. danxbot wakes it when pacing frees slots.
-export const PACED_STOP = 'Record any unrecorded state on its card, pause with PUT /api/plan-sessions/me/pause {waits_on: "pacing"}, do not do the work yourself, and wait until you are told to continue.'
+export const PACED_STOP = 'Record any unrecorded state on the card it concerns, pause with PUT /api/plan-sessions/me/pause {waits_on: "pacing"}, do not do the work yourself, and wait until you are told to continue.'
 
 // the refusal the model reads, worded from the cause danxbot's own claim answer names (`refusal`, from its `refusalOf`), never re-derived here.
 export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
@@ -84,7 +84,7 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
 export function claimFailedReason(failure: string): string {
   return (
     `${REFUSAL_PREFIX} the spawn could not claim its slot from danxbot (${failure}). The budget is a strict cap, so no sub-agent starts until the ` +
-    'claim can be made. Record any unrecorded state on its card, pause with waits_on "pacing", and try the spawn again when told to continue.'
+    'claim can be made. Record any unrecorded state on the card it concerns, pause with waits_on "pacing", and try the spawn again when told to continue.'
   )
 }
 
