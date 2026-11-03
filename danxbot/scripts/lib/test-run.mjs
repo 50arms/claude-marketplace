@@ -51,11 +51,12 @@ export function parseJunitReport(text) {
       if (/<(?:failure|error)\b/.test(body)) failed += 1;
       else if (/<skipped\b/.test(body)) skipped += 1;
     }
-    // a suite's own failures/errors beyond what its cases show (a suite-level error beside passing cases) is still a failure
-    let suiteFailed = 0;
-    for (const t of text.matchAll(/<testsuite\b[^>]*>/g)) suiteFailed += (attr(t[0], "failures") ?? 0) + (attr(t[0], "errors") ?? 0);
-    failed = Math.min(Math.max(failed, suiteFailed), cases.length - skipped);
-    return { tests: counts(cases.length - failed - skipped, failed, skipped, cases.length), test_files: null, files: null };
+    // failures/errors a suite (or the root) declares beyond what the cases show are still failures: each counts as an extra failed test, so no cap can hide one
+    const declared = (re) => [...text.matchAll(re)].reduce((n, t) => n + (attr(t[0], "failures") ?? 0) + (attr(t[0], "errors") ?? 0), 0);
+    const excess = Math.max(0, declared(/<testsuite\b[^>]*>/g), declared(/<testsuites\b[^>]*>/g)) - failed;
+    if (excess > 0) failed += excess;
+    const total = cases.length + Math.max(0, excess);
+    return { tests: counts(total - failed - skipped, failed, skipped, total), test_files: null, files: null };
   }
   const root = /<testsuites\b[^>]*>/.exec(text);
   let tags;
