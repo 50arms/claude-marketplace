@@ -126,8 +126,8 @@ idle goal cards while side work got effort → stop the side work; a goalless cl
 the plan. Review rounds repeat until a clean pass or only minor findings; the round count is
 never a question for the user. Before acting on a finding that is new scope, check whether a plan already covers it:
 `GET /api/plans?content=<one keyword>&fields={"status":true}` per keyword (`content` matches one literal phrase), skipping
-`complete` and `awaiting-sign-off` plans, then `GET /api/plans/<id>/architecture/sections?q=<keyword>` and
-`GET /api/plans/<id>/records?kind=goal&q=<keyword>` for each hit. A covered case gets no stopgap and no card
+`complete` and `awaiting-sign-off` plans, then `GET /api/plans/<id>/architecture/sections?q=<keyword>&fields={"content":true}` and
+`GET /api/plans/<id>/records?kind=goal&q=<keyword>&fields={"context":true}` for each hit. A covered case gets no stopgap and no card
 outside that plan, and is added to that plan if its text does not name it (mantra item 1): your own plan's
 records and sections as usual, another plan by a card on it (see "Your lane only"). A
 finding no plan covers that is new scope rather than a defect in the change → split it into its
