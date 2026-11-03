@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // The danxbot plugin's test-run recorder, for any repo. A builder runs the repo's designated test command THROUGH it:
 //
-//   node "${CLAUDE_PLUGIN_ROOT:-$DANXBOT_PLUGIN_DIR}/scripts/record-test-run.mjs" --report <file outside the repo> [--format vitest-json|junit] [--card <ID>] -- <test command...>
+//   node "$DANXBOT_TEST_RECORDER" --report <file outside the repo> [--format vitest-json|junit] [--card <ID>] -- <test command...>
 //
-// CLAUDE_PLUGIN_ROOT is not in a Bash tool call's environment: it is substituted into a plugin skill's text, and a dispatched agent gets the path as DANXBOT_PLUGIN_DIR.
+// $DANXBOT_TEST_RECORDER is this script's path: in an operator session the plugin's Bash hook defines it for any command that names it; in a danxbot dispatch danxbot exports it.
 // The command runs as an argv with NO shell (output and exit code untouched), so a quoted argument stays one argument. A command that needs a shell
 // (a Windows `npm.cmd` shim, a pipe, a variable) is wrapped, for example:
 //   -- bash -c 'npm test -- --reporter=json --outputFile.json="$DANXBOT_TEST_REPORT"'
