@@ -207,7 +207,7 @@ From the dashboard:
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
-- a usage-pacing or auto-resume message from danxbot → carry on, or stop and wait, as "Usage pacing" says.
+- a usage-pacing or auto-resume message from danxbot → follow it as "Usage pacing" says.
 - `[50 ARMS] Compaction recommendation:` → advice, not an order. Never compact while a conversation with a person is still open: something they said or asked still needs an answer or action that depends on this session's context. Time is only a hint (a message within the last few minutes usually means they are still talking); once the exchange is finished and its outcome is on the cards and plan, compacting is safe at once. Then give the recommendation no answer (it comes again later) and never call compaction-ready; say ready only while you work on your own. Otherwise judge from what is left and what
   you are doing now whether compacting is worth it. If yes, load `danxbot:prepare-for-compaction`,
   run it, then call `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
@@ -328,16 +328,17 @@ never stays active just to wait.
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    cards?, expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when`
    says what would end the wait. `waits_on` is required, the event you wait for:
+   - `pacing`: usage pacing refused your sub-agents (no slot to start one, the account over pace or at its
+     sub-agent budget). Ends when pacing lets the account start agents again.
    - `person`: an open problem, an approval or any answer only a person gives (409
      `person_wait_without_problem` without an open problem on your plan or card: file it first).
    - `dependency`: other cards, their ids in `cards` (required); ends when every one is Done or
      Cancelled, or one is blocked or has its landing returned (409 `pause_cards_finished` when all are already finished).
    - `other`: none of these (a build or deploy with no card). It needs `expires_in_minutes` (at most
      720) and ends by itself then.
-   A pause on `person` or `dependency` has no time limit (`expires_in_minutes` is refused):
+   A pause on `pacing`, `person` or `dependency` has no time limit (`expires_in_minutes` is refused):
    it ends only on its event, you stay connected however long it lasts, and it never needs renewing.
-   Pick the cause you actually wait on. Never pause for usage pacing: when pacing stops you, you only
-   stop (see "Usage pacing"). A usage-limit pause already in force refuses it (409): that
+   Pick the cause you actually wait on, since only that event ends the pause. A usage-limit pause already in force refuses it (409): that
    one ends by itself when the limit resets. `reason` is at most 300 characters. A dispatched worker
    cannot pause (409): only a registered non-worker session can.
 3. Then go idle. A pause is not a `block` (nothing on a card changes), not a stop, and not a
@@ -410,7 +411,7 @@ A working sub-agent is replaced only by agreement, never by your decision alone.
 
 Never end a turn while unblocked work could be dispatched (a running build, test or deploy
 is time to dispatch; a readied card waiting on a worker is not blocked), nor while work runs
-with no wake-up armed. The one exception is a pacing stop: then you only stop ("Usage pacing"). Checks and reviews that de-risk waiting work (verification,
+with no wake-up armed. The one exception is a pacing stop: then you record your state and pause on `pacing` ("Usage pacing"). Checks and reviews that de-risk waiting work (verification,
 cross-repo checks, a whole-change review) are dispatchable too.
 
 Worktrees you create go under the repo's git-ignored `.claude/worktrees/<name>`, never a
@@ -432,17 +433,15 @@ spawn takes its slot from danxbot before it starts, so there is nothing for you 
 cannot be taken (danxbot could not be reached or did not answer) is refused too, in the same
 `Usage pacing:` words, naming the failure.
 
-**When pacing stops you, just stop.** A refused sub-agent spawn, or a pacing message saying the account is
-over pace, critical, or at its sub-agent budget: end your turn and wait until you are told to continue. Do
-nothing else. Record nothing (no agent note, no block, no problem, no pause call, no
-work-in-progress commit), tell no one, and never do the work yourself instead. The pacer already
-knows; danxbot wakes you with the message that lets you continue, and you then carry on where you
-were. A pacing text that asks for more than this is outdated: follow this section.
+**When pacing stops you, pause on `pacing`.** A refused sub-agent spawn, or a pacing message saying the account is
+over pace, critical, or at its sub-agent budget: do not retry the spawn and do not do the work yourself instead. Put
+any state not yet recorded on its card (an agent note), then call `PUT /api/plan-sessions/me/pause` with
+`waits_on: "pacing"` ("Pausing") and go idle. danxbot wakes you with the message that lets you continue (a slot it
+offered you is held for you for 60 seconds), and you then carry on where you were. A usage-pacing pause needs no manual wake.
 
 - **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
-- **Over pace, or the budget full**: stop as above. Agents already running are left to finish.
-- **Critical**: stop as above (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused), and tell
-  each running sub-agent to stop where it is and report back; once told to continue, continue each with `SendMessage`.
+- **Over pace, or the budget full**: pause on `pacing` as above. Agents already running are left to finish.
+- **Critical**: pause as above after telling each running sub-agent to stop where it is and report back (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused); once told to continue, continue each with `SendMessage`.
 
 ## Liveness
 
