@@ -1,7 +1,7 @@
 // The Bash hook's rewrite for a command that names $DANXBOT_TEST_RECORDER: pure, and shared by the hooks module and its tests.
 import { shellWord } from "./shell-quote.mjs";
 
-export const RECORDER_VAR = "DANXBOT_TEST_RECORDER";
+const RECORDER_VAR = "DANXBOT_TEST_RECORDER";
 
 // $VAR, ${VAR}, and the fail-loud forms ${VAR:?message} and ${VAR?message}; a longer name (${VAR_X}) is not this variable
 const RECORDER_USE = /\$(?:\{DANXBOT_TEST_RECORDER(?::?\?[^}]*)?\}|DANXBOT_TEST_RECORDER(?![A-Za-z0-9_]))/;

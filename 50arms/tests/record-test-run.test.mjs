@@ -2,7 +2,7 @@ import "./designated-test-container.mjs";
 // CP-57 (DEC-435): the test-run recorder. The pure decision (report in, `test_run` metadata out) and the wrapper run against a real temp git repo.
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -326,9 +326,17 @@ test("with the token unset the marker path is kept, nothing is posted and one li
 
 test("the rewritten command, run through sh, reaches the script its argument names (path with an apostrophe and a space)", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "it's rec "));
-  const stubScript = path.join(dir, "stub.mjs");
-  writeFileSync(stubScript, "console.log('stub ran with ' + process.argv.slice(2).join(','))\n");
-  const command = withRecorderVar('node "$DANXBOT_TEST_RECORDER" a b', stubScript, false);
-  assert.match(command, /^export DANXBOT_TEST_RECORDER=/);
-  assert.equal(spawnSync("sh", ["-c", command], { encoding: "utf8" }).stdout.trim(), "stub ran with a,b");
+  try {
+    const stubScript = path.join(dir, "stub.mjs");
+    writeFileSync(stubScript, "console.log('stub ran with ' + process.argv.slice(2).join(','))\n");
+    const run = (raw) => {
+      const command = withRecorderVar(raw, stubScript, false);
+      assert.match(command, /^export DANXBOT_TEST_RECORDER=/);
+      return spawnSync("sh", ["-c", command], { encoding: "utf8" }).stdout.trim();
+    };
+    assert.equal(run('node "$DANXBOT_TEST_RECORDER" a b'), "stub ran with a,b");
+    assert.equal(run('node "${DANXBOT_TEST_RECORDER:?DANXBOT_TEST_RECORDER is not set}" a b'), "stub ran with a,b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

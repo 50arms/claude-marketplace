@@ -40,6 +40,7 @@ describe('recorderPath', () => {
   test('names the recorder script in the scripts folder beside lib, decoded', () => {
     expect(recorderPath()).toMatch(/\/scripts\/record-test-run\.mjs$/)
     expect(recorderPath()).not.toContain('%')
+    expect(recorderPath()).toBe(pathOfFileUrl(new URL('../scripts/record-test-run.mjs', import.meta.url).href))
   })
 })
 
