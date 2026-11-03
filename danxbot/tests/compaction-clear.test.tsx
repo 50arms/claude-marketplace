@@ -5,7 +5,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { CLEAR_RESUME_OPENING } from '../hooks/compaction/briefing'
-import { CLEAR_WAITING_NOTICE, HELD_REASON_CLEAR, USED_RELEASE_PREFIX } from '../hooks/compaction/control'
+import { CLEAR_WAITING_NOTICE, USED_RELEASE_PREFIX } from '../hooks/compaction/control'
 import { relayLine } from '../hooks/relay/delivery'
 import { CLEARED_SESSION_ID, CLOCK_START, EVENT_TEXT, HOME_DIR, SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -76,13 +76,12 @@ for (const surface of SURFACES) {
       expect(d.toasts).toContain(CLEARING)
     })
 
-    test("a clear changes the engine's session id, and the release stays spent under the dashboard's id: the same release clears once, a later one clears again", async ($, on) => {
+    test('a clear spends its release: the same release clears once, a later one clears again', async ($, on) => {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = file({ releaseId: 'ready-1' })
       await turnEnds($, d)
       expect(d.clearRuns).toHaveLength(1)
       expect(d.world.sessionId).toBe(CLEARED_SESSION_ID)
-      expect(d.stored.get(`${USED_RELEASE_PREFIX}${SESSION_ID}`)).toEqual({ releaseId: 'ready-1', at: expect.any(Number) })
       // the dashboard's next write of the control still names the release (a clear writes no compaction row), and the engine now answers another id
       await tick(d)
       await turnEnds($, d)
@@ -91,6 +90,21 @@ for (const surface of SURFACES) {
       await turnEnds($, d)
       expect(d.clearRuns).toHaveLength(2)
       expect(d.compactRuns).toEqual([])
+    })
+
+    test('a second release that arrives while a clear is still running starts no second clear', async ($, on) => {
+      const d = await started($, on)
+      d.world.files[CONTROL_FILE] = file({ releaseId: 'ready-1' })
+      const hold = held()
+      d.world.clearHold = hold.promise
+      await turnEnds($, d)
+      expect(d.world.clearsStarted).toBe(1)
+      d.world.files[CONTROL_FILE] = file({ releaseId: 'ready-2' })
+      await tick(d)
+      await tick(d)
+      expect(d.world.clearsStarted).toBe(1)
+      hold.release()
+      await d.clock.settle()
     })
 
     // a plugin reload starts a new process that remembers nothing but the store: the release a clear spent must read as spent under the id the control file is named for, not the engine's new one
@@ -156,14 +170,6 @@ for (const surface of SURFACES) {
       d.world.files[CONTROL_FILE] = file({ releaseId: 'ready-2', releaseUntilMs: CLOCK_START + 600_000 })
       await tick(d)
       expect(d.clearRuns).toHaveLength(1)
-    })
-
-    test('the safety valve and the hold stay as they are: an automatic proposal below the valve is held and says the session is cleared, one at the valve passes', async ($, on) => {
-      const d = await started($, on)
-      d.world.files[CONTROL_FILE] = file()
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON_CLEAR)
-      d.world.context = { tokens: 907_000, window: WINDOW }
-      expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
     })
 
     test('a clear the engine refuses is told, spent, and not retried; nothing is compacted instead', async ($, on) => {

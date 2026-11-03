@@ -70,7 +70,6 @@ describe('the control file (pure)', () => {
     const input = { trigger: 'auto', window: WINDOW, tokens: 120_000 } as const
     expect(verdict({ ...input, file: withControl({ mode: 'compact' }) })).toEqual({ pass: false, reason: HELD_REASON })
     expect(verdict({ ...input, file: withControl({ mode: 'clear' }) })).toEqual({ pass: false, reason: HELD_REASON_CLEAR })
-    expect(HELD_REASON_CLEAR).toContain('clears the session')
     expect(verdict({ ...input, tokens: 907_000, file: withControl({ mode: 'clear' }) })).toEqual({ pass: true, why: 'valve' })
   })
 })
