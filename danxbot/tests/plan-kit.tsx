@@ -616,6 +616,8 @@ export function dashboard(
       const row = world.repos.find(r => r.name === repoOne[1])
       return row === undefined ? reply({ error: 'Not found' }, 404) : reply(repoRow(row))
     }
+    // a card's agent note append (the test-run record hook's post): stored, answered as accepted
+    if (method === 'POST' && /^\/api\/issues\/[A-Za-z0-9]+-\d+\/notes$/.test(path)) return reply({ ok: true })
     return reply({ error: `unrouted ${method} ${path}` }, 404)
   }
 

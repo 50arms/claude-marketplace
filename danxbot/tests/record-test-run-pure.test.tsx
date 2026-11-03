@@ -2,9 +2,14 @@ import "./run-tests-with-npm-test.generated"
 // CP-57: the pure half of the hook that posts a recorded test run (hooks/context/test-run.ts).
 import { describe, expect, test } from 'claude-code/testing'
 
-import { testRunPost, testRunRecordPath } from '../hooks/context/test-run'
+import { RECORD_MARKER as SCRIPT_MARKER } from '../scripts/lib/test-run.mjs'
+import { RECORD_MARKER, testRunPost, testRunRecordPath } from '../hooks/context/test-run'
 
 const record = (over: object = {}) => JSON.stringify({ card: 'DX-9', text: 'Tests passed.', metadata: { kind: 'test_run', commit_sha: 'a'.repeat(40) }, ...over })
+
+describe('the marker', () => {
+  test('the script prints the marker the hook reads', () => expect(SCRIPT_MARKER).toBe(RECORD_MARKER))
+})
 
 describe('testRunRecordPath', () => {
   test('finds the marker line in a result', () => expect(testRunRecordPath('ok\nDANXBOT_TEST_RUN_RECORD /tmp/a b.json\nmore')).toBe('/tmp/a b.json'))
