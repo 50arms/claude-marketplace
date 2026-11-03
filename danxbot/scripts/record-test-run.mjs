@@ -49,7 +49,6 @@ export function parseArgs(argv) {
   if (!opts.report) throw new Error("--report <file> is required: the runner's own report is the only source of counts");
   return { ...opts, command: argv.slice(split + 1) };
 }
-export { shellWord };
 
 export const SHELL_HINT =
   "a command that needs a shell (a Windows npm.cmd shim, a pipe, a variable) is wrapped, for example: -- bash -c 'npm test -- --reporter=json --outputFile.json=\"$DANXBOT_TEST_REPORT\"'; single-quote it so $DANXBOT_TEST_REPORT is not expanded early (from PowerShell, bash can resolve to System32\\bash.exe, which is WSL: use Git Bash by its full path)";

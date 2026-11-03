@@ -8,7 +8,8 @@ import { stamp as nextStamp } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
-import { recorderPath, testRunPost, testRunRecordPath, withRecorderVar } from './context/test-run'
+import { recorderPath, withRecorderVar } from '../scripts/lib/recorder-var.mjs'
+import { testRunPost, testRunRecordPath } from './context/test-run'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -2682,7 +2683,7 @@ async function onPromptStamp($: any, e: any, next: any) {
 // A Bash command that names $DANXBOT_TEST_RECORDER gets the variable defined for it (the recorder script's path in this plugin), unless the session already has it
 // (a danxbot dispatch exports it). Every other command goes through unchanged. Builders and sub-agents alike type the one form.
 async function withRecorder($: any, e: any): Promise<any> {
-  const command = withRecorderVar(e.command, recorderPath(import.meta.url), (await $.env.get('DANXBOT_TEST_RECORDER')) !== undefined)
+  const command = withRecorderVar(e.command, recorderPath(), (await $.env.get('DANXBOT_TEST_RECORDER')) !== undefined)
   return command === e.command ? e : { ...e, command }
 }
 
