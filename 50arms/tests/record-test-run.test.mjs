@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { postRecord } from "../scripts/record-test-run.mjs";
+import { postRecord, withPipefail } from "../scripts/record-test-run.mjs";
 import { shellWord } from "../scripts/lib/shell-quote.mjs";
 import { withRecorderVar } from "../scripts/lib/recorder-var.mjs";
 import assert from "node:assert/strict";
@@ -339,4 +339,54 @@ test("the rewritten command, run through sh, reaches the script its argument nam
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- CP-57 defects found by the first live trial (DX-6681 note 42021)
+const NODE_JUNIT = readFileSync(fileURLToPath(new URL("./fixtures/node-junit-report.xml", import.meta.url)), "utf8");
+
+test("a real node junit report is counted by its test cases: nested suites, top-level cases, a failure and a skip", () => {
+  // fixture source: tests/fixtures/node-junit-report.source.txt, run with `node --test --test-reporter=junit`; node's own totals: tests 6, pass 4, fail 1, skipped 1
+  // the top-level suite there says tests="2": reading suite attributes (the old way) gave 2, not 6
+  assert.deepEqual(parseJunitReport(NODE_JUNIT), { tests: { passed: 4, failed: 1, skipped: 1, total: 6 }, test_files: null, files: null });
+});
+
+test("a node junit report with a failure is never decided as a pass", () => {
+  assert.match(decide({ parsed: parseJunitReport(NODE_JUNIT) }).reason, /failure/);
+});
+
+test("a passing node junit report keeps its full count, not the first suite's", () => {
+  const passing = NODE_JUNIT.replace(/<failure[\s\S]*?<\/failure>/, "").replace(' failure="x"', "");
+  assert.deepEqual(parseJunitReport(passing).tests, { passed: 5, failed: 0, skipped: 1, total: 6 });
+});
+
+test("a junit error element counts as a failed test", () => {
+  assert.equal(parseJunitReport('<testsuite><testcase name="a"><error message="boom"/></testcase><testcase name="b"/></testsuite>').tests.failed, 1);
+});
+
+const BASH = spawnSync("bash", ["-c", "echo ok"], { encoding: "utf8" }).status === 0;
+// the suite fails (exit 1) behind a `| tail` pipe; its report is a clean pass, so only the exit status can tell
+const pipedFailure = (tail) => ["bash", "-c", `node -e "require('fs').writeFileSync(process.env.DANXBOT_TEST_REPORT, process.argv[1]); process.exit(1)" '${vitestReport()}' ${tail}`];
+
+test("a suite that fails behind a `| tail` pipe in a bash -c wrapper is not recorded, and the command's exit status is the failure", { skip: !BASH }, () => {
+  const { dir } = repo();
+  const r = run(dir, ["--report", reportIn(), "--", ...pipedFailure("| tail -3")]);
+  assert.equal(r.status, 1, "pipefail: the wrapper's status is the failing stage's, not tail's");
+  assert.doesNotMatch(r.stdout, MARK);
+  assert.match(r.stderr, /exited 1/);
+});
+
+test("without a pipe the same bash -c wrapper still records a passing run", { skip: !BASH }, () => {
+  const { dir } = repo();
+  const r = run(dir, ["--report", reportIn(), "--", "bash", "-c", `node -e "require('fs').writeFileSync(process.env.DANXBOT_TEST_REPORT, process.argv[1])" '${vitestReport()}' | tail -3`]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, MARK);
+});
+
+test("withPipefail rewrites only bash/zsh -c, and the recorded command is the argv as given", { skip: !BASH }, () => {
+  assert.deepEqual(withPipefail(["bash", "-c", "x"]), ["bash", "-o", "pipefail", "-c", "x"]);
+  assert.deepEqual(withPipefail([["C:", "Program Files", "Git", "bin", "bash.exe"].join(String.fromCharCode(92)), "-c", "x"]).slice(1, 3), ["-o", "pipefail"]);
+  assert.deepEqual(withPipefail(["sh", "-c", "x"]), ["sh", "-c", "x"]);
+  assert.deepEqual(withPipefail(["node", "-e", "0"]), ["node", "-e", "0"]);
+  const { dir } = repo();
+  assert.match(recordOf(run(dir, ["--report", reportIn(), "--", "bash", "-c", `node -e "require('fs').writeFileSync(process.env.DANXBOT_TEST_REPORT, process.argv[1])" '${vitestReport()}'`])).metadata.command, /^bash -c /);
 });

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+	<testsuite name="outer" time="0.002328" disabled="0" errors="0" tests="2" failures="0" skipped="0" hostname="host">
+		<testsuite name="inner" time="0.001949" disabled="0" errors="0" tests="3" failures="0" skipped="1" hostname="host">
+			<testcase name="a" time="0.000465" classname="test"/>
+			<testcase name="b" time="0.000194" classname="test"/>
+			<testcase name="skipme" time="0.000104" classname="test">
+				<skipped type="skipped" message="true"/>
+			</testcase>
+		</testsuite>
+		<testcase name="c" time="0.000072" classname="test"/>
+	</testsuite>
+	<testcase name="top" time="0.000121" classname="test"/>
+	<testcase name="bad" time="0.000115" classname="test" failure="x">
+		<failure type="testCodeFailure" message="x">
+[Error [ERR_TEST_FAILURE]: x] {
+  code: 'ERR_TEST_FAILURE',
+  failureType: 'testCodeFailure',
+  cause: Error: x
+      at TestContext.&lt;anonymous> (file:///r/s.test.mjs:4:25)
+      at Test.runInAsyncScope (node:async_hooks:211:14)
+      at Test.run (node:internal/test_runner/test:979:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:677:18)
+      at Test.postRun (node:internal/test_runner/test:1090:19)
+      at Test.run (node:internal/test_runner/test:1018:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:677:7)
+}
+		</failure>
+	</testcase>
+	<!-- tests 6 -->
+	<!-- suites 2 -->
+	<!-- pass 4 -->
+	<!-- fail 1 -->
+	<!-- cancelled 0 -->
+	<!-- skipped 1 -->
+	<!-- todo 0 -->
+	<!-- duration_ms 82.2674 -->
+</testsuites>
