@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // The danxbot plugin's test-run recorder, for any repo. A builder runs the repo's designated test command THROUGH it:
 //
-//   node "${CLAUDE_PLUGIN_ROOT}/scripts/record-test-run.mjs" --report <file outside the repo> [--format vitest-json|junit] [--card <ID>] -- <test command...>
+//   node "${CLAUDE_PLUGIN_ROOT:-$DANXBOT_PLUGIN_DIR}/scripts/record-test-run.mjs" --report <file outside the repo> [--format vitest-json|junit] [--card <ID>] -- <test command...>
 //
+// CLAUDE_PLUGIN_ROOT is not in a Bash tool call's environment: it is substituted into a plugin skill's text, and a dispatched agent gets the path as DANXBOT_PLUGIN_DIR.
 // The command runs as an argv with NO shell (output and exit code untouched), so a quoted argument stays one argument. A command that needs a shell
 // (a Windows `npm.cmd` shim, a pipe, a variable) is wrapped, for example:
 //   -- bash -c 'npm test -- --reporter=json --outputFile.json="$DANXBOT_TEST_REPORT"'
@@ -102,7 +103,11 @@ async function main() {
   }
   let parsed = null;
   try {
-    if (statSync(report).mtimeMs >= startedAt - 1000) parsed = parseReport(args.format, readFileSync(report, "utf8"));
+    if (statSync(report).mtimeMs < startedAt - 1000) {
+      say("not recorded: the report file is older than this run (a stale report from an earlier run)");
+      return exitCode;
+    }
+    parsed = parseReport(args.format, readFileSync(report, "utf8"));
   } catch {
     parsed = null;
   }
@@ -120,6 +125,7 @@ async function main() {
     await postRecord(url, token, body);
     return exitCode;
   }
+  if (url || token) say(`only ${url ? "DANXBOT_TEST_RUN_URL" : "DANX_AGENT_TOKEN"} is set, so the record goes to the hook (marker line), not the worker`);
   const dir = path.join(os.tmpdir(), "danxbot-test-runs");
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${card}-${decision.metadata.commit_sha}-${Date.now()}.json`);
@@ -139,9 +145,9 @@ export async function postRecord(url, token, body) {
     } catch {
       error = "";
     }
-    say(`the test run was not stored: HTTP ${res.status}${error ? ` ${error}` : ""}`);
+    say(`the test run was not stored: HTTP ${res.status}${error ? ` ${error}` : ""} (the record is not kept)`);
   } catch (err) {
-    say(`the test run was not stored: ${err.message}`);
+    say(`the test run was not stored: ${err.message} (the record is not kept)`);
   }
   return false;
 }
