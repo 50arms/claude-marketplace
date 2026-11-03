@@ -74,5 +74,46 @@ for (const surface of SURFACES) {
       expect(notes(d)).toEqual([])
       expect(d.toasts.some((t: string) => t.includes('the record file is not JSON'))).toBe(true)
     })
+
+    describe('the recorder variable', () => {
+      async function ran($: any, on: any, command: string, extra: object = {}, before?: (d: any) => void) {
+        const seen: string[] = []
+        on('tool.call', (_$: any, e: any) => (seen.push(e.command), { result: { stdout: '' }, text: '' }) as any)
+        const d = dashboard(on, { connected: false })
+        await startSession($, d, surface)
+        before?.(d)
+        await $.tool.call({ tool: 'Bash', command, ...extra } as any)
+        await d.clock.settle()
+        return seen
+      }
+      const SCRIPT = /^DANXBOT_TEST_RECORDER='[^']*\/scripts\/record-test-run\.mjs' /
+
+      test('a command naming $DANXBOT_TEST_RECORDER runs with the variable defined as the plugin script', async ($, on) => {
+        const [seen] = await ran($, on, 'node "$DANXBOT_TEST_RECORDER" --report /tmp/r -- npm test')
+        expect(seen).toMatch(SCRIPT)
+        expect(seen.endsWith(' node "$DANXBOT_TEST_RECORDER" --report /tmp/r -- npm test')).toBe(true)
+      })
+
+      test('the braced form gets it too', async ($, on) => {
+        expect((await ran($, on, 'node "${DANXBOT_TEST_RECORDER}" -- x'))[0]).toMatch(SCRIPT)
+      })
+
+      test('a longer variable name runs unchanged', async ($, on) => {
+        expect(await ran($, on, 'echo $DANXBOT_TEST_RECORDER_OTHER')).toEqual(['echo $DANXBOT_TEST_RECORDER_OTHER'])
+      })
+
+      test('a command that does not name the variable runs unchanged', async ($, on) => {
+        expect(await ran($, on, 'make test')).toEqual(['make test'])
+      })
+
+      test('a session that already has the variable is left alone', async ($, on) => {
+        const seen = await ran($, on, 'node "$DANXBOT_TEST_RECORDER" -- x', {}, d => d.setEnv('DANXBOT_TEST_RECORDER', '/dispatch/path.mjs'))
+        expect(seen).toEqual(['node "$DANXBOT_TEST_RECORDER" -- x'])
+      })
+
+      test("a sub-agent's call gets it too", async ($, on) => {
+        expect((await ran($, on, 'node "$DANXBOT_TEST_RECORDER" -- x', { agentId: 'sub-1' }))[0]).toMatch(SCRIPT)
+      })
+    })
   })
 }

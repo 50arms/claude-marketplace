@@ -8,7 +8,7 @@ import { stamp as nextStamp } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
-import { testRunPost, testRunRecordPath } from './context/test-run'
+import { recorderPath, testRunPost, testRunRecordPath, withRecorderVar } from './context/test-run'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -2679,6 +2679,13 @@ async function onPromptStamp($: any, e: any, next: any) {
   return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT))] })
 }
 
+// A Bash command that names $DANXBOT_TEST_RECORDER gets the variable defined for it (the recorder script's path in this plugin), unless the session already has it
+// (a danxbot dispatch exports it). Every other command goes through unchanged. Builders and sub-agents alike type the one form.
+async function withRecorder($: any, e: any): Promise<any> {
+  const command = withRecorderVar(e.command, recorderPath(import.meta.url), (await $.env.get('DANXBOT_TEST_RECORDER')) !== undefined)
+  return command === e.command ? e : { ...e, command }
+}
+
 // A Bash result whose stdout carries the test-run recorder's marker line names a record file of a passing run; it is posted as the card's `test_run`
 // agent note through the session's own server, so an operator session's sub-agents record with the session's key. A refused post is a toast. A posted
 // record file is emptied, so the same marker shown again posts nothing.
@@ -2697,7 +2704,7 @@ async function postTestRun($: any, r: any): Promise<void> {
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
 // result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
-  const r = await next(e)
+  const r = await next(e.tool === 'Bash' ? await withRecorder($, e) : e)
   // a plugin's own `$.mcp.call` (this one's dashboard reads) is raised as a `tool.call` too, with no agentId. Its result goes to the plugin,
   // never the model, so a stamp or the start text put beside it is lost, and the stamp would move the clock the model reads. The signal is the
   // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (probed against the real engine). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
