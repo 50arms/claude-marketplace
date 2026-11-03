@@ -19,11 +19,16 @@ const frontmatter = (text) => {
   return Object.fromEntries(m[1].split("\n").map((line) => [line.slice(0, line.indexOf(":")), line.slice(line.indexOf(":") + 1).trim()]));
 };
 
-test("agents/ holds the one worker, and it fixes neither a model nor an effort", () => {
+test("agents/ holds the one worker, and it fixes neither a model nor an effort, and lists the tools a worker uses", () => {
   assert.deepEqual(readdirSync(agentsDir), ["worker.md"]);
   const fm = frontmatter(readFileSync(path.join(agentsDir, "worker.md"), "utf8"));
-  assert.deepEqual(Object.keys(fm).sort(), ["description", "name"], "a model or effort in the file would fix what the call passes");
+  assert.deepEqual(Object.keys(fm).sort(), ["description", "name", "tools"], "a model or effort in the file would fix what the call passes");
   assert.equal(fm.name, "worker");
+  // CP-56 — the list is what the work, gate-reviewer, dependency-reviewer and gate-designer profiles use; Agent stays because the file's own body tells a worker it may fan out.
+  const tools = fm.tools.split(", ");
+  for (const t of ["Agent", "Bash", "Read", "Edit", "Write", "Glob", "Grep", "Skill", "ToolSearch", "mcp__plugin_danxbot_danx-dashboard__danxbot_api", "mcp__danx-dashboard__danxbot_api", "mcp__Claude_Browser__navigate"]) assert.ok(tools.includes(t), `${t} stays`);
+  for (const t of ["Artifact", "NotebookEdit", "WebSearch", "mcp__plugin_danxbot_danx-dashboard__plugin_publish"]) assert.ok(!tools.includes(t), `${t} is not a worker tool`);
+  assert.equal(new Set(tools).size, tools.length, "no tool is listed twice");
 });
 
 // The earlier Haiku workers carried a stricter brief than the others (the small model must not widen the task or guess); the one file keeps it for every model.
