@@ -1,3 +1,4 @@
+import "./designated-test-container.mjs";
 // DX-5515 AC 1: the plugin's skills name a board by its per-team ref number, never by the retired repo:slug form.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
