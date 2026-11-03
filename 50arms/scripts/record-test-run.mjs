@@ -51,12 +51,12 @@ export function parseArgs(argv) {
 }
 
 /**
- * CP-57: a command wrapped as `bash -c '<cmd>'` runs with `-o pipefail`, so a failure anywhere in its pipeline (`npm test | tail -3`) is the exit status
+ * A command wrapped as `bash -c '<cmd>'` (or `bash -lc`, `bash -ec`: any short-flag group ending in c) runs with `-o pipefail`, so a failure anywhere in its pipeline (`npm test | tail -3`) is the exit status
  * the recorder sees, never the last stage's. Only bash and zsh are rewritten (`sh` may be dash, which has no pipefail); the recorded command stays as given.
  */
 export function withPipefail(argv) {
   const name = (argv[0] ?? "").split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, "");
-  return (name === "bash" || name === "zsh") && argv[1] === "-c" ? [argv[0], "-o", "pipefail", ...argv.slice(1)] : argv;
+  return (name === "bash" || name === "zsh") && /^-[a-z]*c$/.test(argv[1] ?? "") ? [argv[0], "-o", "pipefail", ...argv.slice(1)] : argv;
 }
 
 export const SHELL_HINT =
