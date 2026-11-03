@@ -10,7 +10,7 @@ import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
-import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
+import { COMPACTING_NOTE_TTL_MS, PERSON_CLEAR_RESUME_OPENING, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from './compaction/briefing'
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
@@ -2726,6 +2726,8 @@ type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connecte
 // The ONE place a key that is gone or revoked is made quiet (its own tools say so, never a failure line): this read is the first of every
 // context lookup, so a later read that finds the key gone in between is an ordinary failure line.
 // a `GET /api/plan-sessions/me` answer that carries no `session` field at all (a null one is a session on no row) is malformed
+// CP-62: told once when a cleared session wakes without a dashboard key (its server started under the new session id)
+const CLEAR_SIGNED_OUT_TOAST = 'This cleared session has no dashboard key yet, so it cannot reconnect by itself: approve it with the link and code in the band, then it carries on.'
 const ME_NO_SESSION = 'bad_response: GET /api/plan-sessions/me answered no session field'
 function meLacksSession(r: Api): boolean {
   return !('session' in (r.body ?? {}))
@@ -3018,12 +3020,15 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   await update($, diskMeasured, () => null)
   if (!restart.briefsMain) return below
   const loopResetting = (await read($, readyLoop))?.phase === 'resetting'
-  const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended, ...(loopResetting && e.source === 'clear' ? { loopReset: true as const } : {}) }
+  // CP-62: a /clear nobody but a person asked for (the ready loop's own is the one above) leaves an idle conversation and nothing to carry the restart notice: the plugin wakes it, but only when the
+  // session it ended was on a plan, which the notice read in resumeAfterCompaction decides (a session on no plan stays quiet)
+  const personClear = e.source === 'clear' && !loopResetting
+  const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended, ...(loopResetting && e.source === 'clear' ? { loopReset: true as const } : {}), ...(personClear ? { personClear: true as const } : {}) }
   await update($, pendingStart, () => start)
   // a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
   // the main agent's OWN compaction (`restart.own`). A restart with no entry at all (an unattributed sub-agent compaction, a host without session.compact) is briefed passively and starts no turn.
   // The isRunning read is a deliberate fast path: a running turn carries the briefing on its next tool result, with no reads or take here.
-  if (restart.own && !(await read($, turn)).isRunning) detach($, 'Resume after compaction', resumeAfterCompaction($))
+  if ((restart.own || personClear) && !(await read($, turn)).isRunning) detach($, 'Resume after compaction', resumeAfterCompaction($))
   return below
 }
 
@@ -3034,18 +3039,25 @@ async function onClassicSessionStart($: any, e: any, next: any) {
 async function resumeAfterCompaction($: any): Promise<void> {
   // checked before the start is taken: a session that is not on a plan leaves it for the prompt or tool result that tells it (or nothing)
   const pending = await read($, pendingStart)
-  if (pending === null || !(await isPlanConnected($, pending.sessionId))) return
+  // a person's clear is decided by its restart notice below (the session it ended was on a plan, or it says nothing): the new session holds no record yet
+  const personClear = pending?.personClear === true
+  if (pending === null || (!personClear && !(await isPlanConnected($, pending.sessionId)))) return
   const start = await takePendingStart($)
   if (start === null) return
+  const rendered = await renderStart($, start)
+  // a clear that had no plan behind it has nothing to resume
+  if (personClear && rendered === null) return
   // a compact start always renders (it carries the registry event), so there is no null to put back
-  const text = (await renderStart($, start))!
+  const text = personClear ? [PERSON_CLEAR_RESUME_OPENING, rendered!].join('\n') : rendered!
+  // a cleared session that holds no key cannot reconnect by itself: its turn asks the person to approve it, and this says so beside the band
+  if (personClear && isSignedOut(await api($, 'GET', '/api/plan-sessions/me'))) $.ui.toast(CLEAR_SIGNED_OUT_TOAST)
   if ((await read($, turn)).isRunning) {
     // by the relay's one note path, so a turn that ends with no tool result after it still tells the briefing as a prompt
     if ((await appendTrackedNote($, text)) !== null) await restoreStart($, start)
     return
   }
   // the procedure needs no dashboard read: a start whose reads failed (only a warning line) still tells the agent how to resume
-  const failure = await submitEvent($, relayLine(text.includes(RESUME_PROCEDURE) ? text : `${text}
+  const failure = await submitEvent($, relayLine(personClear || text.includes(RESUME_PROCEDURE) ? text : `${text}
 ${RESUME_OPENING}`))
   if (failure === null) return
   // the session did not take the prompt: the briefing is still owed, to the next prompt or tool result

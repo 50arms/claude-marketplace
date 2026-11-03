@@ -179,10 +179,18 @@ ${NOTICE}`])
       return d
     }
 
+    // CP-62: a clear whose ended session was on a plan wakes the session, so the notice reaches it in the plugin's own prompt (compaction-clear-person.test.tsx), not on a person's next prompt
+    async function clearWake($: any, d: any, input: Record<string, unknown> = {}): Promise<string> {
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: SESSION_ID, transcript_path: '/work/main.jsonl', ...input })
+      await d.clock.settle()
+      return d.relay.submitted.join('\n')
+    }
+
     test('a clear whose ended session was on a plan is asked with its id, and told the notice', async ($, on) => {
       const d = await cleared($, on)
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'clear')).startLines).toEqual([NOTICE])
+      expect(await clearWake($, d)).toContain(NOTICE)
+      expect((await $.prompt.submit({ text: 'hello' })).context).toHaveLength(1)
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
@@ -193,7 +201,7 @@ ${NOTICE}`])
       d.world.localRecord = false
       d.world.records.push(SESSION_ID)
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines).toContain(NOTICE)
+      expect(await clearWake($, d, { session_id: d.world.sessionId })).toContain(NOTICE)
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
@@ -251,8 +259,9 @@ ${NOTICE}`])
         test(`a \`${reason}\` stop on a ${source} is one warning line with the server's detail and fix`, async ($, on) => {
           const d = await cleared($, on)
           d.world.restart.json = stopped(reason, 'the detail')
-          const r = await firstPrompt($, source)
-          expect(r.startLines).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call plan_connect`)])
+          const line = restartFailureLine(`${reason}: the detail. continue without it; call plan_connect`)
+          if (source === 'clear') expect(await clearWake($, d)).toContain(line)
+          else expect((await firstPrompt($, source)).startLines).toEqual([line])
         })
       }
     }

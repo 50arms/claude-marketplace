@@ -102,6 +102,10 @@ export const RESUME_PROCEDURE = "Resume now, without asking the person, in this 
 // the briefing's opening, alone: a resume prompt whose dashboard reads failed still carries it
 export const RESUME_OPENING = `[50 ARMS] Your conversation was just compacted. ${RESUME_PROCEDURE}`
 
+// the opening of the prompt that starts the fresh conversation after a person typed /clear in a session that was on a plan (register.tsx resumeAfterCompaction); the restart notice, which names the plan and what waits there, follows it.
+export const PERSON_CLEAR_RESUME_OPENING =
+  '[50 ARMS] Your conversation was just cleared by the person, who expects you to carry on without typing anything. Resume now, without asking the person: reconnect to your plan with plan_connect, read the newest handoff agent note on the in-flight cards of your plan, re-read each In Progress card you hold, then continue the step that was in progress.'
+
 export function briefingText(input: BriefingInput): string {
   const plan = input.plan === null ? 'You are on no plan.' : `Your plan is ${input.plan.ref} ${oneLine(input.plan.name, 80)}.`
   return `${RESUME_OPENING} ${owedLine(input.owed)} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`

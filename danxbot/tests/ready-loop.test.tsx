@@ -1046,6 +1046,31 @@ describe('the ready-agent loop', () => {
       expect(told.join(' ')).toContain(EVENT_TEXT('session_start'))
     })
 
+    // CP-62: the loop's own /clear raises the same two engine events a person's does, and is told what a new session is told: it starts no turn of the person-clear kind
+    test("the loop's own clear starts no second turn", async ($, on) => {
+      on('classic.SessionStart', () => ({}) as any)
+      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+      const d = await started($, on)
+      await ready($, d)
+      handCard(d, 'Done')
+      released(d)
+      d.world.restart.json = { notice: 'This session replaced one on PLAN-23; 3 events wait.' }
+      d.world.records.push('sess-own')
+      const hold = held()
+      d.world.clearHold = hold.promise
+      await turnEnds($, d)
+      await tick(d)
+      expect(d.world.clearsStarted).toBe(1)
+      // the phase a real /clear runs in: the engine ends the conversation and raises the fresh one's session start during the command
+      await $.session.end({ reason: 'clear', sessionId: 'sess-own' } as any)
+      await $.classic.SessionStart({ session_id: 'sess-own-2', source: 'clear', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
+      await d.clock.settle()
+      hold.release()
+      await d.clock.settle()
+      expect(d.relay.submitted.filter((t: string) => t.includes('cleared by the person'))).toEqual([])
+      expect(d.restartCalls).toEqual([])
+    })
+
     test('a look whose row answer comes back after a turn began and ended acts on nothing it read: a turn in which the model took the next card ends no loop as work taken', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
