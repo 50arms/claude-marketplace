@@ -3,7 +3,8 @@ import { shellWord } from "./shell-quote.mjs";
 
 export const RECORDER_VAR = "DANXBOT_TEST_RECORDER";
 
-const RECORDER_USE = /\$(?:\{DANXBOT_TEST_RECORDER\}|DANXBOT_TEST_RECORDER(?![A-Za-z0-9_]))/;
+// $VAR, ${VAR}, and the fail-loud forms ${VAR:?message} and ${VAR?message}; a longer name (${VAR_X}) is not this variable
+const RECORDER_USE = /\$(?:\{DANXBOT_TEST_RECORDER(?::?\?[^}]*)?\}|DANXBOT_TEST_RECORDER(?![A-Za-z0-9_]))/;
 
 /** A file URL's path in the forward-slash form bash and node both read: a Windows drive keeps its letter, %20 becomes a space. */
 export function pathOfFileUrl(url) {
