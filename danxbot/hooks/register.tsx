@@ -8,6 +8,7 @@ import { stamp as nextStamp } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
+import { testRunPost, testRunRecordPath } from './context/test-run'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -2678,6 +2679,17 @@ async function onPromptStamp($: any, e: any, next: any) {
   return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT))] })
 }
 
+// CP-57: a Bash result carrying the test-run recorder's marker line (scripts/record-test-run.mjs) names a record file of a passing run; it is posted as the
+// card's `test_run` agent note through the session's own server, so an operator session's sub-agents record with the session's key. A refused post is a toast.
+async function postTestRun($: any, r: any): Promise<void> {
+  const file = testRunRecordPath(r.text) ?? testRunRecordPath(r.result?.stdout)
+  if (file === null) return
+  const post = testRunPost(String(await $.fs.read(file)))
+  if ('error' in post) throw new Error(post.error)
+  const res = await api($, 'POST', post.path, { body: post.body })
+  if (!res.ok) throw new Error(errText(res))
+}
+
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
 // result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
 async function onToolStamp($: any, e: any, next: any) {
@@ -2698,6 +2710,7 @@ async function onToolStamp($: any, e: any, next: any) {
   detach($, 'danxbot activity report', reportShellStart($, e, r))
   if (e.agentId !== undefined) detach($, 'danxbot activity report', reportSubagentAlive($, e.agentId))
   if (r.deny !== undefined) return r
+  if (e.tool === 'Bash') detach($, 'danxbot test-run record', postTestRun($, r))
   // a sub-agent's compaction briefs that sub-agent, in its own tool result
   const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
   // a Bash call that starts a whole test suite (no test file named) gets a reminder beside its result; it rides this handler because no other tool.call handler may sit on a Bash call
