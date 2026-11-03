@@ -1,5 +1,5 @@
-// CP-57: the pure half of the hook that posts a builder's recorded test run. `scripts/record-test-run.mjs` prints a marker line naming a
-// record file after a passing run; the hook reads that file and posts it as the card's `test_run` agent note.
+// The pure half of the hook that posts a builder's recorded test run. The recorder script prints a marker line naming a record file after a
+// passing run; the hook reads that file and posts it as the card's `test_run` agent note.
 
 export const RECORD_MARKER = 'DANXBOT_TEST_RUN_RECORD'
 

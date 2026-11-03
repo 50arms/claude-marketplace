@@ -2908,15 +2908,19 @@ async function onPromptStamp($: any, e: any, next: any) {
   return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT))] })
 }
 
-// CP-57: a Bash result carrying the test-run recorder's marker line (scripts/record-test-run.mjs) names a record file of a passing run; it is posted as the
-// card's `test_run` agent note through the session's own server, so an operator session's sub-agents record with the session's key. A refused post is a toast.
+// A Bash result whose stdout carries the test-run recorder's marker line names a record file of a passing run; it is posted as the card's `test_run`
+// agent note through the session's own server, so an operator session's sub-agents record with the session's key. A refused post is a toast. A posted
+// record file is emptied, so the same marker shown again posts nothing.
 async function postTestRun($: any, r: any): Promise<void> {
-  const file = testRunRecordPath(r.text) ?? testRunRecordPath(r.result?.stdout)
+  const file = testRunRecordPath(r.result?.stdout)
   if (file === null) return
-  const post = testRunPost(String(await $.fs.read(file)))
+  const text = String(await $.fs.read(file))
+  if (text.trim() === '') return
+  const post = testRunPost(text)
   if ('error' in post) throw new Error(post.error)
   const res = await api($, 'POST', post.path, { body: post.body })
   if (!res.ok) throw new Error(errText(res))
+  await $.fs.write(file, '')
 }
 
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's

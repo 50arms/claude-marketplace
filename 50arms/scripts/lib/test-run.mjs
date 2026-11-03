@@ -1,6 +1,5 @@
-// CP-57 (DEC-435) - the pure half of the test-run recorder: a runner's own report in, DX-6681's `test_run` agent-note metadata out.
-// The shape is declared on the server (danxbot `src/issues/write/test-run-metadata.ts`, `origin/card/DX-6681`); the server refuses a malformed
-// record but cannot tell a false one from a true one, so the rules the server cannot check live here: counts come from the runner's report file,
+// The pure half of the test-run recorder: a runner's own report in, the dashboard's `test_run` agent-note metadata out.
+// The dashboard refuses a malformed record but cannot tell a false one from a true one, so the rules it cannot check live here: counts come from the runner's report file,
 // never from console text; a report with no per-test counts records nothing; a failure anywhere records nothing.
 
 export const MAX_RECORDED_FILES = 100;

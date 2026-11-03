@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// CP-57 (DEC-435) - the danxbot plugin's test-run recorder, for any repo. A builder runs the repo's designated test command THROUGH it:
+// The danxbot plugin's test-run recorder, for any repo. A builder runs the repo's designated test command THROUGH it:
 //
 //   node "${CLAUDE_PLUGIN_ROOT}/scripts/record-test-run.mjs" --report <file outside the repo> [--format vitest-json|junit] [--card <ID>] -- <test command...>
 //
 // The command runs exactly as typed (output and exit code untouched). It must write the runner's own report to `$DANXBOT_TEST_REPORT`
 // (the wrapper sets it to the --report path), e.g. vitest `--reporter=default --reporter=json --outputFile.json="$DANXBOT_TEST_REPORT"`.
 // After an exit-0 run on a clean tree whose HEAD and tree did not move, it writes a record file and prints `DANXBOT_TEST_RUN_RECORD <file>`;
-// the plugin's tool hook (hooks/register.tsx) posts it as DX-6681's `test_run` agent note with the session's own key. This script holds no
+// the plugin's tool hook posts it as a `test_run` agent note on the card with the session's own key. This script holds no
 // credential. It never changes the run's exit code: whatever it declines to record it says on stderr.
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -44,6 +44,9 @@ export function parseArgs(argv) {
   return { ...opts, command: argv.slice(split + 1) };
 }
 
+/** One argv word written so a shell would read it back as that one word. */
+export const shellWord = (word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\''")}'`);
+
 const say = (message) => process.stderr.write(`[record-test-run] ${message}\n`);
 
 const insideRepo = (root, file) => {
@@ -75,9 +78,10 @@ async function main() {
   const skip = startRefusal(before, card, report);
   mkdirSync(path.dirname(report), { recursive: true });
   const startedAt = Date.now();
-  const command = args.command.join(" ");
+  // the argv runs as given, with no shell and no re-splitting, so a quoted argument stays one argument; the recorded command is that argv written back
+  const command = args.command.map(shellWord).join(" ");
   const exitCode = await new Promise((resolve) => {
-    const child = spawn(command, { cwd, shell: true, stdio: "inherit", windowsHide: true, env: { ...process.env, DANXBOT_TEST_REPORT: report } });
+    const child = spawn(args.command[0], args.command.slice(1), { cwd, stdio: "inherit", windowsHide: true, env: { ...process.env, DANXBOT_TEST_REPORT: report } });
     child.on("close", (code) => resolve(code ?? 1));
     child.on("error", () => resolve(1));
   });
