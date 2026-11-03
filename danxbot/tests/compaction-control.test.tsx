@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
-import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import { HELD_REASON, HELD_REASON_CLEAR, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import type { AgentControl, ControlFile, GateControl, GateInput, ModelValves } from '../hooks/compaction/control'
 import { BAD_SESSION_ID, BAD_SESSION_ID_PATH, CLOCK_START, EVENT_TEXT, CLEARED_SESSION_ID, HOME_DIR, OWN_SESSION, SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
@@ -20,13 +20,13 @@ const PASS_AT = 907_000
 // DX-5222: the dashboard's per-model-line valves (the sub-agent with no entry is measured against its model's line) and the sub-agents' own controls
 const VALVES = { 'claude-haiku-5-5': 180_000, 'claude-sonnet-5-5': 600_000, 'claude-opus-4-8': 907_000 }
 // DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
-type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: ModelValves }
+type WireControl = Omit<GateControl, 'subagents' | 'mode'> & { agents?: Record<string, AgentControl>; valves?: ModelValves; mode?: GateControl['mode'] }
 const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
 const fileText = (control: WireControl | null, askedAt: string | null = null, sessionId: string = OWN_SESSION.session_id): string => JSON.stringify({ v: 1, sessionId, control, askedAt })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
 const withControl = (over: Partial<WireControl> = {}): ControlFile => {
-  const { agents, valves, ...main } = gateControl(over)
-  return { kind: 'control', control: { ...main, subagents: { agents: agents!, valves: valves! } } }
+  const { agents, valves, mode, ...main } = gateControl(over)
+  return { kind: 'control', control: { ...main, mode: mode ?? 'compact', subagents: { agents: agents!, valves: valves! } } }
 }
 
 describe('the control file (pure)', () => {
@@ -56,6 +56,22 @@ describe('the control file (pure)', () => {
     expect(parse(fileText({ ...gateControl(), releaseUntilMs: 5 }))).toEqual({ kind: 'bad', reason: 'releaseUntilMs and releaseId are both set or both null' })
     expect(parse(fileText({ ...gateControl(), releaseUntilMs: 'x' as any, releaseId: 'r' }))).toEqual({ kind: 'bad', reason: 'releaseUntilMs must be a number or null' })
     expect(parse(fileText({ ...gateControl(), releaseUntilMs: 5, releaseId: '' }))).toEqual({ kind: 'bad', reason: 'releaseId must be a string or null' })
+  })
+
+  // the mode is what a ready does to the session; a relay older than the mode wrote none and only ever compacted, so no mode reads as compact, but a mode that is neither value is corruption
+  test('the mode is read from the file: clear and compact as written, compact when an older relay wrote none, bad for any other value', () => {
+    expect(parse(fileText(gateControl({ mode: 'clear' })))).toEqual(withControl({ mode: 'clear' }))
+    expect(parse(fileText(gateControl({ mode: 'compact' })))).toEqual(withControl({ mode: 'compact' }))
+    expect(parse(fileText(gateControl()))).toEqual(withControl({ mode: 'compact' }))
+    for (const mode of ['Clear', '', null, 1, true]) expect(parse(fileText({ ...gateControl(), mode } as any))).toEqual({ kind: 'bad', reason: 'mode must be "compact" or "clear"' })
+  })
+
+  test('an automatic proposal below the valve is held with the reason of the mode: the session is compacted, or cleared, when its agent says ready', () => {
+    const input = { trigger: 'auto', window: WINDOW, tokens: 120_000 } as const
+    expect(verdict({ ...input, file: withControl({ mode: 'compact' }) })).toEqual({ pass: false, reason: HELD_REASON })
+    expect(verdict({ ...input, file: withControl({ mode: 'clear' }) })).toEqual({ pass: false, reason: HELD_REASON_CLEAR })
+    expect(HELD_REASON_CLEAR).toContain('clears the session')
+    expect(verdict({ ...input, tokens: 907_000, file: withControl({ mode: 'clear' }) })).toEqual({ pass: true, why: 'valve' })
   })
 })
 
@@ -90,7 +106,7 @@ describe('a plugin ahead of its relay (pure, DX-5314)', () => {
 // The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
 // builds the same from the dashboard's frame, and danxbot's operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
 describe('the wire shape (pure)', () => {
-  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"claude-haiku-5-5":180000,"claude-sonnet-5-5":600000,"claude-opus-4-8":907000}},"askedAt":null}'
+  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"claude-haiku-5-5":180000,"claude-sonnet-5-5":600000,"claude-opus-4-8":907000},"mode":"clear"},"askedAt":null}'
 
   test('the file the relay writes is read whole, and its pass-at size is the safety valve (the plugin has no margin of its own)', () => {
     const file = parse(RELAY_FILE)
@@ -102,6 +118,7 @@ describe('the wire shape (pure)', () => {
         windowTokens: 1_000_000,
         releaseUntilMs: 1_800_000_000_000,
         releaseId: '2026-10-14T11:59:00.000Z',
+        mode: 'clear',
         subagents: {
           agents: { a1: { passAtTokens: 600_000 } },
           valves: VALVES,
@@ -109,7 +126,7 @@ describe('the wire shape (pure)', () => {
       },
     })
     const input = { trigger: 'auto', window: WINDOW, file } as const
-    expect(verdict({ ...input, tokens: 906_999 })).toEqual({ pass: false, reason: HELD_REASON })
+    expect(verdict({ ...input, tokens: 906_999 })).toEqual({ pass: false, reason: HELD_REASON_CLEAR })
     expect(verdict({ ...input, tokens: 907_000 })).toEqual({ pass: true, why: 'valve' })
     // a different pass-at size moves the valve: nothing else decides it
     const other = parse(RELAY_FILE.replace('907000', '500000'))

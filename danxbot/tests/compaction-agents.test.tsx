@@ -17,13 +17,13 @@ const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: []
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const entry = (over: Partial<AgentControl> = {}): AgentControl => ({ passAtTokens: 600_000, ...over })
 // DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
-type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: ModelValves }
+type WireControl = Omit<GateControl, 'subagents' | 'mode'> & { agents?: Record<string, AgentControl>; valves?: ModelValves; mode?: GateControl['mode'] }
 const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
 const fileText = (control: WireControl | null): string => JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control, askedAt: null })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
 const withControl = (over: Partial<WireControl> = {}): ControlFile => {
-  const { agents, valves, ...main } = gateControl(over)
-  return { kind: 'control', control: { ...main, subagents: { agents: agents!, valves: valves! } } }
+  const { agents, valves, mode, ...main } = gateControl(over)
+  return { kind: 'control', control: { ...main, mode: mode ?? 'compact', subagents: { agents: agents!, valves: valves! } } }
 }
 
 describe('sub-agents in the control file (pure)', () => {
@@ -40,7 +40,7 @@ describe('sub-agents in the control file (pure)', () => {
   test('a file with no agents or no valves keeps the main control and has no sub-agent control; a malformed one is bad', () => {
     const { agents: _a, valves: _v, ...main } = gateControl()
     const mainControl = (text: string) => (parse(text) as any).control
-    expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main }, askedAt: null }))).toEqual({ ...main, subagents: null })
+    expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main }, askedAt: null }))).toEqual({ ...main, mode: 'compact', subagents: null })
     expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main, agents: {} }, askedAt: null })).subagents).toBeNull()
     expect(mainControl(JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control: { ...main, valves: VALVES }, askedAt: null })).subagents).toBeNull()
     bad({ ...main, agents: 'x', valves: {} }, 'agents must be an object keyed by agent id')

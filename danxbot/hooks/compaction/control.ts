@@ -5,7 +5,8 @@
 // after the agent says ready does a compaction run. Nothing compacts by itself. This module decides the things the plugin owns:
 //   - THE START: when the agent's ready is accepted, the control file carries a release (`releaseId`, `releaseUntilMs`). At the next main-loop turn end the
 //     plugin runs Claude Code's own /compact (`$.command.run({ command: 'compact' })`, verified live on 2.1.299); `readyRelease` says
-//     whether one is waiting. The compaction reaches PreCompact and `session.compact` as trigger `manual`. The plugin sets NO early-proposal variable for the
+//     whether one is waiting. In CLEAR MODE (the control's `mode`, set by the operator's compaction settings) the same ready clears the conversation instead (register.tsx, with Claude Code's
+//     own /clear, once the session is idle) and no compaction runs. The compaction reaches PreCompact and `session.compact` as trigger `manual`. The plugin sets NO early-proposal variable for the
 //     main agent, so the main loop proposes only at Claude Code's own threshold. It still unsets a CLAUDE_CODE_AUTO_COMPACT_WINDOW an older plugin left (that variable
 //     also becomes the window the context meter measures against, so a 1M session showed 400k as its maximum).
 //   - THE GATE: a `classic.PreCompact` hook refuses an automatic proposal while the session is under the handshake. A person's own /compact (trigger `manual`,
@@ -36,6 +37,14 @@
 // so a change to the margin moves every gate. Pinned by the same literal in this plugin's tests and in the relay's own tests.
 
 export const HELD_REASON = '[50 ARMS] automatic compaction is held: your agent compacts the session when it says ready'
+// the same hold in clear mode: the session is cleared at its agent's ready, never compacted
+export const HELD_REASON_CLEAR = '[50 ARMS] automatic compaction is held: your agent clears the session when it says ready'
+
+// what a ready does to the session: run Claude Code's /compact, or clear the conversation once the session is idle
+export type CompactionMode = 'compact' | 'clear'
+
+// told once per release, when the agent said ready in clear mode and something of the session still runs
+export const CLEAR_WAITING_NOTICE = 'Your agent said it is ready, so the session is cleared as soon as no sub-agent or background command is running.'
 
 // `windowTokens` is the context window 50 Arms assumed for the session's model (its table lists a window per exact model version); the floor and
 // the valve were computed from it, so a session whose real window is smaller must not be held (`windowFits`).
@@ -45,6 +54,8 @@ export type GateControl = {
   windowTokens: number
   releaseUntilMs: number | null
   releaseId: string | null
+  // compact when the relay that wrote the file is older than the mode (it wrote none): such a relay only ever compacted
+  mode: CompactionMode
   // null when the relay that wrote the file is older than this plugin and wrote no `agents` or no `valves` (relay 0.1.311 wrote neither, 0.1.315-0.1.317 only `agents`): the
   // MAIN agent's handshake above is complete without them, and every sub-agent feature (arming, asks, the per-agent gate) is off. Claude Code hot-loads a new plugin version into a
   // live session but the session's MCP relay keeps its version until the server restarts, so a plugin must work beside an older relay.
@@ -128,6 +139,9 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
   if (typeof agents === 'string') return { kind: 'bad', reason: agents }
   const valves = c.valves === undefined ? null : parseValves(c.valves)
   if (typeof valves === 'string') return { kind: 'bad', reason: valves }
+  // a relay older than the mode wrote none and only ever compacted; a mode that is present but neither value is corruption
+  const mode = c.mode === undefined ? 'compact' : c.mode
+  if (mode !== 'compact' && mode !== 'clear') return { kind: 'bad', reason: 'mode must be "compact" or "clear"' }
   return {
     kind: 'control',
     control: {
@@ -136,6 +150,7 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
       windowTokens: c.windowTokens,
       releaseUntilMs: c.releaseUntilMs as number | null,
       releaseId: c.releaseId as string | null,
+      mode,
       subagents: agents === null || valves === null ? null : { agents, valves },
     },
   }
@@ -215,7 +230,7 @@ export function verdict(input: GateInput): Verdict {
   if (!windowFits(input.file.control, input.window)) return { pass: true, why: 'no-control' }
   if (input.tokens === null) return { pass: true, why: 'unknown-size' }
   if (input.tokens >= input.file.control.passAtTokens) return { pass: true, why: 'valve' }
-  return { pass: false, reason: HELD_REASON }
+  return { pass: false, reason: input.file.control.mode === 'clear' ? HELD_REASON_CLEAR : HELD_REASON }
 }
 
 // ---- the sub-agents -----------------------------------------------------------------------------------------------------------------------------------

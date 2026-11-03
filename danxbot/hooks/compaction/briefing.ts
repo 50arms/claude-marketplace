@@ -96,6 +96,10 @@ function gitLine(git: Source<GitState>): string {
   return `Work not pushed, in the session's own checkout (${where}): ${parts.join(', ')}.`
 }
 
+// the opening of the prompt that starts the fresh conversation after the plugin cleared the session at its agent's ready; the dashboard's own start text for a new session follows it.
+export const CLEAR_RESUME_OPENING =
+  '[50 ARMS] Your conversation was just cleared, at your own ready. Resume now, without asking the person: reconnect to your plan or card with the danx-dashboard tools, read the newest handoff agent note on your in-flight cards, re-read each In Progress card you hold, then continue the step that was in progress.'
+
 // how the main agent picks up after a compaction, in order; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing.
 export const RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress."
 

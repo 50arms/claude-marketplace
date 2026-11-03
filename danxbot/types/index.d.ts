@@ -143,8 +143,8 @@ export type DiskHome = { home: string } | { fault: string } | null
 // compaction's finish once `done`, and `done` is true once its compaction finished and its own briefing waits for its next tool result.
 export type CompactingState = { main: number | null; agents: Record<string, { at: number; done: boolean }> }
 
-// `loopReset`: the ready-agent loop's own /clear, whose fresh conversation is told the start text as a new session is.
-export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null; loopReset?: true } | null
+// `pluginClear`: the plugin's own /clear (the ready-agent loop's, or the one a ready agent asked for in clear mode), whose fresh conversation is told the start text as a new session is.
+export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null; pluginClear?: true } | null
 
 // what the reports remember between events: what this session reported opening and still owes a close. `agents`: by activity id
 // (`agent-<id>`), each running sub-agent whose start was posted, with the time (epoch ms) of its last post (the start or a liveness
