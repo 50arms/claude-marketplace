@@ -443,3 +443,27 @@ test("a failing suite behind a pipe under bash -l -c is not recorded", { skip: !
   assert.equal(r.status, 1);
   assert.doesNotMatch(r.stdout, MARK);
 });
+
+// ---- fix pass 4: single-quoted attributes and long options with an argument
+test("suite and root attributes in single quotes, or with a > inside a value, still count", () => {
+  const cases = '<testcase name="a"/><testcase name="b"/>';
+  for (const xml of [
+    `<testsuite errors='1'>${cases}</testsuite>`,
+    `<testsuite name="a > b" errors="1">${cases}</testsuite>`,
+    `<testsuites failures='2'><testsuite>${cases}</testsuite></testsuites>`,
+    `<testsuite name='x errors="0"' errors='1'>${cases}</testsuite>`,
+  ]) {
+    const parsed = parseJunitReport(xml);
+    assert.ok(parsed.tests.failed >= 1, xml);
+    assert.match(decide({ parsed }).reason, /failure/, xml);
+  }
+  assert.equal(parseJunitReport(`<testsuite tests='2' failures='1'>${cases}</testsuite>`).tests.failed, 1);
+  assert.deepEqual(parseJunitReport("<testsuite tests='3' failures='0' errors='0' skipped='1'/>").tests, { passed: 2, failed: 0, skipped: 1, total: 3 });
+});
+
+test("withPipefail skips the argument of --rcfile and --init-file, and stops at --", () => {
+  for (const argv of [["bash", "--rcfile", "f", "-c", "x"], ["bash", "--init-file", "f", "-c", "x"], ["bash", "--norc", "--rcfile", "f", "-lc", "x"]]) {
+    assert.deepEqual(withPipefail(argv), [argv[0], "-o", "pipefail", ...argv.slice(1)], argv.join(" "));
+  }
+  for (const argv of [["bash", "--", "-c"], ["bash", "--", "-c", "x"], ["bash", "--rcfile", "-c", "x"]]) assert.deepEqual(withPipefail(argv), argv, argv.join(" "));
+});

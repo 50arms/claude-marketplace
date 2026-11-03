@@ -30,9 +30,13 @@ export function parseJsonReport(text) {
   };
 }
 
+// One start tag of an element, whichever quote its attribute values use (a value may hold a `>`), and a tag's attributes read the same way
+const tagOf = (name) => new RegExp(`<${name}\\b(?:"[^"]*"|'[^']*'|[^>"'])*>`, "g");
 const attr = (tag, name) => {
-  const m = new RegExp(`\\b${name}="(\\d+)"`).exec(tag);
-  return m === null ? undefined : Number(m[1]);
+  for (const m of tag.matchAll(/([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    if (m[1] === name) return /^\d+$/.test(m[2] ?? m[3]) ? Number(m[2] ?? m[3]) : undefined;
+  }
+  return undefined;
 };
 
 /**
@@ -53,18 +57,18 @@ export function parseJunitReport(text) {
     }
     // failures/errors a suite (or the root) declares beyond what the cases show are still failures: each counts as an extra failed test, so no cap can hide one
     const declared = (re) => [...text.matchAll(re)].reduce((n, t) => n + (attr(t[0], "failures") ?? 0) + (attr(t[0], "errors") ?? 0), 0);
-    const excess = Math.max(0, declared(/<testsuite\b[^>]*>/g), declared(/<testsuites\b[^>]*>/g)) - failed;
+    const excess = Math.max(0, declared(tagOf("testsuite")), declared(tagOf("testsuites"))) - failed;
     if (excess > 0) failed += excess;
     const total = cases.length + Math.max(0, excess);
     return { tests: counts(total - failed - skipped, failed, skipped, total), test_files: null, files: null };
   }
-  const root = /<testsuites\b[^>]*>/.exec(text);
+  const root = tagOf("testsuites").exec(text);
   let tags;
   if (root !== null && attr(root[0], "tests") !== undefined) tags = [root[0]];
   else {
     tags = [];
     let end = -1;
-    for (const s of text.matchAll(/<testsuite\b[^>]*>/g)) {
+    for (const s of text.matchAll(tagOf("testsuite"))) {
       if (s.index < end) continue;
       tags.push(s[0]);
       end = s[0].endsWith("/>") ? s.index + s[0].length : text.indexOf("</testsuite>", s.index);
