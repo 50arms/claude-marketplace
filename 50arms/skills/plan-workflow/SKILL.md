@@ -162,7 +162,7 @@ call (no body). One you already acted on is only acknowledged, never acted on tw
 
 From the dashboard:
 
-- `has not made an MCP call …` → the dashboard's idle nudge: every card it names is workable by
+- `this session's turn ended with no sub-agent or background command running …` → the dashboard's idle nudge, sent once when your turn ended with nothing of yours running and cards waiting: every card it names is workable by
   its recorded state. Work it, or record why you can't: a problem, `depends_on`/`conflict_on`, a
   block with the real reason, or `rollback_pickup`. A card it names as `Filed, not readied` was
   filed and never readied: ready it now (its order comes from `depends_on`), or open a problem on
