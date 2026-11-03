@@ -32,7 +32,7 @@ test("DX-4232 / DX-4235: hooks.json declares the module and no command hooks", (
   assert.deepEqual(Object.keys(hooks).sort(), ["description", "modules"]);
 });
 
-test("DX-4235: scripts/ holds only the MCP server launcher and the screenshot tool", () => {
+test("DX-4235: scripts/ holds only the MCP server launcher, the screenshot tool and the test-run recorder", () => {
   assert.deepEqual(filesUnder(path.join(PLUGIN, "scripts")), [
     "capture-screenshot.mjs",
     "dashboard-mcp-server.mjs",
@@ -41,6 +41,8 @@ test("DX-4235: scripts/ holds only the MCP server launcher and the screenshot to
     "lib/dashboard-mcp-package.mjs",
     "lib/page-errors.mjs",
     "lib/page-programs.mjs",
+    "lib/test-run.mjs",
+    "record-test-run.mjs",
   ]);
 });
 
