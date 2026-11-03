@@ -350,10 +350,6 @@ test("a real node junit report is counted by its test cases: nested suites, top-
   assert.deepEqual(parseJunitReport(NODE_JUNIT), { tests: { passed: 4, failed: 1, skipped: 1, total: 6 }, test_files: null, files: null });
 });
 
-test("a node junit report with a failure is never decided as a pass", () => {
-  assert.match(decide({ parsed: parseJunitReport(NODE_JUNIT) }).reason, /failure/);
-});
-
 test("a passing node junit report keeps its full count, not the first suite's", () => {
   const passing = NODE_JUNIT.replace(/<failure[\s\S]*?<\/failure>/, "").replace(' failure="x"', "");
   assert.deepEqual(parseJunitReport(passing).tests, { passed: 5, failed: 0, skipped: 1, total: 6 });
@@ -375,18 +371,38 @@ test("a suite that fails behind a `| tail` pipe in a bash -c wrapper is not reco
   assert.match(r.stderr, /exited 1/);
 });
 
-test("without a pipe the same bash -c wrapper still records a passing run", { skip: !BASH }, () => {
+test("a passing bash -c wrapper with a pipe still records a passing run", { skip: !BASH }, () => {
   const { dir } = repo();
   const r = run(dir, ["--report", reportIn(), "--", "bash", "-c", `node -e "require('fs').writeFileSync(process.env.DANXBOT_TEST_REPORT, process.argv[1])" '${vitestReport()}' | tail -3`]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, MARK);
 });
 
-test("withPipefail rewrites only bash/zsh -c, and the recorded command is the argv as given", { skip: !BASH }, () => {
+test("withPipefail rewrites bash/zsh with -c or a short-flag group ending in c, and nothing else", () => {
   assert.deepEqual(withPipefail(["bash", "-c", "x"]), ["bash", "-o", "pipefail", "-c", "x"]);
+  assert.deepEqual(withPipefail(["bash", "-lc", "x"]), ["bash", "-o", "pipefail", "-lc", "x"]);
+  assert.deepEqual(withPipefail(["bash", "-ec", "x"]), ["bash", "-o", "pipefail", "-ec", "x"]);
+  assert.deepEqual(withPipefail(["zsh", "-c", "x"]), ["zsh", "-o", "pipefail", "-c", "x"]);
   assert.deepEqual(withPipefail([["C:", "Program Files", "Git", "bin", "bash.exe"].join(String.fromCharCode(92)), "-c", "x"]).slice(1, 3), ["-o", "pipefail"]);
-  assert.deepEqual(withPipefail(["sh", "-c", "x"]), ["sh", "-c", "x"]);
-  assert.deepEqual(withPipefail(["node", "-e", "0"]), ["node", "-e", "0"]);
+  for (const argv of [["sh", "-c", "x"], ["sh", "-lc", "x"], ["bash", "script.sh"], ["bash", "-x", "x"], ["bash"], ["node", "-e", "0"]]) assert.deepEqual(withPipefail(argv), argv);
+});
+
+test("a recorded bash -c command is the argv as given, without the pipefail option", { skip: !BASH }, () => {
   const { dir } = repo();
   assert.match(recordOf(run(dir, ["--report", reportIn(), "--", "bash", "-c", `node -e "require('fs').writeFileSync(process.env.DANXBOT_TEST_REPORT, process.argv[1])" '${vitestReport()}'`])).metadata.command, /^bash -c /);
+});
+
+test("a bash -lc wrapper gets pipefail too: a failing suite behind a pipe is not recorded", { skip: !BASH }, () => {
+  const { dir } = repo();
+  const [, , cmd] = pipedFailure("| tail -3");
+  const r = run(dir, ["--report", reportIn(), "--", "bash", "-lc", cmd]);
+  assert.equal(r.status, 1);
+  assert.doesNotMatch(r.stdout, MARK);
+});
+
+test("a suite-level error or failure beside passing cases counts as failed, never a pass", () => {
+  const xml = '<testsuites><testsuite name="s" tests="2" failures="0" errors="1"><testcase name="a"/><testcase name="b"/></testsuite></testsuites>';
+  assert.deepEqual(parseJunitReport(xml).tests, { passed: 1, failed: 1, skipped: 0, total: 2 });
+  assert.match(decide({ parsed: parseJunitReport(xml) }).reason, /failure/);
+  assert.equal(parseJunitReport(xml.replace('failures="0" errors="1"', 'failures="9" errors="0"')).tests.failed, 2, "never more failed than counted tests");
 });
