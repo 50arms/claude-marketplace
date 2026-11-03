@@ -62,6 +62,10 @@ export type PlanView = {
   // the session signed in but holds no team agent, and the MCP's agent gate refuses its dashboard reads until one is held:
   // `agent_needed` (it proposes one), `agent_limit_reached` (the member's or team's cap on sessions signed in as an agent is full: the person ends another or raises the cap), `agent_not_held` (the agent was released; `plan_connect` claims one again); null otherwise. The view is then `ready`.
   agentBlock: 'agent_needed' | 'agent_limit_reached' | 'agent_not_held' | null
+  // the repo of the session's ready mark, or of the ready loop the dashboard keeps for it (a session on a job has no mark); null when it is in neither. A new process takes the loop up from it.
+  readyRepo: string | null
+  // why the dashboard's ready loop on the session's row could not be read, or null. The band never shows it: a new process whose row it is cannot tell whether it was in a loop, and says so once.
+  readyLoopFault: string | null
   // Card counts by status of the connected plan; null when not connected.
   statusBreakdown: StatusBreakdown | null
   // The in-progress bucket's rows (a card in progress with an open problem sits in needs-you, not here).
@@ -73,6 +77,8 @@ export type PlanView = {
   // when the agent's own pause ends (epoch ms), read at each load by the one call that does not end a pause; null when it is not paused,
   // its pause has expired, or the pause read gave no usable answer (the mark is display only). Only the title's pause mark reads it.
   pausedUntil: number | null
+  // what the pause waits on (its `waits_on`, e.g. `pacing` while a sub-agent slot is held back by usage pacing); null when not paused or the pause names none.
+  pausedWaitsOn: string | null
   // what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready`, shows one toast, and replies are then drawn as written.
   links: CardLinks
@@ -113,6 +119,14 @@ export type TurnState = { isRunning: boolean; pending: string[] }
 // the events queued and retries, and the person is asked once (a toast and the band) to send a message.
 export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'held' | 'stopped'; planId: number | null; detail: string | null }
 
+// a session waiting in its team's list of ready agents and rejoining after each job (hooks/ready/loop.ts). `joining`: signing in and marking; `waiting`: marked; `working`: on a job, or waiting for 50 Arms to
+// ask for and release the clear after it; `resetting`: clearing. `rejoining`: the next mark follows a clear. `permissionId`: the loop's own permission request, whose decision only the loop hears. `told`: the last
+// failure shown, so a failure that repeats every minute is shown once. `agentName`: the agent the row last showed, to tell a model on work when a claim hands another. `claimAsked`: `/50arms-ready` was just
+// run, the one thing that may call `plan_connect` when the MCP's own gate is closed. When a job has ended is the dashboard's to say (its `ready_loop`), never the plugin's.
+// a job of the loop as the dashboard names it (`ready_loop.job`)
+export type ReadyJob = { kind: 'plan'; id: number } | { kind: 'card'; id: string }
+export type ReadyLoop = { phase: 'joining' | 'waiting' | 'working' | 'resetting'; repo: string | null; rejoining: boolean; signInAsked: boolean; permissionId: string | null; told: string | null; agentName: string | null; claimAsked: boolean }
+
 // the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
 export type StampState = { at: number; day: string } | null
 
@@ -129,7 +143,8 @@ export type DiskHome = { home: string } | { fault: string } | null
 // compaction's finish once `done`, and `done` is true once its compaction finished and its own briefing waits for its next tool result.
 export type CompactingState = { main: number | null; agents: Record<string, { at: number; done: boolean }> }
 
-export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null } | null
+// `loopReset`: the ready-agent loop's own /clear, whose fresh conversation is told the start text as a new session is.
+export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null; loopReset?: true } | null
 
 // what the reports remember between events: what this session reported opening and still owes a close. `agents`: by activity id
 // (`agent-<id>`), each running sub-agent whose start was posted, with the time (epoch ms) of its last post (the start or a liveness
@@ -181,6 +196,10 @@ declare module 'claude-code' {
       eventsWarned: string | null
       // the main loop's turn as the delivery of an urgent event needs it (see TurnState).
       turn: TurnState
+      // the session's place in the ready-agent loop (see ReadyLoop); null when it is not in it
+      readyLoop: ReadyLoop | null
+      // the background shells the session started and the engine still lists as running: the ready loop's clear waits for them
+      readyShells: string[]
       // the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState
       // the disk notice last told to each agent (see DiskTold), so a tool call repeats it only on a change or after a few minutes.

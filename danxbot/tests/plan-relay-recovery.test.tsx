@@ -5,7 +5,7 @@ import "./run-tests-with-npm-test.generated"
 // not running; the band says when it is not.
 import { describe, expect } from 'claude-code/testing'
 
-import { connectedPlanOf } from '../hooks/plan/mcp'
+import { connectedPlanOf, textOutcome } from '../hooks/plan/mcp'
 import { BACKOFF_MS } from '../hooks/relay/config'
 import { OLD_SERVER_FIX } from '../hooks/relay/text'
 import { test, bandSilent, relayPhase, eventsWarned, SURFACES, SIGN_IN_HALT, answerPlanConnect, dashboard, forceRefresh, startSession } from './plan-kit'
@@ -392,7 +392,7 @@ for (const surface of SURFACES) {
 }
 
 describe('the plan a plan_connect answer connected', () => {
-  const answer = (value: unknown) => JSON.stringify(value)
+  const answer = (value: unknown) => textOutcome(JSON.stringify(value), false)
   test('is the plan id of an ok envelope', () => {
     expect(connectedPlanOf(answer({ ok: true, status: 200, body: { session: { planId: 24 }, naming: { status: 'ok' } } }))?.id ?? null).toBe(24)
   })
@@ -404,7 +404,7 @@ describe('the plan a plan_connect answer connected', () => {
     expect(connectedPlanOf(answer({ ok: true, status: 200, body: { session: { planId: null } } }))?.id ?? null).toBeNull()
     expect(connectedPlanOf(answer({ ok: false, status: 409, body: { session: { planId: 24 } } }))?.id ?? null).toBeNull()
     expect(connectedPlanOf(answer({ state: 'approval_required', approvalUrl: 'u' }))?.id ?? null).toBeNull()
-    expect(connectedPlanOf('connected')?.id ?? null).toBeNull()
-    expect(connectedPlanOf(undefined)?.id ?? null).toBeNull()
+    expect(connectedPlanOf(textOutcome('connected', false))?.id ?? null).toBeNull()
+    expect(connectedPlanOf(textOutcome('', true))?.id ?? null).toBeNull()
   })
 })

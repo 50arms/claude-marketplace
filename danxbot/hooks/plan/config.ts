@@ -6,11 +6,20 @@ export const BRAND = '50 Arms'
 // the problem icon on the band's count button (a Button label is text only).
 export const PROBLEM_GLYPH = '⚠'
 export const COMMAND = 'danx-plan'
-// the one dashboard MCP server, the one this plugin ships (plugin.json `mcpServers`): Claude Code names a plugin's server
-// `plugin:<plugin>:<server>` (verified live with `claude mcp list`) and its tools `mcp__<server with : as _>__<tool>`. No repo
-// declares a `danx-dashboard` server of its own any more, so there is no second name to try.
+// The dashboard MCP server has TWO names, by how the session was started. Claude Code names a plugin's server
+// `plugin:<plugin>:<server>` (verified live with `claude mcp list`) and its tools `mcp__<server with : as _>__<tool>`.
+//   SERVER: the one this plugin ships (plugin.json `mcpServers`): an operator session's, in every folder.
+//   DISPATCHED_SERVER: the one a danxbot-dispatched agent has. Its clean-room config (`--strict-mcp-config --mcp-config`) names the dashboard
+//     server `danx-dashboard` and, being strict, loads no plugin server; the plugin itself is enabled for the orchestrator profile (the hooks
+//     run, the plugin's own server does not exist).
+// A call that must reach "the" server (the usage-pacing claim) asks the session which one it has (hooks/plan/server.ts), and never assumes a name.
+// `SERVER`, `toolName` and the tool.call matchers still name the plugin's server only: what they serve (the plan band, the relay, the permission
+// poll) is an operator session's, and a dispatched agent's own calls are not the plugin's to watch.
 export const SERVER = 'plugin:danxbot:danx-dashboard'
-export const toolName = (tool: string) => `mcp__${SERVER.replace(/:/g, '_')}__${tool}`
+export const DISPATCHED_SERVER = 'danx-dashboard'
+export const DASHBOARD_SERVERS = [SERVER, DISPATCHED_SERVER]
+export const serverToolName = (server: string, tool: string) => `mcp__${server.replace(/:/g, '_')}__${tool}`
+export const toolName = (tool: string) => serverToolName(SERVER, tool)
 export const MIN_GAP_MS = 10_000
 // while a permission request is open its claim is polled this often (otherwise never), so the model hears the
 // decision within seconds. The server's per-key claim limit (twice one 3 s poll, about
@@ -89,6 +98,8 @@ export const DANGER = 'red'
 export const WARNING = 'yellow'
 
 export const EMPTY: PlanView = {
+  readyRepo: null,
+  readyLoopFault: null,
   phase: 'loading',
   error: null,
   serverNotConnected: false,
@@ -102,6 +113,7 @@ export const EMPTY: PlanView = {
   needsYou: 0,
   needsYouError: null,
   pausedUntil: null,
+  pausedWaitsOn: null,
   // nothing to link until a load reads the boards and the plan's cards
   links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,
@@ -155,8 +167,8 @@ export const DONUT_BAND_PX = 16
 // (`sessionListenerAttached` null): the plugin knows only that no status came, so it says that; never green, never silent.
 export const NO_EVENT_STATUS = 'the dashboard sent no event status for this session'
 
-// a session with no dashboard key. The danx-dashboard MCP answers every tool but `plan_connect` with an error
-// result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key lapsed (KEY_LAPSED_HALT
+// a session with no dashboard key. The danx-dashboard MCP answers every tool but the two connect tools (they answer an approval
+// request, see `connectToolOutcome`) with an error result whose text holds this sentence, both when it never had a key (SIGN_IN_HALT) and when its key lapsed (KEY_LAPSED_HALT
 // ends with it): the dashboard's answer when the session has no usable key. A key a PERSON revoked is not this: it is the stop halt below.
 // The text is for the agent: the person only ever reads the words below.
 export const SIGNED_OUT_MARK = 'Not signed in to the danxbot dashboard'

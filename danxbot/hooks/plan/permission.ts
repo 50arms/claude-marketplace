@@ -55,7 +55,8 @@ export function claimStatus(body: any): ClaimDecision {
 // (null: told nothing). A key a person revoked is dropped untold: every tool already tells the session to stop, and "ask again"
 // would contradict that. A lapsed key, or a request the dashboard no longer knows (404: gone, or this session holds another key
 // now), is the session having ended: told as expired. Any other failure keeps the request.
-export type Settled = { kind: 'keep' } | { kind: 'drop'; note: string | null }
+// `granted`: what a person granted, on the answer that granted anything or nothing; absent on any other drop.
+export type Settled = { kind: 'keep' } | { kind: 'drop'; note: string | null; granted?: string[] }
 
 const KEEP: Settled = { kind: 'keep' }
 const drop = (note: string | null): Settled => ({ kind: 'drop', note })
@@ -65,7 +66,7 @@ export function settle(r: PermissionRequest, out: ToolOutcome): Settled {
   if (out.status === 404 || isSignedOut(out)) return drop(permissionExpiredNote(r))
   if (!out.ok) return KEEP
   const decision = claimStatus(out.body)
-  if (decision.kind === 'granted') return drop(permissionGrantedNote(r, decision.granted))
+  if (decision.kind === 'granted') return { kind: 'drop', note: permissionGrantedNote(r, decision.granted), granted: decision.granted }
   if (decision.kind === 'denied') return drop(permissionDeniedNote(r))
   if (decision.kind === 'expired') return drop(permissionExpiredNote(r))
   return KEEP

@@ -115,6 +115,18 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toHaveLength(0)
     })
 
+    // CP-43: on a key the dashboard stopped accepting, plan_connect answers a new access request (the MCP's accessReply), never an envelope
+    test('a key that lapsed: the person reads that the session signed out, never the raw request, and the model is told nothing', async ($, on) => {
+      const d = dashboard(on)
+      const band = await mounted($, d, surface)
+      d.world.signedOut = 'lapsed'
+      await band.press({ key: 'disconnect' })
+      await d.clock.settle()
+      expect(d.toasts).toContain('Signed out. Sign in from the band.')
+      expect(d.toasts.filter((t: string) => t.startsWith('Disconnect') || t.includes('"state"'))).toEqual([])
+      expect(d.relay.told).toHaveLength(0)
+    })
+
     test('the model disconnecting (tool.call plan_connect) ends with the band showing not connected', async ($, on) => {
       const d = dashboard(on)
       on('tool.call', { tool: 'mcp__plugin_danxbot_danx-dashboard__plan_connect' }, () => {

@@ -19,8 +19,13 @@ export type SignInStep =
   | { kind: 'refused'; message: string }
   // a person revoked the key while signing in: nothing more to do, and the view reads the truth
   | { kind: 'revoked'; by: string }
-  // nothing more to do
-  | { kind: 'stop'; message: string }
+  // nothing more to do. `signedIn`: the key exists and only a team agent is missing
+  | { kind: 'stop'; message: string; signedIn?: true }
+
+export const NO_AGENT: Record<string, string> = {
+  agent_needed: 'Signed in, but no team agent exists for this session: a person on the team needs to create one.',
+  agent_limit_reached: 'Signed in, but every team agent is in use: a person needs to end another session first.',
+}
 
 const STOPPED: Record<string, string> = {
   rate_limited: 'Too many sign-in requests from this machine: wait a minute, then press Sign in again.',
@@ -28,6 +33,7 @@ const STOPPED: Record<string, string> = {
   no_session_id: 'This session has no id, so it cannot sign in.',
   request_failed: 'Sign in could not be completed: try again in a moment.',
   request_refused: 'The dashboard refused the sign-in request.',
+  ...NO_AGENT,
 }
 
 export function signInStep(result: any): SignInStep {
@@ -41,13 +47,14 @@ export function signInStep(result: any): SignInStep {
     return { kind: 'stop', message: 'Sign in failed: the answer could not be read.' }
   }
   if (parsed !== null && typeof parsed === 'object' && typeof parsed.state === 'string') {
-    if (parsed.state === 'signed_in') return { kind: 'done' }
+    // a plan-less plan_connect that holds a key answers the claim of its team agent (`agent_held`), not `signed_in`
+    if (parsed.state === 'signed_in' || parsed.state === 'agent_held') return { kind: 'done' }
     if (parsed.state === 'denied') return { kind: 'denied' }
     if (parsed.state === 'approval_required' || parsed.state === 'approval_pending') {
       const request = approvalRequestOf(text, [parsed.state])
       return request === null ? { kind: 'stop', message: 'Sign in failed: the approval request had no usable link.' } : { kind: 'waiting', request }
     }
-    return { kind: 'stop', message: STOPPED[parsed.state] ?? `Sign in stopped (${parsed.state}).` }
+    return { kind: 'stop', message: STOPPED[parsed.state] ?? `Sign in stopped (${parsed.state}).`, ...(parsed.state in NO_AGENT ? { signedIn: true as const } : {}) }
   }
   const outcome = toolOutcome(result)
   return outcome.ok ? { kind: 'done' } : { kind: 'refused', message: `Signed in, but the plan connect was refused: ${refusalText(outcome)}` }

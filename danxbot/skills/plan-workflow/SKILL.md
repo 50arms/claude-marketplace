@@ -64,7 +64,7 @@ decision or a solution detail (the card page lists the card's decisions under it
 step finishing an existing card; agent note on the card
 (`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
 handoffs, blockers; card comment = talking with a person (a reply to what they wrote or
-asked); problem on the card it concerns = user question; steps a person must perform (a
+asked); problem on the card it concerns = user question (while designs are on, a question about how something looks or behaves on screen is a design, never a text problem: mantra item 3); steps a person must perform (a
 live check, a manual task) = an `action` problem whose solution steps are the procedure,
 each with a short title and a description saying where (exact link), what to do and what to
 look for, never an AC checklist; plan note = real milestone; remove a wrong-plan card from
@@ -81,6 +81,11 @@ chat or in the app's end-of-turn next-step or question box: the turn's wrap-up o
 card id, and the problem itself stands alone, with plain background and a concrete example a
 newcomer to the subject can follow. Every card id in chat is a markdown link to that card
 (`[<card id>](<dashboard>/plans/<plan id>/cards/<card id>)`), never a plan or board page.
+
+A problem never sends a person to other problems: no index, checklist or "answer X first"
+problem, since Needs You already lists them. A person's answer never spawns a follow-up
+problem either: read it to its reasonable end, decide what it leaves open, and record that as
+a decision record they can review.
 
 A question is not a stop or a command. "Why X?" gets an answer: running work keeps running
 and nothing new starts. Stop, redirect or act only on an explicit verb.
@@ -119,8 +124,14 @@ found while working goes to the plan whose goal it serves, or none. Enabling wor
 blocks a goal today. Drift audit at start, after each card lands and in every status report:
 idle goal cards while side work got effort → stop the side work; a goalless cluster → split
 the plan. Review rounds repeat until a clean pass or only minor findings; the round count is
-never a question for the user. A finding that is new scope rather than a defect in the
-change → split it into its own card. Report goal by goal. Said "stop if X" → stop when X.
+never a question for the user. Before acting on a finding that is new scope, check whether a plan already covers it:
+`GET /api/plans?content=<one keyword>&fields={"status":true}` per keyword (`content` matches one literal phrase), skipping
+`complete` and `awaiting-sign-off` plans, then `GET /api/plans/<id>/architecture/sections?q=<keyword>` and
+`GET /api/plans/<id>/records?kind=goal&q=<keyword>` for each hit. A covered case gets no stopgap and no card
+outside that plan, and is added to that plan if its text does not name it (mantra item 1): your own plan's
+records and sections as usual, another plan by a card on it (see "Your lane only"). A
+finding no plan covers that is new scope rather than a defect in the change → split it into its
+own card. Report goal by goal. Said "stop if X" → stop when X.
 
 **Your lane only.** Never monitor, investigate or unstick another plan's cards or another
 session unless the user asks. Their work goes to them as a card on the right plan
@@ -155,7 +166,7 @@ From the dashboard:
   its recorded state. Work it, or record why you can't: a problem, `depends_on`/`conflict_on`, a
   block with the real reason, or `rollback_pickup`. A card it names as `Filed, not readied` was
   filed and never readied: ready it now (its order comes from `depends_on`), or open a problem on
-  it when only a person can decide. Never just ignore it. It is not sent while
+  it when only a person can decide (or a design: mantra item 3). Never just ignore it. It is not sent while
   you are paused (see "Pausing"); it is held and arrives in the message that ends the pause.
 - `answered "…"` → an operator's answer: read the card's problems, act on the live decision,
   record the outcome. Retracted or changed → it overrides; already acted → keep, redo or undo.
@@ -189,7 +200,7 @@ From the dashboard:
   that design, which passes the card's design gate: the card builds from the design it holds
   now. Nothing to record.
 - `requested changes on revision …`, a `REJECTED revision …` that closed the card's last live
-  design, or a comment starting `**Asked for another design:**` → the designer owes a turn: run
+  design, or a comment starting `**Asked for another design:**`, or a comment or a problem asking how something should look or behave on screen while designs are on (mantra item 3), even on a card whose design gate has passed → the designer owes a turn: run
   the designer again ("Sub-agents"), unless one you started is still on it.
 - `retracted the answer to` the design problem → the choice was withdrawn and the gate waits on
   the person again: build nothing from that design.
@@ -269,7 +280,7 @@ build it here; the plan never waits on a worker. An archived (Backlog) card was 
 purpose: read why in its comments and agent notes before reopening it; a park the user made is theirs
 to lift. A design talked through with the user is decided the moment their answers leave
 no open question: write it into the plan, slice, ready and build in that same turn, never a
-card held in Review for a "go" (a point still open is a problem on that card).
+card held in Review for a "go" (a point still open is a problem on that card, or a design: mantra item 3).
 
 ## Closing a plan
 
@@ -312,7 +323,7 @@ never stays active just to wait.
    One problem per question: put it on the work card it decides, never a container, and give every
    other card that waits on it a `depends_on` edge to that card; never file a problem that only
    points at another open problem, or that asks a person to restart or reassign another plan's
-   session (its card's own record and `depends_on` already show that wait). That includes a check that needs an ordinary act of theirs (a design change request, a
+   session (its card's own record and `depends_on` already show that wait). That includes a check that needs an ordinary act of theirs (a
    review): an `action` problem asks for it now; never wait for it to happen on its own.
 2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
@@ -378,7 +389,7 @@ gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<
 on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
 have passed and it carries no design yet, start its designer, unless one you started is still on
-it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn.
+it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn, or for a question about how something looks or behaves on screen while designs are on (mantra item 3), even when its design gate has already passed, whoever found it (you, a reviewer's `fail`). Write the question in an agent note on the card first: the brief is only `gate-designer <CARD-ID>`, so the designer reads it from the card. A builder that meets one makes the design itself and reports what it published: that card now waits on its design problem, so run no POST gate on its tip and release the card.
 One screen or component gets ONE design on one card, showing every part that changes with its
 options, however many cards change it: the other cards build from that card's choice. Never a
 design per card or per element of the same screen.

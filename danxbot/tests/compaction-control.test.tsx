@@ -6,9 +6,10 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
-import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, controlPath, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import { sessionFilePath } from '../hooks/relay/session-file'
 import type { AgentControl, ControlFile, GateControl, GateInput, ModelValves } from '../hooks/compaction/control'
-import { CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
+import { BAD_SESSION_ID, BAD_SESSION_ID_PATH, CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
 const NOW = Date.parse('2026-10-14T12:00:00.000Z')
@@ -30,7 +31,7 @@ const withControl = (over: Partial<WireControl> = {}): ControlFile => {
 
 describe('the control file (pure)', () => {
   test('is named for the session under the danxbot config, the relay writes it', () => {
-    expect(controlPath('/home/u', 's1')).toBe('/home/u/.config/danxbot/compaction/s1.json')
+    expect(sessionFilePath('/home/u', 'compaction', 's1')).toBe('/home/u/.config/danxbot/compaction/s1.json')
   })
 
   test('a missing file is absent, a null control is a session the handshake does not hold, a control is read whole', () => {
@@ -450,6 +451,19 @@ for (const surface of SURFACES) {
       d.world.context = { tokens: PASS_AT, window: WINDOW }
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
       expect(d.toasts).toContain('Compacting now: the context reached the size where holding it would end the session.')
+    })
+
+    test('a session id that is not a plain id names no control file: none is read, and it is told once as unreadable', async ($, on) => {
+      const d = await started($, on)
+      d.world.sessionId = BAD_SESSION_ID
+      // a control at the path such an id would name, as the runtime resolves it, so a gate that built the path would find and read it
+      d.world.files[BAD_SESSION_ID_PATH] = fileText(gateControl(), null, BAD_SESSION_ID)
+      await $.turn.complete(TURN)
+      await $.turn.start(START)
+      expect(d.toasts.filter(t => t.startsWith('Compaction control unreadable') && t.includes('names no file'))).toHaveLength(1)
+      expect(d.world.fsExists).not.toContain(BAD_SESSION_ID_PATH)
+      expect(d.world.fsReads).not.toContain(BAD_SESSION_ID_PATH)
+      expect(compactRuns(d)).toEqual([])
     })
 
     // A1: the only way out of a hold is the valve, and it lives in the control file; a gate that cannot read the file must not hold the session until it ends

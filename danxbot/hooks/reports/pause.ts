@@ -6,7 +6,7 @@
 // pause-neutral read (every other call carrying the session header to a card or plan route is the agent's own call and ends its pause).
 export const PAUSE_PATH = '/api/plan-sessions/me/pause'
 
-export type PauseRead = { kind: 'free' } | { kind: 'nothing' } | { kind: 'paused'; reason: string; until: number } | { kind: 'failed'; reason: string }
+export type PauseRead = { kind: 'free' } | { kind: 'nothing' } | { kind: 'paused'; reason: string; until: number; waitsOn: string | null } | { kind: 'failed'; reason: string }
 
 // The answer of one read at wall-clock `now` (epoch ms). Only an unexpired AGENT pause quiets a hook: no pause, a usage-limit pause (its own
 // mechanism, which the hooks never keyed on) and an agent pause past its expiry (the server ends it on its next tick) are all free.
@@ -14,11 +14,13 @@ export function pauseOf(body: unknown, now: number): PauseRead {
   const pause = (body as { pause?: unknown } | null)?.pause
   if (pause === null) return { kind: 'free' }
   if (pause === undefined || typeof pause !== 'object') return { kind: 'failed', reason: `bad_response: GET ${PAUSE_PATH} answered no pause field` }
-  const p = pause as { limit?: unknown; until?: unknown; reason?: unknown }
+  const p = pause as { limit?: unknown; until?: unknown; reason?: unknown; waits_on?: unknown }
   if (p.limit !== 'agent') return { kind: 'free' }
   const until = typeof p.until === 'string' ? Date.parse(p.until) : NaN
   if (Number.isNaN(until) || typeof p.reason !== 'string') return { kind: 'failed', reason: `bad_response: GET ${PAUSE_PATH} answered an agent pause with no expiry or reason` }
-  return until > now ? { kind: 'paused', reason: p.reason, until } : { kind: 'free' }
+  // `waits_on` names what the pause waits on (`pacing`: a sub-agent slot held back by usage pacing); the title's hourglass reads it
+  const waitsOn = typeof p.waits_on === 'string' ? p.waits_on : null
+  return until > now ? { kind: 'paused', reason: p.reason, until, waitsOn } : { kind: 'free' }
 }
 
 // A dashboard older than this plugin has no pause route (404). The hooks then behave as "not paused", and the person is told once.

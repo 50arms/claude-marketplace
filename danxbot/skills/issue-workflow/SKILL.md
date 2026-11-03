@@ -89,7 +89,7 @@ never passed to get it out of the way.
 ## Needing a human
 
 Genuinely need a human → open a problem on the card: an `action` when only a person can do
-it (access, credentials, hardware, authority), else a `question`. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3). Never `AskUserQuestion` or
+it (access, credentials, hardware, authority), else a `question`. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3). How something looks or behaves on screen is never a text problem while designs are on: it is a design on the card, even when its design gate has passed (mantra item 3). The agent working the card makes that design itself: fetch `GET /api/agent-profiles/gate-designer/instruction?card=<card id>`, build the design as it says, publish it to the card with `mini_app_publish` and stop. You sign no gate and you end as Flow step 6 says, naming what you published: the design problem holds the card until a person chooses. An orchestrator may start `gate-designer` for it instead, to keep the build out of its own context. Never `AskUserQuestion` or
 a plan-mode pause. A card needs a human exactly while it has an open problem; a person
 answering its last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
 
@@ -107,8 +107,14 @@ Transition `pickup` with `manual:true`, which stops anything auto-transitioning 
 server stamps your session id (`$CLAUDE_CODE_SESSION_ID`) as `assigned_agent` and ignores
 any name you send. Read `assigned_agent` back — anything but your session id (incl.
 `null`) is a failed claim: retry once, then stop. The hold clears only by an
-explicit transition from your session (`complete`/`cancel`/`block`/`rollback_pickup`). A
+explicit transition from your session (`complete`/`cancel`/`block`/`rollback_pickup`), or,
+after a connecting pickup (below), when the session connects elsewhere or leaves. A
 sub-agent you run is still your card: pickup first, drive the terminal transition yourself.
+
+A session holding no plan and no card that picks up a card on no plan also connects to it, as
+`card_connect` does: the reply carries `connectedByPickup: true` and `card_connect`'s answer
+(`owedComments`, `missedEvents`, `naming`, the role text), so act on it as on a connect. `card_held`
+refuses the pickup. A session holding a plan or another card, a card on a plan and a worker only claim.
 
 ## When to block
 
@@ -121,7 +127,7 @@ first, then end `failed`.
 
 - Waiting on another card to finish first → a `depends_on` dependency, not `block`.
 - Two cards that can't run together → a `conflict_on` dependency.
-- A human is 100% required (a decision, or an action only a person can take; changing, dropping or replacing a decision a person stated always needs that person, mantra item 3) → open a
+- A human is 100% required (a decision, or an action only a person can take; changing, dropping or replacing a decision a person stated always needs that person, mantra item 3; while designs are on, a question about how something looks or behaves on screen is a design, never a text problem: mantra item 3) → open a
   problem with solutions — the problem is the hold: it keeps the card for human review
   before it can be completed. Never `block` a card for an open problem or an unanswered
   question.
