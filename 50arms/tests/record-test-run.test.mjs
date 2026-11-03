@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { shellWord } from "../scripts/record-test-run.mjs";
+import { postRecord, shellWord } from "../scripts/record-test-run.mjs";
 import assert from "node:assert/strict";
 import { decideRecord, parseJsonReport, parseJunitReport, RECORD_MARKER } from "../scripts/lib/test-run.mjs";
 
@@ -133,7 +133,7 @@ test("a report left over from an earlier run is not read", () => {
   utimesSync(report, old, old);
   const r = run(dir, ["--report", report, "--", "node", "-e", "0"]);
   assert.doesNotMatch(r.stdout, MARK);
-  assert.match(r.stderr, /no per-test counts/);
+  assert.match(r.stderr, /older than this run/);
 });
 
 test("a dirty tree records nothing but still runs the command", () => {
@@ -169,9 +169,6 @@ test("a commit made while the command runs records nothing", () => {
   assert.doesNotMatch(r.stdout, MARK);
 });
 
-test("usage errors exit 2", () => {
-  assert.equal(run(os.tmpdir(), ["--report", "x"]).status, 2);
-});
 
 test("a word with an apostrophe is written so a shell reads it back unchanged", () => {
   for (const word of ["it's", "'", "a'b'c", "two words", "plain"]) {
@@ -190,8 +187,72 @@ test("a command that cannot start is reported with the shell-wrapping hint, and 
   assert.match(r.stderr, /System32\\bash\.exe/);
 });
 
-test("the usage error carries the shell-wrapping hint", () => {
-  assert.match(run(os.tmpdir(), ["--report", "x"]).stderr, /bash -c '/);
+test("a usage error exits 2 and carries the shell-wrapping hint", () => {
+  const r = run(os.tmpdir(), ["--report", "x"]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /bash -c '/);
+});
+
+test("a failed file with zero failed tests records nothing", () => {
+  const parsed = parseJsonReport(vitestReport({ testResults: [{ name: "/r/a.test.ts", status: "failed" }, { name: "/r/b.test.ts", status: "passed" }] }));
+  assert.match(decide({ parsed }).reason, /failure/);
+});
+
+test("nothing is recorded when the counts contradict each other", () => {
+  const parsed = parseJsonReport(vitestReport({ numTotalTests: 3, numPassedTests: 3, numPendingTests: 2 }));
+  assert.match(decide({ parsed }).reason, /contradict/);
+});
+
+test("nothing is recorded when HEAD is not a full sha", () => {
+  assert.match(decide({ before: { ...clean, head: "abc" }, after: { ...clean, head: "abc" } }).reason, /full commit sha/);
+});
+
+test("postRecord says so when the request itself fails", async () => {
+  const seen = [];
+  const original = process.stderr.write;
+  process.stderr.write = (m) => (seen.push(String(m)), true);
+  try {
+    assert.equal(await postRecord("http://127.0.0.1:1/x", "t", "{}"), false);
+  } finally {
+    process.stderr.write = original;
+  }
+  assert.match(seen.join(""), /not stored.*not kept/);
+});
+
+test("a refusal whose body is not JSON is still reported with its status", async () => {
+  const server = http.createServer((_q, res) => (res.writeHead(502), res.end("<html>bad gateway</html>")));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const seen = [];
+  const original = process.stderr.write;
+  process.stderr.write = (m) => (seen.push(String(m)), true);
+  try {
+    assert.equal(await postRecord(`http://127.0.0.1:${server.address().port}/x`, "t", "{}"), false);
+  } finally {
+    process.stderr.write = original;
+    server.close();
+  }
+  assert.match(seen.join(""), /HTTP 502 \(the record is not kept\)/);
+});
+
+test("a failed dispatched post says the record is not kept", async () => {
+  const { r } = await dispatched(400, { error: "no" });
+  assert.match(r.stderr, /not kept/);
+});
+
+test("with the URL unset and a token set the marker path is kept and one line says why", async () => {
+  const { dir } = repo();
+  const env = { ...process.env, DANX_AGENT_TOKEN: "tok" };
+  delete env.DANXBOT_TEST_RUN_URL;
+  const r = await new Promise((resolve) => {
+    const child = spawn("node", [SCRIPT, "--report", reportIn(), "--", ...writer(vitestReport())], { cwd: dir, env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("close", () => resolve({ stdout, stderr }));
+  });
+  assert.match(r.stdout, MARK);
+  assert.match(r.stderr, /only DANX_AGENT_TOKEN is set/);
 });
 
 // ---- the dispatched-agent branch: the wrapper posts the record itself
