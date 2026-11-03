@@ -212,6 +212,10 @@ declare module 'claude-code' {
       pendingStart: PendingStart
       // the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
       endedSession: string | null
+      // the id the session's MCP server runs under at its start (set once): the id the engine answers until a /clear changes it, so no lookup is needed while they agree.
+      bootEngineId: string | null
+      // the MCP server's own session id by the engine's id, once the dashboard's row named it, or when and why asking failed (retried after a wait).
+      mcpIds: Record<string, { id: string } | { failedAt: number; fault: string | null }>
       // the desktop app hosts this session (the keepalive's gate): raised at a session start that lists the desktop or whose CLAUDE_CODE_ENTRYPOINT is claude-desktop, and at any desktop
       // attach, never cleared, and kept by a reload of the hooks module, whose own variables start over.
       desktopHosted: boolean

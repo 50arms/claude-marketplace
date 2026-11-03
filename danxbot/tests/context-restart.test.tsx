@@ -6,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { CONTEXT_DEADLINE_MS, restartFailureLine } from '../hooks/context/events'
 import { BLOCKED_LINE } from '../hooks/plan/config'
-import { test, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call plan_connect' } })
@@ -183,6 +183,17 @@ ${NOTICE}`])
       const d = await cleared($, on)
       d.world.restart.json = { notice: NOTICE }
       expect((await firstPrompt($, 'clear')).startLines).toEqual([NOTICE])
+      expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
+    })
+
+    // CP-48: the new session's record is looked for under its own engine id only (the server's kept id is the OLD session's record), so a plan-connected session's first /clear is still a restart
+    test("a clear whose server kept its id still says the session replaced one on the plan, asking the server with the predecessor", async ($, on) => {
+      const d = await cleared($, on, {})
+      d.world.sessionId = CLEARED_SESSION_ID
+      d.world.localRecord = false
+      d.world.records.push(SESSION_ID)
+      d.world.restart.json = { notice: NOTICE }
+      expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines).toContain(NOTICE)
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 

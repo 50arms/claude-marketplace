@@ -9,7 +9,7 @@ import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
 import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import type { AgentControl, ControlFile, GateControl, GateInput, ModelValves } from '../hooks/compaction/control'
-import { BAD_SESSION_ID, BAD_SESSION_ID_PATH, CLOCK_START, EVENT_TEXT, HOME_DIR, OWN_SESSION, SURFACES, dashboard, startSession, test } from './plan-kit'
+import { BAD_SESSION_ID, BAD_SESSION_ID_PATH, CLOCK_START, EVENT_TEXT, CLEARED_SESSION_ID, HOME_DIR, OWN_SESSION, SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
 const NOW = Date.parse('2026-10-14T12:00:00.000Z')
@@ -435,6 +435,119 @@ for (const surface of SURFACES) {
       d.world.files[CONTROL_FILE] = fileText(gateControl())
       expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
       expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
+    })
+
+    // CP-48: a /clear changes the engine's session id and not the MCP server's, which writes the control under the id it booted with (the id its dashboard row names)
+    describe('after the session id changes (a /clear)', () => {
+      const MCP_CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${SESSION_ID}.json`
+      const meReads = (d: any) => d.api.filter((a: any) => a.path === '/api/plan-sessions/me')
+      const CLEARED = CLEARED_SESSION_ID
+
+      test('the control the server wrote under its own id holds the session', async ($, on) => {
+        const d = await started($, on)
+        d.world.sessionId = CLEARED
+        d.world.files[MCP_CONTROL_FILE] = fileText(gateControl(), null, SESSION_ID)
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBe(HELD_REASON)
+      })
+
+      test("the dashboard is asked once for the server's id, not on every look", async ($, on) => {
+        const d = await started($, on)
+        d.world.sessionId = CLEARED
+        d.world.files[MCP_CONTROL_FILE] = fileText(gateControl(), null, SESSION_ID)
+        const before = meReads(d).length
+        await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))
+        await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))
+        expect(meReads(d).length - before).toBe(1)
+      })
+
+      test("a dashboard that cannot name the server's id holds nothing, and is asked again only after a wait", async ($, on) => {
+        const d = await started($, on)
+        d.world.sessionId = CLEARED
+        d.world.files[MCP_CONTROL_FILE] = fileText(gateControl(), null, SESSION_ID)
+        d.world.sessionReadStatus = 503
+        const before = meReads(d).length
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBeUndefined()
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBeUndefined()
+        expect(meReads(d).length - before).toBe(1)
+        // the failed lookup is told once, like an unreadable control, and not on every look
+        const told = () => d.toasts.filter((t: string) => t.startsWith("Compaction control unreadable (the session's id on the dashboard could not be read"))
+        await $.turn.complete(TURN)
+        expect(told()).toHaveLength(1)
+        await $.turn.start(START)
+        await $.turn.complete(TURN)
+        expect(told()).toHaveLength(1)
+        delete d.world.sessionReadStatus
+        await d.clock.advance(31_000)
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBe(HELD_REASON)
+      })
+
+      // a compaction's classic SessionStart after the clear changes nothing the lookup reads (the boot id's set-once guard is pinned by the session.start test below)
+      test("a compaction after the clear still holds the session under the server's id", async ($, on) => {
+        on('classic.SessionStart', () => ({}) as any)
+        const d = await started($, on)
+        d.world.sessionId = CLEARED
+        d.world.files[MCP_CONTROL_FILE] = fileText(gateControl(), null, SESSION_ID)
+        await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: CLEARED })
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBe(HELD_REASON)
+      })
+
+      // the session.start a real /clear fires (the engine's new id) reaches onSessionStart, whose boot id is set once
+      test("the session start a /clear fires does not replace the boot id, so the session stays held under the server's id", async ($, on) => {
+        const d = await started($, on)
+        d.world.sessionId = CLEARED
+        d.world.files[MCP_CONTROL_FILE] = fileText(gateControl(), null, SESSION_ID)
+        await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBe(HELD_REASON)
+      })
+
+      for (const signedOut of ['signed-out', 'lapsed', 'revoked'] as const) {
+        test(`a ${signedOut} session that clears stays quiet: no key is no fault, and the engine's id stands`, async ($, on) => {
+          const d = await started($, on, { connected: false, signedOut })
+          d.world.sessionId = CLEARED
+          // the control sits under the server's id; with no key the lookup cannot name it, so the engine's id stands: nothing is held and nothing is told
+          d.world.files[MCP_CONTROL_FILE] = fileText(gateControl(), null, SESSION_ID)
+          expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBeUndefined()
+          await $.turn.complete(TURN)
+          await $.turn.start(START)
+          await $.turn.complete(TURN)
+          expect(d.toasts.filter((t: string) => t.startsWith('Compaction control unreadable'))).toEqual([])
+        })
+      }
+
+      test('a control file under the id the engine answers now holds the session without asking the dashboard', async ($, on) => {
+        const d = await started($, on)
+        d.world.sessionId = CLEARED
+        d.world.files[`${HOME_DIR}/.config/danxbot/compaction/${CLEARED}.json`] = fileText(gateControl(), null, CLEARED)
+        const before = meReads(d).length
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBe(HELD_REASON)
+        expect(meReads(d).length - before).toBe(0)
+      })
+
+      test('a session whose id has not changed since its start is never asked, even with no control file', async ($, on) => {
+        const d = await started($, on)
+        const atStart = meReads(d).length
+        expect((await $.classic.PreCompact(PRE('auto'))).block).toBeUndefined()
+        expect(meReads(d).length).toBe(atStart)
+      })
+
+      // a fault is not kept past the lookup that met it: once the control file is under the post-clear id the session is held again, with no failure told
+      test('a failed lookup does not outlive the control file appearing under the post-clear id', async ($, on) => {
+        const d = await started($, on)
+        d.world.sessionId = CLEARED
+        d.world.sessionReadStatus = 503
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBeUndefined()
+        d.world.files[`${HOME_DIR}/.config/danxbot/compaction/${CLEARED}.json`] = fileText(gateControl(), null, CLEARED)
+        await d.clock.advance(31_000)
+        expect((await $.classic.PreCompact(PRE('auto', { session_id: CLEARED }))).block).toBe(HELD_REASON)
+      })
+
+      test('a session whose unchanged id names a control file is never asked', async ($, on) => {
+        const d = await started($, on)
+        d.world.files[CONTROL_FILE] = fileText(gateControl())
+        const before = meReads(d).length
+        expect((await $.classic.PreCompact(PRE('auto'))).block).toBe(HELD_REASON)
+        expect(meReads(d).length - before).toBe(0)
+      })
     })
 
     test('a leftover file cannot hold a later session once the relay has pruned it', async ($, on) => {

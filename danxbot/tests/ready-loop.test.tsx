@@ -502,6 +502,15 @@ describe('the ready-agent loop', () => {
     })
   })
 
+  test('a session answer that is no object at all is told once too, never thrown', async ($, on) => {
+    const d = await started($, on)
+    d.world.plansBody = 'not an object'
+    await ready($, d)
+    await tick(d)
+    expect(d.toasts.filter((t: string) => t.includes('answered no session field'))).toHaveLength(1)
+    expect(d.world.readyMarks).toEqual([])
+  })
+
   test('a session row with no session field is a failure told once, never a claim of an agent', async ($, on) => {
     const d = await started($, on)
     d.world.plansBody = { dashboard_url: DASHBOARD_URL }

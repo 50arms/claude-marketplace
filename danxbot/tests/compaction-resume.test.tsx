@@ -5,7 +5,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { RESUME_PROCEDURE, briefingText } from '../hooks/compaction/briefing'
 import { relayLine, repeatLine } from '../hooks/relay/delivery'
-import { SURFACES, TOLD, dashboard, startSession, test } from './plan-kit'
+import { CLEARED_SESSION_ID, SESSION_ID, SURFACES, TOLD, dashboard, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
@@ -60,6 +60,18 @@ for (const surface of SURFACES) {
       expect(prompt).toContain('Work not pushed')
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect(resumes(d)).toHaveLength(1)
+    })
+
+    // CP-48: after a /clear the connection record is under the MCP server's boot id; a compaction keeps that id, so the prompt still fires
+    test("a compaction after a /clear still starts the resume prompt (the record is under the server's boot id)", async ($, on) => {
+      const d = await started($, on)
+      d.world.sessionId = CLEARED_SESSION_ID
+      d.world.localRecord = false
+      d.world.records.push(SESSION_ID)
+      await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+      await $.classic.SessionStart({ ...COMPACT, session_id: d.world.sessionId })
+      await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)
     })
 

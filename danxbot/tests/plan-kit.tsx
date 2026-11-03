@@ -122,6 +122,8 @@ export const NEXT_STEP = (state: string) => `Run plan_connect again (step ${[...
 
 export const CLOCK_START = Date.parse('2026-10-03T08:00:00.000Z')
 export const OWN_SESSION = { session_id: 'sess-own', title: 'PLAN-23: danxbot plugin' }
+// the engine's session id after the session under test is cleared once (its MCP server keeps SESSION_ID)
+export const CLEARED_SESSION_ID = `${OWN_SESSION.session_id}-cleared-1`
 export const OTHER_SESSION = { session_id: 'sess-other', title: 'PLAN-23: review pass' }
 type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean }
 type Card = { id: string; title: string; priority: number; problems: Prob[] }

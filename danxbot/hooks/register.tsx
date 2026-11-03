@@ -129,6 +129,14 @@ const readyShells = atom({ plugin: 'danxbot', key: 'readyShells' } as const, [] 
 const eventsWarned = atom({ plugin: 'danxbot', key: 'eventsWarned' } as const, null as string | null)
 // the start (epoch ms) of the last turn activity sent to the dashboard, so the next one starts strictly later (it keeps only the newest start). $.state, so a reload keeps it.
 const turnReportedAt = atom({ plugin: 'danxbot', key: 'turnReportedAt' } as const, null as number | null)
+// The id the session's MCP server runs under, by the id the engine answers now. A /clear gives the session a new id while its MCP server keeps the id it booted with, and the server writes its
+// per-session files (compaction control, connection record) under its own. `{id}`: the server's id as its row names it; `{failedAt, fault}`: the ask failed (`fault` names why, null when the dashboard answered with no row for the session), retried after MCP_ID_RETRY_MS.
+type McpIds = Record<string, { id: string } | { failedAt: number; fault: string | null }>
+const mcpIds = atom({ plugin: 'danxbot', key: 'mcpIds' } as const, {} as McpIds)
+const MCP_ID_RETRY_MS = 30_000
+// the id the engine answered at the session's own start (a startup, resume or compaction; a /clear start reports the NEW id, so it is not one): the server booted under it, so it needs no ask
+const bootEngineId = atom({ plugin: 'danxbot', key: 'bootEngineId' } as const, null as string | null)
+
 const turn = atom({ plugin: 'danxbot', key: 'turn' } as const, IDLE as TurnState)
 // the last time stamp handed to the model (prompt or tool call), which the next one counts its +delta and its date from.
 const lastStamp = atom({ plugin: 'danxbot', key: 'lastStamp' } as const, null as StampState)
@@ -1729,6 +1737,9 @@ async function onSessionStart($: any, e: any, next: any) {
   if ((await $.session.surfaces()).includes(DESKTOP_SURFACE) || (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) === 'claude-desktop') {
     await update($, desktopHosted, () => true)
   }
+  // the id the session's MCP server boots under (a reload of this module keeps the first one, the atom survives it)
+  const bootId = String(await $.session.id())
+  await update($, bootEngineId, cur => cur ?? bootId)
   await unpinStatus($)
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan band (connection + cards that need you)' })
   await $.command.register({ name: READY_COMMAND, description: READY_DESCRIPTION })
@@ -2064,8 +2075,9 @@ async function readyLook($: any, token: LookToken): Promise<ReadyLookAnswer | nu
     await tellReadyOnce($, readyFailed('reading this session', errText(me)))
     return null
   }
-  if (me.body?.session === undefined) {
-    await tellReadyOnce($, readyFailed('reading this session', 'bad_response: GET /api/plan-sessions/me answered no session field'))
+  // a body that is no object at all is as malformed as one with no session field, and is told, never thrown
+  if (typeof me.body !== 'object' || me.body === null || meLacksSession(me)) {
+    await tellReadyOnce($, readyFailed('reading this session', ME_NO_SESSION))
     return null
   }
   try {
@@ -2713,13 +2725,23 @@ type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connecte
 
 // The ONE place a key that is gone or revoked is made quiet (its own tools say so, never a failure line): this read is the first of every
 // context lookup, so a later read that finds the key gone in between is an ordinary failure line.
+// a `GET /api/plan-sessions/me` answer that carries no `session` field at all (a null one is a session on no row) is malformed
+const ME_NO_SESSION = 'bad_response: GET /api/plan-sessions/me answered no session field'
+function meLacksSession(r: Api): boolean {
+  return !('session' in (r.body ?? {}))
+}
+
+function meIsQuiet(r: Api): boolean {
+  return isSignedOut(r) || outcomeRevokedBy(r) !== null || agentBlockOf(r) !== null
+}
+
 async function sessionPlan($: any): Promise<SessionPlan> {
   const r = await api($, 'GET', '/api/plan-sessions/me')
   if (r.unreachable === true) return { kind: 'unreachable' }
   // the agent gate holds the session (no team agent yet, or a resume after the agent was released): quiet here, because the dashboard's 403 {state, instruction} on the model's first dashboard call is what tells the model what to do
-  if (isSignedOut(r) || outcomeRevokedBy(r) !== null || agentBlockOf(r) !== null) return { kind: 'silent' }
+  if (meIsQuiet(r)) return { kind: 'silent' }
   if (!r.ok) return { kind: 'failed', reason: errText(r), refusal: r.refusal }
-  if (!('session' in (r.body ?? {}))) return { kind: 'failed', reason: 'bad_response: GET /api/plan-sessions/me answered no session field' }
+  if (meLacksSession(r)) return { kind: 'failed', reason: ME_NO_SESSION }
   if (r.body.session === null) return { kind: 'not-connected' }
   const planId = r.body.session.plan_id
   // a registered session on no plan (it holds a team agent, a stand-alone card, or neither yet) is a row whose plan_id is null
@@ -2730,11 +2752,46 @@ async function sessionPlan($: any): Promise<SessionPlan> {
 // Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the danx-dashboard MCP server writes
 // at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, only its existence is
 // read). It decides who a dashboard fault speaks to: a connected session gets one warning line, any other stays silent.
-async function isPlanConnected($: any, id: string): Promise<boolean> {
+async function isPlanConnected($: any, id: string, resolve: boolean = true): Promise<boolean> {
   const home = await homeDir($)
   const path = home === null ? null : sessionFilePath(home, 'plan-sessions', id)
   // an id that names no file has no connection record
-  return path !== null && $.fs.exists(path)
+  if (path === null) return false
+  if (await $.fs.exists(path)) return true
+  if (!resolve) return false
+  // after a /clear the record is under the MCP server's own id
+  const own = (await mcpSessionId($, id)).id
+  return own !== id && $.fs.exists(sessionFilePath(home!, 'plan-sessions', own)!)
+}
+
+// The id the MCP server writes its per-session files under, for the engine's session `id`. Those files are named by the id the server booted with; a /clear changes `$.session.id()` and not the
+// server's id (measured on claude.exe 2.1.308/2.1.309), so a reader that names a file by `$.session.id()` finds nothing after a /clear. Local first: when `id`'s own compaction file exists the server
+// runs under `id` (no read). Otherwise, for the live session only, the dashboard's row of this session names the server's id (`sessionIdOf`), asked once and kept; a failed ask is retried after
+// MCP_ID_RETRY_MS. Anything it cannot establish answers `id` itself, so the readers fail open exactly as before. An id other than the live one (a predecessor) cannot ask and is its own.
+async function mcpSessionId($: any, id: string): Promise<{ id: string; fault: string | null }> {
+  const home = await homeDir($)
+  const own = home === null ? null : sessionFilePath(home, 'compaction', id)
+  if (own === null || (await $.fs.exists(own)) || id !== String(await $.session.id())) return { id, fault: null }
+  if ((await read($, bootEngineId)) === id) return { id, fault: null }
+  const known = (await read($, mcpIds))[id]
+  if (known !== undefined && 'id' in known) return { id: known.id, fault: null }
+  const now = await $.clock.now()
+  if (known !== undefined && now - known.failedAt < MCP_ID_RETRY_MS) return { id, fault: known.fault }
+  let found: string | null = null
+  let fault: string | null = null
+  try {
+    const me = await api($, 'GET', '/api/plan-sessions/me')
+    // the same sorting as sessionPlan: a plugin server not there, a gone or revoked key and the agent gate are quiet (the engine's id stands); only a real dashboard fault is told
+    if (me.unreachable === true || meIsQuiet(me)) {
+      // nothing to say
+    } else if (!me.ok) fault = errText(me).slice(0, TOAST_ERROR_MAX)
+    else if (meLacksSession(me)) fault = ME_NO_SESSION
+    else if (me.body.session !== null) found = sessionIdOf(me.body.session)
+  } catch (err: any) {
+    fault = errMessage(err).slice(0, TOAST_ERROR_MAX)
+  }
+  await update($, mcpIds, cur => ({ ...cur, [id]: found === null ? { failedAt: now, fault } : { id: found } }))
+  return { id: found ?? id, fault: found === null ? fault : null }
 }
 
 // The home directory the session's MCP server keeps its per-session files under (`sessionFilePath`): HOME, else Windows' USERPROFILE; null when neither names one.
@@ -2826,7 +2883,7 @@ type StartReads = { line: string | null; askRestart: boolean }
 // which is also what names the predecessor to the server. Any other clear is quiet, the server is never asked.
 async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<string | null> {
   const ended = start.predecessorId
-  if (ended === null || !(await isPlanConnected($, ended)) || (await isPlanConnected($, start.sessionId))) return null
+  if (ended === null || !(await isPlanConnected($, ended)) || (await isPlanConnected($, start.sessionId, false))) return null
   const server = await serverState($, (await $.clock.now()) + CONTEXT_DEADLINE_MS)
   if (server === 'unloaded') return null
   if (server === 'not-yet') return restartFailureLine(SERVER_NOT_CONNECTED_REASON)
@@ -3543,10 +3600,14 @@ const COMPACTION_IDLE_CHECK_MS = 5000
 async function compactionControl($: any): Promise<ControlFile> {
   const home = await homeDir($)
   if (home === null) return { kind: 'bad', reason: 'no home directory' }
-  const path = sessionFilePath(home, 'compaction', await $.session.id())
-  if (path === null) return { kind: 'bad', reason: `the session id ${JSON.stringify(await $.session.id())} names no file` }
+  const engineId = String(await $.session.id())
+  const { id, fault } = await mcpSessionId($, engineId)
+  // a lookup that failed (not one that found no row) cannot say where the control is: told once as an unreadable control is, and Claude Code's own compaction applies
+  if (fault !== null) return { kind: 'bad', reason: `the session's id on the dashboard could not be read: ${fault}` }
+  const path = sessionFilePath(home, 'compaction', id)
+  if (path === null) return { kind: 'bad', reason: `the session id ${JSON.stringify(engineId)} names no file` }
   if (!(await $.fs.exists(path))) return { kind: 'absent' }
-  return parseControlFile(await $.fs.read(path), String(await $.session.id()))
+  return parseControlFile(await $.fs.read(path), id)
 }
 
 // The size of the context now and the session's real window; each null when the engine cannot say yet (before the first response).
