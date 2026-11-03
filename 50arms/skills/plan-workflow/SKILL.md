@@ -385,7 +385,12 @@ by how much work it is (issue-workflow's creation guide, § Build grade), then r
 The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
 worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate (`GET /api/board-task-profiles?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e.g. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`), at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
 gate instruction route's answer, and pick the matching `50arms:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
-on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
+on its pushed tip; a gate never changes the build grade. When a gate finds something to fix, send the builder
+the findings. Set each fix pass's grade from the hardest single finding it fixes, never the card's build grade
+and never the number of findings, using the same build grade scale (issue-workflow's creation guide, § Build
+grade), and read that grade's model and effort from the board's agent grades. A builder keeps its own model, so
+a fix pass graded above or below the build goes to a fresh agent at its grade, briefed with the findings and the
+builder's handoff note. A gate's own review grade is unchanged. Once the POST gates pass, land it and complete the card.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
 have passed and it carries no design yet, start its designer, unless one you started is still on
 it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn, or for a question about how something looks or behaves on screen while designs are on (mantra item 3), even when its design gate has already passed, whoever found it (you, a reviewer's `fail`). Write the question in an agent note on the card first: the brief is only `gate-designer <CARD-ID>`, so the designer reads it from the card. A builder that meets one makes the design itself and reports what it published: that card now waits on its design problem, so run no POST gate on its tip and release the card.
