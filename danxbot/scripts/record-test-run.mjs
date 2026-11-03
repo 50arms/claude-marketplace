@@ -50,6 +50,15 @@ export function parseArgs(argv) {
   return { ...opts, command: argv.slice(split + 1) };
 }
 
+/**
+ * CP-57: a command wrapped as `bash -c '<cmd>'` runs with `-o pipefail`, so a failure anywhere in its pipeline (`npm test | tail -3`) is the exit status
+ * the recorder sees, never the last stage's. Only bash and zsh are rewritten (`sh` may be dash, which has no pipefail); the recorded command stays as given.
+ */
+export function withPipefail(argv) {
+  const name = (argv[0] ?? "").split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, "");
+  return (name === "bash" || name === "zsh") && argv[1] === "-c" ? [argv[0], "-o", "pipefail", ...argv.slice(1)] : argv;
+}
+
 export const SHELL_HINT =
   "a command that needs a shell (a Windows npm.cmd shim, a pipe, a variable) is wrapped, for example: -- bash -c 'npm test -- --reporter=json --outputFile.json=\"$DANXBOT_TEST_REPORT\"'; single-quote it so $DANXBOT_TEST_REPORT is not expanded early (from PowerShell, bash can resolve to System32\\bash.exe, which is WSL: use Git Bash by its full path)";
 
@@ -87,7 +96,8 @@ async function main() {
   // the argv runs as given, with no shell and no re-splitting, so a quoted argument stays one argument; the recorded command is that argv written back
   const command = args.command.map(shellWord).join(" ");
   const exitCode = await new Promise((resolve) => {
-    const child = spawn(args.command[0], args.command.slice(1), { cwd, stdio: "inherit", windowsHide: true, env: { ...process.env, DANXBOT_TEST_REPORT: report } });
+    const argv = withPipefail(args.command);
+    const child = spawn(argv[0], argv.slice(1), { cwd, stdio: "inherit", windowsHide: true, env: { ...process.env, DANXBOT_TEST_REPORT: report } });
     child.on("close", (code) => resolve(code ?? 1));
     child.on("error", (err) => {
       say(`could not start ${JSON.stringify(args.command[0])}: ${err.message}`);

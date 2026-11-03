@@ -35,13 +35,28 @@ const attr = (tag, name) => {
   return m === null ? undefined : Number(m[1]);
 };
 
-/** Counts from a JUnit XML report (PHPUnit, pytest, Maven and others). No per-file data is assumed: `test_files` and `files` are null. */
+/**
+ * Counts from a JUnit XML report (node --test, PHPUnit, pytest, Maven and others). No per-file data is assumed: `test_files` and `files` are null.
+ * The `testcase` elements are the tests: node's reporter nests `testsuite` elements, puts a suite's `tests` attribute on direct children only, and writes
+ * top-level cases outside any suite, so no suite attribute (nor the root's, which node omits) is a total. A report with no `testcase` falls back to the
+ * suites' own attributes (the top-level ones; a suite nested in another is already in its parent's counts).
+ */
 export function parseJunitReport(text) {
+  const cases = [...text.matchAll(/<testcase\b(?:"[^"]*"|'[^']*'|[^>"'])*?(?:\/>|>([\s\S]*?)<\/testcase>)/g)];
+  if (cases.length > 0) {
+    let failed = 0;
+    let skipped = 0;
+    for (const c of cases) {
+      const body = c[1] ?? "";
+      if (/<(?:failure|error)\b/.test(body)) failed += 1;
+      else if (/<skipped\b/.test(body)) skipped += 1;
+    }
+    return { tests: counts(cases.length - failed - skipped, failed, skipped, cases.length), test_files: null, files: null };
+  }
   const root = /<testsuites\b[^>]*>/.exec(text);
   let tags;
   if (root !== null && attr(root[0], "tests") !== undefined) tags = [root[0]];
   else {
-    // no root totals: sum the top-level suites (a suite nested in another is already in its parent's counts)
     tags = [];
     let end = -1;
     for (const s of text.matchAll(/<testsuite\b[^>]*>/g)) {

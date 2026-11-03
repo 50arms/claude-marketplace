@@ -1,0 +1,4 @@
+import { describe, it } from "node:test";
+describe("outer", () => { describe("inner", () => { it("a", () => {}); it("b", () => {}); it("skipme", { skip: true }, () => {}); }); it("c", () => {}); });
+it("top", () => {});
+it("bad", () => { throw new Error("x"); });
