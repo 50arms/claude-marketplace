@@ -2230,6 +2230,15 @@ describe('the ready-agent loop', () => {
         expect(asked(d)).toBe(0)
       })
 
+      test('a sub-agent that loads the skill does not put the main session on the list', async ($, on) => {
+        on('tool.call', () => ({ result: 'loaded' }) as any)
+        const d = await started($, on)
+        const r: any = await $.tool.call({ tool: 'Skill', skill: 'danxbot:50arms-ready', agentId: 'a1' } as any)
+        await d.clock.settle()
+        expect(d.world.readyMark).toBe(null)
+        expect(r.context ?? []).not.toContain(READY_JOINING)
+      })
+
       test('a store that fails when the session leaves still ends the server loop first', async ($, on) => {
         const d = await resumed($, on, d => void (d.world.readyMark = REPO))
         d.relay.breakStore('store unavailable')

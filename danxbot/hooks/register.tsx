@@ -2346,7 +2346,7 @@ async function markReadyJudged($: any): Promise<void> {
 }
 
 // How the latest session start began (the classic start names it); a restart of the app resumes the session. Read by the chain that follows session.start, which first waits on the
-// dashboard's plan read, so the classic start (a hook of the same start) has set it long before; a module reload starts null and asks nothing.
+// dashboard's plan read, so the classic start (a hook of the same start) has, as inferred and not verified live, set it long before; a module reload starts null and asks nothing.
 let lastStartSource: string | null = null
 
 // A resumed session that is signed in and in no ready loop (this process's, or the row's) is asked once to judge whether its person's work is 50 Arms work, and to load the skill when it is.
