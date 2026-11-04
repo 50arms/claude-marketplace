@@ -16,6 +16,8 @@ const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${SESSION_ID}.json`
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { prompt: 'go', turnId: 't1' } as any
 const AGENT = { agent_id: 'a1b2c3', agent_type: 'danxbot:worker-sonnet-high' } as any
+const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
+const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const PRE = (trigger: string) => ({ trigger, session_id: SESSION_ID, transcript_path: '/work/main.jsonl', cwd: '/work', custom_instructions: null }) as any
 
 type Over = { mode?: 'compact' | 'clear' | null; releaseId?: string | null; releaseUntilMs?: number | null }
@@ -32,6 +34,12 @@ const CLEARING = 'Clearing now: your agent said it is ready.'
 for (const surface of SURFACES) {
   describe(`a ready session is cleared when its control says clear, on ${surface}`, () => {
     async function started($: any, on: any) {
+      // the engine's core for a compaction: a test holds it to keep a compaction running
+      const core = { hold: null as Promise<void> | null }
+      on('session.compact', async () => {
+        if (core.hold !== null) await core.hold
+        return COMPACTED as any
+      })
       on('turn.complete', () => ({ text: 'done' }) as any)
       on('classic.PreCompact', () => ({}) as any)
       on('classic.SessionStart', () => ({}) as any)
@@ -43,7 +51,7 @@ for (const surface of SURFACES) {
       d.world.sessionId = SESSION_ID
       d.world.context = { tokens: 120_000, window: WINDOW }
       await startSession($, d, surface)
-      return d
+      return Object.assign(d, { core })
     }
     const turnEnds = async ($: any, d: any) => {
       await $.turn.start(START)
@@ -106,6 +114,36 @@ for (const surface of SURFACES) {
       hold.release()
       await d.clock.settle()
     })
+
+    // a person's own /compact (or Claude Code's) is running: the plugin notes it from the moment core starts it until the session restarts from it
+    for (const mode of ['compact', 'clear'] as const) {
+      test(`a ready that arrives while a compaction is running starts no ${mode === 'clear' ? 'clear' : 'second compaction'}, and is not spent: it acts once the compaction has ended`, async ($, on) => {
+        const d = await started($, on)
+        d.world.files[CONTROL_FILE] = file({ mode })
+        const hold = held()
+        d.core.hold = hold.promise
+        const running = $.session.compact({ trigger: 'manual', messages: TRANSCRIPT } as any)
+        await d.clock.settle()
+        d.world.files[CONTROL_FILE] = file({ mode, releaseId: 'ready-1' })
+        await turnEnds($, d)
+        await tick(d)
+        await tick(d)
+        expect(d.compactRuns).toEqual([])
+        expect(d.world.clearsStarted).toBe(0)
+        hold.release()
+        await running
+        await $.classic.SessionStart({ session_id: SESSION_ID, source: 'compact', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
+        await d.clock.settle()
+        await tick(d)
+        if (mode === 'clear') {
+          expect(d.clearRuns).toHaveLength(1)
+          expect(d.compactRuns).toEqual([])
+        } else {
+          expect(d.compactRuns).toHaveLength(1)
+          expect(d.clearRuns).toEqual([])
+        }
+      })
+    }
 
     // a plugin reload starts a new process that remembers nothing but the store: the release a clear spent must read as spent under the id the control file is named for, not the engine's new one
     test("a plugin process that starts after the clear finds the release spent in the store under the dashboard's id", async ($, on) => {

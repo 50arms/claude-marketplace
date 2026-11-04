@@ -3810,6 +3810,9 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
 // The compaction reaches PreCompact and `session.compact` as trigger `manual`. The command takes no arguments: the control carries no instructions.
 // A failure is one line to the person, and the dashboard re-asks once the release has expired.
 async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
+  // a compaction of the main agent is already running (its entry stands from the moment core starts it until the session restarts from it): a second /compact would queue behind it and a /clear would
+  // cut into it. The release is left unspent, so it acts at the next check once the compaction has ended; one that expires first is the dashboard's to re-arm
+  if (liveCompacting(await read($, compacting), await $.clock.now()).main !== null) return
   if (file.kind === 'control' && file.control !== null && file.control.mode === 'clear') return clearAtReady($, file)
   if ((await spendReadyRelease($, file)) === null) return
   $.ui.toast('Compacting now: your agent said it is ready.')
