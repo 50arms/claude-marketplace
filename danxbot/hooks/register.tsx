@@ -1766,7 +1766,7 @@ async function onSessionStart($: any, e: any, next: any) {
   resetPacing()
   dashboardAnswered = false
   detach($, 'Usage pacing', primePacing($))
-  detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => adoptReadyMark($)).then(() => askReadyJudgement($)).then(() => retryWhileNotConnected($)).then(() => adoptReadyMark($)).then(() => askReadyJudgement($)))
+  detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => adoptThenAskReady($)).then(() => retryWhileNotConnected($)).then(() => adoptThenAskReady($)))
   // the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
   detach($, 'Plan event relay start', startRelayWhenKnown($))
   return next(e)
@@ -1871,7 +1871,8 @@ async function onReadyCommand($: any, e: any) {
 // The agent's own way onto the list: loading the skill does what the command does, and the model is told the same line the person is.
 async function onReadySkill($: any, e: any, next: any) {
   const ran = await next(e)
-  if (ran.deny !== undefined || ran.isError === true || !READY_SKILL.test(String(e.skill))) return ran
+  // only the main session's own load joins: a sub-agent (agentId) that loads the skill is not the session on the list
+  if (e.agentId !== undefined || ran.deny !== undefined || ran.isError === true || !READY_SKILL.test(String(e.skill))) return ran
   const text = await joinReady($, typeof e.args === 'string' ? e.args.trim() : '')
   return { ...ran, context: [...(ran.context ?? []), text] }
 }
@@ -1896,7 +1897,6 @@ async function leaveReady($: any, told: string | null): Promise<void> {
   // its open approvals go with it: a decision that came later would reach someone who left, or the model, which never asked
   const loop = await read($, readyLoop)
   await update($, readyLoop, () => null)
-  await markReadyJudged($)
   if (typeof loop?.permissionId === 'string') {
     await update($, permissionRequests, cur => cur.filter(r => r.publicId !== loop.permissionId))
     await syncPermissionPoll($)
@@ -1910,6 +1910,8 @@ async function leaveReady($: any, told: string | null): Promise<void> {
   if (told !== null) $.ui.toast(told)
   const r = await api($, 'DELETE', READY_PATH)
   if (!r.ok && !isSignedOut(r) && outcomeRevokedBy(r) === null && agentBlockOf(r) === null) $.ui.toast(`Could not take this session off the ready list: ${errText(r)}`.slice(0, FAILURE_TOAST_MAX))
+  // last, so a store failure here can never leave the server's loop running
+  await markReadyJudged($)
 }
 
 // a failure the next tick retries, shown once until it changes or the loop moves on
@@ -2194,7 +2196,7 @@ async function runReset($: any, sessionId: string, releaseId: string): Promise<b
   // spent once the /clear has run: the release is acted on once, by this process or the next
   const now = await $.clock.now()
   await storeOp($, { op: 'set', key: clearSpentKey(sessionId), value: { releaseId, at: now } })
-  await pruneSpentReleases($, CLEAR_SPENT_PREFIX)
+  await pruneSessionRecords($, CLEAR_SPENT_PREFIX)
   await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'joining', told: null }))
   return true
 }
@@ -2340,10 +2342,11 @@ async function markReady($: any, token: LookToken): Promise<boolean> {
 async function markReadyJudged($: any): Promise<void> {
   const id = String(await $.session.id())
   await storeOp($, { op: 'set', key: readyJudgedKey(id), value: { at: await $.clock.now() } })
-  await pruneSpentReleases($, READY_JUDGED_PREFIX)
+  await pruneSessionRecords($, READY_JUDGED_PREFIX)
 }
 
-// How the latest session start began (the classic start names it); a restart of the app resumes the session
+// How the latest session start began (the classic start names it); a restart of the app resumes the session. Read by the chain that follows session.start, which first waits on the
+// dashboard's plan read, so the classic start (a hook of the same start) has set it long before; a module reload starts null and asks nothing.
 let lastStartSource: string | null = null
 
 // A resumed session that is signed in and in no ready loop (this process's, or the row's) is asked once to judge whether its person's work is 50 Arms work, and to load the skill when it is.
@@ -2355,6 +2358,12 @@ async function askReadyJudgement($: any): Promise<void> {
   if ((await storeOp($, { op: 'get', key: readyJudgedKey(String(await $.session.id())) })) != null) return
   await markReadyJudged($)
   await tellModelAwake($, READY_JUDGE_PROMPT)
+}
+
+// The loop the row still holds is taken up first; a session that is then in none is asked once to judge.
+async function adoptThenAskReady($: any): Promise<void> {
+  await adoptReadyMark($)
+  await askReadyJudgement($)
 }
 
 // A process restarted while the dashboard still keeps its loop (a mark, or a job the loop took: the view's `readyRepo`) is in that loop without the plugin's half, and would take work and never clear:
@@ -3652,8 +3661,8 @@ async function contextReading($: any): Promise<{ tokens: number | null; window: 
   return { tokens: count(context?.tokens), window: count(context?.window) }
 }
 
-// The store keeps the spent-release records under `prefix` (a compaction's, or the ready loop's clear) of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
-async function pruneSpentReleases($: any, prefix: string): Promise<void> {
+// The store keeps one record per session under `prefix` (a compaction's spent release, the ready loop's spent clear, or its judged mark) of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
+async function pruneSessionRecords($: any, prefix: string): Promise<void> {
   const entries: { key: string; at: number }[] = []
   for (const key of await storeOp($, { op: 'keys' })) {
     if (!key.startsWith(prefix)) continue
@@ -3769,7 +3778,7 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
   })
   if (!won) return null
   await storeOp($, { op: 'set', key, value: { releaseId, at: now } })
-  await pruneSpentReleases($, USED_RELEASE_PREFIX)
+  await pruneSessionRecords($, USED_RELEASE_PREFIX)
   return releaseId
 }
 

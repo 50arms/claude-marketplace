@@ -9,7 +9,7 @@ import { heldForInput } from '../relay/text'
 
 export const READY_COMMAND = '50arms-ready'
 // The skill that is the agent's own way onto the list (loading it does what the command does). Loaded as `50arms-ready`, or under the plugin's name.
-export const READY_SKILL = /^(?:[a-z0-9_-]+:)?50arms-ready$/
+export const READY_SKILL = new RegExp(`^(?:[a-z0-9_-]+:)?${READY_COMMAND}$`)
 export const READY_DESCRIPTION = `Wait on the team's ready list for this folder's repo, and rejoin it after each job (\`/${READY_COMMAND} off\` leaves it)`
 export const READY_PATH = '/api/plan-sessions/me/ready'
 // how often a session in the loop looks again. A session's mark can be lost while it runs (a team-mate's claim clears a lapsed session's agent, and the mark goes with it), so a
