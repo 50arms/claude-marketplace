@@ -3474,7 +3474,7 @@ async function reportCompactionEnd($: any): Promise<void> {
 // activity is sent now. The view is not loaded yet at this point (its refresh is detached), so the send does not wait on it.
 async function reportActivityOnConnect($: any): Promise<void> {
   const now = await $.clock.now()
-  const busy = liveCompacting(await read($, compacting), now).main !== null
+  const busy = await mainIsCompacting($)
   await sendTurnActivity($, busy ? 'compacting' : (await read($, turn)).isRunning ? 'in_turn' : 'idle')
 }
 
@@ -3778,6 +3778,11 @@ async function armSubAgents($: any, file: ControlFile): Promise<void> {
   await update($, armedPercent, () => wanted)
 }
 
+// whether the main agent's compaction is running: its entry stands from the moment core starts it until the session restarts from it (or it is skipped, fails, or outlives its TTL)
+async function mainIsCompacting($: any): Promise<boolean> {
+  return liveCompacting(await read($, compacting), await $.clock.now()).main !== null
+}
+
 // The file's unexpired release the plugin has not spent, with the store key that records it. The key is the id the control file is named for (the dashboard's id for the session), which a /clear
 // does not change: the engine's own id would let a release that a clear spent run again under the new id, since a clear writes no compaction to consume it.
 async function waitingRelease($: any, file: ControlFile): Promise<{ key: string; releaseId: string } | null> {
@@ -3810,9 +3815,12 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
 // The compaction reaches PreCompact and `session.compact` as trigger `manual`. The command takes no arguments: the control carries no instructions.
 // A failure is one line to the person, and the dashboard re-asks once the release has expired.
 async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
-  // a compaction of the main agent is already running (its entry stands from the moment core starts it until the session restarts from it): a second /compact would queue behind it and a /clear would
-  // cut into it. The release is left unspent, so it acts at the next check once the compaction has ended; one that expires first is the dashboard's to re-arm
-  if (liveCompacting(await read($, compacting), await $.clock.now()).main !== null) return
+  // a compaction of the main agent is already running (its entry stands from the moment core starts it until the session restarts from it), so it has already done what this ready asked for: the release is
+  // spent without a second /compact or a /clear, as a person's own /compact spends a waiting ready. A later release acts as usual
+  if (await mainIsCompacting($)) {
+    await spendReadyRelease($, file)
+    return
+  }
   if (file.kind === 'control' && file.control !== null && file.control.mode === 'clear') return clearAtReady($, file)
   if ((await spendReadyRelease($, file)) === null) return
   $.ui.toast('Compacting now: your agent said it is ready.')

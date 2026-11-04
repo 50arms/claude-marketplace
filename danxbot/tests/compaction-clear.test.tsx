@@ -117,7 +117,7 @@ for (const surface of SURFACES) {
 
     // a person's own /compact (or Claude Code's) is running: the plugin notes it from the moment core starts it until the session restarts from it
     for (const mode of ['compact', 'clear'] as const) {
-      test(`a ready that arrives while a compaction is running starts no ${mode === 'clear' ? 'clear' : 'second compaction'}, and is not spent: it acts once the compaction has ended`, async ($, on) => {
+      test(`a ready that arrives while a compaction is running starts no ${mode === 'clear' ? 'clear' : 'second compaction'} and is spent: nothing runs for it once the compaction has ended, and a later release still acts`, async ($, on) => {
         const d = await started($, on)
         d.world.files[CONTROL_FILE] = file({ mode })
         const hold = held()
@@ -135,6 +135,13 @@ for (const surface of SURFACES) {
         await $.classic.SessionStart({ session_id: SESSION_ID, source: 'compact', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
         await d.clock.settle()
         await tick(d)
+        await turnEnds($, d)
+        // the running compaction did what that ready asked for: the release is spent, so nothing runs for it after the compaction either
+        expect(d.compactRuns).toEqual([])
+        expect(d.world.clearsStarted).toBe(0)
+        // a later release acts as usual
+        d.world.files[CONTROL_FILE] = file({ mode, releaseId: 'ready-2' })
+        await turnEnds($, d)
         if (mode === 'clear') {
           expect(d.clearRuns).toHaveLength(1)
           expect(d.compactRuns).toEqual([])
