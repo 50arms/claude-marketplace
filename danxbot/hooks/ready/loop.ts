@@ -9,7 +9,7 @@ import { heldForInput } from '../relay/text'
 
 export const READY_COMMAND = '50arms-ready'
 // The skill that is the agent's own way onto the list, and whose command a person types: `/50arms-ready` arrives as the command `danxbot:50arms-ready`
-// (CP-67), the Skill tool as `50arms-ready` or under the plugin's name. Both do the same join.
+// on `command.run`, the Skill tool as `50arms-ready` or under the plugin's name. Both do the same join.
 export const READY_SKILL = new RegExp(`^(?:[a-z0-9_-]+:)?${READY_COMMAND}$`)
 export const READY_PATH = '/api/plan-sessions/me/ready'
 // how often a session in the loop looks again. A session's mark can be lost while it runs (a team-mate's claim clears a lapsed session's agent, and the mark goes with it), so a

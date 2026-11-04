@@ -1741,7 +1741,7 @@ async function onSessionStart($: any, e: any, next: any) {
   const bootId = String(await $.session.id())
   await update($, bootEngineId, cur => cur ?? bootId)
   await unpinStatus($)
-  // CP-67: never a command named after one of the plugin's skills: the engine refuses it (`"/50arms-ready" refused: it is the plugin's /danxbot:50arms-ready`),
+  // never a command named after one of the plugin's skills: the engine refuses it (`"/50arms-ready" refused: it is the plugin's /danxbot:50arms-ready`),
   // and the throw ends this hook here, before the usage ticker and everything below it start. `/50arms-ready` is the skill's own command (onReadyCommand).
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan band (connection + cards that need you)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
@@ -3983,7 +3983,7 @@ export const register: Register = (on, options) => {
   on('session.attach', onSessionAttach)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
-  // CP-67: a person typing /50arms-ready runs the skill's command, which the engine names `danxbot:50arms-ready`; answering it here joins without the model
+  // a person typing /50arms-ready runs the skill's command, which the engine names `danxbot:50arms-ready`; answering it here joins without the model
   on('command.run', { command: READY_SKILL }, onReadyCommand)
   on('tool.call', { tool: 'Skill' }, onReadySkill)
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
