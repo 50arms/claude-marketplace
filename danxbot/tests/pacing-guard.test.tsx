@@ -727,8 +727,8 @@ describe('what register wires', () => {
     const matched = toolCalls.filter(w => w.matcher !== undefined)
     expect(matched.length).toBeGreaterThan(0)
     const toolOf = (w: { matcher: unknown }) => (w.matcher as { tool?: string })?.tool ?? ''
-    // `Write` is the one other tool: onHandoffWrite is a pass-through that only appends a reminder after `next`, so the guard never sits on it
-    for (const w of matched.filter(w => !/__danxbot_api$/.test(toolOf(w)) && toolOf(w) !== 'Write')) expect(toolOf(w)).toMatch(/^mcp__(plugin_danxbot_)?danx-dashboard__(plan_connect|request_permission|card_connect)$/)
+    // `Write` and `Skill` are the two other tools: onHandoffWrite and onReadySkill are pass-throughs that only append context after `next` (the skill's, only when the 50arms-ready skill loads), so the guard never sits on them
+    for (const w of matched.filter(w => !/__danxbot_api$/.test(toolOf(w)) && toolOf(w) !== 'Write' && toolOf(w) !== 'Skill')) expect(toolOf(w)).toMatch(/^mcp__(plugin_danxbot_)?danx-dashboard__(plan_connect|request_permission|card_connect)$/)
     // DX-5846: danxbot_api carries every card write, so exactly ONE handler may sit on it: onAckCall, a pass-through that acts only on the acknowledgement route
     // (POST /api/plan-sessions/me/events/<N>/ack); a second one would reach every card write, push and commit the guard must stay off
     expect(matched.filter(w => /__danxbot_api$/.test(toolOf(w)))).toHaveLength(1)

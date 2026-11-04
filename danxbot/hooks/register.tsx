@@ -17,7 +17,7 @@ import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
-import { CLEAR_SPENT_PREFIX, READY_COMMAND, READY_DESCRIPTION, READY_DISCONNECTED, READY_JOINING, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
+import { CLEAR_SPENT_PREFIX, READY_COMMAND, READY_DESCRIPTION, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
 import type { GithubOrigin, MarkAnswer, ServerLoop } from './ready/loop'
 import { sessionFilePath } from './relay/session-file'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
@@ -1766,7 +1766,7 @@ async function onSessionStart($: any, e: any, next: any) {
   resetPacing()
   dashboardAnswered = false
   detach($, 'Usage pacing', primePacing($))
-  detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => adoptReadyMark($)).then(() => retryWhileNotConnected($)).then(() => adoptReadyMark($)))
+  detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => adoptReadyMark($)).then(() => askReadyJudgement($)).then(() => retryWhileNotConnected($)).then(() => adoptReadyMark($)).then(() => askReadyJudgement($)))
   // the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
   detach($, 'Plan event relay start', startRelayWhenKnown($))
   return next(e)
@@ -1865,17 +1865,29 @@ function stopReadyTicker(): void {
 }
 
 async function onReadyCommand($: any, e: any) {
-  const arg = typeof e.args === 'string' ? e.args.trim() : ''
+  return { text: await joinReady($, typeof e.args === 'string' ? e.args.trim() : '') }
+}
+
+// The agent's own way onto the list: loading the skill does what the command does, and the model is told the same line the person is.
+async function onReadySkill($: any, e: any, next: any) {
+  const ran = await next(e)
+  if (ran.deny !== undefined || ran.isError === true || !READY_SKILL.test(String(e.skill))) return ran
+  const text = await joinReady($, typeof e.args === 'string' ? e.args.trim() : '')
+  return { ...ran, context: [...(ran.context ?? []), text] }
+}
+
+// What the command and the skill share: `off` leaves, nothing joins, anything else is the usage line. Returns the words that answer it.
+async function joinReady($: any, arg: string): Promise<string> {
   if (arg === 'off') {
     detach($, 'Ready list', leaveReady($, null))
-    return { text: READY_OFF }
+    return READY_OFF
   }
-  if (arg !== '') return { text: READY_USAGE }
+  if (arg !== '') return READY_USAGE
   // running it again starts the told-once memory afresh and keeps the rest: the phase the session is in, and an approval still open
   await update($, readyLoop, cur => (cur === null ? joiningLoop() : { ...cur, told: null, claimAsked: true }))
   startReadyTicker($)
   detach($, 'Ready list', syncReady($))
-  return { text: READY_JOINING }
+  return READY_JOINING
 }
 
 // Off the list, for the reason `told` (null: the person asked, and the command's answer said so). Every exit from the loop comes here, and ends the dashboard's loop with the mark: a loop left running there
@@ -1884,6 +1896,7 @@ async function leaveReady($: any, told: string | null): Promise<void> {
   // its open approvals go with it: a decision that came later would reach someone who left, or the model, which never asked
   const loop = await read($, readyLoop)
   await update($, readyLoop, () => null)
+  await markReadyJudged($)
   if (typeof loop?.permissionId === 'string') {
     await update($, permissionRequests, cur => cur.filter(r => r.publicId !== loop.permissionId))
     await syncPermissionPoll($)
@@ -2321,6 +2334,27 @@ async function markReady($: any, token: LookToken): Promise<boolean> {
   }
   await tellReadyOnce($, readyFailed('marking this session ready', errText(r)))
   return false
+}
+
+// The one record that this session was asked, or left the list on its own account: a session that left is never asked to rejoin.
+async function markReadyJudged($: any): Promise<void> {
+  const id = String(await $.session.id())
+  await storeOp($, { op: 'set', key: readyJudgedKey(id), value: { at: await $.clock.now() } })
+  await pruneSpentReleases($, READY_JUDGED_PREFIX)
+}
+
+// How the latest session start began (the classic start names it); a restart of the app resumes the session
+let lastStartSource: string | null = null
+
+// A resumed session that is signed in and in no ready loop (this process's, or the row's) is asked once to judge whether its person's work is 50 Arms work, and to load the skill when it is.
+// A row whose loop could not be read says nothing about being off the list, so it asks nothing.
+async function askReadyJudgement($: any): Promise<void> {
+  if (lastStartSource !== 'resume' || (await read($, readyLoop)) !== null) return
+  const loaded = await read($, view)
+  if (!isSignedIn(loaded) || loaded.readyRepo !== null || loaded.readyLoopFault !== null) return
+  if ((await storeOp($, { op: 'get', key: readyJudgedKey(String(await $.session.id())) })) != null) return
+  await markReadyJudged($)
+  await tellModelAwake($, READY_JUDGE_PROMPT)
 }
 
 // A process restarted while the dashboard still keeps its loop (a mark, or a job the loop took: the view's `readyRepo`) is in that loop without the plugin's half, and would take work and never clear:
@@ -3011,6 +3045,7 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
   // the ended session is consumed by this start only: a later clear that saw no end must not be asked about this one's
   const ended = await takeEndedSession($)
+  lastStartSource = typeof e.source === 'string' ? e.source : null
   // a restart only sub-agents account for is theirs to be briefed about; the main agent's pending start is for its own compaction (and every other start, and a restart nobody noted)
   const restart = e.source === 'compact' ? await restartBriefsMain($) : { briefsMain: true, own: false }
   // every start, a sub-agent's compaction included, loses what the model was told: the disk notice is told again and measured afresh
@@ -3939,6 +3974,7 @@ export const register: Register = (on, options) => {
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
   on('command.run', { command: READY_COMMAND }, onReadyCommand)
+  on('tool.call', { tool: 'Skill' }, onReadySkill)
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
   on('tool.check', (_$, e, next) => ownServerCheck(e, next))
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
