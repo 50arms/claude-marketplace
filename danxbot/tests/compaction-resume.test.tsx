@@ -63,14 +63,19 @@ for (const surface of SURFACES) {
       expect(resumes(d)).toHaveLength(1)
     })
 
-    // CP-48: after a /clear the connection record is under the MCP server's boot id; a compaction keeps that id, so the prompt still fires
+    // CP-48: a /clear in the engine's order (session.end, session.start with the new id, the classic SessionStart(clear)) leaves the connection record under the MCP server's boot id; a later /compact keeps that id, so the prompt still fires
     test("a compaction after a /clear still starts the resume prompt (the record is under the server's boot id)", async ($, on) => {
+      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
       const d = await started($, on)
+      await $.session.end({ reason: 'clear', sessionId: SESSION_ID } as any)
       d.world.sessionId = CLEARED_SESSION_ID
       d.world.localRecord = false
       d.world.records.push(SESSION_ID)
+      await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID })
+      await d.clock.settle()
       await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
-      await $.classic.SessionStart({ ...COMPACT, session_id: d.world.sessionId })
+      await $.classic.SessionStart({ ...COMPACT, session_id: CLEARED_SESSION_ID })
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)
     })
