@@ -79,3 +79,11 @@ test("DX-4233: no script or hook module imports a file that does not exist", () 
     }
   }
 });
+
+test("CP-67: the kit's PLUGIN_SKILLS names every skill folder, so its command.register refuses each name the engine refuses", () => {
+  const folders = fs.readdirSync(path.join(PLUGIN, "skills"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  const kit = fs.readFileSync(path.join(PLUGIN, "tests", "plan-kit.tsx"), "utf8");
+  const listed = /export const PLUGIN_SKILLS = \[([^\]]*)\]/.exec(kit);
+  assert.ok(listed, "plan-kit.tsx exports PLUGIN_SKILLS as one array literal");
+  assert.deepEqual([...listed[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(), folders);
+});

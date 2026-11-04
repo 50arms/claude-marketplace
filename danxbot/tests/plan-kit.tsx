@@ -37,6 +37,9 @@ export const test = makeTest(baseTest as any)
 const fsKey = (path: string): string => path.replace(/^(?:.*\/)?[A-Za-z]:/, '').replaceAll('\\', '/')
 
 export const SURFACES = ['terminal', 'desktop'] as const
+// CP-67: the plugin's skills (one folder each under danxbot/skills; plugin-modules.test.mjs holds this list to them). The engine refuses a command named
+// after one: `$.command.register: "/<name>" refused: it is the plugin's /danxbot:<name>` (claude.exe 2.1.309), and the kit refuses it the same way.
+export const PLUGIN_SKILLS = ['50arms-ready', 'fix-agent-behavior', 'issue-workflow', 'plan-workflow', 'prepare-for-compaction', 'start']
 
 const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError: false })
 // DX-4317: the dashboard origin the fixture answers (`dashboard_url`): deliberately not the production
@@ -1413,6 +1416,7 @@ export function dashboard(
     return { value: { text: '' } } as any
   })
   on('command.register', (_$: any, e: any) => {
+    if (PLUGIN_SKILLS.includes(e.name)) throw new Error(`danxbot: $.command.register: "/${e.name}" refused: it is the plugin's /danxbot:${e.name}`)
     commands.push(e.name)
     return { value: { isRegistered: true } } as any
   })

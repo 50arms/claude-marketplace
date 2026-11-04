@@ -17,7 +17,7 @@ import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
-import { CLEAR_SPENT_PREFIX, READY_COMMAND, READY_DESCRIPTION, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
+import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
 import type { GithubOrigin, MarkAnswer, ServerLoop } from './ready/loop'
 import { sessionFilePath } from './relay/session-file'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
@@ -1741,8 +1741,9 @@ async function onSessionStart($: any, e: any, next: any) {
   const bootId = String(await $.session.id())
   await update($, bootEngineId, cur => cur ?? bootId)
   await unpinStatus($)
+  // CP-67: never a command named after one of the plugin's skills: the engine refuses it (`"/50arms-ready" refused: it is the plugin's /danxbot:50arms-ready`),
+  // and the throw ends this hook here, before the usage ticker and everything below it start. `/50arms-ready` is the skill's own command (onReadyCommand).
   await $.command.register({ name: COMMAND, description: 'Show the danxbot plan band (connection + cards that need you)' })
-  await $.command.register({ name: READY_COMMAND, description: READY_DESCRIPTION })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
   await update($, modelPlan, () => null)
@@ -3982,7 +3983,8 @@ export const register: Register = (on, options) => {
   on('session.attach', onSessionAttach)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
-  on('command.run', { command: READY_COMMAND }, onReadyCommand)
+  // CP-67: a person typing /50arms-ready runs the skill's command, which the engine names `danxbot:50arms-ready`; answering it here joins without the model
+  on('command.run', { command: READY_SKILL }, onReadyCommand)
   on('tool.call', { tool: 'Skill' }, onReadySkill)
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
   on('tool.check', (_$, e, next) => ownServerCheck(e, next))

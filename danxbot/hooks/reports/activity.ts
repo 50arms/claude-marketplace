@@ -3,7 +3,8 @@
 //
 // The row is the stats wire's `ActivityChange` (the session-telemetry wire): the server parses it strictly
 // (every one of these keys, no other) and merges it into the stored row: `startedAt` keeps the earliest, `lastActivityAt` the latest,
-// and the FIRST `finishedAt` wins, so a running report sent after a finish never re-opens the row.
+// and the latest `finishedAt` stands only while no activity is later than it by more than the resume grace (10 s, DX-6815): a sub-agent
+// resumed after its finish (SendMessage) reopens its row with its next report, and a late write of an earlier finish never closes it.
 
 export const ACTIVITY_PATH = '/api/plan-sessions/me/activity'
 

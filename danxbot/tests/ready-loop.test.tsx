@@ -11,6 +11,8 @@ import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
 import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest } from './plan-kit'
+// CP-67: the name the engine gives the command a person types as /50arms-ready: the plugin's skill, under the plugin's name
+const TYPED_READY = 'danxbot:50arms-ready'
 
 const AGENT = { id: 6, name: 'Tendai', avatar_url: null }
 const REPO = 'acme-app'
@@ -176,7 +178,7 @@ describe('the ready-agent loop', () => {
     return d
   }
   async function ready($: any, d: any) {
-    const answer = await $.command.run({ command: '50arms-ready' })
+    const answer = await $.command.run({ command: TYPED_READY })
     await d.clock.settle()
     return answer
   }
@@ -220,9 +222,8 @@ describe('the ready-agent loop', () => {
   }
   const readyDeletes = (d: any) => d.calls.filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'DELETE' && c.args.path === '/api/plan-sessions/me/ready').length
 
-  test('the command registers, and joins the list for the repo of the folder', async ($, on) => {
+  test("/50arms-ready, the skill's own command, joins the list for the repo of the folder", async ($, on) => {
     const d = await started($, on)
-    expect(d.commands).toContain('50arms-ready')
     const answer: any = await ready($, d)
     expect(answer.text).toBe(READY_JOINING)
     expect(d.world.readyMark).toBe(REPO)
@@ -378,7 +379,7 @@ describe('the ready-agent loop', () => {
       d.world.repos = CUSTOM
       d.world.reposAnswer = { status: 403, body: { error: 'forbidden', permission: 'boards.view' } }
       await ready($, d)
-      await $.command.run({ command: '50arms-ready', args: 'off' })
+      await $.command.run({ command: TYPED_READY, args: 'off' })
       await d.clock.settle()
       d.world.permissionClaim = 'approved'
       d.world.permissionGranted = ['boards.view']
@@ -435,10 +436,10 @@ describe('the ready-agent loop', () => {
       d.world.permissionAskRefused = 'role_lacks_permission'
       let release!: () => void
       d.world.permissionAskHold = new Promise<void>(r => (release = r))
-      await $.command.run({ command: '50arms-ready' })
+      await $.command.run({ command: TYPED_READY })
       await d.clock.settle()
       d.world.permissionAskHold = null
-      await $.command.run({ command: '50arms-ready', args: 'off' })
+      await $.command.run({ command: TYPED_READY, args: 'off' })
       await d.clock.settle()
       const cleared = d.world.readyCleared
       release()
@@ -464,10 +465,10 @@ describe('the ready-agent loop', () => {
       d.world.permissionAskDeny = 'request_permission is not available'
       let release!: () => void
       d.world.permissionAskHold = new Promise<void>(r => (release = r))
-      await $.command.run({ command: '50arms-ready' })
+      await $.command.run({ command: TYPED_READY })
       await d.clock.settle()
       d.world.permissionAskHold = null
-      await $.command.run({ command: '50arms-ready', args: 'off' })
+      await $.command.run({ command: TYPED_READY, args: 'off' })
       await d.clock.settle()
       const cleared = d.world.readyCleared
       release()
@@ -482,10 +483,10 @@ describe('the ready-agent loop', () => {
       d.world.reposAnswer = { status: 403, body: { error: 'forbidden', permission: 'boards.view' } }
       let release!: () => void
       d.world.permissionAskHold = new Promise<void>(r => (release = r))
-      await $.command.run({ command: '50arms-ready' })
+      await $.command.run({ command: TYPED_READY })
       await d.clock.settle()
       d.world.permissionAskHold = null
-      await $.command.run({ command: '50arms-ready', args: 'off' })
+      await $.command.run({ command: TYPED_READY, args: 'off' })
       await d.clock.settle()
       release()
       await d.clock.settle()
@@ -1438,10 +1439,10 @@ describe('the ready-agent loop', () => {
     const d = await started($, on)
     let release!: () => void
     d.world.markHold = new Promise<void>(r => (release = r))
-    await $.command.run({ command: '50arms-ready' })
+    await $.command.run({ command: TYPED_READY })
     await d.clock.settle()
     d.world.markHold = null
-    await $.command.run({ command: '50arms-ready', args: 'off' })
+    await $.command.run({ command: TYPED_READY, args: 'off' })
     await d.clock.settle()
     release()
     await d.clock.settle()
@@ -1526,7 +1527,7 @@ describe('the ready-agent loop', () => {
     await tick(d)
   }
   const offList = async ($: any, d: any) => {
-    await $.command.run({ command: '50arms-ready', args: 'off' })
+    await $.command.run({ command: TYPED_READY, args: 'off' })
     await d.clock.settle()
   }
   // a call held until the test releases it
@@ -1703,7 +1704,7 @@ describe('the ready-agent loop', () => {
     const d = await started($, on)
     d.world.signedOut = 'signed-out'
     await ready($, d)
-    await $.command.run({ command: '50arms-ready', args: 'off' })
+    await $.command.run({ command: TYPED_READY, args: 'off' })
     await d.clock.settle()
     await d.clock.advance(60_000)
     await d.clock.settle()
@@ -1721,13 +1722,13 @@ describe('the ready-agent loop', () => {
     const d = await started($, on)
     d.world.signedOut = 'signed-out'
     await ready($, d)
-    await $.command.run({ command: '50arms-ready', args: 'off' })
+    await $.command.run({ command: TYPED_READY, args: 'off' })
     await d.clock.settle()
     await ready($, d)
     // the first watch was in its minimum round when it was ended: this ends its sleep, and it returns
     await d.clock.advance(SIGN_IN_MIN_ROUND_MS)
     await d.clock.settle()
-    await $.command.run({ command: '50arms-ready', args: 'off' })
+    await $.command.run({ command: TYPED_READY, args: 'off' })
     await d.clock.settle()
     await d.clock.advance(60_000)
     await d.clock.settle()
@@ -1747,7 +1748,7 @@ describe('the ready-agent loop', () => {
     await ready($, d)
     const band = await $.ui.mount({ plugin: 'danxbot', surface: 'desktop', component: 'AbovePrompt', props: {} } as any)
     expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
-    await $.command.run({ command: '50arms-ready', args: 'off' })
+    await $.command.run({ command: TYPED_READY, args: 'off' })
     await d.clock.settle()
     await d.clock.advance(60_000)
     await d.clock.settle()
@@ -2000,11 +2001,11 @@ describe('the ready-agent loop', () => {
     test('/50arms-ready off leaves the list and the loop; any other word is only the usage', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
-      const usage: any = await $.command.run({ command: '50arms-ready', args: 'sideways' })
+      const usage: any = await $.command.run({ command: TYPED_READY, args: 'sideways' })
       await d.clock.settle()
       expect(usage.text).toBe(READY_USAGE)
       expect(d.world.readyMark).toBe(REPO)
-      const off: any = await $.command.run({ command: '50arms-ready', args: 'off' })
+      const off: any = await $.command.run({ command: TYPED_READY, args: 'off' })
       await d.clock.settle()
       expect(off.text).toBe(READY_OFF)
       expect(d.world.readyMark).toBe(null)
@@ -2221,7 +2222,7 @@ describe('the ready-agent loop', () => {
 
       test('a session that left the list is never prompted again, on a later resume with no loop on its row', async ($, on) => {
         const d = await resumed($, on, d => void (d.world.readyMark = REPO))
-        await $.command.run({ command: '50arms-ready', args: 'off' })
+        await $.command.run({ command: TYPED_READY, args: 'off' })
         await d.clock.settle()
         expect(d.world.readyMark).toBe(null)
         await $.classic.SessionStart({ source: 'resume', cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl' })
@@ -2242,7 +2243,7 @@ describe('the ready-agent loop', () => {
       test('a store that fails when the session leaves still ends the server loop first', async ($, on) => {
         const d = await resumed($, on, d => void (d.world.readyMark = REPO))
         d.relay.breakStore('store unavailable')
-        await $.command.run({ command: '50arms-ready', args: 'off' })
+        await $.command.run({ command: TYPED_READY, args: 'off' })
         await d.clock.settle()
         expect(d.world.readyMark).toBe(null)
       })
