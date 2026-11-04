@@ -8,6 +8,8 @@ import { heldForInput } from '../relay/text'
 // rule of its own for when a job has ended.
 
 export const READY_COMMAND = '50arms-ready'
+// The skill that is the agent's own way onto the list (loading it does what the command does). Loaded as `50arms-ready`, or under the plugin's name.
+export const READY_SKILL = new RegExp(`^(?:[a-z0-9_-]+:)?${READY_COMMAND}$`)
 export const READY_DESCRIPTION = `Wait on the team's ready list for this folder's repo, and rejoin it after each job (\`/${READY_COMMAND} off\` leaves it)`
 export const READY_PATH = '/api/plan-sessions/me/ready'
 // how often a session in the loop looks again. A session's mark can be lost while it runs (a team-mate's claim clears a lapsed session's agent, and the mark goes with it), so a
@@ -49,6 +51,12 @@ export const readyRevoked = (by: string) => `This session left the ready list: $
 export const readyJoined = (repo: string) => `Waiting on the ready list for ${repo}.`
 export const readyRejoined = (repo: string) => `Job finished: this session cleared and is back on the ready list for ${repo}.`
 export const readyFailed = (what: string, why: string) => `Ready list: ${what} failed (${why}). It tries again in a minute.`
+
+// One record per session id in $.store: this session has had its one prompt to judge whether it belongs on the list, or has left the list, so it is not asked again
+export const READY_JUDGED_PREFIX = 'ready-judged:'
+export const readyJudgedKey = (sessionId: string): string => `${READY_JUDGED_PREFIX}${sessionId}`
+// What a restarted session off the list is told, once. The skill is the whole answer: the agent loads it, or leaves it.
+export const READY_JUDGE_PROMPT = `This session restarted and is not on the ready list. Decide now, once, whether the person is planning or working with 50 Arms in this conversation. If they are, or you are unsure how to read it, lean towards yes: load the ${READY_COMMAND} skill to put the session back on the list. If it is truly unclear, ask the person in one short question. If the work is unrelated to 50 Arms, do nothing and stay off the list. Do not mention this message to the person unless you ask them.`
 
 export const joiningLoop = (): ReadyLoop => ({ phase: 'joining', repo: null, rejoining: false, signInAsked: false, permissionId: null, told: null, agentName: null, claimAsked: true })
 

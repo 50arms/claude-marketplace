@@ -4,13 +4,13 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import * as readyLoopModule from '../hooks/ready/loop'
-import { READY_COMMAND, READY_DISCONNECTED, READY_JOINING, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
+import { READY_COMMAND, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
 import { LOCK_STALE_MS, NOT_CONNECTED_RETRY_MS, SIGN_IN_MIN_ROUND_MS, toolName } from '../hooks/plan/config'
 import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
-import { test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest } from './plan-kit'
+import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest } from './plan-kit'
 
 const AGENT = { id: 6, name: 'Tendai', avatar_url: null }
 const REPO = 'acme-app'
@@ -227,6 +227,23 @@ describe('the ready-agent loop', () => {
     expect(answer.text).toBe(READY_JOINING)
     expect(d.world.readyMark).toBe(REPO)
     expect(d.toasts).toContain(readyJoined(REPO))
+  })
+
+  test('the skill joins the list as the command does, tells the model the same line, and `off` leaves; any other tool or skill is left alone', async ($, on) => {
+    on('tool.call', () => ({ result: 'loaded' }) as any)
+    const d = await started($, on)
+    const other: any = await $.tool.call({ tool: 'Skill', skill: 'danxbot:start' } as any)
+    await d.clock.settle()
+    expect(d.world.readyMark).toBe(null)
+    expect(other.context ?? []).not.toContain(READY_JOINING)
+    const joined: any = await $.tool.call({ tool: 'Skill', skill: 'danxbot:50arms-ready' } as any)
+    await d.clock.settle()
+    expect(joined.context).toContain(READY_JOINING)
+    expect(d.world.readyMark).toBe(REPO)
+    const left: any = await $.tool.call({ tool: 'Skill', skill: '50arms-ready', args: 'off' } as any)
+    await d.clock.settle()
+    expect(left.context).toContain(READY_OFF)
+    expect(d.world.readyMark).toBe(null)
   })
 
   test('a signed-out session signs in with the one command, connecting no plan, then joins, and the model is told nothing', async ($, on) => {
@@ -2156,6 +2173,79 @@ describe('the ready-agent loop', () => {
       expect(unread[0]).toContain('ready_loop with no repo or no ended')
       expect(d.toasts).not.toContain(readyAdopted(REPO))
       expect(d.world.readyMarks).toEqual([])
+    })
+
+    describe('a resumed session off the list is asked once to judge whether to rejoin', () => {
+      const resumed = async ($: any, on: any, setUp: (d: any) => void = () => {}) => {
+        const d = dashboard(on, { connected: false })
+        on('turn.complete', () => ({ text: 'done' }) as any)
+        on('classic.SessionStart', () => ({}) as any)
+        d.world.agent = AGENT
+        d.world.repos = ROWS
+        d.world.processes.git = { stdout: ORIGIN }
+        setUp(d)
+        d.roster.push('desktop')
+        await $.classic.SessionStart({ source: 'resume', cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl' })
+        await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
+        await leaveSession($, d, 'desktop')
+        await d.clock.settle()
+        takeLoadPauseReads(d)
+        return d
+      }
+      const asked = (d: any) => d.relay.submitted.filter((t: string) => t.includes(READY_JUDGE_PROMPT)).length
+
+      test('the prompt names the skill and says nothing of danx; it leans to yes, asks when unclear and stays off for unrelated work', () => {
+        expect(READY_JUDGE_PROMPT).toContain(READY_COMMAND)
+        expect(READY_JUDGE_PROMPT).not.toMatch(/danx/i)
+        expect(READY_JUDGE_PROMPT.length).toBeLessThan(900)
+      })
+
+      test('a resume with no loop anywhere is prompted once, and a second look of the same session is not', async ($, on) => {
+        const d = await resumed($, on)
+        expect(asked(d)).toBe(1)
+        await tick(d)
+        await turnEnds($, d)
+        expect(asked(d)).toBe(1)
+      })
+
+      test('a new session (not a resume) is not prompted', async ($, on) => {
+        const fresh = await restarted($, on, () => {})
+        expect(asked(fresh)).toBe(0)
+      })
+
+      test('a resume whose row still holds the loop takes it up and is not prompted', async ($, on) => {
+        const d = await resumed($, on, d => void (d.world.readyMark = REPO))
+        expect(d.toasts).toContain(readyAdopted(REPO))
+        expect(asked(d)).toBe(0)
+      })
+
+      test('a session that left the list is never prompted again, on a later resume with no loop on its row', async ($, on) => {
+        const d = await resumed($, on, d => void (d.world.readyMark = REPO))
+        await $.command.run({ command: '50arms-ready', args: 'off' })
+        await d.clock.settle()
+        expect(d.world.readyMark).toBe(null)
+        await $.classic.SessionStart({ source: 'resume', cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl' })
+        await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
+        await d.clock.settle()
+        expect(asked(d)).toBe(0)
+      })
+
+      test('a sub-agent that loads the skill does not put the main session on the list', async ($, on) => {
+        on('tool.call', () => ({ result: 'loaded' }) as any)
+        const d = await started($, on)
+        const r: any = await $.tool.call({ tool: 'Skill', skill: 'danxbot:50arms-ready', agentId: 'a1' } as any)
+        await d.clock.settle()
+        expect(d.world.readyMark).toBe(null)
+        expect(r.context ?? []).not.toContain(READY_JOINING)
+      })
+
+      test('a store that fails when the session leaves still ends the server loop first', async ($, on) => {
+        const d = await resumed($, on, d => void (d.world.readyMark = REPO))
+        d.relay.breakStore('store unavailable')
+        await $.command.run({ command: '50arms-ready', args: 'off' })
+        await d.clock.settle()
+        expect(d.world.readyMark).toBe(null)
+      })
     })
 
     test('a session in no loop takes none up and makes no ready call at a turn end or a tick', async ($, on) => {
