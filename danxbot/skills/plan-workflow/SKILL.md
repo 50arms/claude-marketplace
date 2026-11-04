@@ -384,7 +384,7 @@ below only when the card wouldn't cover it. Set the card's build grade (`effort_
 by how much work it is (issue-workflow's creation guide, § Build grade), then read the model and effort that grade means from the dashboard (the card read answers them) when you start the worker, and pick the
 `danxbot:worker-<model>-<effort>` agent with that model and effort; never `general-purpose`. Story points decide process (a card, gates, splitting), never the agent grade.
 The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
-worker, briefed `gate-reviewer <CARD-ID> <gate>`, at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
+worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate (`GET /api/board-task-profiles?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e.g. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`), at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
 gate instruction route's answer, and pick the matching `danxbot:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
 on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
