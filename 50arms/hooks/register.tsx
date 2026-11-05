@@ -199,6 +199,119 @@ const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] a
 // when the session last wrote its plan or a card (or was last reminded, or first called the dashboard), what the no-recent-record reminder counts from. $.state, so a reload keeps it.
 const recordClock = atom({ plugin: '50arms', key: 'recordClock' } as const, { since: null } as RecordClock)
 
+// Every $.state value of the plugin is carried across a /clear (tests/state-carry-scan.test.mjs holds the two lists below to the atoms declared above). claude.exe 2.1.317 empties a plugin's
+// whole $.state when a /clear opens the next conversation (measured with a probe module: `session.end` still reads the ending conversation's values, `classic.SessionStart` (source `clear`)
+// reads none, and what it writes stays), while the process, its MCP server, its loops and its timers go on. Each value belongs to the process: what a new conversation must not inherit is
+// reset by the clear's own steps (onSessionEnd, onClassicSessionStart), as it was while $.state lived through a /clear. So one step carries them all, in a module variable: the clear's
+// `session.end` reads every value (carryAcrossConversation) and the start that opens the next conversation writes every one back before anything else (restoreCarried). A /resume in the
+// same process takes the same step. Each read and write names its atom, since the engine's scan lists a module's values only from such literal calls (a list of atoms refuses to load).
+
+// what the ending conversation's `session.end` read, for the `classic.SessionStart` that opens the next one (restoreCarried); null at every other moment
+let carriedState: Record<string, any> | null = null
+
+// The last step of a /clear's or a /resume's `session.end`, after its own writes: every value the conversation holds, read while the engine still keeps them.
+async function carryAcrossConversation($: any): Promise<void> {
+  const reads: Record<string, Promise<unknown>> = {
+    view: read($, view),
+    gate: read($, gate),
+    dismissed: read($, dismissed),
+    busy: read($, busy),
+    title: read($, title),
+    modelPlan: read($, modelPlan),
+    signInRequest: read($, signInRequest),
+    permissionRequests: read($, permissionRequests),
+    transcript: read($, transcript),
+    usageError: read($, usageError),
+    measuredAt: read($, measuredAt),
+    relay: read($, relay),
+    readyLoop: read($, readyLoop),
+    readyShells: read($, readyShells),
+    eventsWarned: read($, eventsWarned),
+    turnReportedAt: read($, turnReportedAt),
+    mcpIds: read($, mcpIds),
+    bootEngineId: read($, bootEngineId),
+    turn: read($, turn),
+    lastStamp: read($, lastStamp),
+    pendingStart: read($, pendingStart),
+    diskTold: read($, diskTold),
+    diskMeasured: read($, diskMeasured),
+    diskHome: read($, diskHome),
+    endedSession: read($, endedSession),
+    desktopHosted: read($, desktopHosted),
+    idleSince: read($, idleSince),
+    olderDashboardTold: read($, olderDashboardTold),
+    browserMissingTold: read($, browserMissingTold),
+    leftoverArmingCleared: read($, leftoverArmingCleared),
+    armedPercent: read($, armedPercent),
+    sessionCompactSeen: read($, sessionCompactSeen),
+    engineCompact: read($, engineCompact),
+    claimedRelease: read($, claimedRelease),
+    compacting: read($, compacting),
+    runningAgents: read($, runningAgents),
+    reports: read($, reports),
+    workMarks: read($, workMarks),
+    relayOutbox: read($, relayOutbox),
+    ackInFlight: read($, ackInFlight),
+    recordClock: read($, recordClock),
+  }
+  carriedState = Object.fromEntries(await Promise.all(Object.entries(reads).map(async ([key, value]) => [key, await value] as const)))
+}
+
+// The first step of a `classic.SessionStart`: a /clear's or a /resume's start writes back every value the ending conversation's `session.end` carried, then loads the view afresh. Taken
+// once: any other start drops what was carried. A write some loop made in the moment between the engine emptying $.state and this start is overwritten by the value read just before
+// (the module's own copies, such as the relay's outbox, write theirs again at their next change).
+async function restoreCarried($: any, source: unknown): Promise<void> {
+  const carried = carriedState
+  carriedState = null
+  if (carried === null || (source !== 'clear' && source !== 'resume')) return
+  await Promise.all([
+    update($, view, () => carried.view),
+    update($, gate, () => carried.gate),
+    update($, dismissed, () => carried.dismissed),
+    update($, busy, () => carried.busy),
+    update($, title, () => carried.title),
+    update($, modelPlan, () => carried.modelPlan),
+    update($, signInRequest, () => carried.signInRequest),
+    update($, permissionRequests, () => carried.permissionRequests),
+    update($, transcript, () => carried.transcript),
+    update($, usageError, () => carried.usageError),
+    update($, measuredAt, () => carried.measuredAt),
+    update($, relay, () => carried.relay),
+    update($, readyLoop, () => carried.readyLoop),
+    update($, readyShells, () => carried.readyShells),
+    update($, eventsWarned, () => carried.eventsWarned),
+    update($, turnReportedAt, () => carried.turnReportedAt),
+    update($, mcpIds, () => carried.mcpIds),
+    update($, bootEngineId, () => carried.bootEngineId),
+    update($, turn, () => carried.turn),
+    update($, lastStamp, () => carried.lastStamp),
+    update($, pendingStart, () => carried.pendingStart),
+    update($, diskTold, () => carried.diskTold),
+    update($, diskMeasured, () => carried.diskMeasured),
+    update($, diskHome, () => carried.diskHome),
+    update($, endedSession, () => carried.endedSession),
+    update($, desktopHosted, () => carried.desktopHosted),
+    update($, idleSince, () => carried.idleSince),
+    update($, olderDashboardTold, () => carried.olderDashboardTold),
+    update($, browserMissingTold, () => carried.browserMissingTold),
+    update($, leftoverArmingCleared, () => carried.leftoverArmingCleared),
+    update($, armedPercent, () => carried.armedPercent),
+    update($, sessionCompactSeen, () => carried.sessionCompactSeen),
+    update($, engineCompact, () => carried.engineCompact),
+    update($, claimedRelease, () => carried.claimedRelease),
+    update($, compacting, () => carried.compacting),
+    update($, runningAgents, () => carried.runningAgents),
+    update($, reports, () => carried.reports),
+    update($, workMarks, () => carried.workMarks),
+    update($, relayOutbox, () => carried.relayOutbox),
+    update($, ackInFlight, () => carried.ackInFlight),
+    update($, recordClock, () => carried.recordClock),
+  ])
+  // a fresh conversation (or another session taking this one's place) in the same process: what the dashboard shows may have moved while they were in the old one. Loaded from here, so
+  // the load and its lock live in the new conversation's $.state, never across the emptying
+  detach($, 'Plan refresh', refresh($, true))
+}
+
 // the engine follows `$` only into a function declared in the SAME file (`claude plugin
 // validate` refuses it across an import), and refuses a closure that receives `$` declared
 // inside `register`. So every function that takes `$` is a top-level declaration here; the
@@ -1800,7 +1913,6 @@ async function releaseAgent($: any): Promise<void> {
 async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason)) await releaseAgent($)
   if (e.reason === 'clear' && typeof e.sessionId === 'string') await update($, endedSession, () => e.sessionId)
-  if (e.reason === 'clear') readyLoopAcrossClear = await read($, readyLoop)
   // the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
     signInGeneration++
@@ -1809,8 +1921,8 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
   }
   if (PROCESS_ENDS.includes(e.reason)) {
-    // the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh below
-    // restarts it only if the new conversation is on another plan)
+    // the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh the next
+    // conversation's start makes, restoreCarried, restarts it only if that conversation is on another plan)
     stopRelay()
     await stopKeepalive($)
     usageTicker?.cancel()
@@ -1829,9 +1941,8 @@ async function onSessionEnd($: any, e: any, next: any) {
     await update($, modelPlan, () => null)
     await update($, transcript, () => null)
     await update($, runningAgents, () => [])
-    // a fresh conversation (or another session taking this one's place) in the same process: what
-    // the dashboard shows may have moved while they were in the old one
-    detach($, 'Plan refresh', refresh($, true))
+    // last, so what this hook wrote is carried with the rest (the new conversation's start refreshes the view, restoreCarried)
+    await carryAcrossConversation($)
   }
   return next(e)
 }
@@ -1845,7 +1956,7 @@ async function onSessionEnd($: any, e: any, next: any) {
 // the back of the list, with no context from the job. Every exit from the loop ends the dashboard's loop too (`DELETE /api/plan-sessions/me/ready`). A person's Stop takes the session off the list,
 // since Claude Code drops the plugin's prompts until they send a message.
 // A plugin's /clear changes `$.session.id()` and keeps the MCP server and the session id it booted with (measured, claude.exe 2.1.309), so the dashboard sees one session and its agent stays held.
-// It also empties the plugin's whole $.state (measured, claude.exe 2.1.317), so the loop is carried across every /clear, the released one and a person's own (readyLoopAcrossClear).
+// It also empties the plugin's whole $.state (measured, claude.exe 2.1.317): the loop is carried across every /clear, the released one and a person's own, with the rest of it (carryAcrossConversation).
 let readyTicker: { cancel: () => void } | null = null
 // a look's identity. `turns`: the count of main-loop turns started when the look began (or its own clear ended); a higher count now means the session may have moved (the model connects to work only in
 // a turn), so the look acts on nothing it read before
@@ -1864,10 +1975,6 @@ let readyRelayOlderTold = false
 let readyRelayOlderSeen: string | null = null
 // the last unreadable dashboard loop a new process was told it could not take up (adoptReadyMark), so the same fault is told once
 let readyLoopFaultTold: string | null = null
-// The loop as the ending conversation left it, from the `session.end` of a /clear to the `classic.SessionStart` that opens the next one: claude.exe 2.1.317 empties $.state between the two
-// (measured: `session.end` still reads the old values, `classic.SessionStart` (source `clear`) reads none, and what it writes stays). The loop is the process's, as the dashboard's row
-// is, so it outlives the conversation; a module variable, since nothing in $.state does.
-let readyLoopAcrossClear: ReadyLoop | null = null
 
 function startReadyTicker($: any): void {
   if (readyTicker === null) readyTicker = $.clock.every(READY_TICK_MS, () => detach($, 'Ready list', syncReady($)))
@@ -2137,12 +2244,6 @@ async function clearState($: any, sessionId: string): Promise<ClearState> {
   return { spent: spentReleaseId(await storeOp($, { op: 'get', key: clearSpentKey(sessionId) })), olderSign }
 }
 
-// The loop the /clear's `session.end` carried, written back into the new conversation's $.state (readyLoopAcrossClear). Taken once: a later start carries nothing of this one.
-async function restoreReadyLoop($: any): Promise<void> {
-  const carried = readyLoopAcrossClear
-  readyLoopAcrossClear = null
-  await update($, readyLoop, () => carried)
-}
 
 // The plan-less claim, as the plugin's background call: a session that cannot get an agent must not count as working, or its key would never lapse. True once the session holds one.
 async function claimReadyAgent($: any, asked: boolean, token: LookToken): Promise<boolean> {
@@ -3084,8 +3185,8 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
 // desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see stampEntries).
 // The one exception: a compaction that ends with no turn running detaches the resume prompt, whose reads wait for the session to bind.
 async function onClassicSessionStart($: any, e: any, next: any) {
-  // first, so every read below (the start's own `loopReset` among them) sees the loop the cleared conversation was in
-  if (e.source === 'clear') await restoreReadyLoop($)
+  // first, so every read below (the ended session, the start's own `loopReset`) sees what the ended conversation held
+  await restoreCarried($, e.source)
   const below = await onTitle($, e, next)
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
   // the ended session is consumed by this start only: a later clear that saw no end must not be asked about this one's

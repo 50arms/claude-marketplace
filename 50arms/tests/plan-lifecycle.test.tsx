@@ -22,9 +22,14 @@ describe('session.end by reason', () => {
   test(`a ${reason} refreshes at once: what the dashboard shows may have moved`, async ($, on) => {
     const d = dashboard(on)
     on('session.end', () => ({ sessionId: 's1' }) as any)
+    on('classic.SessionStart', () => ({}) as any)
     await startSession($, d, 'desktop')
     const before = loadsOf(d)
+    // the engine ends the conversation, then opens the next one in the same process: the new one loads the view
     await $.session.end({ reason } as any)
+    await d.clock.settle()
+    expect(loadsOf(d)).toBe(before)
+    await $.classic.SessionStart({ source: reason, cwd: '/work', session_id: 'sess-next', transcript_path: '/work/next.jsonl' })
     await d.clock.settle()
     expect(loadsOf(d)).toBe(before + 1)
   })
