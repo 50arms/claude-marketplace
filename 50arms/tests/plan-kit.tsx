@@ -993,7 +993,8 @@ export function dashboard(
       if (e.tool === 'plan_events_wait' && server.script.length > 0) return planEventsWait(e.args)
       // on a key the dashboard stopped accepting, card_connect answers a new approval request, as plan_connect does (the MCP's accessReply), never the halt
       if (world.signedOut !== null && world.signedOut !== 'revoked' && e.tool === 'card_connect') return { value: text(APPROVAL_REQUIRED) }
-      // a revoked key stops EVERY tool, plan_connect included, and asks for nothing
+      // a revoked key stops EVERY tool, plan_connect included, and asks for nothing; only plan_connect with person_sign_in clears it and asks
+      if (world.signedOut === 'revoked' && e.tool === 'plan_connect' && e.args.person_sign_in === true) world.signedOut = 'signed-out'
       if (world.signedOut === 'revoked' || (world.signedOut !== null && e.tool !== 'plan_connect')) {
         return { value: { content: [{ type: 'text', text: haltText() }], isError: true } }
       }

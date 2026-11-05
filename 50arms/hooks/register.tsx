@@ -778,11 +778,17 @@ async function startSignIn($: any): Promise<void> {
   void watchSignIn($, { args, byPress: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
 }
 
-// The sign-in's own `plan_connect` arguments: the session's title, and the plan it was on.
+// The sign-in's own `plan_connect` arguments: the session's title, and the plan it was on. On a revoked key the press also says a person
+// is signing in (`person_sign_in`), the one flag that makes the MCP leave its stop and ask; no other call sends it.
 async function signInArgs($: any): Promise<object> {
   const sessionTitle = await read($, title)
-  const resume = (await read($, view)).resumePlan
-  return { ...(resume !== null ? { plan_id: resume } : {}), ...(sessionTitle ? { title: sessionTitle } : {}) }
+  const current = await read($, view)
+  const resume = current.resumePlan
+  return {
+    ...(resume !== null ? { plan_id: resume } : {}),
+    ...(sessionTitle ? { title: sessionTitle } : {}),
+    ...(current.phase === 'key-revoked' ? { person_sign_in: true } : {}),
+  }
 }
 
 // the one way back to the plan UI, for the footer button and /50arms-plan alike: bring the band back (clear

@@ -1,8 +1,7 @@
 import "./run-tests-with-npm-test.generated"
-// CP-74 / DEC-583: Sign in is ALWAYS offered while the session holds no working connection (signed out, a failed load, an agent block),
+// Sign in is ALWAYS offered while the session holds no working connection (signed out, a failed load, an agent block, a revoked key),
 // never only when the load reads as signed out, and a sign-in request the model started is drawn with its link and code whatever phase the load is in.
-// A loaded, connected session shows neither. Two states keep their own rule and offer none: a key a person revoked (its stop, `KEY_REVOKED_HALT`), and the
-// auto-mode block (the key is fine, the fix is the permission rule).
+// A loaded, connected session shows neither. The auto-mode block offers none (the key is fine, the fix is the permission rule). A revoked key keeps its text, and only the Sign in press sends person_sign_in.
 import { describe, expect } from 'claude-code/testing'
 
 import { EMPTY } from '../hooks/plan/config'
@@ -21,10 +20,12 @@ describe('which views offer Sign in', () => {
     expect(signInOffered(view({ phase: 'error' }))).toBe(true)
     for (const agentBlock of ['agent_needed', 'agent_limit_reached', 'agent_not_held']) expect(signInOffered(view({ phase: 'ready', agentBlock }))).toBe(true)
   })
-  test('a loading or loaded view, a revoked key and the auto-mode block offer none', () => {
+  test('a revoked key offers it too', () => {
+    expect(signInOffered(view({ phase: 'key-revoked', revokedBy: 'dana' }))).toBe(true)
+  })
+  test('a loading or loaded view and the auto-mode block offer none', () => {
     expect(signInOffered(view({ phase: 'loading' }))).toBe(false)
     expect(signInOffered(view({ phase: 'ready' }))).toBe(false)
-    expect(signInOffered(view({ phase: 'key-revoked', revokedBy: 'dana' }))).toBe(false)
     expect(signInOffered(view({ phase: 'blocked' }))).toBe(false)
   })
 })
@@ -47,12 +48,27 @@ for (const surface of SURFACES) {
       expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
     })
 
-    test('a revoked key keeps its stop: no Sign in', async ($, on) => {
+    test('a revoked key keeps its text and offers Sign in; the press sends person_sign_in and shows the new approval', async ($, on) => {
       const d = dashboard(on, { signedOut: 'revoked' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       expect(await texts(band)).toContain('50 Arms: access revoked by dana')
-      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+      expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
+      expect(connectCalls(d)).toHaveLength(0)
+      await band.press({ key: 'sign-in' })
+      await d.clock.settle()
+      expect(connectCalls(d)[0].args.person_sign_in).toBe(true)
+      expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
+      expect(await texts(band)).toContain(`code ${CONFIRM_CODE}`)
+    })
+
+    test('Sign in on a failed load does not send person_sign_in', async ($, on) => {
+      const d = dashboard(on, { sessionReadFails: true })
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
+      await band.press({ key: 'sign-in' })
+      await d.clock.settle()
+      expect(connectCalls(d)[0].args.person_sign_in).toBeUndefined()
     })
 
     for (const gate of ['agent_needed', 'agent_limit_reached', 'agent_not_held'] as const) {

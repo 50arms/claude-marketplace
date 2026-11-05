@@ -51,12 +51,12 @@ export function renderBand(
   // the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
   const showBadge = plan !== null && badge !== ''
-  // a Sign in button leads the controls whenever the session holds no working connection (signInOffered): signed out, a failed load, an agent block.
+  // a Sign in button leads the controls whenever the session holds no working connection (signInOffered): signed out, a failed load, an agent block, a revoked key.
   const offerSignIn = signInOffered(v)
   const signedOut = v.phase === 'signed-out'
   // the sign-in request's link and code show whatever phase the load is in, until the request is approved, denied or expires (it is then cleared)
   const approve = signIn
-  // a revoked key is red too, with no Sign in
+  // a revoked key is red too, and keeps its text beside Sign in
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
   // Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`). The band draws no events

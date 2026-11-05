@@ -195,8 +195,8 @@ export const BLOCKED_LINE = `Auto mode blocks 50 Arms. Have Claude add ${toolNam
 // a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
 // makes no access request, only a revoked-access halt that begins
 // `STOP ALL WORK NOW. <revokedBy> revoked your access to the 50 Arms dashboard at <revokedAt>.` followed by a blank line. The
-// text is for the agent (it tells it to commit and stop); the person reads the words below, and there is no Sign in: a
-// revoked agent must stop.
+// text is for the agent (it tells it to commit and stop); the person reads the words below, and Sign in stays beside them: its press
+// is the one call that asks for a new approval (`person_sign_in`), which a person must give.
 export const KEY_REVOKED_HALT = /^STOP ALL WORK NOW\. (.+) revoked your access to the .+ dashboard at \S+\.\n/
 export const keyRevokedLabel = (by: string) => `${BRAND}: access revoked by ${by}`
 export const KEY_REVOKED_FOOTER = `${BRAND}: access revoked`

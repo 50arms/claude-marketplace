@@ -171,7 +171,7 @@ for (const surface of SURFACES) {
   }
 
   describe(`a revoked key on ${surface}`, () => {
-    test('band and footer say access revoked by the person in red, with no Sign in anywhere and none of the halt', async ($, on) => {
+    test('band and footer say access revoked by the person in red, with Sign in beside it and none of the halt', async ($, on) => {
       const d = dashboard(on, { signedOut: 'revoked' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
@@ -180,11 +180,8 @@ for (const surface of SURFACES) {
       const label = await band.find({ type: 'Text', text: /50 Arms: access revoked by dana/ })
       expect(label.props.color).toBe('red')
       expect(await footerText(footer)).toBe('50 Arms: access revoked')
-      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
-      for (const shown of [await texts(band), (await buttons(band)).join(' ')]) {
-        expect(shown).not.toMatch(AGENT_TEXT)
-        expect(shown).not.toContain('Sign in')
-      }
+      expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
+      for (const shown of [await texts(band), (await buttons(band)).join(' ')]) expect(shown).not.toMatch(AGENT_TEXT)
       expect(await buttons(band)).not.toContain(DISCONNECT_GLYPH)
       expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
     })
@@ -196,7 +193,7 @@ for (const surface of SURFACES) {
       expect(connectCalls(d)).toEqual([])
     })
 
-    test('a lapsed key that is then revoked reads revoked, and the view never offers Sign in again', async ($, on) => {
+    test('a lapsed key that is then revoked reads revoked, and the view offers Sign in', async ($, on) => {
       const d = dashboard(on, { signedOut: 'lapsed' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
@@ -204,7 +201,7 @@ for (const surface of SURFACES) {
       d.world.signedOut = 'revoked'
       await forceRefresh($, d)
       expect(await texts(band)).toContain('50 Arms: access revoked by dana')
-      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+      expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
     })
 
     test('a leave pressed on a band drawn before the revoke: the person reads the view\'s words, never the halt, and the view reloads revoked', async ($, on) => {
@@ -231,7 +228,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.toasts.at(-1)).toBe('50 Arms: access revoked by dana. This session must stop.')
       expect(await texts(band)).toContain('50 Arms: access revoked by dana')
-      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+      expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
       const calls = connectCalls(d).length
       await d.clock.advance(120_000)
       expect(connectCalls(d)).toHaveLength(calls)
