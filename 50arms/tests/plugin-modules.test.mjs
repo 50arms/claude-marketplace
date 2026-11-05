@@ -50,7 +50,7 @@ test("DX-4232: plugin.json names the $.state contract, and the file exists", () 
   assert.ok(fs.existsSync(path.join(PLUGIN, manifest.types)));
   // the contract declares the state under the plugin's own name, never the prototype's
   const contract = fs.readFileSync(path.join(PLUGIN, manifest.types), "utf8");
-  assert.match(contract, /interface PluginState\s*\{\s*50arms:/);
+  assert.match(contract, /interface PluginState\s*\{\s*'50arms':/);
   assert.doesNotMatch(contract, /plan-link/);
 });
 

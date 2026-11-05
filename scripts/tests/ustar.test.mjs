@@ -24,9 +24,9 @@ test("DX-5648: tar reads the archive back: contents, modes, owner and parent dir
   const listing = spawnSync("tar", ["-tvf", "-", "--numeric-owner"], { input: archive, encoding: "utf8" });
   assert.equal(listing.status, 0, listing.stderr);
   const rows = listing.stdout.trim().split("\n");
-  assert.ok(rows.some((r) => /^-rw-r--r-- 1000\/1000 +6 .* 50 Arms\/tests\/a\.txt$/.test(r)), listing.stdout);
+  assert.ok(rows.some((r) => /^-rw-r--r-- 1000\/1000 +6 .* 50arms\/tests\/a\.txt$/.test(r)), listing.stdout);
   assert.ok(rows.some((r) => /^-rwxr-xr-x 1000\/1000 +10 .* scripts\/run\.sh$/.test(r)), listing.stdout);
-  assert.ok(rows.some((r) => /^drwxr-xr-x 1000\/1000 .* 50 Arms\/tests\/$/.test(r)), listing.stdout);
+  assert.ok(rows.some((r) => /^drwxr-xr-x 1000\/1000 .* 50arms\/tests\/$/.test(r)), listing.stdout);
   const content = spawnSync("tar", ["-xOf", "-", "50arms/tests/a.txt"], { input: archive, encoding: "utf8" });
   assert.equal(content.stdout, "hello\n");
 });
