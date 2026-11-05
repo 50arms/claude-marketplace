@@ -49,6 +49,8 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    A card with an open problem never becomes Done: `complete`, a board drop or move to Done
    and a container roll-up are refused (409 `open_problems_block_completion`).
    Get each open problem answered by a person first; remove one only when it has become irrelevant, never because it was answered.
+   The one exception is the review of the card's own docs change: it never holds the card out of Done,
+   whether it is open or its docs change is waiting or landing, and a person approves or withdraws the change afterwards.
 
 ## Gates
 
@@ -91,7 +93,7 @@ never passed to get it out of the way.
 Genuinely need a human → open a problem on the card: an `action` when only a person can do
 it (access, credentials, hardware, authority), else a `question`. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3). How something looks or behaves on screen is never a text problem while designs are on: it is a design on the card, even when its design gate has passed (mantra item 3). The agent working the card makes that design itself: fetch `GET /api/agent-profiles/gate-designer/instruction?card=<card id>`, build the design as it says, publish it to the card with `mini_app_publish` and stop. You sign no gate and you end as Flow step 6 says, naming what you published: the design problem holds the card until a person chooses. An orchestrator may start `gate-designer` for it instead, to keep the build out of its own context. Never `AskUserQuestion` or
 a plan-mode pause. A card needs a human exactly while it has an open problem; a person
-answering its last open problem closes that need. An open problem also holds the card out of Done (Flow step 6).
+answering its last open problem closes that need. An open problem also holds the card out of Done (Flow step 6), except the review of the card's own docs change.
 
 A call refused 403 for a missing permission → `request_permission` with a reason (show the person its code) and keep working; blocked without it, open an action problem.
 
@@ -256,7 +258,8 @@ instructions say.
 The order is fixed: the work reaches the target branch (or its pull request opens) first, only
 then the card transitions `complete`, and the retro is written last (it 409s until the card is
 terminal), citing the sha now on the target branch (on a pull request: the pull request link and
-the branch tip).
+the branch tip). A docs change of the card's own never delays this: complete the card once its code is on the target
+branch, whatever state the docs review is in (open, waiting or landing); a person approves or withdraws the docs change after the card is Done.
 
 Read the card's resolved controls: `GET /api/issues/<id>` with `fields {"controls":true}`, then
 take the value of each key from the entry with that `key`:
