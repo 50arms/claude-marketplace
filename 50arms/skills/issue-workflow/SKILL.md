@@ -269,6 +269,8 @@ take the value of each key from the entry with that `key`:
   push to the target branch.
 - `git.pull_request.done_on`: `opened` or `merged`, whether a card on a pull request is done
   when the pull request opens or only once it merges.
+- `git.pull_request.dependent_start`: `wait_for_merge` or `branch_from_dependency`, how a dependent card
+  starts (below).
 
 A key missing from the reply means the dashboard does not know it: open an `action` problem on
 the card saying which key is missing, then stop ("Needing a human"). Never guess `false`.
@@ -286,32 +288,28 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 
 **`required` is `true`:** the target branch is never pushed to.
 
-1. Check the GitHub CLI first, before you push or open anything: `gh --version`, then
-   `gh auth status --active --hostname github.com` (it checks only the active account and
-   masks the token, so no secret reaches the transcript). `gh` missing → open an
-   `action` problem on the card telling the person to install the GitHub CLI
-   (https://cli.github.com) and run `gh auth login`; not signed in → one telling them to run
-   `gh auth login`. Then stop. Never fall back to pushing the target branch, or to any other
-   way of getting the work onto it.
-2. The pull request's head is the card branch: a sub-agent's pushed card branch, or for your own
-   work a branch cut from `origin/<target branch>` (never the target branch itself), committed
-   and pushed with `git push -u origin <branch>`.
-3. Reuse an open pull request for the branch: `gh pr view <branch> --json url,state`. Its
-   `state` is `OPEN` → use its `url`. A non-zero exit (no pull request) or any other `state`
-   (closed, merged) means no open pull request → `gh pr create --base <target branch> --head <branch> --title
-   "<card id>: <card title>" --body-file <file>`, the file holding a summary of the change, a
-   blank line, then `Card: <card link>`. It prints the pull request URL. The card link is
-   `<dashboard>/plans/<plan id>/cards/<card id>` (`<plan id>` is the plan's number), or
-   `<dashboard>/board/<card id>` when the card is on no plan. `<dashboard>` is the dashboard URL
-   the session is connected to.
-4. Write that URL on the card: `PATCH /api/issues/<id>/edit` with `{"pull_request_url": "<url>"}`.
-5. By `git.pull_request.done_on`:
+1. The pull request's head is the card branch `card/<card id>`: a sub-agent's pushed card branch, or for your own
+   work that branch cut from `origin/<target branch>` (never the target branch itself), committed
+   and pushed with `git push -u origin card/<card id>`. Your own `git` pushes it; no GitHub CLI is needed.
+2. Open the pull request: `POST /api/issues/<id>/pull-request`, with no body. The 50 Arms GitHub App
+   opens it from `card/<card id>` into the card's target branch, or reuses the open one for the branch, with the card's
+   title, summary and link, and stores its URL as the card's `pull_request_url`. The answer carries
+   `pull_request_url`. A refusal says what to do: the branch is not pushed yet → push it and call again; the App is
+   not installed on the repo → open an `action` problem on the card telling the person to connect the repo to
+   the GitHub App in Setup, then stop. Never fall back to pushing the target branch, or to any other way of
+   getting the work onto it.
+3. By `git.pull_request.done_on`:
    - `opened`: transition `complete` with a summary naming the pull request, and write the retro
      citing the pull request link and the branch tip.
-   - `merged`: do not transition `complete`. Release the card with `rollback_pickup` (without
-     `keep_assignment`: a card nobody is working is assigned to no agent, DEC-116), then say plainly that the card stays open (it shows ToDo with its
+   - `merged`: do not transition `complete`. Release your claim with `DELETE /api/issues/<id>/assigned-agent`, then say plainly that the card stays open (it shows ToDo with its
      on-a-pull-request indicator and its pull request link) until the pull request merges, and
      that the person completes it then.
+
+**Dependent cards:** `wait_for_merge` needs nothing from you (the dashboard holds the card until they merge into
+your target branch). `branch_from_dependency` releases it while one dependency's pull request is open: read your
+card's `dependency_pull_requests` (per dependency: `merged`, `holding`, `branch`); before your first edit fetch, base your
+branch on `origin/<the one entry's branch>` and merge your target branch into it; step 2 then opens your pull request
+into that branch. Never code over a branch missing a dependency's code.
 
 ## Git
 
