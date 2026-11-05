@@ -69,7 +69,7 @@ test("a file every suite leans on is a broad change", () => {
 
 test("more code files than a narrow change allows is a broad change", () => {
   const many = Array.from({ length: MAX_NARROW_CODE_FILES + 1 }, (_, i) => `50arms/hooks/x${i}.ts`);
-  const named = { tests: new Map([["50arms/tests/x.test.mjs", many.map((f) => `import "../${f.replace(/^50 Arms\//, "").replace(/\.ts$/, "")}"`).join("\n")]]) };
+  const named = { tests: new Map([["50arms/tests/x.test.mjs", many.map((f) => `import "../${f.replace(/^50arms\//, "").replace(/\.ts$/, "")}"`).join("\n")]]) };
   assert.equal(publishScope(many, named).kind, "all");
   assert.equal(publishScope(many.slice(1), named).kind, "files");
 });

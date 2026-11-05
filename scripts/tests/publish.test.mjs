@@ -301,7 +301,7 @@ test("DX-4232 / DX-5648: validate and the suite both pass: they run before the b
     assert.deepEqual(r.claudeCalls, ["plugin validate 50arms"]);
     assert.deepEqual(npmRuns(r), ["test --silent"], "the suite runs once, as npm test, never as a host claude plugin test");
     assert.notEqual(git(dir, "rev-parse", "HEAD").trim(), before.head);
-    assert.match(git(dir, "log", "-1", "--format=%s").trim(), /^50 Arms v\d+\.\d+\.\d+$/);
+    assert.match(git(dir, "log", "-1", "--format=%s").trim(), /^50arms v\d+\.\d+\.\d+$/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -314,7 +314,7 @@ for (const failing of ["validate", "test"]) {
       const before = snapshot(dir);
       const r = publish(dir, { fail: failing });
       assert.notEqual(r.status, 0, r.out);
-      assert.match(r.out, failing === "validate" ? /claude plugin validate 50 Arms failed/ : /npm test failed/);
+      assert.match(r.out, failing === "validate" ? /claude plugin validate 50arms failed/ : /npm test failed/);
       assert.match(r.out, /Nothing was bumped or pushed/);
       assertUntouched(dir, before);
       // validate runs first: when it fails, the suite never runs
@@ -367,7 +367,7 @@ for (const [what, file, line, reported] of [
 function afterPublishClone() {
   const dir = editedClone();
   git(dir, "checkout", "-q", "--", "50arms/skills/issue-workflow/SKILL.md");
-  git(dir, "commit", "-q", "--allow-empty", "-m", "50 Arms v9.9.9");
+  git(dir, "commit", "-q", "--allow-empty", "-m", "50arms v9.9.9");
   return dir;
 }
 
@@ -404,7 +404,7 @@ test("CP-16: a narrow change runs only the test files that name it", () => {
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
     assert.equal(r.npmCalls.length, 1);
-    assert.match(r.npmCalls[0], /^test --silent -- .*50 Arms\/tests\/issue-workflow-gates\.test\.mjs/);
+    assert.match(r.npmCalls[0], /^test --silent -- .*50arms\/tests\/issue-workflow-gates\.test\.mjs/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

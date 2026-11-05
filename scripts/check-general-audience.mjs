@@ -64,7 +64,7 @@ export function listPluginFiles(repoRoot, plugin) {
  */
 export const OWNED_ELSEWHERE = /DANX(?:BOT)?_[A-Z_]+|danxbot_api(?:_list|_spec)?|@thehammer\/danx-dashboard-mcp|danx-dashboard-mcp|danx-dashboard|\.config\/danxbot|\.danxbot|repo: "danxbot"/g;
 // `@danxbot/ui` is reported by its own kind above, so it is not counted twice.
-const oldNameHit = { test: (line) => /danx/i.test(line.replace(OWNED_ELSEWHERE, "").replace(/@danxbot/ui/g, "")) };
+const oldNameHit = { test: (line) => /danx/i.test(line.replace(OWNED_ELSEWHERE, "").replace(/@danxbot\/ui/g, "")) };
 
 /** Each token names something only the author's setup has. */
 export const BANNED = [
@@ -74,6 +74,7 @@ export const BANNED = [
   { name: "another of the author's products", pattern: /gpt-manager/i },
   { name: "another of the author's organizations", pattern: /flytedesk/i },
   { name: "the author's own UI library", pattern: /@danxbot\/ui/i },
+  { name: "the product's old name (the plugin is 50arms)", pattern: oldNameHit },
   // `comments: true` kinds also apply inside code comments. A comment is read by anyone who opens the installed plugin, so it may
   // name none of our cards, card comments or source paths; it states the reason itself. (The other kinds are about text a user is shown.)
   { name: "a path in the author's repo", pattern: /(?<![\w.-])(?:src|packages|mcp-servers|frontend|docs\/pages)\/[\w.-]/, comments: true },

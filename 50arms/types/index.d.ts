@@ -168,7 +168,7 @@ export type AckInFlight = [number, number][]
 
 declare module 'claude-code' {
   interface PluginState {
-    50arms: {
+    '50arms': {
       view: PlanView
       gate: RefreshGate
       // The band is hidden for the session (the footer button or /50arms-plan brings it back). Its own atom: refresh

@@ -77,8 +77,8 @@ test("step 3 reads the origin URL and refuses, creating nothing, when it is not 
   assert.match(s, /git remote get-url origin/);
   assert.match(s, /connects `github.com` repos only/);
   assert.match(s, /stop/i);
-  assert.match(s, /Nothing has been registered or created in 50arms/);
-  assert.equal(s.match(/Nothing has been registered or created in 50arms/g).length, 2, "both refusal branches say what is true");
+  assert.match(s, /Nothing has been registered or created in 50 Arms/);
+  assert.equal(s.match(/Nothing has been registered or created in 50 Arms/g).length, 2, "both refusal branches say what is true");
   assert.doesNotMatch(s, /Nothing has been created\./);
 });
 
