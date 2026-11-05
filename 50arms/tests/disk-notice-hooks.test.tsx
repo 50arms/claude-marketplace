@@ -169,7 +169,7 @@ for (const surface of SURFACES) {
       // the marker's opening time is fixed (epoch second 1792728384), so no clock is involved
       expect(notice.split('\n')[0]).toBe('MAINTENANCE WINDOW OPEN since 2026-10-23T04:06:24.000Z: compacting docker')
       expect(notice).toMatch(/start no test run, build, deploy or dispatch/)
-      expect(notice).toMatch(/run from the 50 Arms checkout/)
+      expect(notice).toMatch(/run from the dashboard repo checkout/)
     })
 
     test('both overrides apply, then the limits are checked against each other', async ($, on) => {

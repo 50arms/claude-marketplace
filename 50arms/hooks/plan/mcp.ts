@@ -1,5 +1,5 @@
 import { approvalRequestOf } from './approval'
-import { ERROR_BODY_MAX, KEY_REVOKED_HALT, SIGNED_OUT_MARK } from './config'
+import { ERROR_BODY_MAX, KEY_REVOKED_HALT, SIGNED_OUT_MARK, SIGNED_OUT_PATTERN } from './config'
 
 // What `$.mcp.call` rejects with, as the engine words it.
 
@@ -76,11 +76,11 @@ export function refusalText(o: ToolOutcome): string {
   return `${o.status || 'mcp'} ${said}${real}`
 }
 
-// whether a tool's outcome says the session holds no dashboard key (see SIGNED_OUT_MARK). The server answers it as an
+// whether a tool's outcome says the session holds no dashboard key (see SIGNED_OUT_PATTERN). The server answers it as an
 // error result, which toolOutcome reads as status 0 with the text as the error; a failure with a real status that merely
 // mentions signing in is a plain failure.
 export function isSignedOut(o: ToolOutcome): boolean {
-  return !o.ok && o.status === 0 && typeof o.body?.error === 'string' && o.body.error.includes(SIGNED_OUT_MARK)
+  return !o.ok && o.status === 0 && typeof o.body?.error === 'string' && SIGNED_OUT_PATTERN.test(o.body.error)
 }
 
 // The agent gate. A session must hold a team agent before it reads a plan or a card, and two things say it holds none.

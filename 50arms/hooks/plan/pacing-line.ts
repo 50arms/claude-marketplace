@@ -307,7 +307,7 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
 export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
   // a give-back is only ever of a `claimed` claim, but not always one that set hasSucceeded: a claim in flight across a session start
   // (resetPacing) comes back `claimed` without writing the new session's state. Its give-back is harmless (50 Arms scopes deleteAgentClaim to the
-  // session and answers released:false). One that crosses resetPacing itself writes and tells nothing, and its claim lapses in 50arms.
+  // session and answers released:false). One that crosses resetPacing itself writes and tells nothing, and its claim lapses in 50 Arms.
   const gen = generation
   try {
     let failure: string | null = null

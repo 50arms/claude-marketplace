@@ -74,11 +74,11 @@ test('enough free space and no window: silent', () => {
   assert.equal(diskNotice(facts({ freeBytes: 40 * GIB })), '')
 })
 
-test('under the floor: a LOW DISK notice naming the free space and the floor, saying the make targets run from the 50 Arms checkout', () => {
+test('under the floor: a LOW DISK notice naming the free space and the floor, saying the make targets run from the dashboard repo checkout', () => {
   const notice = diskNotice(facts({ freeBytes: 25 * GIB }))
   assert.match(notice, /^LOW DISK: C: has 25\.0 GB free, under the 40\.0 GB floor\./)
   assert.doesNotMatch(notice, /hard minimum/)
-  assert.match(notice, /From the 50 Arms checkout, `make machine-report`/)
+  assert.match(notice, /From the dashboard repo checkout, `make machine-report`/)
 })
 
 test('under the hard minimum the notice also says host test runs refuse', () => {
@@ -88,7 +88,7 @@ test('under the hard minimum the notice also says host test runs refuse', () => 
 test('the limits have one source: a missing file is DISK FLOORS UNAVAILABLE, never a built-in default', () => {
   const notice = diskNotice(facts({ floorsText: null, freeBytes: 1 * GIB }))
   assert.match(notice, /^DISK FLOORS UNAVAILABLE: .*machine-disk-floors is missing/)
-  assert.match(notice, /from the 50 Arms checkout/)
+  assert.match(notice, /from the dashboard repo checkout/)
   assert.doesNotMatch(notice, /LOW DISK/)
 })
 
@@ -116,7 +116,7 @@ test('an open compaction window tells the session to pause, before the disk line
   // the marker's opening time is fixed (epoch second 1792728384), so no clock is involved
   assert.equal(lines[0], 'MAINTENANCE WINDOW OPEN since 2026-10-23T04:06:24.000Z: compacting docker')
   assert.match(lines[1], /start no test run, build, deploy or dispatch/)
-  assert.match(lines[1], /run from the 50 Arms checkout/)
+  assert.match(lines[1], /run from the dashboard repo checkout/)
   assert.ok(notice.indexOf('MAINTENANCE WINDOW') < notice.indexOf('LOW DISK'))
 })
 
