@@ -72,10 +72,9 @@ test("step 3 normalizes ssh:// and github.com-<alias> origins and refuses every 
   assert.match(s, /connects `github\.com` repos only/);
 });
 
-test("step 3 reads the origin URL and refuses, creating nothing, when there is none or it is not GitHub", () => {
+test("step 3 reads the origin URL and refuses, creating nothing, when it is not GitHub or gh cannot create the repo", () => {
   const s = step(3);
   assert.match(s, /git remote get-url origin/);
-  assert.match(s, /no `origin` remote|no origin remote/i);
   assert.match(s, /connects `github.com` repos only/);
   assert.match(s, /stop/i);
   assert.match(s, /Nothing has been registered or created in danxbot/);
@@ -245,4 +244,30 @@ test("the scan matcher catches each banned token and passes general text", () =>
   assert.equal(bannedHits("see DX-4556").length, 1);
   assert.equal(bannedHits("SG-1020 first").length, 1);
   assert.deepEqual(bannedHits("GET /api/repos then POST /api/boards for your own repo"), []);
+});
+
+test("step 3 creates the GitHub repo with gh when the folder has no origin, asking name, owner and visibility in one question", () => {
+  const s = step(3);
+  assert.match(s, /no `origin` remote|no GitHub repo yet/i);
+  assert.match(s, /ONE question for all three/);
+  assert.match(s, /name.*owner.*visibility/i);
+  assert.match(s, /gh repo create <owner>\/<name> --<private\|public> --source \. --remote origin/);
+  assert.match(s, /git init/);
+});
+
+test("step 3 makes a first commit and pushes only when the folder has no history, else just pushes", () => {
+  const s = step(3);
+  assert.match(s, /git rev-parse --verify HEAD/);
+  assert.match(s, /git commit -m "Initial commit"/);
+  assert.match(s, /git push -u origin HEAD/);
+  assert.match(s, /already has commits is not committed to/);
+});
+
+test("step 3 checks gh before anything changes and uses the Delivery wording when it is missing or signed out", () => {
+  const s = step(3);
+  assert.ok(s.indexOf("gh --version") < s.indexOf("ONE question"), "gh is checked before the question");
+  assert.match(s, /gh auth status --active --hostname github\.com/);
+  assert.match(s, /install the GitHub CLI \(https:\/\/cli\.github\.com\) and run `gh auth login`/);
+  assert.match(s, /run `gh auth login`\. Then stop/);
+  assert.match(s, /nothing\s+in the folder has changed|nothing in the folder has changed/);
 });
