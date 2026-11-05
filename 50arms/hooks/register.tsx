@@ -198,7 +198,7 @@ const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] a
 // when the session last wrote its plan or a card (or was last reminded, or first called the dashboard), what the no-recent-record reminder counts from. $.state, so a reload keeps it.
 const recordClock = atom({ plugin: '50arms', key: 'recordClock' } as const, { since: null } as RecordClock)
 
-// Every $.state value of the plugin is carried across a /clear (tests/state-carry-scan.test.mjs holds the two lists below to the atoms declared above). claude.exe 2.1.317 empties a plugin's
+// Every $.state value of the plugin is carried across a /clear (a scan test holds the two lists below to the atoms declared above). claude.exe 2.1.317 empties a plugin's
 // whole $.state when a /clear opens the next conversation (measured with a probe module: `session.end` still reads the ending conversation's values, `classic.SessionStart` (source `clear`)
 // reads none, and what it writes stays), while the process, its MCP server, its loops and its timers go on. Each value belongs to the process: what a new conversation must not inherit is
 // reset by the clear's own steps (onSessionEnd, onClassicSessionStart), as it was while $.state lived through a /clear. So one step carries them all, in a module variable: the clear's
