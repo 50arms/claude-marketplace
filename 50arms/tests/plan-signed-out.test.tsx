@@ -72,6 +72,15 @@ describe('the loaded view', () => {
 describe('a key a person revoked (DX-4418): the stop halt of MCP 0.1.225', () => {
   const halt = (text: string) => ({ ok: false, status: 0, body: { error: text } })
 
+  test('sign-in and revoked-key detection do not depend on the product name the MCP package prints', () => {
+    for (const name of ['danxbot', '50 Arms']) {
+      expect(isSignedOut({ ok: false, status: 0, body: { error: `Not signed in to the ${name} dashboard. Call plan_connect.` } } as any)).toBe(true)
+      expect(keyRevokedBy(`STOP ALL WORK NOW. dana revoked your access to the ${name} dashboard at 2026-10-04T07:00:00.000Z.
+
+Commit your work.`)).toBe('dana')
+    }
+  })
+
   test('the exact halt names who revoked the key, and only that exact opening counts', () => {
     expect(keyRevokedBy(KEY_REVOKED_HALT)).toBe(REVOKER)
     // a name with spaces, and the opening cut from the real text (key-revoked-halt.ts, keyRevokedHalt)

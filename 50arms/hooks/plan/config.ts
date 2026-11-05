@@ -48,7 +48,7 @@ export const PREFIX_PATTERN = new RegExp(`^[A-Z]{1,${PREFIX_MAX}}$`)
 // session's figure freezes at its last response and `session.measure` skips a moved reset time at an unchanged percent.
 export const USAGE_PATH = '/api/plan-sessions/me/usage'
 export const USAGE_TICK_MS = 60_000
-// ... and the shortest cadence the plugin accepts from 50arms: a smaller one is a malformed answer, not a request to report in a loop.
+// ... and the shortest cadence the plugin accepts from 50 Arms: a smaller one is a malformed answer, not a request to report in a loop.
 export const MIN_USAGE_TICK_MS = 5_000
 
 // EVERY plan load (the first and each refresh) answers within this or is shown as an error.
@@ -172,6 +172,9 @@ export const NO_EVENT_STATUS = 'the dashboard sent no event status for this sess
 // ends with it): the dashboard's answer when the session has no usable key. A key a PERSON revoked is not this: it is the stop halt below.
 // The text is for the agent: the person only ever reads the words below.
 export const SIGNED_OUT_MARK = 'Not signed in to the 50 Arms dashboard'
+// What detection matches: the MCP package's wording names the product ("danxbot dashboard" in older releases, "50 Arms dashboard" in newer
+// ones), so the match is independent of the name and no release order can break sign-in detection.
+export const SIGNED_OUT_PATTERN = /Not signed in to the .+ dashboard/
 export const SIGNED_OUT_LABEL = `${BRAND}: signed out`
 export const SIGN_IN_LABEL = 'Sign in'
 export const SIGNING_IN_LABEL = 'Signing in…'
@@ -194,6 +197,6 @@ export const BLOCKED_LINE = "Auto mode is blocking 50 Arms' calls. Run /50arms:s
 // `STOP ALL WORK NOW. <revokedBy> revoked your access to the 50 Arms dashboard at <revokedAt>.` followed by a blank line. The
 // text is for the agent (it tells it to commit and stop); the person reads the words below, and there is no Sign in: a
 // revoked agent must stop.
-export const KEY_REVOKED_HALT = /^STOP ALL WORK NOW\. (.+) revoked your access to the 50 Arms dashboard at \S+\.\n/
+export const KEY_REVOKED_HALT = /^STOP ALL WORK NOW\. (.+) revoked your access to the .+ dashboard at \S+\.\n/
 export const keyRevokedLabel = (by: string) => `${BRAND}: access revoked by ${by}`
 export const KEY_REVOKED_FOOTER = `${BRAND}: access revoked`

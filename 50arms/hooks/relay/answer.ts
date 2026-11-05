@@ -1,4 +1,4 @@
-import { SIGNED_OUT_MARK } from '../plan/config'
+import { SIGNED_OUT_PATTERN } from '../plan/config'
 import { RELAY_TOOL, FAILURE_MAX, WAIT_MS } from './config'
 import { NO_ACKS_DETAIL, NO_ACKS_FIX, NO_URGENT_DETAIL, NO_URGENT_FIX } from './text'
 import { keyRevokedBy, mcpText } from '../plan/mcp'
@@ -81,7 +81,7 @@ export function readWaitAnswer(r: any): WaitAnswer {
 // session is bound" are a server that is not there NOW: a failure the loop retries on its backoff, never the end of the plan's relay. Only an
 // answer that names the tool as unknown is an old server.
 export function classifyText(text: string): WaitAnswer {
-  if (keyRevokedBy(text) !== null || text.includes(SIGNED_OUT_MARK)) return { kind: 'signed-out' }
+  if (keyRevokedBy(text) !== null || SIGNED_OUT_PATTERN.test(text)) return { kind: 'signed-out' }
   if (/unknown tool|no such tool|not found/i.test(text) && text.includes(RELAY_TOOL)) return { kind: 'old-server' }
   // the auto mode classifier refused the plugin's own call: the relay says why and keeps retrying, so it resumes by itself once the rule is added
   const refused = classifierRefusal(text)

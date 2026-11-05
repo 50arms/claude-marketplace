@@ -103,24 +103,24 @@ export function parseWindow(text: string): Window {
 }
 
 // the window first (more urgent), then the free-space line. `floors` null: the limits file is missing, said loudly, free space not judged.
-// The make targets exist only in the 50 Arms checkout and this notice appears in every repo, so it says where to run them.
+// The make targets exist only in the dashboard repo checkout and this notice appears in every repo, so it says where to run them.
 export function noticeText(input: { freeBytes: number; floors: Floors | null; floorsPath: string; window: Window | null }): string {
   const lines: string[] = []
   if (input.window) {
     lines.push(
       `MAINTENANCE WINDOW OPEN since ${new Date(input.window.openedAtMs).toISOString()}: ${input.window.reason}`,
-      'Docker Desktop and WSL are about to be stopped to compact their data disks. Pause: start no test run, build, deploy or dispatch, finish or park what is running, write your state to the card, and tell the operator you are paused. The window stays open until `make compact-docker-disk STAGE=finish` (run from the 50 Arms checkout) closes it.',
+      'Docker Desktop and WSL are about to be stopped to compact their data disks. Pause: start no test run, build, deploy or dispatch, finish or park what is running, write your state to the card, and tell the operator you are paused. The window stays open until `make compact-docker-disk STAGE=finish` (run from the dashboard repo checkout) closes it.',
     )
   }
   if (input.floors === null) {
-    lines.push(`DISK FLOORS UNAVAILABLE: ${input.floorsPath} is missing, so C: is not judged against a floor. Run \`${SEED_COMMAND}\` from the 50 Arms checkout.`)
+    lines.push(`DISK FLOORS UNAVAILABLE: ${input.floorsPath} is missing, so C: is not judged against a floor. Run \`${SEED_COMMAND}\` from the dashboard repo checkout.`)
     return lines.join('\n')
   }
   if (input.freeBytes < input.floors.floorBytes) {
     lines.push(
       `LOW DISK: C: has ${formatGiB(input.freeBytes)} free, under the ${formatGiB(input.floors.floorBytes)} floor.` +
         (input.freeBytes < input.floors.hardMinimumBytes ? ` Under the ${formatGiB(input.floors.hardMinimumBytes)} hard minimum: host test runs refuse.` : ''),
-      'Tell the operator now. Start no image build or large install. From the 50 Arms checkout, `make machine-report` shows what is reclaimable and `make sweep-machine` reclaims it; the Docker data disk only returns space through a compaction window (`make compact-docker-disk STAGE=prepare`).',
+      'Tell the operator now. Start no image build or large install. From the dashboard repo checkout, `make machine-report` shows what is reclaimable and `make sweep-machine` reclaims it; the Docker data disk only returns space through a compaction window (`make compact-docker-disk STAGE=prepare`).',
     )
   }
   return lines.join('\n')

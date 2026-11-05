@@ -33,7 +33,7 @@ const DOCKER_ENV = { ...process.env, MSYS_NO_PATHCONV: "1", MSYS2_ARG_CONV_EXCL:
  * stops, however this process ends. What it cannot cover is the window inside `docker run` itself, which creates the container, attaches,
  * then starts it: a CLI killed in that window leaves a `Created` container that --rm never removes. A graceful end (exit, die(), SIGINT,
  * SIGTERM) removes it here, best effort and harmless once --rm already has. A HARD kill (SIGKILL, a Windows process-tree kill) in that
- * window runs no code, so no runner can close it: the backstop is 50 Arms' `make sweep-docker`, which removes a container that is not
+ * window runs no code, so no runner can close it: the backstop is the dashboard repo's `make sweep-docker`, which removes a container that is not
  * running once it has been idle past its window (60 minutes by default), a `Created` one by its creation time.
  */
 let containerName;

@@ -4,8 +4,8 @@ Source of truth for the `50arms` marketplace (`50arms/claude-marketplace`, insta
 
 ## The mantra is the one home for every rule it states (PLN-11 R-22)
 
-The plugin ships no mantra text. Its default is the `mantra` row of 50 Arms' own reminder seed
-(`src/issues/reminders/seed.yaml`, in the 50 Arms repo), stored in 50 Arms' database and
+The plugin ships no mantra text. Its default is the `mantra` row of the dashboard repo's own reminder seed
+(`src/issues/reminders/seed.yaml`, in the dashboard repo), stored in 50 Arms' database and
 overridable per install, board and plan. Every agent receives the reminder registry row `mantra`'s
 effective text (or the board's override of it, DX-4144), never a copy:
 
@@ -32,7 +32,7 @@ A registry fetch failure is one line naming the failure and telling the agent
 to tell the operator (DX-3421); the hook never reads a local mantra file. **Nothing else restates a mantra
 rule** — no `SKILL.md`, agent body, hook text, `CLAUDE.md`, rule file or profile. A skill may
 point at the mantra or add procedure the mantra doesn't state. To change a rule, change the `mantra`
-row in 50 Arms' `src/issues/reminders/seed.yaml` (or override it in the app); phrase each rule so it
+row in the dashboard repo's `src/issues/reminders/seed.yaml` (or override it in the app); phrase each rule so it
 holds for every one of those readers. No prose states how many sub-agents to run (R-23).
 
 ## The time stamp, the event text and the restart notice are function hooks (DX-4234)
@@ -57,7 +57,7 @@ holds for every one of those readers. No prose states how many sub-agents to run
 ## The session's team agent (DX-5554)
 
 - **The band** names the team agent the session signs in as and what it holds, read from the `GET /api/plan-sessions/me` answer's `session` row (`agent` {id, name} or null, `card_id` / `card_title`; a row that has neither shape fails the load, `hooks/plan/agent.ts`): `Tendai · PLAN-23 · name` on a plan, `Tendai · DX-77 · title` holding a stand-alone card (its Open link goes to the card's `/board/<id>` page and the footer reads `50 Arms · DX-77`), `50 Arms · Tendai: not connected to a plan or card` on neither. The avatar is neither read nor drawn: the terminal's `Image` takes bytes the module cannot fetch, and the desktop has no image element for a URL.
-- **The agent gate** (50 Arms `packages/danx-dashboard-mcp/src/agent-gate.ts`): after `plan_connect` answered `agent_needed` or `agent_limit_reached`, the MCP answers every other dashboard call with that block as an error result. The plan load reads it as a ready view with `agentBlock` set (`50 Arms: waiting for a team agent`), never Disconnected, so the relay keeps running on no plan: the dashboard's wake once a person created the agent arrives through it.
+- **The agent gate** (the dashboard repo's `packages/danx-dashboard-mcp/src/agent-gate.ts`): after `plan_connect` answered `agent_needed` or `agent_limit_reached`, the MCP answers every other dashboard call with that block as an error result. The plan load reads it as a ready view with `agentBlock` set (`50 Arms: waiting for a team agent`), never Disconnected, so the relay keeps running on no plan: the dashboard's wake once a person created the agent arrives through it.
 - **Release at session end:** `session.end` calls `DELETE /api/plan-sessions/me/agent` through `api()` only when the process really ends (`prompt_input_exit`, `logout`, `other`); a `/clear` or `/resume` keeps the agent, since the MCP carries on with the same session id. So the agent is free for the team at once instead of after the dashboard's 30-minute dead-session window. Bounded by `AGENT_RELEASE_DEADLINE_MS` (3 s); a failure is one toast; a signed-out or revoked session, or one the agent gate holds, asks nothing. Which session id the MCP sends on a `/clear`'s end is UNVERIFIED live. Tests: `50arms/tests/agent-release.test.tsx`, `50arms/tests/plan-agent-band.test.tsx`.
 
 ## The ready-agent loop (CP-43, PLAN-116 "The agent queue")
@@ -123,7 +123,7 @@ The reports themselves:
 
 ## Tests run in ONE place: a Linux Docker container (DX-5648, operator 2026-10-21)
 
-`npm test` is the only way to run this repo's tests. `scripts/test-in-container.mjs` builds `Dockerfile.test` (node, git, chromium, the `claude` CLI at the version `.claude-code-version` pins, the dependencies), streams the checkout into a container from it as a tar archive (nothing is mounted, so a container-side write never reaches a host `node_modules`) and runs `scripts/test-container-entry.sh` there: `node --test` over the `.mjs` suites, then `claude plugin test 50arms`. The container carries 50 Arms' owner labels (`danxbot.kind=test-run`, `danxbot.release=idle:60`, `danxbot.session` when `CLAUDE_CODE_SESSION_ID` is set; CP-3), so the dev machine's `make sweep-docker` releases it rather than flagging it unowned. `npm test -- <files>` runs named files (`.mjs` under `node --test`, `.tsx` under `claude plugin test`, which has no file filter, so the entry deletes the other `.test.tsx` files from the container's copy).
+`npm test` is the only way to run this repo's tests. `scripts/test-in-container.mjs` builds `Dockerfile.test` (node, git, chromium, the `claude` CLI at the version `.claude-code-version` pins, the dependencies), streams the checkout into a container from it as a tar archive (nothing is mounted, so a container-side write never reaches a host `node_modules`) and runs `scripts/test-container-entry.sh` there: `node --test` over the `.mjs` suites, then `claude plugin test 50arms`. The container carries the dashboard repo's owner labels (`danxbot.kind=test-run`, `danxbot.release=idle:60`, `danxbot.session` when `CLAUDE_CODE_SESSION_ID` is set; CP-3), so the dev machine's `make sweep-docker` releases it rather than flagging it unowned. `npm test -- <files>` runs named files (`.mjs` under `node --test`, `.tsx` under `claude plugin test`, which has no file filter, so the entry deletes the other `.test.tsx` files from the container's copy).
 
 - Run only the tests a change affects: `npm test -- <its test files and their direct dependents>`. A skill, agent or other prose edit needs no test files at all: its checks are the frontmatter lint, the general-audience scan and the injection budget, which `publish.sh` runs. The whole suite (`npm test` with no files) is only for a broad change across many parts of the hooks module.
 - Never run a test file, `node --test` or `claude plugin test` on the Windows checkout, a bare WSL shell or CI, and never the same suite in two environments. A result from anywhere else is not a test result.
@@ -216,7 +216,7 @@ Both yes → done. **NEVER test, verify, or file AC or problems about the publis
 
 ## Shipped files carry no card ids, source paths or internal mechanics (DX-5786, operator 2026-10-22)
 
-Everything under `50arms/` except `tests/` is installed on third-party machines and opened by their agents and people, who see their own cards and plans, the public dashboard API and the MCP tools, and nothing else. So a shipped file (skill, agent, mantra, hook, script, type declaration, manifest, and every comment in them) never names one of our card, plan or problem ids, a path or module in 50 Arms' / 50 Arms' own source, an internal profile or script, or an internal person or repo.
+Everything under `50arms/` except `tests/` is installed on third-party machines and opened by their agents and people, who see their own cards and plans, the public dashboard API and the MCP tools, and nothing else. So a shipped file (skill, agent, mantra, hook, script, type declaration, manifest, and every comment in them) never names one of our card, plan or problem ids, a path or module in the dashboard repo's source, an internal profile or script, or an internal person or repo.
 
 - **This overrides the issue-ref comment default** (`// CARD-ID: reason`) for shipped plugin files: a comment that needs a reason states the reason itself, in words. Card ids stay fine in commit messages, tests and this file.
 - `scripts/check-general-audience.mjs` enforces the id and source-path parts over comments too (`publish.sh` runs it before any bump; `scripts/tests/check-general-audience.test.mjs` runs it over the shipped plugin). A failing line is reworded, never allow-listed.

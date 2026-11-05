@@ -846,7 +846,7 @@ type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
 // plan still set: a refresh runs at every turn end, as session.measure fires). Signed-out and revoked views, an unloaded one and an error say no.
 const isSignedIn = (v: any): boolean => v.phase === 'ready' || (v.phase === 'loading' && v.connected !== null)
 
-// send this session's rate-limit windows to 50arms. Every signed-in session reports, on a plan or not
+// send this session's rate-limit windows to 50 Arms. Every signed-in session reports, on a plan or not
 // (50 Arms places the session on an account from this report, then paces and resumes it); a session that is not signed in reports nothing and
 // toasts nothing. The whole agent tree's burn is in the session's own figure, so there is one report per session and none per sub-agent. The
 // report says when the figure was MEASURED (the last API response, `measuredAt`): a session that is only ticking re-sends a frozen figure, and 50 Arms must tell it from one that is working.
