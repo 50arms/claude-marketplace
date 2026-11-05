@@ -29,7 +29,6 @@ const step = (n) => {
   const to = required.indexOf(` ${n + 1}. `);
   return required.slice(from, to === -1 ? undefined : to);
 };
-const COMMANDS_THAT_LEAVE_THE_MACHINE = ["git push", "gh pr create", "gh pr view"];
 
 test("it reads the three resolved controls from the card read", () => {
   assert.match(delivery, /`GET \/api\/issues\/<id>` with `fields \{"controls":true\}`/);
@@ -79,61 +78,42 @@ test("required false: the lander rebases the card branch onto the target, tests,
   assert.doesNotMatch(notRequired, /commit and push to the target branch/);
 });
 
-test("required true: step 1 is the gh check: a secret-free login check, an action problem, then stop", () => {
+test("required true: no gh prerequisite, the card branch is pushed with git", () => {
   assert.ok(required.includes("never pushed to"));
-  const first = step(1);
-  assert.ok(first.includes("`gh --version`") && first.includes("`gh auth status --active --hostname github.com`"), first);
-  // `gh auth token` and `gh api` print or use the credential: never in the transcript
-  assert.doesNotMatch(first, /gh auth token/);
-  assert.match(first, /masks the token/);
-  assert.ok(first.includes("`gh auth login`"), first);
-  assert.match(first, /open an `action` problem/);
-  assert.match(first, /Then stop\./);
-  assert.match(first, /Never fall back to pushing the target branch/);
+  assert.doesNotMatch(required, /`gh /);
+  assert.match(step(1), /no GitHub CLI is needed/);
+  assert.ok(step(1).includes("git push -u origin card/<card id>"), step(1));
+  assert.ok(step(1).includes("never the target branch itself"), step(1));
 });
 
-test("required true: no command that leaves the machine appears before the gh check", () => {
-  const check = required.indexOf("`gh auth status --active");
-  assert.ok(check > -1);
-  for (const cmd of COMMANDS_THAT_LEAVE_THE_MACHINE) {
-    assert.ok(required.indexOf(cmd) > check, `${cmd} must come after the gh check`);
-    assert.ok(!step(1).includes(cmd), `step 1 must not run ${cmd}`);
+test("required true: the pull request opens through the 50 Arms route, with its refusals handled", () => {
+  const second = step(2);
+  for (const text of ["POST /api/issues/<id>/pull-request", "with no body", "50 Arms GitHub App", "`pull_request_url`",
+    "the branch is not pushed yet", "open an `action` problem", "GitHub App in Setup", "Never fall back to pushing the target branch"]) {
+    assert.ok(second.includes(text), `step 2 lacks ${text}`);
+  }
+  assert.ok(step(1).indexOf("git push") > -1 && required.indexOf("POST /api/issues") > required.indexOf("git push"), "push before the route");
+});
+
+test("dependent_start is a control, and branch_from_dependency branches from the dependency's pull request branch", () => {
+  assert.ok(delivery.includes("`git.pull_request.dependent_start`: `wait_for_merge` or `branch_from_dependency`"));
+  const dep = delivery.slice(delivery.indexOf("**Dependent cards:**"));
+  for (const text of ["`wait_for_merge` needs nothing from you", "`branch_from_dependency`", "`dependency_pull_requests`",
+    "base your branch on `origin/<the one entry's branch>`", "opens your pull request into that branch", "Never code over a branch missing a dependency's code"]) {
+    assert.ok(dep.includes(text), `lacks ${text}`);
   }
 });
 
-test("required true: branch off the target, push the branch, reuse or open the PR, write the link", () => {
-  const expected = [
-    [2, "origin/<target branch>"],
-    [2, "never the target branch itself"],
-    [2, "git push -u origin <branch>"],
-    [3, "gh pr view <branch> --json url,state"],
-    [3, "gh pr create --base <target branch> --head <branch>"],
-    [3, "--body-file"],
-    [3, "<dashboard>/plans/<plan id>/cards/<card id>"],
-    [3, "<dashboard>/board/<card id>"],
-    [3, "`<plan id>` is the plan's number"],
-    [3, "`<dashboard>` is the dashboard URL the session is connected to"],
-    [3, "`state` is `OPEN`"],
-    [3, "A non-zero exit"],
-    [4, "PATCH /api/issues/<id>/edit"],
-    [4, '"pull_request_url"'],
-  ];
-  for (const [n, text] of expected) assert.ok(step(n).includes(text), `step ${n} lacks ${text}`);
-  assert.ok(step(3).indexOf("gh pr view") < step(3).indexOf("gh pr create"), "reuse is checked before creating");
-  assert.ok(!required.includes("/cards/<card id>`, or"), "the card-on-no-plan form is /board/<card id>");
-});
-
 test("done_on opened completes the card and writes the retro", () => {
-  const opened = step(5).slice(step(5).indexOf("`opened`"), step(5).indexOf("`merged`"));
+  const opened = step(3).slice(step(3).indexOf("`opened`"), step(3).indexOf("`merged`"));
   assert.match(opened, /transition `complete`/);
   assert.match(opened, /retro/);
 });
 
 test("done_on merged never completes, releases the claim, and says the person completes it", () => {
-  const merged = step(5).slice(step(5).indexOf("`merged`"));
+  const merged = step(3).slice(step(3).indexOf("`merged`"));
   assert.match(merged, /^`merged`: do not transition `complete`/);
-  assert.match(merged, /`rollback_pickup` \(without\s+`keep_assignment`/);
-  assert.doesNotMatch(merged, /keep_assignment: true/);
+  assert.match(merged, /Release your claim with `DELETE \/api\/issues\/<id>\/assigned-agent`/);
   assert.match(merged, /the card stays open \(it shows ToDo/);
   assert.doesNotMatch(merged, /In Progress/);
   assert.match(merged, /until the pull request merges/);

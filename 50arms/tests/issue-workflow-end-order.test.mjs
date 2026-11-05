@@ -33,7 +33,7 @@ test("Delivery's every landing path merges before it completes and writes the re
   const retro = notRequired.indexOf("write the retro");
   assert.ok(push > -1 && push < complete && complete < retro, notRequired);
   const opened = delivery.slice(delivery.indexOf("- `opened`:"));
-  assert.ok(delivery.indexOf("gh pr create") < delivery.indexOf("- `opened`:"), "the pull request opens before `complete`");
+  assert.ok(delivery.indexOf("/pull-request`") < delivery.indexOf("- `opened`:"), "the pull request opens before `complete`");
   assert.ok(opened.indexOf("transition `complete`") < opened.indexOf("write the retro"), opened);
 });
 
