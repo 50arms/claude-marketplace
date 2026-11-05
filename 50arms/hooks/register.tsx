@@ -76,6 +76,7 @@ import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { StalePendingError, ackedEventId, clearInFlight, fromPending, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, shouldDropResend, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
+import { legacyRuleCheck, legacySettingsPaths } from './relay/legacy-rule'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
 import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
@@ -2844,6 +2845,16 @@ async function homeDir($: any): Promise<string | null> {
   return typeof home === 'string' && home !== '' ? home : null
 }
 
+// CP-70: TEMPORARY dual name. The text of each settings file that exists (user, project, local), read only; the plugin never writes them.
+async function readLegacySettings($: any): Promise<string[]> {
+  const home = await homeDir($)
+  if (home === null) return []
+  const paths = legacySettingsPaths({ configDir: await $.env.get('CLAUDE_CONFIG_DIR'), home, cwd: await $.session.cwd() })
+  const texts: string[] = []
+  for (const path of paths) if (await $.fs.exists(path)) texts.push(String(await $.fs.read(path)))
+  return texts
+}
+
 // What a session start's wait for the plugin's server came to: it is there, its environment was unloaded, or the deadline came first.
 type ServerState = 'ready' | 'unloaded' | 'not-yet'
 
@@ -3987,7 +3998,8 @@ export const register: Register = (on, options) => {
   on('command.run', { command: READY_SKILL }, onReadyCommand)
   on('tool.call', { tool: 'Skill' }, onReadySkill)
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
-  on('tool.check', (_$, e, next) => ownServerCheck(e, next))
+  // CP-70: the second answer is a TEMPORARY dual name, removed with its tests once installs have moved: the person's allow rule for the old server key still covers the platform tools
+  on('tool.check', ($, e, next) => ownServerCheck(e, Object.assign((x: any) => legacyRuleCheck(x, next, () => readLegacySettings($)), { origin: next.origin })))
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
   on('tool.call', { tool: toolName('card_connect') }, onCardConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
