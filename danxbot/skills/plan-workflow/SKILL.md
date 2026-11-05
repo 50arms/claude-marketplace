@@ -176,7 +176,7 @@ From the dashboard:
   pointless), with a note saying why; never because it was answered or because another answer
   settled it. A problem a person commented on or answered is never deleted: the dashboard refuses
   the delete. When such a question no longer applies, add a solution saying so and why, mark it
-  recommended, and ask the person to accept it. A new build card alone records nothing.
+  recommended, and ask the person to accept it. A design problem takes no added solution; when it no longer applies, archive its designs, which removes it. A new build card alone records nothing.
 - `commented on problem` → a follow-up: reply with a comment on that problem. A comment that
   decides the question (for example "do it this other way") is not yet an answer: only a
   person's accepted solution answers. Edit the problem's solutions to state what they said (change
