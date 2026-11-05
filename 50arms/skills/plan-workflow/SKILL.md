@@ -1,6 +1,6 @@
 ---
 name: plan-workflow
-description: 'THE planning workflow when a human is in the loop beyond a quick cleanup: multi-step plan or build, a question that affects a plan, monitoring, resuming or handing off work, a pasted plan link. "Make a plan" means a 50 Arms plan, never a task list, plan mode or a question in chat. Load before connecting to, creating or writing a plan.'
+description: 'THE planning workflow when a human is in the loop beyond a quick cleanup: multi-step plan or build, a question that affects a plan, monitoring, resuming or handing off work, a pasted plan link, or being asked to sign in to 50 Arms (call `plan_connect`). "Make a plan" means a 50 Arms plan, never a task list, plan mode or a question in chat. Load before connecting to, creating or writing a plan.'
 ---
 
 # Plan Workflow
@@ -241,9 +241,8 @@ From the plugin's relay (delivery itself):
   `plan_connect` again; for a server too old to mark events urgent, restart the session). Read
   the card by hand until it is done.
 - `events delayed:` naming the auto mode classifier → in auto permission mode the engine refused the
-  plugin's own call; updating the plugin does not help. Run `/50arms:start`: with the person's OK it adds
-  the allow rule `mcp__plugin_50arms_dashboard__*` in one step. Or add that rule to `permissions.allow` in
-  `~/.claude/settings.json` yourself (or allow it in `/permissions`). Either way the relay resumes on its own within a few
+  plugin's own call; updating the plugin does not help. With the person's OK, add the allow rule
+  `mcp__plugin_50arms_dashboard__*` to `permissions.allow` in `~/.claude/settings.json` (or the person allows it in `/permissions`). Either way the relay resumes on its own within a few
   minutes (restart the session only if it does not), and read the card by hand until then.
 - `events delayed:` → the relay is retrying on its own; act only if it never clears.
 

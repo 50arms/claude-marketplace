@@ -30,7 +30,7 @@ const ME = 'GET /api/plan-sessions/me'
 const OTHER_SESSION_ID = '7d1f3a52-0c4e-4b8e-9f21-5a6b7c8d9e0f'
 
 describe('reading a folder repo, a session row and a clear file', () => {
-  test('every origin form 50arms:start accepts gives the owner and repo; any other host gives none', () => {
+  test('every GitHub origin form gives the owner and repo; any other host gives none', () => {
     const want = { owner: 'acme', repo: 'app' }
     for (const url of ['https://github.com/acme/app.git', 'https://github.com/acme/app', 'git@github.com:acme/app.git', 'git@github.com-work:acme/app.git', 'ssh://git@github.com/acme/app.git', 'git@github.com:acme/app.git\n']) {
       expect(parseGithubOrigin(url)).toEqual(want)
@@ -119,7 +119,7 @@ describe('reading a folder repo, a session row and a clear file', () => {
     for (const row of [{ plan_id: null, card_id: null }, { session_id: 7 }, { session_id: '' }]) expect(() => sessionIdOf(row)).toThrow('bad_response')
   })
 
-  // DEC-405: the platform is 50 Arms. The one existing name a person may still be sent to is the `/50arms:start` command, renamed with the other existing names later.
+  // DEC-405: the platform is 50 Arms. No text names danx.
   test('nothing the ready loop says to a person or the model says danx: every text the loop module defines, and its no-agent words', () => {
     const texts: string[] = [...Object.values(NO_AGENT)]
     for (const [name, value] of Object.entries(readyLoopModule)) {
@@ -128,10 +128,10 @@ describe('reading a folder repo, a session row and a clear file', () => {
       else if (typeof value === 'function' && /^ready[A-Z]/.test(name)) texts.push((value as (...args: string[]) => string)('x', 'y'))
     }
     expect(texts.filter(t => t.includes(`/${READY_COMMAND}`)).length).toBeGreaterThan(10)
-    for (const text of texts) expect(text.replaceAll('/50arms:start', '')).not.toMatch(/danx/i)
+    for (const text of texts) expect(text).not.toMatch(/danx/i)
   })
 
-  test('the names tried first are the ones 50arms:start gives', () => {
+  test('the names tried first are the ones the setup guide gives', () => {
     expect(repoNameCandidates({ owner: 'Acme', repo: 'My.App' })).toEqual(['my-app', 'acme-my-app'])
     expect(repoNameCandidates({ owner: 'acme', repo: '...' })).toEqual(['acme----'])
   })
@@ -233,7 +233,7 @@ describe('the ready-agent loop', () => {
   test('the skill joins the list as the command does, tells the model the same line, and `off` leaves; any other tool or skill is left alone', async ($, on) => {
     on('tool.call', () => ({ result: 'loaded' }) as any)
     const d = await started($, on)
-    const other: any = await $.tool.call({ tool: 'Skill', skill: '50arms:start' } as any)
+    const other: any = await $.tool.call({ tool: 'Skill', skill: 'some-other-skill' } as any)
     await d.clock.settle()
     expect(d.world.readyMark).toBe(null)
     expect(other.context ?? []).not.toContain(READY_JOINING)
@@ -353,7 +353,7 @@ describe('the ready-agent loop', () => {
     expect(d.world.readyMark).toBe(REPO)
   })
 
-  describe('a repo registered under a name 50arms:start would not give it', () => {
+  describe('a repo registered under a name the setup guide would not give it', () => {
     const CUSTOM = [{ name: 'our-name', github_remote: { owner: 'acme', repo: 'app' } }]
 
     test('asks a person once through the band, tells the model nothing when it is granted, and joins', async ($, on) => {

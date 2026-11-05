@@ -177,11 +177,10 @@ test("scanFiles reports file, line and what for each hit in a scanned surface, a
   ]);
 });
 
-test("the shipped 50 Arms plugin passes, test files that hold the tokens as matcher proof are not shipped, and the start skill is scanned", () => {
+test("the shipped 50 Arms plugin passes, test files that hold the tokens as matcher proof are not shipped, and the plan-workflow skill is scanned", () => {
   assert.deepEqual(scanPlugin(REPO_ROOT, "50arms"), []);
   const shipped = listPluginFiles(REPO_ROOT, "50arms");
-  assert.ok(!shipped.includes("tests/start-skill.test.mjs"));
-  assert.ok(shipped.includes("skills/start/SKILL.md"));
+  assert.ok(shipped.includes("skills/plan-workflow/SKILL.md"));
   assert.ok(shipped.includes("hooks/hooks.json") && shipped.includes("hooks/register.tsx"));
   assert.ok(shipped.includes("scripts/capture-screenshot.mjs"));
 });
