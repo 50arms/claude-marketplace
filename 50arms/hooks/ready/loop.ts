@@ -4,7 +4,7 @@ import { heldForInput } from '../relay/text'
 // A session a person opened waits in its team's list of ready agents, is handed work, and after that work clears and rejoins
 // the back of the list by itself. Pure: register.tsx does the reads, the writes and the commands. The list itself is the dashboard's (`PUT /api/plan-sessions/me/ready`).
 // The dashboard also keeps the session's READY LOOP (the job it took, and whether that job has ended) and decides when it clears, by a handshake: 50 Arms asks, the session wraps up
-// and says ready, and 50 Arms releases the clear. Nothing clears on a timer, so a person still talking keeps the session. The plugin runs the `/clear` it released and rejoins; it holds no
+// and says ready, and 50 Arms releases the clear (the row's `release_id`). Nothing clears on a timer, so a person still talking keeps the session. The plugin runs the `/clear` it released and rejoins; it holds no
 // rule of its own for when a job has ended.
 
 export const READY_COMMAND = '50arms-ready'
@@ -111,7 +111,8 @@ export function holdsWork(session: any): boolean {
 
 // The session's ready loop as the dashboard keeps it: the repo it rejoins, the job it took (null between jobs), and whether that job has ended, by the dashboard's one rule for that
 // (a card Done or Cancelled, a plan whose work is finished, or work the session left). null: the session is in no loop on the server (one only marked ready, that never took a job, included).
-// `releaseId`: the clear release 50 Arms stands behind right now, set only while the job has ended and an agreement answers its current ending; the clear file may name an older one.
+// `releaseId`: the clear release 50 Arms stands behind right now, set only while the job has ended and an agreement answers its current ending. It is the one word on which release to run: the
+// MCP's clear file gets it only at its stream's next frame, and may still name an older one.
 export type ServerLoop = { repo: string; job: ReadyJob | null; ended: boolean; releaseId: string | null }
 
 // The `ready_loop` of an answer of `route` (`GET /api/plan-sessions/me`, or the mark's `PUT`). Anything else is a failure, never "no loop": no loop is what lets a look mark the session, and a
@@ -141,25 +142,6 @@ export function markAnswerOf(body: any): MarkAnswer {
   const loop = serverLoopOf(body, route)
   if (loop === null || loop.job === null) throw new Error(`bad_response: ${route} answered ready null with no ready_loop job`)
   return { kind: 'joined', job: loop.job }
-}
-
-// The release 50 Arms agreed to in the clear file's text (null: no file, or no clear released). The file is `{v: 1, sessionId, control: {releaseId} | null, askedAt}`; `askedAt` is the MCP's own memory of
-// the last ask it showed, and says nothing to the plugin. A file written for another session, or one the MCP would not write, is refused: a release read wrong wipes a conversation.
-export function releaseOfClearFile(text: string | null, sessionId: string): string | null {
-  if (text === null) return null
-  const bad = (why: string) => new Error(`the clear file ${why}`)
-  let parsed: any
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw bad('is not JSON')
-  }
-  if (parsed === null || typeof parsed !== 'object' || parsed.v !== 1 || typeof parsed.sessionId !== 'string' || !('control' in parsed)) throw bad('is not one the MCP writes')
-  if (parsed.sessionId !== sessionId) throw bad(`was written for another session (${parsed.sessionId})`)
-  const control = parsed.control
-  if (control === null) return null
-  if (typeof control !== 'object' || typeof control.releaseId !== 'string' || control.releaseId === '') throw bad('has a control that is not null or {releaseId}')
-  return control.releaseId
 }
 
 // The clears the plugin has run, one record per session's dashboard id in $.store, so a release is run once however many looks and process restarts follow it.

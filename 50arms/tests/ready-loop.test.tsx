@@ -4,13 +4,13 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import * as readyLoopModule from '../hooks/ready/loop'
-import { READY_COMMAND, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
+import { READY_COMMAND, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
 import { LOCK_STALE_MS, NOT_CONNECTED_RETRY_MS, SIGN_IN_MIN_ROUND_MS, toolName } from '../hooks/plan/config'
 import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
-import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest } from './plan-kit'
+import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest } from './plan-kit'
 // CP-67: the name the engine gives the command a person types as /50arms-ready: the plugin's skill, under the plugin's name
 const TYPED_READY = '50arms:50arms-ready'
 
@@ -26,8 +26,6 @@ const TURN = { answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason
 const CARD = { id: 'DX-77', title: 'A held card' }
 // the route whose answer carries the server's ready loop on every look
 const ME = 'GET /api/plan-sessions/me'
-// another session of the same team
-const OTHER_SESSION_ID = '7d1f3a52-0c4e-4b8e-9f21-5a6b7c8d9e0f'
 
 describe('reading a folder repo, a session row and a clear file', () => {
   test('every GitHub origin form gives the owner and repo; any other host gives none', () => {
@@ -84,21 +82,10 @@ describe('reading a folder repo, a session row and a clear file', () => {
     }
   })
 
-  test("the clear file gives the release 50 Arms agreed to; askedAt is the relay's own memory and changes nothing; a file of another session, or one the relay would not write, is refused", () => {
-    const file = (over: object) => JSON.stringify({ v: 1, sessionId: SESSION_ID, control: null, askedAt: null, ...over })
+  test("the clear file is the one of the session's dashboard id, and an id that is not plain names none", () => {
     expect(sessionFilePath(HOME_DIR, 'clear', SESSION_ID)).toBe(`${HOME_DIR}/.config/danxbot/clear/${SESSION_ID}.json`)
     // the MCP keeps no file for an id that is not plain, so no such id reaches a path
     for (const id of ['../other', 'a/b', 'a.b', '']) expect(sessionFilePath(HOME_DIR, 'clear', id)).toBe(null)
-    expect(releaseOfClearFile(null, SESSION_ID)).toBe(null)
-    expect(releaseOfClearFile(file({}), SESSION_ID)).toBe(null)
-    for (const askedAt of [null, '2026-10-03T08:00:00.000Z']) {
-      expect(releaseOfClearFile(file({ control: { releaseId: 'r1' }, askedAt }), SESSION_ID)).toBe('r1')
-      expect(releaseOfClearFile(file({ askedAt }), SESSION_ID)).toBe(null)
-    }
-    expect(() => releaseOfClearFile(file({ control: { releaseId: 'r1' } }), OTHER_SESSION_ID)).toThrow('written for another session')
-    for (const text of ['not json', file({ v: 2 }), JSON.stringify({ v: 1, control: null, askedAt: null }), JSON.stringify({ v: 1, sessionId: SESSION_ID, askedAt: null }), file({ control: { releaseId: '' } }), file({ control: 'r1' }), file({ control: {} })]) {
-      expect(() => releaseOfClearFile(text, SESSION_ID)).toThrow('clear file')
-    }
   })
 
   test("a danxbot_api answer the MCP sent as a file names that file and carries no body, so its reader reads the file; an inline answer names none", () => {
@@ -743,9 +730,9 @@ describe('the ready-agent loop', () => {
       expect(d.world.readySteps).toEqual(['clear', `leave ${CARD.id}`, `mark ${REPO}`])
     })
 
-    // CP-55: the clear file names a release the server no longer stands behind (the job reopened and ended again while the stream was down): nothing clears and nothing is sent, until the
-    // view names the release the file names
-    test('a clear file naming a release the view no longer names clears nothing and sends nothing; once the view names the new release, it clears once and rejoins', async ($, on) => {
+    // CP-55: the clear file names a release the server no longer stands behind (the job reopened and ended again while the stream was down): nothing clears and nothing is sent. The row's
+    // `release_id` alone says which release runs, so a newer one the file has not caught up with clears at once
+    test('a clear file naming a release the view no longer names clears nothing and sends nothing; the new release the view names clears once and rejoins, whatever the file still names', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       handCard(d, 'Done')
@@ -760,14 +747,9 @@ describe('the ready-agent loop', () => {
       expect(d.clearRuns).toHaveLength(0)
       expect(d.world.readySteps).toEqual([])
       expect(d.calls.slice(calls).filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'PUT')).toEqual([])
-      // the view names a newer release than the file (r2 against r1) with the agreement standing: still nothing
+      // the view names a newer release than the file (r2 against r1) with the agreement standing: it clears once
       d.world.releaseId = 'r2'
       d.world.clearAgreed = true
-      await tick(d)
-      expect(d.clearRuns).toHaveLength(0)
-      expect(d.world.readySteps).toEqual([])
-      expect(d.calls.slice(calls).filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'PUT')).toEqual([])
-      released(d, 'r2')
       await tick(d)
       expect(d.clearRuns).toHaveLength(1)
       expect(d.world.readySteps).toEqual(['clear', `leave ${CARD.id}`, `mark ${REPO}`])
@@ -789,6 +771,71 @@ describe('the ready-agent loop', () => {
       expect(d.world.readySteps).toEqual(['clear', 'leave 23', `mark ${REPO}`])
       expect(d.world.planId).toBe(null)
       expect(d.calls.filter((c: any) => c.tool === 'plan_connect' && c.args?.disconnect === true)).toEqual([])
+    })
+
+    // What claude.exe 2.1.317 does around a /clear (measured with a probe module): `session.end` (reason `clear`) still reads the ending conversation's $.state, then the whole of it is
+    // emptied, then `classic.SessionStart` (source `clear`) opens the new conversation, and only what is written from there on stays. `answerEngineClear` puts beneath the plugin
+    // what answers the two events.
+    const answerEngineClear = (on: any) => {
+      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+      on('classic.SessionStart', () => ({}) as any)
+    }
+    const engineClears = async ($: any, d: any) => {
+      await $.session.end({ reason: 'clear', sessionId: SESSION_ID } as any)
+      d.wipeState()
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID, transcript_path: '/work/cleared.jsonl' })
+    }
+
+    test('the turn that agreed to the clear ends and the released /clear runs at once, before the MCP has written the release into the clear file; the session, its $.state emptied by the /clear, rejoins the list in the same look and leaves the finished plan', async ($, on) => {
+      answerEngineClear(on)
+      const d = await started($, on, { stateSteps: true })
+      await ready($, d)
+      handPlan(d, false)
+      await tick(d)
+      await turnEnds($, d)
+      d.world.readySteps.length = 0
+      // the model said ready in this turn: 50 Arms stands behind the release at once, and the stream's next frame, up to 15 s away, has not brought it to the clear file yet
+      d.world.readyLoop = { ...d.world.readyLoop, ended: true }
+      d.world.clearAgreed = true
+      d.world.releaseId = 'r1'
+      const clear = held()
+      d.world.clearHold = clear.promise
+      await turnEnds($, d)
+      d.world.clearHold = null
+      expect(d.world.clearsStarted).toBe(1)
+      await engineClears($, d)
+      clear.release()
+      await d.clock.settle()
+      expect(d.world.readySteps).toEqual(['clear', 'leave 23', `mark ${REPO}`])
+      expect(d.world.planId).toBe(null)
+      expect(d.world.readyMark).toBe(REPO)
+      expect(d.toasts).toContain(readyRejoined(REPO))
+      expect(d.stored.get(clearSpentKey(SESSION_ID))).toMatchObject({ releaseId: 'r1' })
+      // waiting on the list from here: the next look finds the mark standing and neither clears nor marks again
+      const marks = d.world.readyMarks.length
+      await tick(d)
+      expect(d.world.readyMarks).toHaveLength(marks)
+      expect(d.clearRuns).toHaveLength(1)
+    })
+
+    test("a person's own /clear, which empties the plugin's $.state too, keeps the session in the loop: its next job still clears and rejoins", async ($, on) => {
+      answerEngineClear(on)
+      const d = await started($, on, { stateSteps: true })
+      await ready($, d)
+      expect(d.world.readyMark).toBe(REPO)
+      await engineClears($, d)
+      // the engine's id a person's /clear gives the session (the plugin's own /clears later count theirs from the kit's own)
+      d.world.sessionId = `${OWN_SESSION.session_id}-cleared-by-person`
+      await d.clock.settle()
+      handCard(d, 'Done')
+      released(d)
+      d.world.readySteps.length = 0
+      await tick(d)
+      expect(d.world.readySteps).toEqual(['clear', `leave ${CARD.id}`, `mark ${REPO}`])
+      expect(d.world.readyMark).toBe(REPO)
+      expect(readyDeletes(d)).toBe(0)
+      // the loop it kept, never one taken up again from the row as a restarted process does
+      expect(d.toasts).not.toContain(readyAdopted(REPO))
     })
 
     test('the release is run once: a rejoin that failed after the /clear is made again on the next look, with no second /clear', async ($, on) => {
@@ -859,29 +906,6 @@ describe('the ready-agent loop', () => {
       expect(d.clearRuns).toEqual([])
       expect(d.world.card).toEqual(CARD)
       expect(readyDeletes(d)).toBe(0)
-    })
-
-    test('a clear file written for another session is refused: told once, and nothing clears', async ($, on) => {
-      const d = await started($, on)
-      await ready($, d)
-      handCard(d, 'Done')
-      d.world.clearAgreed = true
-      clearFile(d, 'r1', OTHER_SESSION_ID)
-      await tick(d)
-      await tick(d)
-      expect(d.clearRuns).toEqual([])
-      expect(d.toasts.filter((t: string) => t.includes('written for another session'))).toHaveLength(1)
-    })
-
-    test("a clear file the session cannot read is told once and clears nothing", async ($, on) => {
-      const d = await started($, on)
-      await ready($, d)
-      handCard(d, 'Done')
-      d.world.files[clearFileAt(SESSION_ID)] = 'not json'
-      await tick(d)
-      await tick(d)
-      expect(d.clearRuns).toEqual([])
-      expect(d.toasts.filter((t: string) => t.includes('reading the clear file failed'))).toHaveLength(1)
     })
 
     test("the clear file is the one of the session's dashboard id, which the MCP keeps across a /clear: a release under the engine's own session id is not this session's, and the second job clears as the first did", async ($, on) => {
@@ -1049,15 +1073,18 @@ describe('the ready-agent loop', () => {
     })
 
     test("the clear's fresh conversation opens with the start text", async ($, on) => {
+      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
       on('classic.SessionStart', () => ({}) as any)
-      const d = await started($, on)
+      const d = await started($, on, { stateSteps: true })
       await ready($, d)
       handCard(d, 'Done')
       released(d)
       d.world.clearFails = 'clear boom'
       d.world.localRecord = true
       await turnEnds($, d)
-      // the phase a real /clear runs in: the engine raises its session start during the command
+      // the phase a real /clear runs in: the engine ends the conversation, empties $.state and raises its session start during the command
+      await $.session.end({ reason: 'clear', sessionId: SESSION_ID } as any)
+      d.wipeState()
       await $.classic.SessionStart({ session_id: 'sess-own-2', source: 'clear', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
       d.world.localRecord = false
       const told = (await $.prompt.submit({ text: 'next' })).context ?? []

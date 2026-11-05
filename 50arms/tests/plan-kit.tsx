@@ -1212,8 +1212,19 @@ export function dashboard(
       seededRelay = undefined
     }
     stateWrites.push({ plugin: e.plugin, key: e.key, value: e.value })
-    return next(e)
+    const set = await next(e)
+    if (stateWiped) rewrittenSinceWipe.add(e.key)
+    return set
   })
+  // claude.exe 2.1.317 empties the plugin's whole $.state when a /clear starts the new conversation (measured with a probe module): `wipeState()` is that moment, and from it every
+  // key reads as never written until the plugin writes it again. The engine's version of a key is kept, so a write made from such a read lands.
+  let stateWiped = false
+  const rewrittenSinceWipe = new Set<string>()
+  const wipeState = () => {
+    if (!stateGetHooked) throw new Error('wipeState needs dashboard(on, { stateSteps: true })')
+    stateWiped = true
+    rewrittenSinceWipe.clear()
+  }
   // DX-4806: a value the host already holds when the module loads (what a reload of the module finds: $.state outlives it). It is read until the
   // plugin writes the key.
   const seededState = new Map<string, unknown>()
@@ -1227,6 +1238,7 @@ export function dashboard(
     on('state.get', async (_$: any, e: any, next: any) => {
       if (beforeStateRead.size > 0) await takeStep(beforeStateRead, e.key)
       const read = await next(e)
+      if (stateWiped && !rewrittenSinceWipe.has(e.key)) return { ...read, value: { ...read.value, value: undefined } }
       return seededState.has(e.key) && !stateWrites.some(w => w.key === e.key) ? { ...read, value: { ...read.value, value: seededState.get(e.key) } } : read
     })
   }
@@ -1402,8 +1414,9 @@ export function dashboard(
     if (options.compactRunFails !== undefined) throw new Error(options.compactRunFails)
     return { value: undefined } as any
   })
-  // CP-43: the plugin's /clear, only as far as another session id answers afterwards (measured, claude.exe 2.1.309). The engine also raises `session.end` and `classic.SessionStart` and empties the
-  // conversation; a kit fake's `$` cannot raise an event, and the kit keeps no conversation, so none of that is modelled here.
+  // CP-43: the plugin's /clear, only as far as another session id answers afterwards (measured, claude.exe 2.1.309). The engine also raises `session.end`, empties the plugin's $.state
+  // (claude.exe 2.1.317) and raises `classic.SessionStart`; a kit fake's `$` cannot raise an event, so a test that needs those holds this /clear (`clearHold`) and plays them itself
+  // (`$.session.end`, `wipeState`, `$.classic.SessionStart`). The kit keeps no conversation.
   const clearRuns: string[] = []
   on('command.run', { command: 'clear' }, async (_$: any, _e: any) => {
     world.clearsStarted++
@@ -1480,7 +1493,7 @@ export function dashboard(
       const reached = new Promise<void>(r => (entered = r))
       sendHold.entered = entered
       return { reached, release: () => release() }
-    }, suspend: (ms: number) => void (asleepMs += ms), beforeNextRead: (key: string, step: () => Promise<void>) => {
+    }, suspend: (ms: number) => void (asleepMs += ms), wipeState, beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
     }, serversCalled, beforeNextWrite:(key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, turnActivity: turnActivityCalls, loadPauseReads: [] as typeof reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.sessionReadFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
