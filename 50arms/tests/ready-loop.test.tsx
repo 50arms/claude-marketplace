@@ -10,7 +10,7 @@ import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
-import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest } from './plan-kit'
+import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest, answerEngineClear, engineClears } from './plan-kit'
 // CP-67: the name the engine gives the command a person types as /50arms:ready: the plugin's skill, under the plugin's name
 const TYPED_READY = '50arms:ready'
 
@@ -743,7 +743,7 @@ describe('the ready-agent loop', () => {
 
     // CP-55: the clear file names a release the server no longer stands behind (the job reopened and ended again while the stream was down): nothing clears and nothing is sent. The row's
     // `release_id` alone says which release runs, so a newer one the file has not caught up with clears at once
-    test('a clear file naming a release the view no longer names clears nothing and sends nothing; the new release the view names clears once and rejoins, whatever the file still names', async ($, on) => {
+    test('a release the view no longer stands behind clears nothing and sends nothing; a newer release the view names clears once and rejoins', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       handCard(d, 'Done')
@@ -787,15 +787,6 @@ describe('the ready-agent loop', () => {
     // What claude.exe 2.1.317 does around a /clear (measured with a probe module): `session.end` (reason `clear`) still reads the ending conversation's $.state, then the whole of it is
     // emptied, then `classic.SessionStart` (source `clear`) opens the new conversation, and only what is written from there on stays. `answerEngineClear` puts beneath the plugin
     // what answers the two events.
-    const answerEngineClear = (on: any) => {
-      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
-      on('classic.SessionStart', () => ({}) as any)
-    }
-    const engineClears = async ($: any, d: any) => {
-      await $.session.end({ reason: 'clear', sessionId: SESSION_ID } as any)
-      d.wipeState()
-      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID, transcript_path: '/work/cleared.jsonl' })
-    }
 
     test('the turn that agreed to the clear ends and the released /clear runs at once, before the MCP has written the release into the clear file; the session, its $.state emptied by the /clear, rejoins the list in the same look and leaves the finished plan', async ($, on) => {
       answerEngineClear(on)

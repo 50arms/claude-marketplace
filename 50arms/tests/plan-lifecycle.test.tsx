@@ -19,7 +19,7 @@ const loadsOf = (d: any) => d.api.filter((a: any) => a.path === '/api/plan-sessi
 describe('session.end by reason', () => {
   // DX-4233: what the process's end does to the plan event relay is in plan-relay-lifecycle.test.tsx
   for (const reason of ['clear', 'resume']) {
-  test(`a ${reason} refreshes at once: what the dashboard shows may have moved`, async ($, on) => {
+  test(`a ${reason} loads the view when the next conversation starts, not when the old one ends: what the dashboard shows may have moved`, async ($, on) => {
     const d = dashboard(on)
     on('session.end', () => ({ sessionId: 's1' }) as any)
     on('classic.SessionStart', () => ({}) as any)

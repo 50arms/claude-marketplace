@@ -127,6 +127,21 @@ export const CLOCK_START = Date.parse('2026-10-03T08:00:00.000Z')
 export const OWN_SESSION = { session_id: 'sess-own', title: 'PLAN-23: 50 Arms plugin' }
 // the engine's session id after the session under test is cleared once (its MCP server keeps SESSION_ID)
 export const CLEARED_SESSION_ID = `${OWN_SESSION.session_id}-cleared-1`
+
+// what answers the two engine events beneath the plugin when a /clear runs (claude.exe 2.1.317: see wipeState)
+export const answerEngineClear = (on: any) => {
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+  on('classic.SessionStart', () => ({}) as any)
+}
+
+// a /clear as the engine runs it: the conversation ends, $.state is emptied, the next conversation starts under a new id
+export const engineClears = async ($: any, d: any) => {
+  await $.session.end({ reason: 'clear', sessionId: d.world.sessionId } as any)
+  d.wipeState()
+  d.world.sessionId = CLEARED_SESSION_ID
+  await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID, transcript_path: '/work/cleared.jsonl' })
+  await d.clock.settle()
+}
 export const OTHER_SESSION = { session_id: 'sess-other', title: 'PLAN-23: review pass' }
 type Prob = { id: number; type: 'question' | 'action'; statement: string; open: boolean }
 type Card = { id: string; title: string; priority: number; problems: Prob[] }

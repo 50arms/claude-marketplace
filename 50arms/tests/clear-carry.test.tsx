@@ -4,22 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // its MCP server, its loops and its timers go on, so every value the plugin keeps for the process is carried across (register.tsx carryAcrossConversation, restoreCarried).
 import { describe, expect } from 'claude-code/testing'
 
-import { test, SURFACES, CLEARED_SESSION_ID, dashboard, startSession } from './plan-kit'
-
-// what answers the two engine events beneath the plugin
-const answerEngineClear = (on: any) => {
-  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
-  on('classic.SessionStart', () => ({}) as any)
-}
-
-// a /clear as the engine runs it: the conversation ends, $.state is emptied, the next conversation starts under a new id
-const engineClears = async ($: any, d: any) => {
-  await $.session.end({ reason: 'clear', sessionId: d.world.sessionId } as any)
-  d.wipeState()
-  d.world.sessionId = CLEARED_SESSION_ID
-  await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID, transcript_path: '/work/cleared.jsonl' })
-  await d.clock.settle()
-}
+import { test, SURFACES, CLEARED_SESSION_ID, dashboard, startSession, answerEngineClear, engineClears } from './plan-kit'
 
 const relayPhases = (d: any) => d.stateWrites.filter((w: any) => w.key === 'relay').map((w: any) => w.value.phase)
 
@@ -54,7 +39,7 @@ const firstValues = (writes: { key: string; value: unknown }[]) => {
 }
 
 describe('what a /clear that empties $.state carries', () => {
-  test('every value the ending conversation held is written back before anything else of the new one, among them the ended session, the boot id, the MCP ids, the desktop host, the relay outbox and the events in flight', async ($, on) => {
+  test('every value the ending conversation held is written back by the start of the new conversation, among them the ended session, the boot id, the MCP ids, the desktop host, the relay outbox and the events in flight', async ($, on) => {
     answerEngineClear(on)
     const d = dashboard(on, { stateSteps: true })
     await startSession($, d, 'desktop')

@@ -36,7 +36,10 @@ test("every atom the hooks declare is read by carryAcrossConversation and writte
   const declared = [];
   for (const rel of sources) {
     const src = readFileSync(path.join(root, rel), "utf8");
-    const names = [...src.matchAll(/^const (\w+) = atom\(/gm)].map((m) => m[1]);
+    // every `atom(` call must sit in a recognised declaration (`[export] const|let <name>[: type] = atom(`); any other form fails here instead of going uncarried
+    const calls = [...src.matchAll(/\batom\(/g)].length;
+    const names = [...src.matchAll(/^(?:export\s+)?(?:const|let)\s+(\w+)\s*(?::[^=\n]+)?=\s*atom\(/gm)].map((m) => m[1]);
+    assert.equal(names.length, calls, `${rel}: ${calls} atom( calls but ${names.length} recognised declarations; a declaration form the scan does not know would go uncarried`);
     if (!rel.endsWith(path.join("hooks", "register.tsx"))) assert.deepEqual(names, [], `${rel} declares no atom: every one is in register.tsx, beside the carry`);
     declared.push(...names);
   }
