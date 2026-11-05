@@ -1,4 +1,4 @@
-import "../../danxbot/tests/designated-test-container.mjs";
+import "../../50arms/tests/designated-test-container.mjs";
 // scripts/tests/verify-delivery.test.mjs — post-delivery check for
 // scripts/publish.sh (DX-3057). Runs scripts/verify-delivery.mjs for real
 // via execFileSync against fs.mkdtempSync fixtures holding a fake
@@ -17,7 +17,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const SCRIPT = path.join(REPO_ROOT, "scripts", "verify-delivery.mjs");
 
 const MARKETPLACE = "50arms";
-const PLUGIN = "danxbot";
+const PLUGIN = "50arms";
 
 function mkTmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));

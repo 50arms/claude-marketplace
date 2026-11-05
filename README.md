@@ -1,6 +1,6 @@
 # 50arms marketplace
 
-Source repo and marketplace (`50arms`) of one Claude Code plugin, `danxbot` — the plan and issue workflows,
+Source repo and marketplace (`50arms`) of one Claude Code plugin, `50arms` — the plan and issue workflows,
 every dev rule used while working a card, and the hooks that serve them.
 
 ## Install
@@ -11,35 +11,35 @@ In a Claude Code session:
 
 ```
 /plugin marketplace add 50arms/claude-marketplace
-/plugin install danxbot@50arms
+/plugin install 50arms@50arms
 ```
 
 Or from a shell:
 
 ```bash
 claude plugin marketplace add 50arms/claude-marketplace
-claude plugin install danxbot@50arms
+claude plugin install 50arms@50arms
 ```
 
 After installing:
 
-1. Restart Claude Code. The plugin's `danx-dashboard` server starts with the session; there is no `.mcp.json` to write.
+1. Restart Claude Code. The plugin’s `dashboard` server starts with the session; there is no `.mcp.json` to write.
 2. Claude Code asks for the **Dashboard URL**. Leave it at its default, `https://app.50arms.ai`, unless you run your own dashboard. If you installed from a shell, it prints `1 userConfig option not yet set`: that is this option, and it works unset because the default applies. It is kept in your user settings and editable in `/config`.
 3. Ask Claude to connect a plan (or call `plan_connect`). The first call opens a sign-in approval; approve it on the dashboard and the session is signed in.
 
 ## The dashboard MCP server
 
-The plugin ships the `danx-dashboard` MCP server (`danxbot/scripts/dashboard-mcp-server.mjs`, declared in `plugin.json` `mcpServers`). Claude Code names it `plugin:danxbot:danx-dashboard` and lists its tools as `mcp__plugin_danxbot_danx-dashboard__*`. No board is set: name it per call (the `board` argument) or let `plan_connect` connect the session.
+The plugin ships the `dashboard` MCP server (`50arms/scripts/dashboard-mcp-server.mjs`, declared in `plugin.json` `mcpServers`). Claude Code names it `plugin:50arms:dashboard` and lists its tools as `mcp__plugin_50arms_dashboard__*`. No board is set: name it per call (the `board` argument) or let `plan_connect` connect the session.
 
 The launcher runs the `@thehammer/danx-dashboard-mcp` version recorded in the plugin's data directory, installing it with node the first time. While the server runs, it checks npm for a newer version and installs it in the background, so a new server release runs from your next session start with no plugin update.
 
 To use another dashboard, set `DANXBOT_DASHBOARD_URL` (your shell, or the `env` block of a repo's committed `.claude/settings.json` for a per-repo or per-company default). It beats the `dashboard_url` option above. Claude Code reads plugin options from user and managed settings only, never from a project's, so the `env` block is the per-repo route.
 
-This is the session's one dashboard server: a connected repo declares no `danx-dashboard` server of its own, and a repo's own `.mcp.json` entry would run beside it as a second set of tools under another name (`mcp__danx-dashboard__*`) that the plugin's band, hooks and listeners never use.
+This is the session's one dashboard server: a connected repo declares no dashboard server of its own, and a repo's own `.mcp.json` entry would run beside it as a second set of tools under another name (`mcp__danx-dashboard__*`) that the plugin's band, hooks and listeners never use.
 
 ## Tests
 
-`npm test` runs the whole suite inside a Linux Docker container (it needs Docker): the node suites, then the plugin's function-hook tests (`claude plugin test danxbot`). `npm test -- danxbot/tests/mantra.test.mjs danxbot/tests/plan-band.test.tsx` runs named files. A test file run any other way refuses and names this command. `scripts/publish.sh` runs the same command before it bumps.
+`npm test` runs the whole suite inside a Linux Docker container (it needs Docker): the node suites, then the plugin's function-hook tests (`claude plugin test 50arms`). `npm test -- 50arms/tests/mantra.test.mjs 50arms/tests/plan-band.test.tsx` runs named files. A test file run any other way refuses and names this command. `scripts/publish.sh` runs the same command before it bumps.
 
 ## Editing a plugin — MANDATORY version bump
 

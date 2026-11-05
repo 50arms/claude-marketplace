@@ -1,4 +1,4 @@
-import "../../danxbot/tests/designated-test-container.mjs";
+import "../../50arms/tests/designated-test-container.mjs";
 // scripts/publish.sh: its pre-flights (the general-audience scan, the hooks-module validate and
 // test), the bump commit, and the push to origin/main. Each case runs this checkout's publish.sh
 // in a throwaway clone.
@@ -24,7 +24,7 @@ function editedClone() {
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "publish.sh"), path.join(dir, "scripts", "publish.sh"));
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-general-audience.mjs"), path.join(dir, "scripts", "check-general-audience.mjs"));
   git(dir, "commit", "-q", "--allow-empty", "-am", "carry publish.sh");
-  fs.appendFileSync(path.join(dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- publish test edit -->\n");
+  fs.appendFileSync(path.join(dir, "50arms", "skills", "issue-workflow", "SKILL.md"), "\n<!-- publish test edit -->\n");
   return dir;
 }
 
@@ -55,12 +55,12 @@ function standInClaude() {
   return { bin, calls: () => lines("calls.log"), npmCalls: () => lines("npm-calls.log") };
 }
 
-/** publish.sh patch danxbot; DANX_AGENT_WORKTREE commits the bump but skips the push and this machine's plugin delivery. */
+/** publish.sh patch 50 Arms; DANX_AGENT_WORKTREE commits the bump but skips the push and this machine's plugin delivery. */
 function publish(dir, { fail = "", claudeBin } = {}) {
   const standIn = standInClaude();
   // the caller's own CLAUDE_BIN (set to run validate for real) must not replace the stand-in
   const { CLAUDE_BIN: _callers, ...inherited } = process.env;
-  const r = spawnSync("bash", [path.join(dir, "scripts", "publish.sh"), "patch", "danxbot"], {
+  const r = spawnSync("bash", [path.join(dir, "scripts", "publish.sh"), "patch", "50arms"], {
     cwd: dir,
     encoding: "utf8",
     env: {
@@ -79,7 +79,7 @@ function publish(dir, { fail = "", claudeBin } = {}) {
 /** The npm calls a publish made, each without the ` -- <files>` that names the tests (so `test --silent` is pinned exactly). */
 const npmRuns = (r) => r.npmCalls.map((c) => c.replace(/ -- .*$/, ""));
 
-// DX-4235: the danxbot plugin keeps no file-hash manifest (its hooks are one native module, which the engine loads whole or
+// DX-4235: the 50 Arms plugin keeps no file-hash manifest (its hooks are one native module, which the engine loads whole or
 // names as failed), so a publish writes none, for the plugin it bumps or for any other marketplace plugin. The file name is
 // spelled in pieces so the deletion pin (dx4235-deletions.test.mjs) finds no mention of it in this file.
 const HASH_MANIFEST = ["integrity", "manifest.json"].join("-");
@@ -99,7 +99,7 @@ test("DX-4235: a publish writes no file-hash manifest for any marketplace plugin
     git(dir, "commit", "-q", "-m", "add a second plugin");
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
-    for (const plugin of ["danxbot", "plain"]) assert.equal(fs.existsSync(path.join(dir, plugin, HASH_MANIFEST)), false, plugin);
+    for (const plugin of ["50arms", "plain"]) assert.equal(fs.existsSync(path.join(dir, plugin, HASH_MANIFEST)), false, plugin);
     assert.deepEqual(git(dir, "ls-files").split("\n").filter((f) => f.endsWith(HASH_MANIFEST)), []);
     assert.equal(git(dir, "status", "--porcelain").trim(), "", "the publish left a change outside its bump commit");
   } finally {
@@ -129,7 +129,7 @@ function pushHarness() {
   fs.rmSync(path.join(dir, "scripts", "update-plugins.sh"));
   git(dir, "add", "-A");
   git(dir, "commit", "-q", "-m", "carry publish.sh");
-  fs.appendFileSync(path.join(dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- publish test edit -->\n");
+  fs.appendFileSync(path.join(dir, "50arms", "skills", "issue-workflow", "SKILL.md"), "\n<!-- publish test edit -->\n");
   return { root, origin, dir, home };
 }
 
@@ -146,11 +146,11 @@ function publishPushing({ dir, home }, extraEnv = {}) {
   };
   delete env.DANX_AGENT_WORKTREE;
   Object.assign(env, extraEnv);
-  const r = spawnSync("bash", [path.join(dir, "scripts", "publish.sh"), "patch", "danxbot"], { cwd: dir, encoding: "utf8", env });
+  const r = spawnSync("bash", [path.join(dir, "scripts", "publish.sh"), "patch", "50arms"], { cwd: dir, encoding: "utf8", env });
   return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
 }
 
-const pluginVersion = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "danxbot", ".claude-plugin", "plugin.json"), "utf8")).version;
+const pluginVersion = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "50arms", ".claude-plugin", "plugin.json"), "utf8")).version;
 const originMain = (h) => git(h.origin, "rev-parse", "refs/heads/main").trim();
 const originBranches = (h) => git(h.origin, "for-each-ref", "--format=%(refname)", "refs/heads").trim();
 
@@ -236,7 +236,7 @@ test("DX-4288: a HEAD strictly behind origin/main is refused and nothing is push
     const originBefore = originMain(h);
     const headBefore = git(h.dir, "rev-parse", "HEAD").trim();
     const versionBefore = pluginVersion(h.dir);
-    fs.appendFileSync(path.join(h.dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- DX-4288 behind edit -->\n");
+    fs.appendFileSync(path.join(h.dir, "50arms", "skills", "issue-workflow", "SKILL.md"), "\n<!-- DX-4288 behind edit -->\n");
     const r = publishPushing(h);
     assert.notEqual(r.status, 0, r.out);
     assert.match(r.out, /not a fast-forward of origin\/main/);
@@ -284,7 +284,7 @@ test("DX-4288: under DANX_AGENT_WORKTREE the bump is committed and never pushed,
 function snapshot(dir) {
   return {
     head: git(dir, "rev-parse", "HEAD").trim(),
-    pluginJson: fs.readFileSync(path.join(dir, "danxbot", ".claude-plugin", "plugin.json"), "utf8"),
+    pluginJson: fs.readFileSync(path.join(dir, "50arms", ".claude-plugin", "plugin.json"), "utf8"),
   };
 }
 
@@ -298,10 +298,10 @@ test("DX-4232 / DX-5648: validate and the suite both pass: they run before the b
     const before = snapshot(dir);
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
-    assert.deepEqual(r.claudeCalls, ["plugin validate danxbot"]);
+    assert.deepEqual(r.claudeCalls, ["plugin validate 50arms"]);
     assert.deepEqual(npmRuns(r), ["test --silent"], "the suite runs once, as npm test, never as a host claude plugin test");
     assert.notEqual(git(dir, "rev-parse", "HEAD").trim(), before.head);
-    assert.match(git(dir, "log", "-1", "--format=%s").trim(), /^danxbot v\d+\.\d+\.\d+$/);
+    assert.match(git(dir, "log", "-1", "--format=%s").trim(), /^50 Arms v\d+\.\d+\.\d+$/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -314,11 +314,11 @@ for (const failing of ["validate", "test"]) {
       const before = snapshot(dir);
       const r = publish(dir, { fail: failing });
       assert.notEqual(r.status, 0, r.out);
-      assert.match(r.out, failing === "validate" ? /claude plugin validate danxbot failed/ : /npm test failed/);
+      assert.match(r.out, failing === "validate" ? /claude plugin validate 50 Arms failed/ : /npm test failed/);
       assert.match(r.out, /Nothing was bumped or pushed/);
       assertUntouched(dir, before);
       // validate runs first: when it fails, the suite never runs
-      assert.deepEqual(r.claudeCalls, ["plugin validate danxbot"]);
+      assert.deepEqual(r.claudeCalls, ["plugin validate 50arms"]);
       assert.deepEqual(npmRuns(r), failing === "validate" ? [] : ["test --silent"]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -341,13 +341,13 @@ test("DX-4232: a missing claude CLI refuses the publish and names CLAUDE_BIN", (
 
 // DX-4551: a shipped line that names the author's own setup refuses the publish before anything is validated, bumped or committed.
 for (const [what, file, line, reported] of [
-  ["a skill line", "skills/issue-workflow/SKILL.md", "\nask newms about this\n", /danxbot\/skills\/issue-workflow\/SKILL\.md:\d+: a personal GitHub account or marketplace name/],
-  ["a string a script prints", "scripts/capture-screenshot.mjs", '\nconsole.log("run update-claude-plugins");\n', /danxbot\/scripts\/capture-screenshot\.mjs:\d+: a personal shell alias/],
+  ["a skill line", "skills/issue-workflow/SKILL.md", "\nask newms about this\n", /50arms\/skills\/issue-workflow\/SKILL\.md:\d+: a personal GitHub account or marketplace name/],
+  ["a string a script prints", "scripts/capture-screenshot.mjs", '\nconsole.log("run update-claude-plugins");\n', /50arms\/scripts\/capture-screenshot\.mjs:\d+: a personal shell alias/],
 ]) {
   test(`DX-4551: ${what} naming the author's setup refuses the publish: no commit, no bump`, () => {
     const dir = editedClone();
     try {
-      fs.appendFileSync(path.join(dir, "danxbot", file), line);
+      fs.appendFileSync(path.join(dir, "50arms", file), line);
       const before = snapshot(dir);
       const r = publish(dir);
       assert.notEqual(r.status, 0, r.out);
@@ -366,16 +366,16 @@ for (const [what, file, line, reported] of [
 // every suite leans on runs the whole one.
 function afterPublishClone() {
   const dir = editedClone();
-  git(dir, "checkout", "-q", "--", "danxbot/skills/issue-workflow/SKILL.md");
-  git(dir, "commit", "-q", "--allow-empty", "-m", "danxbot v9.9.9");
+  git(dir, "checkout", "-q", "--", "50arms/skills/issue-workflow/SKILL.md");
+  git(dir, "commit", "-q", "--allow-empty", "-m", "50 Arms v9.9.9");
   return dir;
 }
 
 test("CP-16: a prose-only publish no test names skips the whole suite", () => {
   const dir = afterPublishClone();
   try {
-    fs.mkdirSync(path.join(dir, "danxbot", "cp16-unwalked"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "danxbot", "cp16-unwalked", "cp16-note.md"), "A prose note.\n");
+    fs.mkdirSync(path.join(dir, "50arms", "cp16-unwalked"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "50arms", "cp16-unwalked", "cp16-note.md"), "A prose note.\n");
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
     assert.deepEqual(r.npmCalls, []);
@@ -388,7 +388,7 @@ test("CP-16: a prose-only publish no test names skips the whole suite", () => {
 test("CP-16: a change to a file every suite leans on runs the whole suite", () => {
   const dir = afterPublishClone();
   try {
-    fs.appendFileSync(path.join(dir, "danxbot", "tests", "plan-kit.tsx"), "\n// cp16\n");
+    fs.appendFileSync(path.join(dir, "50arms", "tests", "plan-kit.tsx"), "\n// cp16\n");
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
     assert.deepEqual(r.npmCalls, ["test --silent"]);
@@ -400,11 +400,11 @@ test("CP-16: a change to a file every suite leans on runs the whole suite", () =
 test("CP-16: a narrow change runs only the test files that name it", () => {
   const dir = afterPublishClone();
   try {
-    fs.appendFileSync(path.join(dir, "danxbot", "skills", "issue-workflow", "SKILL.md"), "\n<!-- narrow -->\n");
+    fs.appendFileSync(path.join(dir, "50arms", "skills", "issue-workflow", "SKILL.md"), "\n<!-- narrow -->\n");
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
     assert.equal(r.npmCalls.length, 1);
-    assert.match(r.npmCalls[0], /^test --silent -- .*danxbot\/tests\/issue-workflow-gates\.test\.mjs/);
+    assert.match(r.npmCalls[0], /^test --silent -- .*50 Arms\/tests\/issue-workflow-gates\.test\.mjs/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

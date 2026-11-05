@@ -1,4 +1,4 @@
-import "../../danxbot/tests/designated-test-container.mjs";
+import "../../50arms/tests/designated-test-container.mjs";
 // DX-5648: the repo's tests run only in the designated test container. This pins the guard's decision, that every node test file carries the
 // guard, and that the image writes the marker the guard reads and the entry runs the suites the package script names.
 import { test } from "node:test";
@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pluginsWithModules } from "../lib/plugins-with-modules.mjs";
-import { TEST_CONTAINER_COMMAND, TEST_ENVIRONMENT_MARKER, designatedTestContainerRefusal, readTestHost } from "../../danxbot/tests/designated-test-container.mjs";
+import { TEST_CONTAINER_COMMAND, TEST_ENVIRONMENT_MARKER, designatedTestContainerRefusal, readTestHost } from "../../50arms/tests/designated-test-container.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
@@ -34,7 +34,7 @@ test("DX-5648: a test file run outside the container refuses before any test run
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), "guard-"));
   try {
     const file = path.join(dir, "probe.test.mjs");
-    const guard = path.join(REPO_ROOT, "danxbot", "tests", "designated-test-container.mjs");
+    const guard = path.join(REPO_ROOT, "50arms", "tests", "designated-test-container.mjs");
     // The marker path is a module constant, so a host without the marker is simulated by importing the guard through a stub that reads a path that is not there.
     const stub = path.join(dir, "guard-no-marker.mjs");
     fs.writeFileSync(
@@ -79,7 +79,7 @@ test("DX-5648: every node test file imports the guard first", () => {
   assert.ok(files.length > 20, `only ${files.length} test files found`);
   const unguarded = files.filter((rel) => {
     const first = read(rel).split("\n")[0];
-    return first !== 'import "./designated-test-container.mjs";' && first !== 'import "../../danxbot/tests/designated-test-container.mjs";';
+    return first !== 'import "./designated-test-container.mjs";' && first !== 'import "../../50arms/tests/designated-test-container.mjs";';
   });
   assert.deepEqual(unguarded, [], "node test files whose first line is not the guard import");
 });
@@ -122,7 +122,7 @@ test("DX-5648: npm test is the container command, and the entry runs both suites
 // .test.tsx and ran zero tests). Inside the container the entry's argument check runs first, so this changes nothing in the copy.
 test("DX-5648: the entry refuses a named file that is not a test", () => {
   const entry = path.join(REPO_ROOT, "scripts", "test-container-entry.sh");
-  const r = spawnSync("bash", [entry, "danxbot/tests/plan-kit.tsx"], { encoding: "utf8" });
+  const r = spawnSync("bash", [entry, "50arms/tests/plan-kit.tsx"], { encoding: "utf8" });
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /danxbot\/tests\/plan-kit\.tsx is not a test file/);
+  assert.match(r.stderr, /50arms\/tests\/plan-kit\.tsx is not a test file/);
 });

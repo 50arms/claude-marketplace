@@ -14,7 +14,7 @@
 // reminder deleted. Its own measurement (card comment 6999, reproduced here
 // via scripts/measure-injection.mjs at origin/main commit ae177d0) recorded:
 //   - per-turn (UserPromptSubmit, unconditional): 23B — the wall-clock line,
-//     the one thing DX-3347 explicitly kept (since DX-4234 the danxbot module's
+//     the one thing DX-3347 explicitly kept (since DX-4234 the 50 Arms module's
 //     time stamp on prompt.submit, measured by running its pure `stamp`).
 //   - session-start (SessionStart, fires at startup): 26,373B. Not gated any more (DX-4235): a plugin's hooks are one
 //     native module with no command hooks, and what a module says at a session start is the dashboard's (registry and

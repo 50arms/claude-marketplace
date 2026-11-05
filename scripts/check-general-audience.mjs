@@ -55,6 +55,17 @@ export function listPluginFiles(repoRoot, plugin) {
     .sort();
 }
 
+/**
+ * CP-69: the plugin is named 50arms and no customer sees the old product name. These are the only spellings of it a shipped file may still hold,
+ * each one a name another repo owns and this plugin reads or calls, so renaming it here would break the other side: the dashboard's environment
+ * variables (DANXBOT_*, DANX_*), the dashboard MCP package's tool (`danxbot_api`, `_list`, `_spec`) and npm package name, the dispatched
+ * agent's server name (`danx-dashboard`), the dashboard's docs repo name, and the paths a connected repo and the relay write
+ * (`.danxbot/`, `~/.config/danxbot/`). Anything else naming the old product fails the scan.
+ */
+export const OWNED_ELSEWHERE = /DANX(?:BOT)?_[A-Z_]+|danxbot_api(?:_list|_spec)?|@thehammer\/danx-dashboard-mcp|danx-dashboard-mcp|danx-dashboard|\.config\/danxbot|\.danxbot|repo: "danxbot"/g;
+// `@danxbot/ui` is reported by its own kind above, so it is not counted twice.
+const oldNameHit = { test: (line) => /danx/i.test(line.replace(OWNED_ELSEWHERE, "").replace(/@danxbot/ui/g, "")) };
+
 /** Each token names something only the author's setup has. */
 export const BANNED = [
   { name: "a personal GitHub account or marketplace name", pattern: /(?<![a-z])newms(?![a-z])/i },

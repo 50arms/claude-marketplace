@@ -6,7 +6,7 @@
 // totals per cadence class (per-turn, per-tool-call). scripts/check-injection-budget.mjs gates a publish on those totals.
 //
 // WHAT IS MEASURED (DX-4234, DX-4235). A plugin's hooks are one native hooks module (`hooks.json` `modules`); there are no
-// command hooks to run (danxbot/tests/plugin-modules.test.mjs pins that shape for danxbot). The only
+// command hooks to run (50arms/tests/plugin-modules.test.mjs pins that shape for 50 Arms). The only
 // standing text a module hands the model is the time stamp on each prompt (prompt.submit) and after each tool call
 // (tool.call): the pure `stamp` of <plugin>/hooks/context/stamp.ts, the very text register.tsx hands the model. It is run
 // here, at its widest (the first stamp, which carries the date). Everything else a module says is the dashboard's (the

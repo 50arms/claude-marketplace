@@ -1,5 +1,5 @@
-import "../../danxbot/tests/designated-test-container.mjs";
-// DX-4235 (R-1): the danxbot plugin's command hooks, their integrity launcher and its hash manifest, the session-start install
+import "../../50arms/tests/designated-test-container.mjs";
+// DX-4235 (R-1): the 50 Arms plugin's command hooks, their integrity launcher and its hash manifest, the session-start install
 // script and the package module's CLI are gone. A name of any of them left in the plugin, the repo scripts or the docs is a
 // reference to something that no longer exists, so this test finds none.
 //
@@ -23,7 +23,7 @@ const NEEDLES = [
   ["--", "refresh"].join(""),
 ];
 
-const SCANNED = ["danxbot", "scripts", "CLAUDE.md", "README.md"];
+const SCANNED = ["50arms", "scripts", "CLAUDE.md", "README.md"];
 
 /** Files a commit of this checkout would hold under SCANNED (tracked plus untracked-not-ignored, minus deleted ones). */
 function scannedFiles() {
@@ -35,7 +35,7 @@ function scannedFiles() {
 
 test("DX-4235: no file in the plugin, the repo scripts or the docs names a deleted hook script, the launcher, its manifest or the package CLI", () => {
   const files = scannedFiles();
-  assert.ok(files.includes("danxbot/hooks/register.tsx") && files.includes("CLAUDE.md"), "the scan reaches the plugin and the docs");
+  assert.ok(files.includes("50arms/hooks/register.tsx") && files.includes("CLAUDE.md"), "the scan reaches the plugin and the docs");
   const hits = [];
   for (const rel of files) {
     const lines = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8").split("\n");

@@ -1,4 +1,4 @@
-import "../../danxbot/tests/designated-test-container.mjs";
+import "../../50arms/tests/designated-test-container.mjs";
 // scripts/check-general-audience.mjs — DX-4551 AC 44348: the publish-time scan that shipped plugin text
 // names nothing specific to the author's own setup.
 import { test, after } from "node:test";
@@ -26,11 +26,14 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 test("the matcher catches each banned token and passes general text", () => {
   assert.equal(bannedHits("marketplace newms-plugins").length, 1);
   assert.equal(bannedHits("then update-claude-plugins").length, 1);
-  assert.equal(bannedHits("https://danxbot.sageus.ai").length, 1);
+  assert.equal(bannedHits("https://50arms.sageus.ai").length, 1);
   assert.equal(bannedHits("the gpt-manager app").length, 1);
   assert.equal(bannedHits("Flytedesk org").length, 1);
   assert.equal(bannedHits("use @danxbot/ui").length, 1);
-  assert.deepEqual(bannedHits("run `claude plugin install danxbot`; card id `<card id>`; PLAN-NNN"), []);
+  const OLD_NAME = "the product's old name (the plugin is 50arms)";
+  for (const text of ["/danxbot:start", "mcp__plugin_danxbot_danx-dashboard__x", "Danxbot's band", "danxbot@50arms", "the danx plugin"]) assert.deepEqual(bannedHits(text), [OLD_NAME], text);
+  for (const owned of ["DANXBOT_DASHBOARD_URL", "DANX_DASHBOARD_CREDENTIAL", "danxbot_api", "danxbot_api_spec", "@thehammer/danx-dashboard-mcp", "mcp__danx-dashboard__x", "<repo>/.danxbot/config", "~/.config/danxbot/clear"]) assert.deepEqual(bannedHits(owned), [], owned);
+  assert.deepEqual(bannedHits("run `claude plugin install 50arms`; card id `<card id>`; PLAN-NNN"), []);
   assert.equal(bannedHits("owner newms87 / NEWMS").length, 1);
   assert.deepEqual(bannedHits("const newMsgs = []; newMsg(x)"), [], "a code identifier is not the author's account name");
 });
@@ -173,9 +176,9 @@ test("scanFiles reports file, line and what for each hit in a scanned surface, a
   ]);
 });
 
-test("the shipped danxbot plugin passes, test files that hold the tokens as matcher proof are not shipped, and the start skill is scanned", () => {
-  assert.deepEqual(scanPlugin(REPO_ROOT, "danxbot"), []);
-  const shipped = listPluginFiles(REPO_ROOT, "danxbot");
+test("the shipped 50 Arms plugin passes, test files that hold the tokens as matcher proof are not shipped, and the start skill is scanned", () => {
+  assert.deepEqual(scanPlugin(REPO_ROOT, "50arms"), []);
+  const shipped = listPluginFiles(REPO_ROOT, "50arms");
   assert.ok(!shipped.includes("tests/start-skill.test.mjs"));
   assert.ok(shipped.includes("skills/start/SKILL.md"));
   assert.ok(shipped.includes("hooks/hooks.json") && shipped.includes("hooks/register.tsx"));
@@ -183,7 +186,7 @@ test("the shipped danxbot plugin passes, test files that hold the tokens as matc
 });
 
 test("the scan reads real code: capture-screenshot.mjs keeps its printed text after stripping, drops its comments, and keeps its length", () => {
-  const raw = fs.readFileSync(path.join(REPO_ROOT, "danxbot", "scripts", "capture-screenshot.mjs"), "utf8");
+  const raw = fs.readFileSync(path.join(REPO_ROOT, "50arms", "scripts", "capture-screenshot.mjs"), "utf8");
   const text = userFacingText("scripts/capture-screenshot.mjs", raw);
   assert.match(text, /console\.log\(`\$\{args\.out\}/);
   assert.match(raw, /\/\/ usage {2}node/);

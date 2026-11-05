@@ -15,7 +15,7 @@ const MIN_WALKED_DEPTH = 2;
 export const MAX_NARROW_CODE_FILES = 5;
 /** The most `git` output read at once: a checkout lists far fewer paths than this. */
 const GIT_OUTPUT_MAX_BYTES = 64 * 1024 * 1024;
-const TEST_DIRS = ["danxbot/tests", "scripts/tests"];
+const TEST_DIRS = ["50arms/tests", "scripts/tests"];
 const TEST_FILE = /\.test\.(mjs|tsx)$/;
 const PROSE = /\.(md|txt)$/;
 /** Files every suite leans on: a change to one is broad, whatever its size. */
