@@ -233,7 +233,7 @@ describe('the keepalive on the desktop', () => {
     answerPlanConnect(on, d)
     await startSession($, d, 'desktop')
     await d.clock.advance(20 * MINUTE)
-    await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 24 } as any)
+    await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 24 } as any)
     await d.clock.settle()
     closePane(d)
     await d.clock.advance(KEEPALIVE_IDLE_MS - 1)

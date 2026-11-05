@@ -1,6 +1,6 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4234 / DX-5554: the registry's event text for every signed-in session (SessionStart startup / resume / compact, and every sub-agent's start),
-// fetched through the session's own dashboard server (R-2: `danxbot_api`, never the package's CLI), and the silence rules: one warning line for a
+// fetched through the session's own dashboard server (R-2: `50arms_api`, never the package's CLI), and the silence rules: one warning line for a
 // fetch that failed, quiet for a session with no usable key. The dashboard decides the lines: a plan-connected session's text carries the plan-only
 // line, a session on no plan's the agent-scoped lines alone.
 import { describe, expect } from 'claude-code/testing'
@@ -241,7 +241,7 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
-    test('R-2: the reads go through the session’s own server; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {
+    test('R-2: the reads go through the session’s own server; nothing spawns the platform-mcp CLI', async ($, on) => {
       const d = await started($, on)
       await firstPrompt($, 'startup')
       await $.classic.SubagentStart({ ...START, transcript_path: '/work/main.jsonl' })

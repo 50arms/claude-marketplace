@@ -32,7 +32,7 @@ for (const surface of SURFACES) {
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
 
-      expect(disconnectCalls(d)).toEqual([{ server: 'plugin:50arms:dashboard', tool: 'plan_connect', args: { plan_id: 23, disconnect: true } }])
+      expect(disconnectCalls(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'plan_connect', args: { plan_id: 23, disconnect: true } }])
       expect(d.toasts).toContain('Disconnected from PLAN-23')
       expect(await text(band)).toContain('50 Arms: not connected to a plan')
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('yellow')
@@ -129,14 +129,14 @@ for (const surface of SURFACES) {
 
     test('the model disconnecting (tool.call plan_connect) ends with the band showing not connected', async ($, on) => {
       const d = dashboard(on)
-      on('tool.call', { tool: 'mcp__plugin_50arms_dashboard__plan_connect' }, () => {
+      on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => {
         d.world.planId = null
         return { result: {}, text: 'disconnected', isError: false } as any
       })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       expect(await bandLabelOf(band)).toBe('PLAN-23 · 50 Arms plugin')
-      await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 23, disconnect: true } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23, disconnect: true } as any)
       await d.clock.settle()
       expect(await text(band)).toContain('50 Arms: not connected to a plan')
     })

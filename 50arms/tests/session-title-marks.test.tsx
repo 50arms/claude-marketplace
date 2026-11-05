@@ -156,7 +156,7 @@ describe('the desktop app title follows the view', () => {
   })
 
   test("the session's own card write re-reads the plan at once: no plan event echoes it, and no turn end is waited for", async ($, on) => {
-    const API = 'mcp__plugin_50arms_dashboard__danxbot_api'
+    const API = 'mcp__plugin_50arms_platform__50arms_api'
     const d = dashboard(on)
     d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
     on('tool.call', { tool: API }, () => ({ result: {}, text: JSON.stringify({ ok: true, status: 200, body: {} }), isError: false }) as any)
@@ -244,7 +244,7 @@ describe('the pause mark', () => {
   })
 
   test("the agent's own pause and resume re-read the plan at once, and the load after the pause ended drops the mark", async ($, on) => {
-    const API = 'mcp__plugin_50arms_dashboard__danxbot_api'
+    const API = 'mcp__plugin_50arms_platform__50arms_api'
     const d = dashboard(on)
     d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
     for (const c of d.world.cards) for (const p of c.problems) p.open = false

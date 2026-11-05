@@ -20,11 +20,11 @@ const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|laps
 // DX-4530: the toasts the person reads; the model's own rows are d.relay.told. DX-4880: a sign-in's outcome reaches the model as a
 // waking prompt (`woken`), never a row
 const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('Could not tell the model'))
-const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:dashboard' && c.tool === 'plan_connect')
+const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:platform' && c.tool === 'plan_connect')
 // DX-4630: EVERY Claude_Browser call, so a sign-in that touched the browser in any way (tabs_context, tabs_create, ...) fails
 const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
 // the model's own plan_connect call, answering the same approval request the dashboard's world gives the Sign in press
-const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
+const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 const answer = (value: unknown, isError = false) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError })
 
 describe('classification: the signed-out answer is its own state, not an error', () => {
@@ -305,7 +305,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       d.calls.length = 0
-      await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
       await d.clock.settle()
       expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       expect(approvalToasts(d)).toHaveLength(1)

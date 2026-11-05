@@ -241,11 +241,11 @@ let dashboardAnswered = false
 // One dashboard call through the session's own dashboard MCP server (the plugin's, SERVER, unless a caller names the one its session has: the pacing calls do, liveServer): same credential, same
 // x-danx-session-id header. EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
-// the agent acting, which would end the agent's pause. The agent's own danxbot_api calls never pass through here. Any rejection (including the engine's "no such server") is an error shown as one.
+// the agent acting, which would end the agent's pause. The agent's own 50arms_api calls never pass through here. Any rejection (including the engine's "no such server") is an error shown as one.
 async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: number } = {}, server: string = SERVER): Promise<Api> {
   let res
   try {
-    res = await $.mcp.call(server, 'danxbot_api', { method, path, ...extra, background: true })
+    res = await $.mcp.call(server, '50arms_api', { method, path, ...extra, background: true })
   } catch (err: any) {
     return failedCall(err)
   }
@@ -255,7 +255,7 @@ async function api($: any, method: string, path: string, extra: { query?: object
   return outcome
 }
 
-// A danxbot_api answer over the MCP's 100,000-character limit comes as `reply_file` with no body: its body is read from that file, so every reader of an answer reads the whole of it. A file that cannot
+// A 50arms_api answer over the MCP's 100,000-character limit comes as `reply_file` with no body: its body is read from that file, so every reader of an answer reads the whole of it. A file that cannot
 // be read is a failure that names it, never an answer with no body.
 async function wholeAnswer($: any, outcome: Api): Promise<Api> {
   if (outcome.replyFile === undefined) return outcome
@@ -739,7 +739,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
           return
         }
         if (step.kind === 'stop') {
-          // the key exists and only an agent is missing: the loop stays, and only another /50arms-ready can claim one, since the MCP's own gate is closed now
+          // the key exists and only an agent is missing: the loop stays, and only another /50arms:ready can claim one, since the MCP's own gate is closed now
           if ('forReadyLoop' in watch && step.signedIn === true) {
             await tellReadyOnce($, readyNoAgentYet(step.message))
             await refresh($, true)
@@ -1741,8 +1741,8 @@ async function onSessionStart($: any, e: any, next: any) {
   const bootId = String(await $.session.id())
   await update($, bootEngineId, cur => cur ?? bootId)
   await unpinStatus($)
-  // never a command named after one of the plugin's skills: the engine refuses it (`"/50arms-ready" refused: it is the plugin's /50arms:50arms-ready`),
-  // and the throw ends this hook here, before the usage ticker and everything below it start. `/50arms-ready` is the skill's own command (onReadyCommand).
+  // never a command named after one of the plugin's skills: the engine refuses it (`"/50arms:ready" refused: it is the plugin's /50arms:ready`),
+  // and the throw ends this hook here, before the usage ticker and everything below it start. `/50arms:ready` is the skill's own command (onReadyCommand).
   await $.command.register({ name: COMMAND, description: 'Show the 50 Arms plan band (connection + cards that need you)' })
   // a new process or a reload cannot have a write in flight: no key claimed before it is still held
   await update($, busy, () => [])
@@ -1830,7 +1830,7 @@ async function onSessionEnd($: any, e: any, next: any) {
 
 // ---- the ready list ----------------------------------------------------------------------------------------------------------------------------------------------
 //
-// `/50arms-ready` signs the session in and joins the team's list of ready agents for its folder's repo, and tells the model nothing: the join is the plugin's own. The server hands the session work; the model connects to it and works it.
+// `/50arms:ready` signs the session in and joins the team's list of ready agents for its folder's repo, and tells the model nothing: the join is the plugin's own. The server hands the session work; the model connects to it and works it.
 // The dashboard keeps the session's ready loop: the job it took, and whether that job has ended, by its one rule. Once the job has ended the clear is a handshake, so a person still talking keeps the session: 50 Arms
 // asks the model to wrap up (the ask reaches it through the MCP's urgent record, in 50 Arms' own words), the model says ready, and 50 Arms releases the clear into the session's clear file. This loop
 // runs that /clear (Claude Code's own command, which a plugin may run once no turn is running) and marks the session ready again (`PUT /api/plan-sessions/me/ready`, which also leaves the ended job):
@@ -2002,7 +2002,7 @@ const readyIsIdle = async ($: any): Promise<boolean> => !(await read($, turn)).i
 async function syncReadyOnce($: any, token: LookToken, again = true): Promise<void> {
   const first = await read($, readyLoop)
   if (first === null || !(await readyIsIdle($))) return
-  // only the look that follows a person's `/50arms-ready` may call `plan_connect`
+  // only the look that follows a person's `/50arms:ready` may call `plan_connect`
   const asked = first.claimAsked
   if (asked) await update($, readyLoop, cur => (cur === null ? null : { ...cur, claimAsked: false }))
   let look = await readyLook($, token)
@@ -2065,7 +2065,7 @@ async function syncReadyOnce($: any, token: LookToken, again = true): Promise<vo
     await update($, readyLoop, cur => (cur === null ? null : { ...cur, agentName: session.agent.name }))
     return
   }
-  // no loop job on the server: a session on no work is marked ready, and one that holds work (`/50arms-ready` run on a plan or card, or again after a Stop ended the loop) joins the loop with
+  // no loop job on the server: a session on no work is marked ready, and one that holds work (`/50arms:ready` run on a plan or card, or again after a Stop ended the loop) joins the loop with
   // that work as its job through the same call (markReady)
   await update($, readyLoop, cur => (cur === null ? null : { ...cur, agentName: session.agent.name }))
   const now = await read($, readyLoop)
@@ -2144,7 +2144,7 @@ async function claimReadyAgent($: any, asked: boolean, token: LookToken): Promis
 }
 
 // An earlier `plan_connect` found no agent, so the MCP answers every other call with that until a later `plan_connect` finds one, and only that lifts it. No timer may call it: a session idle on no agent work must
-// lapse like any other. So only a person's `/50arms-ready` does, through the sign-in watch, which also draws an approval the call turns up. A session refused an agent does not join by itself when one frees.
+// lapse like any other. So only a person's `/50arms:ready` does, through the sign-in watch, which also draws an approval the call turns up. A session refused an agent does not join by itself when one frees.
 async function claimThroughConnect($: any, asked: boolean): Promise<boolean> {
   const loop = await read($, readyLoop)
   if (loop === null || loop.signInAsked) return false
@@ -2847,12 +2847,12 @@ async function homeDir($: any): Promise<string | null> {
 // What a session start's wait for the plugin's server came to: it is there, its environment was unloaded, or the deadline came first.
 type ServerState = 'ready' | 'unloaded' | 'not-yet'
 
-// A session START may reach its hook before the plugin's own server has connected: the server's `danxbot_api` shows in the
+// A session START may reach its hook before the plugin's own server has connected: the server's `50arms_api` shows in the
 // session's tool list once it has. Polled until `deadlineAt`, the start's one deadline (CONTEXT_DEADLINE_MS from its beginning), and not a tick
 // after. A
 // sub-agent's start is mid-session and does not call this.
 async function serverState($: any, deadlineAt: number): Promise<ServerState> {
-  const own = toolName('danxbot_api')
+  const own = toolName('50arms_api')
   for (;;) {
     let names: string[]
     try {
@@ -3134,7 +3134,7 @@ async function touchRecordClock($: any, e: any, next: any): Promise<void> {
   await update($, recordClock, cur => clockAfterCall(cur, record, now))
 }
 
-// plan_connect and card_connect: the danxbot_api calls go through onAckCall, the one handler allowed on that tool
+// plan_connect and card_connect: the 50arms_api calls go through onAckCall, the one handler allowed on that tool
 async function onRecordCall($: any, e: any, next: any) {
   const r = await next(e)
   await touchRecordClock($, e, next)
@@ -3318,7 +3318,7 @@ function pacingEnv($: any) {
   return {
     now: () => $.clock.now(),
     within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
-    // the pacing calls go to the server the session has: a dispatched agent's is `danx-dashboard`, not the plugin's (DASHBOARD_SERVERS)
+    // the pacing calls go to the server the session has: a dispatched agent's is `platform`, not the plugin's (DASHBOARD_SERVERS)
     call: async (method: string, path: string, body?: object) => api($, method, path, body === undefined ? {} : { body }, await liveServer($)),
     reading: () => currentUsageBody($),
     signedIn: async () => dashboardAnswered || isSignedIn(await read($, view)),
@@ -3553,7 +3553,7 @@ function isNothingToCheck(r: Api): boolean {
 }
 
 // the plan this session is on and its boards, then the plan's ToDo cards on each board (a plan can span boards; an issues read
-// names its board with the danxbot_api tool's own `board` argument).
+// names its board with the 50arms_api tool's own `board` argument).
 async function readReadyCards($: any): Promise<ReadyRead> {
   // the pause is read FIRST, and while the session is in an agent pause neither card read is made: both carry the session header, so
   // they would count as the agent's own dashboard call and end the pause (the pause read does not). The stop is allowed.
@@ -3983,7 +3983,7 @@ export const register: Register = (on, options) => {
   on('session.attach', onSessionAttach)
   on('session.end', onSessionEnd)
   on('command.run', { command: COMMAND }, onCommand)
-  // a person typing /50arms-ready runs the skill's command, which the engine names `50arms:50arms-ready`; answering it here joins without the model
+  // a person typing /50arms:ready runs the skill's command, which the engine names `50arms:ready`; answering it here joins without the model
   on('command.run', { command: READY_SKILL }, onReadyCommand)
   on('tool.call', { tool: 'Skill' }, onReadySkill)
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
@@ -3991,7 +3991,7 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
   on('tool.call', { tool: toolName('card_connect') }, onCardConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
-  on('tool.call', { tool: toolName('danxbot_api') }, onAckCall)
+  on('tool.call', { tool: toolName('50arms_api') }, onAckCall)
   for (const tool of ['plan_connect', 'card_connect']) on('tool.call', { tool: toolName(tool) }, onRecordCall)
   on('tool.call', { tool: 'Write' }, onHandoffWrite)
   on('turn.start', onTurnStart)

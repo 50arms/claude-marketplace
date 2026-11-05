@@ -5,7 +5,7 @@ import { describe, expect } from 'claude-code/testing'
 import { HANDOFF_FILE_REMINDER, NO_RECENT_RECORD_REMINDER, RECORD_AFTER_MS, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from '../hooks/context/record'
 import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
-const API = 'mcp__plugin_50arms_dashboard__danxbot_api'
+const API = 'mcp__plugin_50arms_platform__50arms_api'
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 
 describe('the record clock (pure)', () => {
@@ -90,7 +90,7 @@ for (const surface of SURFACES) {
     for (const tool of ['plan_connect', 'card_connect']) {
       test(`${tool} starts the clock`, async ($, on) => {
         const d = await started($, on)
-        await $.tool.call({ tool: `mcp__plugin_50arms_dashboard__${tool}` } as any)
+        await $.tool.call({ tool: `mcp__plugin_50arms_platform__${tool}` } as any)
         await d.clock.advance(RECORD_AFTER_MS)
         await endTurn($)
         expect(reminders(d)).toHaveLength(1)

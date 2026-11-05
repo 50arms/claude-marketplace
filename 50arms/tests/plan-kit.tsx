@@ -1,5 +1,5 @@
 // Shared stand-ins for the `claude plugin test 50arms` suites: a fake dashboard MCP server
-// (danxbot_api + plan_connect), and recorders for the engine calls the
+// (50arms_api + plan_connect), and recorders for the engine calls the
 // plugin makes beneath it (toast, status, session.append, command.register).
 import { expect, mock, test as baseTest } from 'claude-code/testing'
 import type { On } from 'claude-code'
@@ -39,7 +39,7 @@ const fsKey = (path: string): string => path.replace(/^(?:.*\/)?[A-Za-z]:/, '').
 export const SURFACES = ['terminal', 'desktop'] as const
 // CP-67: the plugin's skills (one folder each under 50arms/skills; plugin-modules.test.mjs holds this list to them). The engine refuses a command named
 // after one: `$.command.register: "/<name>" refused: it is the plugin's /50arms:<name>` (claude.exe 2.1.309), and the kit refuses it the same way.
-export const PLUGIN_SKILLS = ['50arms-ready', 'fix-agent-behavior', 'issue-workflow', 'plan-workflow', 'prepare-for-compaction']
+export const PLUGIN_SKILLS = ['ready', 'fix-agent-behavior', 'issue-workflow', 'plan-workflow', 'prepare-for-compaction']
 
 const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError: false })
 // DX-4317: the dashboard origin the fixture answers (`dashboard_url`): deliberately not the production
@@ -68,7 +68,7 @@ export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
 // for a key a PERSON revoked, which EVERY tool answers, plan_connect included, with no access request. These are the server's
 // words, for the agent: the plugin must never show them to the person.
 // DX-4805: what the engine says when auto mode's classifier gave no verdict on a hook-initiated `$.mcp.call` (the incident's text)
-export const CLASSIFIER_REFUSAL = 'The server-side auto mode classifier gave no verdict for mcp__plugin_50arms_dashboard__plan_events_wait'
+export const CLASSIFIER_REFUSAL = 'The server-side auto mode classifier gave no verdict for mcp__plugin_50arms_platform__plan_events_wait'
 export const SIGN_IN_HALT = "Not signed in to the 50 Arms dashboard. Call `plan_connect` (with `title`: your session's own title) to request access; the user approves it in their browser, then this tool works."
 export const KEY_LAPSED_HALT = `The dashboard no longer accepts this session's key (it lapsed after a day unused), so this session is signed out. ${SIGN_IN_HALT}`
 export const REVOKER = 'dana'
@@ -94,7 +94,7 @@ const reply = (body: unknown, status = 200) => text({ ok: status < 400, status, 
 // DX-4458: the host refuses a tool result past its size limit, with a notice written for the model (captured 2026-10-04 from the
 // session on DX-4443). The fixture's limit is lower than the real one so a fixture card can pass it.
 export const HOST_LIMIT_CHARS = 60_000
-export const HOST_OVERSIZE = (chars: number) => `Error: result (${chars.toLocaleString('en-US')} characters across 2,050 lines) exceeds maximum allowed tokens. Output has been saved to C:\tool-results\mcp-danx-dashboard-danxbot_api-1.txt
+export const HOST_OVERSIZE = (chars: number) => `Error: result (${chars.toLocaleString('en-US')} characters across 2,050 lines) exceeds maximum allowed tokens. Output has been saved to C:\tool-results\mcp-platform-50arms_api-1.txt
 Format: JSON
 Use offset and limit parameters to read specific portions of the file.`
 function hostLimited(result: { content: { text: string }[]; isError: boolean }) {
@@ -149,7 +149,7 @@ export function dashboard(
     // 'down': the engine's own "no such server" rejection; 'flaky': any other rejection
     mcp?: 'up' | 'down' | 'flaky' | 'refused' | 'strictKeys'
     // the dashboard MCP servers this session really has (default: the plugin's own, the name an operator session has). A dispatched agent's clean-room
-    // config names its server `danx-dashboard` and loads no plugin server (`--strict-mcp-config`); a call to a name the session lacks is the engine's "no such server"
+    // config names its server `platform` and loads no plugin server (`--strict-mcp-config`); a call to a name the session lacks is the engine's "no such server"
     servers?: string[]
     // `sessionListenerAttached` on GET /api/plan-sessions/me: a state (any string, so an unknown one can be tried; default
     // healthy, nextStep null) or null (the session has no listener row). A session on no plan always gets null,
@@ -174,7 +174,7 @@ export function dashboard(
     // the disconnect call takes this long on the fake clock
     disconnectTakesMs?: number
     sessionReadFails?: boolean
-    // DX-4423: the session holds no dashboard key: every danxbot_api call is the MCP's error result (the first call after a revoke
+    // DX-4423: the session holds no dashboard key: every 50arms_api call is the MCP's error result (the first call after a revoke
     // answers KEY_LAPSED_HALT, a session that never signed in SIGN_IN_HALT; 'revoked' answers KEY_REVOKED_HALT to every tool and never asks) and the connect tools run the request-and-approve dance
     // (world.signIn): approval_required, then approval_pending after `waitMs` on the fake clock, until a test sets `approved`
     // (then the key is stored: the tools work again and plan_connect connects to the plan it is given) or `answer`
@@ -305,7 +305,7 @@ export function dashboard(
     // a test can hold the reset's /clear (it waits for the session to be idle, and then runs) and act meanwhile; `clearsStarted` counts the /clears begun, held or not
     clearHold: null as Promise<void> | null,
     clearsStarted: 0,
-    // one-shot holds: the next danxbot_api call of that method and path, and the next `$.process.run` of that command line, waits on `hold`; and what holds the plan leave on its way
+    // one-shot holds: the next 50arms_api call of that method and path, and the next `$.process.run` of that command line, waits on `hold`; and what holds the plan leave on its way
     // `early`: the answer is made when the call arrives and held on its way back, so it says what the dashboard held then
     apiHolds: [] as { method: string; path: string; hold: Promise<void>; early?: boolean }[],
     processHolds: [] as { command: string; hold: Promise<void> }[],
@@ -320,7 +320,7 @@ export function dashboard(
     clearAgreed: false,
     // CP-55: the release 50 Arms stands behind (`ready_loop.release_id`); the answers name it only while the job has ended
     releaseId: null as string | null,
-    // DX-4400: the danxbot_api paths whose answer the MCP sends as `reply_file` (over its 100,000-character limit), with the body written whole to a local file
+    // DX-4400: the 50arms_api paths whose answer the MCP sends as `reply_file` (over its 100,000-character limit), with the body written whole to a local file
     replyFilePaths: [] as string[],
     // the reply file is gone before the plugin reads it (a cleaned temp folder, say)
     replyFileLost: false,
@@ -342,7 +342,7 @@ export function dashboard(
     // DX-5554: what DELETE /api/plan-sessions/me/agent (the release at session exit) answers: `{released}` by default (true while an agent is held), an
     // error status, the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock / never (`hangs`)
     release: {} as { status?: number; deny?: string; delayMs?: number; hangs?: boolean },
-    // DX-5549 / DX-5554: the MCP's agent gate. After a plan_connect answered that no team agent is free, every danxbot_api call but the two
+    // DX-5549 / DX-5554: the MCP's agent gate. After a plan_connect answered that no team agent is free, every 50arms_api call but the two
     // proposal routes answers that same block (AGENT_GATE_HALT) as an error result, until a plan_connect holds an agent
     agentGate: null as 'agent_needed' | 'agent_limit_reached' | 'agent_not_held' | null,
     // DX-4234: the context reads never answer (a hung dashboard), or answer after this many ms of the fake clock
@@ -624,7 +624,7 @@ export function dashboard(
     return reply({ error: `unrouted ${method} ${path}` }, 404)
   }
 
-  // DX-4233: the dashboard server's `plan_events_wait` as the contract words it (50 Arms packages/danx-dashboard-mcp): answers
+  // DX-4233: the dashboard server's `plan_events_wait` as the contract words it (50 Arms packages/platform-mcp): answers
   // the records after the call's cursor (those at or below it are dropped; an answer itself is never a drain), or an empty list
   // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
   const server = {
@@ -762,13 +762,13 @@ export function dashboard(
   const restartCalls: unknown[] = []
   // DX-5554: each release of the session's team agent (DELETE /api/plan-sessions/me/agent), kept out of `calls` and `api` like the context reads
   const releaseCalls: { method: string; path: string; background: unknown }[] = []
-  // DX-4997 / DX-5033: the dashboard's rule for the agent pause. A `danxbot_api` call marked `background: true` (the plugin's own work) never ends it;
+  // DX-4997 / DX-5033: the dashboard's rule for the agent pause. A `50arms_api` call marked `background: true` (the plugin's own work) never ends it;
   // an unmarked one (the agent's own call) does, except the route that manages the pause itself.
   const serverPauseRule = (args: any) => {
     const managesPause = args.path === '/api/plan-sessions/me/pause'
     if (!managesPause && args.background !== true && (world.pause as { limit?: string } | null)?.limit === 'agent') world.pause = null
   }
-  // DX-4997: every danxbot_api call the plugin made WITHOUT `background: true` (there must be none)
+  // DX-4997: every 50arms_api call the plugin made WITHOUT `background: true` (there must be none)
   const unmarked: string[] = []
   // DX-5062: the calls an MCP in `strictKeys` mode (one older than the DX-5033 release) refused for carrying `background`
   const backgroundRefusals: string[] = []
@@ -809,7 +809,7 @@ export function dashboard(
   // ... every attempt, including the ones the MCP being down refuses
   const pacingAttempts = { n: 0 }
   // DX-4578: the pacing reads are kept out of `calls` and `api`; the plugin's server is the one every call goes to
-  const pacingPath = (e: any, path: string) => e.server === 'plugin:50arms:dashboard' && e.tool === 'danxbot_api' && e.args.path === path
+  const pacingPath = (e: any, path: string) => e.server === 'plugin:50arms:platform' && e.tool === '50arms_api' && e.args.path === path
   on('mcp.call', async (_$: any, e: any) => {
     if (!world.bound) return unboundCall('$.mcp.call')
     // DX-5093: the Browser pane's server, as the real one answers (tabs_context: `{browserOpen, tabs: [{tabId, origin, isActive}]}`; tabs_create: `{serverId,
@@ -848,18 +848,18 @@ export function dashboard(
       if (!sessionServers().includes(e.server)) return { deny: `$.mcp.call: no connected MCP tool "${e.tool}" on a server named "${e.server}"` }
       e = { ...e, server: SERVER }
     }
-    // DX-4997 / DX-5033: the dashboard's rule for the agent pause, applied to every danxbot_api call the plugin makes
-    if (e.server === SERVER && e.tool === 'danxbot_api') {
+    // DX-4997 / DX-5033: the dashboard's rule for the agent pause, applied to every 50arms_api call the plugin makes
+    if (e.server === SERVER && e.tool === '50arms_api') {
       if (options.mcp === 'strictKeys' && 'background' in e.args) {
         backgroundRefusals.push(`${e.args.method} ${e.args.path}`)
-        return { deny: `MCP error -32602: Input validation error: Invalid arguments for tool danxbot_api: [ { "code": "unrecognized_keys", "keys": [ "background" ], "path": [], "message": "Unrecognized key(s) in object: 'background'" } ]` }
+        return { deny: `MCP error -32602: Input validation error: Invalid arguments for tool 50arms_api: [ { "code": "unrecognized_keys", "keys": [ "background" ], "path": [], "message": "Unrecognized key(s) in object: 'background'" } ]` }
       }
       if (e.args.background !== true) unmarked.push(`${e.args.method} ${e.args.path}`)
       serverPauseRule(e.args)
     }
     if (pacingPath(e, '/api/pacing/line')) {
       pacingAttempts.n++
-      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:50arms:dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       pacingReads.push(pacingReads.length + 1)
@@ -868,9 +868,9 @@ export function dashboard(
       if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
     }
-    // DX-5549: the agent gate closes every danxbot_api call but the proposal routes (packages/danx-dashboard-mcp agent-gate.ts); each refused call is still
+    // DX-5549: the agent gate closes every 50arms_api call but the proposal routes (packages/platform-mcp agent-gate.ts); each refused call is still
     // recorded where its suite counts it
-    if (e.server === SERVER && e.tool === 'danxbot_api' && world.agentGate !== null && !(e.args.method === 'POST' && e.args.path.startsWith('/api/team/agent-proposals')) && !(world.agentGate === 'agent_not_held' && e.args.method === 'POST' && e.args.path === '/api/plan-sessions/me/agent')) {
+    if (e.server === SERVER && e.tool === '50arms_api' && world.agentGate !== null && !(e.args.method === 'POST' && e.args.path.startsWith('/api/team/agent-proposals')) && !(world.agentGate === 'agent_not_held' && e.args.method === 'POST' && e.args.path === '/api/plan-sessions/me/agent')) {
       if (isContextRead(e.args)) contextReads.push(e.args.path)
       else if (e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
       else calls.push({ server: e.server, tool: e.tool, args: e.args })
@@ -880,12 +880,12 @@ export function dashboard(
     }
     // DX-5593: the spawn claim, decided like 50 Arms does under its lock: refuse when the level is not on pace or the live count (the line's
     // `sub_agents` plus the claims held) has reached the budget; unknown (a `reason`, no level) claims nothing. The answer is the line plus {claimed, claim_id}.
-    if (e.server === 'plugin:50arms:dashboard' && e.tool === 'danxbot_api' && typeof e.args.path === 'string' && e.args.path.startsWith('/api/pacing/agents/claim')) {
+    if (e.server === 'plugin:50arms:platform' && e.tool === '50arms_api' && typeof e.args.path === 'string' && e.args.path.startsWith('/api/pacing/agents/claim')) {
       if (e.args.method === 'POST') {
         claimAttempts.n++
         claimBodies.push(e.args.body)
       }
-      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:50arms:dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
@@ -922,11 +922,11 @@ export function dashboard(
       return { value: text(world.restart.json ?? { notice: null }) }
     }
     // DX-5554: the release of the session's team agent at session exit, answered as the real route answers (`{released}`)
-    if (e.server === SERVER && e.tool === 'danxbot_api' && e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') {
+    if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') {
       releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
       if (world.release.hangs) await hung.promise
       if (world.release.delayMs !== undefined) await clock.sleep(world.release.delayMs)
-      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:50arms:dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
       if (world.release.deny !== undefined) return { deny: world.release.deny }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       if (world.release.status !== undefined) return { value: reply({ error: 'release boom' }, world.release.status) }
@@ -936,31 +936,31 @@ export function dashboard(
     }
     // DX-4234: the reads the context hooks make (is the session on a plan, the registry's event text, an earlier session's restart notice) are
     // kept out of `calls` and `api` like the pacing reads, so the suites that count a load's reads stay about their own subject
-    if (e.server === SERVER && e.tool === 'danxbot_api' && isContextRead(e.args)) {
+    if (e.server === SERVER && e.tool === '50arms_api' && isContextRead(e.args)) {
       contextReads.push(e.args.path)
       if (world.contextHangs) await hung.promise
       if (world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
-      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:50arms:dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       return { value: contextAnswer(e.args.path) }
     }
     // DX-5694: the turn activity sends (PUT /api/plan-sessions/me/turn-activity), kept in their own list so every suite that asserts on `reports` stays about its own subject
-    if (e.server === SERVER && e.tool === 'danxbot_api' && e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/turn-activity') {
+    if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/turn-activity') {
       turnActivityCalls.push({ activity: e.args.body.activity, since: e.args.body.since })
       const over = world.reportReplies[`PUT ${e.args.path}`]
-      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:50arms:dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
       if (over?.deny !== undefined) return { deny: over.deny }
       if (over?.status !== undefined) return { value: reply(over.body ?? { error: 'turn activity boom' }, over.status) }
       return { value: reply({ status: 'updated' }) }
     }
-    if (e.server === SERVER && e.tool === 'danxbot_api' && isReportCall(e.args)) {
+    if (e.server === SERVER && e.tool === '50arms_api' && isReportCall(e.args)) {
       reportCalls.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query, board: e.args.board })
       sequence.push(`report ${e.args.method} ${e.args.path}`)
       const over = world.reportReplies[`${e.args.method} ${e.args.path}`]
       if (over?.delayMs !== undefined) await clock.sleep(over.delayMs)
-      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:50arms:dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
@@ -981,10 +981,10 @@ export function dashboard(
       }
     }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
-    if (e.tool !== 'danxbot_api') sequence.push(`tool ${e.tool}`)
-    if (e.server === 'plugin:50arms:dashboard') {
+    if (e.tool !== '50arms_api') sequence.push(`tool ${e.tool}`)
+    if (e.server === 'plugin:50arms:platform') {
       // a deny reaches the plugin as a rejection that carries the reason
-      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "danxbot_api" on a server named "plugin:50arms:dashboard"' }
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       const haltText = () => (world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT)
@@ -1052,7 +1052,7 @@ export function dashboard(
         if (world.planLeaveAnswer !== null) return { value: { content: [{ type: 'text', text: world.planLeaveAnswer.text }], isError: world.planLeaveAnswer.isError } }
         if (options.disconnect === 'rejected') return { deny: 'plan_connect is not available' }
         if (options.disconnectTakesMs) await clock.sleep(options.disconnectTakesMs)
-        // the real envelope (packages/danx-dashboard-mcp jsonResult, the server's handleLeavePlan): pretty-printed
+        // the real envelope (packages/platform-mcp jsonResult, the server's handleLeavePlan): pretty-printed
         // JSON text, and a refusal is `ok: false`, never an error result
         const envelope = (ok: boolean, status: number, body: unknown) => ({
           value: { content: [{ type: 'text', text: JSON.stringify({ ok, status, body }, null, 2) }], isError: false },
@@ -1150,7 +1150,7 @@ export function dashboard(
       // DX-5232: the plan read is one path now (load and session probe alike), so a slow dashboard slows it as it slows a context read
       if (e.args.path === '/api/plan-sessions/me' && world.contextDelayMs > 0) await clock.sleep(world.contextDelayMs)
       if (world.permissionClaimDelayMs > 0 && /\/claim$/.test(String(e.args.path))) await clock.sleep(world.permissionClaimDelayMs)
-      // DX-4635: every danxbot_api read answers after `apiHoldMs` on the harness clock (a slow dashboard), and the card reads in flight together are counted
+      // DX-4635: every 50arms_api read answers after `apiHoldMs` on the harness clock (a slow dashboard), and the card reads in flight together are counted
       const isIssueRead = String(e.args.path).startsWith('/api/issues/')
       if (isIssueRead) {
         issueReads.active++
@@ -1266,7 +1266,7 @@ export function dashboard(
   const toolListAnswer = () => {
     const tool = (server: string, name: string) => ({ name: serverToolName(server, name), description: '', mcp: true })
     if (notConnected() || world.tools === 'none') return { value: [] } as any
-    return { value: sessionServers().flatMap(server => (world.tools === 'old' ? [tool(server, 'danxbot_api')] : [tool(server, 'danxbot_api'), tool(server, 'plan_events_wait')])) } as any
+    return { value: sessionServers().flatMap(server => (world.tools === 'old' ? [tool(server, '50arms_api')] : [tool(server, '50arms_api'), tool(server, 'plan_events_wait')])) } as any
   }
   on('tool.list', () => (toolLists.n++, world.bound ? toolListAnswer() : unboundCall('$.tool.list')))
   // the engine's per-session path as the OS spells it (C:\home\u\... on Windows)

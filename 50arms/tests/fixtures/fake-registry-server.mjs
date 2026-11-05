@@ -26,7 +26,7 @@ const server = http.createServer((req, res) => {
     case "latest-only":
       if (!req.url.endsWith("/latest")) return;
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
-      res.end(JSON.stringify({ name: "@thehammer/danx-dashboard-mcp", version: control.version }));
+      res.end(JSON.stringify({ name: "@50arms/platform-mcp", version: control.version }));
       return;
     case "status-500":
       res.writeHead(500, { "content-type": "text/plain", connection: "close" });
@@ -38,7 +38,7 @@ const server = http.createServer((req, res) => {
       return;
     default:
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
-      res.end(JSON.stringify({ name: "@thehammer/danx-dashboard-mcp", version: control.version }));
+      res.end(JSON.stringify({ name: "@50arms/platform-mcp", version: control.version }));
   }
 });
 server.listen(0, "127.0.0.1", () => process.stdout.write(`${server.address().port}\n`));

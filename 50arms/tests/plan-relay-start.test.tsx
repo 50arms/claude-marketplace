@@ -56,9 +56,9 @@ for (const surface of SURFACES) {
       test(`not for a plan_connect that answered ${name}: nothing is connected yet`, async ($, on) => {
         const d = dashboard(on, { signedOut: 'signed-out' })
         d.world.signIn.answer = { text: pending, waits: true }
-        on('tool.call', { tool: 'mcp__plugin_50arms_dashboard__plan_connect' }, () => ({ result: {}, text: answer, isError: false }) as any)
+        on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: answer, isError: false }) as any)
         await startSession($, d, surface)
-        await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 23 } as any)
+        await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
         await d.clock.settle()
         expect(d.relay.calls).toHaveLength(0)
       })

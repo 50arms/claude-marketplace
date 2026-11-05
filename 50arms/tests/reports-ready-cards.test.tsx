@@ -2,7 +2,7 @@ import "./run-tests-with-npm-test.generated"
 // DX-4534 / DX-4235: the ready-cards Stop check, as a function hook. A plan-connected main session's stop is blocked once while its plan has
 // ready cards nobody holds (GET /api/plans/mine, then GET /api/issues on each board the plan spans); with none, on a stop the hook already
 // forced, for a sub-agent, or when the read fails, the stop goes on. Checked as the engine runs the hook, on both surfaces, plus the
-// definition of "ready" (ported from the dashboard repo's packages/danx-dashboard-mcp ready-cards tests).
+// definition of "ready" (ported from the dashboard repo's packages/platform-mcp ready-cards tests).
 import { describe, expect } from 'claude-code/testing'
 
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, pauseOf } from '../hooks/reports/pause'

@@ -11,7 +11,7 @@ Feature/Epic, print the Slice Plan (below) in your message; no plan, no create.
 ## Types
 
 The team's card types are rows the team's admins edit, so no type list lives here. Before
-choosing a type, read them: `danxbot_api` `GET /api/card-types`. Each row gives its guidance
+choosing a type, read them: `50arms_api` `GET /api/card-types`. Each row gives its guidance
 (`when_to_use`) and its fixed facts (kind, whether it is dispatched, its gates, and its parent
 and child types). Choose by that guidance, and create a child only under a parent type whose
 row allows it. A container type holds context and goal only, its status rolled up from its
@@ -23,7 +23,7 @@ The type names the slicing rules below use (Story, Feature, Epic) stand for the 
 AC and decision records, which the card page lists under the description (the skill's "Mechanics",
 Decisions).
 
-A docs change is made by the agent itself, never recorded as a proposal. Edit the docs pages on your own `docs-change/<name>` branch, cut from the target branch (never from the card branch) and holding only docs pages, then submit it through `danxbot_api` `POST /api/issues/<card id>/docs-submissions` `{repo, branch, summary}`. The card gets a docs-review problem that a person approves.
+A docs change is made by the agent itself, never recorded as a proposal. Edit the docs pages on your own `docs-change/<name>` branch, cut from the target branch (never from the card branch) and holding only docs pages, then submit it through `50arms_api` `POST /api/issues/<card id>/docs-submissions` `{repo, branch, summary}`. The card gets a docs-review problem that a person approves.
 
 ## The slice gate
 

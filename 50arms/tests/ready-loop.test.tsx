@@ -1,18 +1,18 @@
 import "./run-tests-with-npm-test.generated"
-// CP-43 (PLAN-116 "The agent queue"): `/50arms-ready` signs a session in and joins the team's list of ready agents for its folder's repo. After its plan or card work the session clears
+// CP-43 (PLAN-116 "The agent queue"): `/50arms:ready` signs a session in and joins the team's list of ready agents for its folder's repo. After its plan or card work the session clears
 // by handshake (DEC-359: 50 Arms asks, the session wraps up and says ready, 50 Arms releases the clear) and rejoins by itself. A person's Stop takes it off the list and says so.
 import { describe, expect } from 'claude-code/testing'
 
 import * as readyLoopModule from '../hooks/ready/loop'
-import { READY_COMMAND, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
+import { READY_COMMAND, READY_TYPED, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
 import { LOCK_STALE_MS, NOT_CONNECTED_RETRY_MS, SIGN_IN_MIN_ROUND_MS, toolName } from '../hooks/plan/config'
 import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
 import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest } from './plan-kit'
-// CP-67: the name the engine gives the command a person types as /50arms-ready: the plugin's skill, under the plugin's name
-const TYPED_READY = '50arms:50arms-ready'
+// CP-67: the name the engine gives the command a person types as /50arms:ready: the plugin's skill, under the plugin's name
+const TYPED_READY = '50arms:ready'
 
 const AGENT = { id: 6, name: 'Tendai', avatar_url: null }
 const REPO = 'acme-app'
@@ -101,7 +101,7 @@ describe('reading a folder repo, a session row and a clear file', () => {
     }
   })
 
-  test("a danxbot_api answer the MCP sent as a file names that file and carries no body, so its reader reads the file; an inline answer names none", () => {
+  test("a 50arms_api answer the MCP sent as a file names that file and carries no body, so its reader reads the file; an inline answer names none", () => {
     expect(textOutcome(JSON.stringify({ ok: true, status: 200, reply_file: { path: '/tmp/danx-api/a.json', bytes: 1, chars: 1, instruction: 'x' } }), false)).toEqual({ ok: true, status: 200, body: undefined, replyFile: '/tmp/danx-api/a.json' })
     const inline = textOutcome(JSON.stringify({ ok: true, status: 200, body: { a: 1 } }), false)
     expect(inline).toEqual({ ok: true, status: 200, body: { a: 1 } })
@@ -127,7 +127,7 @@ describe('reading a folder repo, a session row and a clear file', () => {
       // every text builder is named ready*; a job, where one takes one, reads as no job here, and its words are what is checked
       else if (typeof value === 'function' && /^ready[A-Z]/.test(name)) texts.push((value as (...args: string[]) => string)('x', 'y'))
     }
-    expect(texts.filter(t => t.includes(`/${READY_COMMAND}`)).length).toBeGreaterThan(10)
+    expect(texts.filter(t => t.includes(`/${READY_TYPED}`)).length).toBeGreaterThan(10)
     for (const text of texts) expect(text).not.toMatch(/danx/i)
   })
 
@@ -220,9 +220,9 @@ describe('the ready-agent loop', () => {
     d.world.releaseId = releaseId
     clearFile(d, releaseId)
   }
-  const readyDeletes = (d: any) => d.calls.filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'DELETE' && c.args.path === '/api/plan-sessions/me/ready').length
+  const readyDeletes = (d: any) => d.calls.filter((c: any) => c.tool === '50arms_api' && c.args.method === 'DELETE' && c.args.path === '/api/plan-sessions/me/ready').length
 
-  test("/50arms-ready, the skill's own command, joins the list for the repo of the folder", async ($, on) => {
+  test("/50arms:ready, the skill's own command, joins the list for the repo of the folder", async ($, on) => {
     const d = await started($, on)
     const answer: any = await ready($, d)
     expect(answer.text).toBe(READY_JOINING)
@@ -237,11 +237,11 @@ describe('the ready-agent loop', () => {
     await d.clock.settle()
     expect(d.world.readyMark).toBe(null)
     expect(other.context ?? []).not.toContain(READY_JOINING)
-    const joined: any = await $.tool.call({ tool: 'Skill', skill: '50arms:50arms-ready' } as any)
+    const joined: any = await $.tool.call({ tool: 'Skill', skill: '50arms:ready' } as any)
     await d.clock.settle()
     expect(joined.context).toContain(READY_JOINING)
     expect(d.world.readyMark).toBe(REPO)
-    const left: any = await $.tool.call({ tool: 'Skill', skill: '50arms-ready', args: 'off' } as any)
+    const left: any = await $.tool.call({ tool: 'Skill', skill: 'ready', args: 'off' } as any)
     await d.clock.settle()
     expect(left.context).toContain(READY_OFF)
     expect(d.world.readyMark).toBe(null)
@@ -262,7 +262,7 @@ describe('the ready-agent loop', () => {
     expect(d.relay.submitted).toEqual([])
   })
 
-  test('a first join that signs in and finds no agent free stays in the loop and says so once, and only /50arms-ready joins it when one frees', async ($, on) => {
+  test('a first join that signs in and finds no agent free stays in the loop and says so once, and only /50arms:ready joins it when one frees', async ($, on) => {
     const d = await started($, on)
     d.world.signedOut = 'signed-out'
     d.world.signIn.answer = { text: JSON.stringify({ state: 'agent_limit_reached', instruction: 'Tell the person.' }) }
@@ -374,7 +374,7 @@ describe('the ready-agent loop', () => {
       expect(d.relay.submitted).toEqual([])
     })
 
-    test('/50arms-ready off takes its open request along: a later approval tells the model nothing', async ($, on) => {
+    test('/50arms:ready off takes its open request along: a later approval tells the model nothing', async ($, on) => {
       const d = await started($, on)
       d.world.repos = CUSTOM
       d.world.reposAnswer = { status: 403, body: { error: 'forbidden', permission: 'boards.view' } }
@@ -429,7 +429,7 @@ describe('the ready-agent loop', () => {
       expect(d.toasts.filter((t: string) => t.includes('{"ok"'))).toEqual([])
     })
 
-    test('/50arms-ready off while an ask that will be refused is on its way: no toast and no second DELETE', async ($, on) => {
+    test('/50arms:ready off while an ask that will be refused is on its way: no toast and no second DELETE', async ($, on) => {
       const d = await started($, on)
       d.world.repos = CUSTOM
       d.world.reposAnswer = { status: 403, body: { error: 'forbidden', permission: 'boards.view' } }
@@ -458,7 +458,7 @@ describe('the ready-agent loop', () => {
       expect(d.world.readyCleared).toBe(1)
     })
 
-    test('/50arms-ready off while an ask that will throw is on its way: no toast and no second DELETE', async ($, on) => {
+    test('/50arms:ready off while an ask that will throw is on its way: no toast and no second DELETE', async ($, on) => {
       const d = await started($, on)
       d.world.repos = CUSTOM
       d.world.reposAnswer = { status: 403, body: { error: 'forbidden', permission: 'boards.view' } }
@@ -477,7 +477,7 @@ describe('the ready-agent loop', () => {
       expect(d.toasts.filter((t: string) => t.includes('could not ask'))).toEqual([])
     })
 
-    test('/50arms-ready off while the ask is on its way: no link is drawn, and its grant tells the model nothing', async ($, on) => {
+    test('/50arms:ready off while the ask is on its way: no link is drawn, and its grant tells the model nothing', async ($, on) => {
       const d = await started($, on)
       d.world.repos = CUSTOM
       d.world.reposAnswer = { status: 403, body: { error: 'forbidden', permission: 'boards.view' } }
@@ -759,14 +759,14 @@ describe('the ready-agent loop', () => {
       await tick(d)
       expect(d.clearRuns).toHaveLength(0)
       expect(d.world.readySteps).toEqual([])
-      expect(d.calls.slice(calls).filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'PUT')).toEqual([])
+      expect(d.calls.slice(calls).filter((c: any) => c.tool === '50arms_api' && c.args.method === 'PUT')).toEqual([])
       // the view names a newer release than the file (r2 against r1) with the agreement standing: still nothing
       d.world.releaseId = 'r2'
       d.world.clearAgreed = true
       await tick(d)
       expect(d.clearRuns).toHaveLength(0)
       expect(d.world.readySteps).toEqual([])
-      expect(d.calls.slice(calls).filter((c: any) => c.tool === 'danxbot_api' && c.args.method === 'PUT')).toEqual([])
+      expect(d.calls.slice(calls).filter((c: any) => c.tool === '50arms_api' && c.args.method === 'PUT')).toEqual([])
       released(d, 'r2')
       await tick(d)
       expect(d.clearRuns).toHaveLength(1)
@@ -954,7 +954,7 @@ describe('the ready-agent loop', () => {
       expect(d.clearRuns).toHaveLength(1)
     })
 
-    test('a shell started before /50arms-ready holds the clear too', async ($, on) => {
+    test('a shell started before /50arms:ready holds the clear too', async ($, on) => {
       on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg1' }, text: 'running' }) as any)
       on('classic.Stop', () => ({}) as any)
       const d = await started($, on)
@@ -1124,7 +1124,7 @@ describe('the ready-agent loop', () => {
     })
   })
 
-  describe('a session that already holds work when /50arms-ready runs joins the loop with that work as its job (the dashboard keeps no loop for it until then)', () => {
+  describe('a session that already holds work when /50arms:ready runs joins the loop with that work as its job (the dashboard keeps no loop for it until then)', () => {
     for (const [kind, hold, end, job] of [
       ['card', (d: any) => {
         d.world.card = CARD
@@ -1161,7 +1161,7 @@ describe('the ready-agent loop', () => {
       })
     }
 
-    test("after a person's Stop during a job ended the loop, /50arms-ready while the card is still held joins again on it, and clears and rejoins once it is released", async ($, on) => {
+    test("after a person's Stop during a job ended the loop, /50arms:ready while the card is still held joins again on it, and clears and rejoins once it is released", async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       handCard(d, 'In Progress')
@@ -1700,7 +1700,7 @@ describe('the ready-agent loop', () => {
     })
   })
 
-  test('off during a sign-in frees it: /50arms-ready after it signs in again, and the session joins', async ($, on) => {
+  test('off during a sign-in frees it: /50arms:ready after it signs in again, and the session joins', async ($, on) => {
     const d = await started($, on)
     d.world.signedOut = 'signed-out'
     await ready($, d)
@@ -1718,7 +1718,7 @@ describe('the ready-agent loop', () => {
     expect(d.world.readyMark).toBe(REPO)
   })
 
-  test('off, /50arms-ready, the old watch returning, off: the second off still ends the watch', async ($, on) => {
+  test('off, /50arms:ready, the old watch returning, off: the second off still ends the watch', async ($, on) => {
     const d = await started($, on)
     d.world.signedOut = 'signed-out'
     await ready($, d)
@@ -1742,7 +1742,7 @@ describe('the ready-agent loop', () => {
     expect((await linksOf(band)).map(l => l.href)).not.toContain(APPROVAL_URL)
   })
 
-  test('/50arms-ready off ends the sign-in it started: no more calls, no link, and a later denial reaches nobody', async ($, on) => {
+  test('/50arms:ready off ends the sign-in it started: no more calls, no link, and a later denial reaches nobody', async ($, on) => {
     const d = await started($, on)
     d.world.signedOut = 'signed-out'
     await ready($, d)
@@ -1809,7 +1809,7 @@ describe('the ready-agent loop', () => {
       d.world.agentClaim = { state: 'agent_limit_reached', instruction: 'Ask a person.' }
     }
 
-    test('the first /50arms-ready with the gate already closed claims through plan_connect, once', async ($, on) => {
+    test('the first /50arms:ready with the gate already closed claims through plan_connect, once', async ($, on) => {
       const d = await started($, on)
       refused(d)
       await ready($, d)
@@ -1838,7 +1838,7 @@ describe('the ready-agent loop', () => {
       expect(d.world.readyMark).toBe(null)
     })
 
-    test('/50arms-ready claims once, and a refusal is not tried again', async ($, on) => {
+    test('/50arms:ready claims once, and a refusal is not tried again', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       refused(d)
@@ -1848,11 +1848,11 @@ describe('the ready-agent loop', () => {
       await tick(d)
       await tick(d)
       expect(d.world.claimsByConnect).toBe(1)
-      expect(d.toasts.some((t: string) => t.includes('every team agent is in use') && t.includes('run /50arms-ready'))).toBe(true)
+      expect(d.toasts.some((t: string) => t.includes('every team agent is in use') && t.includes('run /50arms:ready'))).toBe(true)
       expect(d.world.readyMark).toBe(null)
     })
 
-    test('a person frees an agent and runs /50arms-ready: it joins at once', async ($, on) => {
+    test('a person frees an agent and runs /50arms:ready: it joins at once', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       refused(d)
@@ -1862,7 +1862,7 @@ describe('the ready-agent loop', () => {
       expect(d.world.readyMark).toBe(REPO)
     })
 
-    test('with the key gone behind the gate, /50arms-ready shows the approval link in a toast and on the band', async ($, on) => {
+    test('with the key gone behind the gate, /50arms:ready shows the approval link in a toast and on the band', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       refused(d)
@@ -1874,7 +1874,7 @@ describe('the ready-agent loop', () => {
       expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
     })
 
-    test('/50arms-ready run again during an open approval keeps it: no second watch, and no word that no agent is free', async ($, on) => {
+    test('/50arms:ready run again during an open approval keeps it: no second watch, and no word that no agent is free', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       refused(d)
@@ -1998,7 +1998,7 @@ describe('the ready-agent loop', () => {
       expect(d.world.readyMark).toBe(null)
     })
 
-    test('/50arms-ready off leaves the list and the loop; any other word is only the usage', async ($, on) => {
+    test('/50arms:ready off leaves the list and the loop; any other word is only the usage', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       const usage: any = await $.command.run({ command: TYPED_READY, args: 'sideways' })
@@ -2068,7 +2068,7 @@ describe('the ready-agent loop', () => {
     return d
   }
 
-  test('/50arms-ready off while the /clear is held: the /clear runs, and no mark and no rejoin follow', async ($, on) => {
+  test('/50arms:ready off while the /clear is held: the /clear runs, and no mark and no rejoin follow', async ($, on) => {
     await loopEndsDuringClear($, on, d => offList($, d))
   })
 
@@ -2234,7 +2234,7 @@ describe('the ready-agent loop', () => {
       test('a sub-agent that loads the skill does not put the main session on the list', async ($, on) => {
         on('tool.call', () => ({ result: 'loaded' }) as any)
         const d = await started($, on)
-        const r: any = await $.tool.call({ tool: 'Skill', skill: '50arms:50arms-ready', agentId: 'a1' } as any)
+        const r: any = await $.tool.call({ tool: 'Skill', skill: '50arms:ready', agentId: 'a1' } as any)
         await d.clock.settle()
         expect(d.world.readyMark).toBe(null)
         expect(r.context ?? []).not.toContain(READY_JOINING)

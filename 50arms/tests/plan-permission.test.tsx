@@ -15,7 +15,7 @@ const URL_B = 'https://50arms.example/connect/bbbb'
 // the MCP's answer as it is today, `expiresAt` included (the plugin does not read it)
 const answer = (state: string, url: string, code: string) =>
   JSON.stringify({ state, approvalUrl: url, confirmCode: code, expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the code.' })
-const TOOL = 'mcp__plugin_50arms_dashboard__request_permission'
+const TOOL = 'mcp__plugin_50arms_platform__request_permission'
 const CALL = (permissions: string[]) => ({ tool: TOOL, permissions, reason: 'to read members' }) as any
 const BAND = { plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any
 // the band's permission link label, or undefined when none is drawn

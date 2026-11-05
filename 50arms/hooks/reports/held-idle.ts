@@ -27,7 +27,7 @@ export const WORK_MARK_TTL_MS = 30 * 60_000
 // Card id -> epoch ms the mark was set (or renewed).
 export type WorkMarks = Record<string, number>
 
-// The marks after one `danxbot_api` call of the session: a `PUT` of a mark on a card sets it, a `DELETE` of one clears it, anything else
+// The marks after one `50arms_api` call of the session: a `PUT` of a mark on a card sets it, a `DELETE` of one clears it, anything else
 // (another path, a mark on a problem, design or decision, a malformed body) changes nothing.
 export function marksAfter(marks: WorkMarks, method: unknown, path: unknown, body: unknown, now: number): WorkMarks {
   if (path !== WORK_MARK_PATH || typeof method !== 'string') return marks

@@ -1,6 +1,6 @@
 import "./designated-test-container.mjs";
 // DX-5554 - plan-workflow's Start section: a session signs in, takes its team agent's identity from the reply, proposes an agent itself when none
-// is free (`agent_needed`, through danxbot_api, without asking), tells the person the limit (`agent_limit_reached`), holds a stand-alone card with
+// is free (`agent_needed`, through 50arms_api, without asking), tells the person the limit (`agent_limit_reached`), holds a stand-alone card with
 // `card_connect`, and titles itself by what it holds. No skill of the plugin tells a session to choose its own name any more.
 
 import { test } from "node:test";
@@ -27,7 +27,7 @@ test("Start takes the session's identity from the reply's agent", () => {
   assert.match(start, /`agent` and `agentInstruction`/);
 });
 
-test("agent_needed: the session proposes an agent through danxbot_api, with the routes and fields", () => {
+test("agent_needed: the session proposes an agent through 50arms_api, with the routes and fields", () => {
   assert.match(start, /`agent_needed`/);
   assert.match(start, /`POST \/api\/team\/agent-proposals`/);
   assert.match(start, /`\{name, bio\}`/);

@@ -10,7 +10,7 @@ import { test, SURFACES, answerReportEvents, dashboard, startSession } from './p
 
 const BOARD = 7
 const DETAIL = '/api/plans/23/connected-session/detail'
-const API = 'mcp__plugin_50arms_dashboard__danxbot_api'
+const API = 'mcp__plugin_50arms_platform__50arms_api'
 const held = (id: string, activity: string | null, title = `Card ${id}`) => ({ id, title, activity })
 const MARK = { resource: { type: 'issue', id: 'DX-1' }, note: 'landing it' }
 

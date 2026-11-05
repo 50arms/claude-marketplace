@@ -193,7 +193,7 @@ for (const surface of SURFACES) {
       d.relay.server.stopped = { reason: 'plan_archived', detail: 'archived', fix: 'connect again' }
       await startSession($, d, surface)
       d.relay.server.stopped = undefined
-      await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
       await d.clock.settle()
       expect(d.relay.calls).toHaveLength(2)
     })

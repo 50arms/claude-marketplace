@@ -10,10 +10,10 @@ import { signInApprovedNote, signInDeniedNote, signInExpiredNote } from '../hook
 import { relayLine } from '../hooks/relay/delivery'
 import { test, APPROVAL_PENDING, APPROVAL_URL, APPROVAL_REQUIRED, CONFIRM_CODE, dashboard, startSession, linksOf, woken } from './plan-kit'
 
-const CALL = { tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 23, title: 'PLAN-23: 50 Arms plugin' } as any
-const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:dashboard' && c.tool === 'plan_connect')
+const CALL = { tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23, title: 'PLAN-23: 50 Arms plugin' } as any
+const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:platform' && c.tool === 'plan_connect')
 // the model's own call answers the new request, as the MCP does
-const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
+const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 
 async function modelAsks($: any, d: any) {
   await $.tool.call(CALL)
@@ -100,7 +100,7 @@ describe('a sign-in the model started', () => {
   test('a renewed request the model receives as approval_pending is still shown to the person', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
     // the model's own call answers a request this session has not shown yet, but as pending
-    on('tool.call', { tool: 'mcp__plugin_50arms_dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' }), isError: false }) as any)
+    on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' }), isError: false }) as any)
     await startSession($, d, 'desktop')
     await modelAsks($, d)
     expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
@@ -109,7 +109,7 @@ describe('a sign-in the model started', () => {
 
   test('a request with no id is refused: it is not watched and nothing is told', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
-    on('tool.call', { tool: 'mcp__plugin_50arms_dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify({ ...APPROVAL_REQUIRED, approvalUrl: 'http://localhost:5555/' }), isError: false }) as any)
+    on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: JSON.stringify({ ...APPROVAL_REQUIRED, approvalUrl: 'http://localhost:5555/' }), isError: false }) as any)
     await startSession($, d, 'desktop')
     await modelAsks($, d)
     expect(connectCalls(d)).toHaveLength(0)

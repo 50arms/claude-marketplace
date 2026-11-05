@@ -15,7 +15,7 @@ const KEY = 'relayCursor:sess-own'
 const START = { turnId: 't1' } as any
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const API = 'mcp__plugin_50arms_dashboard__danxbot_api'
+const API = 'mcp__plugin_50arms_platform__50arms_api'
 const ack = (id: number) => ({ tool: API, method: 'POST', path: `/api/plan-sessions/me/events/${id}/ack` }) as any
 const envelope = (ok: boolean, status = ok ? 200 : 400) => JSON.stringify({ ok, status, body: ok ? {} : { error: 'not_in_flight' } })
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })

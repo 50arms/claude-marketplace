@@ -358,7 +358,7 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     const { version } = await launch(h.options);
     assert.equal(version, A, "the recorded version runs");
     assert.equal(h.errLines.length, 1);
-    assert.match(h.errLines[0], /could not refresh .*install_failed: npm install @thehammer\/danx-dashboard-mcp@0\.1\.8 exited 1: npm error 404 Not Found\); this session keeps running 0\.1\.7\n$/);
+    assert.match(h.errLines[0], /could not refresh .*install_failed: npm install @thehammer\/platform-mcp@0\.1\.8 exited 1: npm error 404 Not Found\); this session keeps running 0\.1\.7\n$/);
     assert.equal(recordedVersionOrNull(env), A);
   });
 
@@ -500,7 +500,7 @@ describe("runRefresh: the detached refresh (DX-4235, DX-5314)", () => {
     const h = harness();
     assert.equal(await runRefresh(A, h.options), null);
     assert.equal(h.errLines.length, 1);
-    assert.match(h.errLines[0], /^\[50 Arms dashboard MCP\] could not refresh the @thehammer\/danx-dashboard-mcp version \(.*HTTP 500\); this session keeps running 0\.1\.7\n$/);
+    assert.match(h.errLines[0], /^\[50 Arms dashboard MCP\] could not refresh the @thehammer\/platform-mcp version \(.*HTTP 500\); this session keeps running 0\.1\.7\n$/);
     assert.equal(h.errLines[0].trimEnd().includes("\n"), false);
     assert.equal(recordedVersionOrNull(env), A);
   });
@@ -512,7 +512,7 @@ describe("runRefresh: the detached refresh (DX-4235, DX-5314)", () => {
     const h = harness({ npmMode: "fail" });
     assert.equal(await runRefresh(A, h.options), null);
     assert.equal(h.errLines.length, 1);
-    assert.match(h.errLines[0], /could not refresh .*install_failed: npm install @thehammer\/danx-dashboard-mcp@0\.1\.8 exited 1: npm error 404 Not Found\); this session keeps running 0\.1\.7\n$/);
+    assert.match(h.errLines[0], /could not refresh .*install_failed: npm install @thehammer\/platform-mcp@0\.1\.8 exited 1: npm error 404 Not Found\); this session keeps running 0\.1\.7\n$/);
     assert.equal(recordedVersionOrNull(env), A);
   });
 
@@ -545,7 +545,7 @@ describe("runRefresh: the detached refresh (DX-4235, DX-5314)", () => {
     assert.deepEqual(readdirSync(path.join(dataDir, "dashboard-mcp")).filter((n) => n.startsWith(".stage-")), []);
     assert.equal(recordedVersionOrNull(env), A);
     assert.equal(h.errLines.length, 1);
-    assert.match(h.errLines[0], /^\[50 Arms dashboard MCP\] could not refresh the @thehammer\/danx-dashboard-mcp version \(aborted: installing @thehammer\/danx-dashboard-mcp@0\.1\.8 was stopped\); this session keeps running 0\.1\.7\n$/);
+    assert.match(h.errLines[0], /^\[50 Arms dashboard MCP\] could not refresh the @thehammer\/platform-mcp version \(aborted: installing @thehammer\/platform-mcp@0\.1\.8 was stopped\); this session keeps running 0\.1\.7\n$/);
   });
 
   for (const sig of ["SIGINT", "SIGTERM"]) {
@@ -664,13 +664,13 @@ describe("the launcher process", () => {
     assert.deepEqual(JSON.parse(result.stdout), { url: "https://50arms.sageus.ai", cred: null, repo: null });
   });
 
-  test("a folder whose .mcp.json declares danx-dashboard still gets the real server: the launcher has no standby mode", () => {
+  test("a folder whose .mcp.json declares platform still gets the real server: the launcher has no standby mode", () => {
     recordAt("0.1.50");
     const bin = installedBin(dataDir, "0.1.50");
     mkdirSync(path.dirname(bin), { recursive: true });
     writeFileSync(bin, `process.stdout.write("real-server"); process.exit(4);`);
     const project = sessionFolder({ env: { DANXBOT_DASHBOARD_URL: "https://50arms.sageus.ai" } });
-    writeFileSync(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "danx-dashboard": { command: "node", args: ["x.mjs"] } } }));
+    writeFileSync(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "platform": { command: "node", args: ["x.mjs"] } } }));
     const result = run({ CLAUDE_PROJECT_DIR: project });
     assert.equal(result.status, 4, result.stderr);
     assert.equal(result.stdout, "real-server");
@@ -755,7 +755,7 @@ describe("the launcher process", () => {
     const second = runAsync();
     assert.equal(await second.exited, 4);
     await second.closed;
-    assert.match(second.stderr(), /^\[50 Arms dashboard MCP\] could not refresh the @thehammer\/danx-dashboard-mcp version \(.*HTTP 500\); this session keeps running 0\.1\.7\n$/);
+    assert.match(second.stderr(), /^\[50 Arms dashboard MCP\] could not refresh the @thehammer\/platform-mcp version \(.*HTTP 500\); this session keeps running 0\.1\.7\n$/);
     // the second launcher's own refresh fails the same way and logs it; wait for that so no child writes after the test's directory is removed
     await until(() => existsSync(refreshLogFile(env)), "the second refresh child logged its failure");
   });

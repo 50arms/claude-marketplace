@@ -130,7 +130,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
 
   // DX-4686: the live sub-agent check is no step of the refresh (a hung one cannot hold the lock), so the step after the load that is held here is
   // the settling of an open permission request, whose claim call is slow on the harness clock
-  const PERMISSION_CALL = { tool: 'mcp__plugin_50arms_dashboard__request_permission', permissions: ['team.members.view'], reason: 'to read members' } as any
+  const PERMISSION_CALL = { tool: 'mcp__plugin_50arms_platform__request_permission', permissions: ['team.members.view'], reason: 'to read members' } as any
   // longer than any wait the two tests below make, so the claim is still out when they end, and ending it advances the clock only this far
   const HELD_MS = LOCK_STALE_MS + 5_000
   const withSlowClaim = async ($: any, on: any) => {

@@ -1,6 +1,6 @@
 import "./designated-test-container.mjs";
 // DX-4321 / DX-3811 / DX-4235 — scripts/lib/dashboard-mcp-package.mjs: the ONE module that says which version of
-// `@thehammer/danx-dashboard-mcp` runs and installs it. The plugin carries no version literal: the registry's `latest` is
+// `@50arms/platform-mcp` runs and installs it. The plugin carries no version literal: the registry's `latest` is
 // recorded under the plugin data dir and read back with no network. A fake registry (fixtures/fake-registry.mjs) stands
 // in for npm's registry and an injected spawn for npm itself; nothing here touches the network except the one describe
 // at the end that checks the REAL published package, deliberately.
@@ -36,7 +36,7 @@ import { listPluginFiles } from "../../scripts/check-general-audience.mjs";
 import { REGISTRY_BASE_URL_ENV, REGISTRY_TIMEOUT_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const LATEST_PATH = "/@thehammer%2Fdanx-dashboard-mcp/latest";
+const LATEST_PATH = "/@50arms%2Fplatform-mcp/latest";
 const SPEC = (version) => `${DASHBOARD_MCP_PACKAGE_NAME}@${version}`;
 
 let dataDir;
@@ -140,7 +140,7 @@ describe("resolveLatestVersion", () => {
   test("the registry base URL has a public default and an env override (the test seam)", () => {
     assert.equal(registryUrl({}), `https://registry.npmjs.org${LATEST_PATH}`);
     assert.equal(registryUrl({ [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9/" }), `http://127.0.0.1:9${LATEST_PATH}`);
-    assert.equal(DASHBOARD_MCP_PACKAGE_NAME, "@thehammer/danx-dashboard-mcp");
+    assert.equal(DASHBOARD_MCP_PACKAGE_NAME, "@50arms/platform-mcp");
   });
 
   test("a non-200 throws naming the URL and the status", async () => {
@@ -339,7 +339,7 @@ describe("installVersion", () => {
   test("installs the version into a staging directory, then renames it into dashboard-mcp/<version>, and returns its entry point", async () => {
     const npm = fakeNpm();
     const bin = await installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: { command: "/x/node", args: ["/x/npm-cli.js"] } });
-    assert.equal(bin, path.join(dataDir, "dashboard-mcp", "0.1.50", "node_modules", "@thehammer", "danx-dashboard-mcp", "dist", "index.js"));
+    assert.equal(bin, path.join(dataDir, "dashboard-mcp", "0.1.50", "node_modules", "@50arms", "platform-mcp", "dist", "index.js"));
     assert.equal(readFileSync(bin, "utf8"), "ours");
     assert.equal(npm.calls.length, 1);
     const [{ command, args, options }] = npm.calls;
@@ -373,7 +373,7 @@ describe("installVersion", () => {
     assert.equal(INSTALL_TIMEOUT_MS, 60_000);
     const npm = fakeNpm("hang");
     await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM, installTimeoutMs: 1 }), (err) => {
-      assert.match(err.message, /^timeout: installing @thehammer\/danx-dashboard-mcp@0\.1\.50 took longer than /);
+      assert.match(err.message, /^timeout: installing @thehammer\/platform-mcp@0\.1\.50 took longer than /);
       oneLineOnly(err);
       return true;
     });
@@ -389,7 +389,7 @@ describe("installVersion", () => {
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(readdirSync(installRoot()).filter((n) => n.startsWith(".stage-")).length, 1, "the stage exists while npm runs");
     stop.abort();
-    await assert.rejects(installing, /^Error: aborted: installing @thehammer\/danx-dashboard-mcp@0\.1\.50 was stopped$/);
+    await assert.rejects(installing, /^Error: aborted: installing @thehammer\/platform-mcp@0\.1\.50 was stopped$/);
     assert.equal(npm.children[0].killed, true);
     assert.deepEqual(readdirSync(installRoot()), [], "no stage and no version directory");
   });
@@ -397,7 +397,7 @@ describe("installVersion", () => {
   test("an npm failure fails loudly with one line carrying npm's own last line, and nothing is left behind", async () => {
     const npm = fakeNpm("fail");
     await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), (err) => {
-      assert.equal(err.message, "install_failed: npm install @thehammer/danx-dashboard-mcp@0.1.50 exited 1: npm error 404 Not Found - registry unreachable");
+      assert.equal(err.message, "install_failed: npm install @50arms/platform-mcp@0.1.50 exited 1: npm error 404 Not Found - registry unreachable");
       return true;
     });
     assert.deepEqual(readdirSync(installRoot()), []);
@@ -406,7 +406,7 @@ describe("installVersion", () => {
   test("an install that succeeds but leaves no entry point is a failure, not a path to nothing", async () => {
     const npm = fakeNpm("no-bin");
     await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), (err) => {
-      assert.match(err.message, /^install_incomplete: .*left no node_modules\/@thehammer\/danx-dashboard-mcp\/dist\/index\.js$/);
+      assert.match(err.message, /^install_incomplete: .*left no node_modules\/@thehammer\/platform-mcp\/dist\/index\.js$/);
       return true;
     });
     assert.deepEqual(readdirSync(installRoot()), []);
@@ -676,18 +676,18 @@ describe("refreshInstall: the background refresh", () => {
 describe("no shipped plugin file carries a package version literal", () => {
   /** The lines of `text` that put a version literal next to the package name. */
   function versionLiterals(text) {
-    return text.split("\n").filter((line) => /@thehammer\/danx-dashboard-mcp@\d/.test(line) || (line.includes("danx-dashboard-mcp") && /\b\d+\.\d+\.\d+\b/.test(line)));
+    return text.split("\n").filter((line) => /@thehammer\/platform-mcp@\d/.test(line) || (line.includes("platform-mcp") && /\b\d+\.\d+\.\d+\b/.test(line)));
   }
 
   test("the scan itself catches the shapes a reintroduced pin takes", () => {
     for (const bad of [
-      'export const DASHBOARD_MCP_PACKAGE = "@thehammer/danx-dashboard-mcp@0.1.220";',
-      "// pinned: danx-dashboard-mcp 0.1.220",
-      "npx -y @thehammer/danx-dashboard-mcp@1 event-text",
+      'export const DASHBOARD_MCP_PACKAGE = "@50arms/platform-mcp@0.1.220";',
+      "// pinned: platform-mcp 0.1.220",
+      "npx -y @50arms/platform-mcp@1 event-text",
     ]) {
       assert.equal(versionLiterals(bad).length, 1, bad);
     }
-    for (const fine of ["export const DASHBOARD_MCP_PACKAGE_NAME = \"@thehammer/danx-dashboard-mcp\";", "the danx-dashboard-mcp version is recorded", "plugin v0.12.4"]) {
+    for (const fine of ["export const DASHBOARD_MCP_PACKAGE_NAME = \"@50arms/platform-mcp\";", "the platform-mcp version is recorded", "plugin v0.12.4"]) {
       assert.deepEqual(versionLiterals(fine), [], fine);
     }
   });

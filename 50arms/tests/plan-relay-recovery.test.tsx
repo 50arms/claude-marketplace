@@ -15,7 +15,7 @@ const raw = (t: string, isError = false) => ({ value: { content: [{ type: 'text'
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const TEN_MINUTES = 600_000
 const FIRST_WAIT = { plan_id: 23, cursor: null, timeout_ms: 20_000 }
-const NOT_CONNECTED = '$.mcp.call: no connected MCP tool "plan_events_wait" on a server named "plugin:50arms:dashboard"'
+const NOT_CONNECTED = '$.mcp.call: no connected MCP tool "plan_events_wait" on a server named "plugin:50arms:platform"'
 const UNBOUND = '$.mcp.call is not available in this mode: no session is bound in this process (the REPL has not mounted and no headless session is built); catch it and carry on'
 
 for (const surface of SURFACES) {
@@ -42,7 +42,7 @@ for (const surface of SURFACES) {
       answerPlanConnect(on, d)
       await startSession($, d, surface)
       await d.clock.advance(17_000)
-      await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
       await d.clock.advance(60_000)
       expect(d.relay.calls).toEqual([FIRST_WAIT])
     })
@@ -78,7 +78,7 @@ for (const surface of SURFACES) {
       answerPlanConnect(on, d)
       await startSession($, d, surface)
       d.holdApi(3_600_000)
-      await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 24 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 24 } as any)
       await d.clock.advance(1_000)
       expect(d.relay.calls.filter(c => c.plan_id !== null)).toEqual([{ plan_id: 24, cursor: null, timeout_ms: 20_000 }])
     })
@@ -237,7 +237,7 @@ for (const surface of SURFACES) {
       d.world.tools = 'old'
       notConnected(d, 3)
       await startSession($, d, surface)
-      await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
       await d.clock.advance(2_000)
       d.world.tools = 'full'
       await d.clock.advance(60_000)

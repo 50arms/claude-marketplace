@@ -87,7 +87,7 @@ describe('a plugin ahead of its relay (pure, DX-5314)', () => {
   }
 })
 
-// The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/danx-dashboard-mcp/__tests__/compaction-control.test.ts
+// The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/platform-mcp/__tests__/compaction-control.test.ts
 // builds the same from the dashboard's frame, and 50 Arms' operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
 describe('the wire shape (pure)', () => {
   const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"claude-haiku-5-5":180000,"claude-sonnet-5-5":600000,"claude-opus-4-8":907000}},"askedAt":null}'

@@ -33,7 +33,7 @@ export function classifierRefusal(message: string): Refusal | null {
   return CLASSIFIER_MARK.test(message) ? { detail: message, fix: CLASSIFIER_FIX } : null
 }
 
-// a 50 Arms MCP from before the release that added `background` refuses the `background` key the hooks send with each danxbot_api call (a strict schema:
+// a 50 Arms MCP from before the release that added `background` refuses the `background` key the hooks send with each 50arms_api call (a strict schema:
 // MCP error -32602, `unrecognized_keys`, `keys: ["background"]`). The call is not retried without the key (one path); the failure is STALE_MCP_LINE,
 // short enough to stay whole in every toast this failure reaches. Both marks are needed: an unrecognized key that is not `background`, or a `background` that
 // is not an unrecognized key, is some other failure.

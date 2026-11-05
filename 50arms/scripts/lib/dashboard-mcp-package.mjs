@@ -1,4 +1,4 @@
-// The ONE module that owns `@thehammer/danx-dashboard-mcp` for this plugin: which version runs and installing it.
+// The ONE module that owns `@50arms/platform-mcp` for this plugin: which version runs and installing it.
 // Its callers: the plugin's MCP server launcher (dashboard-mcp-server.mjs), which starts the server
 // from the recorded version and refreshes the record.
 // This file carries NO version literal.
@@ -15,7 +15,7 @@
 // unpinned spec would keep serving whatever this machine cached first. The plugin runs an exact version; it reads which
 // one instead of having it typed in.
 //
-// WHERE. `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/<version>/node_modules/@thehammer/danx-dashboard-mcp/dist/` (the package's built entry point)
+// WHERE. `${CLAUDE_PLUGIN_DATA}/dashboard-mcp/<version>/node_modules/@50arms/platform-mcp/dist/` (the package's built entry point)
 // one directory per version, run with plain `node`, never through a cold `npx -y` (measured 2026-10-01: npx paid ~1.6 s
 // warm and ~4 s cold before the package started; the installed copy ran end to end in 0.6 s).
 //
@@ -34,7 +34,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-export const DASHBOARD_MCP_PACKAGE_NAME = "@thehammer/danx-dashboard-mcp";
+export const DASHBOARD_MCP_PACKAGE_NAME = "@50arms/platform-mcp";
 
 export const DEFAULT_REGISTRY_BASE_URL = "https://registry.npmjs.org";
 export const REGISTRY_BASE_URL_ENV = "DASHBOARD_MCP_REGISTRY_BASE_URL";

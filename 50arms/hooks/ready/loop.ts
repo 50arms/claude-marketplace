@@ -7,9 +7,11 @@ import { heldForInput } from '../relay/text'
 // and says ready, and 50 Arms releases the clear. Nothing clears on a timer, so a person still talking keeps the session. The plugin runs the `/clear` it released and rejoins; it holds no
 // rule of its own for when a job has ended.
 
-export const READY_COMMAND = '50arms-ready'
-// The skill that is the agent's own way onto the list, and whose command a person types: `/50arms-ready` arrives as the command `50arms:50arms-ready`
-// on `command.run`, the Skill tool as `50arms-ready` or under the plugin's name. Both do the same join.
+export const READY_COMMAND = 'ready'
+// What a person types: the plugin's name, then the skill's.
+export const READY_TYPED = `50arms:${READY_COMMAND}`
+// The skill that is the agent's own way onto the list, and whose command a person types: `/50arms:ready` arrives as the command `50arms:ready`
+// on `command.run`, the Skill tool as `ready` or under the plugin's name. Both do the same join.
 export const READY_SKILL = new RegExp(`^(?:[a-z0-9_-]+:)?${READY_COMMAND}$`)
 export const READY_PATH = '/api/plan-sessions/me/ready'
 // how often a session in the loop looks again. A session's mark can be lost while it runs (a team-mate's claim clears a lapsed session's agent, and the mark goes with it), so a
@@ -21,32 +23,32 @@ export const READY_REPOS_PAGE = 50
 export const REPOS_PERMISSION_REASON = "Joining the ready list needs to look up this folder's repo among the team's repos."
 
 export const READY_JOINING = 'Joining the ready list. This session waits there for work and rejoins after each job.'
-export const READY_OFF = `This session left the ready list. Run /${READY_COMMAND} to rejoin.`
-export const READY_USAGE = `Run /${READY_COMMAND} to join the ready list, or /${READY_COMMAND} off to leave it.`
-export const READY_STOPPED = `You stopped this session, so it left the ready list. Run /${READY_COMMAND} to rejoin.`
+export const READY_OFF = `This session left the ready list. Run /${READY_TYPED} to rejoin.`
+export const READY_USAGE = `Run /${READY_TYPED} to join the ready list, or /${READY_TYPED} off to leave it.`
+export const READY_STOPPED = `You stopped this session, so it left the ready list. Run /${READY_TYPED} to rejoin.`
 export const READY_NO_ORIGIN = 'Could not join the ready list: this folder has no git origin, so 50 Arms cannot tell which repo it is.'
 export const READY_NOT_GITHUB = "Could not join the ready list: 50 Arms connects github.com repos only, and this folder's origin is elsewhere."
 export const READY_NOT_REGISTERED = "Could not join the ready list: this folder's repo is not connected to 50 Arms. Connect it in the 50 Arms setup guide first."
-export const READY_DISCONNECTED = `You disconnected this session, so it left the ready list and kept its conversation. Run /${READY_COMMAND} to rejoin.`
-export const READY_SIGN_IN_ENDED = `This session left the ready list: it could not sign in. Run /${READY_COMMAND} to try again.`
-export const READY_PERMISSION_ENDED = `This session left the ready list: the permission to look up this folder's repo was not granted. Run /${READY_COMMAND} to ask again.`
+export const READY_DISCONNECTED = `You disconnected this session, so it left the ready list and kept its conversation. Run /${READY_TYPED} to rejoin.`
+export const READY_SIGN_IN_ENDED = `This session left the ready list: it could not sign in. Run /${READY_TYPED} to try again.`
+export const READY_PERMISSION_ENDED = `This session left the ready list: the permission to look up this folder's repo was not granted. Run /${READY_TYPED} to ask again.`
 export const READY_SHELL_HOLDS_RESET = 'Ready list: the job is over, and this session clears and rejoins when its background task has ended.'
-export const readyPermissionRefused = (why: string) => `This session left the ready list: it could not ask for the permission to look up this folder's repo (${why}). Run /${READY_COMMAND} to try again.`
-export const readyMarkRefused = (why: string) => `This session left the ready list: the dashboard refused to mark it ready (${why}). Run /${READY_COMMAND} to try again.`
+export const readyPermissionRefused = (why: string) => `This session left the ready list: it could not ask for the permission to look up this folder's repo (${why}). Run /${READY_TYPED} to try again.`
+export const readyMarkRefused = (why: string) => `This session left the ready list: the dashboard refused to mark it ready (${why}). Run /${READY_TYPED} to try again.`
 // a sign-in that found no team agent free: its own words, and how to try again
-export const readyNoAgentYet = (message: string) => `${message} Then run /${READY_COMMAND}.`
-export const READY_NO_AGENT_AGAIN = `No team agent is free for this session. Run /${READY_COMMAND} when one is.`
+export const readyNoAgentYet = (message: string) => `${message} Then run /${READY_TYPED}.`
+export const READY_NO_AGENT_AGAIN = `No team agent is free for this session. Run /${READY_TYPED} when one is.`
 const jobName = (job: ReadyJob): string => (job.kind === 'card' ? job.id : `plan ${job.id}`)
 export const readyWorkTaken = (job: ReadyJob) =>
-  `This session no longer holds ${jobName(job)}, and that work has not finished, so it left the ready list and kept its conversation. Run /${READY_COMMAND} to rejoin.`
+  `This session no longer holds ${jobName(job)}, and that work has not finished, so it left the ready list and kept its conversation. Run /${READY_TYPED} to rejoin.`
 export const readyJoinedOnWork = (repo: string, job: ReadyJob) => `This session is in the ready loop for ${repo}: once ${jobName(job)} has ended, it clears and joins the list.`
 // an MCP server older than the plugin never writes the clear file, so 50 Arms' ask to clear never reaches the model and nothing is released: what is off, why, and the fix
 export const READY_RELAY_OLDER =
   "Ready list: this session's 50 Arms MCP server is older than the plugin, so 50 Arms cannot ask it to clear after a job, and it stays on a finished job instead of rejoining the list. Reconnect the 50 Arms MCP server (/mcp) or start a new session to fix it."
 // a restarted process that cannot read the dashboard's ready loop cannot tell whether it was in one, so it takes none up and says why
-export const readyLoopUnread = (why: string) => `Ready list: this session's ready loop could not be read (${why}), so a loop it was in is not taken back up. Run /${READY_COMMAND} to rejoin.`
+export const readyLoopUnread = (why: string) => `Ready list: this session's ready loop could not be read (${why}), so a loop it was in is not taken back up. Run /${READY_TYPED} to rejoin.`
 export const readyAgentChanged = (name: string) => `Your team agent lapsed and this session signed in again as ${name}. Sign as ${name} from now on, and carry on with your work.`
-export const readyAdopted = (repo: string) => `This session is still in the ready loop for ${repo}, and rejoins the list after each job. /${READY_COMMAND} off leaves it.`
+export const readyAdopted = (repo: string) => `This session is still in the ready loop for ${repo}, and rejoins the list after each job. /${READY_TYPED} off leaves it.`
 export const readyRevoked = (by: string) => `This session left the ready list: ${by} revoked its access.`
 export const readyJoined = (repo: string) => `Waiting on the ready list for ${repo}.`
 export const readyRejoined = (repo: string) => `Job finished: this session cleared and is back on the ready list for ${repo}.`

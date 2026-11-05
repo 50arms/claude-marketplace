@@ -80,7 +80,7 @@ for (const surface of SURFACES) {
       d.relay.duringPrompt(async () => {
         d.relay.duringPrompt(async () => {})
         try {
-          await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 24 } as any)
+          await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 24 } as any)
           await d.clock.settle()
         } finally {
           moved()
@@ -238,7 +238,7 @@ for (const surface of SURFACES) {
       d.relay.duringPrompt(async () => {
         d.relay.duringPrompt(async () => {})
         try {
-          await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 24 } as any)
+          await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 24 } as any)
           await d.clock.settle()
         } finally {
           moved()
@@ -261,7 +261,7 @@ for (const surface of SURFACES) {
         d.relay.duringPrompt(async () => {})
         d.relay.rejectPrompts('busy')
         try {
-          await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 24 } as any)
+          await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 24 } as any)
           await d.clock.settle()
         } finally {
           moved()

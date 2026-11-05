@@ -114,7 +114,7 @@ ${NOTICE}`])
       d.world.restart.deny = CLASSIFIER_REFUSAL
       const line = (await firstPrompt($, 'startup')).startLines![0]!
       expect(line).toContain(BLOCKED_LINE)
-      expect(line).toContain('mcp__plugin_50arms_dashboard__*')
+      expect(line).toContain('mcp__plugin_50arms_platform__*')
       expect(line).not.toContain('error: ')
       expect(line).not.toContain('gave no verdict')
     })
@@ -264,7 +264,7 @@ ${NOTICE}`])
       expect(d.restartCalls).toEqual([{ transcript_path: TRANSCRIPT }])
     })
 
-    test('R-2: the restart notice is the server’s own tool; nothing spawns the danx-dashboard-mcp CLI', async ($, on) => {
+    test('R-2: the restart notice is the server’s own tool; nothing spawns the platform-mcp CLI', async ($, on) => {
       const d = await started($, on)
       await firstPrompt($, 'startup')
       expect(d.spawns).toEqual([])

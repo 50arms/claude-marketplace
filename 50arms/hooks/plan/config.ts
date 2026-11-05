@@ -10,13 +10,13 @@ export const COMMAND = '50arms-plan'
 // `plugin:<plugin>:<server>` (verified live with `claude mcp list`) and its tools `mcp__<server with : as _>__<tool>`.
 //   SERVER: the one this plugin ships (plugin.json `mcpServers`): an operator session's, in every folder.
 //   DISPATCHED_SERVER: the one a 50 Arms-dispatched agent has. Its clean-room config (`--strict-mcp-config --mcp-config`) names the dashboard
-//     server `danx-dashboard` and, being strict, loads no plugin server; the plugin itself is enabled for the orchestrator profile (the hooks
+//     server `platform` and, being strict, loads no plugin server; the plugin itself is enabled for the orchestrator profile (the hooks
 //     run, the plugin's own server does not exist).
 // A call that must reach "the" server (the usage-pacing claim) asks the session which one it has (hooks/plan/server.ts), and never assumes a name.
 // `SERVER`, `toolName` and the tool.call matchers still name the plugin's server only: what they serve (the plan band, the relay, the permission
 // poll) is an operator session's, and a dispatched agent's own calls are not the plugin's to watch.
-export const SERVER = 'plugin:50arms:dashboard'
-export const DISPATCHED_SERVER = 'danx-dashboard'
+export const SERVER = 'plugin:50arms:platform'
+export const DISPATCHED_SERVER = 'platform'
 export const DASHBOARD_SERVERS = [SERVER, DISPATCHED_SERVER]
 export const serverToolName = (server: string, tool: string) => `mcp__${server.replace(/:/g, '_')}__${tool}`
 export const toolName = (tool: string) => serverToolName(SERVER, tool)

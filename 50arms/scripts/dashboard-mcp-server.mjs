@@ -2,7 +2,7 @@
 // the dashboard MCP server this plugin ships (plugin.json `mcpServers`), so a
 // tester who installs the plugin never writes a `.mcp.json`.
 //
-// WHAT IT RUNS. The installed `@thehammer/danx-dashboard-mcp` (lib/dashboard-mcp-package.mjs installs it, in this
+// WHAT IT RUNS. The installed `@50arms/platform-mcp` (lib/dashboard-mcp-package.mjs installs it, in this
 // process, into the plugin data dir; the package's own built entry point is then run with plain `node`, never a cold
 // `npx -y`). Nothing here runs bash or any shell.
 //
@@ -29,9 +29,9 @@
 // dashboard) is used. DANX_REPO_NAME / DANXBOT_BOARD_NAME stay unset: the session names its board per call (the `board` argument)
 // or through `plan_connect`.
 //
-// The ONE dashboard server: no connected repo declares its own `danx-dashboard` entry any more, so Claude
-// Code lists exactly this one, named `plugin:50arms:dashboard`, in every folder of an operator session (a 50 Arms-dispatched agent's
-// clean-room config names its own server `danx-dashboard` and, being strict, loads this one not at all: hooks/plan/config.ts DASHBOARD_SERVERS).
+// The ONE dashboard server: no connected repo declares its own `platform` entry any more, so Claude
+// Code lists exactly this one, named `plugin:50arms:platform`, in every folder of an operator session (a 50 Arms-dispatched agent's
+// clean-room config names its own server `platform` and, being strict, loads this one not at all: hooks/plan/config.ts DASHBOARD_SERVERS).
 //
 // stdout is the MCP stream, so nothing here may print to it: every notice goes to stderr, and npm's output is captured.
 import { spawn } from "node:child_process";

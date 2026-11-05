@@ -29,13 +29,13 @@ After installing:
 
 ## The dashboard MCP server
 
-The plugin ships the `dashboard` MCP server (`50arms/scripts/dashboard-mcp-server.mjs`, declared in `plugin.json` `mcpServers`). Claude Code names it `plugin:50arms:dashboard` and lists its tools as `mcp__plugin_50arms_dashboard__*`. No board is set: name it per call (the `board` argument) or let `plan_connect` connect the session.
+The plugin ships the `platform` MCP server (`50arms/scripts/dashboard-mcp-server.mjs`, declared in `plugin.json` `mcpServers`). Claude Code names it `plugin:50arms:platform` and lists its tools as `mcp__plugin_50arms_platform__*`. No board is set: name it per call (the `board` argument) or let `plan_connect` connect the session.
 
-The launcher runs the `@thehammer/danx-dashboard-mcp` version recorded in the plugin's data directory, installing it with node the first time. While the server runs, it checks npm for a newer version and installs it in the background, so a new server release runs from your next session start with no plugin update.
+The launcher runs the `@50arms/platform-mcp` version recorded in the plugin's data directory, installing it with node the first time. While the server runs, it checks npm for a newer version and installs it in the background, so a new server release runs from your next session start with no plugin update.
 
 To use another dashboard, set `DANXBOT_DASHBOARD_URL` (your shell, or the `env` block of a repo's committed `.claude/settings.json` for a per-repo or per-company default). It beats the `dashboard_url` option above. Claude Code reads plugin options from user and managed settings only, never from a project's, so the `env` block is the per-repo route.
 
-This is the session's one dashboard server: a connected repo declares no dashboard server of its own, and a repo's own `.mcp.json` entry would run beside it as a second set of tools under another name (`mcp__danx-dashboard__*`) that the plugin's band, hooks and listeners never use.
+This is the session's one dashboard server: a connected repo declares no dashboard server of its own, and a repo's own `.mcp.json` entry would run beside it as a second set of tools under another name (`mcp__platform__*`) that the plugin's band, hooks and listeners never use.
 
 ## Tests
 

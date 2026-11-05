@@ -1,5 +1,5 @@
 // DX-4321 — a fake npm registry for the plugin's tests: a `node:http` server (own process, see
-// fake-registry-server.mjs) answering `/@thehammer%2Fdanx-dashboard-mcp/latest` with a version
+// fake-registry-server.mjs) answering `/@50arms%2Fplatform-mcp/latest` with a version
 // the test can change, a 500, a malformed body, or no answer at all, and counting requests.
 //
 //   const registry = await startFakeRegistry({ version: "0.1.50" });

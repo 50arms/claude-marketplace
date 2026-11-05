@@ -5,8 +5,8 @@ description: 'The one workflow for working a card, and every dev rule that appli
 
 # Issue Workflow
 
-Dashboard Postgres is the only source of card truth; `danxbot_api` is the whole surface
-(routes: `danxbot_api_list`; contracts: `danxbot_api_spec`) — never file operations.
+Dashboard Postgres is the only source of card truth; `50arms_api` is the whole surface
+(routes: `50arms_api_list`; contracts: `50arms_api_spec`) — never file operations.
 Creating or slicing a card: load `references/card-creation-and-reference.md` first.
 
 ## Two callers
@@ -65,11 +65,11 @@ grade, and a gate never changes that grade. A builder pushes its card branch, re
 Gate workers are briefed by profile and card (plan-workflow "Sub-agents"); the operator session sends the
 builder the findings to fix, and lands the branch once every gate passes ("Delivery" below). Whoever runs a gate:
 
-1. Fetch the board's gate text through `danxbot_api`:
+1. Fetch the board's gate text through `50arms_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, by its ref number>`.
 2. Do what that text says for the card, including any card writes it asks for (checklists,
    dependency edges), and nothing else.
-3. Record the verdict through `danxbot_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`
+3. Record the verdict through `50arms_api`: `PATCH /api/issues/<id>/quality-gates/<gate>`
    with `{status: "pass"|"fail", message: "<the real finding>", reviewed_ref: "<ref>"}`.
    Always send `reviewed_ref`, the ref of what the verdict covers. A code gate (`code-*`) covers
    a diff: send the commit (`git rev-parse HEAD` of the gated branch). A plan gate (`plan-*`)
@@ -161,7 +161,7 @@ first, then end `failed`.
   Changing or deleting a person-approved record is never your call.
 - **Dependencies** — only for a card already known, never a discovery scan.
 - Never write a `status:` literal; transitions derive it.
-- **MCP down** → a failed `danxbot_api` call fails loudly: stop and report the failure. Never retry it another way.
+- **MCP down** → a failed `50arms_api` call fails loudly: stop and report the failure. Never retry it another way.
 - **Issue-ref comments** — `// CARD-ID: <reason>` on any non-obvious decision a card forced.
   Before editing a file, grep its anchored refs
   (`grep -rnE '(//|#|--|<!--|/\*|\*)[[:space:]]*[A-Z]+-[0-9]+' <files>`) and load each card.

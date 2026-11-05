@@ -25,11 +25,11 @@ export function connectedPlanOf(outcome: ToolOutcome): { id: number; name: strin
   return typeof session?.planId === 'number' ? { id: session.planId, name: typeof session.planName === 'string' ? session.planName : '' } : null
 }
 
-// A tool's result as danxbot_api and plan_connect word it: JSON text `{ok, status, body}` (pretty-printed),
+// A tool's result as 50arms_api and plan_connect word it: JSON text `{ok, status, body}` (pretty-printed),
 // where a server refusal is `ok: false` and is NEVER an error result. Only a thrown call is an error:
 // argument validation, an outdated MCP, a 5xx. So an `isError` result carries plain text, and anything
 // that is not an envelope is a failure here, never a success.
-// `replyFile`: the MCP sent danxbot_api's answer as a file (over its 100,000-character limit: `{ok, status, reply_file: {path, ...}}` and no `body`); `body` is then undefined until a reader reads that file.
+// `replyFile`: the MCP sent 50arms_api's answer as a file (over its 100,000-character limit: `{ok, status, reply_file: {path, ...}}` and no `body`); `body` is then undefined until a reader reads that file.
 export type ToolOutcome = { ok: boolean; status: number; body: any; replyFile?: string }
 
 // An MCP tool result's envelope: api() and the band's plan_connect calls use it.

@@ -20,7 +20,7 @@ const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: fals
 const STALLED = (t: string) => t.startsWith('Plan events stalled')
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })
-const MCP_PLAN_CONNECT = 'mcp__plugin_50arms_dashboard__plan_connect'
+const MCP_PLAN_CONNECT = 'mcp__plugin_50arms_platform__plan_connect'
 // what the plugin keeps in $.state for an event it took and has not delivered (the `relayOutbox` atom)
 const PENDING = { planId: 23, cursor: 'c1', text: 'digest', urgent: false, acks: [] as unknown[] }
 // DX-5602: an event put back after the session refused it was delivered once at its call, so it carries `again` (issuing it again stores no cursor)

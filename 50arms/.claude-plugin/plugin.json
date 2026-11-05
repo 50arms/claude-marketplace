@@ -8,7 +8,7 @@
   },
   "types": "./types/index.d.ts",
   "mcpServers": {
-    "dashboard": {
+    "platform": {
       "command": "node",
       "args": [
         "${CLAUDE_PLUGIN_ROOT}/scripts/dashboard-mcp-server.mjs"

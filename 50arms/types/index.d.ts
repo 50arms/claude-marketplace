@@ -121,7 +121,7 @@ export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'held' | 's
 
 // a session waiting in its team's list of ready agents and rejoining after each job (hooks/ready/loop.ts). `joining`: signing in and marking; `waiting`: marked; `working`: on a job, or waiting for 50 Arms to
 // ask for and release the clear after it; `resetting`: clearing. `rejoining`: the next mark follows a clear. `permissionId`: the loop's own permission request, whose decision only the loop hears. `told`: the last
-// failure shown, so a failure that repeats every minute is shown once. `agentName`: the agent the row last showed, to tell a model on work when a claim hands another. `claimAsked`: `/50arms-ready` was just
+// failure shown, so a failure that repeats every minute is shown once. `agentName`: the agent the row last showed, to tell a model on work when a claim hands another. `claimAsked`: `/50arms:ready` was just
 // run, the one thing that may call `plan_connect` when the MCP's own gate is closed. When a job has ended is the dashboard's to say (its `ready_loop`), never the plugin's.
 // a job of the loop as the dashboard names it (`ready_loop.job`)
 export type ReadyJob = { kind: 'plan'; id: number } | { kind: 'card'; id: string }

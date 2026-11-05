@@ -30,7 +30,7 @@ recommendation:` (advice, not an order), or on your own initiative or a handoff.
 8. **Say what compaction affects**, in the handoff note: context is replaced by a summary; the
    tree, commits, pushes and running sub-agents carry on unchanged.
 9. **Say ready, only after a recommendation.** A `[50 ARMS] Compaction recommendation:` you
-   decided to act on is answered by `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`, after
+   decided to act on is answered by `50arms_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`, after
    step 7. Until you do, nothing compacts. After ready, end your turn: the plugin starts the
    compaction when the turn ends (the ready lasts about ten minutes, so do not start long work
    first). `409 compaction_not_requested` means you were not asked: keep working. Your own

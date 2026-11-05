@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// DX-5062: every danxbot_api call a hook makes carries `background: true` (the current MCP accepts it) and there is no retry without it:
+// DX-5062: every 50arms_api call a hook makes carries `background: true` (the current MCP accepts it) and there is no retry without it:
 // an MCP that refuses the key fails the call once, and the failure is told with its fix.
 import { describe, expect } from 'claude-code/testing'
 
@@ -49,7 +49,7 @@ for (const surface of SURFACES) {
 }
 
 describe('which refusal is an MCP older than the plugin', () => {
-  const STRICT = `MCP error -32602: Input validation error: Invalid arguments for tool danxbot_api: [ { "code": "unrecognized_keys", "keys": [ "background" ], "path": [], "message": "Unrecognized key(s) in object: 'background'" } ]`
+  const STRICT = `MCP error -32602: Input validation error: Invalid arguments for tool 50arms_api: [ { "code": "unrecognized_keys", "keys": [ "background" ], "path": [], "message": "Unrecognized key(s) in object: 'background'" } ]`
 
   test('the strict-schema refusal of the background key is one', () => {
     expect(isStaleMcpRefusal(STRICT)).toBe(true)

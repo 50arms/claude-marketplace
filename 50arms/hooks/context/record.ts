@@ -16,7 +16,7 @@ export const HANDOFF_FILE_REMINDER =
 /** The session's record clock: `since` is the last write to a plan or card, the last reminder, or the first dashboard call (null before any). */
 export type RecordClock = { since: number | null }
 
-/** A call that writes a plan or a card (the session's own, through danxbot_api). */
+/** A call that writes a plan or a card (the session's own, through 50arms_api). */
 export function isRecordWrite(method: unknown, path: unknown): boolean {
   return typeof method === 'string' && method.toUpperCase() !== 'GET' && typeof path === 'string' && /^\/api\/(issues|plans)(\/|$)/.test(path)
 }

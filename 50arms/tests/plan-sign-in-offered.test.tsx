@@ -11,8 +11,8 @@ import { test, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, SURFACES, dashboar
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
-const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:dashboard' && c.tool === 'plan_connect')
-const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_dashboard__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
+const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:platform' && c.tool === 'plan_connect')
+const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 
 describe('which views offer Sign in', () => {
   const view = (patch: object) => ({ ...EMPTY, ...patch }) as any
@@ -93,7 +93,7 @@ for (const surface of SURFACES) {
       expect(await texts(band)).toContain('50 Arms: Disconnected')
       // the key lapses behind the failed load: the model's connect is answered with a sign-in request
       d.world.signedOut = 'signed-out'
-      await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
       await d.clock.settle()
       // the request is open; the next read of the session then fails (the key reads valid to the dashboard, the read itself fails): the band reads Disconnected
       d.world.signedOut = null

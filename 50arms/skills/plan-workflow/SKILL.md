@@ -21,7 +21,7 @@ throughout; this skill is the plan mechanics.
    reply's `agent` and `agentInstruction` say which. Use that agent's name and personality for
    the whole session; never choose a name yourself, and never sign what you write (the
    dashboard already shows you as its author). When no agent can be signed in as:
-   - `agent_needed` → propose one at once, without asking in chat: `danxbot_api`
+   - `agent_needed` → propose one at once, without asking in chat: `50arms_api`
      `POST /api/team/agent-proposals` with `{name, bio}` (a first name not taken in the team, a
      short bio of the personality you want) answers `{public_id, url, expires_at}`. With an
      avatar image you made (png, jpeg, webp or svg, under 1 MB), `POST
@@ -157,7 +157,7 @@ Your plan's events arrive unprompted, tagged `[50 Arms plan event]` — never po
 Monitor for them. Every line is one of these kinds.
 
 Acknowledge each flagged event right after reading it, before acting: a line starting
-`[ack-required event N]` gives the exact `danxbot_api POST /api/plan-sessions/me/events/N/ack`
+`[ack-required event N]` gives the exact `50arms_api POST /api/plan-sessions/me/events/N/ack`
 call (no body). One you already acted on is only acknowledged, never acted on twice.
 
 From the dashboard:
@@ -210,7 +210,7 @@ From the dashboard:
 - a usage-pacing or auto-resume message from 50 Arms → carry on, or stop and wait, as "Usage pacing" says.
 - `[50 ARMS] Compaction recommendation:` → advice, not an order. Never compact while a conversation with a person is still open: something they said or asked still needs an answer or action that depends on this session's context. Time is only a hint (a message within the last few minutes usually means they are still talking); once the exchange is finished and its outcome is on the cards and plan, compacting is safe at once. Then give the recommendation no answer (it comes again later) and never call compaction-ready; say ready only while you work on your own. Otherwise judge from what is left and what
   you are doing now whether compacting is worth it. If yes, load `50arms:prepare-for-compaction`,
-  run it, then call `danxbot_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
+  run it, then call `50arms_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
   carry on and answer nothing; it comes again at the next +step of context. Nothing compacts until
   you call ready; then end your turn, and the plugin starts the compaction when the turn ends (the
   ready lasts about ten minutes). It happens once, pauses you for about two minutes, and is followed by
@@ -242,7 +242,7 @@ From the plugin's relay (delivery itself):
   the card by hand until it is done.
 - `events delayed:` naming the auto mode classifier → in auto permission mode the engine refused the
   plugin's own call; updating the plugin does not help. With the person's OK, add the allow rule
-  `mcp__plugin_50arms_dashboard__*` to `permissions.allow` in `~/.claude/settings.json` (or the person allows it in `/permissions`). Either way the relay resumes on its own within a few
+  `mcp__plugin_50arms_platform__*` to `permissions.allow` in `~/.claude/settings.json` (or the person allows it in `/permissions`). Either way the relay resumes on its own within a few
   minutes (restart the session only if it does not), and read the card by hand until then.
 - `events delayed:` → the relay is retrying on its own; act only if it never clears.
 
@@ -259,7 +259,7 @@ fallback for one.
 
 ## Card state always true
 
-Delegated pickup → tell the sub-agent its own `CLAUDE_CODE_SESSION_ID` is real (`danxbot_api`
+Delegated pickup → tell the sub-agent its own `CLAUDE_CODE_SESSION_ID` is real (`50arms_api`
 forwards it on every call). A "fresh worktree" brief →
 `git worktree list` first; the card may carry unpushed prior work. Nobody working a card you
 hold → record why on the card, then release it (`DELETE /api/issues/<id>/assigned-agent`, or
@@ -324,7 +324,7 @@ never stays active just to wait.
    points at another open problem, or that asks a person to restart or reassign another plan's
    session (its card's own record and `depends_on` already show that wait). That includes a check that needs an ordinary act of theirs (a
    review): an `action` problem asks for it now; never wait for it to happen on its own.
-2. Call `danxbot_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
+2. Call `50arms_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
    expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
    what would end the wait. `waits_on` is required, the cause you pick: `person` for an open
    problem, an approval or any answer only a person gives; `dependency` for another card, a build,

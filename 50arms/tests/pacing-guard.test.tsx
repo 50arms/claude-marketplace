@@ -268,7 +268,7 @@ describe('the agent.spawn hook', () => {
     const options: Parameters<typeof dashboard>[1] = { pacingLine: { body: wire({ budget: 12 }) } }
     const d = await session($, on, options)
     const before = d.pacingReads.length
-    d.relay.push({ cursor: 'c1', text: '[danx-dashboard stream] Usage pacing for your Claude account changed: on pace.' })
+    d.relay.push({ cursor: 'c1', text: '[platform stream] Usage pacing for your Claude account changed: on pace.' })
     await d.clock.settle()
     expect(d.pacingReads).toHaveLength(before)
     expect(d.claimAttempts.n).toBe(0)
@@ -503,11 +503,11 @@ describe('the agent.spawn hook', () => {
   })
 
   // A 50 Arms-dispatched agent (the orchestrator profile) runs this plugin's hooks, but its clean-room MCP config (`--strict-mcp-config`) names the
-  // dashboard server `danx-dashboard` and loads no plugin server, so the claim must reach the server the session really has.
+  // dashboard server `platform` and loads no plugin server, so the claim must reach the server the session really has.
   describe('the claim reaches the dashboard server the session has', () => {
     const DISPATCHED = [DISPATCHED_SERVER]
 
-    test('a dispatched session (only `danx-dashboard`): the spawn is claimed through it and starts', async ($, on) => {
+    test('a dispatched session (only `platform`): the spawn is claimed through it and starts', async ($, on) => {
       const d = await session($, on, { servers: DISPATCHED, pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
       const r = await spawn($)
       expect(r.deny).toBeUndefined()
@@ -631,7 +631,7 @@ describe('the agent.spawn hook', () => {
 
   test('a tool call of any tool is never denied under a critical verdict: saving work stays possible', async ($, on) => {
     await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
-    for (const tool of ['Bash', 'Write', 'mcp__plugin_50arms_dashboard__danxbot_api']) {
+    for (const tool of ['Bash', 'Write', 'mcp__plugin_50arms_platform__50arms_api']) {
       const r = await $.tool.call({ tool, command: 'git commit -m x' } as any)
       expect(r.deny).toBeUndefined()
       expect(r.isError).not.toBe(true)
@@ -727,11 +727,11 @@ describe('what register wires', () => {
     const matched = toolCalls.filter(w => w.matcher !== undefined)
     expect(matched.length).toBeGreaterThan(0)
     const toolOf = (w: { matcher: unknown }) => (w.matcher as { tool?: string })?.tool ?? ''
-    // `Write` and `Skill` are the two other tools: onHandoffWrite and onReadySkill are pass-throughs that only append context after `next` (the skill's, only when the 50arms-ready skill loads), so the guard never sits on them
-    for (const w of matched.filter(w => !/__danxbot_api$/.test(toolOf(w)) && toolOf(w) !== 'Write' && toolOf(w) !== 'Skill')) expect(toolOf(w)).toMatch(/^mcp__(plugin_50arms_dashboard|danx-dashboard)__(plan_connect|request_permission|card_connect)$/)
-    // DX-5846: danxbot_api carries every card write, so exactly ONE handler may sit on it: onAckCall, a pass-through that acts only on the acknowledgement route
+    // `Write` and `Skill` are the two other tools: onHandoffWrite and onReadySkill are pass-throughs that only append context after `next` (the skill's, only when the ready skill loads), so the guard never sits on them
+    for (const w of matched.filter(w => !/__50arms_api$/.test(toolOf(w)) && toolOf(w) !== 'Write' && toolOf(w) !== 'Skill')) expect(toolOf(w)).toMatch(/^mcp__(plugin_50arms_platform|platform)__(plan_connect|request_permission|card_connect)$/)
+    // DX-5846: 50arms_api carries every card write, so exactly ONE handler may sit on it: onAckCall, a pass-through that acts only on the acknowledgement route
     // (POST /api/plan-sessions/me/events/<N>/ack); a second one would reach every card write, push and commit the guard must stay off
-    expect(matched.filter(w => /__danxbot_api$/.test(toolOf(w)))).toHaveLength(1)
+    expect(matched.filter(w => /__50arms_api$/.test(toolOf(w)))).toHaveLength(1)
   })
 })
 

@@ -20,7 +20,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       expect(d.relay.calls).toHaveLength(1)
 
-      await $.tool.call({ tool: 'mcp__plugin_50arms_dashboard__plan_connect', plan_id: 24 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 24 } as any)
       await d.clock.settle()
       expect(d.relay.calls).toEqual([
         { plan_id: 23, cursor: null, timeout_ms: WAIT_MS },

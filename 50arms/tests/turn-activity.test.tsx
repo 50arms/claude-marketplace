@@ -39,7 +39,7 @@ function answerPickup(on: any, d: any) {
     d.world.files[REPLY_FILE] = JSON.stringify(body)
     return { result: {}, text: JSON.stringify({ ok: true, status: 200, reply_file: { path: REPLY_FILE, bytes: 1, chars: 1, instruction: 'The reply is this file.' } }), isError: false } as any
   }
-  on('tool.call', { tool: toolName('danxbot_api') }, (_$: any, e: any) => {
+  on('tool.call', { tool: toolName('50arms_api') }, (_$: any, e: any) => {
     if (d.world.pickupRefused) return { result: {}, text: JSON.stringify({ ok: false, status: 409, error: 'card_held' }), isError: true } as any
     if (d.world.pickupConnects !== true) return answered({ issue: { id: CARD_ID } })
     d.world.card = { id: CARD_ID, title: CARD_TITLE }
@@ -265,7 +265,7 @@ for (const surface of SURFACES) {
     })
 
     describe('a manual pickup reports the current activity only when it connected (DX-6556)', () => {
-      const PICKUP = { tool: toolName('danxbot_api'), method: 'POST', path: `/api/issues/${CARD_ID}/transition`, body: { action: 'pickup', manual: true } } as any
+      const PICKUP = { tool: toolName('50arms_api'), method: 'POST', path: `/api/issues/${CARD_ID}/transition`, body: { action: 'pickup', manual: true } } as any
 
       test('a pickup that connected mid-turn sends in_turn at once', async ($, on) => {
         const d = await started($, on, () => COMPACTED, false)
@@ -291,7 +291,7 @@ for (const surface of SURFACES) {
         const d = await started($, on, () => COMPACTED, false)
         d.world.replyAsFile = true
         await $.turn.start(START)
-        await $.tool.call({ tool: toolName('danxbot_api'), method: 'GET', path: `/api/issues/${CARD_ID}` } as any)
+        await $.tool.call({ tool: toolName('50arms_api'), method: 'GET', path: `/api/issues/${CARD_ID}` } as any)
         await $.tool.call({ ...PICKUP, body: { action: 'complete' } })
         await d.clock.settle()
         expect(d.world.fsReads).not.toContain(REPLY_FILE)
