@@ -6,7 +6,7 @@ import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
-import { bandContent, bandLabelCols, bandNameText, needsYouBadge, viewPercent } from './words'
+import { bandContent, bandLabelCols, bandNameText, needsYouBadge, signInOffered, viewPercent } from './words'
 
 // The controls' labels the width budget counts.
 const CLOSE_LABEL = '×'
@@ -51,10 +51,11 @@ export function renderBand(
   // the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
   const showBadge = plan !== null && badge !== ''
-  // a session with no dashboard key: the label says so in red and a Sign in button leads the controls.
+  // a Sign in button leads the controls whenever the session holds no working connection (signInOffered): signed out, a failed load, an agent block.
+  const offerSignIn = signInOffered(v)
   const signedOut = v.phase === 'signed-out'
-  // the sign-in request's link and code show while signed out, and while the MCP's own gate answers for a key that may have lapsed behind it
-  const approve = signedOut || v.agentBlock !== null ? signIn : null
+  // the sign-in request's link and code show whatever phase the load is in, until the request is approved, denied or expires (it is then cleared)
+  const approve = signIn
   // a revoked key is red too, with no Sign in
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
@@ -66,7 +67,7 @@ export function renderBand(
   // none: the `Text` child is its text (children of strings and Text are drawn in the label's place) and the Button is keyed instead.
   const disconnectShown = disconnecting ? DISCONNECTING_LABEL : DISCONNECT_GLYPH
   const controls = [
-    ...(signedOut ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
+    ...(offerSignIn ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
@@ -111,7 +112,7 @@ export function renderBand(
       </Box>
       <Box flexGrow={1} />
       <Box flexDirection="row" gap={1} flexShrink={0}>
-        {signedOut && (
+        {offerSignIn && (
           <Button key="sign-in" variant="primary" onPress={() => hd.signIn()}>
             {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
           </Button>
