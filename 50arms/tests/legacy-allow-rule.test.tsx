@@ -26,6 +26,16 @@ describe('CP-70 the old dashboard allow rule covers the platform tools (temporar
     expect((await check(NEW, [settings({ allow: ['mcp__plugin_50arms_dashboard__plan_connect'] })])).reason).toBe('engine')
   })
 
+  test('the real old tool names (what 0.17.71 showed) cover the tools under their new names, and only theirs', async () => {
+    const old = (tool: string) => [settings({ allow: [`mcp__plugin_50arms_dashboard__${tool}`] })]
+    for (const [oldName, newName] of [['danxbot_api', '50arms_api'], ['danxbot_api_list', '50arms_api_list'], ['danxbot_api_spec', '50arms_api_spec'], ['danxbot_slack_reply', '50arms_slack_reply']]) {
+      expect((await check(toolName(newName), old(oldName))).decision).toBe('allow')
+      expect((await check(toolName(newName), old(newName))).decision).toBe('allow')
+    }
+    expect((await check(toolName('50arms_api_list'), old('danxbot_api'))).reason).toBe('engine')
+    expect((await check(NEW, old('danxbot_api_list'))).reason).toBe('engine')
+  })
+
   test('the rule can sit in any of the user, project and local settings', async () => {
     expect((await check(NEW, ['{}', '{}', settings({ allow: [OLD_ALL] })])).decision).toBe('allow')
   })
@@ -57,7 +67,12 @@ describe('CP-70 the old dashboard allow rule covers the platform tools (temporar
   })
 
   test('the settings files are the user one (CLAUDE_CONFIG_DIR, else HOME/.claude), the project one and the local one', () => {
-    expect(legacySettingsPaths({ configDir: '/c', home: '/h', cwd: '/p' })).toEqual(['/c/settings.json', '/p/.claude/settings.json', '/p/.claude/settings.local.json'])
-    expect(legacySettingsPaths({ configDir: undefined, home: '/h', cwd: '/p' })).toEqual(['/h/.claude/settings.json', '/p/.claude/settings.json', '/p/.claude/settings.local.json'])
+    expect(legacySettingsPaths({ kind: 'wsl', configDir: '/c', home: '/h', cwd: '/p' })).toEqual(['/c/settings.json', '/p/.claude/settings.json', '/p/.claude/settings.local.json'])
+    expect(legacySettingsPaths({ kind: 'wsl', configDir: undefined, home: '/h', cwd: '/p' })).toEqual(['/h/.claude/settings.json', '/p/.claude/settings.json', '/p/.claude/settings.local.json'])
+  })
+
+  test('on Windows the paths are joined with backslashes', () => {
+    const win = legacySettingsPaths({ kind: 'windows', configDir: undefined, home: 'C:\\Users\\u', cwd: 'C:\\p' })
+    expect(win).toEqual(['C:\\Users\\u\\.claude\\settings.json', 'C:\\p\\.claude\\settings.json', 'C:\\p\\.claude\\settings.local.json'])
   })
 })

@@ -29,7 +29,7 @@
 // dashboard) is used. DANX_REPO_NAME / DANXBOT_BOARD_NAME stay unset: the session names its board per call (the `board` argument)
 // or through `plan_connect`.
 //
-// The ONE dashboard server: no connected repo declares its own `platform` entry any more, so Claude
+// The ONE dashboard server: no connected repo declares a dashboard server of its own any more, so Claude
 // Code lists exactly this one, named `plugin:50arms:platform`, in every folder of an operator session (a 50 Arms-dispatched agent's
 // clean-room config names its own server `platform` and, being strict, loads this one not at all: hooks/plan/config.ts DASHBOARD_SERVERS).
 //

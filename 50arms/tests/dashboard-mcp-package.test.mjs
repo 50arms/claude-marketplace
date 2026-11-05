@@ -373,7 +373,7 @@ describe("installVersion", () => {
     assert.equal(INSTALL_TIMEOUT_MS, 60_000);
     const npm = fakeNpm("hang");
     await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM, installTimeoutMs: 1 }), (err) => {
-      assert.match(err.message, /^timeout: installing @thehammer\/platform-mcp@0\.1\.50 took longer than /);
+      assert.match(err.message, /^timeout: installing @50arms\/platform-mcp@0\.1\.50 took longer than /);
       oneLineOnly(err);
       return true;
     });
@@ -389,7 +389,7 @@ describe("installVersion", () => {
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(readdirSync(installRoot()).filter((n) => n.startsWith(".stage-")).length, 1, "the stage exists while npm runs");
     stop.abort();
-    await assert.rejects(installing, /^Error: aborted: installing @thehammer\/platform-mcp@0\.1\.50 was stopped$/);
+    await assert.rejects(installing, /^Error: aborted: installing @50arms\/platform-mcp@0\.1\.50 was stopped$/);
     assert.equal(npm.children[0].killed, true);
     assert.deepEqual(readdirSync(installRoot()), [], "no stage and no version directory");
   });
@@ -406,7 +406,7 @@ describe("installVersion", () => {
   test("an install that succeeds but leaves no entry point is a failure, not a path to nothing", async () => {
     const npm = fakeNpm("no-bin");
     await assert.rejects(installVersion("0.1.50", { env, spawnFn: npm.spawnFn, npm: NPM }), (err) => {
-      assert.match(err.message, /^install_incomplete: .*left no node_modules\/@thehammer\/platform-mcp\/dist\/index\.js$/);
+      assert.match(err.message, /^install_incomplete: .*left no node_modules\/@50arms\/platform-mcp\/dist\/index\.js$/);
       return true;
     });
     assert.deepEqual(readdirSync(installRoot()), []);
@@ -676,7 +676,7 @@ describe("refreshInstall: the background refresh", () => {
 describe("no shipped plugin file carries a package version literal", () => {
   /** The lines of `text` that put a version literal next to the package name. */
   function versionLiterals(text) {
-    return text.split("\n").filter((line) => /@thehammer\/platform-mcp@\d/.test(line) || (line.includes("platform-mcp") && /\b\d+\.\d+\.\d+\b/.test(line)));
+    return text.split("\n").filter((line) => /@50arms\/platform-mcp@\d/.test(line) || (line.includes("platform-mcp") && /\b\d+\.\d+\.\d+\b/.test(line)));
   }
 
   test("the scan itself catches the shapes a reintroduced pin takes", () => {

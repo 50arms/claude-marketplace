@@ -8,5 +8,16 @@ import assert from 'node:assert/strict'
 const source = readFileSync(new URL('../hooks/register.tsx', import.meta.url), 'utf8')
 
 test("register.tsx seats the tool.check hook that answers the plugin's own calls through ownServerCheck", () => {
-  assert.match(source, /on\('tool\.check', \(_\$, e, next\) => ownServerCheck\(e, next\)\)/)
+  assert.match(source, /on\('tool\.check', \(\$, e, next\) => ownServerCheck\(e, Object\.assign\(\(x: any\) => legacyRuleCheck\(x, next, \(\) => readLegacySettings\(\$\)\), \{ origin: next\.origin \}\)\)\)/)
+})
+
+// CP-70 (temporary dual name): the legacy-rule check is seated inside that one registration (the plugin allows a single unmatched tool.check), reads the settings through readLegacySettings,
+// and the plugin's own call, whose origin the wrapper keeps, still reaches ownServerCheck first.
+test("register.tsx seats legacyRuleCheck once, reads the three settings files read-only, and registers no second unmatched tool.check", () => {
+  assert.equal(source.match(/on\('tool\.check'/g).length, 1)
+  assert.equal(source.match(/legacyRuleCheck\(/g).length, 1)
+  const reader = source.slice(source.indexOf('async function readLegacySettings'), source.indexOf('async function readLegacySettings') + 900)
+  assert.match(reader, /legacySettingsPaths\(/)
+  assert.match(reader, /\$\.fs\.read\(/)
+  assert.doesNotMatch(reader, /\$\.fs\.write|\$\.fs\.remove/)
 })

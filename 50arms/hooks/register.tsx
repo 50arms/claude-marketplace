@@ -2845,11 +2845,13 @@ async function homeDir($: any): Promise<string | null> {
   return typeof home === 'string' && home !== '' ? home : null
 }
 
-// CP-70: TEMPORARY dual name. The text of each settings file that exists (user, project, local), read only; the plugin never writes them.
+// TEMPORARY dual name. The text of each settings file that exists (user, project, local), read only; the plugin never writes them.
 async function readLegacySettings($: any): Promise<string[]> {
   const home = await homeDir($)
   if (home === null) return []
-  const paths = legacySettingsPaths({ configDir: await $.env.get('CLAUDE_CONFIG_DIR'), home, cwd: await $.session.cwd() })
+  // any host that is neither Windows nor WSL joins with '/', as WSL does
+  const kind = hostKindOf({ SystemDrive: await $.env.get('SystemDrive'), WSL_DISTRO_NAME: await $.env.get('WSL_DISTRO_NAME') } as any) ?? 'wsl'
+  const paths = legacySettingsPaths({ kind, configDir: await $.env.get('CLAUDE_CONFIG_DIR'), home, cwd: await $.session.cwd() })
   const texts: string[] = []
   for (const path of paths) if (await $.fs.exists(path)) texts.push(String(await $.fs.read(path)))
   return texts
@@ -3998,7 +4000,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: READY_SKILL }, onReadyCommand)
   on('tool.call', { tool: 'Skill' }, onReadySkill)
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
-  // CP-70: the second answer is a TEMPORARY dual name, removed with its tests once installs have moved: the person's allow rule for the old server key still covers the platform tools
+  // the second answer is a TEMPORARY dual name, removed with its tests once installs have moved: the person's allow rule for the old server key still covers the platform tools
   on('tool.check', ($, e, next) => ownServerCheck(e, Object.assign((x: any) => legacyRuleCheck(x, next, () => readLegacySettings($)), { origin: next.origin })))
   on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
   on('tool.call', { tool: toolName('card_connect') }, onCardConnect)

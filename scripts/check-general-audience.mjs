@@ -58,11 +58,11 @@ export function listPluginFiles(repoRoot, plugin) {
 /**
  * CP-69: the plugin is named 50arms and no customer sees the old product name. Only these exact identifiers may still be spelled with it in a
  * shipped file, each one owned by another repo that this plugin reads or calls, so renaming it here would break the other side: the dashboard's
- * environment variables, the dashboard's docs repo name, and the paths a connected repo and the relay write
+ * environment variables, the quoted old tool names a person's existing permission rule still carries, the dashboard's docs repo name, and the paths a connected repo and the relay write
  * ('.danxbot' and `.config/danxbot/`). Prose naming the old product, and any other spelling of these, fails the scan.
  */
 const OWNED_ELSEWHERE =
-  /DANXBOT_(?:DASHBOARD_URL|PLUGIN_DASHBOARD_URL|DASHBOARD_TRACE|DISK_FLOOR_GIB|DISK_HARD_MINIMUM_GIB)|DANX_DASHBOARD_CREDENTIAL|'\.danxbot'|has no \.danxbot directory|\$\{home\}\/\.config\/danxbot\/|repo: "danxbot"/g;
+  /DANXBOT_(?:DASHBOARD_URL|PLUGIN_DASHBOARD_URL|DASHBOARD_TRACE|DISK_FLOOR_GIB|DISK_HARD_MINIMUM_GIB)|DANX_DASHBOARD_CREDENTIAL|'danxbot_(?:api|api_list|api_spec|slack_reply)'|'\.danxbot'|has no \.danxbot directory|\$\{home\}\/\.config\/danxbot\/|repo: "danxbot"/g;
 // `@danxbot/ui` is reported by its own kind above, so it is not counted twice.
 const oldNameHit = { test: (line) => /danx/i.test(line.replace(OWNED_ELSEWHERE, "").replace(/@danxbot\/ui/g, "")) };
 

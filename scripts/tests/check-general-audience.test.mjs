@@ -32,7 +32,7 @@ test("the matcher catches each banned token and passes general text", () => {
   assert.equal(bannedHits("use @danxbot/ui").length, 1);
   const OLD_NAME = "the product's old name (the plugin is 50arms)";
   for (const text of ["/danxbot:start", "mcp__plugin_danxbot_x__y", "Danxbot's band", "danxbot@50arms", "the danx plugin"]) assert.deepEqual(bannedHits(text), [OLD_NAME], text);
-  for (const owned of ["DANXBOT_DASHBOARD_URL", "DANX_DASHBOARD_CREDENTIAL", "joinPath(kind, home, '.danxbot')", "has no .danxbot directory", "${home}/.config/danxbot/${kind}", 'repo: "danxbot"']) assert.deepEqual(bannedHits(owned), [], owned);
+  for (const owned of ["'danxbot_api'", "'danxbot_slack_reply'", "DANXBOT_DASHBOARD_URL", "DANX_DASHBOARD_CREDENTIAL", "joinPath(kind, home, '.danxbot')", "has no .danxbot directory", "${home}/.config/danxbot/${kind}", 'repo: "danxbot"']) assert.deepEqual(bannedHits(owned), [], owned);
   for (const prose of ["danxbot_api", "@thehammer/danx-dashboard-mcp", "const S = 'danx-dashboard'", "the danx-dashboard server", "the .danxbot folder", "DANXBOT_NEW_THING", "danx-dashboard-mcp version", "~/.config/danxbot/x"]) assert.deepEqual(bannedHits(prose), [OLD_NAME], prose);
   assert.deepEqual(bannedHits("run `claude plugin install 50arms`; card id `<card id>`; PLAN-NNN"), []);
   assert.equal(bannedHits("owner newms87 / NEWMS").length, 1);

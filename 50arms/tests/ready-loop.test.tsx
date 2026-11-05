@@ -241,10 +241,21 @@ describe('the ready-agent loop', () => {
     await d.clock.settle()
     expect(joined.context).toContain(READY_JOINING)
     expect(d.world.readyMark).toBe(REPO)
-    const left: any = await $.tool.call({ tool: 'Skill', skill: 'ready', args: 'off' } as any)
+    const left: any = await $.tool.call({ tool: 'Skill', skill: '50arms:ready', args: 'off' } as any)
     await d.clock.settle()
     expect(left.context).toContain(READY_OFF)
     expect(d.world.readyMark).toBe(null)
+  })
+
+  test("only the plugin's own ready skill joins: another plugin's `other:ready` and a bare `ready` leave the session off the list", async ($, on) => {
+    on('tool.call', () => ({ result: 'loaded' }) as any)
+    const d = await started($, on)
+    for (const skill of ['other:ready', 'ready']) {
+      const answer: any = await $.tool.call({ tool: 'Skill', skill } as any)
+      await d.clock.settle()
+      expect(answer.context ?? []).not.toContain(READY_JOINING)
+      expect(d.world.readyMark).toBe(null)
+    }
   })
 
   test('a signed-out session signs in with the one command, connecting no plan, then joins, and the model is told nothing', async ($, on) => {

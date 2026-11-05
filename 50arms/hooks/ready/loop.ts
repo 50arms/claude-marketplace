@@ -11,8 +11,8 @@ export const READY_COMMAND = 'ready'
 // What a person types: the plugin's name, then the skill's.
 export const READY_TYPED = `50arms:${READY_COMMAND}`
 // The skill that is the agent's own way onto the list, and whose command a person types: `/50arms:ready` arrives as the command `50arms:ready`
-// on `command.run`, the Skill tool as `ready` or under the plugin's name. Both do the same join.
-export const READY_SKILL = new RegExp(`^(?:[a-z0-9_-]+:)?${READY_COMMAND}$`)
+// on `command.run`, the Skill tool under the same name. Only the plugin's own skill joins: another plugin's `ready` or a bare `ready` does not.
+export const READY_SKILL = new RegExp(`^${READY_TYPED}$`)
 export const READY_PATH = '/api/plan-sessions/me/ready'
 // how often a session in the loop looks again. A session's mark can be lost while it runs (a team-mate's claim clears a lapsed session's agent, and the mark goes with it), so a
 // waiting session reads its row each minute and writes the mark only when it is gone: every write tells every open tab of the team. The same look finds a released clear.

@@ -11,7 +11,7 @@ import { load as loadYaml } from "js-yaml";
 import { bannedHits } from "../../scripts/check-general-audience.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const raw = readFileSync(path.join(here, "../skills/50arms:ready/SKILL.md"), "utf8").replace(/\r\n/g, "\n");
+const raw = readFileSync(path.join(here, "../skills/ready/SKILL.md"), "utf8").replace(/\r\n/g, "\n");
 const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(raw);
 assert.ok(frontmatter, "the skill opens with a YAML frontmatter block");
 const meta = loadYaml(frontmatter[1]);
