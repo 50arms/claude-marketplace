@@ -9,7 +9,7 @@ description: 'Connect the repo you are in to danxbot with one command, `/danxbot
 asks danxbot, through the plugin's own dashboard connection, to register the repo and
 create its board, then hands over to `danxbot:plan-workflow`. The repo, its board and the
 plan live in the dashboard; the one file it may change is the person's own
-`~/.claude/settings.json`, to add one allow rule, only with their OK (step 2).
+`~/.claude/settings.json`, to add one allow rule, only with their OK (step 2), and, in a folder with no `origin`, the new repo it creates there (step 3).
 
 Run again in a repo that is already set up, it reports what exists, changes nothing that is
 already set up and goes straight to planning (step 6). Each step below says how it recognises
@@ -63,10 +63,8 @@ yourself.
 
 Run `git remote get-url origin` in the repo.
 
-- No output, or an error that there is no such remote: tell the person this folder has no
-  `origin` remote, so danxbot cannot tell which repo it is, and that they can add one
-  (`git remote add origin <url>`) or run `/danxbot:start` again inside a clone of their
-  GitHub repo. Stop. Nothing has been registered or created in danxbot.
+- No output, or an error that there is no such remote: this folder has no GitHub repo yet.
+  Create one, as "Create the repo" below says, and carry on from the origin it sets (the paragraph after these two bullets).
 - A URL whose host is neither `github.com` nor an SSH config alias for it
   (`github.com-<alias>`, which people with several GitHub accounts use): tell the person
   danxbot connects `github.com` repos only. Stop. Nothing has been registered or created in danxbot.
@@ -76,6 +74,32 @@ Otherwise take its owner and repo name (`https://github.com/<owner>/<repo>.git`,
 `ssh://git@github.com/<owner>/<repo>.git` all give `<owner>` and `<repo>`, without `.git`).
 The URL you register is the `https://` or `git@github.com:` form: rewrite an `ssh://` or
 alias origin to `git@github.com:<owner>/<repo>.git`, and keep the others exactly as printed.
+
+#### Create the repo
+
+The person's own `git` and `gh` do this, the same way every push and pull request is made;
+danxbot holds no token that creates repos.
+
+1. Check the GitHub CLI first, before asking or changing anything: `gh --version`, then
+   `gh auth status --active --hostname github.com` (it checks only the active account and
+   masks the token). `gh` missing: tell the person to install the GitHub CLI
+   (https://cli.github.com) and run `gh auth login`. Not signed in: tell them to run
+   `gh auth login`. Then stop. Nothing has been registered or created in danxbot, and nothing
+   in the folder has changed.
+2. Ask ONE question for all three: the new repo's name (default: the folder's name), its owner
+   (default: the signed-in account; an organisation they belong to is allowed) and its
+   visibility (`private` or `public`; default `private`). Nothing is created before they
+   answer.
+3. The folder is not yet a git repo: `git init`. Then `gh repo create <owner>/<name>
+   --<private|public> --source . --remote origin`, which creates the repo and sets `origin`.
+   A refusal (the name is taken, no right to create under that owner) is shown to the person
+   as it came, asking for another name or owner; change nothing else.
+4. A folder with no commits (`git rev-parse --verify HEAD` fails) gets a first commit of what
+   is there: `git add -A`, `git commit -m "Initial commit"`, then `git push -u origin HEAD`.
+   Show the person the file list (`git status --short`) before committing and leave out
+   anything that looks like a secret or a credential file. A folder that already has commits is not
+   committed to: push its current branch with `git push -u origin HEAD`.
+5. Tell the person the repo's URL, then continue below with the origin it set.
 
 ### 4. Register the repo
 
