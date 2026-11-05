@@ -15,7 +15,7 @@ export const READY_PATH = '/api/plan-sessions/me/ready'
 // how often a session in the loop looks again. A session's mark can be lost while it runs (a team-mate's claim clears a lapsed session's agent, and the mark goes with it), so a
 // waiting session reads its row each minute and writes the mark only when it is gone: every write tells every open tab of the team. The same look finds a released clear.
 export const READY_TICK_MS = 60_000
-// the permission the list of the team's repos needs, which a session key does not start with; asked for only when the repo's name is not one `50arms:start` would have given it
+// the permission the list of the team's repos needs, which a session key does not start with; asked for only when the repo's name is not one the setup guide gives a repo
 export const REPOS_PERMISSION = 'boards.view'
 export const READY_REPOS_PAGE = 50
 export const REPOS_PERMISSION_REASON = "Joining the ready list needs to look up this folder's repo among the team's repos."
@@ -26,7 +26,7 @@ export const READY_USAGE = `Run /${READY_COMMAND} to join the ready list, or /${
 export const READY_STOPPED = `You stopped this session, so it left the ready list. Run /${READY_COMMAND} to rejoin.`
 export const READY_NO_ORIGIN = 'Could not join the ready list: this folder has no git origin, so 50 Arms cannot tell which repo it is.'
 export const READY_NOT_GITHUB = "Could not join the ready list: 50 Arms connects github.com repos only, and this folder's origin is elsewhere."
-export const READY_NOT_REGISTERED = "Could not join the ready list: this folder's repo is not connected to 50 Arms. Run /50arms:start first."
+export const READY_NOT_REGISTERED = "Could not join the ready list: this folder's repo is not connected to 50 Arms. Connect it in the 50 Arms setup guide first."
 export const READY_DISCONNECTED = `You disconnected this session, so it left the ready list and kept its conversation. Run /${READY_COMMAND} to rejoin.`
 export const READY_SIGN_IN_ENDED = `This session left the ready list: it could not sign in. Run /${READY_COMMAND} to try again.`
 export const READY_PERMISSION_ENDED = `This session left the ready list: the permission to look up this folder's repo was not granted. Run /${READY_COMMAND} to ask again.`
@@ -65,7 +65,7 @@ export const stoppedByPerson = (failure: string): boolean => /remote-cancel/i.te
 
 export type GithubOrigin = { owner: string; repo: string }
 
-// the forms `50arms:start` accepts: https, scp-like (with an SSH config alias `github.com-<alias>` too) and ssh://, each with or without `.git`
+// the origin forms a GitHub repo has: https, scp-like (with an SSH config alias `github.com-<alias>` too) and ssh://, each with or without `.git`
 const ORIGIN_FORMS = [/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/, /^git@github\.com(?:-[^:]+)?:([^/]+)\/([^/]+?)(?:\.git)?$/, /^ssh:\/\/git@github\.com(?:-[^/]+)?\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/]
 
 export function parseGithubOrigin(url: string): GithubOrigin | null {
@@ -83,7 +83,7 @@ export function remoteIs(row: any, origin: GithubOrigin): boolean {
   return same(row?.github_remote?.owner, origin.owner) && same(row?.github_remote?.repo, origin.repo)
 }
 
-// The names `50arms:start` gives a repo, in the order it tries them: the repo's own, then the owner's and the repo's joined. Reading one of these by name needs no second approval, and its remote says whether it is this repo.
+// The names the setup guide gives a repo, in the order they are tried: the repo's own, then the owner's and the repo's joined. Reading one of these by name needs no second approval, and its remote says whether it is this repo.
 export function repoNameCandidates(origin: GithubOrigin): string[] {
   const name = (raw: string) => raw.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/^[-_]+/, '').slice(0, 64)
   return [...new Set([name(origin.repo), name(`${origin.owner}-${origin.repo}`)])].filter(n => n !== '')

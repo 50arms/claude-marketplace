@@ -39,10 +39,10 @@ test("a skill edit runs the tests that read that skill", () => {
 
 test("a skill folder is matched as a whole quoted path segment, never as a substring of another word", () => {
   const tests = new Map([
-    ["50arms/tests/a.test.mjs", "readFileSync(join(skills, 'restart-notes', 'SKILL.md'))"],
-    ["50arms/tests/b.test.mjs", "readFileSync(join(skills, 'start', 'SKILL.md'))"],
+    ["50arms/tests/a.test.mjs", "readFileSync(join(skills, 'plan-workflows', 'SKILL.md'))"],
+    ["50arms/tests/b.test.mjs", "readFileSync(join(skills, 'plan-workflow', 'SKILL.md'))"],
   ]);
-  assert.deepEqual(publishScope(["50arms/skills/start/SKILL.md"], { tests }).files, ["50arms/tests/b.test.mjs"]);
+  assert.deepEqual(publishScope(["50arms/skills/plan-workflow/SKILL.md"], { tests }).files, ["50arms/tests/b.test.mjs"]);
 });
 
 test("a code file runs the tests that import it", () => {

@@ -190,7 +190,7 @@ export const signInFailedToast = (message: string) => `Sign in failed: ${message
 // is added. The refusal is neither signed out nor a failed load: ONE state (the `blocked` phase, and every toast of a refused call) says so, in
 // the person's words: the cause, then the fix. It is no sticky state: the next load that succeeds replaces it, and the relay retries on its own.
 export const BLOCKED_LABEL = `${BRAND}: blocked by auto mode`
-export const BLOCKED_LINE = "Auto mode is blocking 50 Arms' calls. Run /50arms:start to allow them; this clears by itself, or restart the session if it does not."
+export const BLOCKED_LINE = `Auto mode blocks 50 Arms. Have Claude add ${toolName('')}* to permissions.allow; it clears by itself, else restart.`
 
 // a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
 // makes no access request, only a revoked-access halt that begins

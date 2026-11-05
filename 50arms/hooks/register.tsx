@@ -2202,7 +2202,7 @@ async function runReset($: any, sessionId: string, releaseId: string): Promise<b
   return true
 }
 
-// The folder's repo as the team registered it. The names `50arms:start` gives are read one by one, which the key may do as it stands; only a repo registered under another name needs the team's list, and so a person's
+// The folder's repo as the team registered it. The names the setup guide gives a repo are read one by one, which the key may do as it stands; only a repo registered under another name needs the team's list, and so a person's
 // approval. A failure that retrying cannot fix takes the session off the list and says why.
 async function readyRepo($: any, token: LookToken): Promise<string | null> {
   const out = await $.process.run(['git', 'remote', 'get-url', 'origin'], { cwd: await $.session.cwd(), timeoutMs: GIT_STATUS_TIMEOUT_MS })

@@ -21,7 +21,7 @@ export const raisedByPlugin = (origin: { plugin: string }): boolean => origin.pl
 // The permission rule that allows every tool of the plugin's own server.
 export const CLASSIFIER_RULE = `${toolName('')}*`
 
-export const CLASSIFIER_FIX = `the auto mode classifier refused the plugin's own call; updating the plugin does not change that: the person runs /50arms:start (or you load its skill), which adds the allow rule ${CLASSIFIER_RULE} once the person says yes, or the person adds it to permissions.allow in ~/.claude/settings.json; it then resumes on its own (restart if not)`
+export const CLASSIFIER_FIX = `the auto mode classifier refused the plugin's own call; updating the plugin does not change that: add the allow rule ${CLASSIFIER_RULE} to permissions.allow in ~/.claude/settings.json once the person says yes (or the person adds it themselves); it then resumes on its own (restart if not)`
 
 // What the engine says of a call the auto mode classifier refused (any verdict of it: no verdict, or judged unsafe).
 const CLASSIFIER_MARK = /auto mode classifier/i

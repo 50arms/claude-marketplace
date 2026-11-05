@@ -14,14 +14,14 @@ const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns:
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
 const ENGINE_WORDS = `50 Arms: $.mcp.call(plugin:50arms:dashboard, plan_events_wait) refused: ${CLASSIFIER_REFUSAL}`
 const LOUD = /^\[50 Arms plan event\] events delayed: events are NOT reaching this session: .*auto mode classifier gave no verdict.*Fix: .*mcp__plugin_50arms_dashboard__\*.*it then resumes on its own \(restart if not\)\.$/
-const NAMES_START = /the person runs \/50arms:start \(or you load its skill\), which adds the allow rule \S+ once the person says yes, or the person adds it to permissions\.allow in ~\/\.claude\/settings\.json/
+const NAMES_START = /add the allow rule \S+ to permissions\.allow in ~\/\.claude\/settings\.json once the person says yes \(or the person adds it themselves\)/
 const NOT_THE_FIX = /\b(update[ds]?|updating|reinstall(ing)?)\b(?!( the plugin)? does not)/i
 
 // the leave's answer carries an agent too: it must not change which branch clears the plan the model named (DX-5605)
 const LEFT = JSON.stringify({ ok: true, status: 200, body: { session: { planId: null }, agent: { id: 7, name: 'Katya' } } })
 const MODEL_CONNECTED = JSON.stringify({ ok: true, status: 200, body: { session: { planId: 23, planName: 'Plan twenty-three' } } })
 // DX-4982: the words the person reads, whole, and nothing of the engine's raw refusal in them
-const SAID = "Auto mode is blocking 50 Arms' calls. Run /50arms:start to allow them; this clears by itself, or restart the session if it does not."
+const SAID = "Auto mode blocks 50 Arms. Have Claude add mcp__plugin_50arms_dashboard__* to permissions.allow; it clears by itself, else restart."
 const RAW = /\$\.mcp\.call|refused:|classifier gave no verdict|Sign in failed|Disconnected/
 
 for (const surface of SURFACES) {
