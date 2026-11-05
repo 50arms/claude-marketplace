@@ -741,8 +741,8 @@ describe('the ready-agent loop', () => {
       expect(d.world.readySteps).toEqual(['clear', `leave ${CARD.id}`, `mark ${REPO}`])
     })
 
-    // CP-55: the clear file names a release the server no longer stands behind (the job reopened and ended again while the stream was down): nothing clears and nothing is sent. The row's
-    // `release_id` alone says which release runs, so a newer one the file has not caught up with clears at once
+    // CP-55 / CP-79: a release the server no longer stands behind (the job reopened and ended again while the stream was down) clears nothing and sends nothing.
+    // The row's `release_id` alone says which release runs, so a newer one clears once, whatever the clear file still holds
     test('a release the view no longer stands behind clears nothing and sends nothing; a newer release the view names clears once and rejoins', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
