@@ -58,7 +58,7 @@ export function needsYouShown(v: PlanView): boolean {
   return v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== ''
 }
 
-// Whether the band offers Sign in (CP-74, DEC-583): always, while the session holds no working connection: signed out, a failed load, or the agent
+// Whether the band offers Sign in: always, while the session holds no working connection: signed out, a failed load, or the agent
 // gate holding a signed-in session. Two states keep their own rule: a key a person revoked is a stop with no Sign in (KEY_REVOKED_HALT), and the
 // auto-mode block is not a sign-in fault (the key works; the fix is the permission rule BLOCKED_LINE names). A loading or loaded view has a connection.
 export function signInOffered(v: PlanView): boolean {
