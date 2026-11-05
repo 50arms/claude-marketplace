@@ -17,7 +17,7 @@ import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
-import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, releaseOfClearFile, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
+import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
 import type { GithubOrigin, MarkAnswer, ServerLoop } from './ready/loop'
 import { sessionFilePath } from './relay/session-file'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
@@ -1800,6 +1800,7 @@ async function releaseAgent($: any): Promise<void> {
 async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason)) await releaseAgent($)
   if (e.reason === 'clear' && typeof e.sessionId === 'string') await update($, endedSession, () => e.sessionId)
+  if (e.reason === 'clear') readyLoopAcrossClear = await read($, readyLoop)
   // the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
     signInGeneration++
@@ -1839,11 +1840,12 @@ async function onSessionEnd($: any, e: any, next: any) {
 //
 // `/50arms:ready` signs the session in and joins the team's list of ready agents for its folder's repo, and tells the model nothing: the join is the plugin's own. The server hands the session work; the model connects to it and works it.
 // The dashboard keeps the session's ready loop: the job it took, and whether that job has ended, by its one rule. Once the job has ended the clear is a handshake, so a person still talking keeps the session: 50 Arms
-// asks the model to wrap up (the ask reaches it through the MCP's urgent record, in 50 Arms' own words), the model says ready, and 50 Arms releases the clear into the session's clear file. This loop
+// asks the model to wrap up (the ask reaches it through the MCP's urgent record, in 50 Arms' own words), the model says ready, and 50 Arms releases the clear (the row's `release_id`, read by the look at the end of that turn). This loop
 // runs that /clear (Claude Code's own command, which a plugin may run once no turn is running) and marks the session ready again (`PUT /api/plan-sessions/me/ready`, which also leaves the ended job):
 // the back of the list, with no context from the job. Every exit from the loop ends the dashboard's loop too (`DELETE /api/plan-sessions/me/ready`). A person's Stop takes the session off the list,
 // since Claude Code drops the plugin's prompts until they send a message.
 // A plugin's /clear changes `$.session.id()` and keeps the MCP server and the session id it booted with (measured, claude.exe 2.1.309), so the dashboard sees one session and its agent stays held.
+// It also empties the plugin's whole $.state (measured, claude.exe 2.1.317), so the loop is carried across every /clear, the released one and a person's own (readyLoopAcrossClear).
 let readyTicker: { cancel: () => void } | null = null
 // a look's identity. `turns`: the count of main-loop turns started when the look began (or its own clear ended); a higher count now means the session may have moved (the model connects to work only in
 // a turn), so the look acts on nothing it read before
@@ -1858,10 +1860,14 @@ let readyTurns = 0
 let readyWatchId = 0
 // the person was told that the session's MCP server is too old to bring a clear (READY_RELAY_OLDER): once per process
 let readyRelayOlderTold = false
-// the session id whose last look found its compaction file with no clear file beside it (`clearRelease`'s `olderSign`), or null: only a later look that finds the same tells
+// the session id whose last look found its compaction file with no clear file beside it (`clearState`'s `olderSign`), or null: only a later look that finds the same tells
 let readyRelayOlderSeen: string | null = null
 // the last unreadable dashboard loop a new process was told it could not take up (adoptReadyMark), so the same fault is told once
 let readyLoopFaultTold: string | null = null
+// The loop as the ending conversation left it, from the `session.end` of a /clear to the `classic.SessionStart` that opens the next one: claude.exe 2.1.317 empties $.state between the two
+// (measured: `session.end` still reads the old values, `classic.SessionStart` (source `clear`) reads none, and what it writes stays). The loop is the process's, as the dashboard's row
+// is, so it outlives the conversation; a module variable, since nothing in $.state does.
+let readyLoopAcrossClear: ReadyLoop | null = null
 
 function startReadyTicker($: any): void {
   if (readyTicker === null) readyTicker = $.clock.every(READY_TICK_MS, () => detach($, 'Ready list', syncReady($)))
@@ -2024,7 +2030,7 @@ async function syncReadyOnce($: any, token: LookToken, again = true): Promise<vo
   const { session, server } = look
   let holds: boolean
   let ownId: string
-  let release: ClearRelease
+  let clear: ClearState
   try {
     holds = holdsWork(session)
     ownId = sessionIdOf(session)
@@ -2033,7 +2039,7 @@ async function syncReadyOnce($: any, token: LookToken, again = true): Promise<vo
     return
   }
   try {
-    release = await clearRelease($, ownId)
+    clear = await clearState($, ownId)
   } catch (err: any) {
     await tellReadyOnce($, readyFailed('reading the clear file', errMessage(err)))
     return
@@ -2043,21 +2049,22 @@ async function syncReadyOnce($: any, token: LookToken, again = true): Promise<vo
   // reconnect of the server fixes it. A current server's first connect writes the compaction file before the clear file, so one look can land between the two: only a later look that
   // still finds no clear file tells.
   const olderSeenBefore = readyRelayOlderSeen === ownId
-  readyRelayOlderSeen = release.olderSign ? ownId : null
-  if (release.olderSign && olderSeenBefore && !readyRelayOlderTold) {
+  readyRelayOlderSeen = clear.olderSign ? ownId : null
+  if (clear.olderSign && olderSeenBefore && !readyRelayOlderTold) {
     readyRelayOlderTold = true
     $.ui.toast(READY_RELAY_OLDER)
   }
-  // 50 Arms released a clear this loop has not run, and still stands behind it: the job has ended, the model said ready, and the server's own `release_id` is the file's release (a file
-  // naming an older release is the stream lagging a job that reopened and ended again, and clears nothing until the file names the release the server stands behind)
-  if (release.id !== null && release.id !== release.spent && server?.ended === true && server.releaseId === release.id) {
-    if (!(await resetSession($, token, ownId, release.id))) return
+  // the release 50 Arms stands behind right now: the job has ended and the model said ready. The row's own `release_id` is the one word on it, so the clear runs at the end of the turn that
+  // agreed, never at the stream's next frame, which the MCP's clear file waits for (up to 15 s, and the next look a minute)
+  const releaseId = server?.ended === true ? server.releaseId : null
+  if (releaseId !== null && releaseId !== clear.spent) {
+    if (!(await resetSession($, token, ownId, releaseId))) return
     // the clear's own turn count is the look's from here
     token.turns = readyTurns
     return markAfter($, token, again)
   }
   // the release was run, and the rejoin that follows it is still owed (it failed, or a Stop of the mark): the mark leaves the ended job the session holds, with no second /clear
-  const owesRejoin = release.id !== null && release.id === release.spent && server?.ended === true
+  const owesRejoin = releaseId !== null && releaseId === clear.spent
   if (!owesRejoin && server?.job != null && !holds && !server.ended) {
     // the server took the job while it was still open (a card added to a plan, another session connecting while this one was quiet): the session keeps its conversation and leaves the loop
     await leaveReady($, readyWorkTaken(server.job))
@@ -2111,23 +2118,30 @@ async function readyLook($: any, token: LookToken): Promise<ReadyLookAnswer | nu
   }
 }
 
-// The session's clear file: the release 50 Arms agreed to in it (`id`, null for none), and the one this loop last ran (`spent`). The file is the one of the session's dashboard id, which the
-// MCP writes it under; never `$.session.id()`, which a /clear changes. Throws on a file it cannot read, or one written for another session.
+// The release this loop last ran (`spent`), kept under the session's dashboard id, and whether the session's MCP server is older than the clear handshake (`olderSign`). The files are the
+// ones of the session's dashboard id, which the MCP writes them under; never `$.session.id()`, which a /clear changes. Throws on an id that names no file. Which release 50 Arms stands behind
+// is the row's word (`release_id`), never the clear file's: the MCP writes it there only at its stream's next frame.
 // `olderSign`: the sign of an MCP server older than the clear handshake. Every MCP server the plugin serves writes the session's compaction file at each connect of its event stream, and a
 // current one writes the clear file after it (the stream sends the compaction control, then the clear control). A compaction file with no clear file is a stream that connected through an
 // older server, whatever work the session holds, or a current server's first connect caught between its two frames, which a later look tells apart (syncReadyOnce). No file at all is a
 // stream not up yet, which says nothing of the server. The compaction file is read first, so both frames landing between the two reads read as a current server.
-type ClearRelease = { id: string | null; spent: string | null; olderSign: boolean }
-async function clearRelease($: any, sessionId: string): Promise<ClearRelease> {
+type ClearState = { spent: string | null; olderSign: boolean }
+async function clearState($: any, sessionId: string): Promise<ClearState> {
   const home = await homeDir($)
   if (home === null) throw new Error('no home directory')
   const path = sessionFilePath(home, 'clear', sessionId)
   const compaction = sessionFilePath(home, 'compaction', sessionId)
   if (path === null || compaction === null) throw new Error(`the session id ${JSON.stringify(sessionId)} names no file`)
   const compactionWritten = await $.fs.exists(compaction)
-  if (!(await $.fs.exists(path))) return { id: null, spent: null, olderSign: compactionWritten }
-  const id = releaseOfClearFile(await $.fs.read(path), sessionId)
-  return { id, spent: id === null ? null : spentReleaseId(await storeOp($, { op: 'get', key: clearSpentKey(sessionId) })), olderSign: false }
+  const olderSign = compactionWritten && !(await $.fs.exists(path))
+  return { spent: spentReleaseId(await storeOp($, { op: 'get', key: clearSpentKey(sessionId) })), olderSign }
+}
+
+// The loop the /clear's `session.end` carried, written back into the new conversation's $.state (readyLoopAcrossClear). Taken once: a later start carries nothing of this one.
+async function restoreReadyLoop($: any): Promise<void> {
+  const carried = readyLoopAcrossClear
+  readyLoopAcrossClear = null
+  await update($, readyLoop, () => carried)
 }
 
 // The plan-less claim, as the plugin's background call: a session that cannot get an agent must not count as working, or its key would never lapse. True once the session holds one.
@@ -3070,6 +3084,8 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
 // desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see stampEntries).
 // The one exception: a compaction that ends with no turn running detaches the resume prompt, whose reads wait for the session to bind.
 async function onClassicSessionStart($: any, e: any, next: any) {
+  // first, so every read below (the start's own `loopReset` among them) sees the loop the cleared conversation was in
+  if (e.source === 'clear') await restoreReadyLoop($)
   const below = await onTitle($, e, next)
   const path = typeof e.transcript_path === 'string' ? e.transcript_path : null
   // the ended session is consumed by this start only: a later clear that saw no end must not be asked about this one's
