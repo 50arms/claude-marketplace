@@ -31,7 +31,7 @@
 #
 # EXAMPLES
 #   ./scripts/publish.sh patch
-#   ./scripts/publish.sh minor danxbot
+#   ./scripts/publish.sh minor 50arms
 #
 set -euo pipefail
 
@@ -80,7 +80,7 @@ mapfile -t ALL_PLUGINS < <(
   node -e '
     const m = require("./.claude-plugin/marketplace.json");
     for (const p of m.plugins) {
-      // source like "./danxbot" -> "danxbot"
+      // source like "./50arms" -> "50arms"
       const dir = p.source.replace(/^\.\//, "");
       console.log(dir);
     }
@@ -344,9 +344,9 @@ for plugin in "${TARGETS[@]}"; do
   BUMPED_VERSION["$plugin"]="$next"
 done
 
-# Push — UNLESS we are running inside a danxbot agent worktree.
+# Push — UNLESS we are running inside a 50 Arms agent worktree.
 #
-# A dispatched danxbot agent works on branch `<agent>` in a worktree, not
+# A dispatched 50 Arms agent works on branch `<agent>` in a worktree, not
 # `main`. A push of the branch name from there lands the bump commit on
 # `origin/<agent>` — never `origin/main` — so it ships NOTHING to
 # consumers (the marketplace version-compares `main`). When DANX_AGENT_WORKTREE

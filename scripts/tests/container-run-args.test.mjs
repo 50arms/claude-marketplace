@@ -1,4 +1,4 @@
-import "../../danxbot/tests/designated-test-container.mjs";
+import "../../50arms/tests/designated-test-container.mjs";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -21,8 +21,8 @@ test("docker run carries --rm directly after `run`, before the image", () => {
 
 const labelsOf = (args) => args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
 
-// CP-3: pinned equal to danxbot's schema (src/docker-ownership/labels.ts: OWNER_LABEL kind/release/session; kind test-run; release idle:<minutes>).
-test("the container carries danxbot's owner labels: test-run, idle:60, and the session when set", () => {
+// CP-3: pinned equal to 50 Arms' schema (src/docker-ownership/labels.ts: OWNER_LABEL kind/release/session; kind test-run; release idle:<minutes>).
+test("the container carries 50 Arms' owner labels: test-run, idle:60, and the session when set", () => {
   const withSession = labelsOf(containerRunArgs("n", "img", [], { CLAUDE_CODE_SESSION_ID: "abc-123" }));
   assert.deepEqual(withSession, ["claude-plugins.test-container=1", "danxbot.kind=test-run", "danxbot.release=idle:60", "danxbot.session=abc-123"]);
   assert.deepEqual(labelsOf(containerRunArgs("n", "img", [], {})), ["claude-plugins.test-container=1", "danxbot.kind=test-run", "danxbot.release=idle:60"]);

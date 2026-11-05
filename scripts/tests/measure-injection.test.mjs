@@ -1,4 +1,4 @@
-import "../../danxbot/tests/designated-test-container.mjs";
+import "../../50arms/tests/designated-test-container.mjs";
 // scripts/measure-injection.mjs (DX-3053): it measures each hooks module's time stamp (DX-4234), the only standing text a
 // module hands the model, against the CURRENT tree, so the harness cannot bit-rot as plugin content moves. The ceiling gate
 // is scripts/tests/check-injection-budget.test.mjs.
@@ -37,8 +37,8 @@ test("the function hooks' time stamp is measured on prompt.submit and tool.call,
   const { rows, totals } = run();
   const prompt = rows.filter((r) => r.event === "prompt.submit");
   const tool = rows.filter((r) => r.event === "tool.call");
-  assert.equal(prompt.length, 1, "expected the danxbot module's prompt.submit stamp to be measured");
-  assert.equal(tool.length, 1, "expected the danxbot module's tool.call stamp to be measured");
+  assert.equal(prompt.length, 1, "expected the 50 Arms module's prompt.submit stamp to be measured");
+  assert.equal(tool.length, 1, "expected the 50 Arms module's tool.call stamp to be measured");
   for (const r of [...prompt, ...tool]) {
     assert.equal(r.error, null);
     // the widest stamp, the first (it carries the date): `MM/DD/YYYY HH:MM:SS +HH:MM +0` and a newline

@@ -1,10 +1,10 @@
 /**
  * DX-5648 - the ONE way this repo's tests run: Linux, inside a container started from Dockerfile.test. `npm test` and
  * scripts/publish.sh both come through here; a test file run anywhere else refuses before any test runs
- * (danxbot/tests/designated-test-container.mjs).
+ * (50arms/tests/designated-test-container.mjs).
  *
- *   npm test                                       the whole suite: the node suites, then `claude plugin test danxbot`
- *   npm test -- danxbot/tests/mantra.test.mjs      named files: .mjs files run under `node --test`, .tsx files under `claude plugin test`
+ *   npm test                                       the whole suite: the node suites, then `claude plugin test 50arms`
+ *   npm test -- 50arms/tests/mantra.test.mjs      named files: .mjs files run under `node --test`, .tsx files under `claude plugin test`
  *
  * HOW THE SOURCE GETS IN. Nothing from this machine is mounted. The image holds the installed dependencies and the claude CLI; the
  * source is streamed in on stdin as a tar archive of a single `docker run --rm -i`, whose bootstrap unpacks it (CP-2). The copy is exactly the files git sees here
@@ -33,7 +33,7 @@ const DOCKER_ENV = { ...process.env, MSYS_NO_PATHCONV: "1", MSYS2_ARG_CONV_EXCL:
  * stops, however this process ends. What it cannot cover is the window inside `docker run` itself, which creates the container, attaches,
  * then starts it: a CLI killed in that window leaves a `Created` container that --rm never removes. A graceful end (exit, die(), SIGINT,
  * SIGTERM) removes it here, best effort and harmless once --rm already has. A HARD kill (SIGKILL, a Windows process-tree kill) in that
- * window runs no code, so no runner can close it: the backstop is danxbot's `make sweep-docker`, which removes a container that is not
+ * window runs no code, so no runner can close it: the backstop is 50 Arms' `make sweep-docker`, which removes a container that is not
  * running once it has been idle past its window (60 minutes by default), a `Created` one by its creation time.
  */
 let containerName;

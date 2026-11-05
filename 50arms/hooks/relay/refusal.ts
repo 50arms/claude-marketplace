@@ -1,0 +1,68 @@
+import { toolName } from '../plan/config'
+import { isBrowserKeepaliveTool } from './browser'
+
+// The plugin's name as the host stamps it on a call the plugin raised (`next.origin.plugin`).
+export const PLUGIN_NAME = '50arms'
+
+// The origin the host stamps on a call the model (or the engine itself) made; every call a plugin raises carries that plugin's name instead.
+export const ENGINE_ORIGIN = 'engine'
+
+// a call a plugin raised itself (`$.mcp.call`, `$.tool.call`), any plugin's, not the model's. Its result goes to the plugin, never the model.
+export const raisedByPlugin = (origin: { plugin: string }): boolean => origin.plugin !== ENGINE_ORIGIN
+
+// in auto permission mode the engine puts a hook-initiated `$.mcp.call` to its classifier like any tool call, and a call the
+// classifier "gave no verdict" on is refused: `$.mcp.call(<server>, <tool>) refused: The server-side auto mode classifier gave no verdict for
+// <tool>`. The plugin's own tool.check hook allows the calls it raises on its own server (`ownServerCheck` below, seated by the `on('tool.check', ...)` in register.tsx); when one is
+// refused anyway (an engine that gates it differently), nothing in the plugin can fix it, so the failure is told with the real words and the fix
+// that works: an allow rule for the server's tools. A restart is not needed (observed: the relay attached and the band showed the plan
+// minutes after the rule was added, in the same session), so the relay retries a refused call on its own and the plan load is retried by the
+// session-start watch; a restart is the fallback when it does not clear.
+
+// The permission rule that allows every tool of the plugin's own server.
+export const CLASSIFIER_RULE = `${toolName('')}*`
+
+export const CLASSIFIER_FIX = `the auto mode classifier refused the plugin's own call; updating the plugin does not change that: the person runs /50arms:start (or you load its skill), which adds the allow rule ${CLASSIFIER_RULE} once the person says yes, or the person adds it to permissions.allow in ~/.claude/settings.json; it then resumes on its own (restart if not)`
+
+// What the engine says of a call the auto mode classifier refused (any verdict of it: no verdict, or judged unsafe).
+const CLASSIFIER_MARK = /auto mode classifier/i
+
+export type Refusal = { detail: string; fix: string }
+
+// The refusal in a failure message, or null when the message is none.
+export function classifierRefusal(message: string): Refusal | null {
+  return CLASSIFIER_MARK.test(message) ? { detail: message, fix: CLASSIFIER_FIX } : null
+}
+
+// a 50 Arms MCP from before the release that added `background` refuses the `background` key the hooks send with each danxbot_api call (a strict schema:
+// MCP error -32602, `unrecognized_keys`, `keys: ["background"]`). The call is not retried without the key (one path); the failure is STALE_MCP_LINE,
+// short enough to stay whole in every toast this failure reaches. Both marks are needed: an unrecognized key that is not `background`, or a `background` that
+// is not an unrecognized key, is some other failure.
+const UNRECOGNIZED_KEYS = /unrecognized[_ ]keys?/i
+export const STALE_MCP_LINE = `50 Arms' MCP is older than the plugin: restart this session to update it.`
+
+export function isStaleMcpRefusal(message: string): boolean {
+  return UNRECOGNIZED_KEYS.test(message) && /\bbackground\b/.test(message)
+}
+
+// the plugin ships the permission its own hooks need. Auto permission mode puts a hook-initiated `$.mcp.call` to its classifier like any
+// tool call, and a call the classifier gave no verdict on is refused, which left the relay dead. `tool.check` is the engine's permission decision,
+// asked before the mode's decider (the classifier) and last-word-wins, so an `allow` here settles a call THIS plugin raised on its OWN server's
+// tools (and the Browser pane tools above). `next.origin` is set by the host from where the call came from: the model's own call to the same tool arrives as `engine` and keeps the
+// engine's verdict. The engine's verdict is asked first and a `deny` (a user's `permissions.deny`, an organization's rule) always stands; an
+// organization `ceiling` of `ask` also stands, as the ceiling is the most permissive verdict it lets the tool reach.
+// also the three tools of the desktop's Browser pane the plan-tab keepalive calls (relay/browser.ts): a look at the pane and the plan page opened
+// again, raised by this plugin only; the model's own call to the same tool keeps the engine's verdict.
+export function isOwnServerCall(origin: { plugin: string }, tool: string): boolean {
+  return origin.plugin === PLUGIN_NAME && (tool.startsWith(toolName('')) || isBrowserKeepaliveTool(tool))
+}
+
+type CheckInput = { tool: string; ceiling?: string }
+type CheckVerdict = { decision: 'allow' | 'ask' | 'deny'; reason?: string }
+type CheckNext = { (e: any): Promise<CheckVerdict>; origin: { plugin: string } }
+
+export async function ownServerCheck(e: CheckInput, next: CheckNext): Promise<CheckVerdict> {
+  if (!isOwnServerCall(next.origin, String(e.tool))) return next(e)
+  const engine = await next(e)
+  if (engine.decision === 'deny' || e.ceiling === 'ask') return engine
+  return { decision: 'allow', reason: `${PLUGIN_NAME}'s own call to its own server` }
+}

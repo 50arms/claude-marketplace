@@ -1,0 +1,162 @@
+---
+name: start
+description: 'Connect the repo you are in to 50 Arms with one command, `/50arms:start`: sign in, register the repo, create its board, then start the first plan. Run it when someone types /50arms:start, or asks to set up, connect or get started with 50 Arms in this repo. Safe to run again.'
+---
+
+# Start: connect this repo to 50 Arms
+
+`/50arms:start` takes the repo this session is in from nothing to a connected plan. It
+asks 50 Arms, through the plugin's own dashboard connection, to register the repo and
+create its board, then hands over to `50arms:plan-workflow`. The repo, its board and the
+plan live in the dashboard; the one file it may change is the person's own
+`~/.claude/settings.json`, to add one allow rule, only with their OK (step 2), and, in a folder with no `origin`, the new repo it creates there (step 3).
+
+Run again in a repo that is already set up, it reports what exists, changes nothing that is
+already set up and goes straight to planning (step 6). Each step below says how it recognises
+that its work is already done.
+
+Every dashboard call goes through `danxbot_api` (`method`, `path`, `query`, `body`).
+
+## When a call is refused
+
+A session key starts with only the permissions needed to work cards and plans. Registering
+a repo and creating or listing boards need two more. A call answered `403` naming
+`boards.view` or `boards.manage`: call `request_permission` once with both
+`boards.view` and `boards.manage`, with the reason "50 Arms start needs to look up this
+repo and create its board". The plugin shows the approval link and
+confirm code at once and opens nothing: the person clicks the link, so never open the URL yourself (two tabs). Wait until they say they approved it, then repeat
+the call that was refused. Ask for nothing else.
+
+## Steps
+
+### 1. Sign in
+
+Call `plan_connect` with no plan. If it answers `approval_required` or `approval_pending`,
+show the person the confirm code and the approval URL (the plugin shows the link and code at once and opens nothing: the person clicks the link, so never open the URL yourself),
+and call `plan_connect` again once they approve. Signing in also makes this session one of the
+team's agents: an `agent_needed` or `agent_limit_reached` answer is handled as
+`50arms:plan-workflow`'s Start step 2 says, before any other step here.
+
+### 2. Allow the plugin's own calls in auto permission mode
+
+In auto permission mode Claude Code refuses the plugin's own background calls, so plan events
+stop reaching the session. One allow rule fixes it: `mcp__plugin_50arms_dashboard__*` in
+`permissions.allow` in `~/.claude/settings.json`. This step comes before the plan hand-over
+(step 6), which a session may never return from. The manual instruction, which this step gives
+wherever it says so, is: add that rule to `permissions.allow` in `~/.claude/settings.json`
+yourself.
+
+1. Read `~/.claude/settings.json`; a missing file counts as no settings. When the file exists
+   but is not valid JSON, or its `permissions.allow` is present and not a list, leave the file
+   untouched, tell the person, and give the manual instruction. Never treat such a file as
+   empty. When the `permissions.allow` list already holds the rule, say it is already allowed
+   and change nothing.
+2. Otherwise tell the person in one plain sentence why: in auto permission mode Claude Code
+   refuses the plugin's own background calls, so plan events stop reaching the session. Ask for
+   their OK to add the rule.
+3. Only on a clear yes, add that one entry. Keep every other setting exactly as it was, add no
+   other rule, and create the `permissions.allow` list only when it is missing. Never add it
+   without the yes; on a no or no reply, change nothing and give the manual instruction.
+4. After adding it, say the plugin picks the rule up on its own within a few minutes (its plan band and event relay retry), and that a session restart is only needed if the band still says auto mode is blocking 50 Arms after that.
+
+### 3. Read the repo's origin
+
+Run `git remote get-url origin` in the repo.
+
+- No output, or an error that there is no such remote: this folder has no GitHub repo yet.
+  Create one, as "Create the repo" below says, and carry on from the origin it sets (the paragraph after these two bullets).
+- A URL whose host is neither `github.com` nor an SSH config alias for it
+  (`github.com-<alias>`, which people with several GitHub accounts use): tell the person
+  50 Arms connects `github.com` repos only. Stop. Nothing has been registered or created in 50 Arms.
+
+Otherwise take its owner and repo name (`https://github.com/<owner>/<repo>.git`,
+`git@github.com:<owner>/<repo>.git`, `git@github.com-<alias>:<owner>/<repo>.git` and
+`ssh://git@github.com/<owner>/<repo>.git` all give `<owner>` and `<repo>`, without `.git`).
+The URL you register is the `https://` or `git@github.com:` form: rewrite an `ssh://` or
+alias origin to `git@github.com:<owner>/<repo>.git`, and keep the others exactly as printed.
+
+#### Create the repo
+
+The person's own `git` and `gh` do this, the same way every push and pull request is made;
+50 Arms holds no token that creates repos.
+
+1. Check the GitHub CLI first, before asking or changing anything: `gh --version`, then
+   `gh auth status --active --hostname github.com` (it checks only the active account and
+   masks the token). `gh` missing: tell the person to install the GitHub CLI
+   (https://cli.github.com) and run `gh auth login`. Not signed in: tell them to run
+   `gh auth login`. Then stop. Nothing has been registered or created in 50 Arms, and nothing
+   in the folder has changed.
+2. Ask ONE question for all three: the new repo's name (default: the folder's name), its owner
+   (default: the signed-in account; an organisation they belong to is allowed) and its
+   visibility (`private` or `public`; default `private`). Nothing is created before they
+   answer.
+3. The folder is not yet a git repo: `git init`. Then `gh repo create <owner>/<name>
+   --<private|public> --source . --remote origin`, which creates the repo and sets `origin`.
+   A refusal (the name is taken, no right to create under that owner) is shown to the person
+   as it came, asking for another name or owner; change nothing else.
+4. A folder with no commits (`git rev-parse --verify HEAD` fails) gets a first commit of what
+   is there: `git add -A`, `git commit -m "Initial commit"`, then `git push -u origin HEAD`.
+   Show the person the file list (`git status --short`) before committing and leave out
+   anything that looks like a secret or a credential file. A folder that already has commits is not
+   committed to: push its current branch with `git push -u origin HEAD`.
+5. Tell the person the repo's URL, then continue below with the origin it set.
+
+### 4. Register the repo
+
+First look for it. `GET /api/repos` with `query: {"fields": {"github_remote": true}}`
+lists the team's registered repos. A row whose `github_remote` owner and repo equal the
+origin's owner and repo (ignore case) is already registered: use its `name` and skip to
+step 5.
+
+Not listed: `POST /api/repos` with `{name, url}`.
+
+- `name`: the repo name in lowercase, every character that is not a letter, a digit, `-`
+  or `_` turned into `-`, any leading `-` or `_` removed, cut to 64 characters. It must then
+  match `^[a-z0-9][a-z0-9_-]{0,63}$`. When nothing is left (the repo `.github` leaves
+  `github`, but a name of only dots leaves nothing), use the owner and repo joined as
+  `<owner>-<repo>` the same way; when that is still not valid, ask the person for a name.
+- `url`: the URL from step 3.
+
+`201` answers the registered repo; use its `name`. `409` means that name is already taken: a repo's name is unique across every team on
+50 Arms, so it may be a repo of someone else's. Tell the person, offer the
+`suggested_name` in the answer (the owner and repo joined as `<owner>-<repo>`), and register
+again under the name they accept or type. A second `409` asks them for another name. A
+`400` carries its own message: show it.
+
+### 5. Create the board
+
+A board holds the repo's cards. `GET /api/boards` with `query: {"repo": "<name>"}` lists
+the repo's boards. If the repo already has a board, use it (when it has several, ask which)
+and skip the create.
+
+None: `POST /api/boards` with `{repo, name, issue_prefix}`.
+
+- `repo`: the registered name from step 4.
+- `name`: the repo's name as written on GitHub.
+- `issue_prefix`: two to four capital letters that start every card id on this board
+  (cards read `ABC-12`), letters only. Take the initials of the repo name's words, or its
+  first letters when it is one word. A name with fewer than two letters (`x`, `42`) cannot
+  give one: use the owner's first letters, and when that gives fewer than two, ask the
+  person for a prefix. Tell the person the prefix and change it if they prefer another.
+
+The answer's `id` is the board's ref, its per-team number such as `12`; every call that names
+the board takes that number. Tell the person the repo, the board id and the prefix, flagging
+each that was already there.
+
+### 6. Start the first plan
+
+A plan is where a goal, its design and its cards live; `50arms:plan-workflow` is how to
+work one.
+
+1. `GET /api/plans`. When the team has open plans, offer to continue one.
+2. Otherwise ask what they want to build first, in their own words. Name the plan after
+   it and `POST /api/plans` with `{name}`. The answer carries the plan's id.
+
+Then load `50arms:plan-workflow` and follow its Start steps with that plan: connect with
+`plan_connect`, title the session as its `naming` block says, and orient from the briefing. This session has no
+default board: every call that works on a card or a plan's cards names the board, the
+`board` argument of `danxbot_api` set to the board id from step 5 (the ref number), and
+`POST /api/issues` carries it as `board` in its body. After a restart or a compaction
+the session relearns its board from the plan it reconnects to: `GET /api/plans/mine`
+answers the plan's `boards`, which come from the plan's cards, so that list is empty until
+the plan has a card. Until then, running `/50arms:start` again finds the board (step 5).

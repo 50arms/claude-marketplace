@@ -292,7 +292,7 @@ for row in "${ROWS[@]}"; do
       # every future run (observed: 5 rows for one deleted ad-hoc worktree,
       # naming all 5 plugins, on every publish for a day). Ad-hoc worktrees
       # under `.claude/worktrees/<n>` are created and removed constantly
-      # (see danxbot's `.claude/rules/adhoc-worktree-cleanup.md`), and every
+      # (see 50 Arms' `.claude/rules/adhoc-worktree-cleanup.md`), and every
       # one that ever received a plugin install leaves a row exactly like
       # this behind — so the warning was guaranteed to recur forever, not a
       # one-off. The removal side (whichever tool deleted the worktree) has
