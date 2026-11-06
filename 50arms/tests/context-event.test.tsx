@@ -96,12 +96,12 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect(r.startLines![0]).toBe('⚠ Could not load the "session_resume" event text from the 50 Arms reminder registry (500: event boom). Tell the operator this event hook fetch failed.')
     })
 
-    test('an empty text is that failure, never a silent success', async ($, on) => {
+    test('CP-82: an empty text is nothing to tell, not a failed lookup', async ($, on) => {
       const d = await started($, on)
       d.world.eventText.sub_agent_start = ''
       const r = await $.classic.SubagentStart(START)
       await d.clock.settle()
-      expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', 'empty_response: the dashboard returned an empty text')])
+      expect(r.additionalContext).toBeUndefined()
     })
 
     test('a CONNECTED session (its record is on disk) whose plans read fails is told one warning line, at start and at a sub-agent start', async ($, on) => {
