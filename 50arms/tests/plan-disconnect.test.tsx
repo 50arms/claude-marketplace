@@ -84,6 +84,18 @@ for (const surface of SURFACES) {
       expect(await text(band)).toContain('50 Arms: not connected to a plan')
     })
 
+    test('a leave naming no target is the server 400 with its message_id', async ($, on) => {
+      // the plugin always names a target, so the refusal is driven at the kit's stand-in for the server: capture its mcp.call handler and call it as the engine would
+      let mcpCall: any
+      const d = dashboard((name: string, ...rest: any[]) => {
+        if (name === 'mcp.call') mcpCall = rest.at(-1)
+        return (on as any)(name, ...rest)
+      })
+      await startSession($, d, surface)
+      const r = await mcpCall($, { server: 'plugin:50arms:platform', tool: 'session_connect', args: { disconnect: true } })
+      expect(JSON.parse(r.value.content[0].text)).toMatchObject({ ok: false, status: 400, body: { message_id: 'issues.connectTargetQueryRequired' } })
+    })
+
     test('a 404 (the route is not deployed yet) carries its status and message; the plan stays connected', async ($, on) => {
       const d = dashboard(on, { disconnect: 'notFound' })
       const band = await mounted($, d, surface)

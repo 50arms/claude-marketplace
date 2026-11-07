@@ -1052,7 +1052,10 @@ export function dashboard(
       })
       // a leave with no `target`, or one that is not a string or is empty: the server's 400 (`DELETE /me/connect` with no `?target=`), whichever kind it would have been
       if (e.tool === 'session_connect' && e.args.disconnect && (typeof e.args.target !== 'string' || e.args.target === '')) {
-        return envelope(false, 400, { error: 'target is required: the plan (PLAN-n) or the card the session believes it holds (?target=)' })
+        return envelope(false, 400, {
+          error: 'target is required: the plan (PLAN-n) or the card the session believes it holds (?target=)',
+          message_id: 'issues.connectTargetQueryRequired',
+        })
       }
       // the leave of a held card, from the model or the band's Disconnect: `session_connect` with a card's id as `target` and `disconnect: true`, guarded on that id (409 card_mismatch / session_holds_no_card), answering {session, leftCard}
       if (e.tool === 'session_connect' && e.args.disconnect && planNumberOf(e.args.target) === undefined) {
