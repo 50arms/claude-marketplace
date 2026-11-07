@@ -4,9 +4,17 @@ import type { PermissionRequest } from '../../types'
 // these calls, so it is told. The person never reads them.
 // The plan left is named by ref and name: the session is on no plan now, and must not write to the
 // plan routes until it connects again.
-export function disconnectNote(plan: { ref: string; name: string }): string {
-  return `[50 Arms plan] The operator disconnected this session from ${plan.ref} "${plan.name}" with the band's Disconnect button. This session is on no plan; do not write to /api/plans/mine routes until it connects again.`
+// `left`: the plan or card the session left (null: it held only its team agent); `agentFreed`: the team agent was released too.
+export function disconnectNote(d: { left: { ref: string; name: string } | null; agentFreed: boolean }): string {
+  const what = d.left === null ? 'and freed its team agent' : `from ${d.left.ref} "${d.left.name}"${d.agentFreed ? ' and freed its team agent' : ''}`
+  const holds = d.agentFreed ? 'on no plan or card and holds no team agent' : 'on no plan or card'
+  return `[50 Arms plan] The operator disconnected this session ${what} with the band's Disconnect button. This session is ${holds}; its next dashboard work needs plan_connect or card_connect again. Do not write to /api/plans/mine routes until it connects again.`
 }
+
+// the one toast a Disconnect shows: what was left (a plan or card id), else the team agent alone.
+export const disconnectedToast = (left: { ref: string } | null, agentName: string | null) =>
+  left !== null ? `Disconnected from ${left.ref}` : `Disconnected team agent${agentName === null ? '' : ` ${agentName}`}`
+
 
 // the band's Sign in button signed this session in: the model did not press it, so it is told, as a disconnect
 // tells it. `planId` is the plan the sign-in asked to rejoin (null: none, so where it lands is the dashboard's to say); `connected`

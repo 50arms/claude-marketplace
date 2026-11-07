@@ -4,6 +4,7 @@ import type { ApprovalRequest } from './approval'
 import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
+import { bandHold, holdsAnything } from './hold'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
 import { bandContent, bandLabelCols, bandNameText, needsYouBadge, signInOffered, viewPercent } from './words'
@@ -59,7 +60,10 @@ export function renderBand(
   // a revoked key is red too, and keeps its text beside Sign in
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
-  // Disconnect is the only way off a plan from the UI (connecting or switching a plan is the model's `plan_connect`). The band draws no events
+  // Disconnect is the only way off a plan, a card or the team agent from the UI (connecting or switching a plan is the model's `plan_connect`); it shows whenever the session holds any of them.
+  const hold = bandHold(v)
+  const disconnectOffered = holdsAnything(hold)
+  // The band draws no events
   // status: the band is sign-in, the plan and Disconnect (operator, 2026-10-22); a relay fault reaches the person as its toast. The one exception
   // is events held until the person sends a message (operator, 2026-10-25): that is the person's step, so it stays on the band until done.
   const disconnecting = busyKey.isDisconnecting(busy)
@@ -72,7 +76,7 @@ export function renderBand(
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
     ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
-    ...(plan !== null ? [{ label: disconnectShown, isButton: true }] : []),
+    ...(disconnectOffered ? [{ label: disconnectShown, isButton: true }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
   // the column model is the terminal's (a cell per character, `[ label ]` button chrome). The desktop draws proportional text
@@ -122,8 +126,8 @@ export function renderBand(
         {/* the newest open permission request: its approval page, with the code to check against the page. */}
         {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
         {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
-        {plan !== null && (
-          <Button key="disconnect" plain dimColor={disconnecting} onPress={() => hd.disconnect(plan)}>
+        {disconnectOffered && (
+          <Button key="disconnect" plain dimColor={disconnecting} onPress={() => hd.disconnect(hold)}>
             <Text color="error">{disconnectShown}</Text>
           </Button>
         )}

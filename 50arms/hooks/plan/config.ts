@@ -125,7 +125,7 @@ export const EMPTY: PlanView = {
 
 // What `busy` holds while writes are under way: a list of keys, one per connect, disconnect or sign-in.
 export const busyKey = {
-  disconnect: (planId: number) => `disconnect:${planId}`,
+  disconnect: (hold: string) => `disconnect:${hold}`,
   signIn: 'sign-in',
   isSigningIn: (busy: string[]) => busy.includes('sign-in'),
   isDisconnecting: (busy: string[]) => busy.some(k => k.startsWith('disconnect:')),

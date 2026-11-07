@@ -108,7 +108,8 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       expect(await labelOf(band)).toBe('DX-77 · One-off fix')
       expect(await pageLinks(band)).toEqual([{ key: 'open-card', label: 'DX-77', href: `${DASHBOARD_URL}/board/DX-77` }])
-      expect(await band.find({ key: 'disconnect' })).toBeUndefined()
+      // a held card is something to leave: Disconnect shows (tests/plan-disconnect-hold.test.tsx presses it)
+      expect(await band.find({ key: 'disconnect' })).toBeDefined()
       expect(await footerText(await mountIndicator($, surface))).toBe('Tendai')
     })
 

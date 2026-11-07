@@ -354,6 +354,10 @@ export function dashboard(
     // (`session.card_id` / `card_title`); neither by default. A session with none of a plan, a card and an agent has no session row (`session: null`).
     agent: null as { id: number; name: string; avatar_url: string | null } | null,
     card: null as { id: string; title: string } | null,
+    // what DELETE /api/plan-sessions/me/card (the band's leave of a held card) answers: the leave works (default), a 500, or a 200 that names no card left
+    cardLeave: 'ok' as 'ok' | 'boom' | 'noLeftCard',
+    // the order the band's Disconnect leaves things in: `plan`, `card`, then `release` of the team agent
+    leaveOrder: [] as string[],
     // DX-5554: what DELETE /api/plan-sessions/me/agent (the release at session exit) answers: `{released}` by default (true while an agent is held), an
     // error status, the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock / never (`hangs`)
     release: {} as { status?: number; deny?: string; delayMs?: number; hangs?: boolean },
@@ -614,6 +618,17 @@ export function dashboard(
       world.agent = world.agentNext ?? world.agent ?? { id: 6, name: 'Tendai', avatar_url: null }
       world.agentGate = null
       return reply({ state: 'agent_held', agent: world.agent, instruction: 'Use this name.' })
+    }
+    // the band's Disconnect of a held card: DELETE /api/plan-sessions/me/card?card_id=<id>, guarded on the card id (409 card_mismatch / session_holds_no_card), answering {session, leftCard}
+    if (method === 'DELETE' && path === '/api/plan-sessions/me/card') {
+      if (world.cardLeave === 'boom') return reply({ error: 'card boom' }, 500)
+      if (world.card === null) return reply({ error: 'session_holds_no_card', message: `Session ${SESSION_ID} holds no card, so there is nothing to leave.` }, 409)
+      if (world.card.id !== query?.card_id) return reply({ error: 'card_mismatch', message: `Session ${SESSION_ID} holds ${world.card.id}, not ${query?.card_id}; nothing was changed.` }, 409)
+      const leftCard = world.card
+      world.leaveOrder.push('card')
+      world.card = null
+      if (world.cardLeave === 'noLeftCard') return reply({ session: { sessionId: SESSION_ID, cardId: null } })
+      return reply({ session: { sessionId: SESSION_ID, cardId: null }, leftCard: { id: leftCard.id, title: leftCard.title } })
     }
     if (method === 'DELETE' && path === '/api/plan-sessions/me/ready') {
       const cleared = world.readyMark !== null || world.readyLoop !== null
@@ -946,6 +961,7 @@ export function dashboard(
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       if (world.release.status !== undefined) return { value: reply({ error: 'release boom' }, world.release.status) }
       const released = world.agent !== null
+      world.leaveOrder.push('release')
       world.agent = null
       return { value: reply({ released }) }
     }
@@ -1094,6 +1110,7 @@ export function dashboard(
         if (options.disconnect === 'notFound') return envelope(false, 404, { error: 'Not found' })
         const left = plans.find(p => p.id === world.planId)
         world.planId = null
+        world.leaveOrder.push('plan')
         // as the real route: a leave frees the session's agent in its own transaction, so the hold gate answers what follows
         if (world.agent !== null) {
           world.agent = null
