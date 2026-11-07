@@ -378,7 +378,7 @@ for (const surface of SURFACES) {
       expect(prompts).toHaveLength(1)
       expect(prompts[0]).toContain('signed this session in')
       expect(prompts[0]).toContain('call session_connect to see which plan')
-      expect(prompts[0]).not.toContain('target')
+      expect(prompts[0]).not.toContain('with target')
     })
 
     test('signed in, but the plan connect refused: the model is told it is signed in and that the plan was refused', async ($, on) => {

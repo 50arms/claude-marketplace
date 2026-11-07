@@ -301,14 +301,11 @@ export function dashboard(
     markRefusal: null as { status: number; body: any } | null,
     planReadHold: null as Promise<void> | null,
     cardReadHold: null as Promise<void> | null,
-    // what the card leave and the plan leave answer instead, as the MCP's tool result; what holds `request_permission` and the card leave on their way
-    cardLeaveAnswer: null as { text: string; isError: boolean; then?: () => void } | null,
+    // what the plan leave answers instead, as the MCP's tool result; what holds `request_permission` on its way
     planLeaveAnswer: null as { text: string; isError: boolean } | null,
     permissionAskHold: null as Promise<void> | null,
-    cardLeaveHold: null as Promise<void> | null,
     // a `request_permission` that throws in the engine (a classifier refusal, say), after its hold
     permissionAskDeny: null as string | null,
-    cardLeaves: 0,
     // what `request_permission` answers instead of an approval request, and how many were asked
     permissionAskRefused: null as string | null,
     permissionAsks: 0,
@@ -1053,16 +1050,13 @@ export function dashboard(
       const envelope = (ok: boolean, status: number, body: unknown) => ({
         value: { content: [{ type: 'text', text: JSON.stringify({ ok, status, body }, null, 2) }], isError: false },
       })
+      // a leave with no `target`, or one that is not a string or is empty: the server's 400 (`DELETE /me/connect` with no `?target=`), whichever kind it would have been
+      if (e.tool === 'session_connect' && e.args.disconnect && (typeof e.args.target !== 'string' || e.args.target === '')) {
+        return envelope(false, 400, { error: 'target is required: the plan (PLAN-n) or the card the session believes it holds (?target=)' })
+      }
       // the leave of a held card, from the model or the band's Disconnect: `session_connect` with a card's id as `target` and `disconnect: true`, guarded on that id (409 card_mismatch / session_holds_no_card), answering {session, leftCard}
       if (e.tool === 'session_connect' && e.args.disconnect && planNumberOf(e.args.target) === undefined) {
         if (world.leaveDeny !== null) return { deny: world.leaveDeny }
-        world.cardLeaves++
-        if (world.cardLeaveHold !== null) await world.cardLeaveHold
-        if (world.cardLeaveAnswer !== null) {
-          const answer = world.cardLeaveAnswer
-          answer.then?.()
-          return { value: { content: [{ type: 'text', text: answer.text }], isError: answer.isError } }
-        }
         if (world.cardLeave === 'boom') return envelope(false, 500, { error: 'card boom' })
         if (world.card === null) return envelope(false, 409, { error: 'session_holds_no_card', message: `Session ${SESSION_ID} holds no card, so there is nothing to leave.` })
         if (world.card.id !== e.args.target) return envelope(false, 409, { error: 'card_mismatch', message: `Session ${SESSION_ID} holds ${world.card.id}, not ${e.args.target}; nothing was changed.` })
