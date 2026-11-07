@@ -1,11 +1,14 @@
 // Shared stand-ins for the `claude plugin test 50arms` suites: a fake dashboard MCP server
-// (50arms_api + plan_connect), and recorders for the engine calls the
+// (50arms_api + session_connect), and recorders for the engine calls the
 // plugin makes beneath it (toast, status, session.append, command.register).
 import { expect, mock, test as baseTest } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { DASHBOARD_SERVERS, SERVER, serverToolName, toolName } from '../hooks/plan/config'
 import { CURSOR_PREFIX as RELAY_CURSOR_PREFIX, RELAY_MARKER } from '../hooks/relay/config'
+
+// what the server reads of a `session_connect` target: `PLAN-n` is plan n, anything else a card's id
+export const planNumberOf = (target: unknown): number | undefined => (typeof target === 'string' && /^PLAN-[1-9][0-9]*$/.test(target) ? Number(target.slice(5)) : undefined)
 
 // DX-4883: the runner's default is 5000 ms of REAL time per test, and a case that drives the mocked clock pays real time to settle every timer
 // it fires (about 1 s to start a session plus about 55 ms per mocked minute: the plugin's pacing and usage tickers run each minute). A
@@ -65,15 +68,15 @@ export const NO_DASHBOARD_URL = Symbol('no dashboard_url')
 // DX-4423 / DX-4418: what the dashboard MCP (0.1.225, session-access.ts and key-revoked-halt.ts) answers every tool but
 // the connect tools while the session holds no key: an error result (the connect tools answer an approval request instead). SIGN_IN_HALT is a session that never signed in, KEY_LAPSED_HALT
 // what the first call after a lapsed key's 401 answers (it ends in the sign-in sentence), and KEY_REVOKED_HALT the one stop halt
-// for a key a PERSON revoked, which EVERY tool answers, plan_connect included, with no access request. These are the server's
+// for a key a PERSON revoked, which EVERY tool answers, session_connect included, with no access request. These are the server's
 // words, for the agent: the plugin must never show them to the person.
 // DX-4805: what the engine says when auto mode's classifier gave no verdict on a hook-initiated `$.mcp.call` (the incident's text)
 export const CLASSIFIER_REFUSAL = 'The server-side auto mode classifier gave no verdict for mcp__plugin_50arms_platform__plan_events_wait'
-export const SIGN_IN_HALT = "Not signed in to the 50 Arms dashboard. Call `plan_connect` (with `title`: your session's own title) to request access; the user approves it in their browser, then this tool works."
+export const SIGN_IN_HALT = "Not signed in to the 50 Arms dashboard. Call `session_connect` (with `title`: your session's own title) to request access; the user approves it in their browser, then this tool works."
 export const KEY_LAPSED_HALT = `The dashboard no longer accepts this session's key (it lapsed after a day unused), so this session is signed out. ${SIGN_IN_HALT}`
 export const REVOKER = 'dana'
 export const REVOKED_AT = '2026-10-04T07:00:00.000Z'
-export const KEY_REVOKED_HALT = `STOP ALL WORK NOW. ${REVOKER} revoked your access to the 50 Arms dashboard at ${REVOKED_AT}.\n\nCommit your work in progress now (commit what you have; do not run agent-finalize.sh and do not merge). Then end this session: tell the person what you committed and stop.\n\nDo not call plan_connect or any other 50 Arms dashboard tool again, do not request access again and do not look for another route.`
+export const KEY_REVOKED_HALT = `STOP ALL WORK NOW. ${REVOKER} revoked your access to the 50 Arms dashboard at ${REVOKED_AT}.\n\nCommit your work in progress now (commit what you have; do not run agent-finalize.sh and do not merge). Then end this session: tell the person what you committed and stop.\n\nDo not call session_connect or any other 50 Arms dashboard tool again, do not request access again and do not look for another route.`
 // DX-5549: the MCP agent gate's answer to a dashboard call while the session holds no team agent: the sign-in's own block, as JSON
 export const AGENT_GATE_HALT = (state: 'agent_needed' | 'agent_limit_reached') =>
   state === 'agent_needed'
@@ -81,9 +84,9 @@ export const AGENT_GATE_HALT = (state: 'agent_needed' | 'agent_limit_reached') =
     : { state, cap: 'member', limit: 1, held: 1, raised_by: 'a team owner or admin', instruction: 'No team agent is free. Tell the person.' }
 export const APPROVAL_URL = 'http://localhost:5555/connect/abc123'
 export const CONFIRM_CODE = 'WXYZ2345'
-// the approval request plan_connect answers while signed out, and what its next calls answer meanwhile (instruction text as the server words it)
-export const APPROVAL_REQUIRED = { state: 'approval_required', approvalUrl: APPROVAL_URL, confirmCode: CONFIRM_CODE, expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the user the confirm code and open the approval URL in their browser; they check the code matches and approve. Then call `plan_connect` again: it waits up to about 45 seconds for the approval.' }
-export const APPROVAL_PENDING = { ...APPROVAL_REQUIRED, state: 'approval_pending', instruction: 'Still waiting for the user to approve. Remind them of the confirm code and the URL, then call `plan_connect` again.' }
+// the approval request session_connect answers while signed out, and what its next calls answer meanwhile (instruction text as the server words it)
+export const APPROVAL_REQUIRED = { state: 'approval_required', approvalUrl: APPROVAL_URL, confirmCode: CONFIRM_CODE, expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the user the confirm code and open the approval URL in their browser; they check the code matches and approve. Then call `session_connect` again: it waits up to about 45 seconds for the approval.' }
+export const APPROVAL_PENDING = { ...APPROVAL_REQUIRED, state: 'approval_pending', instruction: 'Still waiting for the user to approve. Remind them of the confirm code and the URL, then call `session_connect` again.' }
 
 // the connected plan's counts: 4 / (3 + 5 + 1 + 3 + 4) = 25%; Cancelled (2) is not counted
 export const DEFAULT_BREAKDOWN = { 'In Progress': 3, ToDo: 5, Backlog: 1, Review: 3, Done: 4, Cancelled: 2 }
@@ -121,7 +124,7 @@ export function bigCard(): Card {
 // ListenerHealthState). The fixture's next step for a state other than `healthy` is `NEXT_STEP(state)`.
 export const LISTENER_STATES = ['unattached', 'stopped', 'reconnecting', 'credential_mismatch', 'plan_has_no_cards', 'inventory_unavailable', 'healthy'] as const
 // The next step never contains the state's name, so a test that finds the state name cannot be satisfied by it.
-export const NEXT_STEP = (state: string) => `Run plan_connect again (step ${[...state].reduce((n, c) => n + c.charCodeAt(0), 0)}).`
+export const NEXT_STEP = (state: string) => `Run session_connect again (step ${[...state].reduce((n, c) => n + c.charCodeAt(0), 0)}).`
 
 export const CLOCK_START = Date.parse('2026-10-03T08:00:00.000Z')
 export const OWN_SESSION = { session_id: 'sess-own', title: 'PLAN-23: 50 Arms plugin' }
@@ -183,7 +186,7 @@ export function dashboard(
     inProgressTotal?: number
     inProgressFails?: boolean
     noInProgressTotal?: boolean
-    // plan_connect {disconnect: true}: the leave works (default), or the server refuses it a given way
+    // session_connect {disconnect: true}: the leave works (default), or the server refuses it a given way
     // ('rejected' is a THROWN call, the only error result; 'noLeftPlan' is a 200 without leftPlan)
     disconnect?: 'ok' | 'mismatch' | 'notConnected' | 'notFound' | 'rejected' | 'noLeftPlan'
     // the disconnect call takes this long on the fake clock
@@ -192,9 +195,9 @@ export function dashboard(
     // DX-4423: the session holds no dashboard key: every 50arms_api call is the MCP's error result (the first call after a revoke
     // answers KEY_LAPSED_HALT, a session that never signed in SIGN_IN_HALT; 'revoked' answers KEY_REVOKED_HALT to every tool and never asks) and the connect tools run the request-and-approve dance
     // (world.signIn): approval_required, then approval_pending after `waitMs` on the fake clock, until a test sets `approved`
-    // (then the key is stored: the tools work again and plan_connect connects to the plan it is given) or `answer`
+    // (then the key is stored: the tools work again and session_connect connects to the plan it is given) or `answer`
     signedOut?: 'signed-out' | 'lapsed' | 'revoked'
-    // plan_connect refuses (ok: false, 409 plan_archived) / throws
+    // session_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
     // the first /api/plan-sessions/me call never settles until `release()`
@@ -293,7 +296,7 @@ export function dashboard(
     readyClearHold: null as Promise<void> | null,
     // the agent the next plan-less claim hands out, when not the one it held
     agentNext: null as { id: number; name: string; avatar_url: null } | null,
-    // how many claims went through `plan_connect`; a leave that throws in the engine; what refuses the mark; what holds the plan read and the card read
+    // how many claims went through `session_connect`; a leave that throws in the engine; what refuses the mark; what holds the plan read and the card read
     leaveDeny: null as string | null,
     markRefusal: null as { status: number; body: any } | null,
     planReadHold: null as Promise<void> | null,
@@ -361,8 +364,8 @@ export function dashboard(
     // DX-5554: what DELETE /api/plan-sessions/me/agent (the release at session exit) answers: `{released}` by default (true while an agent is held), an
     // error status, the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock / never (`hangs`)
     release: {} as { status?: number; deny?: string; delayMs?: number; hangs?: boolean },
-    // DX-5549 / DX-5554: the MCP's agent gate. After a plan_connect answered that no team agent is free, every 50arms_api call but the two
-    // proposal routes answers that same block (AGENT_GATE_HALT) as an error result, until a plan_connect holds an agent
+    // DX-5549 / DX-5554: the MCP's agent gate. After a session_connect answered that no team agent is free, every 50arms_api call but the two
+    // proposal routes answers that same block (AGENT_GATE_HALT) as an error result, until a session_connect holds an agent
     agentGate: null as 'agent_needed' | 'agent_limit_reached' | 'agent_not_held' | null,
     // DX-4234: the context reads never answer (a hung dashboard), or answer after this many ms of the fake clock
     contextHangs: false,
@@ -573,7 +576,7 @@ export function dashboard(
         world.loseAgentAtMark = false
         world.agent = null
         world.agentGate = 'agent_not_held'
-        return reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call plan_connect to claim one.' }, 403)
+        return reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call session_connect to claim one.' }, 403)
       }
       if (world.cardAtMark !== null) {
         world.card = world.cardAtMark
@@ -618,17 +621,6 @@ export function dashboard(
       world.agent = world.agentNext ?? world.agent ?? { id: 6, name: 'Tendai', avatar_url: null }
       world.agentGate = null
       return reply({ state: 'agent_held', agent: world.agent, instruction: 'Use this name.' })
-    }
-    // the band's Disconnect of a held card: DELETE /api/plan-sessions/me/card?card_id=<id>, guarded on the card id (409 card_mismatch / session_holds_no_card), answering {session, leftCard}
-    if (method === 'DELETE' && path === '/api/plan-sessions/me/card') {
-      if (world.cardLeave === 'boom') return reply({ error: 'card boom' }, 500)
-      if (world.card === null) return reply({ error: 'session_holds_no_card', message: `Session ${SESSION_ID} holds no card, so there is nothing to leave.` }, 409)
-      if (world.card.id !== query?.card_id) return reply({ error: 'card_mismatch', message: `Session ${SESSION_ID} holds ${world.card.id}, not ${query?.card_id}; nothing was changed.` }, 409)
-      const leftCard = world.card
-      world.leaveOrder.push('card')
-      world.card = null
-      if (world.cardLeave === 'noLeftCard') return reply({ session: { sessionId: SESSION_ID, cardId: null } })
-      return reply({ session: { sessionId: SESSION_ID, cardId: null }, leftCard: { id: leftCard.id, title: leftCard.title } })
     }
     if (method === 'DELETE' && path === '/api/plan-sessions/me/ready') {
       const cleared = world.readyMark !== null || world.readyLoop !== null
@@ -905,7 +897,7 @@ export function dashboard(
       else if (e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
       else calls.push({ server: e.server, tool: e.tool, args: e.args })
       // the dashboard's own refusal for a session whose agent was released: a 403 envelope, not the MCP's error result
-      if (world.agentGate === 'agent_not_held') return { value: reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call plan_connect to claim one.' }, 403) }
+      if (world.agentGate === 'agent_not_held') return { value: reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call session_connect to claim one.' }, 403) }
       return { value: { content: [{ type: 'text', text: JSON.stringify(AGENT_GATE_HALT(world.agentGate)) }], isError: true } }
     }
     // DX-5593: the spawn claim, decided like 50 Arms does under its lock: refuse when the level is not on pace or the live count (the line's
@@ -1022,14 +1014,12 @@ export function dashboard(
       // DX-4233: a scripted wait answer is the engine's own (a refusal it makes before the server sees the call: not connected, not bound), so it
       // comes first, whatever the key's state
       if (e.tool === 'plan_events_wait' && server.script.length > 0) return planEventsWait(e.args)
-      // on a key the dashboard stopped accepting, card_connect answers a new approval request, as plan_connect does (the MCP's accessReply), never the halt
-      if (world.signedOut !== null && world.signedOut !== 'revoked' && e.tool === 'card_connect') return { value: text(APPROVAL_REQUIRED) }
-      // a revoked key stops EVERY tool, plan_connect included, and asks for nothing; only plan_connect with person_sign_in clears it and asks
-      if (world.signedOut === 'revoked' && e.tool === 'plan_connect' && e.args.person_sign_in === true) world.signedOut = 'signed-out'
-      if (world.signedOut === 'revoked' || (world.signedOut !== null && e.tool !== 'plan_connect')) {
+      // a revoked key stops EVERY tool, session_connect included, and asks for nothing; only session_connect with person_sign_in clears it and asks
+      if (world.signedOut === 'revoked' && e.tool === 'session_connect' && e.args.person_sign_in === true) world.signedOut = 'signed-out'
+      if (world.signedOut === 'revoked' || (world.signedOut !== null && e.tool !== 'session_connect')) {
         return { value: { content: [{ type: 'text', text: haltText() }], isError: true } }
       }
-      if (world.signedOut !== null && e.tool === 'plan_connect') {
+      if (world.signedOut !== null && e.tool === 'session_connect') {
         const dance = world.signIn
         dance.calls.push(e.args)
         // `waits`: the answer comes after the MCP's wait, as a still-pending request's does (a repeating caller must not spin)
@@ -1038,10 +1028,11 @@ export function dashboard(
         // approved: the key is stored, and the call goes on to connect the plan it was given (or answers signed_in)
         const approvedAnswer = () => {
           world.signedOut = null
-          if (e.args.plan_id === undefined) return { value: text({ state: 'signed_in', instruction: 'This session is signed in. Call `plan_connect` with `plan_id` to connect it to a plan.' }) }
-          world.planId = e.args.plan_id
+          if (e.args.target === undefined) return { value: text({ state: 'signed_in', instruction: 'This session is signed in. Call `session_connect` with `target` to connect it to a plan or a card.' }) }
           world.titleSeen = e.args.title
-          return { value: text({ ok: true, status: 200, body: { session: { planId: e.args.plan_id } } }) }
+          if (planNumberOf(e.args.target) === undefined) return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target } } }) }
+          world.planId = planNumberOf(e.args.target)
+          return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId } } }) }
         }
         if (dance.approved) return approvedAnswer()
         if (!dance.requested) {
@@ -1058,8 +1049,12 @@ export function dashboard(
         return { value: text(APPROVAL_PENDING) }
       }
       if (e.tool === 'plan_events_wait') return planEventsWait(e.args)
-      // CP-43: the model's card_connect leave and the plugin's request_permission, as the MCP answers them
-      if (e.tool === 'card_connect' && e.args.disconnect) {
+      // the real envelope (packages/platform-mcp jsonResult, the server's leave routes): pretty-printed JSON text, and a refusal is `ok: false`, never an error result
+      const envelope = (ok: boolean, status: number, body: unknown) => ({
+        value: { content: [{ type: 'text', text: JSON.stringify({ ok, status, body }, null, 2) }], isError: false },
+      })
+      // the leave of a held card, from the model or the band's Disconnect: `session_connect` with a card's id as `target` and `disconnect: true`, guarded on that id (409 card_mismatch / session_holds_no_card), answering {session, leftCard}
+      if (e.tool === 'session_connect' && e.args.disconnect && planNumberOf(e.args.target) === undefined) {
         if (world.leaveDeny !== null) return { deny: world.leaveDeny }
         world.cardLeaves++
         if (world.cardLeaveHold !== null) await world.cardLeaveHold
@@ -1068,9 +1063,14 @@ export function dashboard(
           answer.then?.()
           return { value: { content: [{ type: 'text', text: answer.text }], isError: answer.isError } }
         }
-        world.readySteps.push(`leave ${e.args.card_id}`)
+        if (world.cardLeave === 'boom') return envelope(false, 500, { error: 'card boom' })
+        if (world.card === null) return envelope(false, 409, { error: 'session_holds_no_card', message: `Session ${SESSION_ID} holds no card, so there is nothing to leave.` })
+        if (world.card.id !== e.args.target) return envelope(false, 409, { error: 'card_mismatch', message: `Session ${SESSION_ID} holds ${world.card.id}, not ${e.args.target}; nothing was changed.` })
+        const leftCard = world.card
+        world.leaveOrder.push('card')
         world.card = null
-        return { value: text({ ok: true, status: 200, body: { session: { sessionId: SESSION_ID, cardId: null }, leftCard: { id: e.args.card_id, title: 'x' } } }) }
+        if (world.cardLeave === 'noLeftCard') return envelope(true, 200, { session: { sessionId: SESSION_ID, cardId: null } })
+        return envelope(true, 200, { session: { sessionId: SESSION_ID, cardId: null }, leftCard: { id: leftCard.id, title: leftCard.title } })
       }
       if (e.tool === 'request_permission') {
         world.permissionAsks++
@@ -1078,25 +1078,20 @@ export function dashboard(
         if (world.permissionAskDeny !== null) return { deny: world.permissionAskDeny }
         return { value: text(world.permissionAskRefused === null ? APPROVAL_REQUIRED : { ok: false, status: 403, body: { error: world.permissionAskRefused } }) }
       }
-      if (e.tool === 'plan_connect' && e.args.disconnect) {
+      if (e.tool === 'session_connect' && e.args.disconnect) {
         if (world.leaveDeny !== null) return { deny: world.leaveDeny }
         if (world.planLeaveHold !== null) await world.planLeaveHold
         if (world.planLeaveAnswer !== null) return { value: { content: [{ type: 'text', text: world.planLeaveAnswer.text }], isError: world.planLeaveAnswer.isError } }
-        if (options.disconnect === 'rejected') return { deny: 'plan_connect is not available' }
+        if (options.disconnect === 'rejected') return { deny: 'session_connect is not available' }
         if (options.disconnectTakesMs) await clock.sleep(options.disconnectTakesMs)
-        // the real envelope (packages/platform-mcp jsonResult, the server's handleLeavePlan): pretty-printed
-        // JSON text, and a refusal is `ok: false`, never an error result
-        const envelope = (ok: boolean, status: number, body: unknown) => ({
-          value: { content: [{ type: 'text', text: JSON.stringify({ ok, status, body }, null, 2) }], isError: false },
-        })
         if (options.disconnect === 'mismatch') {
           world.planId = 24
           return envelope(false, 409, {
             error: 'plan_mismatch',
             session_id: SESSION_ID,
-            expected_plan_id: e.args.plan_id,
+            expected_plan_id: planNumberOf(e.args.target),
             actual_plan: { id: 24, name: 'Agent mode' },
-            message: `Session ${SESSION_ID} is on plan 24, not plan ${e.args.plan_id}; nothing was changed.`,
+            message: `Session ${SESSION_ID} is on plan 24, not plan ${planNumberOf(e.args.target)}; nothing was changed.`,
           })
         }
         if (options.disconnect === 'notConnected' || world.planId === null) {
@@ -1122,9 +1117,9 @@ export function dashboard(
           leftPlan: { id: left?.id, name: left?.name },
         })
       }
-      if (e.tool === 'plan_connect') {
+      if (e.tool === 'session_connect') {
         // a THROWN call (argument validation, an outdated MCP): the one error-result path
-        if (options.connectThrows) return { deny: 'plan_connect: the MCP server is outdated' }
+        if (options.connectThrows) return { deny: 'session_connect: the MCP server is outdated' }
         // refusals are `ok: false` envelopes (handleConnect / lockPlanForConnect / planArchivedError)
         if (options.connectFails) {
           return {
@@ -1150,17 +1145,21 @@ export function dashboard(
             },
           }
         }
-        // CP-43: a plan-less plan_connect claims a team agent and connects nothing (the agent gate's answers are the kit's `agentClaim`)
-        if (e.args.plan_id === undefined) {
+        // CP-43: a session_connect with no target claims a team agent and connects nothing (the agent gate's answers are the kit's `agentClaim`)
+        if (e.args.target === undefined) {
           world.claimsByConnect++
           if (world.agentClaim !== null) return { value: text(world.agentClaim) }
           world.agent = world.agentNext ?? world.agent ?? { id: 6, name: 'Tendai', avatar_url: null }
           world.agentGate = null
           return { value: text({ state: 'agent_held', agent: world.agent, instruction: 'Use this name.' }) }
         }
-        world.planId = e.args.plan_id
         world.titleSeen = e.args.title
-        return { value: text({ ok: true, status: 200, body: { session: { planId: e.args.plan_id } } }) }
+        if (planNumberOf(e.args.target) === undefined) {
+          world.card = { id: e.args.target, title: 'x' }
+          return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target } } }) }
+        }
+        world.planId = planNumberOf(e.args.target)
+        return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId } } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
       const apiHold = world.apiHolds.findIndex(h => h.method === e.args.method && h.path === e.args.path)
@@ -1624,7 +1623,7 @@ export const FOOTER_PAD = / /g
 export const footerText = async (ui: any): Promise<string | undefined> => (await ui.find({ key: 'footer-plan' }))?.text?.replace(FOOTER_PAD, '')
 export const pressFooter = async (ui: any) => ui.press({ key: 'footer-plan' })
 
-// DX-5605: the team agent the model's plan_connect answer carries (PLAN-51), and the band's label read back: the plan id is the link keyed
+// DX-5605: the team agent the model's session_connect answer carries (PLAN-51), and the band's label read back: the plan id is the link keyed
 // `open-plan`, the name the Text after it.
 export const AGENT_NAME = 'Katya'
 export async function bandLabelOf(ui: any): Promise<string> {
@@ -1662,11 +1661,14 @@ export async function needsYouBadgeOf(ui: any): Promise<string | undefined> {
 // DX-4630: the plugin opens no page itself: every call the fake dashboard host saw for the in-app browser's server, which stays empty
 export const browserCalls = (d: { calls: { server: string }[] }) => d.calls.filter(c => c.server === 'Claude_Browser')
 
-// The model's plan_connect as the host runs it (the engine has no implementation of its own): the dashboard connects the plan the call names,
+// The model's session_connect as the host runs it (the engine has no implementation of its own): the dashboard connects the plan the call names,
 // and the call answers. Registered before the test first uses `$`, like every hook.
 export function answerPlanConnect(on: On, d: { world: { planId: number | null } }) {
-  on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => {
-    if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
+  on('tool.call', { tool: toolName('session_connect') }, (_$: any, e: any, next: any) => {
+    const named = planNumberOf(e.target)
+    // a call naming a card is another answerer's (the test's own)
+    if (named === undefined && e.target !== undefined) return next(e)
+    if (named !== undefined) d.world.planId = named
     // the real answer's envelope (the server's handleConnect): the plan the session is on now
     const text = JSON.stringify({ ok: true, status: 200, body: { session: { planId: d.world.planId } } })
     return { result: {}, text, isError: false } as any

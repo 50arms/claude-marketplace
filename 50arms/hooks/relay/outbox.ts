@@ -12,7 +12,7 @@ import { isAckList, type RelayEvent } from './answer'
 // merged into a queued turn settles is NOT measured. Waiting for the promise kept every event in the outbox for hours and sent the whole backlog again at each
 // reload. The module instance that made the call still watches its outcome: a refusal (`drop`, or a throw) puts the event back at its place in the original
 // order (`seq`) and issues it again (`again`; its older cursor never moves the stored one back and is never polled from). The outbox is a module variable shared by successive runs
-// of one plan: a run that replaces a stuck one (the model's plan_connect, the stall watch) polls from the newest cursor still waiting here that has not
+// of one plan: a run that replaces a stuck one (the model's session_connect, the stall watch) polls from the newest cursor still waiting here that has not
 // been delivered, else from the stored one, so a delivered event is neither asked for again nor delivered twice.
 //
 // The poll's cursor ACKNOWLEDGES: the dashboard server drops every record at or below the cursor a call presents, so an event taken

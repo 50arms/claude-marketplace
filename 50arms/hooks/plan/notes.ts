@@ -8,7 +8,7 @@ import type { PermissionRequest } from '../../types'
 export function disconnectNote(d: { left: { ref: string; name: string } | null; agentFreed: boolean }): string {
   const what = d.left === null ? 'and freed its team agent' : `from ${d.left.ref} "${d.left.name}"${d.agentFreed ? ' and freed its team agent' : ''}`
   const holds = d.agentFreed ? 'on no plan or card and holds no team agent' : 'on no plan or card'
-  return `[50 Arms plan] The operator disconnected this session ${what} with the band's Disconnect button. This session is ${holds}; its next dashboard work needs plan_connect or card_connect again. Do not write to /api/plans/mine routes until it connects again.`
+  return `[50 Arms plan] The operator disconnected this session ${what} with the band's Disconnect button. This session is ${holds}; its next dashboard work needs session_connect again. Do not write to /api/plans/mine routes until it connects again.`
 }
 
 // the one toast a Disconnect shows: what was left (a plan or card id), else the team agent alone.
@@ -17,13 +17,13 @@ export const disconnectedToast = (left: { ref: string } | null, agentName: strin
 
 
 // the band's Sign in button signed this session in: the model did not press it, so it is told, as a disconnect
-// tells it. `planId` is the plan the sign-in asked to rejoin (null: none, so where it lands is the dashboard's to say); `connected`
+// tells it. `target` is the plan the sign-in asked to rejoin (`PLAN-n`; null: none, so where it lands is the dashboard's to say); `connected`
 // is false when that connect was refused.
-export function signInNote(planId: number | null, connected: boolean): string {
+export function signInNote(target: string | null, connected: boolean): string {
   const head = '[50 Arms plan] The operator signed this session in to the 50 Arms dashboard with the Sign in button. Its dashboard tools work again: retry any call that was refused as signed out.'
-  if (planId === null) return `${head} It asked to rejoin no plan: call plan_connect to see which plan, if any, it is on.`
-  if (!connected) return `${head} Reconnecting it to plan_id ${planId} was refused: call plan_connect to see which plan it is on.`
-  return `${head} It is back on plan_id ${planId}: call plan_connect with plan_id ${planId} yourself to read its briefing and start its events.`
+  if (target === null) return `${head} It asked to rejoin no plan: call session_connect to see which plan, if any, it is on.`
+  if (!connected) return `${head} Reconnecting it to ${target} was refused: call session_connect to see which plan it is on.`
+  return `${head} It is back on ${target}: call session_connect with target ${target} yourself to read its briefing and start its events.`
 }
 
 // the decision on one of the model's `request_permission` requests, told once in its chat: the MCP only frees
@@ -43,13 +43,13 @@ export function permissionDeniedNote(r: Asked): string {
 }
 
 export function permissionExpiredNote(r: Asked): string {
-  return `[50 Arms] Permission request ${r.code} (asked: ${askedList(r.permissions)}) expired before it was decided: this session's dashboard session or key ended. Reconnect the session (call plan_connect), then call request_permission again for ${askedList(r.permissions)}.`
+  return `[50 Arms] Permission request ${r.code} (asked: ${askedList(r.permissions)}) expired before it was decided: this session's dashboard session or key ended. Reconnect the session (call session_connect), then call request_permission again for ${askedList(r.permissions)}.`
 }
 
-// the outcome of a sign-in the model itself started (its `plan_connect` answered `approval_required`), told once in its
-// chat so the person never has to type "approved". `planId` is the plan its own call asked for.
-export function signInApprovedNote(code: string, planId: number | null): string {
-  const again = planId === null ? 'call plan_connect again now' : `call plan_connect again now with plan_id ${planId}`
+// the outcome of a sign-in the model itself started (its `session_connect` answered `approval_required`), told once in its
+// chat so the person never has to type "approved". `target` is what its own call asked to hold (`PLAN-n` or a card's id; null: none).
+export function signInApprovedNote(code: string, target: string | null): string {
+  const again = target === null ? 'call session_connect again now' : `call session_connect again now with target ${target}`
   return `[50 Arms] The person approved sign-in request ${code}: this session's dashboard key is stored and its tools work. Approved: ${again}.`
 }
 
@@ -58,5 +58,5 @@ export function signInDeniedNote(code: string): string {
 }
 
 export function signInExpiredNote(code: string): string {
-  return `[50 Arms] Sign-in request ${code} expired before it was decided: a renewed request is already open for the person, so wait for its outcome (or call plan_connect to see it).`
+  return `[50 Arms] Sign-in request ${code} expired before it was decided: a renewed request is already open for the person, so wait for its outcome (or call session_connect to see it).`
 }

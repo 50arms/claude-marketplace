@@ -16,31 +16,31 @@ export function mcpText(r: any): string {
   return (r?.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
 }
 
-// the plan a plan_connect answer says the session is on now: its `{ok: true, body: {session: {planId}}}` envelope (the tool's session is camelCase; GET /api/plan-sessions/me's own `session` is snake_case and is read in load.ts). Null for anything
-// else: a refusal, an approval request, a leave (`plan_id: null`), text that is no envelope.
+// the plan a session_connect answer says the session is on now: its `{ok: true, body: {session: {planId}}}` envelope (the tool's session is camelCase; GET /api/plan-sessions/me's own `session` is snake_case and is read in load.ts). Null for anything
+// else: a refusal, an approval request, a leave (`session: {planId: null}`), text that is no envelope.
 // the plan with its name (`session.planName`, '' when the answer has none): what the band names while the plugin's own
-// reads are refused by auto mode's classifier and the model's own successful plan_connect is all that is known of the plan.
+// reads are refused by auto mode's classifier and the model's own successful session_connect is all that is known of the plan.
 export function connectedPlanOf(outcome: ToolOutcome): { id: number; name: string } | null {
   const session = outcome.ok ? outcome.body?.session : undefined
   return typeof session?.planId === 'number' ? { id: session.planId, name: typeof session.planName === 'string' ? session.planName : '' } : null
 }
 
-// A tool's result as 50arms_api and plan_connect word it: JSON text `{ok, status, body}` (pretty-printed),
+// A tool's result as 50arms_api and session_connect word it: JSON text `{ok, status, body}` (pretty-printed),
 // where a server refusal is `ok: false` and is NEVER an error result. Only a thrown call is an error:
 // argument validation, an outdated MCP, a 5xx. So an `isError` result carries plain text, and anything
 // that is not an envelope is a failure here, never a success.
 // `replyFile`: the MCP sent 50arms_api's answer as a file (over its 100,000-character limit: `{ok, status, reply_file: {path, ...}}` and no `body`); `body` is then undefined until a reader reads that file.
 export type ToolOutcome = { ok: boolean; status: number; body: any; replyFile?: string }
 
-// An MCP tool result's envelope: api() and the band's plan_connect calls use it.
+// An MCP tool result's envelope: api() and the band's session_connect calls use it.
 export function toolOutcome(r: any): ToolOutcome {
   if (r === null || r === undefined) return { ok: false, status: 0, body: { error: 'the tool answered no result' } }
   return textOutcome(mcpText(r), r.isError === true)
 }
 
-// A connect tool's result (`plan_connect`, `card_connect`). On a key the dashboard stopped accepting, these two answer the MCP's access
+// The connect tool's result (`session_connect`). On a key the dashboard stopped accepting, it answers the MCP's access
 // request (its `accessReply`: `approval_required` or `approval_pending` with a link and code), never the envelope and never the signed-out
-// halt, so that answer reads here as signed out. Only from these two tools: `request_permission` answers the same shape for a
+// halt, so that answer reads here as signed out. Only from this tool: `request_permission` answers the same shape for a
 // permission on a key that works, so the shared parser below never reads an approval as signed out.
 export function connectToolOutcome(r: any): ToolOutcome {
   if (r !== null && r !== undefined && r.isError !== true && approvalRequestOf(mcpText(r), ['approval_required', 'approval_pending']) !== null) {
@@ -50,7 +50,7 @@ export function connectToolOutcome(r: any): ToolOutcome {
 }
 
 // THE one parser of that envelope, from a result's text (`isError`: the call threw): toolOutcome, connectedPlanOf, and the model's own
-// plan_connect result as its tool.call hook sees it (whether its leave or move happened) all read it here.
+// session_connect result as its tool.call hook sees it (whether its leave or move happened) all read it here.
 export function textOutcome(text: string, isError: boolean): ToolOutcome {
   if (isError) return { ok: false, status: 0, body: { error: text } }
   let parsed: any
@@ -84,8 +84,8 @@ export function isSignedOut(o: ToolOutcome): boolean {
 }
 
 // The agent gate. A session must hold a team agent before it reads a plan or a card, and two things say it holds none.
-// The MCP's own halt: once `plan_connect` answered that no agent can be signed in as, every other dashboard call answers that block as an
-// error result (`{state, instruction, ...}` as JSON, status 0) until a `plan_connect` holds one. And the dashboard's own 403 for a
+// The MCP's own halt: once `session_connect` answered that no agent can be signed in as, every other dashboard call answers that block as an
+// error result (`{state, instruction, ...}` as JSON, status 0) until a `session_connect` holds one. And the dashboard's own 403 for a
 // session whose agent was released (the session ended and came back): the envelope's body is `{error, state, instruction}`.
 // The state when the outcome is either, else null.
 export type AgentBlock = 'agent_needed' | 'agent_limit_reached' | 'agent_not_held'

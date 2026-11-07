@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// DX-4391: a signed-out session's plan_connect answers `approval_required` (the MCP server,
+// DX-4391: a signed-out session's session_connect answers `approval_required` (the MCP server,
 // DX-4390). The plugin draws the approval link and confirm code at once (DX-4630, no browser call); every other
 // answer (a normal connect, a refusal, a denied call) shows nothing.
 import { describe, expect } from 'claude-code/testing'
@@ -16,16 +16,16 @@ const pending = JSON.stringify({ state: 'approval_pending', approvalUrl: URL_A, 
 const connected = JSON.stringify({ ok: true, status: 200, body: { session: { planId: 23 } } })
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const CALL = { tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any
+const CALL = { tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23' } as any
 
-// DX-4548: the plugin waits on a request the model's plan_connect started, through the MCP: the stand-in MCP answers the same
+// DX-4548: the plugin waits on a request the model's session_connect started, through the MCP: the stand-in MCP answers the same
 // request as still pending, so the wait stays open and tells the model nothing.
 const stillPending = (d: any) => void (d.world.signIn.answer = { text: pending, waits: true })
 
 // The tool answers `text` the way the host reports an MCP result.
 function answering(on: any, texts: string[]) {
   let i = 0
-  on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: texts[Math.min(i++, texts.length - 1)], isError: false }) as any)
+  on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: texts[Math.min(i++, texts.length - 1)], isError: false }) as any)
 }
 
 describe('approvalRequestOf', () => {
@@ -40,7 +40,7 @@ describe('approvalRequestOf', () => {
   })
 })
 
-describe('plan_connect while signed out', () => {
+describe('session_connect while signed out', () => {
   // DX-4630: the link and code are shown the moment the request exists; no browser call is made for them, so a slow or refused
   // browser cannot delay or hide them.
   test('approval_required toasts the link and the confirm code with no browser call, whatever the browser would have done', async ($, on) => {
@@ -62,7 +62,7 @@ describe('plan_connect while signed out', () => {
     const d = dashboard(on, { signedOut: 'signed-out' })
     stillPending(d)
     const text = required(URL_A)
-    on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ ref: 7, result: { content: [{ type: 'text', text }] }, text }) as any)
+    on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ ref: 7, result: { content: [{ type: 'text', text }] }, text }) as any)
     await startSession($, d, 'desktop')
     d.calls.length = 0
     const ran = await $.tool.call(CALL)
@@ -126,7 +126,7 @@ describe('plan_connect while signed out', () => {
 
   for (const [name, text] of [
     ['a normal connect', connected],
-    ['text that is not JSON', 'plan_connect: bad arguments'],
+    ['text that is not JSON', 'session_connect: bad arguments'],
   ] as const) {
     test(`${name} opens nothing and shows no code`, async ($, on) => {
       const d = dashboard(on)
@@ -144,7 +144,7 @@ describe('plan_connect while signed out', () => {
 
   test('a denied call opens nothing', async ($, on) => {
     const d = dashboard(on)
-    on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ deny: 'plan_connect is not available' }) as any)
+    on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ deny: 'session_connect is not available' }) as any)
     await startSession($, d, 'desktop')
     d.calls.length = 0
     await $.tool.call(CALL)

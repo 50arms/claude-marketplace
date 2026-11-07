@@ -67,7 +67,7 @@ for (const surface of SURFACES) {
 
     test('after the server stopped the relay', async ($, on) => {
       const d = dashboard(on)
-      d.relay.server.stopped = { reason: 'relay_failed', detail: 'the relay cannot go on', fix: 'Connect this session to a plan with plan_connect' }
+      d.relay.server.stopped = { reason: 'relay_failed', detail: 'the relay cannot go on', fix: 'Connect this session to a plan with session_connect' }
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       expect(relayPhase(d)).toBe('stopped')

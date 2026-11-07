@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// DX-2985: the band's Disconnect button. plan_connect {plan_id, disconnect: true} takes the
+// DX-2985: the band's Disconnect button. session_connect {target, disconnect: true} takes the
 // session off its plan; the model is told in the same step; every refusal is shown, never swallowed.
 import { describe, expect } from 'claude-code/testing'
 
@@ -8,7 +8,7 @@ import { test, SURFACES, bandLabelOf, dashboard, expectRowCarries, startSession 
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
-const disconnectCalls = (d: any) => d.calls.filter((c: any) => c.tool === 'plan_connect' && c.args.disconnect)
+const disconnectCalls = (d: any) => d.calls.filter((c: any) => c.tool === 'session_connect' && c.args.disconnect)
 
 async function mounted($: any, d: any, surface: string) {
   await startSession($, d, surface)
@@ -32,7 +32,7 @@ for (const surface of SURFACES) {
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
 
-      expect(disconnectCalls(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'plan_connect', args: { plan_id: 23, disconnect: true } }])
+      expect(disconnectCalls(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'PLAN-23', disconnect: true } }])
       expect(d.toasts).toContain('Disconnected from PLAN-23')
       expect(await text(band)).toContain('50 Arms: not connected to a plan')
       expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('yellow')
@@ -111,11 +111,11 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { disconnect: 'rejected' })
       const band = await mounted($, d, surface)
       await band.press({ key: 'disconnect' })
-      expect(d.toasts.at(-1)).toMatch(/^Disconnect failed: .*plan_connect is not available/)
+      expect(d.toasts.at(-1)).toMatch(/^Disconnect failed: .*session_connect is not available/)
       expect(d.relay.told).toHaveLength(0)
     })
 
-    // CP-43: on a key the dashboard stopped accepting, plan_connect answers a new access request (the MCP's accessReply), never an envelope
+    // CP-43: on a key the dashboard stopped accepting, session_connect answers a new access request (the MCP's accessReply), never an envelope
     test('a key that lapsed: the person reads that the session signed out, never the raw request, and the model is told nothing', async ($, on) => {
       const d = dashboard(on)
       const band = await mounted($, d, surface)
@@ -127,16 +127,16 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toHaveLength(0)
     })
 
-    test('the model disconnecting (tool.call plan_connect) ends with the band showing not connected', async ($, on) => {
+    test('the model disconnecting (tool.call session_connect) ends with the band showing not connected', async ($, on) => {
       const d = dashboard(on)
-      on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => {
+      on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => {
         d.world.planId = null
         return { result: {}, text: 'disconnected', isError: false } as any
       })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       expect(await bandLabelOf(band)).toBe('PLAN-23 · 50 Arms plugin')
-      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23, disconnect: true } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23', disconnect: true } as any)
       await d.clock.settle()
       expect(await text(band)).toContain('50 Arms: not connected to a plan')
     })

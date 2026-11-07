@@ -25,11 +25,11 @@ After installing:
 
 1. Restart Claude Code. The plugin’s `dashboard` server starts with the session; there is no `.mcp.json` to write.
 2. Claude Code asks for the **Dashboard URL**. Leave it at its default, `https://app.50arms.ai`, unless you run your own dashboard. If you installed from a shell, it prints `1 userConfig option not yet set`: that is this option, and it works unset because the default applies. It is kept in your user settings and editable in `/config`.
-3. Ask Claude to connect a plan (or call `plan_connect`). The first call opens a sign-in approval; approve it on the dashboard and the session is signed in.
+3. Ask Claude to connect a plan (or call `session_connect`). The first call opens a sign-in approval; approve it on the dashboard and the session is signed in.
 
 ## The dashboard MCP server
 
-The plugin ships the `platform` MCP server (`50arms/scripts/dashboard-mcp-server.mjs`, declared in `plugin.json` `mcpServers`). Claude Code names it `plugin:50arms:platform` and lists its tools as `mcp__plugin_50arms_platform__*`. No board is set: name it per call (the `board` argument) or let `plan_connect` connect the session.
+The plugin ships the `platform` MCP server (`50arms/scripts/dashboard-mcp-server.mjs`, declared in `plugin.json` `mcpServers`). Claude Code names it `plugin:50arms:platform` and lists its tools as `mcp__plugin_50arms_platform__*`. No board is set: name it per call (the `board` argument) or let `session_connect` connect the session.
 
 The launcher runs the `@50arms/platform-mcp` version recorded in the plugin's data directory, installing it with node the first time. While the server runs, it checks npm for a newer version and installs it in the background, so a new server release runs from your next session start with no plugin update.
 

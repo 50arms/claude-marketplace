@@ -87,15 +87,13 @@ for (const surface of SURFACES) {
       expect(reminders(d)).toHaveLength(0)
     })
 
-    for (const tool of ['plan_connect', 'card_connect']) {
-      test(`${tool} starts the clock`, async ($, on) => {
-        const d = await started($, on)
-        await $.tool.call({ tool: `mcp__plugin_50arms_platform__${tool}` } as any)
-        await d.clock.advance(RECORD_AFTER_MS)
-        await endTurn($)
-        expect(reminders(d)).toHaveLength(1)
-      })
-    }
+    test('session_connect starts the clock', async ($, on) => {
+      const d = await started($, on)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect' } as any)
+      await d.clock.advance(RECORD_AFTER_MS)
+      await endTurn($)
+      expect(reminders(d)).toHaveLength(1)
+    })
 
 
     for (const path of ['/api/issues', '/api/plans']) {

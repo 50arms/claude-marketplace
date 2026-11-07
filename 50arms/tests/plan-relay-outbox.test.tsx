@@ -20,7 +20,7 @@ const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: fals
 const STALLED = (t: string) => t.startsWith('Plan events stalled')
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const answer = (body: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } })
-const MCP_PLAN_CONNECT = 'mcp__plugin_50arms_platform__plan_connect'
+const MCP_SESSION_CONNECT = 'mcp__plugin_50arms_platform__session_connect'
 // what the plugin keeps in $.state for an event it took and has not delivered (the `relayOutbox` atom)
 const PENDING = { planId: 23, cursor: 'c1', text: 'digest', urgent: false, acks: [] as unknown[] }
 // DX-5602: an event put back after the session refused it was delivered once at its call, so it carries `again` (issuing it again stores no cursor)
@@ -377,7 +377,7 @@ for (const surface of SURFACES) {
       // the re-issue after the first step is refused again: the old plan has two refusals in a row
       await d.clock.advance(BACKOFF_MS[0])
       expect(tries(d)).toBe(2)
-      await $.tool.call({ tool: MCP_PLAN_CONNECT, plan_id: 24 } as any)
+      await $.tool.call({ tool: MCP_SESSION_CONNECT, target: 'PLAN-24' } as any)
       await d.clock.settle()
       d.relay.push({ cursor: 'd1', text: 'plan 24 digest' })
       await d.clock.settle()
@@ -425,7 +425,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(prompts.held()).toBe(1)
       d.relay.server.script.push(() => answer({ events: [] }))
-      await $.tool.call({ tool: MCP_PLAN_CONNECT, plan_id: 24 } as any)
+      await $.tool.call({ tool: MCP_SESSION_CONNECT, target: 'PLAN-24' } as any)
       await d.clock.settle()
       // the engine refuses the prompt the old plan's event was handed over as, after the move
       d.relay.rejectPrompts('the session is closing')
@@ -550,7 +550,7 @@ for (const surface of SURFACES) {
       d.relay.acceptPrompts()
       // the new plan's first wait fails, then answers an empty list: a poll that works says the relay is streaming again
       d.relay.server.script.push(() => ({ deny: 'request timed out' }) as any, () => answer({ events: [] }))
-      await $.tool.call({ tool: MCP_PLAN_CONNECT, plan_id: 24 } as any)
+      await $.tool.call({ tool: MCP_SESSION_CONNECT, target: 'PLAN-24' } as any)
       await d.clock.settle()
       await d.clock.advance(BACKOFF_MS[0] + 60_000)
       expect(relayPhase(d)).not.toBe('retrying')

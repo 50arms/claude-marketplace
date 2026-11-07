@@ -12,10 +12,10 @@ test('an envelope is read as it is: a refusal is ok false with its status and bo
 })
 
 test('an error result carries plain text: it is a failure with that text', () => {
-  expect(toolOutcome({ content: [{ type: 'text', text: 'plan_connect: bad arguments' }], isError: true })).toEqual({
+  expect(toolOutcome({ content: [{ type: 'text', text: 'session_connect: bad arguments' }], isError: true })).toEqual({
     ok: false,
     status: 0,
-    body: { error: 'plan_connect: bad arguments' },
+    body: { error: 'session_connect: bad arguments' },
   })
 })
 

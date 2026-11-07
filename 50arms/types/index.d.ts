@@ -41,7 +41,7 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // `key-revoked`: a person revoked the session's key (`revokedBy`): the band says so and offers NO
 // Sign in, because a revoked agent must stop.
 // `blocked`: auto permission mode's classifier refused the plugin's own dashboard call: the band says so and names the
-// fix. `connected` is then the plan the model's own successful plan_connect named, when it did one; nothing else of the plan is known.
+// fix. `connected` is then the plan the model's own successful session_connect named, when it did one; nothing else of the plan is known.
 // `prefixes` are the issue prefixes (`ABC`, `XYZ`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
 // EVERY card on the connected plan, any status (`card_ids` on GET /api/plans/:id, unscoped by board, closed cards included). Empty when not connected.
 export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: string[] } | { state: 'error'; message: string }
@@ -60,7 +60,7 @@ export type PlanView = {
   agent: SessionAgent | null
   card: HeldCard | null
   // the session signed in but holds no team agent, and the MCP's agent gate refuses its dashboard reads until one is held:
-  // `agent_needed` (it proposes one), `agent_limit_reached` (the member's or team's cap on sessions signed in as an agent is full: the person ends another or raises the cap), `agent_not_held` (the agent was released; `plan_connect` claims one again); null otherwise. The view is then `ready`.
+  // `agent_needed` (it proposes one), `agent_limit_reached` (the member's or team's cap on sessions signed in as an agent is full: the person ends another or raises the cap), `agent_not_held` (the agent was released; `session_connect` claims one again); null otherwise. The view is then `ready`.
   agentBlock: 'agent_needed' | 'agent_limit_reached' | 'agent_not_held' | null
   // the repo of the session's ready mark, or of the ready loop the dashboard keeps for it (a session on a job has no mark); null when it is in neither. A new process takes the loop up from it.
   readyRepo: string | null
@@ -122,7 +122,7 @@ export type RelayState = { phase: 'off' | 'streaming' | 'retrying' | 'held' | 's
 // a session waiting in its team's list of ready agents and rejoining after each job (hooks/ready/loop.ts). `joining`: signing in and marking; `waiting`: marked; `working`: on a job, or waiting for 50 Arms to
 // ask for and release the clear after it; `resetting`: clearing. `rejoining`: the next mark follows a clear. `permissionId`: the loop's own permission request, whose decision only the loop hears. `told`: the last
 // failure shown, so a failure that repeats every minute is shown once. `agentName`: the agent the row last showed, to tell a model on work when a claim hands another. `claimAsked`: `/50arms:ready` was just
-// run, the one thing that may call `plan_connect` when the MCP's own gate is closed. When a job has ended is the dashboard's to say (its `ready_loop`), never the plugin's.
+// run, the one thing that may call `session_connect` when the MCP's own gate is closed. When a job has ended is the dashboard's to say (its `ready_loop`), never the plugin's.
 // a job of the loop as the dashboard names it (`ready_loop.job`)
 export type ReadyJob = { kind: 'plan'; id: number } | { kind: 'card'; id: string }
 export type ReadyLoop = { phase: 'joining' | 'waiting' | 'working' | 'resetting'; repo: string | null; rejoining: boolean; signInAsked: boolean; permissionId: string | null; told: string | null; agentName: string | null; claimAsked: boolean }
@@ -176,11 +176,11 @@ declare module 'claude-code' {
       dismissed: boolean
       // keys of the writes under way (config busyKey): one per connect, disconnect or sign-in
       busy: string[]
-      // The session's title as the app last reported it, passed to `plan_connect`.
+      // The session's title as the app last reported it, passed to `session_connect`.
       title: string | null
       // the sign-in request waiting for the person (its approval link and confirm code), drawn by the band; null when none.
       signInRequest: { url: string; code: string } | null
-      // the plan the model's own successful plan_connect named, for the blocked view
+      // the plan the model's own successful session_connect named, for the blocked view
       modelPlan: { id: number; name: string } | null
       // the model's undecided permission requests, oldest first.
       permissionRequests: PermissionRequest[]

@@ -37,12 +37,12 @@ for (const surface of SURFACES) {
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[50 Arms plan event] one'])
     })
 
-    test("T2: a first plan load that never settles, then the model's plan_connect: the relay starts", async ($, on) => {
+    test("T2: a first plan load that never settles, then the model's session_connect: the relay starts", async ($, on) => {
       const d = dashboard(on, { hangFirstLoad: true, connected: false })
       answerPlanConnect(on, d)
       await startSession($, d, surface)
       await d.clock.advance(17_000)
-      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23' } as any)
       await d.clock.advance(60_000)
       expect(d.relay.calls).toEqual([FIRST_WAIT])
     })
@@ -73,12 +73,12 @@ for (const surface of SURFACES) {
       expect(d.relay.delivered.map(x => x.text)).toEqual(['[50 Arms plan event] after the bind'])
     })
 
-    test('a plan_connect answer that connected a plan starts its relay without waiting for the view', async ($, on) => {
+    test('a session_connect answer that connected a plan starts its relay without waiting for the view', async ($, on) => {
       const d = dashboard(on, { connected: false })
       answerPlanConnect(on, d)
       await startSession($, d, surface)
       d.holdApi(3_600_000)
-      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 24 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-24' } as any)
       await d.clock.advance(1_000)
       expect(d.relay.calls.filter(c => c.plan_id !== null)).toEqual([{ plan_id: 24, cursor: null, timeout_ms: 20_000 }])
     })
@@ -237,7 +237,7 @@ for (const surface of SURFACES) {
       d.world.tools = 'old'
       notConnected(d, 3)
       await startSession($, d, surface)
-      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23' } as any)
       await d.clock.advance(2_000)
       d.world.tools = 'full'
       await d.clock.advance(60_000)
@@ -391,7 +391,7 @@ for (const surface of SURFACES) {
   })
 }
 
-describe('the plan a plan_connect answer connected', () => {
+describe('the plan a session_connect answer connected', () => {
   const answer = (value: unknown) => textOutcome(JSON.stringify(value), false)
   test('is the plan id of an ok envelope', () => {
     expect(connectedPlanOf(answer({ ok: true, status: 200, body: { session: { planId: 24 }, naming: { status: 'ok' } } }))?.id ?? null).toBe(24)

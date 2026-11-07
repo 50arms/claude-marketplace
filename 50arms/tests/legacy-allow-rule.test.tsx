@@ -23,7 +23,7 @@ describe('CP-70 the old dashboard allow rule covers the platform tools (temporar
   test('the bare old server rule and the old rule for that very tool allow it; the old rule for another tool does not', async () => {
     expect((await check(NEW, [settings({ allow: ['mcp__plugin_50arms_dashboard'] })])).decision).toBe('allow')
     expect((await check(NEW, [settings({ allow: ['mcp__plugin_50arms_dashboard__50arms_api'] })])).decision).toBe('allow')
-    expect((await check(NEW, [settings({ allow: ['mcp__plugin_50arms_dashboard__plan_connect'] })])).reason).toBe('engine')
+    expect((await check(NEW, [settings({ allow: ['mcp__plugin_50arms_dashboard__session_connect'] })])).reason).toBe('engine')
   })
 
   test('the real old tool names (what 0.17.71 showed) cover the tools under their new names, and only theirs', async () => {
@@ -51,7 +51,7 @@ describe('CP-70 the old dashboard allow rule covers the platform tools (temporar
       expect((await check(NEW, [settings({ allow: [OLD_ALL] }), settings({ deny: [rule] })])).reason).toBe('engine')
       expect((await check(NEW, [settings({ allow: [OLD_ALL], ask: [rule] })])).reason).toBe('engine')
     }
-    expect((await check(NEW, [settings({ allow: [OLD_ALL], deny: ['mcp__plugin_50arms_platform__plan_connect'] })])).decision).toBe('allow')
+    expect((await check(NEW, [settings({ allow: [OLD_ALL], deny: ['mcp__plugin_50arms_platform__session_connect'] })])).decision).toBe('allow')
   })
 
   test("the engine's own deny and an organization ask ceiling stand", async () => {

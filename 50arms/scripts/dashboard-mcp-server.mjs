@@ -27,7 +27,7 @@
 // names the dashboard. With none, a DANXBOT_DASHBOARD_URL in the shell or a user setting is REFUSED (it would move every session
 // at once), and the plugin's `userConfig.dashboard_url` (passed as DANXBOT_PLUGIN_DASHBOARD_URL; its default is the hosted
 // dashboard) is used. DANX_REPO_NAME / DANXBOT_BOARD_NAME stay unset: the session names its board per call (the `board` argument)
-// or through `plan_connect`.
+// or through `session_connect`.
 //
 // The ONE dashboard server: no connected repo declares a dashboard server of its own any more, so Claude
 // Code lists exactly this one, named `plugin:50arms:platform`, in every folder of an operator session (a 50 Arms-dispatched agent's

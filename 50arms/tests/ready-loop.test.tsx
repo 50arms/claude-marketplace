@@ -124,7 +124,7 @@ describe('reading a folder repo, a session row and a clear file', () => {
   })
 })
 
-describe('a plan-less plan_connect that holds a key', () => {
+describe('a plan-less session_connect that holds a key', () => {
   const answer = (body: object) => ({ content: [{ type: 'text', text: JSON.stringify(body) }] })
 
   test('holding its team agent is signed in, never a stopped sign-in', () => {
@@ -734,7 +734,7 @@ describe('the ready-agent loop', () => {
       expect(d.world.readyMark).toBe(REPO)
       expect(d.toasts).toContain(readyRejoined(REPO))
       // the rejoin left the card: the plugin made no leave of its own
-      expect(d.calls.filter((c: any) => c.tool === 'card_connect')).toEqual([])
+      expect(d.calls.filter((c: any) => c.tool === 'session_connect')).toEqual([])
       // the MCP has not caught up yet, so the file still names the same release: it is run once
       await tick(d)
       await turnEnds($, d)
@@ -781,7 +781,7 @@ describe('the ready-agent loop', () => {
       await turnEnds($, d)
       expect(d.world.readySteps).toEqual(['clear', 'leave 23', `mark ${REPO}`])
       expect(d.world.planId).toBe(null)
-      expect(d.calls.filter((c: any) => c.tool === 'plan_connect' && c.args?.disconnect === true)).toEqual([])
+      expect(d.calls.filter((c: any) => c.tool === 'session_connect' && c.args?.disconnect === true)).toEqual([])
     })
 
     // What claude.exe 2.1.317 does around a /clear (measured with a probe module): `session.end` (reason `clear`) still reads the ending conversation's $.state, then the whole of it is
@@ -1838,7 +1838,7 @@ describe('the ready-agent loop', () => {
       d.world.agentClaim = { state: 'agent_limit_reached', instruction: 'Ask a person.' }
     }
 
-    test('the first /50arms:ready with the gate already closed claims through plan_connect, once', async ($, on) => {
+    test('the first /50arms:ready with the gate already closed claims through session_connect, once', async ($, on) => {
       const d = await started($, on)
       refused(d)
       await ready($, d)
@@ -1853,7 +1853,7 @@ describe('the ready-agent loop', () => {
       expect(d.world.readyMark).toBe(REPO)
     })
 
-    test('six hours with nobody present call plan_connect not once, and a freed agent is not taken: the key lapses as any other', async ($, on) => {
+    test('six hours with nobody present call session_connect not once, and a freed agent is not taken: the key lapses as any other', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       refused(d)
@@ -2173,7 +2173,7 @@ describe('the ready-agent loop', () => {
       })
     }
 
-    test('a process that takes up the loop calls no plan_connect by itself: a timer look with the gate closed only says so', async ($, on) => {
+    test('a process that takes up the loop calls no session_connect by itself: a timer look with the gate closed only says so', async ($, on) => {
       const d = await restarted($, on, d => void (d.world.readyMark = REPO))
       expect(d.toasts).toContain(readyAdopted(REPO))
       d.world.agent = null

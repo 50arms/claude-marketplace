@@ -335,7 +335,7 @@ describe('the model is told the decision', () => {
       expect(told).toHaveLength(1)
       expect(told[0]).toContain('CODE1')
       expect(told[0]).toContain('expired')
-      expect(told[0]).toContain('plan_connect')
+      expect(told[0]).toContain('session_connect')
       expect(told[0]).toContain('request_permission again for team.members.view')
     })
   }

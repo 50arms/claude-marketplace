@@ -1,7 +1,7 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4423: a session with no dashboard key (lapsed, never approved; a key a person revoked is its own view, DX-4418). The dashboard MCP answers every tool but
-// plan_connect with an error result written for the agent; the band and footer must say "50 Arms: signed out" in the
-// person's words with a Sign in button, and Sign in must run the request-and-approve dance through plan_connect.
+// session_connect with an error result written for the agent; the band and footer must say "50 Arms: signed out" in the
+// person's words with a Sign in button, and Sign in must run the request-and-approve dance through session_connect.
 import { describe, expect } from 'claude-code/testing'
 
 import { loadPlan } from '../hooks/plan/load'
@@ -16,15 +16,15 @@ const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' ')
 const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => b.text)
 // the server's agent-facing wording: none of it may reach the person, in any drawing or toast
-const AGENT_TEXT = /plan_connect|Not signed in|user approves|request access|lapsed|no longer accepts|STOP ALL WORK|Commit your work|agent-finalize/i
+const AGENT_TEXT = /session_connect|Not signed in|user approves|request access|lapsed|no longer accepts|STOP ALL WORK|Commit your work|agent-finalize/i
 // DX-4530: the toasts the person reads; the model's own rows are d.relay.told. DX-4880: a sign-in's outcome reaches the model as a
 // waking prompt (`woken`), never a row
 const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('Could not tell the model'))
-const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:platform' && c.tool === 'plan_connect')
+const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:platform' && c.tool === 'session_connect')
 // DX-4630: EVERY Claude_Browser call, so a sign-in that touched the browser in any way (tabs_context, tabs_create, ...) fails
 const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
-// the model's own plan_connect call, answering the same approval request the dashboard's world gives the Sign in press
-const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
+// the model's own session_connect call, answering the same approval request the dashboard's world gives the Sign in press
+const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 const answer = (value: unknown, isError = false) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError })
 
 describe('classification: the signed-out answer is its own state, not an error', () => {
@@ -35,13 +35,13 @@ describe('classification: the signed-out answer is its own state, not an error',
     expect(isSignedOut(halt(KEY_LAPSED_HALT))).toBe(true)
     // a key a person revoked is the stop halt, never signed out: it does not carry the sign-in sentence
     expect(isSignedOut(halt(KEY_REVOKED_HALT))).toBe(false)
-    expect(isSignedOut(halt('plan_connect: bad arguments'))).toBe(false)
+    expect(isSignedOut(halt('session_connect: bad arguments'))).toBe(false)
     expect(isSignedOut({ ok: false, status: 500, body: { error: SIGN_IN_HALT } })).toBe(false)
     expect(isSignedOut({ ok: true, status: 200, body: { error: SIGN_IN_HALT } })).toBe(false)
     expect(isSignedOut({ ok: false, status: 0, body: undefined })).toBe(false)
-    // only the server's own sentence: another service's "not signed in", or a bare mention of plan_connect, is a plain failure
+    // only the server's own sentence: another service's "not signed in", or a bare mention of session_connect, is a plain failure
     expect(isSignedOut(halt('Not signed in to Slack'))).toBe(false)
-    expect(isSignedOut(halt('Call `plan_connect` with a plan id'))).toBe(false)
+    expect(isSignedOut(halt('Call `session_connect` with a plan id'))).toBe(false)
   })
 
   test('the first call, a later call, and the revoked wording each end the load as signed-out', async () => {
@@ -74,7 +74,7 @@ describe('a key a person revoked (DX-4418): the stop halt of MCP 0.1.225', () =>
 
   test('sign-in and revoked-key detection do not depend on the product name the MCP package prints', () => {
     for (const name of ['danxbot', '50 Arms']) {
-      expect(isSignedOut({ ok: false, status: 0, body: { error: `Not signed in to the ${name} dashboard. Call plan_connect.` } } as any)).toBe(true)
+      expect(isSignedOut({ ok: false, status: 0, body: { error: `Not signed in to the ${name} dashboard. Call session_connect.` } } as any)).toBe(true)
       expect(keyRevokedBy(`STOP ALL WORK NOW. dana revoked your access to the ${name} dashboard at 2026-10-04T07:00:00.000Z.
 
 Commit your work.`)).toBe('dana')
@@ -117,7 +117,7 @@ Commit your work.`)).toBe('dana')
   })
 })
 
-describe('what one plan_connect answer means to Sign in', () => {
+describe('what one session_connect answer means to Sign in', () => {
   test("each answer of the server maps to one step, and the words are never the server's", () => {
     expect(signInStep(answer(APPROVAL_REQUIRED))).toEqual({ kind: 'waiting', request: { url: APPROVAL_URL, code: CONFIRM_CODE } })
     // a waiting call names the request it waits on; one that names none is a stop (DX-4548: the wait has no round limit, so it must not repeat)
@@ -140,13 +140,13 @@ describe('what one plan_connect answer means to Sign in', () => {
 // DX-4530: the prompt the model reads (DX-4880: a waking prompt, not a row) once the Sign in button signed its session in (it did not press it, so it is told)
 describe('signInNote', () => {
   test('back on the plan it was on, on no plan, or signed in with the plan connect refused', () => {
-    expect(signInNote(23, true)).toContain('call plan_connect with plan_id 23')
-    expect(signInNote(null, true)).toContain('call plan_connect to see which plan')
-    const refused = signInNote(23, false)
+    expect(signInNote('PLAN-23', true)).toContain('call session_connect with target PLAN-23')
+    expect(signInNote(null, true)).toContain('call session_connect to see which plan')
+    const refused = signInNote('PLAN-23', false)
     expect(refused).toContain('signed this session in')
-    expect(refused).toContain('plan_id 23 was refused')
-    expect(refused).not.toContain('call plan_connect with plan_id 23 yourself to read its briefing')
-    for (const note of [signInNote(23, true), signInNote(null, true), refused]) expect(note).toMatch(/retry/i)
+    expect(refused).toContain('PLAN-23 was refused')
+    expect(refused).not.toContain('call session_connect with target PLAN-23 yourself to read its briefing')
+    for (const note of [signInNote('PLAN-23', true), signInNote(null, true), refused]) expect(note).toMatch(/retry/i)
   })
 })
 
@@ -186,7 +186,7 @@ for (const surface of SURFACES) {
       expect(d.toasts.join(' ')).not.toMatch(AGENT_TEXT)
     })
 
-    test('the plugin never calls plan_connect for a revoked session, however long it polls', async ($, on) => {
+    test('the plugin never calls session_connect for a revoked session, however long it polls', async ($, on) => {
       const d = dashboard(on, { signedOut: 'revoked' })
       await startSession($, d, surface)
       for (let i = 0; i < 5; i++) await forceRefresh($, d)
@@ -248,7 +248,7 @@ for (const surface of SURFACES) {
       expect(await texts(band)).toContain('50 Arms: signed out')
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
-      expect(connectCalls(d)[0]!.args).toEqual({ plan_id: 23, title: 'PLAN-23: 50 Arms plugin' })
+      expect(connectCalls(d)[0]!.args).toEqual({ target: 'PLAN-23', title: 'PLAN-23: 50 Arms plugin' })
       expect(connectCalls(d).every((c: any) => c.args.disconnect === undefined)).toBe(true)
       // DX-4530: approved: the model is told, once, that it is signed in and back on the plan it was on
       d.world.signIn.approved = true
@@ -258,7 +258,7 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toEqual([])
       expect(prompts).toHaveLength(1)
       expect(prompts[0]).toContain('signed this session in')
-      expect(prompts[0]).toContain('call plan_connect with plan_id 23')
+      expect(prompts[0]).toContain('call session_connect with target PLAN-23')
     })
 
     test('a failed load before the revoke does not make the session forget its plan', async ($, on) => {
@@ -272,7 +272,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
-      expect(connectCalls(d)[0]!.args).toEqual({ plan_id: 23 })
+      expect(connectCalls(d)[0]!.args).toEqual({ target: 'PLAN-23' })
     })
 
     // DX-4630: the link and code are drawn the moment the request exists, whatever the browser does: a refused or slow browser
@@ -302,7 +302,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       d.calls.length = 0
-      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23' } as any)
       await d.clock.settle()
       expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       expect(approvalToasts(d)).toHaveLength(1)
@@ -377,8 +377,8 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toEqual([])
       expect(prompts).toHaveLength(1)
       expect(prompts[0]).toContain('signed this session in')
-      expect(prompts[0]).toContain('call plan_connect to see which plan')
-      expect(prompts[0]).not.toContain('plan_id')
+      expect(prompts[0]).toContain('call session_connect to see which plan')
+      expect(prompts[0]).not.toContain('target')
     })
 
     test('signed in, but the plan connect refused: the model is told it is signed in and that the plan was refused', async ($, on) => {
@@ -391,17 +391,17 @@ for (const surface of SURFACES) {
       d.world.signIn.answer = { text: JSON.stringify({ ok: false, status: 409, body: { error: 'plan_archived', message: 'PLAN-23 is archived.' } }) }
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
-      expect(connectCalls(d)[0]!.args.plan_id).toBe(23)
+      expect(connectCalls(d)[0]!.args.target).toBe('PLAN-23')
       expect(d.toasts).toContain('Signed in, but the plan connect was refused: 409 PLAN-23 is archived.')
       const prompts = woken(d)
       expect(d.relay.told).toEqual([])
       expect(prompts).toHaveLength(1)
       expect(prompts[0]).toContain('signed this session in')
-      expect(prompts[0]).toContain('plan_id 23 was refused')
+      expect(prompts[0]).toContain('PLAN-23 was refused')
     })
 
     for (const [name, value, expected] of [
-      ['denied', { state: 'denied', instruction: 'The user denied the request. Do not retry unless they ask; a new `plan_connect` makes a new request.' }, 'Sign in was denied.'],
+      ['denied', { state: 'denied', instruction: 'The user denied the request. Do not retry unless they ask; a new `session_connect` makes a new request.' }, 'Sign in was denied.'],
       ['rate limited', { state: 'rate_limited', retryAfterSeconds: 30, error: 'too many access requests from this address' }, 'Too many sign-in requests from this machine: wait a minute, then press Sign in again.'],
     ] as const) {
       test(`${name}: one toast in the person's words, no retry, and the signed-out view stays`, async ($, on) => {

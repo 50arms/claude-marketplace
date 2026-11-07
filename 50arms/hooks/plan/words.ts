@@ -29,7 +29,7 @@ export type TitleActivity = { subAgents: boolean; turnRunning: boolean; slotRefu
 // every mark as any title may hold it, the selector or not, repeated or not, in any order (two plugin versions marking one title in turn stacked two)
 const ANY_TITLE_MARK = /^(?:(?:✋️?|⏸️?|🔨️?|⚠️?|⏳️?|🟢|🔴)\s*)+/u
 
-// the title without any leading mark: what the plugin keeps and hands to plan_connect, since the marks are display only
+// the title without any leading mark: what the plugin keeps and hands to session_connect, since the marks are display only
 export function unmarkedTitle(title: string): string {
   return title.replace(ANY_TITLE_MARK, '')
 }
@@ -107,7 +107,7 @@ const NAME_SEP = ' · '
 const AGENT_BLOCK_LABEL: Record<NonNullable<PlanView['agentBlock']>, string> = {
   agent_needed: 'waiting for a team agent',
   agent_limit_reached: 'agent session limit reached',
-  agent_not_held: 'no team agent held (plan_connect claims one)',
+  agent_not_held: 'no team agent held (session_connect claims one)',
 }
 const NOTHING_HELD = 'not connected to a plan or card'
 

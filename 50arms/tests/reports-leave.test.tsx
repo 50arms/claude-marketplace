@@ -1,12 +1,12 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4235 (comment 12426): before the session leaves its plan or moves to another, every close the reports owe (a running sub-agent's
 // finish, an open background shell's end) is posted first: after the leave the dashboard takes no report from the session, and a row left
-// running is the stuck-row bug of comment 10065. Every leave the module takes part in: the band's Disconnect and the model's plan_connect leave or move. Bounded so a dead dashboard never holds the leave; a failure is one toast.
+// running is the stuck-row bug of comment 10065. Every leave the module takes part in: the band's Disconnect and the model's session_connect leave or move. Bounded so a dead dashboard never holds the leave; a failure is one toast.
 import { describe, expect } from 'claude-code/testing'
 
 import { toolName } from '../hooks/plan/config'
 import { LEAVE_CLOSE_DEADLINE_MS, agentRow, shellRow } from '../hooks/reports/activity'
-import { test, SURFACES, answerReportEvents, dashboard, finishes, startSession, takeLoadPauseReads } from './plan-kit'
+import { test, SURFACES, answerReportEvents, dashboard, finishes, planNumberOf, startSession, takeLoadPauseReads } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
@@ -15,20 +15,20 @@ const CLOSE = 'report POST /api/plan-sessions/me/activity'
 
 for (const surface of SURFACES) {
   describe(`the closes owed before a leave on ${surface}`, () => {
-    // A connected session with a running sub-agent and an open background shell. `planConnect` answers the model's own plan_connect
+    // A connected session with a running sub-agent and an open background shell. `planConnect` answers the model's own session_connect
     // (the engine has none of its own in a test) and records where it came in the sequence.
-    // `model`: how the model's own plan_connect answers: as the dashboard would (default), a refusal (`ok: false`, the session stays where
+    // `model`: how the model's own session_connect answers: as the dashboard would (default), a refusal (`ok: false`, the session stays where
     // it is), or a thrown call.
     async function working($: any, on: any, options: Parameters<typeof dashboard>[1] = {}, model: 'answers' | 'refuses' | 'throws' = 'answers') {
       answerReportEvents(on)
       on('tool.call', { tool: 'Bash' }, () => BACKGROUNDED as any)
       const d = dashboard(on, options)
-      on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => {
-        d.sequence.push('tool plan_connect')
-        if (model === 'throws') throw new Error('plan_connect broke')
+      on('tool.call', { tool: toolName('session_connect') }, (_$: any, e: any) => {
+        d.sequence.push('tool session_connect')
+        if (model === 'throws') throw new Error('session_connect broke')
         if (model === 'refuses') return { result: {}, text: JSON.stringify({ ok: false, status: 409, body: { error: 'plan_mismatch' } }), isError: false } as any
         if (e.disconnect === true) d.world.planId = null
-        else if (typeof e.plan_id === 'number') d.world.planId = e.plan_id
+        else if (planNumberOf(e.target) !== undefined) d.world.planId = planNumberOf(e.target) ?? null
         return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { planId: d.world.planId } } }), isError: false } as any
       })
       await startSession($, d, surface)
@@ -45,24 +45,24 @@ for (const surface of SURFACES) {
       const at = d.clock.now()
       await (await band($)).press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.sequence).toEqual([CLOSE, 'tool plan_connect', 'tool plan_events_wait'])
+      expect(d.sequence).toEqual([CLOSE, 'tool session_connect', 'tool plan_events_wait'])
       expect(finishes(d)).toEqual([agentRow('agent-a1', null, at, at), shellRow('b1', null, at, at)])
       await $.turn.complete({ ...TURN, agentId: 'a1' })
       await d.clock.settle()
       expect(finishes(d)).toHaveLength(2)
     })
 
-    test("the model's plan_connect leave, and its move to another plan, post the closes before the call; a call to the same plan closes nothing", async ($, on) => {
+    test("the model's session_connect leave, and its move to another plan, post the closes before the call; a call to the same plan closes nothing", async ($, on) => {
       const d = await working($, on)
-      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23 } as any)
+      await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-23' } as any)
       await d.clock.settle()
       // CP-8: the plan load after a connect reads the pause for the title's mark; that read is not what this test counts
       takeLoadPauseReads(d)
-      expect(d.sequence).toEqual(['tool plan_connect'])
-      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 24 } as any)
+      expect(d.sequence).toEqual(['tool session_connect'])
+      await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-24' } as any)
       await d.clock.settle()
       takeLoadPauseReads(d)
-      expect(d.sequence.slice(1, 3)).toEqual([CLOSE, 'tool plan_connect'])
+      expect(d.sequence.slice(1, 3)).toEqual([CLOSE, 'tool session_connect'])
       expect(finishes(d).map(r => r.activityId)).toEqual(['agent-a1', 'b1'])
       // DX-4982: the move happened (the answer's session is on plan 24): no "did not happen" toast, and nothing owed again
       expect(d.toasts.filter(t => /did not happen/.test(t))).toEqual([])
@@ -71,11 +71,11 @@ for (const surface of SURFACES) {
       expect(finishes(d)).toHaveLength(2)
     })
 
-    test("the model's plan_connect disconnect posts the closes before the call", async ($, on) => {
+    test("the model's session_connect disconnect posts the closes before the call", async ($, on) => {
       const d = await working($, on)
-      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any)
+      await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-23', disconnect: true } as any)
       await d.clock.settle()
-      expect(d.sequence.slice(0, 2)).toEqual([CLOSE, 'tool plan_connect'])
+      expect(d.sequence.slice(0, 2)).toEqual([CLOSE, 'tool session_connect'])
       expect(finishes(d).map(r => r.activityId)).toEqual(['agent-a1', 'b1'])
     })
 
@@ -107,9 +107,9 @@ for (const surface of SURFACES) {
       expect(finishes(d).slice(before)).toHaveLength(2)
     })
 
-    test("the model's plan_connect leave the dashboard refuses: the same toast, and nothing more is posted", async ($, on) => {
+    test("the model's session_connect leave the dashboard refuses: the same toast, and nothing more is posted", async ($, on) => {
       const d = await working($, on, {}, 'refuses')
-      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any)
+      await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-23', disconnect: true } as any)
       await d.clock.settle()
       expect(d.toasts).toContain("50 Arms: leaving the plan did not happen, but its 2 running activities were already reported finished: the dashboard keeps them finished while they run")
       await $.turn.complete({ ...TURN, agentId: 'a1' })
@@ -117,11 +117,11 @@ for (const surface of SURFACES) {
       expect(finishes(d)).toHaveLength(2)
     })
 
-    for (const args of [{ plan_id: 23, disconnect: true }, { plan_id: 24 }]) {
-      test(`a sub-agent's end racing the model's plan_connect ${JSON.stringify(args)} is not posted twice: the memory is cleared before the closes go out`, async ($, on) => {
+    for (const args of [{ target: 'PLAN-23', disconnect: true }, { target: 'PLAN-24' }]) {
+      test(`a sub-agent's end racing the model's session_connect ${JSON.stringify(args)} is not posted twice: the memory is cleared before the closes go out`, async ($, on) => {
         const d = await working($, on)
         d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { delayMs: 1_000 }
-        const leaving = $.tool.call({ tool: toolName('plan_connect'), ...args } as any)
+        const leaving = $.tool.call({ tool: toolName('session_connect'), ...args } as any)
         await d.clock.settle()
         await $.turn.complete({ ...TURN, agentId: 'a1' })
         await d.clock.advance(1_000)
@@ -133,16 +133,16 @@ for (const surface of SURFACES) {
 
     test("the model's refused move to another plan: the same toast, and the closes it took stay taken", async ($, on) => {
       const d = await working($, on, {}, 'refuses')
-      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 24 } as any)
+      await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-24' } as any)
       await d.clock.settle()
       expect(d.toasts).toContain("50 Arms: moving to plan 24 did not happen, but its 2 running activities were already reported finished: the dashboard keeps them finished while they run")
       expect(finishes(d)).toHaveLength(2)
     })
 
-    test("the model's plan_connect that rejects gives the closes back too (here they failed, so they are owed again), and the rejection still reaches the caller", async ($, on) => {
+    test("the model's session_connect that rejects gives the closes back too (here they failed, so they are owed again), and the rejection still reaches the caller", async ($, on) => {
       const d = await working($, on, {}, 'throws')
       d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 500, body: { error: 'activity boom' } }
-      const r: any = await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any).catch((err: any) => ({ thrown: String(err?.message ?? err) }))
+      const r: any = await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-23', disconnect: true } as any).catch((err: any) => ({ thrown: String(err?.message ?? err) }))
       // the engine skips a hook that throws, so the call rejects with nothing beneath to answer it: either way next(e) rejected
       expect(r.thrown).toBeDefined()
       d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
@@ -184,7 +184,7 @@ for (const surface of SURFACES) {
       d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 500, body: { error: 'activity boom' } }
       await (await band($)).press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.sequence).toEqual([CLOSE, 'tool plan_connect', 'tool plan_events_wait'])
+      expect(d.sequence).toEqual([CLOSE, 'tool session_connect', 'tool plan_events_wait'])
       expect(d.toasts.filter(t => t.startsWith('50 Arms could not close'))).toEqual([
         '50 Arms could not close 2 running activities before leaving PLAN-23 (500: activity boom): the dashboard may show them running',
       ])
@@ -197,7 +197,7 @@ for (const surface of SURFACES) {
       const leaving = (await band($)).press({ key: 'disconnect' })
       await d.clock.advance(LEAVE_CLOSE_DEADLINE_MS)
       await leaving
-      expect(d.sequence).toEqual([CLOSE, 'tool plan_connect', 'tool plan_events_wait'])
+      expect(d.sequence).toEqual([CLOSE, 'tool session_connect', 'tool plan_events_wait'])
       expect(d.toasts.filter(t => t.startsWith('50 Arms could not close'))).toEqual([
         `50 Arms could not close 2 running activities before leaving PLAN-23 (timeout: no answer within ${LEAVE_CLOSE_DEADLINE_MS / 1000} s): the dashboard may show them running`,
       ])

@@ -1,6 +1,6 @@
 ---
 name: plan-workflow
-description: 'THE planning workflow when a human is in the loop beyond a quick cleanup: multi-step plan or build, a question that affects a plan, monitoring, resuming or handing off work, a pasted plan link, or being asked to sign in to 50 Arms (call `plan_connect`). "Make a plan" means a 50 Arms plan, never a task list, plan mode or a question in chat. Load before connecting to, creating or writing a plan.'
+description: 'THE planning workflow when a human is in the loop beyond a quick cleanup: multi-step plan or build, a question that affects a plan, monitoring, resuming or handing off work, a pasted plan link, or being asked to sign in to 50 Arms (call `session_connect`). "Make a plan" means a 50 Arms plan, never a task list, plan mode or a question in chat. Load before connecting to, creating or writing a plan.'
 ---
 
 # Plan Workflow
@@ -10,11 +10,11 @@ throughout; this skill is the plan mechanics.
 
 ## Start (every new, resumed or compacted session)
 
-1. Sign in: `plan_connect`, with the plan's `plan_id` when you know it (a plan link in the
-   prompt, or your session's plan in `GET /api/plans`), else with no `plan_id`. A session holds
+1. Sign in: `session_connect`, with `target` the plan's `PLAN-n` when you know it (a plan link in the
+   prompt, or your session's plan in `GET /api/plans`), else with no `target`. A session holds
    no dashboard key until its user approves it: `approval_required` (or `approval_pending`) is
    not a failure. Show the user the confirm code and the approval URL, and once they approve
-   call `plan_connect` again. The plugin shows the link and code at once and opens nothing: the
+   call `session_connect` again. The plugin shows the link and code at once and opens nothing: the
    person clicks the link, so never open the URL yourself (two tabs). The same holds for
    `request_permission`. Every other dashboard tool answers "not signed in" until then.
 2. Take your identity from the reply: signing in makes you one of the team's agents, and the
@@ -28,19 +28,19 @@ throughout; this skill is the plan mechanics.
      /api/team/agent-proposals/<public_id>/avatar` with `body_file` set to its absolute path.
      Give the person the `url`: they review the proposal and press Create, which signs you in
      as the new agent and connects you to the plan or card you asked for; you are woken with an
-     event saying so. Taking them needs no `plan_connect`; a naming or role step the event carries
-     makes its own call. Not woken → call `plan_connect` again: it answers the agent and plan you
+     event saying so. Taking them needs no `session_connect`; a naming or role step the event carries
+     makes its own call. Not woken → call `session_connect` again: it answers the agent and plan you
      hold.
    - `agent_limit_reached` → tell the person the limit the reply names (`held` of `limit`, and
      who can raise it, `raised_by`), or that ending another session frees its agent; call
-     `plan_connect` again once they say one is free.
+     `session_connect` again once they say one is free.
    Until an agent is held, every other dashboard call answers that same state: do no other
    dashboard work. You hold the agent only while this session is connected: a revoked key, a
    session that stopped responding for a minute (a crash) or a pause past the hold timeout frees
    it at once, and signing in again takes the next free agent, never necessarily the same one.
-3. What you work on: a plan → `plan_connect({plan_id})`; none in the list fits → create one.
+3. What you work on: a plan → `session_connect({target: "PLAN-n"})`; none in the list fits → create one.
    One card on no plan (a one-off, a quick fix, an epic that is not a plan) →
-   `card_connect({card_id})` instead; a card on a plan is refused `card_on_plan` (connect to
+   `session_connect({target: "<card id>"})` instead; a card on a plan is refused `card_on_plan` (connect to
    that plan). A session holds a plan or a card, never both: connecting to one lets go of the
    other. Neither → stay signed in, on no plan.
 4. Your session title follows what you hold, `{Name}` being your agent's name: on a plan
@@ -52,7 +52,7 @@ throughout; this skill is the plan mechanics.
 5. Orient from the connect briefing, else read the plan's records, architecture and cards,
    plus one batch read of its In-Progress/open-problem cards and the newest handoff agent note
    (`agent_notes` on the card read).
-6. Follow `plan_connect`'s browser instruction as written.
+6. Follow `session_connect`'s browser instruction as written.
 
 ## Where things go
 
@@ -238,7 +238,7 @@ From the plugin's relay (delivery itself):
   tool result carried that note, so it comes once more as a prompt. You have seen it: act once,
   never twice.
 - `events stopped:` → events are NOT reaching this session: do the fix it names (usually
-  `plan_connect` again; for a server too old to mark events urgent, restart the session). Read
+  `session_connect` again; for a server too old to mark events urgent, restart the session). Read
   the card by hand until it is done.
 - `events delayed:` naming the auto mode classifier → in auto permission mode the engine refused the
   plugin's own call; updating the plugin does not help. With the person's OK, add the allow rule
@@ -287,7 +287,7 @@ A person's sign-off is the final one. The plan is complete once the person has s
 every plan card is Done or Cancelled. Your record verifications and your own sign-off are advice
 to the person: the app warns them and asks them to confirm when they were not done.
 
-Before the person signs off (the `plan_connect` briefing has no `signOffs.human`), every plan card
+Before the person signs off (the `session_connect` briefing has no `signOffs.human`), every plan card
 Done or Cancelled → verify each goal, rule and caveat end to end against the running system and
 the shipped code (the mantra's evidence rule), so the person gets that advice before they sign:
 
@@ -301,7 +301,7 @@ the shipped code (the mantra's evidence rule), so the person gets that advice be
   shows it pending). No card, no problem. Never tick or clear their sign-off: the server
   refuses it.
 
-When the person has already signed off (the `plan_connect` briefing shows `signOffs.human`), the
+When the person has already signed off (the `session_connect` briefing shows `signOffs.human`), the
 plan is complete: skip the record verifications and your own sign-off, say so in one line, and
 never start them after the fact.
 
@@ -362,9 +362,9 @@ A pause longer than your team's agent hold timeout (default 60 minutes; a team o
 on Team > Agents) disconnects your session: its key is revoked, its team agent goes back to the pool and
 it leaves every session list. A session holds an agent exactly while it is connected, and nothing
 remembers the agent you had. On waking, your next dashboard call is refused as a revoked key: sign in
-again (approval as for any new key), then `plan_connect`, which takes the next free agent or answers
+again (approval as for any new key), then `session_connect`, which takes the next free agent or answers
 `agent_limit_reached`. The pause-ended notice then says `Your agent <name> went back to the pool: this session was
-disconnected after <N> minutes paused. Sign in again with plan_connect.` Until you hold an
+disconnected after <N> minutes paused. Sign in again with session_connect.` Until you hold an
 agent again work calls are refused with `agent_not_held` or `agent_needed`.
 
 ## Stopping
@@ -447,5 +447,5 @@ the JSONL last-entry age — name the source.
 Before an actual compaction, load `50arms:prepare-for-compaction`.
 
 Retiring this session (a handoff, not a compaction): as your last plan action, after the handoff
-agent note, call `plan_connect({plan_id, disconnect: true})` (`plan_id` = the plan you are on). Moving to
+agent note, call `session_connect({target, disconnect: true})` (`target` = the `PLAN-n` you are on). Moving to
 another plan needs no leave.

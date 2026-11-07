@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// DX-4635: a Disconnect press returns once its own plan_connect outcome is known and shown; the refresh, the
+// DX-4635: a Disconnect press returns once its own session_connect outcome is known and shown; the refresh, the
 // model's note and the syncs run detached, their failures still shown, and the card reads of one load overlap.
 import { describe, expect } from 'claude-code/testing'
 

@@ -75,9 +75,9 @@ for (const surface of SURFACES) {
 
     // a model that connected plan 23 while every read of the plugin's own is refused (no origin has ever been read)
     async function modelConnected($: any, on: any, d: any) {
-      on('tool.call', { tool: toolName('plan_connect') }, (_$: any, e: any) => ({ result: {}, text: e.disconnect === true ? LEFT : MODEL_CONNECTED, isError: false }) as any)
+      on('tool.call', { tool: toolName('session_connect') }, (_$: any, e: any) => ({ result: {}, text: e.disconnect === true ? LEFT : MODEL_CONNECTED, isError: false }) as any)
       await startSession($, d, surface)
-      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23 } as any)
+      await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-23' } as any)
       await d.clock.settle()
       return $.ui.mount({ plugin: '50arms', surface, ...BAND })
     }
@@ -86,7 +86,7 @@ for (const surface of SURFACES) {
     const OPTION = 'https://app.50arms.ai'
     const planLink = async (band: any) => (await linksOf(band)).map(l => l.href).filter(h => h.includes('/plans/23'))
 
-    test("the model's own successful plan_connect names its plan in the band while the plugin's own reads are refused, on the plugin's dashboard_url option alone, and the footer reads 50 Arms disconnected (the agent cannot be read)", async ($, on) => {
+    test("the model's own successful session_connect names its plan in the band while the plugin's own reads are refused, on the plugin's dashboard_url option alone, and the footer reads 50 Arms disconnected (the agent cannot be read)", async ($, on) => {
       const d = dashboard(on, { mcp: 'refused' })
       const band = await modelConnected($, on, d)
       const said = await text(band)
@@ -128,7 +128,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { mcp: 'refused' })
       const band = await modelConnected($, on, d)
       expect(await bandLabelOf(band)).toContain('PLAN-23')
-      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23, disconnect: true } as any)
+      await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-23', disconnect: true } as any)
       await d.clock.settle()
       expect(await bandLabelOf(band)).toBe('')
       expect(await text(band)).not.toContain('Plan twenty-three')

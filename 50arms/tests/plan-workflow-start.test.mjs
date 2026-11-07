@@ -1,7 +1,7 @@
 import "./designated-test-container.mjs";
 // DX-5554 - plan-workflow's Start section: a session signs in, takes its team agent's identity from the reply, proposes an agent itself when none
 // is free (`agent_needed`, through 50arms_api, without asking), tells the person the limit (`agent_limit_reached`), holds a stand-alone card with
-// `card_connect`, and titles itself by what it holds. No skill of the plugin tells a session to choose its own name any more.
+// `session_connect`, and titles itself by what it holds. No skill of the plugin tells a session to choose its own name any more.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -19,7 +19,7 @@ const startEnd = planWorkflow.indexOf("\n## ", startAt + 1);
 const start = flat(planWorkflow.slice(startAt, startEnd));
 
 test("Start signs in first, approval included", () => {
-  assert.match(start, /1\. Sign in: `plan_connect`/);
+  assert.match(start, /1\. Sign in: `session_connect`/);
   assert.match(start, /`approval_required` \(or `approval_pending`\)/);
 });
 
@@ -34,9 +34,9 @@ test("agent_needed: the session proposes an agent through 50arms_api, with the r
   assert.match(start, /`POST \/api\/team\/agent-proposals\/<public_id>\/avatar`/);
   assert.match(start, /`body_file`/);
   assert.match(start, /svg/);
-  assert.match(start, /`plan_connect` again/);
+  assert.match(start, /`session_connect` again/);
   // DX-6157: Create signs the session in and connects it, so taking them needs no connect (a naming or role step makes its own call)
-  assert.match(start, /Create, which signs you in[\s\S]*Taking them needs no `plan_connect`/);
+  assert.match(start, /Create, which signs you in[\s\S]*Taking them needs no `session_connect`/);
   // the deleted MCP tool (DX-5724) is never named
   assert.doesNotMatch(planWorkflow, /agent_propose/);
 });
@@ -46,8 +46,9 @@ test("agent_limit_reached: the session tells the person the limit and who can ra
   for (const field of ["held", "limit", "raised_by"]) assert.ok(start.includes("`" + field + "`"), field);
 });
 
-test("a stand-alone card is held with card_connect, a plan with plan_connect", () => {
-  assert.match(start, /`card_connect\(\{card_id\}\)`/);
+test("a stand-alone card and a plan are both held with session_connect, named by `target`", () => {
+  assert.match(start, /`session_connect\(\{target: "<card id>"\}\)`/);
+  assert.match(start, /`session_connect\(\{target: "PLAN-n"\}\)`/);
   assert.match(start, /`card_on_plan`/);
 });
 

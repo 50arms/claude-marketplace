@@ -114,7 +114,7 @@ after a connecting pickup (below), when the session connects elsewhere or leaves
 sub-agent you run is still your card: pickup first, drive the terminal transition yourself.
 
 A session holding no plan and no card that picks up a card on no plan also connects to it, as
-`card_connect` does: the reply carries `connectedByPickup: true` and `card_connect`'s answer
+`session_connect` does for a card: the reply carries `connectedByPickup: true` and `session_connect`'s answer
 (`owedComments`, `missedEvents`, `naming`, the role text), so act on it as on a connect. `card_held`
 refuses the pickup. A session holding a plan or another card, a card on a plan and a worker only claim.
 

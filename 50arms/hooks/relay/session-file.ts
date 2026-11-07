@@ -1,5 +1,5 @@
 // The per-session files the session's MCP server keeps for the plugin: one directory per kind under the home directory's `.config`, one file per session id. The compaction control,
-// the ready loop's clear release, and the record a `plan_connect` writes all follow this one layout, which is the MCP server's own.
+// the ready loop's clear release, and the record a `session_connect` writes all follow this one layout, which is the MCP server's own.
 export type SessionFileKind = 'compaction' | 'clear' | 'plan-sessions'
 
 // the MCP server keeps a file only for a plain session id, so an id with anything else in it (a path separator, a dot) names no file and never reaches a path

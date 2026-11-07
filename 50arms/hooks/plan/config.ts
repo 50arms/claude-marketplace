@@ -192,7 +192,7 @@ export const signInFailedToast = (message: string) => `Sign in failed: ${message
 export const BLOCKED_LABEL = `${BRAND}: blocked by auto mode`
 export const BLOCKED_LINE = `Auto mode blocks 50 Arms. Have Claude add ${toolName('')}* to permissions.allow; it clears by itself, else restart.`
 
-// a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, plan_connect included, with one stop halt and
+// a person revoked the session's key. The MCP (0.1.225) answers EVERY tool, session_connect included, with one stop halt and
 // makes no access request, only a revoked-access halt that begins
 // `STOP ALL WORK NOW. <revokedBy> revoked your access to the 50 Arms dashboard at <revokedAt>.` followed by a blank line. The
 // text is for the agent (it tells it to commit and stop); the person reads the words below, and Sign in stays beside them: its press

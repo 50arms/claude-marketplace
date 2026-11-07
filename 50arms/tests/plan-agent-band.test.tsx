@@ -42,7 +42,7 @@ describe('the agent and its association in the band label', () => {
   test('DX-5549: a session the agent gate holds reads why it has no agent', () => {
     expect(bandLabel({ ...ready, agentBlock: 'agent_needed' })).toBe('50 Arms: waiting for a team agent')
     expect(bandLabel({ ...ready, agentBlock: 'agent_limit_reached' })).toBe('50 Arms: agent session limit reached')
-    expect(bandLabel({ ...ready, agentBlock: 'agent_not_held' })).toBe('50 Arms: no team agent held (plan_connect claims one)')
+    expect(bandLabel({ ...ready, agentBlock: 'agent_not_held' })).toBe('50 Arms: no team agent held (session_connect claims one)')
   })
   test('the agent gate is read from its own answer, and nothing else is', () => {
     const halted = (body: unknown) => ({ ok: false, status: 0, body: { error: JSON.stringify(body) } })
@@ -53,7 +53,7 @@ describe('the agent and its association in the band label', () => {
     // the dashboard's own refusal for a session whose agent was released: status 403, body {error, state, instruction}
     const refused = (status: number, body: unknown) => ({ ok: false, status, body })
     for (const state of ['agent_not_held', 'agent_needed', 'agent_limit_reached'] as const) {
-      expect(agentBlockOf(refused(403, { error: state, state, instruction: 'Call plan_connect.' }))).toBe(state)
+      expect(agentBlockOf(refused(403, { error: state, state, instruction: 'Call session_connect.' }))).toBe(state)
     }
     expect(agentBlockOf(refused(403, { error: 'agent_not_held', state: 'agent_not_held' }))).toBe(null)
     expect(agentBlockOf(refused(403, { error: 'forbidden', state: 'something_else', instruction: 'x' }))).toBe(null)
@@ -128,7 +128,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       d.world.agentGate = 'agent_not_held'
       await forceRefresh($, d)
-      expect(await labelOf(band)).toBe('50 Arms: no team agent held (plan_connect claims one)')
+      expect(await labelOf(band)).toBe('50 Arms: no team agent held (session_connect claims one)')
     })
 
     test('a session row whose agent is not {id, name} fails the load, never a guessed name', async ($, on) => {
@@ -149,9 +149,9 @@ for (const surface of SURFACES) {
       expect(await labelOf(band)).toBe('50 Arms: waiting for a team agent')
       expect(d.relay.calls.at(-1)?.plan_id).toBe(null)
       // the dashboard's wake once a person created the agent (the MCP turns the stream's team_agent_created into an urgent record)
-      d.relay.push({ cursor: 'c1', text: 'A person created your team agent Mira: call plan_connect again to take it.', urgent: true })
+      d.relay.push({ cursor: 'c1', text: 'A person created your team agent Mira: call session_connect again to take it.', urgent: true })
       await d.clock.settle()
-      expect(woken(d).some(t => t.includes('call plan_connect again to take it'))).toBe(true)
+      expect(woken(d).some(t => t.includes('call session_connect again to take it'))).toBe(true)
     })
 
     test('DX-5549: a session the agent gate holds frees nothing at its end, quietly (it holds no agent)', async ($, on) => {

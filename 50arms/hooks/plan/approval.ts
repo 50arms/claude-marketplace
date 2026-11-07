@@ -1,4 +1,4 @@
-// what `plan_connect` answers while the session holds no dashboard key. The MCP server
+// what `session_connect` answers while the session holds no dashboard key. The MCP server
 // replies with the bare request, not the `{ok, status, body}` envelope a connect uses:
 //   { state: 'approval_required', approvalUrl, confirmCode, expiresAt, instruction }
 // `approval_required` is the answer to a NEW request (a later call answers `approval_pending`), so
@@ -7,7 +7,7 @@
 // `permissions` is set for a `request_permission` request (what the key asks to be granted), absent for a sign-in.
 export type ApprovalRequest = { url: string; code: string; permissions?: readonly string[] }
 
-// `states`: the answers that carry a request to show. A model's `plan_connect` shows only a NEW request
+// `states`: the answers that carry a request to show. A model's `session_connect` shows only a NEW request
 // (`approval_required`); the Sign in also reads the request a waiting call names (`approval_pending`).
 export function approvalRequestOf(text: string | undefined, states: readonly string[] = ['approval_required']): ApprovalRequest | null {
   if (!text) return null

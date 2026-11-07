@@ -10,8 +10,9 @@ const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const AGENT = { id: 6, name: 'Tendai', avatar_url: null }
 const CARD = { id: 'DX-77', title: 'One-off fix' }
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
-const planLeaves = (d: any) => d.calls.filter((c: any) => c.tool === 'plan_connect' && c.args.disconnect)
-const cardLeaves = (d: any) => d.api.filter((c: any) => c.method === 'DELETE' && c.path === '/api/plan-sessions/me/card')
+const leaves = (d: any) => d.calls.filter((c: any) => c.tool === 'session_connect' && c.args.disconnect)
+const planLeaves = (d: any) => leaves(d).filter((c: any) => c.args.target.startsWith('PLAN-'))
+const cardLeaves = (d: any) => leaves(d).filter((c: any) => !c.args.target.startsWith('PLAN-'))
 
 async function mounted($: any, d: any, surface: string) {
   await startSession($, d, surface)
@@ -57,7 +58,7 @@ for (const surface of SURFACES) {
       expect(cardLeaves(d)).toEqual([])
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected team agent Tendai'])
       expect(d.relay.told).toHaveLength(1)
-      expectRowCarries(d.relay.told[0]!, ['disconnected', 'freed its team agent', 'no plan or card', 'plan_connect', 'card_connect'])
+      expectRowCarries(d.relay.told[0]!, ['disconnected', 'freed its team agent', 'no plan or card', 'session_connect'])
       expect(await text(band)).toContain('50 Arms: not connected to a plan or card')
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
     })
@@ -71,12 +72,12 @@ for (const surface of SURFACES) {
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
 
-      expect(cardLeaves(d)).toEqual([{ method: 'DELETE', path: '/api/plan-sessions/me/card', query: { card_id: 'DX-77' } }])
+      expect(cardLeaves(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'DX-77', disconnect: true } }])
       expect(d.world.leaveOrder).toEqual(['card', 'release'])
       expect(planLeaves(d)).toEqual([])
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected from DX-77'])
       expect(d.relay.told).toHaveLength(1)
-      expectRowCarries(d.relay.told[0]!, ['DX-77', 'One-off fix', 'disconnected', 'freed its team agent', 'card_connect'])
+      expectRowCarries(d.relay.told[0]!, ['DX-77', 'One-off fix', 'disconnected', 'freed its team agent', 'session_connect'])
       expect(await text(band)).toContain('50 Arms: not connected to a plan or card')
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
     })
@@ -88,13 +89,13 @@ for (const surface of SURFACES) {
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
 
-      expect(planLeaves(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'plan_connect', args: { plan_id: 23, disconnect: true } }])
+      expect(planLeaves(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'PLAN-23', disconnect: true } }])
       // the plan's leave already freed the agent (the agent gate then answers agent_not_held), and the release is still asked for, once, after it
       expect(d.world.leaveOrder).toEqual(['plan'])
       expect(d.releaseCalls).toHaveLength(1)
       expect(cardLeaves(d)).toEqual([])
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected from PLAN-23'])
-      expectRowCarries(d.relay.told[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'freed its team agent', 'plan_connect'])
+      expectRowCarries(d.relay.told[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'freed its team agent', 'session_connect'])
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
     })
 

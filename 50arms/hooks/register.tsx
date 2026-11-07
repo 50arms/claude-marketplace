@@ -63,7 +63,8 @@ import { errText, loadPlan } from './plan/load'
 import { blockedOrigin, optionDashboardUrl } from './plan/origin'
 import type { Api } from './plan/load'
 import { agentBlockOf, connectToolOutcome, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
-import { AGENT_RELEASE_DEADLINE_MS, AGENT_RELEASE_PATH, AGENT_RELEASE_TIMEOUT_REASON, CARD_LEAVE_PATH, disconnectReleaseFailure, releaseFailureToast } from './plan/agent'
+import { AGENT_RELEASE_DEADLINE_MS, AGENT_RELEASE_PATH, AGENT_RELEASE_TIMEOUT_REASON, disconnectReleaseFailure, releaseFailureToast } from './plan/agent'
+import { connectTargetOf, planTarget } from './plan/target'
 import { holdKey } from './plan/hold'
 import type { BandHold } from './plan/hold'
 import type { ToolOutcome } from './plan/mcp'
@@ -107,7 +108,7 @@ const gate = atom({ plugin: '50arms', key: 'gate' } as const, { inFlight: false,
 const dismissed = atom({ plugin: '50arms', key: 'dismissed' } as const, false)
 const busy = atom({ plugin: '50arms', key: 'busy' } as const, [] as string[])
 const title = atom({ plugin: '50arms', key: 'title' } as const, null as string | null)
-// the plan the model's own successful plan_connect named, kept for the `blocked` view (the plugin's own reads are refused by auto mode's
+// the plan the model's own successful session_connect named, kept for the `blocked` view (the plugin's own reads are refused by auto mode's
 // classifier, so nothing else names the plan); null after any leave, a /clear or a resume, a session start, and every loaded view.
 const modelPlan = atom({ plugin: '50arms', key: 'modelPlan' } as const, null as { id: number; name: string } | null)
 // the sign-in request waiting for the person (its link and confirm code), set the moment it exists and cleared when it
@@ -338,7 +339,7 @@ let stallTicker: { cancel: () => void } | null = null
 let stallSeen: { run: RelayRun; since: number } | null = null
 let stallTickAt: number | null = null
 // The plan whose relay the server stopped, or that is signed out: it is not started again until something asks (a connect, the
-// model's plan_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
+// model's session_connect, a sign-in), so a refresh cannot restart a stopped relay in a loop.
 // boxed, because a halt on no plan (`planId: null`) is a halt too.
 let relayHalted: { planId: number | null } | null = null
 // the usage report's timer, one per session.
@@ -451,7 +452,7 @@ async function loadView($: any) {
 async function applyLoaded($: any, loaded: any): Promise<void> {
   // each failure is told once, on the load that makes it appear; the change is decided inside the update, so overlapping loads toast once
   let told: string[] = []
-  // the plan the model's own plan_connect named stands in for what the refused reads could not say
+  // the plan the model's own session_connect named stands in for what the refused reads could not say
   const named = loaded.phase === 'blocked' ? await read($, modelPlan) : null
   // a link is never built on a null origin: the load's (or the stored) one, else DANXBOT_DASHBOARD_URL, else the plugin's dashboard_url option; with none, the plan is not named
   const origin = named === null ? null : blockedOrigin({ loaded: loaded.dashboardUrl, env: await $.env.get('DANXBOT_DASHBOARD_URL'), option: dashboardOption })
@@ -729,15 +730,15 @@ function toastCallFailedAndReload($: any, what: string, err: any): void {
 
 const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
 
-// what a plan_connect answer settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards,
+// what a session_connect answer for a plan settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards,
 // listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin, the session's team agent). A leave puts the session on no plan.
 const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl, agent: cur.agent })
 function leftView(cur: any): any {
   return { ...planIndependent(cur), phase: 'ready', refreshedAt: cur.refreshedAt }
 }
 
-// The band's Disconnect: takes the session off everything it holds, under one busy key so nothing runs while another leave holds it: the plan (plan_connect with disconnect: true,
-// guarded by the plan we think we are on) or the card (DELETE /api/plan-sessions/me/card, guarded by the card id), then its team agent is released. A refusal is shown,
+// The band's Disconnect: takes the session off everything it holds, under one busy key so nothing runs while another leave holds it: the plan or the card (session_connect with disconnect: true,
+// its `target` the guard: the plan or card we think we are on), then its team agent is released. A refusal is shown,
 // never swallowed: a 409 means the band was stale (the server names what the session really holds), so it also refreshes; a 404 or any other failure carries its status and message.
 // A refused leave stops there and the agent stays held. No confirm: the model can connect again to undo it.
 function disconnect($: any, hold: BandHold): Promise<void> {
@@ -757,14 +758,14 @@ function disconnect($: any, hold: BandHold): Promise<void> {
   })
 }
 
-// Leaves the plan; the plan's ref and name, or 'refused' once the refusal is shown (and the view reloaded where it was stale).
-async function leavePlan($: any, plan: ConnectedPlan): Promise<{ ref: string; name: string } | 'refused'> {
-  // the leave closes what the session opened under the plan first; a leave that does not happen takes that back
-  const why = `leaving ${plan.ref}`
+// One leave call: `session_connect` with `disconnect: true` and the `target` the band shows, which the server checks against what the session really holds. It closes what the session
+// opened first; a leave that does not happen takes that back. The answer of a leave that happened, or 'refused' once the refusal is shown (and the view reloaded where it was stale).
+async function leaveCall($: any, target: string): Promise<ToolOutcome | 'refused'> {
+  const why = `leaving ${target}`
   const closes = await closeOwedBeforeLeave($, why)
   let r
   try {
-    r = await $.mcp.call(SERVER, 'plan_connect', { plan_id: plan.id, disconnect: true })
+    r = await $.mcp.call(SERVER, 'session_connect', { target, disconnect: true })
   } catch (err: any) {
     await settleLeave($, closes, false, why)
     toastCallFailedAndReload($, 'Disconnect failed', err)
@@ -775,9 +776,17 @@ async function leavePlan($: any, plan: ConnectedPlan): Promise<{ ref: string; na
   if (await accessEnded($, outcome)) return 'refused'
   if (!outcome.ok) {
     $.ui.toast(`Disconnect refused: ${refusalText(outcome)}`.slice(0, FAILURE_TOAST_MAX))
+    // plan_mismatch / session_not_connected / card_mismatch / session_holds_no_card: the band was stale (the server names what the session really holds)
     if (outcome.status === 409) detach($, 'Plan refresh', refresh($, true))
     return 'refused'
   }
+  return outcome
+}
+
+// Leaves the plan; the plan's ref and name, or 'refused' once the refusal is shown.
+async function leavePlan($: any, plan: ConnectedPlan): Promise<{ ref: string; name: string } | 'refused'> {
+  const outcome = await leaveCall($, planTarget(plan.id))
+  if (outcome === 'refused') return 'refused'
   const left = outcome.body?.leftPlan
   if (typeof left?.name !== 'string') {
     // a 200 that names no plan left cannot be told to the model as fact: show it, and read the truth
@@ -790,19 +799,9 @@ async function leavePlan($: any, plan: ConnectedPlan): Promise<{ ref: string; na
 
 // Leaves the stand-alone card the band shows (the server refuses a card id the session does not hold); the card's id and title, or 'refused' once the refusal is shown.
 async function leaveCard($: any, card: NonNullable<BandHold['card']>): Promise<{ ref: string; name: string } | 'refused'> {
-  const why = `leaving ${card.id}`
-  const closes = await closeOwedBeforeLeave($, why)
-  const r = await api($, 'DELETE', CARD_LEAVE_PATH, { query: { card_id: card.id } })
-  await settleLeave($, closes, r.ok, why)
-  if (await accessEnded($, r)) return 'refused'
-  if (!r.ok) {
-    // a call that never reached the dashboard (status 0) is the call failing; every other refusal carries its status and the server's sentence
-    $.ui.toast((r.status === 0 ? `Disconnect failed: ${errText(r)}` : `Disconnect refused: ${refusalText(r)}`).slice(0, FAILURE_TOAST_MAX))
-    // card_mismatch / session_holds_no_card: the band was stale
-    if (r.status === 409) detach($, 'Plan refresh', refresh($, true))
-    return 'refused'
-  }
-  if (r.body?.leftCard === null || typeof r.body?.leftCard !== 'object') {
+  const outcome = await leaveCall($, card.id)
+  if (outcome === 'refused') return 'refused'
+  if (outcome.body?.leftCard === null || typeof outcome.body?.leftCard !== 'object') {
     $.ui.toast('Disconnect failed: the answer named no card left')
     detach($, 'Plan refresh', refresh($, true))
     return 'refused'
@@ -811,7 +810,7 @@ async function leaveCard($: any, card: NonNullable<BandHold['card']>): Promise<{
 }
 
 // the wait on a sign-in request, one at a time. A session with no dashboard key asks for one through
-// `plan_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's link and code). Each call waits
+// `session_connect`; the MCP answers with the approval request, drawn at once (showSignInRequest: the band's link and code). Each call waits
 // there (about 45 s) for the person's approval, so the calls repeat until one answers something final, with no round limit: a
 // request stays open for as long as its session lives. The status of the request cannot be read any other way: its
 // claim needs a secret only the MCP process holds (and a claim would take the key from it), and reading it by id needs a
@@ -819,11 +818,11 @@ async function leaveCard($: any, card: NonNullable<BandHold['card']>): Promise<{
 // model is told, and the renewed request is shown and watched in its place, so nobody has to relay it.
 //
 // Two starts: the Sign in button (`byPress`: the person is waiting, and the model is told once that it is
-// signed in), and the model's own `plan_connect` answering `approval_required` (`known`: the request already shown; the model is
+// signed in), and the model's own `session_connect` answering `approval_required` (`known`: the request already shown; the model is
 // told the outcome once, approved, denied or expired, so the person never has to type "approved"). The whole watch holds the
 // sign-in busy key (the buttons read "Signing in…", a second start does nothing).
 // bumped when the conversation (or the process) ends; a watch of an older generation stops at its next step, so it
-// never calls plan_connect with the old conversation's arguments or tells the new conversation about a request it never made
+// never calls session_connect with the old conversation's arguments or tells the new conversation about a request it never made
 let signInGeneration = 0
 
 // `forReadyLoop`: the ready-agent loop's own sign-in. The model did not ask for it and is told nothing; a sign-in that ends without a key takes the session off the list.
@@ -853,7 +852,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         const startedAt = await $.clock.now()
         let r
         try {
-          r = await $.mcp.call(SERVER, 'plan_connect', watch.args)
+          r = await $.mcp.call(SERVER, 'session_connect', watch.args)
         } catch (err: any) {
           if (!ended()) toastCallFailedAndReload($, 'Sign in failed', err)
           return
@@ -904,8 +903,8 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         // signed in (even if the plan was refused): the view reads the truth
         $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
         // the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
-        const planId = typeof (watch.args as any).plan_id === 'number' ? (watch.args as any).plan_id : null
-        await tell(shown, watch.byPress ? signInNote(planId, step.kind === 'done') : signInApprovedNote(shownRequest().code, planId))
+        const target = typeof (watch.args as any).target === 'string' ? (watch.args as any).target : null
+        await tell(shown, watch.byPress ? signInNote(target, step.kind === 'done') : signInApprovedNote(shownRequest().code, target))
         await refresh($, true)
         if ('forReadyLoop' in watch) detach($, 'Ready list', syncReady($))
         return
@@ -929,14 +928,14 @@ async function startSignIn($: any): Promise<void> {
   void watchSignIn($, { args, byPress: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
 }
 
-// The sign-in's own `plan_connect` arguments: the session's title, and the plan it was on. On a revoked key the press also says a person
+// The sign-in's own `session_connect` arguments: the session's title, and the plan it was on (its `target`). On a revoked key the press also says a person
 // is signing in (`person_sign_in`), the one flag that makes the MCP leave its stop and ask; no other call sends it.
 async function signInArgs($: any): Promise<object> {
   const sessionTitle = await read($, title)
   const current = await read($, view)
   const resume = current.resumePlan
   return {
-    ...(resume !== null ? { plan_id: resume } : {}),
+    ...(resume !== null ? { target: planTarget(resume) } : {}),
     ...(sessionTitle ? { title: sessionTitle } : {}),
     ...(current.phase === 'key-revoked' ? { person_sign_in: true } : {}),
   }
@@ -1118,7 +1117,7 @@ async function syncRelay($: any): Promise<void> {
   startRelay($, v.connected?.id ?? null)
 }
 
-// THE start of the relay, from a plan id however it was learned (the view, a plan_connect answer, the light plan read). Never async:
+// THE start of the relay, from a plan id however it was learned (the view, a session_connect answer, the light plan read). Never async:
 // the check that no loop runs for this plan and the registration of the new one are one step, so two starts landing together make one loop.
 function startRelay($: any, planId: number | null): void {
   // the keepalive follows the plan connection, not the relay's health: a halted or ended relay does not end it.
@@ -1135,7 +1134,7 @@ function startRelay($: any, planId: number | null): void {
   const head = outbox[0]
   outbox = onlyPlan(outbox, planId)
   if (outbox[0] !== head) outboxFailure = null
-  // every start of a run (a stall restart, a replacing plan_connect, a plan move) starts the refusal backoff afresh: earlier refusals do not lengthen the new run's first wait
+  // every start of a run (a stall restart, a replacing session_connect, a plan move) starts the refusal backoff afresh: earlier refusals do not lengthen the new run's first wait
   outboxRefusals = 0
   const run: RelayRun = { planId, dead: false, told: null, lacking: null, beat: 0 }
   relayRun = run
@@ -1963,7 +1962,7 @@ async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
     signInGeneration++
     await update($, signInRequest, () => null)
-    // free the sign-in key at once; the aborted watch's in-flight plan_connect (up to ~45s) must not hold it
+    // free the sign-in key at once; the aborted watch's in-flight session_connect (up to ~45s) must not hold it
     await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
   }
   if (PROCESS_ENDS.includes(e.reason)) {
@@ -2168,7 +2167,7 @@ const readyIsIdle = async ($: any): Promise<boolean> => !(await read($, turn)).i
 async function syncReadyOnce($: any, token: LookToken, again = true): Promise<void> {
   const first = await read($, readyLoop)
   if (first === null || !(await readyIsIdle($))) return
-  // only the look that follows a person's `/50arms:ready` may call `plan_connect`
+  // only the look that follows a person's `/50arms:ready` may call `session_connect`
   const asked = first.claimAsked
   if (asked) await update($, readyLoop, cur => (cur === null ? null : { ...cur, claimAsked: false }))
   let look = await readyLook($, token)
@@ -2311,7 +2310,7 @@ async function claimReadyAgent($: any, asked: boolean, token: LookToken): Promis
   return claimThroughConnect($, asked)
 }
 
-// An earlier `plan_connect` found no agent, so the MCP answers every other call with that until a later `plan_connect` finds one, and only that lifts it. No timer may call it: a session idle on no agent work must
+// An earlier `session_connect` found no agent, so the MCP answers every other call with that until a later `session_connect` finds one, and only that lifts it. No timer may call it: a session idle on no agent work must
 // lapse like any other. So only a person's `/50arms:ready` does, through the sign-in watch, which also draws an approval the call turns up. A session refused an agent does not join by itself when one frees.
 async function claimThroughConnect($: any, asked: boolean): Promise<boolean> {
   const loop = await read($, readyLoop)
@@ -2573,10 +2572,10 @@ function answerOf(ran: any) {
   return textOutcome(typeof ran.text === 'string' ? ran.text : '', ran.isError === true || ran.deny !== undefined)
 }
 
-// The model held a stand-alone card (card_connect, a first connect or a move): the dashboard gets the session's current activity at once, and the view is
+// The model held a stand-alone card (session_connect with a card's id, a first connect or a move): the dashboard gets the session's current activity at once, and the view is
 // refreshed so the turn reports see the card the session holds. A refused connect (`card_on_plan`) changes nothing and reports nothing; a leave
 // (`disconnect: true`) refreshes the view so the card clears, but reports nothing, the session holding neither a plan nor a card.
-async function onCardConnect($: any, e: any, next: any) {
+async function afterCardConnect($: any, e: any, next: any) {
   const ran = await next(e)
   if (!answerOf(ran).ok) return ran
   if (e.disconnect !== true) await reportActivityOnConnect($)
@@ -2584,15 +2583,13 @@ async function onCardConnect($: any, e: any, next: any) {
   return ran
 }
 
-// The model connected (or moved) this session: show it at once. A signed-out session's `approval_required`
-// answer draws the approval link and the code in the band; the plan page is not opened (there is
-// no connection to show yet).
-async function onPlanConnect($: any, e: any, next: any) {
+// The model connected (or moved) this session to a plan, left it, or only signed in (`plan`: the plan target it named, null for neither): show it at once.
+async function afterPlanConnect($: any, e: any, next: any, plan: { id: number } | null) {
   // the model's leave, or its move to another plan, closes what the session opened under the plan it is on first; a leave or move
   // its answer says did not happen takes that back
-  const leaving = e.disconnect === true
-  const why = leaving ? 'leaving the plan' : `moving to plan ${e.plan_id}`
-  const moving = !leaving && typeof e.plan_id === 'number' && (await movesOffReportedPlan($, e.plan_id))
+  const leaving = e.disconnect === true && plan !== null
+  const why = leaving ? 'leaving the plan' : `moving to plan ${plan?.id}`
+  const moving = !leaving && plan !== null && (await movesOffReportedPlan($, plan.id))
   const closes = leaving || moving ? await closeOwedBeforeLeave($, why) : null
   let ran
   try {
@@ -2605,8 +2602,8 @@ async function onPlanConnect($: any, e: any, next: any) {
   const answer = answerOf(ran)
   // the plan the answer says the session is on now, read once: whether the move happened, the relay, the loop's job, and what the blocked view names when the plugin's own reads are refused
   const modelConnected = connectedPlanOf(answer)
-  await settleLeave($, closes, leaving ? answer.ok : modelConnected !== null && modelConnected.id === e.plan_id, why)
-  // the model's plan_connect starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
+  await settleLeave($, closes, leaving ? answer.ok : modelConnected !== null && modelConnected.id === plan?.id, why)
+  // the model's connect to a plan starts the relay (or restarts it on a move to another plan) from the plan the answer says it connected, not
   // from the view the refresh below loads (a load that is slow or fails must not keep the relay down)
   relayHalted = null
   if (modelConnected !== null) startRelay($, modelConnected.id)
@@ -2615,6 +2612,14 @@ async function onPlanConnect($: any, e: any, next: any) {
   if (modelConnected !== null) await update($, modelPlan, () => modelConnected)
   else if (leaving && answer.ok) await update($, modelPlan, () => null)
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)))
+  return ran
+}
+
+// The model's `session_connect` (one tool for a plan, a card, or only a sign-in; `target` says which): show what it settled at once. A signed-out session's `approval_required`
+// answer draws the approval link and the code in the band, for any target; the plan page is not opened (there is no connection to show yet).
+async function onSessionConnect($: any, e: any, next: any) {
+  const target = connectTargetOf(e.target)
+  const ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
   if (approval === null) return ran
   const waiting = await read($, signInRequest)
@@ -2629,7 +2634,7 @@ async function onPlanConnect($: any, e: any, next: any) {
   if (waiting?.url !== approval.url) await showSignInRequest($, approval)
   // the model started this sign-in, so the plugin waits on it and tells the model how it ended
   if (waiting === null) {
-    const args = { ...(typeof e.plan_id === 'number' ? { plan_id: e.plan_id } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
+    const args = { ...(typeof e.target === 'string' && e.target !== '' ? { target: e.target } : {}), ...(typeof e.title === 'string' && e.title !== '' ? { title: e.title } : {}) }
     void watchSignIn($, { args, byPress: false, known: approval }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
   }
   return withSignInNote(ran, approval)
@@ -2665,7 +2670,7 @@ async function onAckCall($: any, e: any, next: any) {
   }
   await touchRecordClock($, e, next)
   const answer = answerOf(ran)
-  // a manual pickup by a session holding nothing connects it, as card_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
+  // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
   // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
   if (answer.ok && isPickup(e) && (await wholeAnswer($, answer)).body?.connectedByPickup === true) await reportActivityOnConnect($)
   // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
@@ -2962,7 +2967,7 @@ async function sessionPlan($: any): Promise<SessionPlan> {
 }
 
 // Whether the session is KNOWN to be on a plan without asking the dashboard: the connection record the dashboard MCP server writes
-// at `plan_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, only its existence is
+// at `session_connect` (`~/.config/danxbot/plan-sessions/<session id>.json`, only its existence is
 // read). It decides who a dashboard fault speaks to: a connected session gets one warning line, any other stays silent.
 async function isPlanConnected($: any, id: string, resolve: boolean = true): Promise<boolean> {
   const home = await homeDir($)
@@ -3316,7 +3321,7 @@ async function touchRecordClock($: any, e: any, next: any): Promise<void> {
   await update($, recordClock, cur => clockAfterCall(cur, record, now))
 }
 
-// plan_connect and card_connect: the 50arms_api calls go through onAckCall, the one handler allowed on that tool
+// session_connect: the 50arms_api calls go through onAckCall, the one handler allowed on that tool
 async function onRecordCall($: any, e: any, next: any) {
   const r = await next(e)
   await touchRecordClock($, e, next)
@@ -3399,7 +3404,7 @@ async function onTurnStart($: any, e: any, next: any) {
   return next(e)
 }
 
-// The app's session title (without any mark), handed to `plan_connect`; and the main transcript's path. The answer's `sessionTitle` sets
+// The app's session title (without any mark), handed to `session_connect`; and the main transcript's path. The answer's `sessionTitle` sets
 // the marks (sessionTitle) on Claude Code's own title, the one a terminal shows; the desktop app's title is syncTitleMark's.
 async function onTitle($: any, e: any, next: any) {
   await noteTranscript($, e)
@@ -4171,11 +4176,10 @@ export const register: Register = (on, options) => {
   // the plugin ships the permission its own calls to its own server need (ownServerCheck, hooks/relay/refusal.ts)
   // the second answer is a TEMPORARY dual name, removed with its tests once installs have moved: the person's allow rule for the old server key still covers the platform tools
   on('tool.check', ($, e, next) => ownServerCheck(e, Object.assign((x: any) => legacyRuleCheck(x, next, () => readLegacySettings($)), { origin: next.origin })))
-  on('tool.call', { tool: toolName('plan_connect') }, onPlanConnect)
-  on('tool.call', { tool: toolName('card_connect') }, onCardConnect)
+  on('tool.call', { tool: toolName('session_connect') }, onSessionConnect)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('tool.call', { tool: toolName('50arms_api') }, onAckCall)
-  for (const tool of ['plan_connect', 'card_connect']) on('tool.call', { tool: toolName(tool) }, onRecordCall)
+  on('tool.call', { tool: toolName('session_connect') }, onRecordCall)
   on('tool.call', { tool: 'Write' }, onHandoffWrite)
   on('turn.start', onTurnStart)
   on('turn.complete', onTurnComplete)

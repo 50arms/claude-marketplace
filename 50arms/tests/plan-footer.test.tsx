@@ -55,7 +55,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await holdAgent($, d)
       // the model leaves the plan; the session still holds its agent
-      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23, disconnect: true } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23', disconnect: true } as any)
       d.world.planId = null
       await forceRefresh($, d)
       expect(await footerText(await mountIndicator($, surface))).toBe(AGENT_NAME)

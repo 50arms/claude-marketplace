@@ -60,7 +60,7 @@ export function renderBand(
   // a revoked key is red too, and keeps its text beside Sign in
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
-  // Disconnect is the only way off a plan, a card or the team agent from the UI (connecting or switching a plan is the model's `plan_connect`); it shows whenever the session holds any of them.
+  // Disconnect is the only way off a plan, a card or the team agent from the UI (connecting or switching a plan is the model's `session_connect`); it shows whenever the session holds any of them.
   const hold = bandHold(v)
   const disconnectOffered = holdsAnything(hold)
   // The band draws no events

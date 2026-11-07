@@ -9,7 +9,7 @@ import { BLOCKED_LINE } from '../hooks/plan/config'
 import { test, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
-const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call plan_connect' } })
+const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call session_connect' } })
 
 const TRANSCRIPT = '/work/main.jsonl'
 // DX-4234: what the restart notice is asked with, by the source the session started from (the server's `restart_notice` contract): a resume (a
@@ -18,7 +18,7 @@ const TRANSCRIPT = '/work/main.jsonl'
 const ARGS = { startup: {}, resume: { transcript_path: TRANSCRIPT } } as const
 const PREVIOUS = 'sess-previous'
 
-// A restarted session has a new id and holds NO key: signed out until plan_connect is approved. That is the state the notice is for.
+// A restarted session has a new id and holds NO key: signed out until session_connect is approved. That is the state the notice is for.
 const SIGNED_OUT = { connected: false, signedOut: 'signed-out' } as const
 
 for (const surface of SURFACES) {
@@ -96,7 +96,7 @@ ${NOTICE}`])
         const d = await started($, on)
         d.world.restart.json = stopped(reason, 'the detail')
         const r = await firstPrompt($, 'startup')
-        expect(r.startLines).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call plan_connect`)])
+        expect(r.startLines).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call session_connect`)])
         expect(r.startLines![0]).toMatch(/^⚠ Could not load the restart notice \(.*\)\. Tell the operator if this session should be plan-connected\.$/)
       })
     }
@@ -140,8 +140,8 @@ ${NOTICE}`])
       const pending = firstPrompt($, 'startup')
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       const r = await pending
-      expect(r.startLines).toEqual([restartFailureLine('lookup_timeout: the lookup did not finish within 8000 ms. continue without it; call plan_connect')])
-      expect(r.startLines![0]).toContain('call plan_connect')
+      expect(r.startLines).toEqual([restartFailureLine('lookup_timeout: the lookup did not finish within 8000 ms. continue without it; call session_connect')])
+      expect(r.startLines![0]).toContain('call session_connect')
     })
 
     test('DX-3421: a plans read that fails with a dashboard fault is silent for the event text, and the restart notice is still asked', async ($, on) => {
@@ -252,7 +252,7 @@ ${NOTICE}`])
           const d = await cleared($, on)
           d.world.restart.json = stopped(reason, 'the detail')
           const r = await firstPrompt($, source)
-          expect(r.startLines).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call plan_connect`)])
+          expect(r.startLines).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call session_connect`)])
         })
       }
     }

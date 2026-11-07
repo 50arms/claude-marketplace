@@ -5,7 +5,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { afterCompaction, nextSince, turnActivityBody } from '../hooks/reports/turn-activity'
 import { toolName } from '../hooks/plan/config'
-import { HOME_DIR, SURFACES, answerPlanConnect, dashboard, startSession, test } from './plan-kit'
+import { HOME_DIR, SURFACES, answerPlanConnect, dashboard, planNumberOf, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
@@ -14,18 +14,20 @@ const START = { prompt: 'go', turnId: 't1' } as any
 const PUT = 'PUT /api/plan-sessions/me/turn-activity'
 const CARD_ID = 'DX-9'
 const CARD_TITLE = 'A one-off card'
-const CARD_CONNECT = { tool: toolName('card_connect'), card_id: CARD_ID } as any
+const CARD_CONNECT = { tool: toolName('session_connect'), target: CARD_ID } as any
 
-// the real answer's envelope (the MCP's card_connect): the card the session holds now, as GET /api/plan-sessions/me then reads it
+// the real answer's envelope (the MCP's session_connect): the card the session holds now, as GET /api/plan-sessions/me then reads it
 function answerCardConnect(on: any, d: any) {
-  on('tool.call', { tool: toolName('card_connect') }, (_$: any, e: any) => {
+  on('tool.call', { tool: toolName('session_connect') }, (_$: any, e: any, next: any) => {
+    // a call naming a plan is the kit's answerer's
+    if (planNumberOf(e.target) !== undefined) return next(e)
     if (d.world.cardRefused) return { result: {}, text: JSON.stringify({ ok: false, status: 409, error: 'card_on_plan' }), isError: true } as any
     if (e.disconnect === true) {
       d.world.card = null
       return { result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { cardId: null } } }), isError: false } as any
     }
-    d.world.card = { id: e.card_id, title: CARD_TITLE }
-    const text = JSON.stringify({ ok: true, status: 200, body: { session: { cardId: e.card_id } } })
+    d.world.card = { id: e.target, title: CARD_TITLE }
+    const text = JSON.stringify({ ok: true, status: 200, body: { session: { cardId: e.target } } })
     return { result: {}, text, isError: false } as any
   })
 }
@@ -192,7 +194,7 @@ for (const surface of SURFACES) {
     })
 
     describe('a plan connect reports the current activity', () => {
-      const CONNECT = { tool: toolName('plan_connect'), plan_id: 23 } as any
+      const CONNECT = { tool: toolName('session_connect'), target: 'PLAN-23' } as any
       async function offPlan($: any, on: any, compact: () => unknown = () => COMPACTED) {
         return started($, on, compact, false)
       }

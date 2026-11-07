@@ -2,7 +2,7 @@ import { FAILURE_MAX, RELAY_MARKER } from './config'
 
 // The one wording for a relay failure the session could not otherwise see: ONE row in its transcript, the first time a
 // failure shows (a repeat of the same text is not told again), never silence. The row is read by the model, which can act on
-// the fix (usually `plan_connect` again).
+// the fix (usually `session_connect` again).
 const trim = (text: string) => text.trim().replace(/\.+$/, '').slice(0, FAILURE_MAX)
 
 // The relay cannot go on until something is done: the reason and the fix.
@@ -18,7 +18,7 @@ export const delayedLine = (message: string) => `${RELAY_MARKER} events delayed:
 // the relay's loop made no step for a long time (a call it waits on never settled): events were NOT reaching this session meanwhile. It is
 // started again on its own; the line is for the person (a toast) and the session (a note), never silence.
 export const stalledNotice = (seconds: number) =>
-  `Plan events stalled: the listener made no progress for ${seconds} s, so events were NOT reaching this session. It was started again on its own; if events stay silent, call plan_connect.`
+  `Plan events stalled: the listener made no progress for ${seconds} s, so events were NOT reaching this session. It was started again on its own; if events stay silent, call session_connect.`
 export const stalledLine = (seconds: number) => `${RELAY_MARKER} ${stalledNotice(seconds)}`
 
 // how a delivery the session refused reads (a dropped or throwing prompt, a refused or throwing row)
@@ -46,4 +46,4 @@ export const STALE_PENDING_DETAIL = 'events queued by an older version of this p
 export const STALE_PENDING_FIX = 'restart the session so the plugin starts with an empty queue; the server then resumes from the stored cursor, so every event past it is sent again'
 
 // The relay's own loop hit an error nothing above anticipated: it stops for that plan until something asks for it again.
-export const RELAY_ERROR_FIX = 'call plan_connect to start the relay again'
+export const RELAY_ERROR_FIX = 'call session_connect to start the relay again'

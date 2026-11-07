@@ -50,7 +50,7 @@ export function eventText(r: Api): Told {
 }
 
 // The three answers of the server's `restart_notice` tool (JSON text): say the notice, say nothing, or the lookup could not answer. `fix`
-// is the server's own remedy text (it tells the session to continue and to call plan_connect).
+// is the server's own remedy text (it tells the session to continue and to call session_connect).
 export type RestartNoticeAnswer = { notice: string } | { notice: null } | { stopped: { reason: string; detail: string; fix: string } }
 
 const isText = (v: unknown): v is string => typeof v === 'string' && v !== ''

@@ -2,7 +2,7 @@ import { approvalRequestOf } from './approval'
 import type { ApprovalRequest } from './approval'
 import { keyRevokedBy, mcpText, refusalText, toolOutcome } from './mcp'
 
-// what one `plan_connect` answer means to the Sign in button, and what the person is told. The server's own
+// what one `session_connect` answer means to the Sign in button, and what the person is told. The server's own
 // words are written for the agent (it says "Do not retry unless they ask"), so nothing here passes them on: every
 // message below is the person's. The answers are the dashboard MCP's: `{ state, ... }` while the session holds no
 // key, the `{ ok, status, body }` envelope once it connects.
@@ -47,7 +47,7 @@ export function signInStep(result: any): SignInStep {
     return { kind: 'stop', message: 'Sign in failed: the answer could not be read.' }
   }
   if (parsed !== null && typeof parsed === 'object' && typeof parsed.state === 'string') {
-    // a plan-less plan_connect that holds a key answers the claim of its team agent (`agent_held`), not `signed_in`
+    // a plan-less session_connect that holds a key answers the claim of its team agent (`agent_held`), not `signed_in`
     if (parsed.state === 'signed_in' || parsed.state === 'agent_held') return { kind: 'done' }
     if (parsed.state === 'denied') return { kind: 'denied' }
     if (parsed.state === 'approval_required' || parsed.state === 'approval_pending') {

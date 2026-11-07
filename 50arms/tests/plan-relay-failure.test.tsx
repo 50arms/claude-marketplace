@@ -67,13 +67,13 @@ for (const surface of SURFACES) {
 
     test("a stop answer shows the server's fix once; neither the clock nor a refresh retries it", async ($, on) => {
       const d = dashboard(on)
-      d.relay.server.stopped = { reason: 'relay_failed', detail: 'the relay cannot go on', fix: 'Connect this session to a plan with plan_connect' }
+      d.relay.server.stopped = { reason: 'relay_failed', detail: 'the relay cannot go on', fix: 'Connect this session to a plan with session_connect' }
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       expect(relayPhase(d)).toBe('stopped')
       await bandSilent(band)
       expect(d.relay.told).toEqual([
-        '[50 Arms plan event] events stopped: events are NOT reaching this session: the relay cannot go on. Fix: Connect this session to a plan with plan_connect.',
+        '[50 Arms plan event] events stopped: events are NOT reaching this session: the relay cannot go on. Fix: Connect this session to a plan with session_connect.',
       ])
       await d.clock.advance(120_000)
       await forceRefresh($, d)
@@ -193,7 +193,7 @@ for (const surface of SURFACES) {
       d.relay.server.stopped = { reason: 'plan_archived', detail: 'archived', fix: 'connect again' }
       await startSession($, d, surface)
       d.relay.server.stopped = undefined
-      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
+      await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23' } as any)
       await d.clock.settle()
       expect(d.relay.calls).toHaveLength(2)
     })

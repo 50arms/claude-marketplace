@@ -71,16 +71,16 @@ describe('the dashboard cannot be read', () => {
 })
 
 describe('the hooks that refresh', () => {
-  test('the model connecting a plan (tool.call plan_connect) is shown at once', async ($, on) => {
+  test('the model connecting a plan (tool.call session_connect) is shown at once', async ($, on) => {
     const d = dashboard(on, { connected: false })
-    on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => {
+    on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => {
       d.world.planId = 24
       return { result: {}, text: 'connected', isError: false } as any
     })
     await startSession($, d, 'desktop')
     const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
     expect(await label(band)).toContain('50 Arms: not connected to a plan')
-    await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 24 } as any)
+    await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-24' } as any)
     await d.clock.settle()
     expect(await bandLabelOf(band)).toBe('PLAN-24 · Agent mode')
   })

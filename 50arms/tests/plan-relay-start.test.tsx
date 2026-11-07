@@ -22,12 +22,12 @@ for (const surface of SURFACES) {
       expect(d.relay.calls).toHaveLength(1)
     })
 
-    test("on the model's plan_connect", async ($, on) => {
+    test("on the model's session_connect", async ($, on) => {
       const d = dashboard(on, { connected: false })
       answerPlanConnect(on, d)
       await startSession($, d, surface)
       expect(d.relay.calls.map(c => c.plan_id)).toEqual([null])
-      await $.tool.call({ tool: toolName('plan_connect'), plan_id: 23 } as any)
+      await $.tool.call({ tool: toolName('session_connect'), target: 'PLAN-23' } as any)
       await d.clock.settle()
       expect(d.relay.calls).toEqual([{ plan_id: null, cursor: null, timeout_ms: WAIT_MS }, { plan_id: 23, cursor: null, timeout_ms: WAIT_MS }])
       // the calls (the no-plan one, then the plan's) reached the plugin's own server
@@ -53,12 +53,12 @@ for (const surface of SURFACES) {
     })
 
     for (const [name, answer] of [['approval_required', required], ['approval_pending', pending]] as const) {
-      test(`not for a plan_connect that answered ${name}: nothing is connected yet`, async ($, on) => {
+      test(`not for a session_connect that answered ${name}: nothing is connected yet`, async ($, on) => {
         const d = dashboard(on, { signedOut: 'signed-out' })
         d.world.signIn.answer = { text: pending, waits: true }
-        on('tool.call', { tool: 'mcp__plugin_50arms_platform__plan_connect' }, () => ({ result: {}, text: answer, isError: false }) as any)
+        on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: answer, isError: false }) as any)
         await startSession($, d, surface)
-        await $.tool.call({ tool: 'mcp__plugin_50arms_platform__plan_connect', plan_id: 23 } as any)
+        await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23' } as any)
         await d.clock.settle()
         expect(d.relay.calls).toHaveLength(0)
       })
