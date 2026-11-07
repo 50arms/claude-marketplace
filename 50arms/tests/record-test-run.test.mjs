@@ -243,7 +243,7 @@ test("a failed dispatched post says the record is not kept", async () => {
 
 test("with the URL unset and a token set the marker path is kept and one line says why", async () => {
   const { dir } = repo();
-  const r = await runAsync(dir, ["--report", reportIn(), "--", ...writer(vitestReport())], { DANX_AGENT_TOKEN: "tok", DANXBOT_TEST_RUN_URL: undefined });
+  const r = await runAsync(dir, ["--report", reportIn(), "--", ...writer(vitestReport())], { DANX_AGENT_TOKEN: "tok", DANXBOT_TEST_RECORD_URL: undefined });
   assert.match(r.stdout, MARK);
   assert.match(r.stderr, /only DANX_AGENT_TOKEN is set/);
 });
@@ -275,7 +275,7 @@ const runAsync = (dir, args, env) =>
 const dispatched = async (status, reply, command = writer(vitestReport())) => {
   const s = await stub(status, reply);
   const { dir } = repo();
-  const r = await runAsync(dir, ["--report", reportIn(), "--", ...command], { DANX_AGENT_TOKEN: "tok", DANXBOT_TEST_RUN_URL: s.url });
+  const r = await runAsync(dir, ["--report", reportIn(), "--", ...command], { DANX_AGENT_TOKEN: "tok", DANXBOT_TEST_RECORD_URL: s.url });
   s.close();
   return { r, seen: s.seen };
 };
@@ -317,10 +317,10 @@ test("a failing test run posts nothing even in a dispatch", async () => {
 test("with the token unset the marker path is kept, nothing is posted and one line says why", async () => {
   const s = await stub(201, { note_id: 1 });
   const { dir } = repo();
-  const r = await runAsync(dir, ["--report", reportIn(), "--", ...writer(vitestReport())], { DANXBOT_TEST_RUN_URL: s.url, DANX_AGENT_TOKEN: undefined });
+  const r = await runAsync(dir, ["--report", reportIn(), "--", ...writer(vitestReport())], { DANXBOT_TEST_RECORD_URL: s.url, DANX_AGENT_TOKEN: undefined });
   s.close();
   assert.match(r.stdout, MARK);
-  assert.match(r.stderr, /only DANXBOT_TEST_RUN_URL is set/);
+  assert.match(r.stderr, /only DANXBOT_TEST_RECORD_URL is set/);
   assert.equal(s.seen.length, 0);
 });
 

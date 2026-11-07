@@ -135,14 +135,14 @@ async function main() {
     return exitCode;
   }
   const body = JSON.stringify({ card, text: decision.text, metadata: decision.metadata });
-  const url = process.env.DANXBOT_TEST_RUN_URL;
+  const url = process.env.DANXBOT_TEST_RECORD_URL;
   const token = process.env.DANX_AGENT_TOKEN;
   // a dispatched agent: no hook runs there, so the script posts the record itself, to the worker route the dispatch names; no marker is printed
   if (url && token) {
     await postRecord(url, token, body);
     return exitCode;
   }
-  if (url || token) say(`only ${url ? "DANXBOT_TEST_RUN_URL" : "DANX_AGENT_TOKEN"} is set, so the record goes to the hook (marker line), not the worker`);
+  if (url || token) say(`only ${url ? "DANXBOT_TEST_RECORD_URL" : "DANX_AGENT_TOKEN"} is set, so the record goes to the hook (marker line), not the worker`);
   const dir = path.join(os.tmpdir(), "danxbot-test-runs");
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${card}-${decision.metadata.commit_sha}-${Date.now()}.json`);
