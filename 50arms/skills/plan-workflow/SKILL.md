@@ -70,6 +70,12 @@ each with a short title and a description saying where (exact link), what to do 
 look for, never an AC checklist; plan note = real milestone; remove a wrong-plan card from
 the plan; rename a stale plan.
 
+**A handoff, whole-plan state, takeover or gate-verdict note replaces your own earlier note of that
+kind** instead of adding a near-copy: write the new note through `50arms_api` with `replaces: [<the
+earlier note's id>]` (up to 5 ids). The replaced note leaves the default card read and stays whole,
+read by id or with `include_retired`. Leave an earlier note when a later note cites it as the
+record, and never replace a person's note.
+
 ## The user
 
 They read cards, not chat. A chat reply is at most 3 lines, no headings, tables, lists or

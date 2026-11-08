@@ -143,6 +143,11 @@ first, then end `failed`.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
   progress, evidence, gate results, handoffs, blockers; trace, audit and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
+  **A handoff, whole-plan state, takeover or gate-verdict note replaces your own earlier note of that kind**
+  instead of adding a near-copy: write the new note through `50arms_api` with `replaces: [<the earlier note's
+  id>]` (up to 5 ids). The replaced note leaves the default card read and stays whole, read by id or with
+  `include_retired`. Leave an earlier note when a later note cites it as the record, and never replace a
+  person's note.
 - **Decisions** — a decision record is the default home for anything important about a card.
   A consequential decision (a business rule, an architecture choice, a design) is a decision
   record on its card, `POST /api/issues/<id>/decision-records`, with a brief `title` (at most
