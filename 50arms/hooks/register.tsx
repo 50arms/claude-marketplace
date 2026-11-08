@@ -4037,10 +4037,11 @@ async function reportSubagentEnd($: any, agentId: string): Promise<void> {
 async function reportShellStart($: any, e: any, r: any): Promise<void> {
   const taskId = r.deny === undefined ? r.result?.backgroundTaskId : undefined
   if (typeof taskId !== 'string' || taskId === '') return
+  // CP-85: every signed-in session reports its shells, plan or card or neither, the same rule its sub-agent rows follow
+  if ((await reportingState($)) !== 'on') return
   const planId = await openingPlan($)
-  if (planId === null) return
   const now = await $.clock.now()
-  await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId], planId }))
+  await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId], planId: planId ?? cur.planId }))
   postActivity($, [shellRow(taskId, labelOf(e.description), now, null)])
 }
 

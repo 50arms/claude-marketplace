@@ -108,6 +108,23 @@ for (const surface of SURFACES) {
       expect(JSON.stringify(d.reports)).not.toContain('sk-ant')
     })
 
+    test('a signed-in session on no plan (a card or neither) opens a shell row for a backgrounded command and its end closes it (CP-85)', async ($, on) => {
+      on('tool.call', () => BACKGROUNDED as any)
+      answerReportEvents(on)
+      const d = dashboard(on, { connected: false })
+      await startSession($, d, surface)
+      await d.clock.advance(3_000)
+      const start = d.clock.now()
+      await $.tool.call({ tool: 'Bash', command: 'sleep 99', run_in_background: true } as any)
+      await d.clock.settle()
+      expect(activityRows(d)).toEqual([shellRow('bjlibh54w', null, start, null)])
+      await d.clock.advance(10_000)
+      const end = d.clock.now()
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('bjlibh54w', null, end, end)])
+    })
+
     test('a Stop or SubagentStop whose snapshot no longer lists a shell running finishes it; one still running stays open until a later Stop', async ($, on) => {
       let answer: any = BACKGROUNDED
       on('tool.call', () => answer)
