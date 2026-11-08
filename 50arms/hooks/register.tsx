@@ -905,7 +905,10 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
         // the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
         const target = typeof (watch.args as any).target === 'string' ? (watch.args as any).target : null
-        await tell(shown, watch.byPress ? signInNote(target, step.kind === 'done') : signInApprovedNote(shownRequest().code, target))
+        const note = watch.byPress ? signInNote(target, step.kind === 'done') : signInApprovedNote(shownRequest().code, target)
+        // CP-61: this call bound the session, so its answer carries the start packet; the model's own connect after it is a reconnect, which carries none
+        const packet = step.kind === 'done' ? toldLine(step.packet, startPacketFailureLine) : null
+        await tell(shown, joinLines([note, packet]) ?? note)
         await refresh($, true)
         if ('forReadyLoop' in watch) detach($, 'Ready list', syncReady($))
         return

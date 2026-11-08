@@ -9,6 +9,7 @@ import { LOCK_STALE_MS, NOT_CONNECTED_RETRY_MS, SIGN_IN_MIN_ROUND_MS, toolName }
 import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
+import { START_PACKET_PATH } from '../hooks/context/packet'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
 import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest, answerEngineClear, engineClears } from './plan-kit'
 // CP-67: the name the engine gives the command a person types as /50arms:ready: the plugin's skill, under the plugin's name
@@ -128,7 +129,7 @@ describe('a plan-less session_connect that holds a key', () => {
   const answer = (body: object) => ({ content: [{ type: 'text', text: JSON.stringify(body) }] })
 
   test('holding its team agent is signed in, never a stopped sign-in', () => {
-    expect(signInStep(answer({ state: 'agent_held', agent: AGENT, instruction: 'Use this name.' }))).toEqual({ kind: 'done' })
+    expect(signInStep(answer({ state: 'agent_held', agent: AGENT, instruction: 'Use this name.' }))).toEqual({ kind: 'done', packet: { kind: 'nothing' } })
   })
 
   test('with no agent to hold it stops and says why in the words of the person', () => {
@@ -1091,6 +1092,30 @@ describe('the ready-agent loop', () => {
       d.world.localRecord = false
       const told = (await $.prompt.submit({ text: 'next' })).context ?? []
       expect(told.join(' ')).toContain(EVENT_TEXT('session_start'))
+    })
+
+    // CP-61: the reset's fresh conversation is a session start, so it reads the start packet of what the session now holds, once
+    test("the clear's fresh conversation is told its start packet's file after the start text, from one read", async ($, on) => {
+      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+      on('classic.SessionStart', () => ({}) as any)
+      const d = await started($, on, { stateSteps: true })
+      await ready($, d)
+      handCard(d, 'Done')
+      released(d)
+      d.world.clearFails = 'clear boom'
+      d.world.localRecord = true
+      await turnEnds($, d)
+      await $.session.end({ reason: 'clear', sessionId: SESSION_ID } as any)
+      d.wipeState()
+      const file = { profile: 'work', path: '/tmp/danx-start-packet/work-0123456789abcdef.md', bytes: 4096, instruction: 'Read this file now, whole, in ONE Read call with allow_large: true.' }
+      d.world.startPacket = file
+      d.contextReads.length = 0
+      await $.classic.SessionStart({ session_id: 'sess-own-2', source: 'clear', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
+      d.world.localRecord = false
+      const told = (await $.prompt.submit({ text: 'next' })).context ?? []
+      expect(told.slice(1)).toEqual([`${EVENT_TEXT('session_start')}
+[50 ARMS] Your start packet is already fetched for you. File: ${file.path} (4096 bytes, the work role). ${file.instruction}`])
+      expect(d.contextReads.filter((p: string) => p === START_PACKET_PATH)).toEqual([START_PACKET_PATH])
     })
 
     test('a look whose row answer comes back after a turn began and ended acts on nothing it read: a turn in which the model took the next card ends no loop as work taken', async ($, on) => {

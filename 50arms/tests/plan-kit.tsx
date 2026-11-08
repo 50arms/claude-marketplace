@@ -402,7 +402,8 @@ export function dashboard(
     localRecord: options.connected !== false,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
     eventText: {} as Record<string, string | { status: number }>,
-    // CP-61: what GET /api/plan-sessions/me/start-packet answers as `startPacket` (null: the session holds nothing), or a status; the server's own MCP has already written the file
+    // CP-61: what GET /api/plan-sessions/me/start-packet answers as `startPacket` (null: the session holds nothing), or a status; the server's own MCP has already written the file.
+    // A session_connect's envelope carries the same value as its `startPacket`
     startPacket: null as unknown,
     // DX-4234: what the server's `restart_notice` tool answers (DX-4632): `{notice: null}` unless a test sets a JSON answer (`json`), a raw
     // result (`raw`), or a rejection (`deny`). `delayMs` / `hangs`: it answers late / never.
@@ -1034,9 +1035,10 @@ export function dashboard(
           world.signedOut = null
           if (e.args.target === undefined) return { value: text({ state: 'signed_in', instruction: 'This session is signed in. Call `session_connect` with `target` to connect it to a plan or a card.' }) }
           world.titleSeen = e.args.title
-          if (planNumberOf(e.args.target) === undefined) return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target } } }) }
+          // CP-61: a connect answers the start packet it built (the server's `startPacket`, already a file in the MCP's answer), as GET /me/start-packet does
+          if (planNumberOf(e.args.target) === undefined) return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target }, startPacket: world.startPacket } }) }
           world.planId = planNumberOf(e.args.target)
-          return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId } } }) }
+          return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId }, startPacket: world.startPacket } }) }
         }
         if (dance.approved) return approvedAnswer()
         if (!dance.requested) {
@@ -1160,10 +1162,10 @@ export function dashboard(
         world.titleSeen = e.args.title
         if (planNumberOf(e.args.target) === undefined) {
           world.card = { id: e.args.target, title: 'x' }
-          return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target } } }) }
+          return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target }, startPacket: world.startPacket } }) }
         }
         world.planId = planNumberOf(e.args.target)
-        return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId } } }) }
+        return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId }, startPacket: world.startPacket } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
       const apiHold = world.apiHolds.findIndex(h => h.method === e.args.method && h.path === e.args.path)

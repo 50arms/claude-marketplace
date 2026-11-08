@@ -53,7 +53,7 @@ export function eventText(r: Api): Told {
 // is the server's own remedy text (it tells the session to continue and to call session_connect).
 export type RestartNoticeAnswer = { notice: string } | { notice: null } | { stopped: { reason: string; detail: string; fix: string } }
 
-const isText = (v: unknown): v is string => typeof v === 'string' && v !== ''
+export const isText = (v: unknown): v is string => typeof v === 'string' && v !== ''
 
 // The answer as the contract words it, or null for any other shape.
 function asRestartNoticeAnswer(value: unknown): RestartNoticeAnswer | null {

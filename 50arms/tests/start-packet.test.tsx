@@ -6,7 +6,9 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { START_PACKET_PATH } from '../hooks/context/packet'
-import { DEFAULT_BRIEFING, EVENT_TEXT, SURFACES, dashboard, firstPrompt, startSession, test } from './plan-kit'
+import { signInApprovedNote, signInNote } from '../hooks/plan/notes'
+import { relayLine } from '../hooks/relay/delivery'
+import { APPROVAL_REQUIRED, CONFIRM_CODE, DEFAULT_BRIEFING, EVENT_TEXT, SURFACES, dashboard, firstPrompt, forceRefresh, startSession, test, woken } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
 // what the session's dashboard server answers in place of the packet's text (spillStartPacket): where the file is and the one Read that takes it whole
@@ -16,7 +18,7 @@ const FILE = {
   bytes: 78688,
   instruction: 'Read this file now, whole, in ONE Read call with allow_large: true and no offset or limit. It is your start packet: your role\'s workflow, then what you hold now.',
 }
-const POINTER = `[50 ARMS] Your start packet is already fetched for you, so call no start-packet route. File: ${FILE.path} (78688 bytes, the orchestrator role). ${FILE.instruction}`
+const POINTER = `[50 ARMS] Your start packet is already fetched for you. File: ${FILE.path} (78688 bytes, the orchestrator role). ${FILE.instruction}`
 const PACKET_READS = (reads: string[]) => reads.filter(p => p === START_PACKET_PATH)
 
 for (const surface of SURFACES) {
@@ -91,6 +93,69 @@ for (const surface of SURFACES) {
       const r = await $.classic.SubagentStart(START)
       await d.clock.settle()
       expect(r.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])
+      expect(PACKET_READS(d.contextReads)).toEqual([])
+    })
+  })
+}
+
+// CP-61: a fresh session usually has no dashboard key yet, so its first session_connect answers approval_required and the plugin's sign-in
+// watch repeats that call until the person approves. The watch's call is then the one that BINDS the session, so the dashboard builds the
+// packet for its answer; the model's own connect after the wake note is a reconnect, answered with none. So the packet the watch's answer
+// carries is told in the wake note itself, and the plugin makes no route read of its own for it.
+for (const surface of SURFACES) {
+  describe(`the start packet of a sign-in approved on ${surface}`, () => {
+    const CALL = { tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23', title: 'PLAN-23: 50 Arms plugin' } as any
+    const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
+    // the model's own call answers the request, as the MCP does, and the watch takes the wait from there
+    async function modelAsksToSignIn($: any, on: any, packet: unknown) {
+      on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
+      const d = dashboard(on, { signedOut: 'signed-out' })
+      await startSession($, d, surface)
+      d.world.startPacket = packet
+      d.contextReads.length = 0
+      await $.tool.call(CALL)
+      await d.clock.settle()
+      d.world.signIn.approved = true
+      await d.clock.advance(45_000)
+      await d.clock.settle()
+      return d
+    }
+
+    test("the model's own sign-in: the wake note carries the packet's file the binding connect answered, and no route is read", async ($, on) => {
+      const d = await modelAsksToSignIn($, on, FILE)
+      expect(woken(d)).toEqual([relayLine(`${signInApprovedNote(CONFIRM_CODE, 'PLAN-23')}
+${POINTER}`)])
+      expect(PACKET_READS(d.contextReads)).toEqual([])
+    })
+
+    test('a binding connect whose packet is malformed: the wake note is followed by one warning line, never a guessed pointer', async ($, on) => {
+      const d = await modelAsksToSignIn($, on, { profile: 'orchestrator', path: '', bytes: 1, instruction: 'x' })
+      expect(woken(d)).toEqual([
+        relayLine(`${signInApprovedNote(CONFIRM_CODE, 'PLAN-23')}
+⚠ Could not load your start packet (bad_response: startPacket is not {profile, path, bytes, instruction}). Tell the operator this start packet fetch failed.`),
+      ])
+    })
+
+    test('a connect that builds no packet (null) adds nothing to the wake note', async ($, on) => {
+      const d = await modelAsksToSignIn($, on, null)
+      expect(woken(d)).toEqual([relayLine(signInApprovedNote(CONFIRM_CODE, 'PLAN-23'))])
+    })
+
+    test("the Sign in button: the note that the operator signed the session in carries the packet's file", async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
+      d.world.signedOut = 'lapsed'
+      for (let i = 0; i < 3; i++) await forceRefresh($, d)
+      d.world.startPacket = FILE
+      d.contextReads.length = 0
+      await band.press({ key: 'sign-in' })
+      await d.clock.settle()
+      d.world.signIn.approved = true
+      await d.clock.advance(45_000)
+      await d.clock.settle()
+      expect(woken(d)).toEqual([relayLine(`${signInNote('PLAN-23', true)}
+${POINTER}`)])
       expect(PACKET_READS(d.contextReads)).toEqual([])
     })
   })

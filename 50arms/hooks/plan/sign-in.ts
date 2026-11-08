@@ -1,6 +1,8 @@
 import { approvalRequestOf } from './approval'
 import type { ApprovalRequest } from './approval'
 import { keyRevokedBy, mcpText, refusalText, toolOutcome } from './mcp'
+import type { Told } from '../context/events'
+import { startPacketTold } from '../context/packet'
 
 // what one `session_connect` answer means to the Sign in button, and what the person is told. The server's own
 // words are written for the agent (it says "Do not retry unless they ask"), so nothing here passes them on: every
@@ -13,8 +15,10 @@ export type SignInStep =
   | { kind: 'waiting'; request: ApprovalRequest }
   // the person denied the request (the model is told, the others are not)
   | { kind: 'denied' }
-  // signed in (and on its plan again when one was asked for)
-  | { kind: 'done' }
+  // signed in (and on its plan again when one was asked for). `packet`: the start packet the connect answered. The call that binds
+  // the session to its plan or card is the one the dashboard builds the packet for, and on the approval path that call is the
+  // watch's own: the model's later connect is a reconnect, answered with none, so this is the only place the packet is seen.
+  | { kind: 'done'; packet: Told }
   // signed in, but the plan connect was refused: the view reloads and says where the session is
   | { kind: 'refused'; message: string }
   // a person revoked the key while signing in: nothing more to do, and the view reads the truth
@@ -48,7 +52,7 @@ export function signInStep(result: any): SignInStep {
   }
   if (parsed !== null && typeof parsed === 'object' && typeof parsed.state === 'string') {
     // a plan-less session_connect that holds a key answers the claim of its team agent (`agent_held`), not `signed_in`
-    if (parsed.state === 'signed_in' || parsed.state === 'agent_held') return { kind: 'done' }
+    if (parsed.state === 'signed_in' || parsed.state === 'agent_held') return { kind: 'done', packet: { kind: 'nothing' } }
     if (parsed.state === 'denied') return { kind: 'denied' }
     if (parsed.state === 'approval_required' || parsed.state === 'approval_pending') {
       const request = approvalRequestOf(text, [parsed.state])
@@ -57,5 +61,5 @@ export function signInStep(result: any): SignInStep {
     return { kind: 'stop', message: STOPPED[parsed.state] ?? `Sign in stopped (${parsed.state}).`, ...(parsed.state in NO_AGENT ? { signedIn: true as const } : {}) }
   }
   const outcome = toolOutcome(result)
-  return outcome.ok ? { kind: 'done' } : { kind: 'refused', message: `Signed in, but the plan connect was refused: ${refusalText(outcome)}` }
+  return outcome.ok ? { kind: 'done', packet: startPacketTold(outcome) } : { kind: 'refused', message: `Signed in, but the plan connect was refused: ${refusalText(outcome)}` }
 }
