@@ -13,8 +13,9 @@ throughout; this skill is the plan mechanics.
 1. Sign in: `session_connect`, with `target` the plan's `PLAN-n` when you know it (a plan link in the
    prompt, or your session's plan in `GET /api/plans`), else with no `target`. A session holds
    no dashboard key until its user approves it: `approval_required` (or `approval_pending`) is
-   not a failure. Show the user the confirm code and the approval URL, and once they approve
-   call `session_connect` again. The plugin shows the link and code at once and opens nothing: the
+   not a failure. Show the user the confirm code and the approval URL, then end your turn: the
+   plugin wakes you when they decide, and you call `session_connect` once then, never in a loop
+   while you wait. The plugin shows the link and code at once and opens nothing: the
    person clicks the link, so never open the URL yourself (two tabs). The same holds for
    `request_permission`. Every other dashboard tool answers "not signed in" until then.
 2. Take your identity from the reply: signing in makes you one of the team's agents, and the
@@ -47,11 +48,13 @@ throughout; this skill is the plan mechanics.
    `{Name}: PLAN-NNN {short title}`, on a card `{Name}: {CARD-ID} {card title}`, on neither
    `{Name}`. The sign-in reply on no plan gives that title in `title` with `titleInstruction`; a
    plan connect's `naming` block (status `needed`) gives the exact title. Rename the thread to it
-   (desktop `set_session_title`; terminal: ask the person to `/rename`); after a plan connect
-   asked for it, connect again with that `title`.
-5. Orient from the connect briefing, else read the plan's records, architecture and cards,
-   plus one batch read of its In-Progress/open-problem cards and the newest handoff agent note
-   (`agent_notes` on the card read).
+   (desktop `set_session_title`; terminal: ask the person to `/rename`). A rename needs no second
+   `session_connect`: the heartbeat carries the title to the dashboard.
+5. Orient from your start packet: the connect reply names its file, and the plugin names the same
+   file at a session start and after a compaction. Read it whole, in ONE `Read` call with
+   `allow_large: true` and no offset. It holds your role's workflow, the plan's in-flight cards with
+   each newest agent note, the card you hold and your running sub-agents; read the plan's records,
+   architecture and cards only as the work needs them.
 6. Follow `session_connect`'s browser instruction as written.
 
 ## Where things go

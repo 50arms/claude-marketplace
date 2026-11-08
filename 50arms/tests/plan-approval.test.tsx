@@ -87,6 +87,9 @@ describe('session_connect while signed out', () => {
     expect(note[0]).toContain('already shows the person the approval link')
     expect(note[0]).toContain('Do not open the link yourself')
     expect(note[0]).toContain('NXGUF88G')
+    // CP-61: the watch wakes the session with the outcome, so the note ends the turn and asks for no connect while it waits
+    expect(note[0]).toContain('end your turn: the plugin wakes you with the outcome')
+    expect(note[0]).toContain('do not call session_connect again while you wait')
   })
 
   test('the same request repeated shows its toast once; a new request swaps the link and the code', async ($, on) => {

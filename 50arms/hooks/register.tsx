@@ -4,6 +4,7 @@ import type { Register, SessionRateLimit } from 'claude-code'
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
+import { START_PACKET_PATH, startPacketFailureLine, startPacketTold } from './context/packet'
 import { stamp as nextStamp } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
@@ -3084,6 +3085,18 @@ async function eventContext($: any, event: DashboardEvent): Promise<string | nul
   return toldLine(eventText(await api($, 'GET', eventPath(event))), reason => eventFailureLine(event, reason))
 }
 
+// The start packet of what the session holds, read by the plugin so the agent makes no route call of its own: the line names the file to read once.
+// A session that holds no plan and no card is told nothing (the dashboard answers null); a read that broke is one line naming why.
+async function startPacketContext($: any): Promise<string | null> {
+  return toldLine(startPacketTold(await api($, 'GET', START_PACKET_PATH)), startPacketFailureLine)
+}
+
+// the lines of one start in the order the model reads them; a line with nothing to say is null
+const joinLines = (lines: (string | null)[]): string | null => {
+  const told = lines.filter((x): x is string => x !== null)
+  return told.length === 0 ? null : told.join('\n')
+}
+
 // a session that is not on a plan (or has no key yet) but replaced one that was is told which plan and what waits there. The
 // session's own dashboard server finds the earlier session and answers; its `restart_notice` tool works before sign-in and owns its
 // lookup's 8 s deadline (a `lookup_timeout` stop carries the server's fix text), so the plugin sets no deadline of its own around the call. A stop
@@ -3137,13 +3150,14 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)
     if (plan.kind === 'connected') {
-      const line = await eventContext($, event)
-      // a compaction is followed by the resume briefing, in the same first turn as the registry's text
-      return { line: start.source === 'compact' ? [line, await compactionBriefing($)].filter(x => x !== null).join('\n') : line, askRestart: false }
+      // the registry's text, then the start packet's file, then (after a compaction) the resume briefing, in the same first turn; the two reads go out together, so the packet adds no wait to the deadline
+      const [line, packet] = await Promise.all([eventContext($, event), startPacketContext($)])
+      return { line: joinLines([line, packet, start.source === 'compact' ? await compactionBriefing($) : null]), askRestart: false }
     }
     if (plan.kind === 'failed') return fault(plan.reason)
     // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
-    if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
+    // (it may hold a stand-alone card, whose start packet is the work role's)
+    if (plan.kind === 'not-connected') return { line: joinLines(await Promise.all([eventContext($, event), startPacketContext($)])), askRestart }
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
     return { line: null, askRestart }
   }

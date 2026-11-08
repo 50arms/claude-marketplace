@@ -44,6 +44,7 @@ export const APPROVE_SIGN_IN_LABEL = 'Approve sign-in ↗'
 export const codeLabel = (a: ApprovalRequest) => `code ${a.code}`
 
 // What the model reads after a tool answer that carries a sign-in request: the plugin has put the link and code in front of the
-// person already, so the model only has to say so (and opens nothing).
+// person already, so the model only has to say so (and opens nothing), then ends its turn. The plugin's sign-in watch wakes the
+// session with the outcome (watchSignIn, signInApprovedNote), so a model that connects again while it waits is a poll the watch already makes.
 export const signInShownNote = (a: ApprovalRequest) =>
-  `The 50 Arms plugin already shows the person the approval link (${a.url}) and confirm code ${a.code} in the band. Do not open the link yourself; tell the user to approve with confirm code ${a.code}.`
+  `The 50 Arms plugin already shows the person the approval link (${a.url}) and confirm code ${a.code} in the band. Do not open the link yourself; tell the user to approve with confirm code ${a.code}, then end your turn: the plugin wakes you with the outcome, so do not call session_connect again while you wait.`

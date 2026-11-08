@@ -21,11 +21,13 @@ const restartMain = async ($: any) => {
 const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('Your conversation was just compacted'))
 
 describe('the resume procedure (pure)', () => {
-  test('names the five steps in order, and the briefing carries it', () => {
-    const at = ['re-invoke every skill', 'newest handoff agent note', 're-read each In Progress card', 'check your running sub-agents', 'continue the step that was in progress'].map(s => RESUME_PROCEDURE.indexOf(s))
+  // CP-61: the start packet is the whole orientation, so the procedure lists no fetch for the agent to make by itself
+  test('points at the start packet, then the sub-agents and the step, and lists none of the reads the packet replaced; the briefing carries it', () => {
+    const at = ['start packet', 'ONE Read', 'read only what it does not carry', 'sub-agents', 'continue the step that was in progress'].map(s => RESUME_PROCEDURE.indexOf(s))
     expect(at.every(i => i >= 0)).toBe(true)
     expect([...at].sort((a, b) => a - b)).toEqual(at)
     expect(RESUME_PROCEDURE).toContain('without asking the person')
+    for (const gone of ['re-invoke', 'handoff agent note', 're-read each In Progress card']) expect(RESUME_PROCEDURE).not.toContain(gone)
     const ok = <T,>(value: T) => ({ ok: true as const, value })
     expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })).toContain(RESUME_PROCEDURE)
   })
@@ -60,6 +62,19 @@ for (const surface of SURFACES) {
       expect(prompt).toContain('Work not pushed')
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect(resumes(d)).toHaveLength(1)
+    })
+
+    // CP-61: the packet's file rides the resume prompt between the registry's text and the briefing, so the agent reads ONE file instead of the reads the old procedure listed
+    test("the resume prompt names the start packet's file after the event text and before the briefing", async ($, on) => {
+      const d = await started($, on)
+      d.world.startPacket = { profile: 'orchestrator', path: '/tmp/danx-start-packet/orchestrator-0123456789abcdef.md', bytes: 78688, instruction: 'Read this file now, whole, in ONE Read call with allow_large: true and no offset or limit.' }
+      await restartMain($)
+      await d.clock.settle()
+      const [prompt] = resumes(d)
+      const at = [TOLD('after_compaction').split('\n')[0], 'Your start packet is already fetched for you', '/tmp/danx-start-packet/orchestrator-0123456789abcdef.md', 'allow_large: true', RESUME_PROCEDURE].map(s => prompt.indexOf(s))
+      expect(at.every((i: number) => i >= 0)).toBe(true)
+      expect([...at].sort((a: number, b: number) => a - b)).toEqual(at)
       expect(resumes(d)).toHaveLength(1)
     })
 

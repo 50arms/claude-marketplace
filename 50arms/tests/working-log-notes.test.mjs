@@ -24,7 +24,8 @@ test("plan-workflow sends the working log, handoffs and blockers to agent notes 
   // a pacing stop records nothing (operator rule, 2026-10-25)
   assert.match(planWorkflow, /\*\*When pacing stops you, just stop\.\*\*.*Record nothing \(no agent note, no block, no problem, no pause call, no work-in-progress commit\)/);
   assert.doesNotMatch(planWorkflow, /as paused in an agent note|saying what is paused/);
-  assert.match(planWorkflow, /the newest handoff agent note \(`agent_notes` on the card read\)/);
+  // CP-61: the newest handoff note of each in-flight card reaches the session in its start packet, so the skill sends no batch read for it
+  assert.match(planWorkflow, /the plan's in-flight cards with each newest agent note/);
   assert.match(planWorkflow, /write each real blocker \(card id, open problem, user action\) to an agent note on that card/);
   assert.match(planWorkflow, /after the handoff agent note, call `session_connect\(\{target, disconnect: true\}\)`/);
   assert.match(planWorkflow, /Record why on the card first \(a problem, an agent note, `depends_on`, or the real block\)/);

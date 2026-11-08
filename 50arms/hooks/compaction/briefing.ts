@@ -66,7 +66,7 @@ function owedLine(owed: Source<OwedComment[]>): string {
   if (!owed.ok) return `Comments you still owe an answer: NOT KNOWN, the read failed (${oneLine(owed.reason, REASON_MAX)}). Read your plan's cards for person comments with no reply of yours before you continue the step that was in progress.`
   if (owed.value.length === 0) return 'Comments you still owe an answer: none.'
   const items = owed.value.map(c => `${c.cardId} ${oneLine(c.cardTitle, TITLE_MAX)}, comment ${c.commentId} from ${oneLine(c.author.name, AUTHOR_MAX)} [${OWED_STATE_LABEL[c.state]}, waiting ${waitedText(c.waitedMs)}]: "${oneLine(c.excerpt.text, EXCERPT_MAX)}"`)
-  return `Comments you still owe an answer, oldest first: ${items.join('; ')}. Answer them right after steps (1)-(3) above (skills, handoff note, cards) and before you continue the step that was in progress. For each, acknowledge it (POST /api/issues/<card>/comments/<commentId>/reply with phase "ack" and your short acknowledgement as body; skip this for one that is Seen, already acknowledged), then write your answer into that same message (the same route with phase "reply" and the answer as body).`
+  return `Comments you still owe an answer, oldest first: ${items.join('; ')}. Answer them right after you read your start packet and before you continue the step that was in progress. For each, acknowledge it (POST /api/issues/<card>/comments/<commentId>/reply with phase "ack" and your short acknowledgement as body; skip this for one that is Seen, already acknowledged), then write your answer into that same message (the same route with phase "reply" and the answer as body).`
 }
 
 function cardsLine(cards: Source<BriefingCard[]>): string {
@@ -74,7 +74,7 @@ function cardsLine(cards: Source<BriefingCard[]>): string {
   if (cards.value.length === 0) return 'Cards in flight: none on your plan.'
   const shown = cards.value.slice(0, CARDS_SHOWN).map(c => `${c.id} ${oneLine(c.title, 60)}`)
   const more = cards.value.length - shown.length
-  return `Cards in flight on your plan: ${shown.join('; ')}${more > 0 ? `, and ${more} more` : ''}. Read each card before you act on it.`
+  return `Cards in flight on your plan: ${shown.join('; ')}${more > 0 ? `, and ${more} more` : ''}.`
 }
 
 function agentsLine(agents: Source<BriefingAgent[]>): string {
@@ -96,8 +96,9 @@ function gitLine(git: Source<GitState>): string {
   return `Work not pushed, in the session's own checkout (${where}): ${parts.join(', ')}.`
 }
 
-// how the main agent picks up after a compaction, in order; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing.
-export const RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress."
+// how the main agent picks up after a compaction; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing. The start packet (the file hooks/context/packet.ts names, told
+// just above) is the whole orientation, so there is no list of reads: the role's workflow, the in-flight cards with each newest note, the card the session holds and its running sub-agents are all in it.
+export const RESUME_PROCEDURE = "Resume now, without asking the person: your start packet (the file named above when it could be read) is your whole orientation, so read it now in ONE Read, work from it, and read only what it does not carry. Wait for your running sub-agents' notifications (listed below when they could be read), never starting a duplicate, and continue the step that was in progress."
 
 // the briefing's opening, alone: a resume prompt whose dashboard reads failed still carries it
 export const RESUME_OPENING = `[50 ARMS] Your conversation was just compacted. ${RESUME_PROCEDURE}`

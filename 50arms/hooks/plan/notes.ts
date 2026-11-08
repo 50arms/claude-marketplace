@@ -58,5 +58,5 @@ export function signInDeniedNote(code: string): string {
 }
 
 export function signInExpiredNote(code: string): string {
-  return `[50 Arms] Sign-in request ${code} expired before it was decided: a renewed request is already open for the person, so wait for its outcome (or call session_connect to see it).`
+  return `[50 Arms] Sign-in request ${code} expired before it was decided: a renewed request is already open for the person, so end your turn and wait for its outcome: the plugin wakes you with it.`
 }

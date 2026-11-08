@@ -65,3 +65,20 @@ test("no skill of the plugin tells a session to pick its own name", () => {
     assert.doesNotMatch(text, /given name|free name|your own (short )?name|choose a name for yourself/i, `${skill}/SKILL.md`);
   }
 });
+
+// CP-61 / DX-6733: no approval polling, no title re-connect, and the orientation is the start packet read once
+test("approval: the session ends its turn and calls session_connect once after the plugin's wake, never in a loop", () => {
+  assert.match(start, /then end your turn: the plugin wakes you when they decide, and you call `session_connect` once then, never in a loop while you wait/);
+  assert.doesNotMatch(start, /once they approve call `session_connect` again/);
+});
+
+test("the rename needs no second session_connect: the heartbeat carries the title", () => {
+  assert.match(start, /A rename needs no second `session_connect`: the heartbeat carries the title to the dashboard/);
+  assert.doesNotMatch(start, /connect again with that `title`/);
+});
+
+test("orientation is the start packet, read whole in one Read with allow_large, not a batch of card and note reads", () => {
+  assert.match(start, /5\. Orient from your start packet: the connect reply names its file, and the plugin names the same file at a session start and after a compaction\. Read it whole, in ONE `Read` call with `allow_large: true` and no offset\./);
+  assert.match(start, /the plan's in-flight cards with each newest agent note, the card you hold and your running sub-agents/);
+  assert.doesNotMatch(start, /one batch read of its In-Progress/);
+});
