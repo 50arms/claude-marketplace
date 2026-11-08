@@ -4,7 +4,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
-const FILE = '/tmp/danxbot-test-runs/DX-9-run.json'
+const FILE = '/tmp/50arms-test-runs/DX-9-run.json'
 const METADATA = { kind: 'test_run', commit_sha: 'a'.repeat(40), tree_id: 'b'.repeat(40), command: 'npm test', machine: 'm', tests: { passed: 3, failed: 0, skipped: 0, total: 3 }, test_files: null, files: null }
 const RECORD = JSON.stringify({ card: 'DX-9', text: 'Tests passed.', metadata: METADATA })
 const marked = (file = FILE) => ({ result: { stdout: `3 passed\nTEST_RUN_RECORD ${file}\n`, stderr: '', interrupted: false }, text: 'ignored' })

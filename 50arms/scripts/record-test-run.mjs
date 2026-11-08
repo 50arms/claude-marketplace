@@ -143,7 +143,7 @@ async function main() {
     return exitCode;
   }
   if (url || token) say(`only ${url ? "DANXBOT_TEST_RECORD_URL" : "DANX_AGENT_TOKEN"} is set, so the record goes to the hook (marker line), not the worker`);
-  const dir = path.join(os.tmpdir(), "danxbot-test-runs");
+  const dir = path.join(os.tmpdir(), "50arms-test-runs");
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${card}-${decision.metadata.commit_sha}-${Date.now()}.json`);
   writeFileSync(file, body, "utf8");
