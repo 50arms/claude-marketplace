@@ -10,7 +10,7 @@
 // Single-quote the whole command so the outer shell does not expand `$DANXBOT_TEST_REPORT` early. From a PowerShell-started node, `bash` can resolve to
 // `System32\bash.exe`, which is WSL: name Git Bash's bash by its full path there. The command must write the runner's own report to `$DANXBOT_TEST_REPORT`
 // (the wrapper sets it to the --report path), e.g. vitest `--reporter=default --reporter=json --outputFile.json="$DANXBOT_TEST_REPORT"`.
-// After an exit-0 run on a clean tree whose HEAD and tree did not move, it writes a record file and prints `DANXBOT_TEST_RUN_RECORD <file>`;
+// After an exit-0 run on a clean tree whose HEAD and tree did not move, it writes a record file and prints `TEST_RUN_RECORD <file>`;
 // the plugin's tool hook posts it as a `test_run` agent note on the card with the session's own key. This script holds no
 // credential. It never changes the run's exit code: whatever it declines to record it says on stderr.
 import { spawn, spawnSync } from "node:child_process";

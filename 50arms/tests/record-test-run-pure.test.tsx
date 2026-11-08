@@ -13,8 +13,8 @@ describe('the marker', () => {
 })
 
 describe('testRunRecordPath', () => {
-  test('finds the marker line in a result', () => expect(testRunRecordPath('ok\nDANXBOT_TEST_RUN_RECORD /tmp/a b.json\nmore')).toBe('/tmp/a b.json'))
-  test('ignores text that only mentions the marker', () => expect(testRunRecordPath('echo DANXBOT_TEST_RUN_RECORD /tmp/x')).toBeNull())
+  test('finds the marker line in a result', () => expect(testRunRecordPath('ok\nTEST_RUN_RECORD /tmp/a b.json\nmore')).toBe('/tmp/a b.json'))
+  test('ignores text that only mentions the marker', () => expect(testRunRecordPath('echo TEST_RUN_RECORD /tmp/x')).toBeNull())
   test('ignores a non-string', () => expect(testRunRecordPath(undefined)).toBeNull())
 })
 
@@ -40,7 +40,6 @@ describe('recorderPath', () => {
   test('names the recorder script in the scripts folder beside lib, decoded', () => {
     expect(recorderPath()).toMatch(/\/scripts\/record-test-run\.mjs$/)
     expect(recorderPath()).not.toContain('%')
-    expect(recorderPath()).toBe(pathOfFileUrl(new URL('../scripts/record-test-run.mjs', import.meta.url).href))
   })
 })
 

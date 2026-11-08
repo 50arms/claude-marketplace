@@ -7,7 +7,7 @@ import { test, SURFACES, dashboard, startSession } from './plan-kit'
 const FILE = '/tmp/danxbot-test-runs/DX-9-run.json'
 const METADATA = { kind: 'test_run', commit_sha: 'a'.repeat(40), tree_id: 'b'.repeat(40), command: 'npm test', machine: 'm', tests: { passed: 3, failed: 0, skipped: 0, total: 3 }, test_files: null, files: null }
 const RECORD = JSON.stringify({ card: 'DX-9', text: 'Tests passed.', metadata: METADATA })
-const marked = (file = FILE) => ({ result: { stdout: `3 passed\nDANXBOT_TEST_RUN_RECORD ${file}\n`, stderr: '', interrupted: false }, text: 'ignored' })
+const marked = (file = FILE) => ({ result: { stdout: `3 passed\nTEST_RUN_RECORD ${file}\n`, stderr: '', interrupted: false }, text: 'ignored' })
 const notes = (d: any) => d.api.filter((a: any) => a.method === 'POST' && a.path.endsWith('/notes'))
 
 for (const surface of SURFACES) {
@@ -38,7 +38,7 @@ for (const surface of SURFACES) {
     })
 
     test('a marker only in the result text, not stdout, posts nothing', async ($, on) => {
-      const d = await started($, on, () => ({ result: { stdout: '' }, text: `DANXBOT_TEST_RUN_RECORD ${FILE}` }))
+      const d = await started($, on, () => ({ result: { stdout: '' }, text: `TEST_RUN_RECORD ${FILE}` }))
       await $.tool.call({ tool: 'Bash', command: 'a' } as any)
       await d.clock.settle()
       expect(notes(d)).toEqual([])
@@ -63,7 +63,7 @@ for (const surface of SURFACES) {
       d.setMcp('flaky')
       await $.tool.call({ tool: 'Bash', command: 'a' } as any)
       await d.clock.settle()
-      expect(d.toasts.some((t: string) => t.startsWith('danxbot test-run record failed'))).toBe(true)
+      expect(d.toasts.some((t: string) => t.startsWith('50arms test-run record failed'))).toBe(true)
       expect(d.world.files[FILE]).toBe(RECORD)
     })
 

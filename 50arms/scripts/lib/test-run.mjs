@@ -4,7 +4,7 @@
 
 export const MAX_RECORDED_FILES = 100;
 /** The marker line the wrapper prints; the plugin's tool hook posts the record file the line names. */
-export const RECORD_MARKER = "DANXBOT_TEST_RUN_RECORD";
+export const RECORD_MARKER = "TEST_RUN_RECORD";
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const counts = (passed, failed, skipped, total) => ({ passed, failed, skipped, total });

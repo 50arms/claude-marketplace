@@ -62,7 +62,7 @@ export function listPluginFiles(repoRoot, plugin) {
  * ('.danxbot' and `.config/danxbot/`). Prose naming the old product, and any other spelling of these, fails the scan.
  */
 const OWNED_ELSEWHERE =
-  /DANXBOT_(?:DASHBOARD_URL|PLUGIN_DASHBOARD_URL|DASHBOARD_TRACE|DISK_FLOOR_GIB|DISK_HARD_MINIMUM_GIB)|DANX_DASHBOARD_CREDENTIAL|'danxbot_(?:api|api_list|api_spec|slack_reply)'|'\.danxbot'|has no \.danxbot directory|\$\{home\}\/\.config\/danxbot\/|repo: "danxbot"/g;
+  /DANXBOT_(?:TEST_RECORDER|TEST_RECORD_URL|TEST_REPORT|DASHBOARD_URL|PLUGIN_DASHBOARD_URL|DASHBOARD_TRACE|DISK_FLOOR_GIB|DISK_HARD_MINIMUM_GIB)|DANX_DASHBOARD_CREDENTIAL|'danxbot_(?:api|api_list|api_spec|slack_reply)'|'\.danxbot'|has no \.danxbot directory|\$\{home\}\/\.config\/danxbot\/|repo: "danxbot"/g;
 // `@danxbot/ui` is reported by its own kind above, so it is not counted twice.
 const oldNameHit = { test: (line) => /danx/i.test(line.replace(OWNED_ELSEWHERE, "").replace(/@danxbot\/ui/g, "")) };
 

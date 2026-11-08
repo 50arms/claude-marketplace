@@ -2951,7 +2951,7 @@ async function onToolStamp($: any, e: any, next: any) {
   detach($, '50 Arms activity report', reportShellStart($, e, r))
   if (e.agentId !== undefined) detach($, '50 Arms activity report', reportSubagentAlive($, e.agentId))
   if (r.deny !== undefined) return r
-  if (e.tool === 'Bash') detach($, 'danxbot test-run record', postTestRun($, r))
+  if (e.tool === 'Bash') detach($, '50arms test-run record', postTestRun($, r))
   // a sub-agent's compaction briefs that sub-agent, in its own tool result
   const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
   // a Bash call that starts a whole test suite (no test file named) gets a reminder beside its result; it rides this handler because no other tool.call handler may sit on a Bash call

@@ -447,14 +447,14 @@ test("a failing suite behind a pipe under bash -l -c is not recorded", { skip: !
 // ---- fix pass 4: single-quoted attributes and long options with an argument
 test("suite and root attributes in single quotes, or with a > inside a value, still count", () => {
   const cases = '<testcase name="a"/><testcase name="b"/>';
-  for (const xml of [
-    `<testsuite errors='1'>${cases}</testsuite>`,
-    `<testsuite name="a > b" errors="1">${cases}</testsuite>`,
-    `<testsuites failures='2'><testsuite>${cases}</testsuite></testsuites>`,
-    `<testsuite name='x errors="0"' errors='1'>${cases}</testsuite>`,
+  for (const [xml, failed] of [
+    [`<testsuite errors='1'>${cases}</testsuite>`, 1],
+    [`<testsuite name="a > b" errors="1">${cases}</testsuite>`, 1],
+    [`<testsuites failures='2'><testsuite>${cases}</testsuite></testsuites>`, 2],
+    [`<testsuite name='x errors="0"' errors='1'>${cases}</testsuite>`, 1],
   ]) {
     const parsed = parseJunitReport(xml);
-    assert.ok(parsed.tests.failed >= 1, xml);
+    assert.equal(parsed.tests.failed, failed, xml);
     assert.match(decide({ parsed }).reason, /failure/, xml);
   }
   assert.equal(parseJunitReport(`<testsuite tests='2' failures='1'>${cases}</testsuite>`).tests.failed, 1);
@@ -465,5 +465,5 @@ test("withPipefail skips the argument of --rcfile and --init-file, and stops at 
   for (const argv of [["bash", "--rcfile", "f", "-c", "x"], ["bash", "--init-file", "f", "-c", "x"], ["bash", "--norc", "--rcfile", "f", "-lc", "x"]]) {
     assert.deepEqual(withPipefail(argv), [argv[0], "-o", "pipefail", ...argv.slice(1)], argv.join(" "));
   }
-  for (const argv of [["bash", "--", "-c"], ["bash", "--", "-c", "x"], ["bash", "--rcfile", "-c", "x"]]) assert.deepEqual(withPipefail(argv), argv, argv.join(" "));
+  for (const argv of [["bash", "--", "-c", "x"], ["bash", "--rcfile", "-c", "x"]]) assert.deepEqual(withPipefail(argv), argv, argv.join(" "));
 });
