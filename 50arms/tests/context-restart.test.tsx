@@ -6,7 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { CONTEXT_DEADLINE_MS, restartFailureLine } from '../hooks/context/events'
 import { BLOCKED_LINE } from '../hooks/plan/config'
-import { test, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, EVENT_TEXT, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call session_connect' } })
@@ -193,7 +193,7 @@ ${NOTICE}`])
       d.world.localRecord = false
       d.world.records.push(SESSION_ID)
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines).toContain(NOTICE)
+      expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines?.join('\n')).toContain(NOTICE)
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
@@ -211,10 +211,11 @@ ${NOTICE}`])
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
-    test('a clear whose NEW session already holds a connection record asks nothing and is quiet (it is on a plan)', async ($, on) => {
+    // CP-61: a /clear is told the session_start text whatever else it asks; only the restart notice is skipped here
+    test('a clear whose NEW session already holds a connection record asks no restart notice (it is on a plan)', async ($, on) => {
       const d = await cleared($, on, {})
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
+      expect((await firstPrompt($, 'clear')).startLines).toEqual([EVENT_TEXT('session_start')])
       expect(d.restartCalls).toEqual([])
     })
 

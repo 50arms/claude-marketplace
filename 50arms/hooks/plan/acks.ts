@@ -8,11 +8,11 @@ export const ackPath = (id: number) => `/api/plan-sessions/me/events/${id}/ack`
 
 export const isDeliveryId = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v > 0
 
-// the ids a reply that carries the start packet and/or the connect's mantra names; a null (nothing was built for this reply) or an absent one names none
+// the ids a reply that carries the start packet, the connect's mantra and/or the operator events no session was told about (`missedEvents`) names; a null (nothing was built for this reply) or an absent one names none
 export function deliveryIdsOf(body: unknown): number[] {
   if (body === null || typeof body !== 'object') return []
-  const { startPacketDeliveryId, mantraDeliveryId } = body as Record<string, unknown>
-  return [startPacketDeliveryId, mantraDeliveryId].filter(isDeliveryId)
+  const { startPacketDeliveryId, mantraDeliveryId, missedEventsDeliveryId } = body as Record<string, unknown>
+  return [startPacketDeliveryId, mantraDeliveryId, missedEventsDeliveryId].filter(isDeliveryId)
 }
 
 // the ack route's 404 `ack_event_unknown`: the id is not this session's or is past its retention. Nothing to retry, so it is no failure to report.

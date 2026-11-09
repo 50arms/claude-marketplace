@@ -22,7 +22,7 @@ const texts = (d: any): string[] => d.relay.delivered.map((x: { text: string }) 
 // the ackInFlight atom as the plugin last wrote it
 const inFlight = (d: any): [number, number][] => d.stateWrites.filter((w: any) => w.key === 'ackInFlight').at(-1)?.value ?? []
 const pendingWrites = (d: any) => d.stateWrites.filter((w: any) => w.key === 'relayOutbox').map((w: any) => w.value)
-const ref = (eventId: number, attempt = 1, resend = true) => ({ eventId, attempt, resend })
+const ref = (eventId: number, attempt = 1, resend = true) => ({ eventId, attempt, resend, atOnce: false })
 
 for (const surface of SURFACES) {
   describe(`acknowledgement of plan events on ${surface}`, () => {

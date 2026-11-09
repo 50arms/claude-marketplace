@@ -161,8 +161,8 @@ export type ReportState = { agents: Record<string, number>; shells: string[]; pl
 export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; acks: AckRef[]; again?: true }
 
 // one plan event the plugin acknowledges once its text is in the model's conversation; `attempt` is how many times it has been sent (1 = the first send),
-// `resend` whether the dashboard sends it again until it is acknowledged (false: the acknowledgement only records receipt).
-export type AckRef = { eventId: number; attempt: number; resend: boolean }
+// `resend` whether the dashboard sends it again until it is acknowledged (false: the acknowledgement only records receipt). `atOnce` is the MCP relay's own digest hold, which the plugin never reads.
+export type AckRef = { eventId: number; attempt: number; resend: boolean; atOnce: boolean }
 
 // the re-sendable events (`resend: true`) this module has issued and whose acknowledgement has not succeeded yet, as [event id, attempt] pairs oldest first, capped (ACK_IN_FLIGHT_MAX).
 export type AckInFlight = [number, number][]

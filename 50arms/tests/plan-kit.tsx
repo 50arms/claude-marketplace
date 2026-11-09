@@ -660,7 +660,7 @@ export function dashboard(
   // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
   const server = {
     calls: [] as { plan_id: number; cursor: string | null; timeout_ms: number; transcript_path?: string }[],
-    buffer: [] as { cursor: string; text: string; urgent: boolean; acks: { eventId: number; attempt: number; resend: boolean }[] }[],
+    buffer: [] as { cursor: string; text: string; urgent: boolean; acks: { eventId: number; attempt: number; resend: boolean; atOnce: boolean }[] }[],
     plan: undefined as number | undefined,
     script: [] as (() => any)[],
     stopped: undefined as { reason: string; detail: string; fix: string } | undefined,
@@ -1503,9 +1503,9 @@ export function dashboard(
     // events appear on the dashboard: a held wait answers at once
     // (DX-4721: every record the server answers carries a boolean `urgent`; a test that does not say is a not-urgent record)
     // (DX-5846: so does `acks`, the events the record asks the session to acknowledge; a test that does not say asks for none)
-    push: (...events: { cursor: string; text: string; urgent?: boolean; acks?: { eventId: number; attempt: number; resend?: boolean }[] }[]) => {
+    push: (...events: { cursor: string; text: string; urgent?: boolean; acks?: { eventId: number; attempt: number; resend?: boolean; atOnce?: boolean }[] }[]) => {
       // CP-61: every ack names whether the dashboard sends the event again (`resend`, true unless a test says otherwise: the common case, a person's event)
-      server.buffer.push(...events.map(e => ({ urgent: false, ...e, acks: (e.acks ?? []).map(a => ({ resend: true, ...a })) })))
+      server.buffer.push(...events.map(e => ({ urgent: false, ...e, acks: (e.acks ?? []).map(a => ({ resend: true, atOnce: false, ...a })) })))
       server.wake?.()
     },
     // every key the plugin wrote to $.store, in order

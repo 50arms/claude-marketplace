@@ -8,7 +8,7 @@ import { isDeliveryId } from '../plan/acks'
 // The wording is a 50 Arms registry row (`GET /api/reminders/event/:event`, the `plan_restart.waiting_events` reminder); this file
 // carries no wording of its own but the two failure lines.
 
-// 50 Arms' four events. A SessionStart `source` of `clear` or `fork` has none: it is told nothing.
+// 50 Arms' four events. A SessionStart `source` of `fork` has none: it is told nothing.
 export type DashboardEvent = 'session_start' | 'session_resume' | 'after_compaction' | 'sub_agent_start'
 
 export function sessionEvent(source: unknown): DashboardEvent | null {
@@ -22,6 +22,12 @@ export function sessionEvent(source: unknown): DashboardEvent | null {
     default:
       return null
   }
+}
+
+// The event a start reads. A /clear reads `session_start` like a ready-loop reset does: the read itself tells 50 Arms the session started over (it clears the mantra and the start packet the
+// session's row says the model holds, which the /clear just wiped), so every /clear makes it, on a plan or not.
+export function startEvent(start: { source: string; loopReset?: true }): DashboardEvent | null {
+  return start.loopReset === true || start.source === 'clear' ? 'session_start' : sessionEvent(start.source)
 }
 
 // What `restart_notice` is asked with, by how the session started (the server's contract: a transcript path finds the nearest ancestor in the

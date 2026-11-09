@@ -31,12 +31,12 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('clear and fork have no event: nothing is read, nothing is told', async ($, on) => {
+    test('a clear reads the session_start text (it tells 50 Arms the session started over); a fork has no event: nothing is read', async ($, on) => {
       const d = await started($, on)
-      for (const source of ['clear', 'fork'] as const) {
-        const r = await firstPrompt($, source)
-        expect(r.startLines).toBeUndefined()
-      }
+      expect((await firstPrompt($, 'clear')).startLines).toEqual([EVENT_TEXT('session_start')])
+      expect(d.contextReads).toEqual(['/api/reminders/event/session_start'])
+      d.contextReads.length = 0
+      expect((await firstPrompt($, 'fork')).startLines).toBeUndefined()
       expect(d.contextReads).toEqual([])
     })
 

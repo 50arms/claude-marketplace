@@ -6,8 +6,9 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { START_PACKET_PATH } from '../hooks/context/packet'
-import { CONTEXT_DEADLINE_MS } from '../hooks/context/events'
-import { APPROVAL_REQUIRED, SURFACES, dashboard, firstPrompt, forceRefresh, startSession, test } from './plan-kit'
+import { CONTEXT_DEADLINE_MS, eventFailureLine } from '../hooks/context/events'
+import { SERVER } from '../hooks/plan/config'
+import { APPROVAL_REQUIRED, EVENT_TEXT, SURFACES, dashboard, firstPrompt, forceRefresh, startSession, test } from './plan-kit'
 
 const SESSION_CONNECT = 'mcp__plugin_50arms_platform__session_connect'
 const API = 'mcp__plugin_50arms_platform__50arms_api'
@@ -186,9 +187,9 @@ for (const surface of SURFACES) {
       expect(d.world.ackCalls).toEqual([])
     })
 
-    test('a clear or a fork is told nothing, so acknowledges nothing', async ($, on) => {
+    test('a fork is told nothing, so acknowledges nothing', async ($, on) => {
       const d = await started($, on)
-      for (const source of ['clear', 'fork'] as const) await firstPrompt($, source)
+      await firstPrompt($, 'fork')
       await d.clock.settle()
       expect(d.world.ackCalls).toEqual([])
     })
@@ -356,6 +357,135 @@ for (const surface of SURFACES) {
       await d.clock.advance(45_000)
       await d.clock.settle()
       expect(d.world.acked).toEqual([63])
+    })
+  })
+
+  // CP-61 / DX-6733 (DEC-637): a person's /clear wipes the model's conversation, so 50 Arms must forget the mantra and the start packet it thinks the model holds. The read of the `session_start` text
+  // is what tells it (it clears both on the session's row), so every /clear makes that read, through the session's own dashboard server, and acknowledges the text once it is in the conversation.
+  describe(`acknowledging what a /clear tells the model on ${surface}`, () => {
+    const PREVIOUS = 'sess-previous'
+    const NOTICE = 'You replaced PLAN-23.'
+
+    async function cleared($: any, on: any, options: Parameters<typeof dashboard>[1] = {}, endedOnPlan = true) {
+      on('classic.SessionStart', () => ({}) as any)
+      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      const d = dashboard(on, options)
+      await startSession($, d, surface)
+      d.world.deliveries.event = { session_start: 61 }
+      d.world.deliveries.startPacket = 62
+      d.world.startPacket = FILE
+      d.world.restart.json = { notice: NOTICE }
+      await $.session.end({ reason: 'clear', sessionId: PREVIOUS } as any)
+      // the new session has no connection record under its own engine id; the ended one had (a first /clear of a plan session is a restart)
+      if (endedOnPlan) {
+        d.world.localRecord = false
+        d.world.records.push(PREVIOUS)
+      }
+      return d
+    }
+
+    test('a /clear reads the session_start text through the session own dashboard server, tells it and acknowledges only that text', async ($, on) => {
+      const d = await cleared($, on, {}, false)
+      const r = await firstPrompt($, 'clear')
+      expect(r.startLines).toEqual([EVENT_TEXT('session_start')])
+      await d.clock.settle()
+      expect(d.contextReads).toContain('/api/reminders/event/session_start')
+      expect([...d.serversCalled]).toEqual([SERVER])
+      // the start packet is the model's own connect's to bring, so the clear reads and acknowledges none
+      expect(d.contextReads.some(p => p.includes('start-packet'))).toBe(false)
+      expect(d.world.acked).toEqual([61])
+      expect(d.world.ackCalls).toEqual([{ id: 61, background: true }])
+    })
+
+    test('a /clear of a session that was on a plan is also told the restart notice, after the text; the text is acknowledged', async ($, on) => {
+      const d = await cleared($, on)
+      const r = await firstPrompt($, 'clear')
+      expect(r.startLines).toEqual([`${EVENT_TEXT('session_start')}
+${NOTICE}`])
+      await d.clock.settle()
+      expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
+      expect(d.world.acked).toEqual([61])
+    })
+
+    test('a /clear of a session on no plan still reads the text', async ($, on) => {
+      const d = await cleared($, on, { connected: false }, false)
+      const r = await firstPrompt($, 'clear')
+      expect(r.startLines).toEqual([EVENT_TEXT('session_start')])
+      await d.clock.settle()
+      expect(d.world.acked).toEqual([61])
+    })
+
+    test('a signed-out /clear reads nothing and acknowledges nothing', async ($, on) => {
+      const d = await cleared($, on, { connected: false, signedOut: 'signed-out' }, false)
+      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
+      await d.clock.settle()
+      expect(d.world.ackCalls).toEqual([])
+      expect(d.contextReads.some(p => p.startsWith('/api/reminders/event/'))).toBe(false)
+    })
+
+    test('a read that fails is one warning line and acknowledges nothing; the restart notice still follows', async ($, on) => {
+      const d = await cleared($, on)
+      d.world.eventText.session_start = { status: 500 }
+      const r = await firstPrompt($, 'clear')
+      expect(r.startLines).toHaveLength(1)
+      expect(r.startLines![0]).toContain(eventFailureLine('session_start', '').slice(0, 20))
+      expect(r.startLines![0]).toContain(NOTICE)
+      await d.clock.settle()
+      expect(d.world.ackCalls).toEqual([])
+    })
+
+    test('a read that misses the deadline is one warning line and acknowledges nothing', async ($, on) => {
+      const d = await cleared($, on, {}, false)
+      d.world.contextHangs = true
+      const pending = firstPrompt($, 'clear')
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      const r = await pending
+      expect(r.startLines).toHaveLength(1)
+      expect(r.startLines![0]).not.toContain(EVENT_TEXT('session_start'))
+      await d.clock.settle()
+      expect(d.world.ackCalls).toEqual([])
+    })
+  })
+
+  describe(`acknowledging the missed events a connect hands over on ${surface}`, () => {
+    const connected = { session: { planId: 23 }, startPacket: null, startPacketDeliveryId: null, mantraDeliveryId: 52, missedEvents: [{ text: 'x' }], missedEventsDeliveryId: 71 }
+
+    async function answering($: any, on: any, text: string) {
+      on('tool.call', { tool: SESSION_CONNECT }, () => ({ result: {}, text, isError: false }) as any)
+      on('tool.call', { tool: API }, () => ({ result: {}, text, isError: false }) as any)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      return d
+    }
+
+    test("the model's own connect acknowledges missedEventsDeliveryId with the other ids", async ($, on) => {
+      const d = await answering($, on, envelope(connected))
+      await $.tool.call({ tool: SESSION_CONNECT, target: 'PLAN-23' } as any)
+      await d.clock.settle()
+      expect(d.world.acked).toEqual([52, 71])
+    })
+
+    test('a connecting pickup acknowledges it too', async ($, on) => {
+      const d = await answering($, on, envelope({ issue: { id: 'DX-9' }, connectedByPickup: true, startPacket: null, startPacketDeliveryId: null, mantraDeliveryId: null, missedEvents: [{ text: 'x' }], missedEventsDeliveryId: 72 }))
+      await $.tool.call({ tool: API, method: 'POST', path: '/api/issues/DX-9/transition', body: { action: 'pickup' } } as any)
+      await d.clock.settle()
+      expect(d.world.acked).toEqual([72])
+    })
+
+    test('a null missedEventsDeliveryId acknowledges nothing', async ($, on) => {
+      const d = await answering($, on, envelope({ ...connected, mantraDeliveryId: null, missedEvents: [], missedEventsDeliveryId: null }))
+      await $.tool.call({ tool: SESSION_CONNECT, target: 'PLAN-23' } as any)
+      await d.clock.settle()
+      expect(d.world.ackCalls).toEqual([])
+    })
+
+    test("a sub-agent's connect is not the session's: its missed events are not acknowledged", async ($, on) => {
+      const d = await answering($, on, envelope(connected))
+      await $.tool.call({ tool: SESSION_CONNECT, target: 'PLAN-23', agentId: AGENT_ID } as any)
+      await d.clock.settle()
+      expect(d.world.ackCalls).toEqual([])
     })
   })
 }

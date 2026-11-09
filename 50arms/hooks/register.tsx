@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent, toldAcks } from './context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, startEvent, toldAcks } from './context/events'
 import { ackPath, ackUnknown, deliveryIdsOf } from './plan/acks'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { START_PACKET_PATH, startPacketFailureLine, startPacketTold } from './context/packet'
@@ -2803,7 +2803,7 @@ async function renderStart($: any, start: NonNullable<PendingStart>): Promise<Re
   try {
     return await sessionContext($, start)
   } catch (err: any) {
-    const event = sessionEvent(start.source)
+    const event = startEvent(start)
     return event === null ? NOTHING : plain(eventFailureLine(event, `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}`))
   }
 }
@@ -3183,13 +3183,11 @@ async function restartNotice($: any, asked: RestartAsk): Promise<string | null> 
 // What the plugin's own reads of a session start came to: the text to tell, or that the restart notice is to be asked next.
 type StartReads = { line: Rendered; askRestart: boolean }
 
-// A /clear: it has no event text, and it is a restart only when the session it ended was on a plan (that session's connection record is on disk),
-// which is also what names the predecessor to the server. Any other clear is quiet, the server is never asked.
-async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<string | null> {
+// A /clear's restart notice, told after its `session_start` text: a /clear is a restart only when the session it ended was on a plan (that session's connection record is on disk),
+// which is also what names the predecessor to the server. Any other clear asks nothing. `server`: the wait for the plugin's server, which the start's reads already made.
+async function clearNotice($: any, start: NonNullable<PendingStart>, server: 'ready' | 'not-yet'): Promise<string | null> {
   const ended = start.predecessorId
   if (ended === null || !(await isPlanConnected($, ended)) || (await isPlanConnected($, start.sessionId, false))) return null
-  const server = await serverState($, (await $.clock.now()) + CONTEXT_DEADLINE_MS)
-  if (server === 'unloaded') return null
   if (server === 'not-yet') return restartFailureLine(SERVER_NOT_CONNECTED_REASON)
   return restartNotice($, { kind: 'ask', args: { predecessor_id: ended } })
 }
@@ -3200,17 +3198,22 @@ async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<st
 // or resume, still asks the restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<Rendered> {
   // the ready-agent loop's reset opens a fresh conversation in a session that is still working: it is told what a new session is told
-  const event = start.loopReset === true ? 'session_start' : sessionEvent(start.source)
-  if (event === null) return start.source === 'clear' ? plain(await clearNotice($, start)) : NOTHING
+  const event = startEvent(start)
+  if (event === null) return NOTHING
+  const cleared = start.source === 'clear' && start.loopReset !== true
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
   const connected = await isPlanConnected($, start.sessionId)
   const askRestart = start.source !== 'compact' && start.loopReset !== true
-  const fault = (reason: string): StartReads => ({ line: plain(connected ? eventFailureLine(event, reason) : null), askRestart: !connected && askRestart })
+  // a /clear's notice decides for itself (clearNotice), so it is always asked; any other start asks only when it is not known to be on a plan
+  const fault = (reason: string): StartReads => ({ line: plain(connected ? eventFailureLine(event, reason) : null), askRestart: askRestart && (cleared || !connected) })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return NOTHING
-  if (server === 'not-yet') return plain(connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null)
+  if (server === 'not-yet') return cleared ? plain(await clearNotice($, start, server)) : plain(connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null)
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)
+    // A /clear is told the registry's text alone: the read is what makes 50 Arms forget the mantra and the packet the wiped conversation held, and the model's own connect, which the restart notice
+    // asks for, then gets both. Neither is read here, so neither is acknowledged here.
+    if (cleared && (plan.kind === 'connected' || plan.kind === 'not-connected')) return { line: await eventRead($, event), askRestart }
     if (plan.kind === 'connected') {
       // the start packet's file FIRST, then the registry's text, then (after a compaction) the resume briefing, in the same first turn: the whole is one entry of about 8-10 KB, and a cap on an entry
       // (a classic hook's `additionalContext` is cut at 8,000 characters; whether this channel has one is UNVERIFIED, the largest entry seen delivered whole is 8,442) would cut the tail, so what the
@@ -3231,7 +3234,7 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   // a read that finishes after the deadline is discarded with its delivery ids: what the model was never told is never acknowledged
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
   if (!done.askRestart) return done.line
-  const notice = await restartNotice($, restartAsk(start))
+  const notice = cleared ? await clearNotice($, start, 'ready') : await restartNotice($, restartAsk(start))
   return joinRendered([done.line, plain(notice)])
 }
 
