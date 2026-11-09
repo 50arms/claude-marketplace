@@ -1130,7 +1130,7 @@ export function dashboard(
         const left = plans.find(p => p.id === world.planId)
         world.planId = null
         world.leaveOrder.push('plan')
-        // a leave keeps the session's key and its team agent (the dashboard frees an agent only on a revoke or the session's end): nothing else changes here
+        // the fake's plan leave keeps the session's key and its team agent because the server rule now keeps them: the dashboard frees an agent only on a revoke or the session's end
         if (options.disconnect === 'noLeftPlan') return envelope(true, 200, { session: { sessionId: SESSION_ID, planId: null } })
         return envelope(true, 200, {
           session: { sessionId: SESSION_ID, planId: null },
