@@ -35,9 +35,9 @@ throughout; this skill is the plan mechanics.
      who can raise it, `raised_by`), or that ending another session frees its agent; call
      `session_connect` again once they say one is free.
    Until an agent is held, every other dashboard call answers that same state: do no other
-   dashboard work. You hold the agent only while this session is connected: a revoked key, a
-   session that stopped responding for a minute (a crash) or an `other` pause past the hold timeout frees
-   it at once, and signing in again takes the next free agent, never necessarily the same one.
+   dashboard work. You hold the agent while this session is connected, however long you wait. Only an
+   explicit disconnect, a revoked key or a session that stopped responding for a minute (a crash)
+   frees it, and signing in again takes the next free agent, never necessarily the same one.
 3. What you work on: a plan → `session_connect({target: "PLAN-n"})`; none in the list fits → create one.
    One card on no plan (a one-off, a quick fix, an epic that is not a plan) →
    `session_connect({target: "<card id>"})` instead; a card on a plan is refused `card_on_plan` (connect to
@@ -316,7 +316,7 @@ each reminder with "still waiting": pause. A session with nothing to do right no
 never stays active just to wait.
 
 1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block), and
-   any state not yet recorded: an `other` pause can end in a disconnect after which you cannot write.
+   any state not yet recorded.
    The pause is only the signal, never the record. Waiting on a person is always an open problem
    on a card of this plan, worded for the step left now (no note or comment reaches Needs You).
    One problem per question: put it on the work card it decides, never a container, and give every
@@ -336,7 +336,8 @@ never stays active just to wait.
    - `other`: none of these (a build or deploy with no card). It needs `expires_in_minutes` (at most
      720) and ends by itself then.
    A pause on `pacing`, `person` or `dependency` has no time limit (`expires_in_minutes` is refused):
-   it ends only on its event, you stay connected however long it lasts, and it never needs renewing.
+   it ends only on its event or one of the ends below, and you stay connected with your agent however
+   long it lasts, so it never needs renewing.
    Pick the cause you actually wait on, since only that event ends the pause. A usage-limit pause already in force refuses it (409): that
    one ends by itself when the limit resets. `reason` is at most 300 characters. A dispatched worker
    cannot pause (409): only a registered non-worker session can.
@@ -365,14 +366,11 @@ messages themselves (a held nudge still means the cards it names are workable no
 ended on your own call needs no reply. Read the plan before resuming, since the cause names what
 changed.
 
-An `other` pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
-on Team > Agents) disconnects your session; a pause on `person` or `dependency` never does. A disconnect revokes its key: its team agent goes back to the pool and
-it leaves every session list. A session holds an agent exactly while it is connected, and nothing
-remembers the agent you had. On waking, your next dashboard call is refused as a revoked key: sign in
-again (approval as for any new key), then `session_connect`, which takes the next free agent or answers
-`agent_limit_reached`. The pause-ended notice then says `Your agent <name> went back to the pool: this session was
-disconnected after <N> minutes paused. Sign in again with session_connect.` Until you hold an
-agent again work calls are refused with `agent_not_held` or `agent_needed`.
+While this session is connected to a plan or card and its event stream is open, its key does not expire and its agent stays
+its own, paused or not, whatever the pause: only an explicit disconnect, a revoked key or the session going silent ends
+that. It never spends a turn to keep them, and waking never needs a new sign-in. If it does end (a revoked key), your next
+dashboard call is refused: sign in again (approval as for any new key), then `session_connect`, which takes the next free agent
+or answers `agent_limit_reached`; until you hold an agent again work calls are refused with `agent_not_held` or `agent_needed`.
 
 ## Stopping
 
@@ -454,3 +452,7 @@ Before an actual compaction, load `50arms:prepare-for-compaction`.
 Retiring this session (a handoff, not a compaction): as your last plan action, after the handoff
 agent note, call `session_connect({target, disconnect: true})` (`target` = the `PLAN-n` you are on). Moving to
 another plan needs no leave.
+Finished everything (every card of the plan terminal and landed, no open problem, nothing waiting on you): you may detach the
+same way, then load `50arms:ready` to wait at the top level on the ready list for your next assignment. Only then: until everything
+is finished you stay connected and listening, pausing when you have nothing to do, and a connected agent stays until it is explicitly
+disconnected.
