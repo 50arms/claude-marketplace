@@ -43,7 +43,7 @@ const cut = (text: string, max = FAILURE_MAX) => (text.length > max ? `${text.sl
 const isRecord = (x: any): boolean =>
   x !== null && typeof x === 'object' && typeof x.text === 'string' && x.text !== '' && typeof x.cursor === 'string' && x.cursor !== ''
 export const isAckList = (x: any): x is AckRef[] =>
-  Array.isArray(x) && x.every(a => a !== null && typeof a === 'object' && Number.isSafeInteger(a.eventId) && a.eventId > 0 && Number.isSafeInteger(a.attempt) && a.attempt >= 1 && typeof a.resend === 'boolean' && typeof a.atOnce === 'boolean')
+  Array.isArray(x) && x.every(a => a !== null && typeof a === 'object' && Number.isSafeInteger(a.eventId) && a.eventId > 0 && Number.isSafeInteger(a.attempt) && a.attempt >= 1 && typeof a.resend === 'boolean')
 const isEvent = (x: any): x is RelayEvent => isRecord(x) && typeof x.urgent === 'boolean' && isAckList(x.acks)
 
 // a malformed answer is a loud failure, never an empty list (Core Principle 1)

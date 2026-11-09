@@ -3202,7 +3202,8 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   if (event === null) return NOTHING
   const cleared = start.source === 'clear' && start.loopReset !== true
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
-  const connected = await isPlanConnected($, start.sessionId)
+  // a /clear's new session has no record under its own engine id and resolving the server's id would ask the dashboard before the deadline starts: the ended session's record on disk says whether it was on a plan
+  const connected = cleared ? start.predecessorId !== null && (await isPlanConnected($, start.predecessorId)) : await isPlanConnected($, start.sessionId)
   const askRestart = start.source !== 'compact' && start.loopReset !== true
   // a /clear's notice decides for itself (clearNotice), so it is always asked; any other start asks only when it is not known to be on a plan
   const fault = (reason: string): StartReads => ({ line: plain(connected ? eventFailureLine(event, reason) : null), askRestart: askRestart && (cleared || !connected) })

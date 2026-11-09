@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { START_PACKET_PATH } from '../hooks/context/packet'
-import { CONTEXT_DEADLINE_MS, eventFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, eventFailureLine } from '../hooks/context/events'
 import { SERVER } from '../hooks/plan/config'
 import { APPROVAL_REQUIRED, EVENT_TEXT, SURFACES, dashboard, firstPrompt, forceRefresh, startSession, test } from './plan-kit'
 
@@ -425,25 +425,47 @@ ${NOTICE}`])
       expect(d.contextReads.some(p => p.startsWith('/api/reminders/event/'))).toBe(false)
     })
 
-    test('a read that fails is one warning line and acknowledges nothing; the restart notice still follows', async ($, on) => {
+    // the real /clear state: the ended session had a record, the new engine id has none. A dashboard outage then gives the one warning line inside the start's own 8 s deadline.
+    test('a read that fails is the event-specific warning line and acknowledges nothing; the restart notice still follows', async ($, on) => {
       const d = await cleared($, on)
       d.world.eventText.session_start = { status: 500 }
       const r = await firstPrompt($, 'clear')
-      expect(r.startLines).toHaveLength(1)
-      expect(r.startLines![0]).toContain(eventFailureLine('session_start', '').slice(0, 20))
-      expect(r.startLines![0]).toContain(NOTICE)
+      expect(r.startLines).toEqual([`${eventFailureLine('session_start', '500: event boom')}
+${NOTICE}`])
       await d.clock.settle()
       expect(d.world.ackCalls).toEqual([])
     })
 
-    test('a read that misses the deadline is one warning line and acknowledges nothing', async ($, on) => {
-      const d = await cleared($, on, {}, false)
+    test('a read that misses the deadline is the deadline warning line and acknowledges nothing', async ($, on) => {
+      const d = await cleared($, on)
       d.world.contextHangs = true
       const pending = firstPrompt($, 'clear')
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       const r = await pending
-      expect(r.startLines).toHaveLength(1)
-      expect(r.startLines![0]).not.toContain(EVENT_TEXT('session_start'))
+      expect(r.startLines).toEqual([`${eventFailureLine('session_start', DEADLINE_REASON)}
+${NOTICE}`])
+      await d.clock.settle()
+      expect(d.world.ackCalls).toEqual([])
+    })
+
+    test('a dashboard that never answers the session read gives the deadline warning line at 8 s, never a hang', async ($, on) => {
+      const d = await cleared($, on)
+      d.holdApi(10 * CONTEXT_DEADLINE_MS)
+      const pending = firstPrompt($, 'clear')
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      const r = await pending
+      expect(r.startLines).toEqual([`${eventFailureLine('session_start', DEADLINE_REASON)}
+${NOTICE}`])
+      await d.clock.settle()
+      expect(d.world.ackCalls).toEqual([])
+    })
+
+    test('a failing session read is one warning line naming the event and acknowledges nothing', async ($, on) => {
+      const d = await cleared($, on)
+      d.world.sessionReadStatus = 503
+      const r = await firstPrompt($, 'clear')
+      expect(r.startLines).toEqual([`${eventFailureLine('session_start', '503: session boom')}
+${NOTICE}`])
       await d.clock.settle()
       expect(d.world.ackCalls).toEqual([])
     })
