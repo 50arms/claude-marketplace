@@ -82,6 +82,10 @@ card id, and the problem itself stands alone, with plain background and a concre
 newcomer to the subject can follow. Every card id in chat is a markdown link to that card
 (`[<card id>](<dashboard>/plans/<plan id>/cards/<card id>)`), never a plan or board page.
 
+Never tell a person to press a button or take a step you can do yourself. When you already know the
+answer, make the change: edit or delete the decision, problem or record, or answer for them with
+their words as provenance. Ask only for what the dashboard lets a person alone do, and say that is why.
+
 A problem never sends a person to other problems: no index, checklist or "answer X first"
 problem, since Needs You already lists them. A person's answer never spawns a follow-up
 problem either: read it to its reasonable end, decide what it leaves open, and record that as
