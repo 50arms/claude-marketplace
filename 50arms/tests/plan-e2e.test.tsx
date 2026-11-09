@@ -59,8 +59,8 @@ for (const surface of SURFACES) {
 
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
-      // the real leave frees the session's agent in its own transaction, so the hold gate answers the band's next read and the footer names no agent
-      expect(await footerText(footer)).toBe('50 Arms disconnected')
+      // CP-89: the Disconnect ends the session's sign-in, so the band's next read is the revoked key's and the footer says so
+      expect(await footerText(footer)).toBe('50 Arms: access revoked')
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await band.find({ type: 'Text', text: /^events: / })).toBeUndefined()
       expect(await text(band)).not.toMatch(/events|%/)

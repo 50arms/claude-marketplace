@@ -17,7 +17,7 @@ async function mounted($: any, d: any, surface: string) {
 
 for (const surface of SURFACES) {
   describe(`Disconnect on ${surface}`, () => {
-    test('one call with the connected plan id and disconnect: true; the band reads not connected; the model is told', async ($, on) => {
+    test('one call with the connected plan id and disconnect: true, then the sign-in ends; the band reads access revoked and offers Sign in; the model is told not to connect', async ($, on) => {
       const d = dashboard(on)
       const band = await mounted($, d, surface)
       expect(await bandLabelOf(band)).toBe('PLAN-23 · 50 Arms plugin')
@@ -34,13 +34,15 @@ for (const surface of SURFACES) {
 
       expect(disconnectCalls(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'PLAN-23', disconnect: true } }])
       expect(d.toasts).toContain('Disconnected from PLAN-23')
-      expect(await text(band)).toContain('50 Arms: not connected to a plan')
-      expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('yellow')
+      expect(d.personDisconnects).toHaveLength(1)
+      expect(await text(band)).toContain('50 Arms: access revoked by dana')
+      expect((await band.find({ key: 'sign-in' }))?.text).toBe('Sign in')
+      expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('red')
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
 
       const rows = d.relay.told
       expect(rows).toHaveLength(1)
-      expectRowCarries(rows[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'no plan', '/api/plans/mine'])
+      expectRowCarries(rows[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'ended its sign-in', 'Do not call session_connect', '/api/plans/mine'])
     })
 
     test('the button is dim and its label reads Disconnecting… while the call is in flight, and a double press makes one call', async ($, on) => {

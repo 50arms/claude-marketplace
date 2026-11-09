@@ -63,7 +63,7 @@ import { errText, loadPlan } from './plan/load'
 import { blockedOrigin, optionDashboardUrl } from './plan/origin'
 import type { Api } from './plan/load'
 import { agentBlockOf, connectToolOutcome, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
-import { AGENT_RELEASE_DEADLINE_MS, AGENT_RELEASE_PATH, AGENT_RELEASE_TIMEOUT_REASON, disconnectReleaseFailure, releaseFailureToast } from './plan/agent'
+import { AGENT_RELEASE_DEADLINE_MS, AGENT_RELEASE_PATH, AGENT_RELEASE_TIMEOUT_REASON, PERSON_DISCONNECT_PATH, disconnectEndFailure, releaseFailureToast } from './plan/agent'
 import { connectTargetOf, planTarget } from './plan/target'
 import { holdKey } from './plan/hold'
 import type { BandHold } from './plan/hold'
@@ -738,23 +738,27 @@ function leftView(cur: any): any {
 }
 
 // The band's Disconnect: takes the session off everything it holds, under one busy key so nothing runs while another leave holds it: the plan or the card (session_connect with disconnect: true,
-// its `target` the guard: the plan or card we think we are on), then its team agent is released. A refusal is shown,
+// its `target` the guard: the plan or card we think we are on), then the person's disconnect ends the session's sign-in (`POST /me/person-disconnect` frees the team agent and revokes
+// the key, so no call of the session's own reconnects it; only the person's Sign in does). The route goes last because the key dies with it. A refusal is shown,
 // never swallowed: a 409 means the band was stale (the server names what the session really holds), so it also refreshes; a 404 or any other failure carries its status and message.
-// A refused leave stops there and the agent stays held. No confirm: the model can connect again to undo it.
+// A refused leave stops there and the key stays.
 function disconnect($: any, hold: BandHold): Promise<void> {
   return withBusy($, busyKey.disconnect(holdKey(hold)), async () => {
     const left = hold.plan !== null ? await leavePlan($, hold.plan) : hold.card !== null ? await leaveCard($, hold.card) : null
     if (left === 'refused') return
-    const released = await releaseAgentCall($)
-    const freed = released.ok || releaseUnneeded(released)
-    // one toast for the person: what was left; a release that failed is said in the same breath
+    // a sign-in watch running now (the model's own connect, begun before the person pressed Disconnect) must not hold "Signing in…" on a band that offers Sign in
+    await abortSignInWatch($)
+    const ended = await personDisconnectCall($)
+    // a key that is already gone (signed out, revoked) leaves nothing to end: the refreshed view says which
+    const done = ended.ok || endUnneeded(ended)
+    // one toast for the person: what was left; an end that failed is said in the same breath
     const said = disconnectedToast(left, hold.agent?.name ?? null)
-    const failure = disconnectReleaseFailure(errText(released))
-    $.ui.toast((freed ? said : left === null ? failure : `${said}, but ${failure.charAt(0).toLowerCase()}${failure.slice(1)}`).slice(0, FAILURE_TOAST_MAX))
-    // the band goes to no work at once, then reads the truth; the model, which did not make the calls, is told in its chat. An agent-only disconnect whose release failed changed nothing the model could act on.
-    await update($, view, cur => (freed ? { ...leftView(cur), agent: null } : leftView(cur)))
-    if (left === null && !freed) return
-    detach($, 'Plan update', tellModel($, disconnectNote({ left, agentFreed: freed })).then(() => refresh($, true)))
+    const failure = disconnectEndFailure(errText(ended))
+    $.ui.toast((done ? said : left === null ? failure : `${said}, but ${failure.charAt(0).toLowerCase()}${failure.slice(1)}`).slice(0, FAILURE_TOAST_MAX))
+    // the band goes to no work at once, then reads the truth (a revoked key reads "access revoked" and offers Sign in); the model, which did not make the calls, is told in its chat. An agent-only disconnect that failed changed nothing the model could act on.
+    await update($, view, cur => (done ? { ...leftView(cur), agent: null } : leftView(cur)))
+    if (left === null && !done) return
+    detach($, 'Plan update', tellModel($, disconnectNote({ left, ended: done })).then(() => refresh($, true)))
   })
 }
 
@@ -1947,23 +1951,34 @@ async function releaseAgent($: any): Promise<void> {
   $.ui.toast(releaseFailureToast(errText(r)))
 }
 
-// The release of the session's team agent, bounded (AGENT_RELEASE_DEADLINE_MS): the session's end and the band's Disconnect both make it.
+// The release of the session's team agent, bounded (AGENT_RELEASE_DEADLINE_MS): the session's end makes it.
 function releaseAgentCall($: any): Promise<Api> {
   return withinDeadline($, AGENT_RELEASE_DEADLINE_MS, api($, 'DELETE', AGENT_RELEASE_PATH), (): Api => ({ ok: false, status: 0, body: { error: AGENT_RELEASE_TIMEOUT_REASON }, sentence: true }))
 }
 
+// The band's Disconnect, bounded the same way: frees the agent and revokes the session's key, answering `{released, revoked: true}`.
+function personDisconnectCall($: any): Promise<Api> {
+  return withinDeadline($, AGENT_RELEASE_DEADLINE_MS, api($, 'POST', PERSON_DISCONNECT_PATH), (): Api => ({ ok: false, status: 0, body: { error: AGENT_RELEASE_TIMEOUT_REASON }, sentence: true }))
+}
+
 // A refused release that needs no word to the person: the session holds no key (the sign-in states say so) or holds no agent to free (the gate says so).
 const releaseUnneeded = (r: Api): boolean => isSignedOut(r) || outcomeRevokedBy(r) !== null || agentBlockOf(r) !== null
+// A refused Disconnect end with nothing left to end: the key is already gone (signed out, revoked). Unlike the release, an agent block is not one: the route is open to a session holding no agent.
+const endUnneeded = (r: Api): boolean => isSignedOut(r) || outcomeRevokedBy(r) !== null
+
+// Ends the sign-in watch that is running, if any: it stops at its next step, its request is no longer drawn, and its busy key is freed at once (the aborted watch's in-flight session_connect, up to ~45s, must not hold it).
+async function abortSignInWatch($: any): Promise<void> {
+  signInGeneration++
+  await update($, signInRequest, () => null)
+  await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
+}
 
 async function onSessionEnd($: any, e: any, next: any) {
   if (PROCESS_ENDS.includes(e.reason)) await releaseAgent($)
   if (e.reason === 'clear' && typeof e.sessionId === 'string') await update($, endedSession, () => e.sessionId)
   // the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
-    signInGeneration++
-    await update($, signInRequest, () => null)
-    // free the sign-in key at once; the aborted watch's in-flight session_connect (up to ~45s) must not hold it
-    await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
+    await abortSignInWatch($)
   }
   if (PROCESS_ENDS.includes(e.reason)) {
     // the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh the next
@@ -2067,11 +2082,7 @@ async function leaveReady($: any, told: string | null): Promise<void> {
     await update($, permissionRequests, cur => cur.filter(r => r.publicId !== loop.permissionId))
     await syncPermissionPoll($)
   }
-  if (loop?.signInAsked === true) {
-    signInGeneration++
-    await update($, signInRequest, () => null)
-    await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
-  }
+  if (loop?.signInAsked === true) await abortSignInWatch($)
   stopReadyTicker()
   if (told !== null) $.ui.toast(told)
   const r = await api($, 'DELETE', READY_PATH)
