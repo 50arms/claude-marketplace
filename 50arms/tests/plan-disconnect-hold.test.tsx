@@ -1,9 +1,10 @@
 import "./run-tests-with-npm-test.generated"
 // The band's Disconnect shows whenever the session holds a team agent, a plan or a card (operator, 2026-11-06: "If an agent is connected the band must
-// ALWAYS show a disconnect button"), and its press fully disconnects: the plan or the card is left, then the agent is released.
+// ALWAYS show a disconnect button"), and its press fully disconnects: the plan or the card is left, then the session's sign-in is ended (CP-89 / DX-7026: the person-disconnect route frees the agent and revokes the key).
 import { describe, expect } from 'claude-code/testing'
 
 import { DISCONNECT_GLYPH } from '../hooks/plan/config'
+import { PERSON_DISCONNECT_PATH, disconnectEndFailure } from '../hooks/plan/agent'
 import { test, SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -46,24 +47,27 @@ for (const surface of SURFACES) {
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
     })
 
-    test('agent only: the agent is released (no plan or card call), one toast, the model told, the band reads not connected', async ($, on) => {
+    test('agent only: the sign-in is ended (no plan or card call), one toast, the model told, the band reads access revoked and offers Sign in', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       const band = await mounted($, d, surface)
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
 
-      expect(d.world.leaveOrder).toEqual(['release'])
+      expect(d.world.leaveOrder).toEqual(['person-disconnect'])
+      expect(d.personDisconnects).toEqual([{ method: 'POST', path: PERSON_DISCONNECT_PATH, background: true }])
+      expect(d.releaseCalls).toEqual([])
       expect(planLeaves(d)).toEqual([])
       expect(cardLeaves(d)).toEqual([])
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected team agent Tendai'])
       expect(d.relay.told).toHaveLength(1)
-      expectRowCarries(d.relay.told[0]!, ['disconnected', 'freed its team agent', 'no plan or card', 'session_connect'])
-      expect(await text(band)).toContain('50 Arms: not connected to a plan or card')
+      expectRowCarries(d.relay.told[0]!, ['disconnected', 'ended its sign-in', 'Do not call session_connect', 'Sign in'])
+      expect(await text(band)).toContain('50 Arms: access revoked by dana')
+      expect((await band.find({ key: 'sign-in' }))?.text).toBe('Sign in')
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
     })
 
-    test('card held: the card is left with its id, then the agent is released; the model is told', async ($, on) => {
+    test('card held: the card is left with its id, then the sign-in is ended; the model is told', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       d.world.card = CARD
@@ -73,16 +77,16 @@ for (const surface of SURFACES) {
       await d.clock.settle()
 
       expect(cardLeaves(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'DX-77', disconnect: true } }])
-      expect(d.world.leaveOrder).toEqual(['card', 'release'])
+      expect(d.world.leaveOrder).toEqual(['card', 'person-disconnect'])
       expect(planLeaves(d)).toEqual([])
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected from DX-77'])
       expect(d.relay.told).toHaveLength(1)
-      expectRowCarries(d.relay.told[0]!, ['DX-77', 'One-off fix', 'disconnected', 'freed its team agent', 'session_connect'])
-      expect(await text(band)).toContain('50 Arms: not connected to a plan or card')
+      expectRowCarries(d.relay.told[0]!, ['DX-77', 'One-off fix', 'disconnected', 'ended its sign-in', 'Do not call session_connect'])
+      expect(await text(band)).toContain('50 Arms: access revoked by dana')
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
     })
 
-    test('plan held: the plan is left first, then the agent is released', async ($, on) => {
+    test('plan held: the plan is left first, then the sign-in is ended, and the exit-time release is not asked', async ($, on) => {
       const d = dashboard(on)
       d.world.agent = AGENT
       const band = await mounted($, d, surface)
@@ -90,12 +94,13 @@ for (const surface of SURFACES) {
       await d.clock.settle()
 
       expect(planLeaves(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'PLAN-23', disconnect: true } }])
-      // the plan's leave already freed the agent (the agent gate then answers agent_not_held), and the release is still asked for, once, after it
-      expect(d.world.leaveOrder).toEqual(['plan'])
-      expect(d.releaseCalls).toHaveLength(1)
+      // the plan's leave already freed the agent (the agent gate then answers agent_not_held); the person-disconnect route is open to a session holding none, and goes last
+      expect(d.world.leaveOrder).toEqual(['plan', 'person-disconnect'])
+      expect(d.personDisconnects).toHaveLength(1)
+      expect(d.releaseCalls).toEqual([])
       expect(cardLeaves(d)).toEqual([])
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected from PLAN-23'])
-      expectRowCarries(d.relay.told[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'freed its team agent', 'session_connect'])
+      expectRowCarries(d.relay.told[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'ended its sign-in', 'Do not call session_connect'])
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
     })
 
@@ -114,7 +119,8 @@ for (const surface of SURFACES) {
       await d.clock.advance(5_000)
       await first
       expect(cardLeaves(d)).toHaveLength(1)
-      expect(d.world.leaveOrder).toEqual(['card', 'release'])
+      expect(d.world.leaveOrder).toEqual(['card', 'person-disconnect'])
+      expect(d.personDisconnects).toHaveLength(1)
       expect(d.relay.told).toHaveLength(1)
     })
 
@@ -179,7 +185,7 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toHaveLength(0)
     })
 
-    test('a card left but the agent release failing: one toast says both, and the model is not told the agent was freed', async ($, on) => {
+    test('a card left but ending the sign-in failing: one toast says both, and the model is told the end failed', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       d.world.card = CARD
@@ -188,19 +194,21 @@ for (const surface of SURFACES) {
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected from DX-77'))).toHaveLength(1)
-      expect(d.toasts.at(-1)).toMatch(/^Disconnected from DX-77, but could not free this session's team agent \(500: release boom\)/)
+      expect(d.toasts.at(-1)).toMatch(/^Disconnected from DX-77, but could not end this session's sign-in \(500: release boom\)/)
       expect(d.relay.told).toHaveLength(1)
-      expect(d.relay.told[0]).not.toContain('freed its team agent')
+      expect(d.relay.told[0]).not.toContain('ended its sign-in')
+      expect(d.relay.told[0]).toContain('ending its sign-in failed')
+      expect(d.relay.told[0]).toContain('Do not call session_connect')
     })
 
-    test('agent only and the release failing: the failure is toasted, the model is told nothing and the button stays', async ($, on) => {
+    test('agent only and ending the sign-in failing: the failure is toasted, the model is told nothing and the button stays', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       d.world.release = { status: 500 }
       const band = await mounted($, d, surface)
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toMatch(/^Could not free this session's team agent \(500: release boom\)/)
+      expect(d.toasts.at(-1)).toBe(disconnectEndFailure('500: release boom'))
       expect(d.relay.told).toHaveLength(0)
       expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
     })

@@ -781,6 +781,8 @@ export function dashboard(
   const restartCalls: unknown[] = []
   // DX-5554: each release of the session's team agent (DELETE /api/plan-sessions/me/agent), kept out of `calls` and `api` like the context reads
   const releaseCalls: { method: string; path: string; background: unknown }[] = []
+  // CP-89: each call of the band's Disconnect route (POST /api/plan-sessions/me/person-disconnect), kept out of `calls` and `api` like the release
+  const personDisconnects: { method: string; path: string; background: unknown }[] = []
   // DX-4997 / DX-5033: the dashboard's rule for the agent pause. A `50arms_api` call marked `background: true` (the plugin's own work) never ends it;
   // an unmarked one (the agent's own call) does, except the route that manages the pause itself.
   const serverPauseRule = (args: any) => {
@@ -886,6 +888,23 @@ export function dashboard(
       const given = options.pacingLine ?? { body: { account: null, level: null, budget: null, resets_at: null, main_agents: null, sub_agents: null, reserved_agents: null, line: null, reason: 'no_usage_account' } }
       if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
+    }
+    // CP-89 / DX-7026: the band's Disconnect, an open route of the agent gate (a session holding no agent must still be disconnectable). It frees the agent and revokes the
+    // presented key, so every later call answers the revoked halt and only session_connect with person_sign_in leaves it; it answers {released, revoked: true}. world.release shapes it as it shapes the exit-time release.
+    if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'POST' && e.args.path === '/api/plan-sessions/me/person-disconnect') {
+      personDisconnects.push({ method: e.args.method, path: e.args.path, background: e.args.background })
+      if (world.release.hangs) await hung.promise
+      if (world.release.delayMs !== undefined) await clock.sleep(world.release.delayMs)
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
+      if (world.release.deny !== undefined) return { deny: world.release.deny }
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
+      if (world.release.status !== undefined) return { value: reply({ error: 'release boom' }, world.release.status) }
+      const released = world.agent !== null
+      world.leaveOrder.push('person-disconnect')
+      world.agent = null
+      world.agentGate = null
+      world.signedOut = 'revoked'
+      return { value: reply({ released, revoked: true }) }
     }
     // DX-5549: the agent gate closes every 50arms_api call but the proposal routes (packages/platform-mcp agent-gate.ts); each refused call is still
     // recorded where its suite counts it
@@ -1525,7 +1544,7 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), wipeState, beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, serversCalled, beforeNextWrite:(key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, turnActivity: turnActivityCalls, loadPauseReads: [] as typeof reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.sessionReadFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, serversCalled, beforeNextWrite:(key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, turnActivity: turnActivityCalls, loadPauseReads: [] as typeof reportCalls, unmarked, backgroundRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, personDisconnects, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.sessionReadFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-5605: the session's stored events warning (the text its one toast is built from): the latest value the plugin wrote, null while events flow.
