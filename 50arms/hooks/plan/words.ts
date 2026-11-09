@@ -193,8 +193,11 @@ export function donutGlyph(percent: number): string {
 
 // A connected, LOADED view's percent; null otherwise. An error view keeps the last plan's fields, so only a
 // ready view may draw a figure: nothing derived from loaded data shows under an error.
+// A held card's checklist progress draws the same donut, and a card with no checklist items draws none.
 export function viewPercent(v: PlanView): number | null {
-  return v.phase === 'ready' && v.connected && v.statusBreakdown ? planPercent(v.statusBreakdown) : null
+  if (v.phase !== 'ready') return null
+  if (v.connected && v.statusBreakdown) return planPercent(v.statusBreakdown)
+  return v.card !== null ? v.cardPercent : null
 }
 
 // the footer indicator's text, read from `view.connected` and the team agent the session holds (`view.agent`, from the server):

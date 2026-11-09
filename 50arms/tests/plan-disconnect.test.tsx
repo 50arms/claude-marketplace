@@ -1,10 +1,10 @@
 import "./run-tests-with-npm-test.generated"
-// DX-2985: the band's Disconnect button. session_connect {target, disconnect: true} takes the
+// DX-2985: the band's Disconnect button (CP-91: it only leaves the plan or card). session_connect {target, disconnect: true} takes the
 // session off its plan; the model is told in the same step; every refusal is shown, never swallowed.
 import { describe, expect } from 'claude-code/testing'
 
 import { DISCONNECT_GLYPH } from '../hooks/plan/config'
-import { test, SURFACES, bandLabelOf, dashboard, expectRowCarries, startSession } from './plan-kit'
+import { test, SURFACES, bandLabelOf, dashboard, expectRowCarries, linksOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
 const text = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
@@ -17,16 +17,17 @@ async function mounted($: any, d: any, surface: string) {
 
 for (const surface of SURFACES) {
   describe(`Disconnect on ${surface}`, () => {
-    test('one call with the connected plan id and disconnect: true, then the sign-in ends; the band reads access revoked and offers Sign in; the model is told not to connect', async ($, on) => {
+    test('one call with the connected plan id and disconnect: true and nothing else: the session stays signed in with its agent, offers no Sign in, and the model is told not to rejoin', async ($, on) => {
       const d = dashboard(on)
+      d.world.agent = { id: 6, name: 'Tendai', avatar_url: null }
       const band = await mounted($, d, surface)
       expect(await bandLabelOf(band)).toBe('PLAN-23 · 50 Arms plugin')
-      // DX-5605: a red control reading just Disconnect, last but for the close x
+      // a red control reading just the glyph, then Revoke, last but for the close x
       expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
       expect((await band.find({ key: 'disconnect' }))?.props.plain).toBe(true)
       expect((await band.find({ type: 'Text', text: DISCONNECT_GLYPH }))?.props.color).toBe('error')
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
-      expect(keys.slice(-2)).toEqual(['disconnect', 'band-close'])
+      expect(keys.slice(-3)).toEqual(['disconnect', 'revoke', 'band-close'])
       expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBeFalsy()
 
       await band.press({ key: 'disconnect' })
@@ -34,15 +35,29 @@ for (const surface of SURFACES) {
 
       expect(disconnectCalls(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'PLAN-23', disconnect: true } }])
       expect(d.toasts).toContain('Disconnected from PLAN-23')
-      expect(d.personDisconnects).toHaveLength(1)
-      expect(await text(band)).toContain('50 Arms: access revoked by dana')
-      expect((await band.find({ key: 'sign-in' }))?.text).toBe('Sign in')
-      expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('red')
+      // the Revoke route is never called, the key is not revoked, and the agent is kept
+      expect(d.personDisconnects).toEqual([])
+      expect(d.releaseCalls).toEqual([])
+      expect(d.world.signedOut).toBe(null)
+      expect(d.world.agent).toEqual({ id: 6, name: 'Tendai', avatar_url: null })
+      expect(await text(band)).toContain('50 Arms · Tendai: not connected to a plan or card')
+      expect(await text(band)).not.toContain('access revoked')
+      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+      expect(await linksOf(band)).toEqual([])
+      // nothing is held to leave now; Revoke is still offered
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('Revoke')
 
       const rows = d.relay.told
       expect(rows).toHaveLength(1)
-      expectRowCarries(rows[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'ended its sign-in', 'Do not call session_connect', '/api/plans/mine'])
+      expectRowCarries(rows[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'still signed in', 'Do not call session_connect', '/api/plans/mine'])
+      expect(rows[0]).not.toContain('ended its sign-in')
+
+      // however long the session sits, the plugin makes no connect call of its own
+      await d.clock.advance(10 * 60_000)
+      await d.clock.settle()
+      expect(d.calls.filter((c: any) => c.tool === 'session_connect')).toHaveLength(1)
+      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
     })
 
     test('the button is dim and its label reads Disconnecting… while the call is in flight, and a double press makes one call', async ($, on) => {

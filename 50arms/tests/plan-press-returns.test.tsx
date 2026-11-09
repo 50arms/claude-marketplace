@@ -11,7 +11,7 @@ const SLOW_MS = 30_000
 
 for (const surface of SURFACES) {
   describe(`a Disconnect press returns before the refresh on ${surface}`, () => {
-    test('Disconnect: the press resolves while the refresh is slow and the band shows access revoked and Sign in', async ($, on) => {
+    test('Disconnect: the press resolves while the refresh is slow and the band shows the session on no plan, still signed in', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
@@ -20,6 +20,23 @@ for (const surface of SURFACES) {
       await d.clock.advance(1_000)
       await press
       expect(d.toasts).toContain('Disconnected from PLAN-23')
+      expect(await text(band)).toContain('not connected to a plan or card')
+      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
+      expect(d.relay.told).toHaveLength(1)
+      d.holdApi(0)
+      await d.clock.settle()
+      expect(await text(band)).toContain('not connected to a plan or card')
+    })
+
+    test('Revoke: the press resolves while the refresh is slow and the band shows access revoked and Sign in', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
+      d.holdApi(SLOW_MS)
+      const press = band.press({ key: 'revoke' })
+      await d.clock.advance(1_000)
+      await press
+      expect(d.toasts.filter((t: string) => t.startsWith('Revoked'))).toHaveLength(1)
       expect(await text(band)).toContain('50 Arms: access revoked by dana')
       expect(d.relay.told).toHaveLength(1)
       d.holdApi(0)

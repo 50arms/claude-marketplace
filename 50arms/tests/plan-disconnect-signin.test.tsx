@@ -1,5 +1,5 @@
 import "./run-tests-with-npm-test.generated"
-// CP-89 / DX-7026: after a person's Disconnect the session's key is dead and only the person's Sign in restarts it. The band never sits on "Signing in…" with nothing in flight,
+// CP-89 / DX-7026: after a person's Revoke the session's key is dead and only the person's Sign in restarts it. The band never sits on "Signing in…" with nothing in flight,
 // the plugin makes no connect call of its own, and the Sign in that follows shows the approval link and code.
 import { describe, expect } from 'claude-code/testing'
 
@@ -11,25 +11,26 @@ const connects = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50a
 const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 
 for (const surface of SURFACES) {
-  describe(`Disconnect then Sign in on ${surface}`, () => {
+  describe(`Revoke then Sign in on ${surface}`, () => {
     test('the band offers Sign in, not Signing in…, and the plugin makes no connect call of its own, however long the session sits', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
-      await band.press({ key: 'disconnect' })
+      await band.press({ key: 'revoke' })
       await d.clock.settle()
 
       expect(await texts(band)).toContain('50 Arms: access revoked by dana')
       expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
-      expect(connects(d).map((c: any) => c.args)).toEqual([{ target: 'PLAN-23', disconnect: true }])
+      // Revoke makes no leave call and no connect call of the plugin's own
+      expect(connects(d)).toEqual([])
 
       await d.clock.advance(10 * 60_000)
       await d.clock.settle()
       expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
-      expect(connects(d)).toHaveLength(1)
+      expect(connects(d)).toHaveLength(0)
     })
 
-    test('a sign-in watch the model started before the Disconnect is ended by it: the band reads Sign in at once, with no stop toast', async ($, on) => {
+    test('a sign-in watch the model started before the Revoke is ended by the Revoke: the band reads Sign in at once, with no stop toast', async ($, on) => {
       const d = dashboard(on)
       modelConnect(on)
       await startSession($, d, surface)
@@ -42,7 +43,7 @@ for (const surface of SURFACES) {
       await forceRefresh($, d)
       expect((await band.find({ key: 'sign-in' })) ?? null).toBeNull()
 
-      await band.press({ key: 'disconnect' })
+      await band.press({ key: 'revoke' })
       await d.clock.settle()
       expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
       expect((await linksOf(band)).map(l => l.href)).not.toContain(APPROVAL_URL)
@@ -55,11 +56,11 @@ for (const surface of SURFACES) {
       expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
     })
 
-    test('Sign in after the Disconnect asks as a person (person_sign_in), names no plan, and shows the approval link and code', async ($, on) => {
+    test('Sign in after the Revoke asks as a person (person_sign_in), names no plan, and shows the approval link and code', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
-      await band.press({ key: 'disconnect' })
+      await band.press({ key: 'revoke' })
       await d.clock.settle()
       expect(await texts(band)).toContain('access revoked')
 

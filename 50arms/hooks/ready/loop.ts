@@ -30,6 +30,7 @@ export const READY_NO_ORIGIN = 'Could not join the ready list: this folder has n
 export const READY_NOT_GITHUB = "Could not join the ready list: 50 Arms connects github.com repos only, and this folder's origin is elsewhere."
 export const READY_NOT_REGISTERED = "Could not join the ready list: this folder's repo is not connected to 50 Arms. Connect it in the 50 Arms setup guide first."
 export const READY_DISCONNECTED = `You disconnected this session, so it left the ready list and kept its conversation. Run /${READY_TYPED} to rejoin.`
+export const READY_REVOKED = `You revoked this session's sign-in, so it left the ready list and kept its conversation. Run /${READY_TYPED} to rejoin.`
 export const READY_SIGN_IN_ENDED = `This session left the ready list: it could not sign in. Run /${READY_TYPED} to try again.`
 export const READY_PERMISSION_ENDED = `This session left the ready list: the permission to look up this folder's repo was not granted. Run /${READY_TYPED} to ask again.`
 export const READY_SHELL_HOLDS_RESET = 'Ready list: the job is over, and this session clears and rejoins when its background task has ended.'

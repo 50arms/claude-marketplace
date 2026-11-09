@@ -1,10 +1,10 @@
 import type { PlanView } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
-import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DONUT_BAND_PX, REVOKE_LABEL, REVOKING_LABEL, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
-import { bandHold, holdsAnything } from './hold'
+import { bandHold, holdsAnything, holdsPlanOrCard } from './hold'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
 import { bandContent, bandLabelCols, bandNameText, needsYouBadge, signInOffered, viewPercent } from './words'
@@ -19,7 +19,7 @@ function idUrl(plan: PlanView['connected'], card: PlanView['card'], dashboardUrl
 }
 
 // The band above the prompt: the plan line (indicator, label, then the count of cards that need you / the permission
-// request / Disconnect and a close control hugging the right edge, the label truncating first). Every control that
+// request / Disconnect, Revoke and a close control hugging the right edge, the label truncating first). Every control that
 // opens a page is a Markdown link (links.tsx), so the app opens it in the in-app browser the way it opens a link in the thread.
 // The held plan's `PLAN-NN` (or a card-only session's card id) in the label is that link: there is no separate Open control.
 // `hasSvg`: the surface draws an Svg (the desktop; the terminal shows the glyph as text).
@@ -60,9 +60,11 @@ export function renderBand(
   // a revoked key is red too, and keeps its text beside Sign in
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
-  // Disconnect is the only way off a plan, a card or the team agent from the UI (connecting or switching a plan is the model's `session_connect`); it shows whenever the session holds any of them.
+  // Disconnect is the only way off a plan or a card from the UI (connecting or switching a plan is the model's `session_connect`); it shows while the session holds one, and leaves it signed in.
+  // Revoke signs the session out (ends its key, frees its team agent); it shows whenever the session holds an agent, a plan or a card.
   const hold = bandHold(v)
-  const disconnectOffered = holdsAnything(hold)
+  const disconnectOffered = holdsPlanOrCard(hold)
+  const revokeOffered = holdsAnything(hold)
   // The band draws no events
   // status: the band is sign-in, the plan and Disconnect (operator, 2026-10-22); a relay fault reaches the person as its toast. The one exception
   // is events held until the person sends a message (operator, 2026-10-25): that is the person's step, so it stays on the band until done.
@@ -70,6 +72,8 @@ export function renderBand(
   // Disconnect is the glyph in the theme's error color. A Button's `label`, when set, is what the desktop draws (ButtonProps.label), so it carries
   // none: the `Text` child is its text (children of strings and Text are drawn in the label's place) and the Button is keyed instead.
   const disconnectShown = disconnecting ? DISCONNECTING_LABEL : DISCONNECT_GLYPH
+  const revoking = busyKey.isRevoking(busy)
+  const revokeShown = revoking ? REVOKING_LABEL : REVOKE_LABEL
   const controls = [
     ...(offerSignIn ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
@@ -77,6 +81,7 @@ export function renderBand(
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
     ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
     ...(disconnectOffered ? [{ label: disconnectShown, isButton: true }] : []),
+    ...(revokeOffered ? [{ label: revokeShown, isButton: true }] : []),
     { label: CLOSE_LABEL, isButton: true },
   ]
   // the column model is the terminal's (a cell per character, `[ label ]` button chrome). The desktop draws proportional text
@@ -129,6 +134,11 @@ export function renderBand(
         {disconnectOffered && (
           <Button key="disconnect" plain dimColor={disconnecting} onPress={() => hd.disconnect(hold)}>
             <Text color="error">{disconnectShown}</Text>
+          </Button>
+        )}
+        {revokeOffered && (
+          <Button key="revoke" plain dimColor={revoking} onPress={() => hd.revoke(hold)}>
+            <Text color="error">{revokeShown}</Text>
           </Button>
         )}
         {close}

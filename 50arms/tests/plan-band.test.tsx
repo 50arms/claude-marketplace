@@ -23,8 +23,8 @@ describe('plan band', () => {
     const wide = await $.ui.mount({ plugin: '50arms', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
     const narrow = await $.ui.mount({ plugin: '50arms', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     expect(await bandLabelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, `⚠ 2` 3, × 6
-    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name that goes o…')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, Revoke, `⚠ 2` 3, × 6
+    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name …')
     expect((await narrow.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
   })
   test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {
@@ -204,7 +204,7 @@ for (const surface of SURFACES) {
       expect((await band.find({ type: 'Text', text: / · / }))?.props.wrap).toBe('truncate-end')
       // order and keys unchanged, the close control last
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)
-      expect(keys).toEqual(['disconnect', 'band-close'])
+      expect(keys).toEqual(['disconnect', 'revoke', 'band-close'])
       expect((await linksOf(band)).map(l => l.key)).toEqual(['needs-you', 'open-plan'])
       expect((await band.find({ key: 'band-close' }))?.props.role).toBe('dismiss')
     })
