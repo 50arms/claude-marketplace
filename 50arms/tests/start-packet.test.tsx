@@ -33,20 +33,20 @@ for (const surface of SURFACES) {
     }
 
     for (const [source, event] of [['startup', 'session_start'], ['resume', 'session_resume']] as const) {
-      test(`a connected session's ${source} is told the packet's file after the ${event} text, from one read`, async ($, on) => {
+      test(`a connected session's ${source} is told the packet's file before the ${event} text, from one read`, async ($, on) => {
         const d = await started($, on)
         d.world.startPacket = FILE
         const r = await firstPrompt($, source)
-        expect(r.startLines).toEqual([`${EVENT_TEXT(event)}\n${POINTER}`])
+        expect(r.startLines).toEqual([`${POINTER}\n${EVENT_TEXT(event)}`])
         expect(PACKET_READS(d.contextReads)).toEqual([START_PACKET_PATH])
       })
     }
 
-    test("a compaction is told the event text, then the packet's file, then the resume briefing, from one read", async ($, on) => {
+    test("a compaction is told the packet's file, then the event text, then the resume briefing, from one read", async ($, on) => {
       const d = await started($, on)
       d.world.startPacket = FILE
       const r = await firstPrompt($, 'compact')
-      expect(r.startLines).toEqual([`${EVENT_TEXT('after_compaction')}\n${POINTER}\n${DEFAULT_BRIEFING}`])
+      expect(r.startLines).toEqual([`${POINTER}\n${EVENT_TEXT('after_compaction')}\n${DEFAULT_BRIEFING}`])
       expect(PACKET_READS(d.contextReads)).toEqual([START_PACKET_PATH])
     })
 
@@ -57,33 +57,33 @@ for (const surface of SURFACES) {
       expect(PACKET_READS(d.contextReads)).toEqual([START_PACKET_PATH])
     })
 
-    test('a read the dashboard refuses is one warning line after the event text, never silence and never a guessed packet', async ($, on) => {
+    test('a read the dashboard refuses is one warning line before the event text, never silence and never a guessed packet', async ($, on) => {
       const d = await started($, on)
       d.world.startPacket = { status: 500 }
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines).toEqual([`${EVENT_TEXT('session_start')}\n⚠ Could not load your start packet (500: packet boom). Tell the operator this start packet fetch failed.`])
+      expect(r.startLines).toEqual([`⚠ Could not load your start packet (500: packet boom). Tell the operator this start packet fetch failed.\n${EVENT_TEXT('session_start')}`])
     })
 
     test('a packet that came inline (a dashboard MCP older than the dashboard) is a failure that names the remedy, not a line built from the text', async ($, on) => {
       const d = await started($, on)
       d.world.startPacket = { profile: 'orchestrator', text: 'the whole role text, which the client would cut to a preview' }
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines).toEqual([`${EVENT_TEXT('session_start')}\n⚠ Could not load your start packet (old_mcp: the dashboard MCP server answered the packet inline, with no file: reconnect it with /mcp or start a new session). Tell the operator this start packet fetch failed.`])
+      expect(r.startLines).toEqual([`⚠ Could not load your start packet (old_mcp: the dashboard MCP server answered the packet inline, with no file: reconnect it with /mcp or start a new session). Tell the operator this start packet fetch failed.\n${EVENT_TEXT('session_start')}`])
     })
 
     test('an answer of no known shape is a failure, not a pointer', async ($, on) => {
       const d = await started($, on)
       d.world.startPacket = { profile: 'orchestrator', path: '', bytes: 1, instruction: 'x' }
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines).toEqual([`${EVENT_TEXT('session_start')}\n⚠ Could not load your start packet (bad_response: startPacket is not {profile, path, bytes, instruction}). Tell the operator this start packet fetch failed.`])
+      expect(r.startLines).toEqual([`⚠ Could not load your start packet (bad_response: startPacket is not {profile, path, bytes, instruction}). Tell the operator this start packet fetch failed.\n${EVENT_TEXT('session_start')}`])
     })
 
-    test("a signed-in session on no plan that holds a card is told its packet's file after the event text", async ($, on) => {
+    test("a signed-in session on no plan that holds a card is told its packet's file before the event text", async ($, on) => {
       const d = await started($, on, { connected: false })
       Object.assign(d.world, { agent: { id: 6, name: 'Tendai', avatar_url: null }, card: { id: 'DX-77', title: 'One-off fix' } })
       d.world.startPacket = { ...FILE, profile: 'work' }
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines).toEqual([`${EVENT_TEXT('session_start')}\n${POINTER.replace('the orchestrator role', 'the work role')}`])
+      expect(r.startLines).toEqual([`${POINTER.replace('the orchestrator role', 'the work role')}\n${EVENT_TEXT('session_start')}`])
     })
 
     test('clear and fork have no start, a sub-agent no packet: nothing is read', async ($, on) => {

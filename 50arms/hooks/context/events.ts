@@ -2,6 +2,7 @@ import type { Api } from '../plan/load'
 import { errText } from '../plan/load'
 import { ERROR_BODY_MAX } from '../plan/config'
 import { mcpText } from '../plan/mcp'
+import { isDeliveryId } from '../plan/acks'
 
 // the event text a plan-connected session is told, and the restart notice a session that replaced a connected one is told.
 // The wording is a 50 Arms registry row (`GET /api/reminders/event/:event`, the `plan_restart.waiting_events` reminder); this file
@@ -39,14 +40,18 @@ export const eventPath = (event: DashboardEvent) => `/api/reminders/event/${even
 export const RESTART_NOTICE_TOOL = 'restart_notice'
 
 // What a lookup came to: text to say, nothing to say, or a failure whose reason names why (one line, never silence).
-export type Told = { kind: 'text'; text: string } | { kind: 'nothing' } | { kind: 'failed'; reason: string }
+// `acks`: the delivery ids the plugin acknowledges once `text` is in the conversation (none for a text the dashboard minted no id for)
+export type Told = { kind: 'text'; text: string; acks: number[] } | { kind: 'nothing' } | { kind: 'failed'; reason: string }
+
+// the delivery ids of a told text, for the caller that puts it in the conversation
+export const toldAcks = (t: Told): number[] => (t.kind === 'text' ? t.acks : [])
 
 export function eventText(r: Api): Told {
   if (!r.ok) return { kind: 'failed', reason: errText(r) }
   const text = r.body?.effective_text
   if (typeof text !== 'string') return { kind: 'failed', reason: 'bad_response: the dashboard answered no effective_text' }
   if (text === '') return { kind: 'failed', reason: 'empty_response: the dashboard returned an empty text' }
-  return { kind: 'text', text }
+  return { kind: 'text', text, acks: isDeliveryId(r.body?.delivery_id) ? [r.body.delivery_id] : [] }
 }
 
 // The three answers of the server's `restart_notice` tool (JSON text): say the notice, say nothing, or the lookup could not answer. `fix`
@@ -83,7 +88,7 @@ export function restartNoticeText(result: { content?: { type: string; text?: str
   const answer = asRestartNoticeAnswer(parsed)
   if (answer === null) return { kind: 'failed', reason: 'bad_response: restart_notice answered neither a notice, null nor a stop' }
   if ('stopped' in answer) return { kind: 'failed', reason: `${answer.stopped.reason}: ${answer.stopped.detail}. ${answer.stopped.fix}` }
-  return answer.notice === null ? { kind: 'nothing' } : { kind: 'text', text: answer.notice }
+  return answer.notice === null ? { kind: 'nothing' } : { kind: 'text', text: answer.notice, acks: [] }
 }
 
 export const eventFailureLine = (event: DashboardEvent, reason: string) =>

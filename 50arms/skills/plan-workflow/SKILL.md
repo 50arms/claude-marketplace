@@ -159,9 +159,8 @@ One writer: the main session. Sub-agent briefs say "no plan writes; return findi
 Your plan's events arrive unprompted, tagged `[50 Arms plan event]` — never poll, loop or
 Monitor for them. Every line is one of these kinds.
 
-Acknowledge each flagged event right after reading it, before acting: a line starting
-`[ack-required event N]` gives the exact `50arms_api POST /api/plan-sessions/me/events/N/ack`
-call (no body). One you already acted on is only acknowledged, never acted on twice.
+The plugin acknowledges each event to 50 Arms once its text is in your conversation; you never
+do. One you already acted on is not acted on twice.
 
 From the dashboard:
 

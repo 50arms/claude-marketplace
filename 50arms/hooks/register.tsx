@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent, toldAcks } from './context/events'
+import { ackPath, ackUnknown, deliveryIdsOf } from './plan/acks'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { START_PACKET_PATH, startPacketFailureLine, startPacketTold } from './context/packet'
 import { stamp as nextStamp } from './context/stamp'
@@ -78,7 +79,7 @@ import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanT
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
-import { StalePendingError, ackedEventId, clearInFlight, fromPending, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, shouldDropResend, toPending } from './relay/outbox'
+import { StalePendingError, clearInFlight, fromPending, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, resendable, shouldDropResend, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
 import { legacyRuleCheck, legacySettingsPaths } from './relay/legacy-rule'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
@@ -649,15 +650,36 @@ async function tellModel($: any, text: string): Promise<void> {
 // tell the model something it must ACT on while the person types nothing (a permission decision, a sign-in's outcome): by the plan event
 // bridge's own delivery (deliverEvent), not urgent: a prompt, which wakes an idle session and queues behind a running turn.
 // `tellModel`'s append is only read on the session's next turn, which an idle agent waiting on the person never starts.
-async function tellModelAwake($: any, text: string): Promise<void> {
+// True when the text is in the conversation (a caller that acknowledges something it carries needs to know).
+async function tellModelAwake($: any, text: string): Promise<boolean> {
   const failure = await deliverEvent($, text, false)
   if (failure !== null) notToldToast($, failure, text)
+  return failure === null
 }
 
 // The write the operator asked for already happened: say the model was not told, and carry the row it was meant to read (the
 // operator can paste it), never hide it.
 function notToldToast($: any, cause: unknown, text: string): void {
   $.ui.toast(`Could not tell the model: ${String(cause).slice(0, TOAST_ERROR_MAX)}${NOTE_MARKER}${text}`)
+}
+
+// the plugin tells 50 Arms, by the id the text carried, that an event text, a mantra, a start packet or a plan event is IN the model's conversation. Called
+// only once it is: a text that was queued, dropped after a missed deadline, refused by the session or lost when the session exited is not acknowledged (the dashboard then keeps it owed or
+// sends a plan event again). The model is never asked to. A repeated acknowledgement changes nothing; a re-sendable plan event whose acknowledgement succeeded (or whose id the server does not
+// know) is no longer in flight. Any other refusal is shown, never swallowed: the dashboard will send the text again.
+async function ackDelivered($: any, ids: readonly number[]): Promise<void> {
+  const failed: string[] = []
+  for (const id of new Set(ids)) {
+    const r = await api($, 'POST', ackPath(id))
+    if (r.ok || ackUnknown(r)) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
+    else failed.push(`${id}: ${errText(r)}`)
+  }
+  if (failed.length > 0) $.ui.toast(`Could not acknowledge a delivery to 50 Arms (${failed.join('; ')}): it will be sent again.`.slice(0, FAILURE_TOAST_MAX))
+}
+
+// the acknowledgement runs apart from the delivery that earned it: the model never waits on it
+function ackLater($: any, ids: readonly number[]): void {
+  if (ids.length > 0) detach($, 'Acknowledging a delivery', ackDelivered($, ids))
 }
 
 // a permission request's toast: link and code together, for the longest the host allows. The band draws the same link and
@@ -839,10 +861,11 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
     // (onPlanConnect and the renewal below refuse one without); only the press may see one with none, and it tells once per watch.
     // told as a waking prompt (tellModelAwake), on both paths: the session sits idle while the person approves, and an
     // appended row is read only on a turn nobody starts, so the person had to type "approved" for the model to go on.
-    const tell = async (request: ApprovalRequest | null, text: string) => {
-      if ('forReadyLoop' in watch) return
+    // true when the text reached the conversation (not told at all: the ready loop's own sign-in, a request already told, a delivery the session refused)
+    const tell = async (request: ApprovalRequest | null, text: string): Promise<boolean> => {
+      if ('forReadyLoop' in watch) return false
       const key = request === null ? undefined : publicIdOf(request.url)
-      if (key === undefined ? watch.byPress : await markToldOnce($, key)) await tellModelAwake($, text)
+      return (key === undefined ? watch.byPress : await markToldOnce($, key)) ? tellModelAwake($, text) : false
     }
     const shownRequest = (): ApprovalRequest => {
       if (shown === null) throw new Error('sign-in watch: the model path has no shown request')
@@ -906,9 +929,11 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         // the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
         const target = typeof (watch.args as any).target === 'string' ? (watch.args as any).target : null
         const note = watch.byPress ? signInNote(target, step.kind === 'done') : signInApprovedNote(shownRequest().code, target)
-        // CP-61: this call bound the session, so its answer carries the start packet; the model's own connect after it is a reconnect, which carries none
+        // this call bound the session, so its answer carries the start packet; the model's own connect after it is a reconnect, which carries none
         const packet = step.kind === 'done' ? toldLine(step.packet, startPacketFailureLine) : null
-        await tell(shown, joinLines([note, packet]) ?? note)
+        const told = await tell(shown, joinLines([note, packet]) ?? note)
+        // the packet's delivery id is acknowledged only when its line reached the conversation; the connect's mantra is never told here, so its id is never acknowledged
+        if (told && step.kind === 'done') ackLater($, toldAcks(step.packet))
         await refresh($, true)
         if ('forReadyLoop' in watch) detach($, 'Ready list', syncReady($))
         return
@@ -1627,8 +1652,8 @@ async function issueOutbox($: any): Promise<void> {
       // no live run on that plan: the events wait for a run that serves it (startRelay starts this again)
       if (next === undefined || next.held || relayRun === null || relayRun.planId !== next.planId) return
       // a re-send of an event the session already holds, while its turn runs, is delivered in effect (its cursor moves, it leaves the outbox) but not issued again
-      // (a record that asks for no acknowledgement, the common case, reads nothing and awaits nothing extra)
-      const asks = next.event.acks.length > 0
+      // (a record with no re-sendable event, the common case, reads nothing and awaits nothing extra)
+      const asks = resendable(next.event.acks).length > 0
       const resend = asks && shouldDropResend(next.event.acks, await read($, ackInFlight), (await read($, turn)).isRunning)
       if (resend) {
         if (outbox.includes(next)) await markDelivered($, next)
@@ -1679,6 +1704,9 @@ async function settleOutbox($: any, event: Queued, outcome: Promise<string | nul
   const failure = await outcome
   const live = relayRun !== null && relayRun.planId === event.planId ? relayRun : null
   if (failure === null) {
+    // the text is in the conversation (a prompt entered the session, or the note was appended to the running turn): the plan events it carried are acknowledged. This watch is the
+    // module instance's that made the call; a reload loses it, and the dashboard then sends a re-sendable event again (outbox.ts, shouldDropResend).
+    ackLater($, event.event.acks.map(a => a.eventId))
     // a late success says nothing about an event that is still put back
     if (outbox.some(q => q.again === true)) return
     outboxRefusals = 0
@@ -1693,7 +1721,7 @@ async function settleOutbox($: any, event: Queued, outcome: Promise<string | nul
   if (relayRun !== null && relayRun.planId !== event.planId) return
   outboxFailure = failure
   outboxRefusals++
-  // the refused event never reached the session, so it is not an event the session holds
+  // the refused event never reached the session, so it is not an event the session holds, and nothing is acknowledged for it
   if (event.event.acks.length > 0) await update($, ackInFlight, cur => clearInFlight(cur, event.event.acks.map(a => a.eventId)))
   const held: Queued = { ...event, again: true, held: true }
   putBack(outbox, held)
@@ -2625,6 +2653,12 @@ async function onSessionConnect($: any, e: any, next: any) {
   const target = connectTargetOf(e.target)
   const ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
+  // the connect's answer is in the model's conversation with this result, so the mantra and the start packet it carries are acknowledged. An answer the engine denied or the dashboard
+  // refused carries none (and a sub-agent's connect is not the session's)
+  if (e.agentId === undefined && !raisedByPlugin(next.origin)) {
+    const answer = answerOf(ran)
+    if (answer.ok) ackLater($, deliveryIdsOf((await wholeAnswer($, answer)).body))
+  }
   if (approval === null) return ran
   const waiting = await read($, signInRequest)
   // a request with no id cannot be told once, so it is refused before anything is drawn (as permissionRequestOf refuses one):
@@ -2662,8 +2696,8 @@ async function showPermissionRequest($: any, request: PermissionRequest) {
   return approval
 }
 
-// the session acknowledged an event (POST /api/plan-sessions/me/events/<N>/ack): it is no longer in flight. A refusal comes back as a normal result with
-// ok:false (a 400 is not an error result), so success is the envelope's ok, never the absence of isError.
+// The one handler on 50arms_api, a pass-through for every card write: it acts only on the calls that matter here. The plugin acknowledges deliveries itself (ackDelivered), so the model's
+// own acknowledgement call is no longer watched. A refusal comes back as a normal result with ok:false (a 400 is not an error result), so success is the envelope's ok, never the absence of isError.
 async function onAckCall($: any, e: any, next: any) {
   const ran = await next(e)
   // the session's own card or plan write reaches it as no plan event (the relay hears other members' writes), so the band and the title's
@@ -2675,18 +2709,23 @@ async function onAckCall($: any, e: any, next: any) {
   await touchRecordClock($, e, next)
   const answer = answerOf(ran)
   // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
-  // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
-  if (answer.ok && isPickup(e) && (await wholeAnswer($, answer)).body?.connectedByPickup === true) await reportActivityOnConnect($)
+  // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body.
+  // the model's own pickup that connected it, and its own read of the start packet, put the packet (and the connect's mantra) in its conversation with this very result: acknowledged here
+  if (answer.ok && (isPickup(e) || isStartPacketRead(e))) {
+    const whole = await wholeAnswer($, answer)
+    if (isPickup(e) && whole.body?.connectedByPickup === true) await reportActivityOnConnect($)
+    if (e.agentId === undefined && !raisedByPlugin(next.origin)) ackLater($, deliveryIdsOf(whole.body))
+  }
   // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
   if (e.agentId === undefined && !raisedByPlugin(next.origin) && answer.ok) {
     const now = await $.clock.now()
     await update($, workMarks, cur => marksAfter(cur, e.method, e.path, e.body, now))
   }
-  const id = ackedEventId(e.method, e.path)
-  if (id === null) return ran
-  if (answer.ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
   return ran
 }
+
+// the model's own read of its start packet (the agent-created frame's pointer leads there)
+const isStartPacketRead = (e: any): boolean => typeof e.method === 'string' && e.method.toUpperCase() === 'GET' && e.path === START_PACKET_PATH
 
 // what the session is doing now, for its title's mark: any sub-agent running, and the main loop's turn
 async function titleActivity($: any): Promise<TitleActivity> {
@@ -2760,12 +2799,12 @@ async function takeEndedSession($: any): Promise<string | null> {
 // A pending session start is told once: the next prompt or tool result, whichever comes first, carries its line beside the stamp (a start with no
 // prompt coming, such as a compaction in the middle of a turn, reaches the model on the next tool result). It is gone once taken, so work that throws is one warning line here, never a rejected hook that
 // would lose the time stamp beside it.
-async function renderStart($: any, start: NonNullable<PendingStart>): Promise<string | null> {
+async function renderStart($: any, start: NonNullable<PendingStart>): Promise<Rendered> {
   try {
     return await sessionContext($, start)
   } catch (err: any) {
     const event = sessionEvent(start.source)
-    return event === null ? null : eventFailureLine(event, `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}`)
+    return event === null ? NOTHING : plain(eventFailureLine(event, `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}`))
   }
 }
 
@@ -2773,14 +2812,15 @@ async function renderStart($: any, start: NonNullable<PendingStart>): Promise<st
 // the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
 // (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
 // the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
-async function stampEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
+// `acks`: the delivery ids of the session start's text among the entries, acknowledged by the hook once it hands the entries to the engine
+async function stampEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<{ entries: string[]; acks: number[] }> {
   const pending = takeStart ? await takePendingStart($) : null
   const line = await timeLine($)
   const disk = await diskLine($, trigger, agent)
   const head = disk === null ? [line] : [line, disk]
-  if (pending === null) return head
+  if (pending === null) return { entries: head, acks: [] }
   const start = await renderStart($, pending)
-  return start === null ? head : [...head, start]
+  return start.text === null ? { entries: head, acks: [] } : { entries: [...head, start.text], acks: start.acks }
 }
 
 // The machine's free-space notice (hooks/context/disk.ts), in every repo: a person's prompt, a session start (it clears the memory, so the first
@@ -2908,7 +2948,11 @@ async function wslHome($: any): Promise<string | null> {
 
 // the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
 async function onPromptStamp($: any, e: any, next: any) {
-  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT))] })
+  const stamped = await stampEntries($, true, 'prompt', MAIN_AGENT)
+  const r = await next({ ...e, context: [...(e.context ?? []), ...stamped.entries] })
+  // the prompt, and the start text beside it, is in the conversation unless the engine refused it
+  if (typeof r?.drop !== 'string' && typeof r?.deny !== 'string') ackLater($, stamped.acks)
+  return r
 }
 
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
@@ -2935,7 +2979,10 @@ async function onToolStamp($: any, e: any, next: any) {
   const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
   // a Bash call that starts a whole test suite (no test file named) gets a reminder beside its result; it rides this handler because no other tool.call handler may sit on a Bash call
   const reminder = e.tool === 'Bash' ? wholeSuiteReminder(e.command) : null
-  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...(reminder === null ? [] : [reminder])] }
+  const stamped = await stampEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)
+  // the last step: the entries go to the engine with the result (a denied result returned above), so the start text among them is in the conversation
+  ackLater($, stamped.acks)
+  return { ...r, context: [...(r.context ?? []), ...stamped.entries, ...(briefing === null ? [] : [briefing]), ...(reminder === null ? [] : [reminder])] }
 }
 
 // what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -3082,16 +3129,28 @@ const toldLine = (t: Told, failure: (reason: string) => string): string | null =
   return t.kind === 'failed' ? failure(t.reason) : null
 }
 
+// What a start tells the model, and the delivery ids to acknowledge once that text is in the conversation: a failure line, or a read that came after the deadline, has none.
+type Rendered = { text: string | null; acks: number[] }
+const NOTHING: Rendered = { text: null, acks: [] }
+const plain = (text: string | null): Rendered => ({ text, acks: [] })
+const toldRendered = (t: Told, failure: (reason: string) => string): Rendered => ({ text: toldLine(t, failure), acks: toldAcks(t) })
+const joinRendered = (lines: Rendered[]): Rendered => ({ text: joinLines(lines.map(l => l.text)), acks: lines.flatMap(l => l.acks) })
+
 // The registry's text for `event`, for every signed-in session (the dashboard leaves the plan-only line out for a session on no plan). A read
 // that broke: one line naming the event and why.
+async function eventRead($: any, event: DashboardEvent): Promise<Rendered> {
+  return toldRendered(eventText(await api($, 'GET', eventPath(event))), reason => eventFailureLine(event, reason))
+}
+
+// A sub-agent's start text goes to the sub-agent's own conversation, not the session's: it is told and acknowledges nothing (the mantra it may carry stays owed to the session's next connect)
 async function eventContext($: any, event: DashboardEvent): Promise<string | null> {
-  return toldLine(eventText(await api($, 'GET', eventPath(event))), reason => eventFailureLine(event, reason))
+  return (await eventRead($, event)).text
 }
 
 // The start packet of what the session holds, read by the plugin so the agent makes no route call of its own: the line names the file to read once.
 // A session that holds no plan and no card is told nothing (the dashboard answers null); a read that broke is one line naming why.
-async function startPacketContext($: any): Promise<string | null> {
-  return toldLine(startPacketTold(await api($, 'GET', START_PACKET_PATH)), startPacketFailureLine)
+async function startPacketRead($: any): Promise<Rendered> {
+  return toldRendered(startPacketTold(await api($, 'GET', START_PACKET_PATH)), startPacketFailureLine)
 }
 
 // the lines of one start in the order the model reads them; a line with nothing to say is null
@@ -3121,8 +3180,8 @@ async function restartNotice($: any, asked: RestartAsk): Promise<string | null> 
   return toldLine(told, restartFailureLine)
 }
 
-// What the plugin's own reads of a session start came to: the line to tell, or that the restart notice is to be asked next.
-type StartReads = { line: string | null; askRestart: boolean }
+// What the plugin's own reads of a session start came to: the text to tell, or that the restart notice is to be asked next.
+type StartReads = { line: Rendered; askRestart: boolean }
 
 // A /clear: it has no event text, and it is a restart only when the session it ended was on a plan (that session's connection record is on disk),
 // which is also what names the predecessor to the server. Any other clear is quiet, the server is never asked.
@@ -3139,35 +3198,41 @@ async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<st
 // the plan read finds signed in is told the event text, on a plan or not; one on no plan then also asks the restart notice. Whatever fails before
 // the plan read answers, a session KNOWN to be on a plan (its record on disk) is told in one warning line; any other stays silent and, on a start
 // or resume, still asks the restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
-async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
+async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<Rendered> {
   // the ready-agent loop's reset opens a fresh conversation in a session that is still working: it is told what a new session is told
   const event = start.loopReset === true ? 'session_start' : sessionEvent(start.source)
-  if (event === null) return start.source === 'clear' ? clearNotice($, start) : null
+  if (event === null) return start.source === 'clear' ? plain(await clearNotice($, start)) : NOTHING
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
   const connected = await isPlanConnected($, start.sessionId)
   const askRestart = start.source !== 'compact' && start.loopReset !== true
-  const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && askRestart })
+  const fault = (reason: string): StartReads => ({ line: plain(connected ? eventFailureLine(event, reason) : null), askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
-  if (server === 'unloaded') return null
-  if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
+  if (server === 'unloaded') return NOTHING
+  if (server === 'not-yet') return plain(connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null)
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)
     if (plan.kind === 'connected') {
-      // the registry's text, then the start packet's file, then (after a compaction) the resume briefing, in the same first turn; the two reads go out together, so the packet adds no wait to the deadline
-      const [line, packet] = await Promise.all([eventContext($, event), startPacketContext($)])
-      return { line: joinLines([line, packet, start.source === 'compact' ? await compactionBriefing($) : null]), askRestart: false }
+      // the start packet's file FIRST, then the registry's text, then (after a compaction) the resume briefing, in the same first turn: the whole is one entry of about 8-10 KB, and a cap on an entry
+      // (a classic hook's `additionalContext` is cut at 8,000 characters; whether this channel has one is UNVERIFIED, the largest entry seen delivered whole is 8,442) would cut the tail, so what the
+      // session must act on (the packet's file, a line of 300 bytes) can never be the part lost. The two reads go out together, so the packet adds no wait to the deadline
+      const [line, packet] = await Promise.all([eventRead($, event), startPacketRead($)])
+      return { line: joinRendered([packet, line, plain(start.source === 'compact' ? await compactionBriefing($) : null)]), askRestart: false }
     }
     if (plan.kind === 'failed') return fault(plan.reason)
     // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
     // (it may hold a stand-alone card, whose start packet is the work role's)
-    if (plan.kind === 'not-connected') return { line: joinLines(await Promise.all([eventContext($, event), startPacketContext($)])), askRestart }
+    if (plan.kind === 'not-connected') {
+      const [line, packet] = await Promise.all([eventRead($, event), startPacketRead($)])
+      return { line: joinRendered([packet, line]), askRestart }
+    }
     // a signed-out session is the one a restart leaves without a key: the notice is for it too
-    return { line: null, askRestart }
+    return { line: NOTHING, askRestart }
   }
+  // a read that finishes after the deadline is discarded with its delivery ids: what the model was never told is never acknowledged
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
   if (!done.askRestart) return done.line
   const notice = await restartNotice($, restartAsk(start))
-  return done.line === null ? notice : notice === null ? done.line : [done.line, notice].join('\n')
+  return joinRendered([done.line, plain(notice)])
 }
 
 async function readSubagentContext($: any): Promise<string | null> {
@@ -3287,16 +3352,23 @@ async function resumeAfterCompaction($: any): Promise<void> {
   const start = await takePendingStart($)
   if (start === null) return
   // a compact start always renders (it carries the registry event), so there is no null to put back
-  const text = (await renderStart($, start))!
+  const rendered = await renderStart($, start)
+  const text = rendered.text!
   if ((await read($, turn)).isRunning) {
     // by the relay's one note path, so a turn that ends with no tool result after it still tells the briefing as a prompt
     if ((await appendTrackedNote($, text)) !== null) await restoreStart($, start)
+    // the note is appended to the conversation
+    else ackLater($, rendered.acks)
     return
   }
   // the procedure needs no dashboard read: a start whose reads failed (only a warning line) still tells the agent how to resume
   const failure = await submitEvent($, relayLine(text.includes(RESUME_PROCEDURE) ? text : `${text}
 ${RESUME_OPENING}`))
-  if (failure === null) return
+  // the prompt entered the session
+  if (failure === null) {
+    ackLater($, rendered.acks)
+    return
+  }
   // the session did not take the prompt: the briefing is still owed, to the next prompt or tool result
   await restoreStart($, start)
   $.ui.toast(`The resume prompt was not taken by the session: ${failure}`.slice(0, TOAST_ERROR_MAX))

@@ -405,6 +405,14 @@ export function dashboard(
     // CP-61: what GET /api/plan-sessions/me/start-packet answers as `startPacket` (null: the session holds nothing), or a status; the server's own MCP has already written the file.
     // A session_connect's envelope carries the same value as its `startPacket`
     startPacket: null as unknown,
+    // CP-61 / DX-6733: the delivery ids the dashboard minted for what it answers: an event text's `delivery_id` (per event, null when absent), and the `startPacketDeliveryId` / `mantraDeliveryId`
+    // beside a start packet or a connect's body. The plugin acknowledges them (POST /api/plan-sessions/me/events/<id>/ack) once the text is in the conversation.
+    deliveries: { event: {} as Record<string, number>, startPacket: null as number | null, mantra: null as number | null },
+    // CP-61: the ack route. `acked`: the ids it accepted, in order; `ackCalls`: every call it got (id and whether it was marked background); `ackReplies`: an id's answer instead of 200
+    // (`status` 404 is the server's `ack_event_unknown`), or a rejected call (`deny`).
+    acked: [] as number[],
+    ackCalls: [] as { id: number; background: unknown }[],
+    ackReplies: {} as Record<number, { status: number; error?: string } | { deny: string }>,
     // DX-4234: what the server's `restart_notice` tool answers (DX-4632): `{notice: null}` unless a test sets a JSON answer (`json`), a raw
     // result (`raw`), or a rejection (`deny`). `delayMs` / `hangs`: it answers late / never.
     restart: {} as { json?: unknown; raw?: unknown; deny?: string; delayMs?: number; hangs?: boolean },
@@ -652,7 +660,7 @@ export function dashboard(
   // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
   const server = {
     calls: [] as { plan_id: number; cursor: string | null; timeout_ms: number; transcript_path?: string }[],
-    buffer: [] as { cursor: string; text: string; urgent: boolean; acks: { eventId: number; attempt: number }[] }[],
+    buffer: [] as { cursor: string; text: string; urgent: boolean; acks: { eventId: number; attempt: number; resend: boolean }[] }[],
     plan: undefined as number | undefined,
     script: [] as (() => any)[],
     stopped: undefined as { reason: string; detail: string; fix: string } | undefined,
@@ -824,13 +832,14 @@ export function dashboard(
   function contextAnswer(path: string) {
     if (path === START_PACKET_PATH) {
       const given = world.startPacket as { status?: number } | null
-      return given !== null && typeof given === 'object' && typeof given.status === 'number' ? reply({ error: 'packet boom' }, given.status) : reply({ startPacket: world.startPacket })
+      return given !== null && typeof given === 'object' && typeof given.status === 'number' ? reply({ error: 'packet boom' }, given.status) : reply({ startPacket: world.startPacket, startPacketDeliveryId: world.deliveries.startPacket })
     }
     const event = /^\/api\/reminders\/event\/(.+)$/.exec(path)
     if (event) {
       const given = world.eventText[event[1]]
-      if (given === undefined) return reply({ event: event[1], effective_text: EVENT_TEXT(event[1]) })
-      return typeof given === 'string' ? reply({ event: event[1], effective_text: given }) : reply({ error: 'event boom' }, given.status)
+      const delivery_id = world.deliveries.event[event[1]] ?? null
+      if (given === undefined) return reply({ event: event[1], effective_text: EVENT_TEXT(event[1]), delivery_id })
+      return typeof given === 'string' ? reply({ event: event[1], effective_text: given, delivery_id }) : reply({ error: 'event boom' }, given.status)
     }
   }
   // ... every attempt, including the ones the MCP being down refuses
@@ -962,6 +971,18 @@ export function dashboard(
       world.agent = null
       return { value: reply({ released }) }
     }
+    // CP-61: the ack route, kept out of `calls` and `api` like the context reads (a suite counting a session's writes stays about its own subject)
+    const ackOf = e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'POST' ? /^\/api\/plan-sessions\/me\/events\/([^/]+)\/ack$/.exec(e.args.path) : null
+    if (ackOf !== null) {
+      const id = Number(ackOf[1])
+      world.ackCalls.push({ id, background: e.args.background })
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
+      const over = world.ackReplies[id]
+      if (over !== undefined && 'deny' in over) return { deny: over.deny }
+      if (over !== undefined) return { value: reply({ error: over.error ?? 'ack_event_unknown' }, over.status) }
+      if (!world.acked.includes(id)) world.acked.push(id)
+      return { value: reply({ acknowledged: true, event_id: id }) }
+    }
     // DX-4234: the reads the context hooks make (is the session on a plan, the registry's event text, an earlier session's restart notice) are
     // kept out of `calls` and `api` like the pacing reads, so the suites that count a load's reads stay about their own subject
     if (e.server === SERVER && e.tool === '50arms_api' && isContextRead(e.args)) {
@@ -1036,9 +1057,9 @@ export function dashboard(
           if (e.args.target === undefined) return { value: text({ state: 'signed_in', instruction: 'This session is signed in. Call `session_connect` with `target` to connect it to a plan or a card.' }) }
           world.titleSeen = e.args.title
           // CP-61: a connect answers the start packet it built (the server's `startPacket`, already a file in the MCP's answer), as GET /me/start-packet does
-          if (planNumberOf(e.args.target) === undefined) return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target }, startPacket: world.startPacket } }) }
+          if (planNumberOf(e.args.target) === undefined) return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target }, startPacket: world.startPacket, startPacketDeliveryId: world.deliveries.startPacket, mantraDeliveryId: world.deliveries.mantra } }) }
           world.planId = planNumberOf(e.args.target)
-          return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId }, startPacket: world.startPacket } }) }
+          return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId }, startPacket: world.startPacket, startPacketDeliveryId: world.deliveries.startPacket, mantraDeliveryId: world.deliveries.mantra } }) }
         }
         if (dance.approved) return approvedAnswer()
         if (!dance.requested) {
@@ -1162,10 +1183,10 @@ export function dashboard(
         world.titleSeen = e.args.title
         if (planNumberOf(e.args.target) === undefined) {
           world.card = { id: e.args.target, title: 'x' }
-          return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target }, startPacket: world.startPacket } }) }
+          return { value: text({ ok: true, status: 200, body: { session: { cardId: e.args.target }, startPacket: world.startPacket, startPacketDeliveryId: world.deliveries.startPacket, mantraDeliveryId: world.deliveries.mantra } }) }
         }
         world.planId = planNumberOf(e.args.target)
-        return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId }, startPacket: world.startPacket } }) }
+        return { value: text({ ok: true, status: 200, body: { session: { planId: world.planId }, startPacket: world.startPacket, startPacketDeliveryId: world.deliveries.startPacket, mantraDeliveryId: world.deliveries.mantra } }) }
       }
       api.push({ method: e.args.method, path: e.args.path, body: e.args.body, query: e.args.query })
       const apiHold = world.apiHolds.findIndex(h => h.method === e.args.method && h.path === e.args.path)
@@ -1482,8 +1503,9 @@ export function dashboard(
     // events appear on the dashboard: a held wait answers at once
     // (DX-4721: every record the server answers carries a boolean `urgent`; a test that does not say is a not-urgent record)
     // (DX-5846: so does `acks`, the events the record asks the session to acknowledge; a test that does not say asks for none)
-    push: (...events: { cursor: string; text: string; urgent?: boolean; acks?: { eventId: number; attempt: number }[] }[]) => {
-      server.buffer.push(...events.map(e => ({ urgent: false, acks: [], ...e })))
+    push: (...events: { cursor: string; text: string; urgent?: boolean; acks?: { eventId: number; attempt: number; resend?: boolean }[] }[]) => {
+      // CP-61: every ack names whether the dashboard sends the event again (`resend`, true unless a test says otherwise: the common case, a person's event)
+      server.buffer.push(...events.map(e => ({ urgent: false, ...e, acks: (e.acks ?? []).map(a => ({ resend: true, ...a })) })))
       server.wake?.()
     },
     // every key the plugin wrote to $.store, in order

@@ -160,10 +160,11 @@ export type ReportState = { agents: Record<string, number>; shells: string[]; pl
 // `acks`: the events the record asks the session to acknowledge (empty for most records); required, so one written by the previous plugin version (which has none) is a fault when it is read back (fromPending).
 export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; acks: AckRef[]; again?: true }
 
-// one event the dashboard needs the session to acknowledge; `attempt` is how many times it has been sent (1 = the first send).
-export type AckRef = { eventId: number; attempt: number }
+// one plan event the plugin acknowledges once its text is in the model's conversation; `attempt` is how many times it has been sent (1 = the first send),
+// `resend` whether the dashboard sends it again until it is acknowledged (false: the acknowledgement only records receipt).
+export type AckRef = { eventId: number; attempt: number; resend: boolean }
 
-// the acknowledgement-requiring events this module has issued and no acknowledgement has confirmed yet, as [event id, attempt] pairs oldest first, capped (ACK_IN_FLIGHT_MAX).
+// the re-sendable events (`resend: true`) this module has issued and whose acknowledgement has not succeeded yet, as [event id, attempt] pairs oldest first, capped (ACK_IN_FLIGHT_MAX).
 export type AckInFlight = [number, number][]
 
 declare module 'claude-code' {

@@ -1095,7 +1095,7 @@ describe('the ready-agent loop', () => {
     })
 
     // CP-61: the reset's fresh conversation is a session start, so it reads the start packet of what the session now holds, once
-    test("the clear's fresh conversation is told its start packet's file after the start text, from one read", async ($, on) => {
+    test("the clear's fresh conversation is told its start packet's file before the start text, from one read", async ($, on) => {
       on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
       on('classic.SessionStart', () => ({}) as any)
       const d = await started($, on, { stateSteps: true })
@@ -1113,8 +1113,8 @@ describe('the ready-agent loop', () => {
       await $.classic.SessionStart({ session_id: 'sess-own-2', source: 'clear', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
       d.world.localRecord = false
       const told = (await $.prompt.submit({ text: 'next' })).context ?? []
-      expect(told.slice(1)).toEqual([`${EVENT_TEXT('session_start')}
-[50 ARMS] Your start packet is already fetched for you. File: ${file.path} (4096 bytes, the work role). ${file.instruction}`])
+      expect(told.slice(1)).toEqual([`[50 ARMS] Your start packet is already fetched for you. File: ${file.path} (4096 bytes, the work role). ${file.instruction}
+${EVENT_TEXT('session_start')}`])
       expect(d.contextReads.filter((p: string) => p === START_PACKET_PATH)).toEqual([START_PACKET_PATH])
     })
 

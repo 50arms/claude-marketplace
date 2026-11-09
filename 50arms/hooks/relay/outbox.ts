@@ -19,7 +19,7 @@ import { isAckList, type RelayEvent } from './answer'
 // and not yet delivered exists nowhere else once the next poll is made. A reload of the hook module empties the module variable, so each queued event is
 // also kept in the `relayOutbox` atom ($.state outlives a reload), written before the poll that acknowledges it and cleared when it is delivered, i.e. when
 // its engine call is made (`toPending`, `fromPending`). A reload therefore loses no event that was taken and not yet called for, and re-sends none that was:
-// the one repeat is a reload between the engine call and the end of the atom write that follows the cursor store. Delivered means handed over, not acknowledged: an event can be lost if Claude Code itself exits while its prompt is still queued behind a running turn (an event that asks to be acknowledged is sent again by the dashboard until the session acknowledges it, which covers that). A new process has no atom, and the server
+// the one repeat is a reload between the engine call and the end of the atom write that follows the cursor store. Delivered means handed over, not acknowledged: an event can be lost if Claude Code itself exits while its prompt is still queued behind a running turn (a re-sendable plan event is sent again by the dashboard until the plugin acknowledges it, which covers that). A new process has no atom, and the server
 // then resumes from the stored (delivered) cursor.
 // Events are issued strictly in the order the server sent them: only the head of the outbox is ever issued. A refusal (the engine is busy or failing) hits
 // every event alike, so an event waiting behind a refused one loses nothing by waiting.
@@ -64,33 +64,33 @@ export const fromPending = (pending: readonly PendingEvent[], planId: number | n
       return { planId: p.planId, seq: firstSeq + i, event: { cursor: p.cursor, text: p.text, urgent: p.urgent, acks: p.acks }, held: false, ...(p.again === true ? { again: true as const } : {}) }
     })
 
-// the dashboard re-sends an event the session has not acknowledged, `attempt` counting the sends. A session that already holds the
-// first copy (processed it, never acknowledged) is not helped by the same prompt again while its turn runs; it is dropped here. `ackInFlight` is the events
+// the dashboard re-sends a plan event (`resend: true`) the session has not acknowledged, `attempt` counting the sends. The PLUGIN acknowledges an event once its text is in
+// the conversation, so a re-send means the first copy never arrived or its acknowledgement was lost. A session that still holds the first copy
+// queued behind a running turn (issued, not yet acknowledged) is not helped by the same prompt again; it is dropped here. `ackInFlight` is the re-sendable events
 // issued and not yet acknowledged, oldest first, capped.
 export const ACK_IN_FLIGHT_MAX = 200
 
-// Drop a record only when it asks for acknowledgements, every one is a re-send (attempt above 1) of an event already issued, and the main turn runs now.
-// A first send (attempt 1) is never dropped; a re-send after the turn ended gets through (the session may have lost the first copy).
-export const shouldDropResend = (acks: readonly AckRef[], inFlight: AckInFlight, turnRunning: boolean): boolean =>
-  turnRunning && acks.length > 0 && acks.every(a => a.attempt > 1 && inFlight.some(([id]) => id === a.eventId))
+// the entries a record's re-send logic judges: an event with `resend: false` is never sent again, so it is neither in flight nor dropped
+export const resendable = (acks: readonly AckRef[]): AckRef[] => acks.filter(a => a.resend)
 
-// The events a record issued: each is in flight at its attempt, the newest last; the oldest past the cap go.
+// Drop a record only when it carries re-sendable events, every one is a re-send (attempt above 1) of an event already issued, and the main turn runs now.
+// A first send (attempt 1) is never dropped; a re-send after the turn ended gets through (the session may have lost the first copy).
+export const shouldDropResend = (acks: readonly AckRef[], inFlight: AckInFlight, turnRunning: boolean): boolean => {
+  const owed = resendable(acks)
+  return turnRunning && owed.length > 0 && owed.every(a => a.attempt > 1 && inFlight.some(([id]) => id === a.eventId))
+}
+
+// The re-sendable events a record issued: each is in flight at its attempt, the newest last; the oldest past the cap go.
 export const markInFlight = (inFlight: AckInFlight, acks: readonly AckRef[]): AckInFlight => {
-  if (acks.length === 0) return inFlight
-  const ids = new Set(acks.map(a => a.eventId))
-  return [...inFlight.filter(([id]) => !ids.has(id)), ...acks.map((a): [number, number] => [a.eventId, a.attempt])].slice(-ACK_IN_FLIGHT_MAX)
+  const owed = resendable(acks)
+  if (owed.length === 0) return inFlight
+  const ids = new Set(owed.map(a => a.eventId))
+  return [...inFlight.filter(([id]) => !ids.has(id)), ...owed.map((a): [number, number] => [a.eventId, a.attempt])].slice(-ACK_IN_FLIGHT_MAX)
 }
 
 // An acknowledgement succeeded for `eventId` (or a delivery was refused and the event never reached the session).
 export const clearInFlight = (inFlight: AckInFlight, eventIds: readonly number[]): AckInFlight =>
   inFlight.some(([id]) => eventIds.includes(id)) ? inFlight.filter(([id]) => !eventIds.includes(id)) : inFlight
-
-// The event id an acknowledgement call names, or null when the call is another route: POST /api/plan-sessions/me/events/<N>/ack.
-export function ackedEventId(method: unknown, path: unknown): number | null {
-  if (typeof method !== 'string' || method.toUpperCase() !== 'POST' || typeof path !== 'string') return null
-  const m = path.match(/^\/api\/plan-sessions\/me\/events\/([1-9][0-9]*)\/ack\/?(?:\?.*)?$/)
-  return m === null ? null : Number(m[1])
-}
 
 // A watch tick that ran more than twice its interval after the last one: the machine slept, and the wall clock moved while no timer did.
 export const isLateTick = (now: number, lastTickAt: number | null, intervalMs: number): boolean => lastTickAt !== null && now - lastTickAt > 2 * intervalMs

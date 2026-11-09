@@ -1,6 +1,7 @@
 import type { Api } from '../plan/load'
 import { errText } from '../plan/load'
 import { isText, type Told } from './events'
+import { isDeliveryId } from '../plan/acks'
 
 // A main session's start packet. The dashboard builds ONE packet for what the session holds (its role's workflow text, then the
 // plan's in-flight cards with each newest agent note, the card it holds whole, and its running sub-agents), and the session's own dashboard server
@@ -35,7 +36,9 @@ export function startPacketTold(r: Api): Told {
     const inline = body.startPacket !== null && typeof body.startPacket === 'object' && typeof (body.startPacket as { text?: unknown }).text === 'string'
     return { kind: 'failed', reason: inline ? 'old_mcp: the dashboard MCP server answered the packet inline, with no file: reconnect it with /mcp or start a new session' : 'bad_response: startPacket is not {profile, path, bytes, instruction}' }
   }
-  return { kind: 'text', text: `[50 ARMS] Your start packet is already fetched for you. File: ${file.path} (${file.bytes} bytes, the ${file.profile} role). ${file.instruction}` }
+  // the id beside `startPacket` is acknowledged once this line is in the conversation (null: nothing to acknowledge)
+  const id = (body as Record<string, unknown>).startPacketDeliveryId
+  return { kind: 'text', text: `[50 ARMS] Your start packet is already fetched for you. File: ${file.path} (${file.bytes} bytes, the ${file.profile} role). ${file.instruction}`, acks: isDeliveryId(id) ? [id] : [] }
 }
 
 export const startPacketFailureLine = (reason: string) => `⚠ Could not load your start packet (${reason}). Tell the operator this start packet fetch failed.`
