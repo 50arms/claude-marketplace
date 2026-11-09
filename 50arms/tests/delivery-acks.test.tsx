@@ -460,6 +460,35 @@ ${NOTICE}`])
       expect(d.world.ackCalls).toEqual([])
     })
 
+    // a later /clear: the ended session (the first /clear's) has no record, the one under the id the server booted with does
+    describe('a second /clear', () => {
+      async function again($: any, on: any) {
+        const d = await cleared($, on, {}, false)
+        d.world.localRecord = false
+        d.world.records.push(d.world.sessionId)
+        d.world.sessionId = 'sess-second-clear'
+        return d
+      }
+
+      test('a hung session read gives the deadline warning line at 8 s', async ($, on) => {
+        const d = await again($, on)
+        d.holdApi(10 * CONTEXT_DEADLINE_MS)
+        const pending = firstPrompt($, 'clear', { session_id: d.world.sessionId })
+        await d.clock.advance(CONTEXT_DEADLINE_MS)
+        expect((await pending).startLines).toEqual([eventFailureLine('session_start', DEADLINE_REASON)])
+        await d.clock.settle()
+        expect(d.world.ackCalls).toEqual([])
+      })
+
+      test('a failing session read gives the event-specific warning line', async ($, on) => {
+        const d = await again($, on)
+        d.world.sessionReadStatus = 503
+        expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines).toEqual([eventFailureLine('session_start', '503: session boom')])
+        await d.clock.settle()
+        expect(d.world.ackCalls).toEqual([])
+      })
+    })
+
     test('a failing session read is one warning line naming the event and acknowledges nothing', async ($, on) => {
       const d = await cleared($, on)
       d.world.sessionReadStatus = 503
