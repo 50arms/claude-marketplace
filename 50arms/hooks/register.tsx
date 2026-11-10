@@ -14,6 +14,7 @@ import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText,
 import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from './compaction/briefing'
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
+import { machineRegisteredNote, registrationFailedToast, registrationOf, registrationShownNote, registrationStep } from './plan/registration'
 import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
@@ -115,6 +116,9 @@ const modelPlan = atom({ plugin: '50arms', key: 'modelPlan' } as const, null as 
 // ends (approved, denied, expired and renewed, or the conversation ended). The band draws it as a Markdown link and the
 // code the moment it exists. Also what tells a watch is running.
 const signInRequest = atom({ plugin: '50arms', key: 'signInRequest' } as const, null as ApprovalRequest | null)
+// the machine's registration while the person has not accepted it (its link and claim code, drawn by the band; `noted`: the model was told to send the person to it,
+// so it is woken once when the person accepts). The same answer on every session of the machine. Cleared when the machine is registered or the conversation ended.
+const machineRegistration = atom({ plugin: '50arms', key: 'machineRegistration' } as const, null as { url: string; code: string; noted: boolean } | null)
 // the model's `request_permission` requests not yet decided, oldest first; the band counts them.
 const permissionRequests = atom({ plugin: '50arms', key: 'permissionRequests' } as const, [] as PermissionRequest[])
 // the main session's transcript path (the classic events carry it).
@@ -222,6 +226,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     title: read($, title),
     modelPlan: read($, modelPlan),
     signInRequest: read($, signInRequest),
+    machineRegistration: read($, machineRegistration),
     permissionRequests: read($, permissionRequests),
     transcript: read($, transcript),
     usageError: read($, usageError),
@@ -275,6 +280,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, title, () => carried.title),
     update($, modelPlan, () => carried.modelPlan),
     update($, signInRequest, () => carried.signInRequest),
+    update($, machineRegistration, () => carried.machineRegistration),
     update($, permissionRequests, () => carried.permissionRequests),
     update($, transcript, () => carried.transcript),
     update($, usageError, () => carried.usageError),
@@ -476,6 +482,9 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   await noteEventsWarning($)
   // the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
+  // a signed-out session reads the machine's registration (registration_only: the call makes no access request); a working connection has none to show
+  if (loaded.phase === 'signed-out') detach($, 'Machine registration', watchRegistration($))
+  else if (loaded.phase === 'ready') await abortRegistrationWatch($)
 }
 
 // a load that failed outside the load itself (its deadline, a throw): the view goes to the error phase, told once on the change into it.
@@ -674,6 +683,70 @@ const toastSignIn = ($: any, approval: ApprovalRequest) => $.ui.toast(signInToas
 async function showSignInRequest($: any, approval: ApprovalRequest): Promise<void> {
   await update($, signInRequest, () => approval)
   toastSignIn($, approval)
+}
+
+// the machine registration watch, one at a time. It repeats `session_connect` with `registration_only: true` (a call that makes no access request and
+// claims no team agent, and waits about 45 s while the registration is open) under the sign-in watch's rules (a minimum round, a generation check)
+// until the answer is `machine_registered`. Nothing else calls session_connect without that flag from a timer.
+let registrationGeneration = 0
+let registrationRunning = false
+
+// the registration is drawn by the band the moment it exists; `noted`: the model was told to send the person to it (never unset by a later look)
+async function showRegistration($: any, request: { url: string; code: string }, noted: boolean): Promise<void> {
+  await update($, machineRegistration, cur => ({ url: request.url, code: request.code, noted: noted || (cur !== null && cur.code === request.code && cur.noted) }))
+}
+
+// ends the watch that is running, if any, and draws no registration
+async function abortRegistrationWatch($: any): Promise<void> {
+  registrationGeneration++
+  registrationRunning = false
+  await update($, machineRegistration, () => null)
+}
+
+// the person accepted: the link goes from every band, and the model that was told about it is woken once (keyed by the claim code)
+async function onMachineRegistered($: any): Promise<void> {
+  const shown = await read($, machineRegistration)
+  if (shown === null) return
+  await update($, machineRegistration, () => null)
+  if (shown.noted && (await markToldOnce($, `registration:${shown.code}`))) await tellModelAwake($, machineRegisteredNote(shown.code))
+  await refresh($, true)
+}
+
+async function watchRegistration($: any): Promise<void> {
+  if (registrationRunning) return
+  registrationRunning = true
+  const generation = registrationGeneration
+  const ended = () => generation !== registrationGeneration
+  try {
+    for (;;) {
+      const startedAt = await $.clock.now()
+      let r
+      try {
+        r = await $.mcp.call(SERVER, 'session_connect', { registration_only: true })
+      } catch (err: any) {
+        if (!ended()) $.ui.toast(registrationFailedToast(String(err?.message ?? err)))
+        return
+      }
+      if (ended()) return
+      const step = registrationStep(r)
+      if (step.kind === 'registered') {
+        await onMachineRegistered($)
+        return
+      }
+      if (step.kind === 'stop') {
+        $.ui.toast(registrationFailedToast(step.message))
+        await update($, machineRegistration, () => null)
+        return
+      }
+      await showRegistration($, step.request, false)
+      // an answer that came back sooner than the MCP's own wait must not turn this into a tight loop
+      const took = (await $.clock.now()) - startedAt
+      if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
+      if (ended()) return
+    }
+  } finally {
+    if (!ended()) registrationRunning = false
+  }
 }
 
 // the tool answer, with the note that the person already has the link and code, as context the model reads after the result.
@@ -880,6 +953,13 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
           if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
           if (ended()) return
           continue
+        }
+        if (step.kind === 'registration') {
+          // the machine is not registered, so there is no sign-in to wait on: the band shows the link, and the registration watch tells when the person accepts
+          await showRegistration($, step.request, false)
+          detach($, 'Machine registration', watchRegistration($))
+          if ('forReadyLoop' in watch) await leaveReady($, READY_SIGN_IN_ENDED)
+          return
         }
         if (step.kind === 'revoked') {
           $.ui.toast(`${keyRevokedLabel(step.by)}. This session must stop.`)
@@ -1910,6 +1990,7 @@ async function onSessionStart($: any, e: any, next: any) {
   await update($, modelPlan, () => null)
   // nor a sign-in request: its watch died with the old process
   await update($, signInRequest, () => null)
+  await update($, machineRegistration, () => null)
   // no plan polling timer (the relay's events, the turns and the sub-agents refresh the view).
   startUsageTicker($, USAGE_TICK_MS)
   // a reload starts with no compaction check: the sync below arms it again when the session is under the handshake (syncCompactionTicker)
@@ -1971,6 +2052,7 @@ async function abortSignInWatch($: any): Promise<void> {
   signInGeneration++
   await update($, signInRequest, () => null)
   await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
+  await abortRegistrationWatch($)
 }
 
 async function onSessionEnd($: any, e: any, next: any) {
@@ -2629,8 +2711,19 @@ async function afterPlanConnect($: any, e: any, next: any, plan: { id: number } 
 // The model's `session_connect` (one tool for a plan, a card, or only a sign-in; `target` says which): show what it settled at once. A signed-out session's `approval_required`
 // answer draws the approval link and the code in the band, for any target; the plan page is not opened (there is no connection to show yet).
 async function onSessionConnect($: any, e: any, next: any) {
+  // the plugin's own read of the machine's registration (watchRegistration) is no connect of the model's
+  if (e.registration_only === true) return next(e)
   const target = connectTargetOf(e.target)
   const ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
+  const registration = registrationOf(ran.text)
+  if (registration !== null) {
+    // an unregistered machine: the band shows the link and code, and the model is told to send the person there (and woken when they accept)
+    // (a press of Sign in raises this call itself: the band shows the link, and nobody was told to send the person)
+    const byModel = !raisedByPlugin(next.origin)
+    await showRegistration($, registration, byModel)
+    detach($, 'Machine registration', watchRegistration($))
+    return byModel ? { ...ran, context: [...(ran.context ?? []), registrationShownNote(registration)] } : ran
+  }
   const approval = approvalRequestOf(ran.text, ['approval_required', 'approval_pending'])
   if (approval === null) return ran
   const waiting = await read($, signInRequest)
@@ -3473,6 +3566,7 @@ async function drawBand($: any, e: any, next: any) {
     await read($, signInRequest),
     e.props.bodyColumns,
     held,
+    await read($, machineRegistration),
   )
 }
 

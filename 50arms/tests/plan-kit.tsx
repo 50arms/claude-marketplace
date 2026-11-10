@@ -86,6 +86,11 @@ export const APPROVAL_URL = 'http://localhost:5555/connect/abc123'
 export const CONFIRM_CODE = 'WXYZ2345'
 // the approval request session_connect answers while signed out, and what its next calls answer meanwhile (instruction text as the server words it)
 export const APPROVAL_REQUIRED = { state: 'approval_required', approvalUrl: APPROVAL_URL, confirmCode: CONFIRM_CODE, expiresAt: '2026-10-03T08:10:00.000Z', instruction: 'Show the user the confirm code and open the approval URL in their browser; they check the code matches and approve. Then call `session_connect` again: it waits up to about 45 seconds for the approval.' }
+export const REGISTRATION_URL = 'http://localhost:5555/register/xyz789'
+export const CLAIM_CODE = 'CLAIM123'
+// what session_connect answers an unregistered machine (the first call: required; the calls after it, while the registration is open: pending)
+export const MACHINE_REQUIRED = { state: 'machine_registration_required', registrationUrl: REGISTRATION_URL, claimCode: CLAIM_CODE, instruction: 'Tell the user to open the registration URL and check the claim code.' }
+export const MACHINE_PENDING = { ...MACHINE_REQUIRED, state: 'machine_registration_pending' }
 export const APPROVAL_PENDING = { ...APPROVAL_REQUIRED, state: 'approval_pending', instruction: 'Still waiting for the user to approve. Remind them of the confirm code and the URL, then call `session_connect` again.' }
 
 // the connected plan's counts: 4 / (3 + 5 + 1 + 3 + 4) = 25%; Cancelled (2) is not counted
@@ -197,6 +202,8 @@ export function dashboard(
     // (world.signIn): approval_required, then approval_pending after `waitMs` on the fake clock, until a test sets `approved`
     // (then the key is stored: the tools work again and session_connect connects to the plan it is given) or `answer`
     signedOut?: 'signed-out' | 'lapsed' | 'revoked'
+    // CP-88: the machine has no registration yet
+    unregistered?: boolean
     // session_connect refuses (ok: false, 409 plan_archived) / throws
     connectFails?: boolean
     connectThrows?: boolean
@@ -432,6 +439,9 @@ export function dashboard(
     // DX-4423: null while the session holds a key
     signedOut: (options.signedOut ?? null) as 'signed-out' | 'lapsed' | 'revoked' | null,
     signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean; waits?: boolean } | undefined, calls: [] as any[] },
+    // CP-88: the machine's registration. Registered by default; `unregistered` opens it. A `registration_only` call is kept out of `calls` (the suites that count the
+    // sign-in's session_connect calls stay about their own subject) and recorded here: the first answers required, the next ones wait `waitMs` and answer pending until `registered` is set
+    machine: { registered: !options.unregistered, requested: false, waitMs: 45_000, refuse: false, calls: [] as any[] },
     // DX-4435: what the key's own claim route (POST /api/permission-requests/:publicId/claim) answers: a status, or 'notFound'
     // DX-4686: the key's claim route answers only after this long on the harness clock (a step after the plan load that holds the refresh lock)
     permissionClaimDelayMs: 0,
@@ -1019,6 +1029,20 @@ export function dashboard(
         return { value: { content: [{ type: 'text', text: `Renamed this session to "${app.title}" (was "${was}").` }], isError: false } }
       }
     }
+    if (e.server === SERVER && e.tool === 'session_connect' && e.args.registration_only === true) {
+      const machine = world.machine
+      machine.calls.push(e.args)
+      // an MCP older than the flag refuses it: every tool's input schema is strict
+      if (machine.refuse) return { deny: 'session_connect: unrecognized key registration_only' }
+      if (machine.registered) return { value: text({ state: 'machine_registered' }) }
+      const first = !machine.requested
+      machine.requested = true
+      if (!first) {
+        await clock.sleep(machine.waitMs)
+        if (machine.registered) return { value: text({ state: 'machine_registered' }) }
+      }
+      return { value: text(first ? MACHINE_REQUIRED : MACHINE_PENDING) }
+    }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (e.tool !== '50arms_api') sequence.push(`tool ${e.tool}`)
     if (e.server === 'plugin:50arms:platform') {
@@ -1034,6 +1058,11 @@ export function dashboard(
       if (world.signedOut === 'revoked' && e.tool === 'session_connect' && e.args.person_sign_in === true) world.signedOut = 'signed-out'
       if (world.signedOut === 'revoked' || (world.signedOut !== null && e.tool !== 'session_connect')) {
         return { value: { content: [{ type: 'text', text: haltText() }], isError: true } }
+      }
+      // an unregistered machine answers a plain session_connect with its registration, and makes no access request
+      if (world.signedOut !== null && e.tool === 'session_connect' && !world.machine.registered) {
+        world.machine.requested = true
+        return { value: text(MACHINE_REQUIRED) }
       }
       if (world.signedOut !== null && e.tool === 'session_connect') {
         const dance = world.signIn

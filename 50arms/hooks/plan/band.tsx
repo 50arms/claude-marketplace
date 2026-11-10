@@ -2,6 +2,8 @@ import type { PlanView } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
 import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DONUT_BAND_PX, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { REGISTER_MACHINE_LABEL } from './registration'
+import type { MachineRegistration } from './registration'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
 import { bandHold, holdsAnything } from './hold'
@@ -38,6 +40,8 @@ export function renderBand(
   columns: number | undefined,
   // the plan's events held by a Stop until the person sends a message (a relay `held` on this plan): the call to action, drawn on its own line; null otherwise.
   held: string | null = null,
+  // the machine's registration while it is open: its link and claim code are drawn, and Sign in is not offered until the person accepts; null otherwise.
+  registration: MachineRegistration | null = null,
 ): any {
   const { Box, Text, Button } = E
   const close = (
@@ -53,7 +57,7 @@ export function renderBand(
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
   const showBadge = plan !== null && badge !== ''
   // a Sign in button leads the controls whenever the session holds no working connection (signInOffered): signed out, a failed load, an agent block, a revoked key.
-  const offerSignIn = signInOffered(v)
+  const offerSignIn = signInOffered(v) && registration === null
   const signedOut = v.phase === 'signed-out'
   // the sign-in request's link and code show whatever phase the load is in, until the request is approved, denied or expires (it is then cleared)
   const approve = signIn
@@ -72,6 +76,7 @@ export function renderBand(
   const disconnectShown = disconnecting ? DISCONNECTING_LABEL : DISCONNECT_GLYPH
   const controls = [
     ...(offerSignIn ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
+    ...(registration !== null ? [{ label: REGISTER_MACHINE_LABEL, isButton: false }, { label: codeLabel(registration), isButton: false }] : []),
     ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
@@ -121,6 +126,8 @@ export function renderBand(
             {busyKey.isSigningIn(busy) ? SIGNING_IN_LABEL : SIGN_IN_LABEL}
           </Button>
         )}
+        {registration !== null && mdLink(E, 'register-machine', REGISTER_MACHINE_LABEL, registration.url)}
+        {registration !== null && <Text key="registration-code">{codeLabel(registration)}</Text>}
         {approve !== null && mdLink(E, 'approve-sign-in', APPROVE_SIGN_IN_LABEL, approve.url)}
         {approve !== null && <Text key="sign-in-code">{codeLabel(approve)}</Text>}
         {/* the newest open permission request: its approval page, with the code to check against the page. */}

@@ -221,3 +221,7 @@ Everything under `50arms/` except `tests/` is installed on third-party machines 
 
 - **This overrides the issue-ref comment default** (`// CARD-ID: reason`) for shipped plugin files: a comment that needs a reason states the reason itself, in words. Card ids stay fine in commit messages, tests and this file.
 - `scripts/check-general-audience.mjs` enforces the id and source-path parts over comments too (`publish.sh` runs it before any bump; `scripts/tests/check-general-audience.test.mjs` runs it over the shipped plugin). A failing line is reworded, never allow-listed.
+
+## The machine's registration (CP-88)
+
+- A signed-out load starts the registration watch (`watchRegistration`, `register.tsx`): `session_connect` with `registration_only: true` (the one session_connect a timer may make; it makes no access request), repeated under the sign-in watch's rules until the answer is `machine_registered`. While the answer is `machine_registration_required` or `_pending` the band shows the link and claim code (`machineRegistration` atom, `plan/registration.ts`) and offers no Sign in. The model's own `session_connect` meeting the state gets `registrationShownNote` (do not open the link), and is woken once, keyed by the claim code, when the person accepts. A press of Sign in meeting the state (`signInStep` kind `registration`) shows the link and starts the same watch. Needs a platform MCP that accepts `registration_only` (0.1.449 or later). Tests: `50arms/tests/plan-machine-registration.test.tsx`.
