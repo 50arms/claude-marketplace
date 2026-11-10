@@ -1,6 +1,6 @@
 ---
 name: fix-agent-behavior
-description: 'Load when the user corrects how you work, before saving the correction anywhere. Diagnose the wrong action, then fix it by briefly refining an existing rule/skill/hook/MCP description, expanding documentation, or escalating — never a memory file or a new skill.'
+description: 'Load when the user corrects how you work, before saving the correction anywhere. Diagnose the wrong action, then fix it by briefly refining an existing rule/skill/hook/MCP description, expanding documentation, or escalating — never a memory file or a new skill. A promise to behave differently ("from now on I will...") is never the answer: the run ends with the governing text changed or the change escalated.'
 ---
 
 # Diagnose, Then Fix (Never Add a Skill)
@@ -65,6 +65,11 @@ reaching or loading in a new session — that is the Claude Code harness's job, 
 it is not ours.
 
 ## 4. End state
+
+A promise to behave differently ("from now on I will...", "next time I'll...") is never a
+resolution and never an answer to a correction: a promise changes nothing that governs the
+next session. Either the text that governs the behaviour is changed permanently, or the change
+is escalated, or (when the user says to leave it) nothing is changed.
 
 Every run ends in exactly one of two states — say which:
 - **Resolved:** name the file and the brief edit (or doc expansion) made, and where it
