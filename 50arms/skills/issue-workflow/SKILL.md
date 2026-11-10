@@ -355,3 +355,7 @@ into that branch. Never code over a branch missing a dependency's code.
   open (`reused: true`) is the person's, never yours.
 - Signal only a PID you spawned and captured at spawn — never `pkill -f`, `killall` or a
   pattern lookup. A dev server someone may be using is not yours to restart without asking.
+- Never start a process that opens a visible window or takes the foreground; run every
+  background process headless. On Windows a window comes from `cmd start` without `/b`,
+  `Start-Process` without `-WindowStyle Hidden`, `wscript`/`cscript` without `//B`, or a
+  spawn without `windowsHide: true`. Only a repo's own instructions may allow a window.
