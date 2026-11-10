@@ -441,7 +441,7 @@ export function dashboard(
     signIn: { requested: false, approved: false, waitMs: 45_000, expireAfterCalls: undefined as number | undefined, answer: undefined as { text: string; isError?: boolean; waits?: boolean } | undefined, calls: [] as any[] },
     // CP-88: the machine's registration. Registered by default; `unregistered` opens it. A `registration_only` call is kept out of `calls` (the suites that count the
     // sign-in's session_connect calls stay about their own subject) and recorded here: the first answers required, the next ones wait `waitMs` and answer pending until `registered` is set
-    machine: { registered: !options.unregistered, requested: false, waitMs: 45_000, refuse: false, calls: [] as any[] },
+    machine: { registered: !options.unregistered, requested: false, waitMs: 45_000, refuse: false as false | 'deny' | 'error', active: 0, maxActive: 0, calls: [] as any[] },
     // DX-4435: what the key's own claim route (POST /api/permission-requests/:publicId/claim) answers: a status, or 'notFound'
     // DX-4686: the key's claim route answers only after this long on the harness clock (a step after the plan load that holds the refresh lock)
     permissionClaimDelayMs: 0,
@@ -1033,13 +1033,21 @@ export function dashboard(
       const machine = world.machine
       machine.calls.push(e.args)
       // an MCP older than the flag refuses it: every tool's input schema is strict
-      if (machine.refuse) return { deny: 'session_connect: unrecognized key registration_only' }
+      if (machine.refuse === 'deny') return { deny: 'session_connect: unrecognized key registration_only' }
+      if (machine.refuse === 'error') return { value: { content: [{ type: 'text', text: 'MCP error -32602: Invalid arguments: unrecognized key registration_only' }], isError: true } }
       if (machine.registered) return { value: text({ state: 'machine_registered' }) }
       const first = !machine.requested
       machine.requested = true
-      if (!first) {
-        await clock.sleep(machine.waitMs)
-        if (machine.registered) return { value: text({ state: 'machine_registered' }) }
+      // the calls in flight at once (the watch is one at a time)
+      machine.active++
+      machine.maxActive = Math.max(machine.maxActive, machine.active)
+      try {
+        if (!first) {
+          await clock.sleep(machine.waitMs)
+          if (machine.registered) return { value: text({ state: 'machine_registered' }) }
+        }
+      } finally {
+        machine.active--
       }
       return { value: text(first ? MACHINE_REQUIRED : MACHINE_PENDING) }
     }

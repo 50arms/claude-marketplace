@@ -245,6 +245,25 @@ describe('the ready-agent loop', () => {
     }
   })
 
+  test('an unregistered machine: the ready sign-in keeps waiting for the person to register, then asks to sign in again by itself and joins', async ($, on) => {
+    const d = await started($, on, { unregistered: true })
+    d.world.signedOut = 'signed-out'
+    await ready($, d)
+    expect(d.toasts).not.toContain(READY_SIGN_IN_ENDED)
+    expect(d.world.signIn.calls).toHaveLength(0)
+    expect(d.world.readyMark).toBe(null)
+    d.world.machine.registered = true
+    await d.clock.advance(60_000)
+    await d.clock.settle()
+    expect(d.world.signIn.calls.length).toBeGreaterThan(0)
+    d.world.signIn.approved = true
+    await d.clock.advance(60_000)
+    await d.clock.settle()
+    await tick(d)
+    expect(d.world.readyMark).toBe(REPO)
+    expect(d.toasts).not.toContain(READY_SIGN_IN_ENDED)
+  })
+
   test('a signed-out session signs in with the one command, connecting no plan, then joins, and the model is told nothing', async ($, on) => {
     const d = await started($, on)
     d.world.signedOut = 'signed-out'

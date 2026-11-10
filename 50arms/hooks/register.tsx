@@ -685,11 +685,11 @@ async function showSignInRequest($: any, approval: ApprovalRequest): Promise<voi
   toastSignIn($, approval)
 }
 
-// the machine registration watch, one at a time. It repeats `session_connect` with `registration_only: true` (a call that makes no access request and
-// claims no team agent, and waits about 45 s while the registration is open) under the sign-in watch's rules (a minimum round, a generation check)
-// until the answer is `machine_registered`. Nothing else calls session_connect without that flag from a timer.
+// the machine registration watch, one at a time and shared by whoever asks (the load, the model's session_connect, a press of Sign in, the ready loop's sign-in): it
+// repeats `session_connect` with `registration_only: true` (a call that makes no access request and claims no team agent, and waits about 45 s while the
+// registration is open) until the answer is `machine_registered`. Nothing else calls session_connect without that flag from a timer.
 let registrationGeneration = 0
-let registrationRunning = false
+let registrationWatchRun: Promise<'registered' | 'stopped'> | null = null
 
 // the registration is drawn by the band the moment it exists; `noted`: the model was told to send the person to it (never unset by a later look)
 async function showRegistration($: any, request: { url: string; code: string }, noted: boolean): Promise<void> {
@@ -699,53 +699,75 @@ async function showRegistration($: any, request: { url: string; code: string }, 
 // ends the watch that is running, if any, and draws no registration
 async function abortRegistrationWatch($: any): Promise<void> {
   registrationGeneration++
-  registrationRunning = false
+  registrationWatchRun = null
   await update($, machineRegistration, () => null)
 }
 
-// the person accepted: the link goes from every band, and the model that was told about it is woken once (keyed by the claim code)
+// the person accepted: the link goes from this session's band, and the model that was told about it is woken. The telling is taken out of this session's own
+// atom in the same update that clears it, so it is per session and per telling: another session's model is woken by its own watch, and a later registration
+// (the server keeps the claim code) wakes a model that was told about it again.
 async function onMachineRegistered($: any): Promise<void> {
-  const shown = await read($, machineRegistration)
+  let shown = null as { url: string; code: string; noted: boolean } | null
+  await update($, machineRegistration, cur => {
+    shown = cur
+    return null
+  })
   if (shown === null) return
-  await update($, machineRegistration, () => null)
-  if (shown.noted && (await markToldOnce($, `registration:${shown.code}`))) await tellModelAwake($, machineRegisteredNote(shown.code))
+  const { code, noted } = shown
+  if (noted) await tellModelAwake($, machineRegisteredNote(code))
   await refresh($, true)
 }
 
-async function watchRegistration($: any): Promise<void> {
-  if (registrationRunning) return
-  registrationRunning = true
-  const generation = registrationGeneration
-  const ended = () => generation !== registrationGeneration
+// One `session_connect` round of a watch (the sign-in's and the registration's): the call, and null when it threw (`onFailure` says so, unless the watch ended meanwhile)
+// or the watch ended while it waited. `startedAt` is for holdMinRound.
+async function watchCall($: any, args: object, ended: () => boolean, onFailure: (err: any) => void): Promise<{ r: any; startedAt: number } | null> {
+  const startedAt = await $.clock.now()
+  let r
   try {
-    for (;;) {
-      const startedAt = await $.clock.now()
-      let r
-      try {
-        r = await $.mcp.call(SERVER, 'session_connect', { registration_only: true })
-      } catch (err: any) {
-        if (!ended()) $.ui.toast(registrationFailedToast(String(err?.message ?? err)))
-        return
-      }
-      if (ended()) return
-      const step = registrationStep(r)
-      if (step.kind === 'registered') {
-        await onMachineRegistered($)
-        return
-      }
-      if (step.kind === 'stop') {
-        $.ui.toast(registrationFailedToast(step.message))
-        await update($, machineRegistration, () => null)
-        return
-      }
-      await showRegistration($, step.request, false)
-      // an answer that came back sooner than the MCP's own wait must not turn this into a tight loop
-      const took = (await $.clock.now()) - startedAt
-      if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
-      if (ended()) return
+    r = await $.mcp.call(SERVER, 'session_connect', args)
+  } catch (err: any) {
+    if (!ended()) onFailure(err)
+    return null
+  }
+  return ended() ? null : { r, startedAt }
+}
+
+// an answer that came back sooner than the MCP's own wait must not turn a watch into a tight loop
+async function holdMinRound($: any, startedAt: number): Promise<void> {
+  const took = (await $.clock.now()) - startedAt
+  if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
+}
+
+// The shared watch: its outcome is 'registered', or 'stopped' (it failed, or the conversation ended it).
+function watchRegistration($: any): Promise<'registered' | 'stopped'> {
+  if (registrationWatchRun === null) {
+    const generation = registrationGeneration
+    const run: Promise<'registered' | 'stopped'> = runRegistrationWatch($, () => generation !== registrationGeneration).finally(() => {
+      // an aborted watch's slot was freed at the abort; a new watch may hold it by now
+      if (registrationWatchRun === run) registrationWatchRun = null
+    })
+    registrationWatchRun = run
+  }
+  return registrationWatchRun
+}
+
+async function runRegistrationWatch($: any, ended: () => boolean): Promise<'registered' | 'stopped'> {
+  for (;;) {
+    const round = await watchCall($, { registration_only: true }, ended, err => $.ui.toast(registrationFailedToast(String(err?.message ?? err))))
+    if (round === null) return 'stopped'
+    const step = registrationStep(round.r)
+    if (step.kind === 'registered') {
+      await onMachineRegistered($)
+      return 'registered'
     }
-  } finally {
-    if (!ended()) registrationRunning = false
+    if (step.kind === 'stop') {
+      $.ui.toast(registrationFailedToast(step.message))
+      await update($, machineRegistration, () => null)
+      return 'stopped'
+    }
+    await showRegistration($, step.request, false)
+    await holdMinRound($, round.startedAt)
+    if (ended()) return 'stopped'
   }
 }
 
@@ -926,15 +948,9 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
     }
     try {
       for (;;) {
-        const startedAt = await $.clock.now()
-        let r
-        try {
-          r = await $.mcp.call(SERVER, 'session_connect', watch.args)
-        } catch (err: any) {
-          if (!ended()) toastCallFailedAndReload($, 'Sign in failed', err)
-          return
-        }
-        if (ended()) return
+        const round = await watchCall($, watch.args, ended, err => toastCallFailedAndReload($, 'Sign in failed', err))
+        if (round === null) return
+        const { r, startedAt } = round
         const step = signInStep(r)
         if (step.kind === 'waiting') {
           if (shown !== null && step.request.url !== shown.url) {
@@ -948,17 +964,24 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
           }
           if (shown === null || step.request.url !== shown.url) await showSignInRequest($, step.request)
           shown = step.request
-          // an answer that came back sooner than the MCP's own wait must not turn this into a tight loop
-          const took = (await $.clock.now()) - startedAt
-          if (took < SIGN_IN_MIN_ROUND_MS) await $.clock.sleep(SIGN_IN_MIN_ROUND_MS - took)
+          await holdMinRound($, startedAt)
           if (ended()) return
           continue
         }
         if (step.kind === 'registration') {
           // the machine is not registered, so there is no sign-in to wait on: the band shows the link, and the registration watch tells when the person accepts
           await showRegistration($, step.request, false)
+          if ('forReadyLoop' in watch) {
+            // the ready-agent loop stays waiting for the person's accept and then asks to sign in again, so it moves on without being told
+            if ((await watchRegistration($)) === 'registered' && !ended()) {
+              await holdMinRound($, startedAt)
+              if (ended()) return
+              continue
+            }
+            if (!ended()) await leaveReady($, READY_SIGN_IN_ENDED)
+            return
+          }
           detach($, 'Machine registration', watchRegistration($))
-          if ('forReadyLoop' in watch) await leaveReady($, READY_SIGN_IN_ENDED)
           return
         }
         if (step.kind === 'revoked') {

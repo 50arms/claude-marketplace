@@ -180,6 +180,8 @@ declare module 'claude-code' {
       title: string | null
       // the sign-in request waiting for the person (its approval link and confirm code), drawn by the band; null when none.
       signInRequest: { url: string; code: string } | null
+      // the machine's registration while the person has not accepted it (the band draws its link and claim code); `noted`: the model was told to send the person to it
+      machineRegistration: { url: string; code: string; noted: boolean } | null
       // the plan the model's own successful session_connect named, for the blocked view
       modelPlan: { id: number; name: string } | null
       // the model's undecided permission requests, oldest first.
