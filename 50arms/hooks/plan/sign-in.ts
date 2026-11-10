@@ -1,5 +1,7 @@
 import { approvalRequestOf } from './approval'
 import type { ApprovalRequest } from './approval'
+import { registrationOf } from './registration'
+import type { MachineRegistration } from './registration'
 import { keyRevokedBy, mcpText, refusalText, toolOutcome } from './mcp'
 
 // what one `session_connect` answer means to the Sign in button, and what the person is told. The server's own
@@ -11,6 +13,8 @@ export type SignInStep =
   // for it). An answer that names no usable request is a `stop`, never a wait: the wait has no round limit, so a
   // call that answered at once with nothing to wait on must not be repeated.
   | { kind: 'waiting'; request: ApprovalRequest }
+  // the machine has no registration yet: the band shows its link and code, and the registration watch waits for the person (there is no sign-in to wait on)
+  | { kind: 'registration'; request: MachineRegistration }
   // the person denied the request (the model is told, the others are not)
   | { kind: 'denied' }
   // signed in (and on its plan again when one was asked for)
@@ -50,6 +54,8 @@ export function signInStep(result: any): SignInStep {
     // a plan-less session_connect that holds a key answers the claim of its team agent (`agent_held`), not `signed_in`
     if (parsed.state === 'signed_in' || parsed.state === 'agent_held') return { kind: 'done' }
     if (parsed.state === 'denied') return { kind: 'denied' }
+    const registration = registrationOf(text)
+    if (registration !== null) return { kind: 'registration', request: registration }
     if (parsed.state === 'approval_required' || parsed.state === 'approval_pending') {
       const request = approvalRequestOf(text, [parsed.state])
       return request === null ? { kind: 'stop', message: 'Sign in failed: the approval request had no usable link.' } : { kind: 'waiting', request }
