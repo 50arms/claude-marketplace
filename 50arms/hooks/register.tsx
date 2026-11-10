@@ -560,12 +560,40 @@ async function applyNaming($: any, target: unknown, naming: any): Promise<string
   if (naming?.status !== 'needed' || typeof naming.title !== 'string' || naming.title.trim() === '') return null
   if (!(await read($, desktopHosted))) return null
   const exact = naming.title.trim()
-  await underTitleLock(async () => {
-    const want = sessionTitle(exact, await read($, view), await read($, relay), await titleActivity($))
-    await setAppTitle($, want)
-  })
-  await $.mcp.call(SERVER, 'session_connect', { ...(typeof target === 'string' && target !== '' ? { target } : {}), title: exact })
+  // the model's connect already succeeded on the server: a failure here is told, never thrown out of the hook
+  try {
+    await underTitleLock(async () => {
+      const want = sessionTitle(exact, await read($, view), await read($, relay), await titleActivity($))
+      await setAppTitle($, want)
+    })
+  } catch (err) {
+    $.ui.toast(`Setting the thread title failed: ${errMessage(err)}`.slice(0, TOAST_ERROR_MAX))
+    return null
+  }
+  try {
+    const again = answerOf(await $.mcp.call(SERVER, 'session_connect', { ...(typeof target === 'string' && target !== '' ? { target } : {}), title: exact }))
+    if (!again.ok) $.ui.toast(`Telling 50 Arms the thread title failed: ${errMessage(again.body?.error ?? again.status)}`.slice(0, TOAST_ERROR_MAX))
+  } catch (err) {
+    $.ui.toast(`Telling 50 Arms the thread title failed: ${errMessage(err)}`.slice(0, TOAST_ERROR_MAX))
+  }
   return exact
+}
+
+// the model is told the plugin named the thread, so it does not rename it as the connect answer's naming block asks
+const withNamedNote = (ran: any, named: string) => ({ ...ran, context: [...(ran.context ?? []), `The plugin set this thread's title to "${named}" and connected again with it; do not rename the thread.`] })
+
+// CP-93: the model's own rename of the desktop thread runs under the same lock as the plugin's title writers, so a title-mark sync's read and write
+// never straddle it, and the plugin remembers the title the model set. The sync that follows puts the state mark back. The plugin's own calls to the
+// tool pass straight through: they already hold the lock.
+async function onModelSetTitle($: any, e: any, next: any) {
+  if (raisedByPlugin(next.origin)) return next(e)
+  const ran = await underTitleLock(async () => {
+    const done = await next(e)
+    if (done.isError !== true && done.deny === undefined && typeof e.title === 'string') await rememberTitle($, e.title.trim())
+    return done
+  })
+  detach($, 'The session title mark', syncTitleMark($))
+  return ran
 }
 
 // the desktop app's session server (its `get_session` / `set_session_title` tools)
@@ -2736,7 +2764,8 @@ async function onCommand($: any) {
 }
 
 // the model's own pickup of a card (`POST /api/issues/<id>/transition` with `action: pickup`)
-const isPickup = (e: any): boolean => typeof e.method === 'string' && e.method.toUpperCase() === 'POST' && typeof e.path === 'string' && /^\/api\/issues\/[^/]+\/transition$/.test(e.path) && e.body?.action === 'pickup'
+const CARD_TRANSITION_PATH = /^\/api\/issues\/([^/]+)\/transition$/
+const isPickup = (e: any): boolean => typeof e.method === 'string' && e.method.toUpperCase() === 'POST' && typeof e.path === 'string' && CARD_TRANSITION_PATH.test(e.path) && e.body?.action === 'pickup'
 
 // what a tool call's answer says happened: its text, read as a refusal when the call errored or was denied
 function answerOf(ran: any) {
@@ -2794,7 +2823,7 @@ async function onSessionConnect($: any, e: any, next: any) {
   const target = connectTargetOf(e.target)
   let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
   const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
-  if (named !== null) ran = { ...ran, context: [...(ran.context ?? []), `The plugin set this thread's title to "${named}" and connected again with it; do not rename the thread.`] }
+  if (named !== null) ran = withNamedNote(ran, named)
   const registration = registrationOf(ran.text)
   if (registration !== null) {
     // an unregistered machine: the band shows the link and code, and the model is told to send the person there (and woken when they accept)
@@ -2856,11 +2885,12 @@ async function onAckCall($: any, e: any, next: any) {
   const answer = answerOf(ran)
   // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
   // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
+  let named: string | null = null
   if (answer.ok && isPickup(e)) {
     const connected = (await wholeAnswer($, answer)).body
     if (connected?.connectedByPickup === true) {
       await reportActivityOnConnect($)
-      if (!raisedByPlugin(next.origin)) await applyNaming($, /^\/api\/issues\/([^/]+)\/transition$/.exec(e.path)?.[1], connected.naming)
+      if (!raisedByPlugin(next.origin)) named = await applyNaming($, CARD_TRANSITION_PATH.exec(e.path)?.[1], connected.naming)
     }
   }
   // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
@@ -2869,9 +2899,8 @@ async function onAckCall($: any, e: any, next: any) {
     await update($, workMarks, cur => marksAfter(cur, e.method, e.path, e.body, now))
   }
   const id = ackedEventId(e.method, e.path)
-  if (id === null) return ran
-  if (answer.ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
-  return ran
+  if (id !== null && answer.ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
+  return named === null ? ran : withNamedNote(ran, named)
 }
 
 // what the session is doing now, for its title's mark: any sub-agent running, and the main loop's turn
@@ -4369,6 +4398,7 @@ export const register: Register = (on, options) => {
   // the second answer is a TEMPORARY dual name, removed with its tests once installs have moved: the person's allow rule for the old server key still covers the platform tools
   on('tool.check', ($, e, next) => ownServerCheck(e, Object.assign((x: any) => legacyRuleCheck(x, next, () => readLegacySettings($)), { origin: next.origin })))
   on('tool.call', { tool: toolName('session_connect') }, onSessionConnect)
+  on('tool.call', { tool: `mcp__${DESKTOP_SESSION_SERVER}__set_session_title` }, onModelSetTitle)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('tool.call', { tool: toolName('50arms_api') }, onAckCall)
   on('tool.call', { tool: toolName('session_connect') }, onRecordCall)
