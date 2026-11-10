@@ -42,7 +42,7 @@ test("the description every session sees sends a correction to the skill before 
   const frontmatter = fixBehavior.slice(4, fixBehavior.indexOf("\n---", 4));
   const description = flat(parseYaml(frontmatter).description);
   assert.match(description, /^Load when the user corrects how you work, before saving the correction anywhere\./);
-  assert.match(description, /never a memory file or a new skill\.$/);
+  assert.match(description, /never a memory file or a new skill\. A promise to behave differently/);
 });
 
 test("the list of homes rules a memory file out", () => {
