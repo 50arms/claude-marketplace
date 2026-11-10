@@ -115,6 +115,23 @@ describe('session_connect while signed out', () => {
     expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code ZZZZ1111')
   })
 
+  // CP-100: the incident's sequence: the model's first call answers approval_required, its second (in flight, then answered) approval_pending for the same request, and a third approval_pending again
+  test('approval_required then approval_pending then approval_pending of the same request keeps the band link and code, with no toast', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    stillPending(d)
+    answering(on, [required(URL_A), pending, pending])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
+    d.toasts.length = 0
+    for (let i = 0; i < 3; i++) {
+      await $.tool.call(CALL)
+      await d.clock.settle()
+      expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+      expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code NXGUF88G')
+    }
+    expect(d.toasts).toEqual([])
+  })
+
   // DX-4548: a request is shown by its URL, not by the answer's state: one this session has not shown appears even as approval_pending
   test('approval_pending of a request not yet shown shows its link and code', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
