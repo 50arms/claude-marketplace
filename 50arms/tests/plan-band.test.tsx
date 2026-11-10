@@ -23,8 +23,8 @@ describe('plan band', () => {
     const wide = await $.ui.mount({ plugin: '50arms', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 200 } } as any)
     const narrow = await $.ui.mount({ plugin: '50arms', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 70 } } as any)
     expect(await bandLabelOf(wide)).toBe('PLAN-23 · A very long plan name that goes on and on and on')
-    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, Revoke, `⚠ 2` 3, × 6
-    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name …')
+    // 70 columns less the indicator, two gaps, 2 spare, and the controls: the Disconnect glyph, the Revoke glyph, `⚠ 2` 3, × 6
+    expect(await bandLabelOf(narrow)).toBe('PLAN-23 · A very long plan name that…')
     expect((await narrow.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
   })
   test('DX-4626: the desktop band never pre-cuts the name by a column count; the layout truncates it beside the controls', async ($, on) => {

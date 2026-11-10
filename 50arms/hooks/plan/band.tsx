@@ -1,7 +1,7 @@
 import type { PlanView } from '../../types'
 import { APPROVE_SIGN_IN_LABEL, codeLabel } from './approval'
 import type { ApprovalRequest } from './approval'
-import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DONUT_BAND_PX, REVOKE_LABEL, REVOKING_LABEL, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
+import { BLOCKED_LINE, DANGER, DISCONNECTING_LABEL, DISCONNECT_GLYPH, DONUT_BAND_PX, REVOKE_GLYPH, REVOKING_LABEL, SIGNING_IN_LABEL, boardCardUrl, SIGN_IN_LABEL, SUCCESS, WARNING, busyKey, needsYouUrl, planUrl } from './config'
 import { REGISTER_MACHINE_LABEL } from './registration'
 import type { MachineRegistration } from './registration'
 import { donutMark } from './donut'
@@ -77,7 +77,7 @@ export function renderBand(
   // none: the `Text` child is its text (children of strings and Text are drawn in the label's place) and the Button is keyed instead.
   const disconnectShown = disconnecting ? DISCONNECTING_LABEL : DISCONNECT_GLYPH
   const revoking = busyKey.isRevoking(busy)
-  const revokeShown = revoking ? REVOKING_LABEL : REVOKE_LABEL
+  const revokeShown = revoking ? REVOKING_LABEL : REVOKE_GLYPH
   const controls = [
     ...(offerSignIn ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     ...(registration !== null ? [{ label: REGISTER_MACHINE_LABEL, isButton: false }, { label: codeLabel(registration), isButton: false }] : []),
