@@ -250,7 +250,7 @@ export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fet
   // A dispatch's credential declaration (it often names the LOCAL dev dashboard) must never reach the hosted one.
   delete serverEnv.DANX_DASHBOARD_CREDENTIAL;
   const release = leaseVersion(version, { env });
-  const run = { child: spawnFn(process.execPath, [bin], { env: serverEnv, stdio: "inherit" }), version, release, refreshChild: refreshChild ?? null };
+  const run = { child: spawnFn(process.execPath, [bin], { env: serverEnv, stdio: "inherit", windowsHide: true }), version, release, refreshChild: refreshChild ?? null };
   onServer(run);
   return run;
 }

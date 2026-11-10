@@ -465,6 +465,7 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     assert.equal(options.env.DANXBOT_DASHBOARD_URL, "https://hosted");
     assert.equal("DANX_DASHBOARD_CREDENTIAL" in options.env, false);
     assert.equal(options.stdio, "inherit", "the server owns the MCP stream");
+    assert.equal(options.windowsHide, true, "a console program started without a console must not open a window");
 
     const none = harness();
     none.options.env = { ...env, CLAUDE_PROJECT_DIR: sessionFolder() };

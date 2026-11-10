@@ -173,7 +173,7 @@ export async function launchPage(executable, timeoutMs) {
         "--hide-scrollbars",
         "about:blank",
       ],
-      { stdio: ["ignore", "ignore", "pipe"] },
+      { stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
     );
     let spawnError = null;
     child.stderr.on("data", (d) => (stderrTail = (stderrTail + d).slice(-STDERR_TAIL_CHARS)));
