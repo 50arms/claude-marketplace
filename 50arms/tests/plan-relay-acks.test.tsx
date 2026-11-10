@@ -285,7 +285,7 @@ describe('the acknowledgement helpers', () => {
     expect(isAckList([])).toBe(true)
     expect(isAckList([ref(1)])).toBe(true)
     expect(isAckList([ref(1, 2, false)])).toBe(true)
-    // `atOnce` is the MCP relay's own and optional here: an entry with or without it is accepted
+    // `atOnce` is the MCP relay's own field, which this check does not read: an entry with or without it is accepted
     expect(isAckList([{ eventId: 1, attempt: 1, resend: true }])).toBe(true)
     expect(isAckList([{ eventId: 1, attempt: 1, resend: true, atOnce: true }])).toBe(true)
     for (const bad of [undefined, null, 'x', [null], [{ eventId: 1 }], [{ eventId: 1, attempt: 1 }], [{ eventId: 1, attempt: 1, resend: 'yes' }], [{ eventId: 0, attempt: 1, resend: true }], [{ eventId: 1, attempt: 0, resend: true }], [{ eventId: 1.5, attempt: 1, resend: true }]]) {

@@ -86,11 +86,11 @@ for (const surface of SURFACES) {
       expect(r.startLines).toEqual([`${POINTER.replace('the orchestrator role', 'the work role')}\n${EVENT_TEXT('session_start')}`])
     })
 
-    // a /clear reads the session_start text alone (the model's own connect brings the packet), a fork nothing
+    // a /clear reads the session_start text alone (the model's own connect brings the packet), a fork nothing; that text is pinned in context-event.test.tsx
     test('a clear reads no packet, a fork has no start, a sub-agent no packet: no packet is read', async ($, on) => {
       const d = await started($, on)
       d.world.startPacket = FILE
-      expect((await firstPrompt($, 'clear')).startLines).toEqual([EVENT_TEXT('session_start')])
+      await firstPrompt($, 'clear')
       expect((await firstPrompt($, 'fork')).startLines).toBeUndefined()
       const r = await $.classic.SubagentStart(START)
       await d.clock.settle()

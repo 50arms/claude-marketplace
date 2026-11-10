@@ -4,9 +4,9 @@ import "./run-tests-with-npm-test.generated"
 // tells the model that answer and surfaces a stop. Both surfaces: the model's context and the failure line.
 import { describe, expect } from 'claude-code/testing'
 
-import { CONTEXT_DEADLINE_MS, restartFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, SERVER_NOT_CONNECTED_REASON, eventFailureLine, restartFailureLine } from '../hooks/context/events'
 import { BLOCKED_LINE } from '../hooks/plan/config'
-import { test, EVENT_TEXT, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call session_connect' } })
@@ -208,6 +208,39 @@ ${NOTICE}`])
       expect(d.restartCalls).toEqual([{ predecessor_id: boot }])
     })
 
+    // CP-90 AC2: a second /clear whose plugin server stays absent the whole deadline is told one warning line, and asks nothing
+    test('a second clear whose plugin server stays absent the whole deadline is told one warning line', async ($, on) => {
+      const d = await started($, on, { ...SIGNED_OUT, mcp: 'down' })
+      const boot = d.world.sessionId
+      d.world.records.push(boot)
+      d.world.sessionId = CLEARED_SESSION_ID
+      const pending = firstPrompt($, 'clear', { session_id: d.world.sessionId })
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      expect((await pending).startLines).toEqual([restartFailureLine(SERVER_NOT_CONNECTED_REASON)])
+      expect(d.restartCalls).toEqual([])
+    })
+
+    // CP-90 AC3: a compaction after a /clear decides from the records on disk: its dashboard read hangs past the deadline, and the start still tells its line at the deadline
+    test('a compaction after a /clear decides from the local records and waits on no dashboard read before its deadline', async ($, on) => {
+      const d = await started($, on, { ...SIGNED_OUT, mcp: 'down' })
+      const boot = d.world.sessionId
+      d.world.records.push(boot)
+      d.world.sessionId = CLEARED_SESSION_ID
+      d.holdApi(10 * CONTEXT_DEADLINE_MS)
+      const pending = firstPrompt($, 'compact', { session_id: d.world.sessionId })
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      expect((await pending).startLines).toEqual([eventFailureLine('after_compaction', SERVER_NOT_CONNECTED_REASON)])
+    })
+
+    // CP-90 AC4: a clear whose session.end was never seen and whose boot id holds no record is quiet on the null-predecessor path
+    test('a clear with no session.end, whose boot id holds no record, is quiet and asks nothing', async ($, on) => {
+      const d = await started($, on, SIGNED_OUT)
+      d.world.sessionId = CLEARED_SESSION_ID
+      d.world.restart.json = { notice: NOTICE }
+      expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines).toBeUndefined()
+      expect(d.restartCalls).toEqual([])
+    })
+
     test('a clear whose ended session held no record asks nothing and is quiet (the common /clear in a session on no plan)', async ($, on) => {
       const d = await cleared($, on, SIGNED_OUT, PREVIOUS, false)
       d.world.restart.json = stopped('no_predecessor_record', 'no record')
@@ -222,11 +255,11 @@ ${NOTICE}`])
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
-    // CP-61: a /clear is told the session_start text whatever else it asks; only the restart notice is skipped here
+    // CP-61: a /clear is told the session_start text whatever else it asks (pinned in context-event.test.tsx); only the restart notice is skipped here
     test('a clear whose NEW session already holds a connection record asks no restart notice (it is on a plan)', async ($, on) => {
       const d = await cleared($, on, {})
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'clear')).startLines).toEqual([EVENT_TEXT('session_start')])
+      await firstPrompt($, 'clear')
       expect(d.restartCalls).toEqual([])
     })
 

@@ -3189,6 +3189,15 @@ async function clearedOnPlan($: any, start: NonNullable<PendingStart>): Promise<
   return boot !== null && (await isPlanConnected($, boot, false))
 }
 
+// Whether a start that keeps its conversation (a compaction, a ready-loop reset) is on a plan, decided from the connection records on disk alone: the
+// session's own id, and the id the server booted with (a session started by a /clear keeps that record). No dashboard read, so the decision never waits
+// on the dashboard before the start's deadline.
+async function localPlanRecord($: any, sessionId: string): Promise<boolean> {
+  if (await isPlanConnected($, sessionId, false)) return true
+  const boot = await read($, bootEngineId)
+  return boot !== null && (await isPlanConnected($, boot, false))
+}
+
 // A /clear's restart notice, told after its `session_start` text: a /clear is a restart only when the session it replaced was on a plan (its connection record is on disk),
 // which is also what names the predecessor to the server. A later /clear replaces a session whose id has no record: the server keeps the id it booted with, so that
 // record is under the boot id, and the boot id is the predecessor then. Any other clear asks nothing. `server`: the wait for the plugin's server, which the start's reads already made.
@@ -3212,7 +3221,9 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
   // a /clear's new session has no record under its own engine id and resolving the server's id would ask the dashboard before the deadline starts: the records on disk say whether it was on a plan, the ended
   // session's (a first /clear) or the id the server booted with (a later one: the server keeps that id, so the record stays under it)
-  const connected = cleared ? await clearedOnPlan($, start) : await isPlanConnected($, start.sessionId)
+  // a compaction or a ready-loop reset keeps the conversation, so its records are local (localPlanRecord): it never waits on the dashboard
+  const keeps = start.source === 'compact' || start.loopReset === true
+  const connected = cleared ? await clearedOnPlan($, start) : keeps ? await localPlanRecord($, start.sessionId) : await isPlanConnected($, start.sessionId)
   const askRestart = start.source !== 'compact' && start.loopReset !== true
   // a /clear's notice decides for itself (clearNotice), so it is always asked; any other start asks only when it is not known to be on a plan
   const fault = (reason: string): StartReads => ({ line: plain(connected ? eventFailureLine(event, reason) : null), askRestart: askRestart && (cleared || !connected) })
