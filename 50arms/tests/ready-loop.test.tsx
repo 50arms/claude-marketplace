@@ -10,7 +10,7 @@ import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
-import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest, answerEngineClear, engineClears } from './plan-kit'
+import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, REGISTRATION_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest, answerEngineClear, engineClears } from './plan-kit'
 // CP-67: the name the engine gives the command a person types as /50arms:ready: the plugin's skill, under the plugin's name
 const TYPED_READY = '50arms:ready'
 
@@ -262,6 +262,42 @@ describe('the ready-agent loop', () => {
     await tick(d)
     expect(d.world.readyMark).toBe(REPO)
     expect(d.toasts).not.toContain(READY_SIGN_IN_ENDED)
+  })
+
+  // the busy keys the plugin last wrote to its $.state
+  const busyNow = (d: any): string[] => (d.stateWrites.filter((w: any) => w.key === 'busy').at(-1)?.value ?? []) as string[]
+
+  test('CP-92: the ready sign-in waiting on a registration holds no sign-in busy key, and holds it again once the person registers', async ($, on) => {
+    const d = await started($, on, { unregistered: true })
+    d.world.signedOut = 'signed-out'
+    await ready($, d)
+    await d.clock.advance(2 * 60_000)
+    expect(d.world.machine.calls.length).toBeGreaterThan(0)
+    expect(busyNow(d)).not.toContain('sign-in')
+    d.world.machine.registered = true
+    await d.clock.advance(60_000)
+    await d.clock.settle()
+    expect(d.world.signIn.calls.length).toBeGreaterThan(0)
+    expect(busyNow(d)).toContain('sign-in')
+  })
+
+  test('CP-92: leaving the ready list keeps the registration link on the band and the watch running', async ($, on) => {
+    const d = await started($, on, { unregistered: true })
+    d.world.signedOut = 'signed-out'
+    await ready($, d)
+    expect((await linksOf(await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: {} } as any))).map(l => l.href)).toContain(REGISTRATION_URL)
+    await $.command.run({ command: TYPED_READY, args: 'off' })
+    await d.clock.settle()
+    const reads = d.world.machine.calls.length
+    await d.clock.advance(2 * 60_000)
+    await d.clock.settle()
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: {} } as any)
+    expect((await linksOf(band)).map(l => l.href)).toContain(REGISTRATION_URL)
+    expect(d.world.machine.calls.length).toBeGreaterThan(reads)
+    d.world.machine.registered = true
+    await d.clock.advance(60_000)
+    await d.clock.settle()
+    expect((await linksOf(await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: {} } as any))).map(l => l.href)).not.toContain(REGISTRATION_URL)
   })
 
   test('a signed-out session signs in with the one command, connecting no plan, then joins, and the model is told nothing', async ($, on) => {
