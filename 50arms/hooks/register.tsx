@@ -3189,13 +3189,15 @@ async function clearedOnPlan($: any, start: NonNullable<PendingStart>): Promise<
   return boot !== null && (await isPlanConnected($, boot, false))
 }
 
-// A /clear's restart notice, told after its `session_start` text: a /clear is a restart only when the session it ended was on a plan (that session's connection record is on disk),
-// which is also what names the predecessor to the server. Any other clear asks nothing. `server`: the wait for the plugin's server, which the start's reads already made.
+// A /clear's restart notice, told after its `session_start` text: a /clear is a restart only when the session it replaced was on a plan (its connection record is on disk),
+// which is also what names the predecessor to the server. A later /clear replaces a session whose id has no record: the server keeps the id it booted with, so that
+// record is under the boot id, and the boot id is the predecessor then. Any other clear asks nothing. `server`: the wait for the plugin's server, which the start's reads already made.
 async function clearNotice($: any, start: NonNullable<PendingStart>, server: 'ready' | 'not-yet'): Promise<string | null> {
   const ended = start.predecessorId
-  if (ended === null || !(await isPlanConnected($, ended)) || (await isPlanConnected($, start.sessionId, false))) return null
+  const predecessor = ended !== null && (await isPlanConnected($, ended)) ? ended : await read($, bootEngineId)
+  if (predecessor === null || !(await isPlanConnected($, predecessor, false)) || (await isPlanConnected($, start.sessionId, false))) return null
   if (server === 'not-yet') return restartFailureLine(SERVER_NOT_CONNECTED_REASON)
-  return restartNotice($, { kind: 'ask', args: { predecessor_id: ended } })
+  return restartNotice($, { kind: 'ask', args: { predecessor_id: predecessor } })
 }
 
 // The reads a pending start asks of the dashboard: the wait for the plugin's server, the plan read and the event text read share ONE deadline. A session

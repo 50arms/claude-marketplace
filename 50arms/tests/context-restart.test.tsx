@@ -197,6 +197,17 @@ ${NOTICE}`])
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
+    // CP-90: a second /clear replaces a session that has no record (the first /clear's new id); the record is under the id the server booted with, so that id is the predecessor
+    test('a second clear, whose replaced session has no record, asks the server with the boot id the record is under', async ($, on) => {
+      const d = await started($, on)
+      const boot = d.world.sessionId
+      d.world.records.push(boot)
+      d.world.sessionId = CLEARED_SESSION_ID
+      d.world.restart.json = { notice: NOTICE }
+      expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines?.join('\n')).toContain(NOTICE)
+      expect(d.restartCalls).toEqual([{ predecessor_id: boot }])
+    })
+
     test('a clear whose ended session held no record asks nothing and is quiet (the common /clear in a session on no plan)', async ($, on) => {
       const d = await cleared($, on, SIGNED_OUT, PREVIOUS, false)
       d.world.restart.json = stopped('no_predecessor_record', 'no record')
