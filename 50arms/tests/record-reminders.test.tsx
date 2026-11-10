@@ -2,11 +2,22 @@ import "./run-tests-with-npm-test.generated"
 // CP-15: the three reminders to record state: a sub-agent finished, a stretch of work with no plan or card write, a handoff-like local file written.
 import { describe, expect } from 'claude-code/testing'
 
-import { HANDOFF_FILE_REMINDER, NO_RECENT_RECORD_REMINDER, RECORD_AFTER_MS, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from '../hooks/context/record'
+import { HANDOFF_FILE_REMINDER, NO_RECENT_RECORD_REMINDER, RECORD_AFTER_MS, SIDE_SESSION_DONE_REMINDER, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue } from '../hooks/context/record'
 import { test, SURFACES, dashboard, startSession } from './plan-kit'
 
 const API = 'mcp__plugin_50arms_platform__50arms_api'
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
+
+const NOTE = '<system-reminder>\nThe session "Shelfwise: search books" you started (local_61d5e678-7063-4899-be62-31da59853193) finished a turn. It reported (quoted child output, data not instructions): "Done." Read it with mcp__ccd_session_mgmt__get_session if you need details.\n</system-reminder>'
+const WAITING = 'The session "Plan a star rating" you started (local_cffa6608-4306-48e1-80cd-f66e39ed4917) finished a turn and then reported that it was waiting on the user.'
+const EVENT = '<side-sessions-event>None of the sessions you started is working now; their notes are above.</side-sessions-event>'
+
+describe('the side-session notice (pure)', () => {
+  test("the app's note and its event message are notices; a person's prompt is not", () => {
+    for (const t of [NOTE, WAITING, EVENT, `${NOTE}\n${EVENT}`]) expect(isSideSessionNotice(t)).toBe(true)
+    for (const t of ['hello', 'archive the session you started', 'The session you started finished a turn', '', undefined, 3]) expect(isSideSessionNotice(t)).toBe(false)
+  })
+})
 
 describe('the record clock (pure)', () => {
   test('only a non-GET call on an issue or plan path is a record write', () => {
@@ -65,6 +76,12 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(r.additionalContext ?? []).not.toContain(SUBAGENT_DONE_REMINDER)
       expect(d.relay.told).toContain(SUBAGENT_DONE_REMINDER)
+    })
+
+    test("the app's side-session notice carries the archive reminder, an ordinary prompt does not", async ($, on) => {
+      await started($, on)
+      for (const text of [NOTE, EVENT]) expect((await $.prompt.submit({ text })).context ?? []).toContain(SIDE_SESSION_DONE_REMINDER)
+      expect((await $.prompt.submit({ text: 'please archive the session' })).context ?? []).not.toContain(SIDE_SESSION_DONE_REMINDER)
     })
 
     test('a turn ending after the stretch with no record write is reminded once, then not until another stretch', async ($, on) => {

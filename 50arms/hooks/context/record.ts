@@ -4,6 +4,19 @@
 export const SUBAGENT_DONE_REMINDER =
   'A sub-agent you started just finished. Before doing anything else, put its result on its card (an agent note with what it did, the evidence and the commit), so it survives this session ending.'
 
+export const SIDE_SESSION_DONE_REMINDER =
+  'A side session you started just ended a turn. Once its work is finished (its card Done or its branch landed, nothing of its own still open), archive it now with archive_session: a finished side session is never left idle. If its work is not finished, leave it running.'
+
+/**
+ * Whether a prompt is the desktop app's notice that a side session this session started ended a turn. The app words it two ways, both
+ * measured in live transcripts: a `<system-reminder>` note that opens `The session "<title>" you started (local_<id>) finished a turn`
+ * (with `and then reported that it was waiting on the user` after it when that is so), and, when the starter was idle, a
+ * `<side-sessions-event>` message beside it. Either marks the event; a person's own prompt carries neither.
+ */
+export function isSideSessionNotice(text: unknown): boolean {
+  return typeof text === 'string' && (text.includes('<side-sessions-event>') || /The session ".*" you started \(local_[\w-]+\) finished a turn/.test(text))
+}
+
 // 40 minutes: the middle of the 30-45 the plan set. Long enough that a session mid-task is not nagged between steps, short enough that a crash loses little.
 export const RECORD_AFTER_MS = 40 * 60 * 1000
 

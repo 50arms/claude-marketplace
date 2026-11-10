@@ -5,7 +5,7 @@ import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanVie
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { HANDOFF_FILE_REMINDER, baseName, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, looksLikeHandoff, recordDue } from './context/record'
+import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
@@ -3169,9 +3169,12 @@ async function wslHome($: any): Promise<string | null> {
   return chosen
 }
 
-// the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any
+// the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any.
+// The desktop app's notice that a side session this session started ended a turn arrives as a prompt too, and it also carries the reminder to
+// archive that session once its work is finished.
 async function onPromptStamp($: any, e: any, next: any) {
-  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT))] })
+  const side = isSideSessionNotice(e.text) ? [SIDE_SESSION_DONE_REMINDER] : []
+  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT)), ...side] })
 }
 
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
