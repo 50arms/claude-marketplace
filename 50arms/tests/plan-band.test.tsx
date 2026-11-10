@@ -197,10 +197,14 @@ for (const surface of SURFACES) {
       const kids = row.children
       const spacerAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexGrow === 1)
       const labelAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexShrink === 1)
-      const controlsAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexShrink === 0 && c.children?.some((x: any) => x?.props?.key === 'disconnect'))
+      const controlsAt = kids.findIndex((c: any) => c?.type === 'Box' && c.props.flexShrink === 0 && c.children?.some((x: any) => x?.props?.key === 'session-controls'))
       expect(labelAt).toBeGreaterThan(-1)
       expect(spacerAt).toBeGreaterThan(labelAt)
       expect(controlsAt).toBeGreaterThan(spacerAt)
+      // Disconnect and Revoke share one row Box: no gap between the two icons on the desktop (its buttons pad themselves), one cell on the terminal
+      const session = kids[controlsAt].children.find((x: any) => x?.props?.key === 'session-controls')
+      expect(session.children.map((x: any) => x?.props?.key)).toEqual(['disconnect', 'revoke'])
+      expect(session.props.gap).toBe(surface === 'terminal' ? 1 : 0)
       expect((await band.find({ type: 'Text', text: / · / }))?.props.wrap).toBe('truncate-end')
       // order and keys unchanged, the close control last
       const keys = (await band.findAll({ type: 'Button' })).map((b: any) => b.key)

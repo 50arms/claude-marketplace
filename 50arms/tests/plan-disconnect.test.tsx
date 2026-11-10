@@ -46,7 +46,7 @@ for (const surface of SURFACES) {
       expect(await linksOf(band)).toEqual([])
       // nothing is held to leave now; Revoke is still offered
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
-      expect((await band.find({ key: 'revoke' }))?.text).toBe('🚪')
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('🔒')
 
       const rows = d.relay.told
       expect(rows).toHaveLength(1)

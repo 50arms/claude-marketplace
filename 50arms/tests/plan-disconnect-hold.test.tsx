@@ -28,7 +28,7 @@ for (const surface of SURFACES) {
       d.world.agent = AGENT
       const band = await mounted($, d, surface)
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
-      expect((await band.find({ key: 'revoke' }))?.text).toBe('🚪')
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('🔒')
     })
 
     test('a card-only view shows both', async ($, on) => {
@@ -36,13 +36,13 @@ for (const surface of SURFACES) {
       d.world.card = CARD
       const band = await mounted($, d, surface)
       expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
-      expect((await band.find({ key: 'revoke' }))?.text).toBe('🚪')
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('🔒')
     })
 
     test('a plan view shows both', async ($, on) => {
       const band = await mounted($, dashboard(on), surface)
       expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
-      expect((await band.find({ key: 'revoke' }))?.text).toBe('🚪')
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('🔒')
     })
 
     test('a view holding no agent, plan or card shows neither', async ($, on) => {
@@ -111,7 +111,7 @@ for (const surface of SURFACES) {
       expect(await text(band)).toContain('50 Arms · Tendai: not connected to a plan or card')
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
-      expect((await band.find({ key: 'revoke' }))?.text).toBe('🚪')
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('🔒')
     })
 
     test('Disconnect on a plan view: only the plan is left, and the exit-time release is not asked', async ($, on) => {
@@ -247,7 +247,7 @@ for (const surface of SURFACES) {
       expect(d.world.card).toEqual(CARD)
       expect(leaves(d)).toEqual([])
       expect(await text(band)).not.toContain('access revoked')
-      expect((await band.find({ key: 'revoke' }))?.text).toBe('🚪')
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('🔒')
       expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
     })
   })

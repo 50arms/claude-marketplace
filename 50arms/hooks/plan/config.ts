@@ -162,8 +162,9 @@ export function boardCardUrl(plan: { dashboardUrl: string }, cardId: string): st
 // the band's Disconnect control: a broken-chain glyph, since a Button holds only text, never an Svg icon (operator, 2026-10-23)
 export const DISCONNECT_GLYPH = '⛓️‍💥'
 export const DISCONNECTING_LABEL = 'Disconnecting…'
-// the band's Revoke control: a door glyph (sign out), drawn like Disconnect's broken chain since band controls are icons, never words
-export const REVOKE_GLYPH = '🚪'
+// the band's Revoke control: a lock glyph (the session is locked out until a person approves it again), drawn like Disconnect's broken chain since
+// band controls are icons, never words. The person chose the lock (2026-11-10): the door glyph drew as a plain rectangle on the desktop.
+export const REVOKE_GLYPH = '🔒'
 export const REVOKING_LABEL = 'Revoking…'
 // the footer when no team agent is known for the session: the dashboard holds none, or the load failed (the band then says Disconnected too).
 export const NO_AGENT_LABEL = '50 Arms disconnected'

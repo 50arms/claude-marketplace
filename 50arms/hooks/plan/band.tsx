@@ -138,15 +138,21 @@ export function renderBand(
         {/* the newest open permission request: its approval page, with the code to check against the page. */}
         {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
         {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}
-        {disconnectOffered && (
-          <Button key="disconnect" plain dimColor={disconnecting} onPress={() => hd.disconnect(hold)}>
-            <Text color="error">{disconnectShown}</Text>
-          </Button>
-        )}
-        {revokeOffered && (
-          <Button key="revoke" plain dimColor={revoking} onPress={() => hd.revoke(hold)}>
-            <Text color="error">{revokeShown}</Text>
-          </Button>
+        {/* Disconnect and Revoke sit together with no gap on a graphical surface, whose native buttons carry their own padding (the
+            person asked for less space between the two icons); the terminal keeps its one-cell gap, which the column model counts. */}
+        {(disconnectOffered || revokeOffered) && (
+          <Box key="session-controls" flexDirection="row" gap={hasSvg ? 0 : 1}>
+            {disconnectOffered && (
+              <Button key="disconnect" plain dimColor={disconnecting} onPress={() => hd.disconnect(hold)}>
+                <Text color="error">{disconnectShown}</Text>
+              </Button>
+            )}
+            {revokeOffered && (
+              <Button key="revoke" plain dimColor={revoking} onPress={() => hd.revoke(hold)}>
+                <Text color="error">{revokeShown}</Text>
+              </Button>
+            )}
+          </Box>
         )}
         {close}
       </Box>
