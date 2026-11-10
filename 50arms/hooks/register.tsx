@@ -483,7 +483,8 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   // the view says which plan this session is on, so it says whether a relay runs and for which
   await syncRelay($)
   // a signed-out session reads the machine's registration (registration_only: the call makes no access request); a working connection has none to show
-  if (loaded.phase === 'signed-out') detach($, 'Machine registration', watchRegistration($))
+  // a watch that stopped on an error is not started again by every load: each restart would toast the failure again
+  if (loaded.phase === 'signed-out' && !(await registrationRecentlyStopped($))) detach($, 'Machine registration', watchRegistration($))
   else if (loaded.phase === 'ready') await abortRegistrationWatch($)
 }
 
@@ -779,8 +780,22 @@ async function showRegistration($: any, request: { url: string; code: string }, 
   await update($, machineRegistration, cur => ({ url: request.url, code: request.code, noted: noted || (cur !== null && cur.code === request.code && cur.noted) }))
 }
 
+// When the watch last stopped on an error. A load starts no watch for REGISTRATION_RETRY_MS after it (long enough for a rate limit to pass); a press of Sign in,
+// the end of the conversation (a new MCP starts with the next one) or a registered machine clears it.
+const REGISTRATION_RETRY_MS = 5 * 60_000
+let registrationStoppedAt: number | null = null
+
+async function registrationRecentlyStopped($: any): Promise<boolean> {
+  return registrationStoppedAt !== null && (await $.clock.now()) - registrationStoppedAt < REGISTRATION_RETRY_MS
+}
+
+async function markRegistrationStopped($: any): Promise<void> {
+  registrationStoppedAt = await $.clock.now()
+}
+
 // ends the watch that is running, if any, and draws no registration
 async function abortRegistrationWatch($: any): Promise<void> {
+  registrationStoppedAt = null
   registrationGeneration++
   registrationWatchRun = null
   await update($, machineRegistration, () => null)
@@ -803,13 +818,13 @@ async function onMachineRegistered($: any): Promise<void> {
 
 // One `session_connect` round of a watch (the sign-in's and the registration's): the call, and null when it threw (`onFailure` says so, unless the watch ended meanwhile)
 // or the watch ended while it waited. `startedAt` is for holdMinRound.
-async function watchCall($: any, args: object, ended: () => boolean, onFailure: (err: any) => void): Promise<{ r: any; startedAt: number } | null> {
+async function watchCall($: any, args: object, ended: () => boolean, onFailure: (err: any) => void | Promise<void>): Promise<{ r: any; startedAt: number } | null> {
   const startedAt = await $.clock.now()
   let r
   try {
     r = await $.mcp.call(SERVER, 'session_connect', args)
   } catch (err: any) {
-    if (!ended()) onFailure(err)
+    if (!ended()) await onFailure(err)
     return null
   }
   return ended() ? null : { r, startedAt }
@@ -836,7 +851,10 @@ function watchRegistration($: any): Promise<'registered' | 'stopped'> {
 
 async function runRegistrationWatch($: any, ended: () => boolean): Promise<'registered' | 'stopped'> {
   for (;;) {
-    const round = await watchCall($, { registration_only: true }, ended, err => $.ui.toast(registrationFailedToast(String(err?.message ?? err))))
+    const round = await watchCall($, { registration_only: true }, ended, async err => {
+      $.ui.toast(registrationFailedToast(String(err?.message ?? err)))
+      await markRegistrationStopped($)
+    })
     if (round === null) return 'stopped'
     const step = registrationStep(round.r)
     if (step.kind === 'registered') {
@@ -845,6 +863,7 @@ async function runRegistrationWatch($: any, ended: () => boolean): Promise<'regi
     }
     if (step.kind === 'stop') {
       $.ui.toast(registrationFailedToast(step.message))
+      await markRegistrationStopped($)
       await update($, machineRegistration, () => null)
       return 'stopped'
     }
@@ -1027,6 +1046,8 @@ type SignInWatch = { args: object } & ({ byPress: true; forReadyLoop?: true } | 
 
 async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
   const generation = signInGeneration
+  // False while the ready loop waits on a registration without the busy key (a person may take as long as they like), so the finally frees nothing then
+  let holdsBusy = true
   await withBusy($, busyKey.signIn, async () => {
     const ended = () => generation !== signInGeneration
     let shown: ApprovalRequest | null = watch.byPress ? null : watch.known
@@ -1071,7 +1092,12 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
           await showRegistration($, step.request, false)
           if ('forReadyLoop' in watch) {
             // the ready-agent loop stays waiting for the person's accept and then asks to sign in again, so it moves on without being told
+            // the wait is the person's, however long: the buttons do not read "Signing in…" meanwhile
+            holdsBusy = false
+            await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
             if ((await watchRegistration($)) === 'registered' && !ended()) {
+              await update($, busy, cur => (cur.includes(busyKey.signIn) ? cur : [...cur, busyKey.signIn]))
+              holdsBusy = true
               await holdMinRound($, startedAt)
               if (ended()) return
               continue
@@ -1118,7 +1144,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
       if (!ended()) await update($, signInRequest, () => null)
     }
     // an aborted watch's key was freed at the abort (onSessionEnd); a new watch may hold it by now, so this one never frees it
-  }, () => generation === signInGeneration)
+  }, () => holdsBusy && generation === signInGeneration)
 }
 
 // The button's press returns at once: the sign-in waits minutes for a person, and a press must not. A watch already running
@@ -1129,6 +1155,7 @@ async function startSignIn($: any): Promise<void> {
     toastSignIn($, waiting)
     return
   }
+  registrationStoppedAt = null
   const args = await signInArgs($)
   void watchSignIn($, { args, byPress: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
 }
@@ -2174,7 +2201,6 @@ async function abortSignInWatch($: any): Promise<void> {
   signInGeneration++
   await update($, signInRequest, () => null)
   await update($, busy, cur => cur.filter(k => k !== busyKey.signIn))
-  await abortRegistrationWatch($)
 }
 
 async function onSessionEnd($: any, e: any, next: any) {
@@ -2183,6 +2209,7 @@ async function onSessionEnd($: any, e: any, next: any) {
   // the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
     await abortSignInWatch($)
+    await abortRegistrationWatch($)
   }
   if (PROCESS_ENDS.includes(e.reason)) {
     // the relay ends with the process; a /clear or a resume goes on (its loop is module code, and the refresh the next

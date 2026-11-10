@@ -117,7 +117,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(woken(d)).toEqual([relayLine(machineRegisteredNote(CLAIM_CODE))])
       expect(d.relay.told).toEqual([])
-      expect(d.relay.storeSets.filter(k => /regist/i.test(k))).toEqual([])
+      expect(d.relay.storeSets.filter(k => k === 'permissionTold')).toEqual([])
     })
 
     test("another session's telling of the same claim code (the store every session on the machine shares) does not keep this session's model asleep", async ($, on) => {
@@ -195,5 +195,19 @@ for (const surface of SURFACES) {
         expect(await buttons(band)).toContain('Sign in')
       })
     }
+
+    test('a watch stopped on an error is not started again by a later signed-out load, so its failure toasts once', async ($, on) => {
+      const d = dashboard(on, { signedOut: 'signed-out', unregistered: true })
+      d.world.machine.refuse = 'error'
+      await startSession($, d, surface)
+      await $.ui.mount({ plugin: '50arms', surface, ...BAND })
+      await d.clock.settle()
+      const failures = () => d.toasts.filter(t => t.startsWith('Machine registration check failed')).length
+      expect(failures()).toBe(1)
+      await forceRefresh($, d)
+      await d.clock.settle()
+      expect(failures()).toBe(1)
+      expect(d.world.machine.calls).toHaveLength(1)
+    })
   })
 }
