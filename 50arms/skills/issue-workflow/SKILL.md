@@ -139,7 +139,12 @@ first, then end `failed`.
 
 - **AC/checklists** — each item's id is under the card's `checklists[].items[]`; set it
   `passing` on its checklist item.
-- **Comments** — only for talking with a person: a reply to what they wrote or asked.
+- **Comments** — only for talking with a person: a reply to what they wrote or asked. A
+  comment you read may be its shorter version (`reduced: true`), and one with nothing worth
+  keeping is left out. When the exact words matter (a person's stated decision, a provenance
+  quote, which the server checks against the original), read the originals:
+  `comments: {"expanded": true}` in a card's `fields` (`?expanded=true` on
+  `GET /api/plans/:planId/comments`); `q: "<words>"` in the same place searches them.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
   progress, evidence, gate results, handoffs, blockers; trace, audit and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
