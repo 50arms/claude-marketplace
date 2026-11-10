@@ -64,15 +64,25 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('after a leave: the plan wait is dropped, and the sign-in being ended (CP-89) the session runs no wait of its own', async ($, on) => {
+    test('after a Disconnect: the plan wait is dropped, and the session, still signed in, waits on no plan', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       expect(d.relay.calls).toHaveLength(1)
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
+      expect(d.relay.calls.map(c => c.plan_id)).toEqual([23, null])
+    })
+
+    test('after a Revoke: the plan wait is dropped, and the sign-in being ended the session runs no wait of its own', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
+      expect(d.relay.calls).toHaveLength(1)
+      await band.press({ key: 'revoke' })
+      await d.clock.settle()
       expect(d.relay.calls.map(c => c.plan_id)).toEqual([23])
-      d.relay.push({ cursor: 'c5', text: 'after the leave' })
+      d.relay.push({ cursor: 'c5', text: 'after the revoke' })
       await d.clock.advance(60_000)
       expect(d.relay.calls.map(c => c.plan_id)).toEqual([23])
       expect(d.relay.delivered).toHaveLength(0)

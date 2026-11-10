@@ -2,19 +2,24 @@ import type { PermissionRequest } from '../../types'
 
 // The rows the operator's band actions append for the model: the model did not make
 // these calls, so it is told. The person never reads them.
-// a person's Disconnect ends the session's sign-in, so the model is told not to connect again: only the person's Sign in restarts the session.
-// The plan left is named by ref and name: the session is on no plan now, and must not write to the plan routes.
-// `left`: the plan or card the session left (null: it held only its team agent); `ended`: the sign-in was ended too (false: that call failed, the key still works but the person has taken the session back).
-export function disconnectNote(d: { left: { ref: string; name: string } | null; ended: boolean }): string {
-  const what = d.left === null ? '' : ` from ${d.left.ref} "${d.left.name}"`
-  const state = d.ended ? 'and ended its sign-in' : "but ending its sign-in failed (the operator's band says so)"
-  return `[50 Arms plan] The operator disconnected this session${what} with the band's Disconnect button ${state}. Do not call session_connect or any other 50 Arms dashboard tool, and do not write to /api/plans/mine routes, until the operator signs this session in again with the band's Sign in: a person's approval is needed, and none of your calls can reconnect it.`
+// A person's Disconnect takes the session off its plan or card and leaves it signed in with its team agent. The model did not make the call, so it is told the session is on no plan or card now, and that
+// it joins one again only when the person asks. The plan or card left is named by ref and name: the session must not write to the plan routes.
+export function disconnectNote(left: { ref: string; name: string }): string {
+  return `[50 Arms plan] The operator disconnected this session from ${left.ref} "${left.name}" with the band's Disconnect button. It is still signed in and keeps its team agent, but it holds no plan or card now. Do not call session_connect to join a plan or card, and do not write to /api/plans/mine routes, until the operator asks you to.`
 }
 
-// the one toast a Disconnect shows: what was left (a plan or card id), else the team agent alone.
-export const disconnectedToast = (left: { ref: string } | null, agentName: string | null) =>
-  left !== null ? `Disconnected from ${left.ref}` : `Disconnected team agent${agentName === null ? '' : ` ${agentName}`}`
+// A person's Revoke ends the session's sign-in, so the model is told not to connect again: only the person's Sign in restarts the session.
+// `ended`: the sign-in was ended (false: that call failed, the key still works but the person has taken the session back).
+export function revokeNote(d: { ended: boolean }): string {
+  const state = d.ended ? "The operator revoked this session's sign-in" : "The operator tried to revoke this session's sign-in, but the call failed (the operator's band says so)"
+  return `[50 Arms plan] ${state} with the band's Revoke button. Do not call session_connect or any other 50 Arms dashboard tool, and do not write to /api/plans/mine routes, until the operator signs this session in again with the band's Sign in: a person's approval is needed, and none of your calls can reconnect it.`
+}
 
+// the toast of a Disconnect: the plan or card left.
+export const disconnectedToast = (left: { ref: string }) => `Disconnected from ${left.ref}`
+
+// the toast of a Revoke that ended the sign-in: the agent it freed, when the session held one.
+export const revokedToast = (agentName: string | null) => `Revoked this session's sign-in${agentName === null ? '' : ` and freed team agent ${agentName}`}`
 
 // the band's Sign in button signed this session in: the model did not press it, so it is told, as a disconnect
 // tells it. `target` is the plan the sign-in asked to rejoin (`PLAN-n`; null: none, so where it lands is the dashboard's to say); `connected`

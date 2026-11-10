@@ -7,5 +7,6 @@ export type Handlers = {
   showPlan: () => Promise<unknown>
   dismissBand: () => Promise<unknown>
   disconnect: (hold: BandHold) => Promise<unknown>
+  revoke: (hold: BandHold) => Promise<unknown>
   signIn: () => Promise<unknown>
 }

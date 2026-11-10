@@ -38,6 +38,8 @@ export const IN_PROGRESS_LIMIT = 15
 // for the plan's card ids (an opt-in field, a few bytes per card at any plan size). The band and the reply links need nothing more of a card, and the plan's card-list route answers whole
 // card rows (about 3 KB each), which past about 20 cards exceeds the host's tool-result limit.
 export const PLAN_BAND_FIELDS = { card_ids: true }
+// what the held card's read names: its checklists, each with its items and their status (`passing` is a ticked one)
+export const CARD_CHECKLIST_FIELDS = { checklists: true }
 // an issue prefix as a board names it (`ABC`, `XYZ`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10
@@ -107,6 +109,7 @@ export const EMPTY: PlanView = {
   connected: null,
   agent: null,
   card: null,
+  cardPercent: null,
   agentBlock: null,
   statusBreakdown: null,
   inProgress: [],
@@ -129,6 +132,8 @@ export const busyKey = {
   signIn: 'sign-in',
   isSigningIn: (busy: string[]) => busy.includes('sign-in'),
   isDisconnecting: (busy: string[]) => busy.some(k => k.startsWith('disconnect:')),
+  revoke: 'revoke',
+  isRevoking: (busy: string[]) => busy.includes('revoke'),
 }
 
 // every link is built on the origin the plan read answered (`dashboard_url`), carried on the
@@ -157,6 +162,8 @@ export function boardCardUrl(plan: { dashboardUrl: string }, cardId: string): st
 // the band's Disconnect control: a broken-chain glyph, since a Button holds only text, never an Svg icon (operator, 2026-10-23)
 export const DISCONNECT_GLYPH = '⛓️‍💥'
 export const DISCONNECTING_LABEL = 'Disconnecting…'
+export const REVOKE_LABEL = 'Revoke'
+export const REVOKING_LABEL = 'Revoking…'
 // the footer when no team agent is known for the session: the dashboard holds none, or the load failed (the band then says Disconnected too).
 export const NO_AGENT_LABEL = '50 Arms disconnected'
 

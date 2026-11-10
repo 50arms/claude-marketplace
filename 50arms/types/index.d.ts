@@ -59,6 +59,8 @@ export type PlanView = {
   // the session's team agent, and the stand-alone card it holds (a session holds a plan or a card, never both); null when it holds none.
   agent: SessionAgent | null
   card: HeldCard | null
+  // the held card's checklist progress (items passing over all items, a whole percent); null with no card or a card whose checklists hold no items.
+  cardPercent: number | null
   // the session signed in but holds no team agent, and the MCP's agent gate refuses its dashboard reads until one is held:
   // `agent_needed` (it proposes one), `agent_limit_reached` (the member's or team's cap on sessions signed in as an agent is full: the person ends another or raises the cap), `agent_not_held` (the agent was released; `session_connect` claims one again); null otherwise. The view is then `ready`.
   agentBlock: 'agent_needed' | 'agent_limit_reached' | 'agent_not_held' | null

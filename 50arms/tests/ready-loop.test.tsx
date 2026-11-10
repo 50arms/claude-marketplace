@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import * as readyLoopModule from '../hooks/ready/loop'
-import { READY_COMMAND, READY_TYPED, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
+import { READY_COMMAND, READY_TYPED, READY_DISCONNECTED, READY_REVOKED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
 import { LOCK_STALE_MS, NOT_CONNECTED_RETRY_MS, SIGN_IN_MIN_ROUND_MS, toolName } from '../hooks/plan/config'
 import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
@@ -2044,6 +2044,23 @@ describe('the ready-agent loop', () => {
       expect(d.world.readyLoop).toBe(null)
       expect(d.clearRuns).toEqual([])
       expect(d.world.readyMark).toBe(null)
+    })
+
+    test("a person's Revoke takes the session back the same way: it leaves the list and the server's loop, says so, and keeps its conversation", async ($, on) => {
+      const d = await started($, on, { connected: true })
+      await ready($, d)
+      d.world.readyLoop = { repo: REPO, job: { kind: 'plan', id: 23 }, ended: false }
+      const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: {} } as any)
+      await band.press({ key: 'revoke' })
+      await d.clock.settle()
+      await turnEnds($, d)
+      await tick(d)
+      expect(d.toasts).toContain(READY_REVOKED)
+      expect(d.world.readyCleared).toBe(1)
+      expect(d.world.readyLoop).toBe(null)
+      expect(d.clearRuns).toEqual([])
+      expect(d.world.readyMark).toBe(null)
+      expect(d.personDisconnects).toHaveLength(1)
     })
 
     test('/50arms:ready off leaves the list and the loop; any other word is only the usage', async ($, on) => {

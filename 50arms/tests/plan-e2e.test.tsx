@@ -57,9 +57,9 @@ for (const surface of SURFACES) {
       expect(eventsWarned(d)).toBe('events: unattached')
       await bandSilent(band)
 
-      await band.press({ key: 'disconnect' })
+      await band.press({ key: 'revoke' })
       await d.clock.settle()
-      // CP-89: the Disconnect ends the session's sign-in, so the band's next read is the revoked key's and the footer says so
+      // CP-89: the Revoke ends the session's sign-in, so the band's next read is the revoked key's and the footer says so
       expect(await footerText(footer)).toBe('50 Arms: access revoked')
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
       expect(await band.find({ type: 'Text', text: /^events: / })).toBeUndefined()

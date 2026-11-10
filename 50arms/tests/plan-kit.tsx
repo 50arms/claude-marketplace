@@ -320,6 +320,9 @@ export function dashboard(
     reposAnswer: null as { status: number; body: any } | null,
     repos: [] as { name: string; github_remote: { owner: string; repo: string } | null }[],
     cardStatus: {} as Record<string, string>,
+    // card id -> the checklists GET /api/issues/<id> answers when `fields` names `checklists`; and a switch that makes that read answer 500
+    cardChecklists: {} as Record<string, { id: number; name: string; items: { id: number; label: string; status: string }[] }[]>,
+    cardChecklistFails: false,
     planRead: {} as Record<string, unknown>,
     clearFails: undefined as string | undefined,
     // a /clear that answers but changes nothing
@@ -363,7 +366,7 @@ export function dashboard(
     card: null as { id: string; title: string } | null,
     // what DELETE /api/plan-sessions/me/card (the band's leave of a held card) answers: the leave works (default), a 500, or a 200 that names no card left
     cardLeave: 'ok' as 'ok' | 'boom' | 'noLeftCard',
-    // the order the band's Disconnect leaves things in: `plan`, `card`, then `release` of the team agent
+    // the order the band's leaves and Revoke ran in: `plan`, `card`, `person-disconnect`, `release` of the team agent
     leaveOrder: [] as string[],
     // DX-5554: what DELETE /api/plan-sessions/me/agent (the release at session exit) answers: `{released}` by default (true while an agent is held), an
     // error status, the engine's refusal (`deny`), or an answer that comes only after `delayMs` on the harness clock / never (`hangs`)
@@ -556,6 +559,11 @@ export function dashboard(
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
+    // the held card's checklist read (the band's donut): the checklists the test seeded for the card, each `{id, name, items: [{id, label, status}]}`; none seeded is a card with no checklist
+    if (method === 'GET' && issue && query?.fields?.checklists) {
+      if (world.cardChecklistFails) return reply({ error: 'checklist boom' }, 500)
+      return reply({ id: issue[1], title: 'x', checklists: world.cardChecklists[issue[1]] ?? [] })
+    }
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
       if (!c) return reply({ error: 'nope' }, 404)
@@ -792,7 +800,7 @@ export function dashboard(
   const restartCalls: unknown[] = []
   // DX-5554: each release of the session's team agent (DELETE /api/plan-sessions/me/agent), kept out of `calls` and `api` like the context reads
   const releaseCalls: { method: string; path: string; background: unknown }[] = []
-  // CP-89: each call of the band's Disconnect route (POST /api/plan-sessions/me/person-disconnect), kept out of `calls` and `api` like the release
+  // CP-89: each call of the band's Revoke route (POST /api/plan-sessions/me/person-disconnect), kept out of `calls` and `api` like the release
   const personDisconnects: { method: string; path: string; background: unknown }[] = []
   // DX-4997 / DX-5033: the dashboard's rule for the agent pause. A `50arms_api` call marked `background: true` (the plugin's own work) never ends it;
   // an unmarked one (the agent's own call) does, except the route that manages the pause itself.
@@ -900,7 +908,7 @@ export function dashboard(
       if (options.pacingHoldMs !== undefined) await clock.sleep(options.pacingHoldMs)
       return { value: 'status' in given ? reply({ error: 'line boom' }, given.status) : reply(given.body) }
     }
-    // CP-89 / DX-7026: the band's Disconnect, an open route of the agent gate (a session holding no agent must still be disconnectable). It frees the agent and revokes the
+    // CP-89 / DX-7026: the band's Revoke, an open route of the agent gate (a session holding no agent must still be revocable). It frees the agent and revokes the
     // presented key, so every later call answers the revoked halt and only session_connect with person_sign_in leaves it; it answers {released, revoked: true}. world.release shapes it as it shapes the exit-time release.
     if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'POST' && e.args.path === '/api/plan-sessions/me/person-disconnect') {
       personDisconnects.push({ method: e.args.method, path: e.args.path, background: e.args.background })
@@ -1167,11 +1175,7 @@ export function dashboard(
         const left = plans.find(p => p.id === world.planId)
         world.planId = null
         world.leaveOrder.push('plan')
-        // as the real route: a leave frees the session's agent in its own transaction, so the hold gate answers what follows
-        if (world.agent !== null) {
-          world.agent = null
-          world.agentGate = 'agent_not_held'
-        }
+        // the fake's plan leave keeps the session's key and its team agent because the server rule now keeps them: the dashboard frees an agent only on a revoke or the session's end
         if (options.disconnect === 'noLeftPlan') return envelope(true, 200, { session: { sessionId: SESSION_ID, planId: null } })
         return envelope(true, 200, {
           session: { sessionId: SESSION_ID, planId: null },

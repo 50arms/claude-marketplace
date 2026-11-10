@@ -1,10 +1,11 @@
 import "./run-tests-with-npm-test.generated"
-// The band's Disconnect shows whenever the session holds a team agent, a plan or a card (operator, 2026-11-06: "If an agent is connected the band must
-// ALWAYS show a disconnect button"), and its press fully disconnects: the plan or the card is left, then the session's sign-in is ended (CP-89 / DX-7026: the person-disconnect route frees the agent and revokes the key).
+// The band's two buttons, each with its own job (CP-91). Disconnect shows while the session holds a plan or a card and only leaves it: the session stays signed in with its team agent.
+// Revoke shows whenever the session holds a team agent, a plan or a card (operator, 2026-11-06: "If an agent is connected the band must ALWAYS show" a way to end it) and only ends the
+// session's sign-in (CP-89 / DX-7026: the person-disconnect route frees the agent and revokes the key); it makes no leave call.
 import { describe, expect } from 'claude-code/testing'
 
 import { DISCONNECT_GLYPH } from '../hooks/plan/config'
-import { PERSON_DISCONNECT_PATH, disconnectEndFailure } from '../hooks/plan/agent'
+import { PERSON_DISCONNECT_PATH, revokeFailure } from '../hooks/plan/agent'
 import { test, SURFACES, dashboard, expectRowCarries, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -21,53 +22,74 @@ async function mounted($: any, d: any, surface: string) {
 }
 
 for (const surface of SURFACES) {
-  describe(`Disconnect for what the session holds, on ${surface}`, () => {
-    test('shows on an agent-only view', async ($, on) => {
+  describe(`Disconnect and Revoke for what the session holds, on ${surface}`, () => {
+    test('an agent-only view shows Revoke and no Disconnect', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       const band = await mounted($, d, surface)
-      expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
+      expect(await band.find({ key: 'disconnect' })).toBeUndefined()
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('Revoke')
     })
 
-    test('shows on a card-only view', async ($, on) => {
+    test('a card-only view shows both', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.card = CARD
       const band = await mounted($, d, surface)
       expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('Revoke')
     })
 
-    test('shows on a plan view', async ($, on) => {
+    test('a plan view shows both', async ($, on) => {
       const band = await mounted($, dashboard(on), surface)
       expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('Revoke')
     })
 
-    test('does not show on a view holding no agent, plan or card', async ($, on) => {
+    test('a view holding no agent, plan or card shows neither', async ($, on) => {
       const band = await mounted($, dashboard(on, { connected: false }), surface)
       expect(await text(band)).toContain('50 Arms: not connected to a plan or card')
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
+      expect(await band.find({ key: 'revoke' })).toBeUndefined()
     })
 
-    test('agent only: the sign-in is ended (no plan or card call), one toast, the model told, the band reads access revoked and offers Sign in', async ($, on) => {
+    test('Revoke on an agent-only view: only the person-disconnect route is called, one toast, the model told, the band reads access revoked and offers Sign in', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       const band = await mounted($, d, surface)
-      await band.press({ key: 'disconnect' })
+      await band.press({ key: 'revoke' })
       await d.clock.settle()
 
       expect(d.world.leaveOrder).toEqual(['person-disconnect'])
       expect(d.personDisconnects).toEqual([{ method: 'POST', path: PERSON_DISCONNECT_PATH, background: true }])
       expect(d.releaseCalls).toEqual([])
-      expect(planLeaves(d)).toEqual([])
-      expect(cardLeaves(d)).toEqual([])
-      expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected team agent Tendai'])
+      expect(leaves(d)).toEqual([])
+      expect(d.toasts.filter((t: string) => t.startsWith('Revoked'))).toEqual(["Revoked this session's sign-in and freed team agent Tendai"])
       expect(d.relay.told).toHaveLength(1)
-      expectRowCarries(d.relay.told[0]!, ['disconnected', 'ended its sign-in', 'Do not call session_connect', 'Sign in'])
+      expectRowCarries(d.relay.told[0]!, ['revoked', 'Revoke button', 'Do not call session_connect', 'Sign in'])
       expect(await text(band)).toContain('50 Arms: access revoked by dana')
       expect((await band.find({ key: 'sign-in' }))?.text).toBe('Sign in')
+      expect(await band.find({ key: 'revoke' })).toBeUndefined()
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
     })
 
-    test('card held: the card is left with its id, then the sign-in is ended; the model is told', async ($, on) => {
+    test('Revoke on a plan view makes no leave call: the plan is not left, only the sign-in ends', async ($, on) => {
+      const d = dashboard(on)
+      d.world.agent = AGENT
+      const band = await mounted($, d, surface)
+      await band.press({ key: 'revoke' })
+      await d.clock.settle()
+
+      expect(leaves(d)).toEqual([])
+      expect(d.world.leaveOrder).toEqual(['person-disconnect'])
+      expect(d.personDisconnects).toHaveLength(1)
+      expect(d.releaseCalls).toEqual([])
+      expect(d.toasts.filter((t: string) => t.startsWith('Revoked'))).toHaveLength(1)
+      expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual([])
+      expectRowCarries(d.relay.told[0]!, ['revoked', 'Revoke button', 'Do not call session_connect'])
+      expect(await band.find({ key: 'revoke' })).toBeUndefined()
+    })
+
+    test('Disconnect on a card view: only the card is left, with its id; the agent and the key are kept and no sign-in is offered', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       d.world.card = CARD
@@ -77,16 +99,22 @@ for (const surface of SURFACES) {
       await d.clock.settle()
 
       expect(cardLeaves(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'DX-77', disconnect: true } }])
-      expect(d.world.leaveOrder).toEqual(['card', 'person-disconnect'])
+      expect(d.world.leaveOrder).toEqual(['card'])
       expect(planLeaves(d)).toEqual([])
+      expect(d.personDisconnects).toEqual([])
+      expect(d.releaseCalls).toEqual([])
+      expect(d.world.agent).toEqual(AGENT)
+      expect(d.world.signedOut).toBe(null)
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected from DX-77'])
       expect(d.relay.told).toHaveLength(1)
-      expectRowCarries(d.relay.told[0]!, ['DX-77', 'One-off fix', 'disconnected', 'ended its sign-in', 'Do not call session_connect'])
-      expect(await text(band)).toContain('50 Arms: access revoked by dana')
+      expectRowCarries(d.relay.told[0]!, ['DX-77', 'One-off fix', 'disconnected', 'still signed in', 'Do not call session_connect'])
+      expect(await text(band)).toContain('50 Arms · Tendai: not connected to a plan or card')
+      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
       expect(await band.find({ key: 'disconnect' })).toBeUndefined()
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('Revoke')
     })
 
-    test('plan held: the plan is left first, then the sign-in is ended, and the exit-time release is not asked', async ($, on) => {
+    test('Disconnect on a plan view: only the plan is left, and the exit-time release is not asked', async ($, on) => {
       const d = dashboard(on)
       d.world.agent = AGENT
       const band = await mounted($, d, surface)
@@ -94,33 +122,54 @@ for (const surface of SURFACES) {
       await d.clock.settle()
 
       expect(planLeaves(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'PLAN-23', disconnect: true } }])
-      // the plan's leave already freed the agent (the agent gate then answers agent_not_held); the person-disconnect route is open to a session holding none, and goes last
-      expect(d.world.leaveOrder).toEqual(['plan', 'person-disconnect'])
-      expect(d.personDisconnects).toHaveLength(1)
+      expect(d.world.leaveOrder).toEqual(['plan'])
+      expect(d.personDisconnects).toEqual([])
       expect(d.releaseCalls).toEqual([])
       expect(cardLeaves(d)).toEqual([])
+      expect(d.world.agent).toEqual(AGENT)
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected from PLAN-23'])
-      expectRowCarries(d.relay.told[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'ended its sign-in', 'Do not call session_connect'])
-      expect(await band.find({ key: 'disconnect' })).toBeUndefined()
+      expectRowCarries(d.relay.told[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'still signed in', 'Do not call session_connect'])
+      expect(await band.find({ key: 'sign-in' })).toBeUndefined()
     })
 
-    test('the button reads Disconnecting… while the leave runs, and a second press changes nothing', async ($, on) => {
-      const d = dashboard(on, { connected: false })
+    test('Disconnect reads Disconnecting… while the leave runs, and a second press changes nothing; Revoke pressed meanwhile does nothing', async ($, on) => {
+      const d = dashboard(on, { disconnectTakesMs: 5_000 })
       d.world.agent = AGENT
-      d.world.card = CARD
-      d.world.release = { delayMs: 5_000 }
       const band = await mounted($, d, surface)
       const first = band.press({ key: 'disconnect' })
       await d.clock.settle()
       expect((await band.find({ key: 'disconnect' }))?.text).toBe('Disconnecting…')
       expect((await band.find({ key: 'disconnect' }))?.props.dimColor).toBe(true)
-      await Promise.allSettled([band.press({ key: 'disconnect' })])
-      expect(cardLeaves(d)).toHaveLength(1)
+      await Promise.allSettled([band.press({ key: 'disconnect' }), band.press({ key: 'revoke' })])
+      expect(planLeaves(d)).toHaveLength(1)
+      expect(d.personDisconnects).toEqual([])
       await d.clock.advance(5_000)
       await first
-      expect(cardLeaves(d)).toHaveLength(1)
-      expect(d.world.leaveOrder).toEqual(['card', 'person-disconnect'])
+      await d.clock.settle()
+      expect(planLeaves(d)).toHaveLength(1)
+      expect(d.world.leaveOrder).toEqual(['plan'])
+      expect(d.personDisconnects).toEqual([])
+      expect(d.relay.told).toHaveLength(1)
+    })
+
+    test('Revoke reads Revoking… while the call runs, a second press changes nothing, and Disconnect pressed meanwhile does nothing', async ($, on) => {
+      const d = dashboard(on, { connected: false })
+      d.world.agent = AGENT
+      d.world.card = CARD
+      d.world.release = { delayMs: 2_000 }
+      const band = await mounted($, d, surface)
+      const first = band.press({ key: 'revoke' })
+      await d.clock.settle()
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('Revoking…')
+      expect((await band.find({ key: 'revoke' }))?.props.dimColor).toBe(true)
+      await Promise.allSettled([band.press({ key: 'revoke' }), band.press({ key: 'disconnect' })])
       expect(d.personDisconnects).toHaveLength(1)
+      expect(leaves(d)).toEqual([])
+      await d.clock.advance(2_000)
+      await first
+      await d.clock.settle()
+      expect(d.personDisconnects).toHaveLength(1)
+      expect(d.world.leaveOrder).toEqual(['person-disconnect'])
       expect(d.relay.told).toHaveLength(1)
     })
 
@@ -185,31 +234,20 @@ for (const surface of SURFACES) {
       expect(d.relay.told).toHaveLength(0)
     })
 
-    test('a card left but ending the sign-in failing: one toast says both, and the model is told the end failed', async ($, on) => {
+    test('Revoke failing: the failure is toasted, nothing else changes, the model is told nothing and the buttons stay', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       d.world.card = CARD
       d.world.release = { status: 500 }
       const band = await mounted($, d, surface)
-      await band.press({ key: 'disconnect' })
+      await band.press({ key: 'revoke' })
       await d.clock.settle()
-      expect(d.toasts.filter((t: string) => t.startsWith('Disconnected from DX-77'))).toHaveLength(1)
-      expect(d.toasts.at(-1)).toMatch(/^Disconnected from DX-77, but could not end this session's sign-in \(500: release boom\)/)
-      expect(d.relay.told).toHaveLength(1)
-      expect(d.relay.told[0]).not.toContain('ended its sign-in')
-      expect(d.relay.told[0]).toContain('ending its sign-in failed')
-      expect(d.relay.told[0]).toContain('Do not call session_connect')
-    })
-
-    test('agent only and ending the sign-in failing: the failure is toasted, the model is told nothing and the button stays', async ($, on) => {
-      const d = dashboard(on, { connected: false })
-      d.world.agent = AGENT
-      d.world.release = { status: 500 }
-      const band = await mounted($, d, surface)
-      await band.press({ key: 'disconnect' })
-      await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe(disconnectEndFailure('500: release boom'))
+      expect(d.toasts.at(-1)).toBe(revokeFailure('500: release boom'))
       expect(d.relay.told).toHaveLength(0)
+      expect(d.world.card).toEqual(CARD)
+      expect(leaves(d)).toEqual([])
+      expect(await text(band)).not.toContain('access revoked')
+      expect((await band.find({ key: 'revoke' }))?.text).toBe('Revoke')
       expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
     })
   })
