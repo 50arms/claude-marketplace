@@ -238,6 +238,8 @@ for (const surface of SURFACES) {
   describe(`Sign in on ${surface}`, () => {
     test('a session that was on a plan loses its key: the next refresh reads signed out and Sign in asks for that plan again with its title', async ($, on) => {
       const d = dashboard(on)
+      // CP-93: the desktop app's own title is the latest one, so it is the title a sign-in sends
+      d.world.appSession.title = 'PLAN-23: 50 Arms plugin'
       on('classic.SessionStart', () => ({}) as any)
       await $.classic.SessionStart({ source: 'startup', session_title: 'PLAN-23: 50 Arms plugin' } as any)
       await startSession($, d, surface)
@@ -272,7 +274,8 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
-      expect(connectCalls(d)[0]!.args).toEqual({ target: 'PLAN-23' })
+      // CP-93: on the desktop the app's title (the sync's read of it) is what a sign-in sends
+      expect(connectCalls(d)[0]!.args).toEqual(surface === 'desktop' ? { target: 'PLAN-23', title: 'PLAN-23 Agent mode' } : { target: 'PLAN-23' })
     })
 
     // DX-4630: the link and code are drawn the moment the request exists, whatever the browser does: a refused or slow browser
@@ -367,7 +370,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
-      expect(connectCalls(d)[0]!.args).toEqual({})
+      expect(connectCalls(d)[0]!.args).toEqual(surface === 'desktop' ? { title: 'PLAN-23 Agent mode' } : {})
       d.world.signIn.approved = true
       await d.clock.advance(45_000)
       await d.clock.settle()

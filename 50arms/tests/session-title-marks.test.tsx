@@ -127,6 +127,181 @@ describe('marks never stack', () => {
   })
 })
 
+const CONNECT = 'mcp__plugin_50arms_platform__session_connect'
+const API = 'mcp__plugin_50arms_platform__50arms_api'
+const SET_TITLE = 'mcp__ccd_session_mgmt__set_session_title'
+const KOFI_TITLE = "Kofi: DX-7050 A person's follow-up comments stack"
+const OLD_TITLE = 'Overly loose comment search highlight'
+const NEEDED = { status: 'needed', title: 'Dunnock: DX-7061 Overly loose comment search highlight' }
+const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:platform' && c.tool === 'session_connect')
+const cardConnect = (naming: unknown) => ({ result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { cardId: 'DX-7061' }, naming } }), isError: false }) as any
+const pickupAnswer = (naming: unknown) => ({ result: {}, text: JSON.stringify({ ok: true, status: 200, body: { connectedByPickup: true, naming } }), isError: false }) as any
+const PICKUP = { tool: API, method: 'POST', path: '/api/issues/DX-7061/transition', body: { action: 'pickup', manual: true } } as any
+const NOT_RENAME = 'do not rename the thread'
+
+// the desktop session of agent `name`, every card settled so the connection mark is green
+// (`mocks` registers the tool mocks, which must come before the session first uses $)
+async function desktop($: any, on: any, name: string, appTitle: string, mocks: (d: any) => void = () => {}, options?: any) {
+  answerReportEvents(on)
+  const d = dashboard(on, options)
+  d.world.agent = { id: 9, name, avatar_url: null }
+  for (const c of d.world.cards) for (const p of c.problems) p.open = false
+  d.world.appSession.title = appTitle
+  mocks(d)
+  await startSession($, d, 'desktop')
+  return d
+}
+
+// the model's own set_session_title
+const renameCall = (title: string) => ({ tool: SET_TITLE, session_id: 'self', title }) as any
+
+describe('a rename racing a title-mark sync (CP-93)', () => {
+  test("a rename landing before the sync's re-read keeps the new title: the sync marks the new base", async ($, on) => {
+    const d = await desktop($, on, 'Kofi', 'Kofi')
+    const app = d.world.appSession
+    expect(app.title).toBe(`${UP}Kofi`)
+    app.afterRead.push(() => {
+      app.title = KOFI_TITLE
+    })
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(app.title).toBe(`${BUILD}${KOFI_TITLE}`)
+    await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(app.title).toBe(`${UP}${KOFI_TITLE}`)
+  })
+
+  test("the model's own rename landing after the sync's re-read, before its write, is kept: the call waits for the write, then the sync marks it", async ($, on) => {
+    // the plugin's titles written when the model's rename reaches the app: the call must not run while the sync sits between its re-read and its write
+    let writtenWhenRenamed = -1
+    const d = await desktop($, on, 'Kofi', 'Kofi', d => {
+      on('tool.call', { tool: SET_TITLE }, () => {
+        writtenWhenRenamed = d.world.appSession.set.length
+        d.world.appSession.title = KOFI_TITLE
+        return { result: {}, text: 'Renamed.', isError: false } as any
+      })
+    })
+    const app = d.world.appSession
+    const writtenBefore = app.set.length
+    app.setDelayMs = 10
+    let renamed: Promise<unknown> = Promise.resolve()
+    // reads: the sync's first, then its re-read; the model's call is made right after the re-read answered
+    app.afterRead.push(
+      () => {},
+      () => {
+        renamed = $.tool.call(renameCall(KOFI_TITLE))
+      },
+    )
+    const started = $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.advance(30)
+    await started
+    await renamed
+    app.setDelayMs = 0
+    await d.clock.advance(30)
+    await d.clock.settle()
+    expect(writtenWhenRenamed).toBe(writtenBefore + 1)
+    expect(app.title).toBe(`${BUILD}${KOFI_TITLE}`)
+  })
+
+  test("the plugin's naming rename landing between a sync's read and its write is kept too: two writers never straddle each other", async ($, on) => {
+    const d = await desktop($, on, 'Dunnock', OLD_TITLE, () => on('tool.call', { tool: CONNECT }, () => cardConnect(NEEDED)))
+    const app = d.world.appSession
+    let connected: Promise<unknown> = Promise.resolve()
+    app.afterRead.push(
+      () => {},
+      () => {
+        connected = $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
+      },
+    )
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await connected
+    await d.clock.settle()
+    expect(app.title).toBe(`${BUILD}${NEEDED.title}`)
+  })
+
+  test('the title a later sign-in sends to session_connect is the latest one, never the name from before the rename', async ($, on) => {
+    const d = await desktop($, on, 'Kofi', 'Kofi', () => on('classic.SessionStart', () => ({}) as any), { signedOut: 'signed-out' })
+    d.world.appSession.title = KOFI_TITLE
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    // an older title arrives with a new conversation's start event: the app's title, kept by the sync, is the later one
+    await $.classic.SessionStart({ source: 'startup', session_title: 'Kofi' } as any)
+    await d.clock.settle()
+    d.world.signIn.answer = { text: JSON.stringify({ state: 'denied' }) }
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+    await band.press({ key: 'sign-in' })
+    await d.clock.settle()
+    const sent = d.world.signIn.calls.map((c: any) => c.title)
+    expect(sent.length).toBeGreaterThan(0)
+    // a signed-out session holds no team agent, so the agent name is dropped from the title it sends (sessionTitle); the rename itself is kept
+    for (const t of sent) expect(t).toBe(KOFI_TITLE.replace('Kofi: ', ''))
+  })
+})
+
+describe('a connect answer whose naming is needed (CP-93)', () => {
+  test('on a desktop session the plugin sets the exact marked title, connects again with that title, and tells the model not to rename', async ($, on) => {
+    const d = await desktop($, on, 'Dunnock', OLD_TITLE, () => on('tool.call', { tool: CONNECT }, () => cardConnect(NEEDED)))
+    const ran: any = await $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
+    await d.clock.settle()
+    expect(d.world.appSession.title).toBe(`${UP}${NEEDED.title}`)
+    expect(connectCalls(d).filter((c: any) => c.args.title !== undefined).map((c: any) => c.args)).toEqual([{ target: 'DX-7061', title: NEEDED.title }])
+    expect(JSON.stringify(ran)).toContain(NOT_RENAME)
+  })
+
+  test('a pickup that connects the session names the thread the same way, with the same note', async ($, on) => {
+    const d = await desktop($, on, 'Dunnock', OLD_TITLE, () => on('tool.call', { tool: API }, () => pickupAnswer(NEEDED)))
+    const ran: any = await $.tool.call(PICKUP)
+    await d.clock.settle()
+    expect(d.world.appSession.title).toBe(`${UP}${NEEDED.title}`)
+    expect(connectCalls(d).filter((c: any) => c.args.title !== undefined).map((c: any) => c.args)).toEqual([{ target: 'DX-7061', title: NEEDED.title }])
+    expect(JSON.stringify(ran)).toContain(NOT_RENAME)
+  })
+
+  test('a pickup that did not connect the session, or whose naming is not needed, names nothing', async ($, on) => {
+    let body: any = { connectedByPickup: false, naming: NEEDED }
+    const d = await desktop($, on, 'Dunnock', OLD_TITLE, () => on('tool.call', { tool: API }, () => ({ result: {}, text: JSON.stringify({ ok: true, status: 200, body }), isError: false }) as any))
+    const app = d.world.appSession
+    const before = app.set.length
+    await $.tool.call(PICKUP)
+    body = { connectedByPickup: true, naming: { status: 'ok', title: NEEDED.title } }
+    await $.tool.call(PICKUP)
+    await d.clock.settle()
+    expect(app.set.length).toBe(before)
+    expect(connectCalls(d).filter((c: any) => c.args.title !== undefined)).toEqual([])
+  })
+
+  test('a terminal session has no title tool: nothing is set, no second connect is made, the model gets no note', async ($, on) => {
+    const d = dashboard(on)
+    d.world.appSession.title = OLD_TITLE
+    on('tool.call', { tool: CONNECT }, () => cardConnect(NEEDED))
+    await startSession($, d, 'terminal')
+    const before = connectCalls(d).length
+    const ran: any = await $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
+    await d.clock.settle()
+    expect(d.world.appSession.set).toEqual([])
+    expect(connectCalls(d).length).toBe(before)
+    expect(JSON.stringify(ran)).not.toContain(NOT_RENAME)
+  })
+
+  test('a naming that is not needed changes nothing', async ($, on) => {
+    const d = await desktop($, on, 'Dunnock', OLD_TITLE, () => on('tool.call', { tool: CONNECT }, () => cardConnect({ status: 'ok', title: NEEDED.title })))
+    const before = d.world.appSession.set.length
+    await $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
+    await d.clock.settle()
+    expect(d.world.appSession.set.length).toBe(before)
+    expect(connectCalls(d).filter((c: any) => c.args.title !== undefined)).toEqual([])
+  })
+
+  test("a failing rename is toasted, not thrown out of the model's connect, and the note is not sent", async ($, on) => {
+    const d = await desktop($, on, 'Dunnock', OLD_TITLE, () => on('tool.call', { tool: CONNECT }, () => cardConnect(NEEDED)))
+    d.world.appSession.failSet = 'the desktop refused'
+    const ran: any = await $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
+    await d.clock.settle()
+    expect(d.toasts.some((t: string) => t.includes('Setting the thread title failed'))).toBe(true)
+    expect(JSON.stringify(ran)).not.toContain(NOT_RENAME)
+  })
+})
+
 describe('the desktop app title follows the view', () => {
   test('a load with cards that need a person shows the waiting mark (no turn runs here); a load with none shows green; a right title is left alone', async ($, on) => {
     const d = dashboard(on)
@@ -291,19 +466,19 @@ describe('the building mark', () => {
     await startSession($, d, 'desktop')
     const app = d.world.appSession
     expect(app.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
-    // the title is read once per sync, so the reads count the syncs: one at each crossing of 0 / 1, none between
-    const syncs = async (event: Promise<unknown>) => {
-      const before = app.reads
+    // the title is written at each crossing of 0 / 1 sub-agents, never between
+    const writes = async (event: Promise<unknown>) => {
+      const before = app.set.length
       await event
       await d.clock.settle()
-      return app.reads - before
+      return app.set.length - before
     }
-    expect(await syncs($.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(1)
+    expect(await writes($.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(1)
     expect(app.title).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
-    expect(await syncs($.classic.SubagentStart({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(0)
-    expect(await syncs($.classic.SubagentStop({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(0)
+    expect(await writes($.classic.SubagentStart({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(0)
+    expect(await writes($.classic.SubagentStop({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(0)
     expect(app.title).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
-    expect(await syncs($.classic.SubagentStop({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(1)
+    expect(await writes($.classic.SubagentStop({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(1)
     expect(app.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
     // one set to build, one to drop: nothing in between wrote the title
     expect(app.set).toEqual([`${UP}Tendai: PLAN-23 Agent mode`, `${BUILD}Tendai: PLAN-23 Agent mode`, `${UP}Tendai: PLAN-23 Agent mode`])
@@ -402,13 +577,13 @@ describe('the waiting mark', () => {
     const app = d.world.appSession
     // the default world has a card waiting on a person and no turn has started: the session waits on them
     expect(app.title.startsWith(WAIT)).toBe(true)
-    const reads = async (event: Promise<unknown>) => {
-      const before = app.reads
+    const writes = async (event: Promise<unknown>) => {
+      const before = app.set.length
       await event
       await d.clock.settle()
-      return app.reads - before
+      return app.set.length - before
     }
-    expect(await reads($.turn.start({ turnId: 't1' } as any))).toBe(1)
+    expect(await writes($.turn.start({ turnId: 't1' } as any))).toBe(1)
     expect(app.title.startsWith(HAND)).toBe(true)
     await $.turn.complete(TURN)
     await d.clock.settle()
@@ -422,10 +597,10 @@ describe('the waiting mark', () => {
     await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'Explore' })
     await d.clock.settle()
     expect(app.title.startsWith(WAIT)).toBe(true)
-    // with nothing waiting on a person a turn start reads no title
+    // with nothing waiting on a person a turn start writes no title
     for (const c of d.world.cards) for (const p of c.problems) p.open = false
     await forceRefresh($, d)
-    expect(await reads($.turn.start({ turnId: 't3' } as any))).toBe(0)
+    expect(await writes($.turn.start({ turnId: 't3' } as any))).toBe(0)
   })
 })
 

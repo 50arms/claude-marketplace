@@ -728,7 +728,8 @@ describe('what register wires', () => {
     expect(matched.length).toBeGreaterThan(0)
     const toolOf = (w: { matcher: unknown }) => (w.matcher as { tool?: string })?.tool ?? ''
     // `Write` and `Skill` are the two other tools: onHandoffWrite and onReadySkill are pass-throughs that only append context after `next` (the skill's, only when the ready skill loads), so the guard never sits on them
-    for (const w of matched.filter(w => !/__50arms_api$/.test(toolOf(w)) && toolOf(w) !== 'Write' && toolOf(w) !== 'Skill')) expect(toolOf(w)).toMatch(/^mcp__(plugin_50arms_platform|platform)__(session_connect|request_permission)$/)
+    // CP-93: the desktop's `set_session_title` is the third: onModelSetTitle holds the title lock around the model's rename, a tool that writes no commit, push or card
+    for (const w of matched.filter(w => !/__50arms_api$/.test(toolOf(w)) && toolOf(w) !== 'Write' && toolOf(w) !== 'Skill' && toolOf(w) !== 'mcp__ccd_session_mgmt__set_session_title')) expect(toolOf(w)).toMatch(/^mcp__(plugin_50arms_platform|platform)__(session_connect|request_permission)$/)
     // DX-5846: 50arms_api carries every card write, so exactly ONE handler may sit on it: onAckCall, a pass-through that acts only on the acknowledgement route
     // (POST /api/plan-sessions/me/events/<N>/ack); a second one would reach every card write, push and commit the guard must stay off
     expect(matched.filter(w => /__50arms_api$/.test(toolOf(w)))).toHaveLength(1)
