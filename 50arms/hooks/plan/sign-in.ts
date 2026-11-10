@@ -6,7 +6,7 @@ import { keyRevokedBy, mcpText, refusalText, toolOutcome } from './mcp'
 
 // what one `session_connect` answer means to the Sign in button, and what the person is told. The server's own
 // words are written for the agent (it says "Do not retry unless they ask"), so nothing here passes them on: every
-// message below is the person's. The answers are the dashboard MCP's: `{ state, ... }` while the session holds no
+// message below is the person's, and a refusal shows at most the dashboard's own person-facing `display_message`. The answers are the dashboard MCP's: `{ state, ... }` while the session holds no
 // key, the `{ ok, status, body }` envelope once it connects.
 export type SignInStep =
   // a request is waiting for the person's approval (`request`: its page and code): show it, then call again (the call waits
@@ -40,6 +40,22 @@ const STOPPED: Record<string, string> = {
   ...NO_AGENT,
 }
 
+// why the dashboard refused a sign-in request, in the person's words, by the refusal's code (the MCP's `request_refused`
+// answer carries the dashboard's refusal `body`); a code not named here shows the dashboard's own `display_message`, which is
+// written for a person, and only an answer with neither keeps the fixed line.
+const REFUSED: Record<string, string> = {
+  role_exceeds_owner: 'Your role on this team is too small to sign in an agent session: ask a team admin to give you the Member role or higher, then press Sign in again.',
+  unknown_role: 'The dashboard does not know the role this session asked to sign in with.',
+  claim_target_required: 'This dashboard needs a newer 50 Arms plugin: update the plugin, then press Sign in again.',
+}
+
+function refusedMessage(body: unknown): string {
+  const refusal = body !== null && typeof body === 'object' ? (body as { error?: unknown; display_message?: unknown }) : {}
+  if (typeof refusal.error === 'string' && refusal.error in REFUSED) return REFUSED[refusal.error]
+  if (typeof refusal.display_message === 'string' && refusal.display_message.trim() !== '') return `${STOPPED.request_refused} ${refusal.display_message.trim()}`
+  return STOPPED.request_refused
+}
+
 export function signInStep(result: any): SignInStep {
   const text = mcpText(result)
   const revokedBy = keyRevokedBy(text)
@@ -60,6 +76,7 @@ export function signInStep(result: any): SignInStep {
       const request = approvalRequestOf(text, [parsed.state])
       return request === null ? { kind: 'stop', message: 'Sign in failed: the approval request had no usable link.' } : { kind: 'waiting', request }
     }
+    if (parsed.state === 'request_refused') return { kind: 'stop', message: refusedMessage(parsed.body) }
     return { kind: 'stop', message: STOPPED[parsed.state] ?? `Sign in stopped (${parsed.state}).`, ...(parsed.state in NO_AGENT ? { signedIn: true as const } : {}) }
   }
   const outcome = toolOutcome(result)

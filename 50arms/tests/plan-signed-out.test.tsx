@@ -131,6 +131,11 @@ describe('what one session_connect answer means to Sign in', () => {
     expect(signInStep(answer({ state: 'approval_required', approvalUrl: 'javascript:x', confirmCode: 'A' })).kind).toBe('stop')
     expect(signInStep(answer({ state: 'request_failed', error: 'x' }, true))).toEqual({ kind: 'stop', message: 'Sign in could not be completed: try again in a moment.' })
     expect(signInStep(answer({ state: 'request_refused', status: 403 }, true))).toEqual({ kind: 'stop', message: 'The dashboard refused the sign-in request.' })
+    // a refusal names why in the person's words: by its code, else the dashboard's own person-facing message, never the MCP's agent text
+    const tooSmall = { state: 'request_refused', status: 400, body: { error: 'role_exceeds_owner', missingPermissions: ['cards.edit'] }, error: 'Tell them to ask a team admin' }
+    expect(signInStep(answer(tooSmall, true))).toEqual({ kind: 'stop', message: 'Your role on this team is too small to sign in an agent session: ask a team admin to give you the Member role or higher, then press Sign in again.' })
+    const named = { state: 'request_refused', status: 403, body: { error: 'something_else', display_message: 'This team is suspended.' } }
+    expect(signInStep(answer(named, true))).toEqual({ kind: 'stop', message: 'The dashboard refused the sign-in request. This team is suspended.' })
     expect(signInStep({ content: [{ type: 'text', text: 'plain text' }], isError: true }).kind).toBe('stop')
     const refused = signInStep(answer({ ok: false, status: 409, body: { error: 'plan_archived', message: 'PLAN-23 is archived.' } }))
     expect(refused).toEqual({ kind: 'refused', message: 'Signed in, but the plan connect was refused: 409 PLAN-23 is archived.' })
