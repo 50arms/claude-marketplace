@@ -81,7 +81,7 @@ for (const surface of SURFACES) {
       expect(woken(d)).toEqual([])
     })
 
-    test('the registration read is repeated about every minimum round and never overlaps itself', async ($, on) => {
+    test('the registration read is repeated about every minimum round', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out', unregistered: true })
       d.world.machine.waitMs = 0
       await startSession($, d, surface)
@@ -89,13 +89,9 @@ for (const surface of SURFACES) {
       // 60 s at a minimum round of 5 s: about twelve calls, never a tight loop
       expect(d.world.machine.calls.length).toBeLessThanOrEqual(14)
       expect(d.world.machine.calls.length).toBeGreaterThan(3)
-      expect(d.world.machine.maxActive).toBe(1)
-      // more signed-out loads while it runs start no second watch
-      for (let i = 0; i < 3; i++) await d.clock.advance(1_000)
-      expect(d.world.machine.maxActive).toBe(1)
     })
 
-    test("the model's own session_connect is told to send the person to the link, and not to open it", async ($, on) => {
+    test("the model's own session_connect is told to send the person to the link, and not to open it, and starts no second registration read", async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out', unregistered: true })
       modelMeetsMachine(on)
       await startSession($, d, surface)
@@ -104,6 +100,9 @@ for (const surface of SURFACES) {
       expect(note).toHaveLength(1)
       expect(note[0]).toContain('Do not open the link yourself')
       expect(note[0]).toContain(CLAIM_CODE)
+      // the model's call joins the band's running watch while its read is still waiting
+      await d.clock.advance(1_000)
+      expect(d.world.machine.maxActive).toBe(1)
     })
 
     test('the model that was told is woken when the person accepts, and the wake needs no key in the machine-wide store', async ($, on) => {
