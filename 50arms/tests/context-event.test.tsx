@@ -1,11 +1,11 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4234 / DX-5554: the registry's event text for every signed-in session (SessionStart startup / resume / compact, and every sub-agent's start),
 // fetched through the session's own dashboard server (R-2: `50arms_api`, never the package's CLI), and the silence rules: one warning line for a
-// fetch that failed, quiet for a session with no usable key. The dashboard decides the lines: a plan-connected session's text carries the plan-only
+// fetch that failed, one invitation to sign in for a session with no usable key (nothing at its sub-agents, nothing for a revoked key). The dashboard decides the lines: a plan-connected session's text carries the plan-only
 // line, a session on no plan's the agent-scoped lines alone.
 import { describe, expect } from 'claude-code/testing'
 
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, SIGN_IN_INVITATION, eventFailureLine } from '../hooks/context/events'
 import { test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, EVENT_TEXT, TOLD, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
@@ -139,14 +139,31 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
-    for (const signedOut of ['signed-out', 'lapsed', 'revoked'] as const) {
-      test(`a ${signedOut} session is quiet: its own tools tell the model`, async ($, on) => {
+    // a session with no usable key cannot ask 50 Arms for anything: its start carries the plugin's one invitation, and a sub-agent's start nothing
+    for (const signedOut of ['signed-out', 'lapsed'] as const) {
+      test(`a ${signedOut} session is told the one sign-in invitation at its start, and its sub-agent nothing`, async ($, on) => {
         const d = await started($, on, { signedOut })
-        expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
+        const r = await firstPrompt($, 'startup')
+        expect(r.startLines).toEqual([SIGN_IN_INVITATION])
         expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
         await d.clock.settle()
+        expect(EVENT_PATHS(d.contextReads)).toEqual([])
+      })
+
+      test(`a ${signedOut} session's resume and compaction are quiet: the invitation is for a start`, async ($, on) => {
+        const d = await started($, on, { signedOut })
+        for (const source of ['resume', 'compact'] as const) expect((await firstPrompt($, source)).startLines).toBeUndefined()
+        await d.clock.settle()
+        expect(EVENT_PATHS(d.contextReads)).toEqual([])
       })
     }
+
+    test('a session whose key a person revoked is quiet: its own tools tell the model', async ($, on) => {
+      const d = await started($, on, { signedOut: 'revoked' })
+      expect((await firstPrompt($, 'startup')).startLines).toBeUndefined()
+      expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
+      await d.clock.settle()
+    })
 
     test('a CONNECTED session whose plugin server is not connected at the deadline is told so in one warning line, and the poll stops there', async ($, on) => {
       const d = await started($, on, { mcp: 'down' })

@@ -5,7 +5,7 @@ import "./run-tests-with-npm-test.generated"
 // fake `$` of the earlier suites could not.
 import { describe, expect } from 'claude-code/testing'
 
-import { eventFailureLine } from '../hooks/context/events'
+import { SIGN_IN_INVITATION, eventFailureLine } from '../hooks/context/events'
 import { test, TOLD, OTHER_SESSION, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
@@ -54,7 +54,9 @@ for (const surface of SURFACES) {
         const { d } = await unboundStart($, on, source, { connected: false, signedOut: 'signed-out' })
         d.world.restart.json = { notice: NOTICE }
         const first = await $.prompt.submit({ text: 'hello' })
-        expect(first.context!.slice(1)).toEqual([NOTICE])
+        // a signed-out startup is told the one sign-in invitation before the notice; a resume is not
+        expect(first.context!.slice(1)).toEqual([source === 'startup' ? `${SIGN_IN_INVITATION}
+${NOTICE}` : NOTICE])
         expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
         expect(d.restartCalls).toEqual([source === 'resume' ? { transcript_path: '/work/main.jsonl' } : {}])
       })

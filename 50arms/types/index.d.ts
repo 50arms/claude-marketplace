@@ -215,6 +215,8 @@ declare module 'claude-code' {
       diskHome: DiskHome
       // the session start waiting for the next prompt or main-loop tool result (see PendingStart).
       pendingStart: PendingStart
+      // the mantra this conversation is still owed: its start found the session without a usable key (see giveOwedMantra).
+      mantraOwed: boolean
       // the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
       endedSession: string | null
       // the id the session's MCP server runs under at its start (set once): the id the engine answers until a /clear changes it, so no lookup is needed while they agree.

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue } from './context/record'
@@ -149,6 +149,9 @@ const lastStamp = atom({ plugin: '50arms', key: 'lastStamp' } as const, null as 
 // session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
 // prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
 const pendingStart = atom({ plugin: '50arms', key: 'pendingStart' } as const, null as PendingStart)
+// the mantra this conversation is still owed: a start that found the session without a usable key (signed out, or its key revoked) could not ask 50 Arms for it. The first load that finds the
+// session signed in turns this into a pending start (`source: 'sign-in'`), so the mantra reaches the model on its next prompt or tool result, from the moment it signs in.
+const mantraOwed = atom({ plugin: '50arms', key: 'mantraOwed' } as const, false)
 // The machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
 // notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home found once per session.
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
@@ -244,6 +247,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     turn: read($, turn),
     lastStamp: read($, lastStamp),
     pendingStart: read($, pendingStart),
+    mantraOwed: read($, mantraOwed),
     diskTold: read($, diskTold),
     diskMeasured: read($, diskMeasured),
     diskHome: read($, diskHome),
@@ -300,6 +304,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, turn, () => carried.turn),
     update($, lastStamp, () => carried.lastStamp),
     update($, pendingStart, () => carried.pendingStart),
+    update($, mantraOwed, () => carried.mantraOwed),
     update($, diskTold, () => carried.diskTold),
     update($, diskMeasured, () => carried.diskMeasured),
     update($, diskHome, () => carried.diskHome),
@@ -493,6 +498,22 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   // a watch that stopped on an error is not started again by every load: each restart would toast the failure again
   if (loaded.phase === 'signed-out' && !(await registrationRecentlyStopped($))) detach($, 'Machine registration', watchRegistration($))
   else if (loaded.phase === 'ready') await abortRegistrationWatch($)
+  // signed in, with its team agent: whatever the session's start could not tell it, it is told now
+  if (loaded.phase === 'ready' && loaded.agentBlock === null) await giveOwedMantra($)
+}
+
+// A conversation whose start found the session without a usable key is owed the mantra once the session is signed in (and can ask for it). The owing is taken
+// here and becomes a pending start, told with the next prompt or tool result like a session start: a sign-in the person made at the band, the model's own approved
+// `session_connect` and a ready command's all end in a load, so this is the one place they meet.
+async function giveOwedMantra($: any): Promise<void> {
+  let owed = false
+  await update($, mantraOwed, cur => {
+    owed = cur
+    return false
+  })
+  if (!owed) return
+  const start: NonNullable<PendingStart> = { sessionId: String(await $.session.id()), source: SIGN_IN_SOURCE, transcriptPath: null, predecessorId: null }
+  await update($, pendingStart, cur => cur ?? start)
 }
 
 // a load that failed outside the load itself (its deadline, a throw): the view goes to the error phase, told once on the change into it.
@@ -3236,11 +3257,11 @@ async function onToolStamp($: any, e: any, next: any) {
   return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...(reminder === null ? [] : [reminder])] }
 }
 
-// what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
-// the session holds no key or a person revoked it (its own tools already tell the model). `failed`: the read itself broke (a dashboard fault).
+// what the dashboard says of this session's plan. `signed-out`: the session holds no usable key (never approved, or lapsed): a session start gives it the one sign-in invitation. `silent`:
+// nothing can be said, never a line: a person revoked its key, or the agent gate holds it (its own tools already tell the model). `failed`: the read itself broke (a dashboard fault).
 // `connected` carries the plan the session is on (the relay starts from it); `unreachable` is the plugin's server not connected yet (quiet to
 // the model, retried by the relay's start).
-type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connected' } | { kind: 'silent' } | { kind: 'unreachable' } | { kind: 'failed'; reason: string; refusal?: Refusal }
+type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connected' } | { kind: 'signed-out' } | { kind: 'silent' } | { kind: 'unreachable' } | { kind: 'failed'; reason: string; refusal?: Refusal }
 
 // The ONE place a key that is gone or revoked is made quiet (its own tools say so, never a failure line): this read is the first of every
 // context lookup, so a later read that finds the key gone in between is an ordinary failure line.
@@ -3257,6 +3278,7 @@ function meIsQuiet(r: Api): boolean {
 async function sessionPlan($: any): Promise<SessionPlan> {
   const r = await api($, 'GET', '/api/plan-sessions/me')
   if (r.unreachable === true) return { kind: 'unreachable' }
+  if (isSignedOut(r)) return { kind: 'signed-out' }
   // the agent gate holds the session (no team agent yet, or a resume after the agent was released): quiet here, because the dashboard's 403 {state, instruction} on the model's first dashboard call is what tells the model what to do
   if (meIsQuiet(r)) return { kind: 'silent' }
   if (!r.ok) return { kind: 'failed', reason: errText(r), refusal: r.refusal }
@@ -3431,13 +3453,16 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   if (event === null) return start.source === 'clear' ? clearNotice($, start) : null
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
   const connected = await isPlanConnected($, start.sessionId)
-  const askRestart = start.source !== 'compact' && !isFreshStart(start)
+  // a sign-in's start is the same session going on: it asks no restart notice
+  const askRestart = start.source !== 'compact' && start.source !== SIGN_IN_SOURCE && !isFreshStart(start)
   const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return null
   if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)
+    // a key that works asks for the mantra now; one that does not leaves the conversation owing it (giveOwedMantra)
+    if (plan.kind !== 'failed' && plan.kind !== 'unreachable') await update($, mantraOwed, () => plan.kind === 'signed-out' || plan.kind === 'silent')
     if (plan.kind === 'connected') {
       const line = await eventContext($, event)
       // a compaction, and a compaction by clear, are followed by the resume briefing, in the same first turn as the registry's text
@@ -3447,7 +3472,8 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
     if (plan.kind === 'failed') return fault(plan.reason)
     // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
     if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
-    // a signed-out session is the one a restart leaves without a key: the notice is for it too
+    // a signed-out session is the one a restart leaves without a key: the notice is for it too. Its start carries the one invitation to sign in, and nothing of the mantra
+    if (plan.kind === 'signed-out') return { line: start.source === 'startup' ? SIGN_IN_INVITATION : null, askRestart }
     return { line: null, askRestart }
   }
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
