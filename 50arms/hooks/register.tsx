@@ -503,14 +503,69 @@ async function failView($: any, error: string): Promise<void> {
 // A terminal session has no such server, so its title follows at each prompt only.
 async function syncTitleMark($: any): Promise<void> {
   if (!(await read($, desktopHosted))) return
+  await underTitleLock(async () => {
+    let held = await readAppTitle($)
+    // CP-93: the title is read again right before the write, and a title that changed in between (a rename racing this sync) is the new base. Bounded: a
+    // title that keeps changing is left to the next sync.
+    for (let tries = 0; held !== null && tries < TITLE_WRITE_TRIES; tries++) {
+      await rememberTitle($, held)
+      const want = sessionTitle(held, await read($, view), await read($, relay), await titleActivity($))
+      if (want === held) return
+      const again = await readAppTitle($)
+      if (again !== held) {
+        held = again
+        continue
+      }
+      await setAppTitle($, want)
+      return
+    }
+  })
+}
+
+const TITLE_WRITE_TRIES = 3
+
+// CP-93: every writer of the desktop app's title runs one at a time, so a sync and a rename never interleave their read and write. A failure of one
+// step reaches its own caller only.
+let titleChain: Promise<unknown> = Promise.resolve()
+function underTitleLock<T>(step: () => Promise<T>): Promise<T> {
+  const run = titleChain.then(step)
+  titleChain = run.catch(() => undefined)
+  return run
+}
+
+// the desktop app's title of this session, trimmed; null when it is empty or unreadable as a title
+async function readAppTitle($: any): Promise<string | null> {
   const got = await $.mcp.call(DESKTOP_SESSION_SERVER, 'get_session', { session_id: 'self' })
   if (got.isError) throw new Error(`get_session: ${mcpText(got)}`)
   const held = JSON.parse(mcpText(got))?.title
-  if (typeof held !== 'string' || held.trim() === '') return
-  const want = sessionTitle(held.trim(), await read($, view), await read($, relay), await titleActivity($))
-  if (want === held.trim()) return
-  const set = await $.mcp.call(DESKTOP_SESSION_SERVER, 'set_session_title', { session_id: 'self', title: want })
+  return typeof held === 'string' && held.trim() !== '' ? held.trim() : null
+}
+
+async function setAppTitle($: any, to: string): Promise<void> {
+  const set = await $.mcp.call(DESKTOP_SESSION_SERVER, 'set_session_title', { session_id: 'self', title: to })
   if (set.isError) throw new Error(`set_session_title: ${mcpText(set)}`)
+  await rememberTitle($, to)
+}
+
+// the plugin's remembered title (the one a later sign-in sends to session_connect) is the app's latest, never a name from before a rename
+async function rememberTitle($: any, held: string): Promise<void> {
+  const bare = unmarkedTitle(held)
+  if (bare) await update($, title, () => bare)
+}
+
+// CP-93: a connect answer (a session_connect, or a pickup that connected) whose `naming` block is `needed` carries the exact thread title. On a desktop
+// session the plugin sets it itself (with the state mark), then connects again with that title so the server records it. A terminal session has
+// no title tool and keeps the model's instruction. Returns the title set, or null when nothing was done.
+async function applyNaming($: any, target: unknown, naming: any): Promise<string | null> {
+  if (naming?.status !== 'needed' || typeof naming.title !== 'string' || naming.title.trim() === '') return null
+  if (!(await read($, desktopHosted))) return null
+  const exact = naming.title.trim()
+  await underTitleLock(async () => {
+    const want = sessionTitle(exact, await read($, view), await read($, relay), await titleActivity($))
+    await setAppTitle($, want)
+  })
+  await $.mcp.call(SERVER, 'session_connect', { ...(typeof target === 'string' && target !== '' ? { target } : {}), title: exact })
+  return exact
 }
 
 // the desktop app's session server (its `get_session` / `set_session_title` tools)
@@ -2737,7 +2792,9 @@ async function onSessionConnect($: any, e: any, next: any) {
   // the plugin's own read of the machine's registration (watchRegistration) is no connect of the model's
   if (e.registration_only === true) return next(e)
   const target = connectTargetOf(e.target)
-  const ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
+  let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
+  const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
+  if (named !== null) ran = { ...ran, context: [...(ran.context ?? []), `The plugin set this thread's title to "${named}" and connected again with it; do not rename the thread.`] }
   const registration = registrationOf(ran.text)
   if (registration !== null) {
     // an unregistered machine: the band shows the link and code, and the model is told to send the person there (and woken when they accept)
@@ -2799,7 +2856,13 @@ async function onAckCall($: any, e: any, next: any) {
   const answer = answerOf(ran)
   // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
   // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
-  if (answer.ok && isPickup(e) && (await wholeAnswer($, answer)).body?.connectedByPickup === true) await reportActivityOnConnect($)
+  if (answer.ok && isPickup(e)) {
+    const connected = (await wholeAnswer($, answer)).body
+    if (connected?.connectedByPickup === true) {
+      await reportActivityOnConnect($)
+      if (!raisedByPlugin(next.origin)) await applyNaming($, /^\/api\/issues\/([^/]+)\/transition$/.exec(e.path)?.[1], connected.naming)
+    }
+  }
   // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
   if (e.agentId === undefined && !raisedByPlugin(next.origin) && answer.ok) {
     const now = await $.clock.now()
@@ -3539,7 +3602,8 @@ async function onTitle($: any, e: any, next: any) {
   // a session start or a prompt: the session is about to act, so its turn counts as running (the waiting mark follows the turn's end)
   const marked = held ? sessionTitle(held, await read($, view), await read($, relay), { ...(await titleActivity($)), turnRunning: true }) : ''
   const t = unmarkedTitle(held)
-  if (t) await update($, title, () => t)
+  // on a desktop session the app's title, which syncTitleMark keeps in `title`, is the latest; the event's copy may be older
+  if (t && (!(await read($, desktopHosted)) || (await read($, title)) === null)) await update($, title, () => t)
   const below = await next(e)
   return marked && marked !== held ? { ...below, sessionTitle: marked } : below
 }

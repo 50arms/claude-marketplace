@@ -397,7 +397,8 @@ export function dashboard(
     },
     // the desktop app's session server (`ccd_session_mgmt`) as the title mark reaches it: the app's title of this session and each title the
     // plugin set, in order
-    appSession: { title: 'Tendai: PLAN-23 Agent mode', set: [] as string[], reads: 0 },
+    // `afterRead`: runs once, right after a get_session answered (the app is renamed between a reader's read and its write, as a model's set_session_title does)
+    appSession: { title: 'Tendai: PLAN-23 Agent mode', set: [] as string[], reads: 0, afterRead: undefined as (() => void) | undefined },
     // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
     tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
@@ -1021,7 +1022,13 @@ export function dashboard(
     if (e.server === 'ccd_session_mgmt') {
       const app = world.appSession
       if (e.tool === 'get_session') app.reads++
-      if (e.tool === 'get_session') return { value: { content: [{ type: 'text', text: JSON.stringify({ sessionId: 'local_test', title: app.title }, null, 2) }], isError: false } }
+      if (e.tool === 'get_session') {
+        const answer = { value: { content: [{ type: 'text', text: JSON.stringify({ sessionId: 'local_test', title: app.title }, null, 2) }], isError: false } }
+        const after = app.afterRead
+        app.afterRead = undefined
+        after?.()
+        return answer
+      }
       if (e.tool === 'set_session_title') {
         app.set.push(e.args.title)
         const was = app.title

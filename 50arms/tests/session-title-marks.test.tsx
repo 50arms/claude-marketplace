@@ -127,6 +127,92 @@ describe('marks never stack', () => {
   })
 })
 
+const CONNECT = 'mcp__plugin_50arms_platform__session_connect'
+const KOFI_TITLE = "Kofi: DX-7050 A person's follow-up comments stack"
+const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:platform' && c.tool === 'session_connect')
+
+describe('a rename racing a title-mark sync (CP-93)', () => {
+  test("a rename between the sync's read and its write keeps the new title: the sync marks the new base, never writes the old one", async ($, on) => {
+    answerReportEvents(on)
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Kofi', avatar_url: null }
+    for (const c of d.world.cards) for (const p of c.problems) p.open = false
+    d.world.appSession.title = 'Kofi'
+    await startSession($, d, 'desktop')
+    const app = d.world.appSession
+    expect(app.title).toBe(`${UP}Kofi`)
+    // the sub-agent start's sync reads the marked name; the model's rename lands before the sync writes
+    app.afterRead = () => {
+      app.title = KOFI_TITLE
+    }
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(app.title).toBe(`${BUILD}${KOFI_TITLE}`)
+    expect(app.set.some(t => t.startsWith(BUILD) && t.endsWith('Kofi'))).toBe(false)
+    await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    expect(app.title).toBe(`${UP}${KOFI_TITLE}`)
+  })
+
+  test('the title a later sign-in sends to session_connect is the latest one, never the name from before the rename', async ($, on) => {
+    answerReportEvents(on)
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    d.world.agent = { id: 9, name: 'Kofi', avatar_url: null }
+    d.world.appSession.title = 'Kofi'
+    await startSession($, d, 'desktop')
+    d.world.appSession.title = KOFI_TITLE
+    await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' })
+    await d.clock.settle()
+    d.world.signIn.answer = { text: JSON.stringify({ state: 'denied' }) }
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+    await band.press({ key: 'sign-in' })
+    await d.clock.settle()
+    const sent = d.world.signIn.calls.map((c: any) => c.title)
+    expect(sent.length).toBeGreaterThan(0)
+    // a signed-out session holds no team agent, so the agent name is dropped from the title it sends (sessionTitle); the rename itself is kept
+    for (const t of sent) expect(t).toBe(KOFI_TITLE.replace('Kofi: ', ''))
+  })
+})
+
+describe('a connect answer whose naming is needed (CP-93)', () => {
+  const NEEDED = { status: 'needed', title: 'Dunnock: DX-7061 Overly loose comment search highlight' }
+  const answer = (naming: unknown) => ({ result: {}, text: JSON.stringify({ ok: true, status: 200, body: { session: { cardId: 'DX-7061' }, naming } }), isError: false }) as any
+
+  test('on a desktop session the plugin sets the title itself, with its state mark, then connects again with that title', async ($, on) => {
+    const d = dashboard(on)
+    d.world.agent = { id: 9, name: 'Dunnock', avatar_url: null }
+    d.world.appSession.title = 'Overly loose comment search highlight'
+    on('tool.call', { tool: CONNECT }, () => answer(NEEDED))
+    await startSession($, d, 'desktop')
+    await $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
+    await d.clock.settle()
+    expect(d.world.appSession.title.endsWith(NEEDED.title)).toBe(true)
+    expect(connectCalls(d).some((c: any) => c.args.target === 'DX-7061' && c.args.title === NEEDED.title)).toBe(true)
+  })
+
+  test('a terminal session has no title tool: nothing is set and no second connect is made', async ($, on) => {
+    const d = dashboard(on)
+    d.world.appSession.title = 'Overly loose comment search highlight'
+    on('tool.call', { tool: CONNECT }, () => answer(NEEDED))
+    await startSession($, d, 'terminal')
+    const before = connectCalls(d).length
+    await $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
+    await d.clock.settle()
+    expect(d.world.appSession.set).toEqual([])
+    expect(connectCalls(d).length).toBe(before)
+  })
+
+  test('a naming that is not needed changes nothing', async ($, on) => {
+    const d = dashboard(on)
+    d.world.appSession.title = 'Overly loose comment search highlight'
+    on('tool.call', { tool: CONNECT }, () => answer({ status: 'ok', title: NEEDED.title }))
+    await startSession($, d, 'desktop')
+    await $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
+    await d.clock.settle()
+    expect(d.world.appSession.set.some(t => t.includes('DX-7061'))).toBe(false)
+  })
+})
+
 describe('the desktop app title follows the view', () => {
   test('a load with cards that need a person shows the waiting mark (no turn runs here); a load with none shows green; a right title is left alone', async ($, on) => {
     const d = dashboard(on)
@@ -291,19 +377,19 @@ describe('the building mark', () => {
     await startSession($, d, 'desktop')
     const app = d.world.appSession
     expect(app.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
-    // the title is read once per sync, so the reads count the syncs: one at each crossing of 0 / 1, none between
+    // a writing sync reads the title, then again right before it writes (CP-93): two reads at each crossing of 0 / 1, none between
     const syncs = async (event: Promise<unknown>) => {
       const before = app.reads
       await event
       await d.clock.settle()
       return app.reads - before
     }
-    expect(await syncs($.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(1)
+    expect(await syncs($.classic.SubagentStart({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(2)
     expect(app.title).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
     expect(await syncs($.classic.SubagentStart({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(0)
     expect(await syncs($.classic.SubagentStop({ agent_id: 'a1', agent_type: 'Explore' }))).toBe(0)
     expect(app.title).toBe(`${BUILD}Tendai: PLAN-23 Agent mode`)
-    expect(await syncs($.classic.SubagentStop({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(1)
+    expect(await syncs($.classic.SubagentStop({ agent_id: 'b2', agent_type: 'Explore' }))).toBe(2)
     expect(app.title).toBe(`${UP}Tendai: PLAN-23 Agent mode`)
     // one set to build, one to drop: nothing in between wrote the title
     expect(app.set).toEqual([`${UP}Tendai: PLAN-23 Agent mode`, `${BUILD}Tendai: PLAN-23 Agent mode`, `${UP}Tendai: PLAN-23 Agent mode`])
@@ -408,7 +494,7 @@ describe('the waiting mark', () => {
       await d.clock.settle()
       return app.reads - before
     }
-    expect(await reads($.turn.start({ turnId: 't1' } as any))).toBe(1)
+    expect(await reads($.turn.start({ turnId: 't1' } as any))).toBe(2)
     expect(app.title.startsWith(HAND)).toBe(true)
     await $.turn.complete(TURN)
     await d.clock.settle()
