@@ -34,7 +34,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
 
       expect(disconnectCalls(d)).toEqual([{ server: 'plugin:50arms:platform', tool: 'session_connect', args: { target: 'PLAN-23', disconnect: true } }])
-      expect(d.toasts).toContain('Disconnected from PLAN-23')
+      expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual([])
       // the Revoke route is never called, the key is not revoked, and the agent is kept
       expect(d.personDisconnects).toEqual([])
       expect(d.releaseCalls).toEqual([])
@@ -151,7 +151,7 @@ for (const surface of SURFACES) {
       d.world.signedOut = 'lapsed'
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.toasts).toContain('Signed out. Sign in from the band.')
+      expect(d.toasts).not.toContain('Signed out. Sign in from the band.')
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnect') || t.includes('"state"'))).toEqual([])
       expect(d.relay.told).toHaveLength(0)
     })

@@ -328,7 +328,7 @@ for (const surface of SURFACES) {
         await $.turn.start(START)
         await $.turn.complete(TURN)
         expect(compactRuns(d)).toHaveLength(1)
-        expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
+        expect(d.toasts).not.toContain('Compacting now: your agent said it is ready.')
         expect(d.toasts.filter(t => t === RELAY_OLDER_NOTICE)).toHaveLength(older ? 1 : 0)
         expect(d.toasts.some(t => t.startsWith('Compaction control unreadable'))).toBe(false)
         await $.turn.start(START)
@@ -382,7 +382,7 @@ for (const surface of SURFACES) {
       // the plugin gives the command no arguments (the control carries no instructions)
       expect(compactRuns(d)).toHaveLength(1)
       expect(String(compactRuns(d)[0] ?? '').trim()).toBe('')
-      expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
+      expect(d.toasts).not.toContain('Compacting now: your agent said it is ready.')
       // the same release is spent: the dashboard's next write of the control still names it
       await $.turn.start(START)
       await $.turn.complete(TURN)
@@ -772,7 +772,7 @@ for (const surface of SURFACES) {
         d.world.files[CONTROL_FILE] = RELAY_SHAPES[relay](CLOCK_START + 120_000)
         await d.clock.advance(5_000)
         expect(compactRuns(d)).toHaveLength(1)
-        expect(d.toasts).toContain('Compacting now: your agent said it is ready.')
+        expect(d.toasts).not.toContain('Compacting now: your agent said it is ready.')
       })
     }
 

@@ -190,7 +190,7 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter(t => t.startsWith('50 Arms could not close'))).toEqual([
         '50 Arms could not close 2 running activities before leaving PLAN-23 (500: activity boom): the dashboard may show them running',
       ])
-      expect(d.toasts).toContain('Disconnected from PLAN-23')
+      expect(d.toasts).not.toContain('Disconnected from PLAN-23')
     })
 
     test('a dashboard that does not answer within the deadline never holds the leave: one toast, then the leave', async ($, on) => {
@@ -204,7 +204,7 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter(t => t.startsWith('50 Arms could not close'))).toEqual([
         `50 Arms could not close 2 running activities before leaving PLAN-23 (timeout: no answer within ${LEAVE_CLOSE_DEADLINE_MS / 1000} s): the dashboard may show them running`,
       ])
-      expect(d.toasts).toContain('Disconnected from PLAN-23')
+      expect(d.toasts).not.toContain('Disconnected from PLAN-23')
     })
   })
 }

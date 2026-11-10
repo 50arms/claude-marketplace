@@ -6,8 +6,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { loadPlan } from '../hooks/plan/load'
 import { isSignedOut, keyRevokedBy, outcomeRevokedBy } from '../hooks/plan/mcp'
-import { signInToast } from '../hooks/plan/approval'
-import { APPROVAL_TOAST_MS, DISCONNECT_GLYPH } from '../hooks/plan/config'
+import { DISCONNECT_GLYPH } from '../hooks/plan/config'
 import { signInNote } from '../hooks/plan/notes'
 import { signInStep } from '../hooks/plan/sign-in'
 import { test, bandLabelOf, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, CONFIRM_CODE, KEY_LAPSED_HALT, KEY_REVOKED_HALT, REVOKER, SIGN_IN_HALT, SURFACES, dashboard, footerText, mountIndicator, startSession, forceRefresh, browserCalls, linksOf, woken } from './plan-kit'
@@ -22,7 +21,7 @@ const AGENT_TEXT = /session_connect|Not signed in|user approves|request access|l
 const personToasts = (d: any) => d.toasts.filter((t: string) => !t.startsWith('Could not tell the model'))
 const connectCalls = (d: any) => d.calls.filter((c: any) => c.server === 'plugin:50arms:platform' && c.tool === 'session_connect')
 // DX-4630: EVERY Claude_Browser call, so a sign-in that touched the browser in any way (tabs_context, tabs_create, ...) fails
-const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE))
+const approvalToasts = (d: any) => d.toasts.filter((t: string) => t.includes(CONFIRM_CODE) || t.includes('NEWCODE9'))
 // the model's own session_connect call, answering the same approval request the dashboard's world gives the Sign in press
 const modelConnect = (on: any) => on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: JSON.stringify(APPROVAL_REQUIRED), isError: false }) as any)
 const answer = (value: unknown, isError = false) => ({ content: [{ type: 'text', text: JSON.stringify(value) }], isError })
@@ -218,11 +217,11 @@ for (const surface of SURFACES) {
       d.relay.told.length = 0
       await band.press({ key: 'disconnect' })
       await d.clock.settle()
-      expect(d.toasts).toEqual(['50 Arms: access revoked by dana. This session must stop.'])
+      expect(d.toasts).toEqual([])
       expect(await texts(band)).toContain('50 Arms: access revoked by dana')
     })
 
-    test('a person revokes the key while Sign in waits: one toast, the view reads revoked, and no further call is made', async ($, on) => {
+    test('a person revokes the key while Sign in waits: no toast, the view reads revoked, and no further call is made', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
@@ -231,7 +230,7 @@ for (const surface of SURFACES) {
       d.world.signedOut = 'revoked'
       await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts.at(-1)).toBe('50 Arms: access revoked by dana. This session must stop.')
+      expect(d.toasts).toEqual([])
       expect(await texts(band)).toContain('50 Arms: access revoked by dana')
       expect((await band.find({ key: 'sign-in' })).text).toBe('Sign in')
       const calls = connectCalls(d).length
@@ -285,7 +284,7 @@ for (const surface of SURFACES) {
 
     // DX-4630: the link and code are drawn the moment the request exists, whatever the browser does: a refused or slow browser
     // cannot delay or hide them, and no browser call is made for sign-in at all.
-    test('the request is drawn in the band at once, with a toast, and no browser call is made', async ($, on) => {
+    test('the request is drawn in the band at once, with no toast and no browser call', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
@@ -295,16 +294,15 @@ for (const surface of SURFACES) {
       expect(browserCalls(d)).toEqual([])
       expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       expect(await texts(band)).toContain(`code ${CONFIRM_CODE}`)
-      expect(approvalToasts(d)).toEqual([signInToast({ url: APPROVAL_URL, code: CONFIRM_CODE })])
-      expect(d.toastTimeouts.at(-1)).toBe(APPROVAL_TOAST_MS)
+      expect(approvalToasts(d)).toEqual([])
       // the later rounds of the same wait say nothing more
       await d.clock.advance(45_000)
       await d.clock.advance(45_000)
       expect(browserCalls(d)).toEqual([])
-      expect(approvalToasts(d)).toHaveLength(1)
+      expect(approvalToasts(d)).toEqual([])
     })
 
-    test('a request the model started is drawn too, and a Sign in press while it waits says the link and code again and starts no second wait', async ($, on) => {
+    test('a request the model started is drawn too, and a Sign in press while it waits starts no second wait', async ($, on) => {
       const d = dashboard(on, { signedOut: 'signed-out' })
       modelConnect(on)
       await startSession($, d, surface)
@@ -313,11 +311,11 @@ for (const surface of SURFACES) {
       await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect', target: 'PLAN-23' } as any)
       await d.clock.settle()
       expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
-      expect(approvalToasts(d)).toHaveLength(1)
+      expect(approvalToasts(d)).toEqual([])
       const calls = connectCalls(d).length
       await band.press({ key: 'sign-in' })
       await d.clock.settle()
-      expect(approvalToasts(d)).toHaveLength(2)
+      expect(approvalToasts(d)).toEqual([])
       expect(connectCalls(d)).toHaveLength(calls)
       expect(browserCalls(d)).toEqual([])
     })
@@ -355,7 +353,7 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts).toContain('Signed in')
+      expect(d.toasts).not.toContain('Signed in')
       expect(await texts(band)).not.toContain('signed out')
       expect(await bandLabelOf(band)).toContain('PLAN-23')
       expect(await buttons(band)).not.toContain('Sign in')
@@ -437,8 +435,8 @@ for (const surface of SURFACES) {
       await band.press({ key: 'sign-in' })
       for (let i = 0; i < 4; i++) await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts).toContain('Sign in expired. A new request is open.')
-      expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
+      expect(approvalToasts(d)).toEqual([])
+      expect(d.toasts).not.toContain('Sign in expired. A new request is open.')
       // DX-4630: the renewal swaps the band's link and code
       expect((await linksOf(band)).map(l => l.href)).toContain(`${APPROVAL_URL}-renewed`)
       expect(await texts(band)).toContain('code NEWCODE9')
@@ -447,7 +445,7 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts).toContain('Signed in')
+      expect(await texts(band)).not.toContain('signed out')
     })
 
     // DX-4548: a request stays open while its session lives, so the wait has no round limit
@@ -466,7 +464,7 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(5_000)
       await d.clock.settle()
-      expect(d.toasts).toContain('Signed in')
+      expect(await texts(band)).not.toContain('signed out')
     })
 
     test('a call that throws is one toast, and the key is released', async ($, on) => {

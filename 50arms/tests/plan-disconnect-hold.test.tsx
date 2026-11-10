@@ -52,7 +52,7 @@ for (const surface of SURFACES) {
       expect(await band.find({ key: 'revoke' })).toBeUndefined()
     })
 
-    test('Revoke on an agent-only view: only the person-disconnect route is called, one toast, the model told, the band reads access revoked and offers Sign in', async ($, on) => {
+    test('Revoke on an agent-only view: only the person-disconnect route is called, no toast, the model told, the band reads access revoked and offers Sign in', async ($, on) => {
       const d = dashboard(on, { connected: false })
       d.world.agent = AGENT
       const band = await mounted($, d, surface)
@@ -63,7 +63,7 @@ for (const surface of SURFACES) {
       expect(d.personDisconnects).toEqual([{ method: 'POST', path: PERSON_DISCONNECT_PATH, background: true }])
       expect(d.releaseCalls).toEqual([])
       expect(leaves(d)).toEqual([])
-      expect(d.toasts.filter((t: string) => t.startsWith('Revoked'))).toEqual(["Revoked this session's sign-in and freed team agent Tendai"])
+      expect(d.toasts.filter((t: string) => t.startsWith('Revoked'))).toEqual([])
       expect(d.relay.told).toHaveLength(1)
       expectRowCarries(d.relay.told[0]!, ['revoked', 'Revoke button', 'Do not call session_connect', 'Sign in'])
       expect(await text(band)).toContain('50 Arms: access revoked by dana')
@@ -83,7 +83,7 @@ for (const surface of SURFACES) {
       expect(d.world.leaveOrder).toEqual(['person-disconnect'])
       expect(d.personDisconnects).toHaveLength(1)
       expect(d.releaseCalls).toEqual([])
-      expect(d.toasts.filter((t: string) => t.startsWith('Revoked'))).toHaveLength(1)
+      expect(d.toasts.filter((t: string) => t.startsWith('Revoked'))).toEqual([])
       expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual([])
       expectRowCarries(d.relay.told[0]!, ['revoked', 'Revoke button', 'Do not call session_connect'])
       expect(await band.find({ key: 'revoke' })).toBeUndefined()
@@ -105,7 +105,7 @@ for (const surface of SURFACES) {
       expect(d.releaseCalls).toEqual([])
       expect(d.world.agent).toEqual(AGENT)
       expect(d.world.signedOut).toBe(null)
-      expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected from DX-77'])
+      expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual([])
       expect(d.relay.told).toHaveLength(1)
       expectRowCarries(d.relay.told[0]!, ['DX-77', 'One-off fix', 'disconnected', 'still signed in', 'Do not call session_connect'])
       expect(await text(band)).toContain('50 Arms · Tendai: not connected to a plan or card')
@@ -127,7 +127,7 @@ for (const surface of SURFACES) {
       expect(d.releaseCalls).toEqual([])
       expect(cardLeaves(d)).toEqual([])
       expect(d.world.agent).toEqual(AGENT)
-      expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual(['Disconnected from PLAN-23'])
+      expect(d.toasts.filter((t: string) => t.startsWith('Disconnected'))).toEqual([])
       expectRowCarries(d.relay.told[0]!, ['PLAN-23', '50 Arms plugin', 'disconnected', 'still signed in', 'Do not call session_connect'])
       expect(await band.find({ key: 'sign-in' })).toBeUndefined()
     })

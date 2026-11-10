@@ -86,9 +86,7 @@ describe('a sign-in the model started', () => {
     expect(woken(d)).toEqual([relayLine(signInExpiredNote(CONFIRM_CODE))])
     expect(d.relay.told).toEqual([])
     expect(woken(d)[0]).toContain('a renewed request is already open')
-    expect(d.toasts).toContain('Sign in expired. A new request is open.')
-    // the renewed request reached the person
-    expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
+    expect(d.toasts).toEqual([])
     // and is watched: its approval is told once, with its own code
     d.world.signIn.approved = true
     await d.clock.advance(45_000)
@@ -100,10 +98,15 @@ describe('a sign-in the model started', () => {
   test('a renewed request the model receives as approval_pending is still shown to the person', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
     // the model's own call answers a request this session has not shown yet, but as pending
-    on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' }), isError: false }) as any)
+    const renewed = JSON.stringify({ ...APPROVAL_PENDING, approvalUrl: `${APPROVAL_URL}-renewed`, confirmCode: 'NEWCODE9' })
+    on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: renewed, isError: false }) as any)
+    // the plugin's own wait on that request is still pending
+    d.world.signIn.answer = { text: renewed, waits: true }
     await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
     await modelAsks($, d)
-    expect(d.toasts.some(t => t.includes('NEWCODE9') && t.includes(`${APPROVAL_URL}-renewed`))).toBe(true)
+    expect((await linksOf(band)).map(l => l.href)).toContain(`${APPROVAL_URL}-renewed`)
+    expect(d.toasts).toEqual([])
     expect(connectCalls(d).length).toBeGreaterThan(0)
   })
 

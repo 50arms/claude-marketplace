@@ -25,19 +25,10 @@ export function approvalRequestOf(text: string | undefined, states: readonly str
   return { url: approvalUrl, code: confirmCode }
 }
 
-// What the person is asked to approve: the permissions a key asked for, else the session itself.
-export const approvalSubject = (a: ApprovalRequest) => (a.permissions && a.permissions.length > 0 ? `permission ${a.permissions.join(', ')}` : 'this session')
-
-// a permission request's toast: the link and code together (the person follows the link; the plugin opens nothing).
-export const permissionToast = (a: ApprovalRequest) => `Approve ${approvalSubject(a)}: open ${a.url} and check that confirm code ${a.code} matches.`
-
-// What the model reads after a tool answer that carries a permission request: the plugin toasts the link and code to the person (the
-// band may be dismissed), so the model opens nothing and only says so.
+// What the model reads after a tool answer that carries a permission request: the band shows the link and code to the person,
+// so the model opens nothing and only says so.
 export const permissionShownNote = (a: ApprovalRequest) =>
-  `The 50 Arms plugin already showed the person the approval link (${a.url}) and confirm code ${a.code} in a notification. Do not open the link yourself; tell the user to approve with confirm code ${a.code}.`
-
-// a sign-in request's toast: the link and code together, no browser involved (the person follows the link).
-export const signInToast = (a: ApprovalRequest) => `Approve this session: open ${a.url} and check that confirm code ${a.code} matches.`
+  `The 50 Arms plugin already shows the person the approval link (${a.url}) and confirm code ${a.code} in the band. Do not open the link yourself; tell the user to approve with confirm code ${a.code}.`
 
 // The label of the band's sign-in link, and the words beside a request's code.
 export const APPROVE_SIGN_IN_LABEL = 'Approve sign-in ↗'
