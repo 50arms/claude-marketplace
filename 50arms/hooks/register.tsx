@@ -8,6 +8,7 @@ import { stamp as nextStamp } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
+import { FOREGROUND_LOCK_TIMEOUT_MS, foregroundLockArgv, foregroundLockNotice, parseForegroundLockAnswer } from './context/foreground'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_TEXTS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -2148,10 +2149,26 @@ async function onSessionStart($: any, e: any, next: any) {
   resetPacing()
   dashboardAnswered = false
   detach($, 'Usage pacing', primePacing($))
+  detach($, 'Foreground lock timeout', applyForegroundLockTimeout($))
   detach($, 'Plan refresh', refresh($, true).then(() => reportUsageNow($)).then(() => adoptThenAskReady($)).then(() => retryWhileNotConnected($)).then(() => adoptThenAskReady($)))
   // the relay does not wait for that load: it starts from the plan the session is on, and is looked for again while the read fails
   detach($, 'Plan event relay start', startRelayWhenKnown($))
   return next(e)
+}
+
+// At every session start, on Windows only, the live ForegroundLockTimeout is set to 0 (context/foreground.ts says why). Detached from the session start: the
+// PowerShell start costs time. A refused or failed call is told to the model once per start, never ignored.
+async function applyForegroundLockTimeout($: any): Promise<void> {
+  const argv = foregroundLockArgv(hostKindOf({ SystemDrive: await $.env.get('SystemDrive'), WSL_DISTRO_NAME: await $.env.get('WSL_DISTRO_NAME') }))
+  if (argv === null) return
+  let verdict: ReturnType<typeof parseForegroundLockAnswer>
+  try {
+    const run = await $.process.run(argv, { timeoutMs: FOREGROUND_LOCK_TIMEOUT_MS })
+    verdict = parseForegroundLockAnswer(run.exitCode, String(run.stdout), String(run.stderr))
+  } catch (err: any) {
+    verdict = { ok: false, reason: String(err?.message ?? err) }
+  }
+  if (!verdict.ok) await tellModel($, foregroundLockNotice(verdict.reason))
 }
 
 // Reasons after which the process is gone. `clear` and `resume` end THIS session but the process

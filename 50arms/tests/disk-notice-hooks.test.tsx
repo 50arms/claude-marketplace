@@ -199,8 +199,10 @@ for (const surface of SURFACES) {
         m.world.files['/Users/dev/.danxbot/machine-disk-floors'] = FLOORS_FILE
       })
       expect(noticeOf((await $.prompt.submit({ text: 'hello' })).context)).toMatch(LOW)
-      expect(runsOf(d, 'powershell.exe')).toHaveLength(1)
-      expect(runsOf(d, 'powershell.exe')[0].join(' ')).toContain("DriveInfo 'C'")
+      // the other powershell.exe run is the session start's foreground lock timeout (foreground-lock-hooks.test.tsx)
+      const probes = runsOf(d, 'powershell.exe').filter((argv: string[]) => argv.join(' ').includes('DriveInfo'))
+      expect(probes).toHaveLength(1)
+      expect(probes[0].join(' ')).toContain("DriveInfo 'C'")
       expect(runsOf(d, 'cmd.exe')).toEqual([])
     })
 
