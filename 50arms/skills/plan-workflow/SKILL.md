@@ -128,13 +128,14 @@ found while working goes to the plan whose goal it serves, or none. Enabling wor
 blocks a goal today. Drift audit at start, after each card lands and in every status report:
 idle goal cards while side work got effort → stop the side work; a goalless cluster → split
 the plan. Review rounds repeat until a clean pass or only minor findings; the round count is
-never a question for the user. Before acting on a finding that is new scope, check whether a plan already covers it:
+never a question for the user. A fix round's brief names only the blocking findings. Before acting on new scope
+found while working, check whether a plan already covers it:
 `GET /api/plans?content=<one keyword>&fields={"status":true}` per keyword (`content` matches one literal phrase), skipping
 `complete` and `awaiting-sign-off` plans, then `GET /api/plans/<id>/architecture/sections?q=<keyword>` and
 `GET /api/plans/<id>/records?kind=goal&q=<keyword>` for each hit. A covered case gets no stopgap and no card
 outside that plan, and is added to that plan if its text does not name it (mantra item 1): your own plan's
-records and sections as usual, another plan by a card on it (see "Your lane only"). A
-finding no plan covers that is new scope rather than a defect in the change → split it into its
+records and sections as usual, another plan by a card on it (see "Your lane only"). New
+scope found while working (never a gate finding) that no plan covers → split it into its
 own card. Report goal by goal. Said "stop if X" → stop when X.
 
 **Your lane only.** Never monitor, investigate or unstick another plan's cards or another
@@ -408,7 +409,9 @@ A working sub-agent is replaced only by agreement, never by your decision alone.
 Never end a turn while unblocked work could be dispatched (a running build, test or deploy
 is time to dispatch; a readied card waiting on a worker is not blocked), nor while work runs
 with no wake-up armed. The one exception is a pacing stop: then you only stop ("Usage pacing"). Checks and reviews that de-risk waiting work (verification,
-cross-repo checks, a whole-change review) are dispatchable too.
+cross-repo checks, a whole-change review) are dispatchable too. A review that needs no build (a plan gate a
+reviewer runs from cards and plans only) starts as soon as it is pending, alongside builds, even while its card's
+build waits on a `depends_on` partner.
 
 Worktrees you create go under the repo's git-ignored `.claude/worktrees/<name>`, never a
 sibling checkout. Remove each once `git status --porcelain` and `git cherry origin/main

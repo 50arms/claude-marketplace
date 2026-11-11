@@ -74,7 +74,7 @@ test("the operator session runs every gate on its review grade; the builder only
 
 test("the operator session runs and re-runs the gates as gate workers, then lands the branch itself", () => {
   assert.match(gates, /The operator session runs each gate not yet `pass` \(all but `plan-design`, below\) through its own gate worker, at the gate's review grade, which the board sets: the gate instruction route answers it with its model and effort when the worker starts/);
-  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\); the operator session sends the builder the findings to fix, and lands the branch once every gate passes \("Delivery" below\)\./);
+  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\); the operator session sends the builder only the blocking findings to fix, and lands the branch once every gate passes \("Delivery" below\)\./);
   assert.match(gates, /the operator session re-runs a POST gate/);
 });
 

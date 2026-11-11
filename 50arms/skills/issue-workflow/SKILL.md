@@ -63,7 +63,7 @@ grade, which the board sets: the gate instruction route answers it with its mode
 before the builder starts; POST gates run on its pushed tip. The builder only builds, at its card's build
 grade, and a gate never changes that grade. A builder pushes its card branch, reports the tip SHA and stops.
 Gate workers are briefed by profile and card (plan-workflow "Sub-agents"); the operator session sends the
-builder the findings to fix, and lands the branch once every gate passes ("Delivery" below). Whoever runs a gate:
+builder only the blocking findings to fix, and lands the branch once every gate passes ("Delivery" below). Whoever runs a gate:
 
 1. Fetch the board's gate text through `50arms_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, by its ref number>`.
