@@ -415,7 +415,8 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = READY('ready-1')
       await $.turn.complete(TURN)
-      expect(d.stored.get(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)).toEqual({ releaseId: 'ready-1', at: expect.any(Number) })
+      // keyed by the release itself, never a session id: whichever process or id reads the file, the release is spent once
+      expect(d.stored.get(usedReleaseKey('ready-1'))).toEqual({ releaseId: 'ready-1', at: expect.any(Number) })
     })
 
     test("the store keeps the newest sessions' spent releases only", async ($, on) => {
@@ -426,7 +427,7 @@ for (const surface of SURFACES) {
       await $.turn.complete(TURN)
       const kept = [...d.stored.keys()].filter(k => k.startsWith(USED_RELEASE_PREFIX))
       expect(kept).toHaveLength(USED_RELEASE_KEEP)
-      expect(kept).toContain(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)
+      expect(kept).toContain(usedReleaseKey('ready-1'))
       expect(kept).not.toContain(`${USED_RELEASE_PREFIX}old-0`)
       expect(d.stored.has('relayCursor:not-ours')).toBe(true)
     })
@@ -668,7 +669,7 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
       await $.turn.complete(TURN)
       expect(compactRuns(d)).toEqual([])
-      expect(d.stored.get(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)).toMatchObject({ releaseId: 'ready-1' })
+      expect(d.stored.get(usedReleaseKey('ready-1'))).toMatchObject({ releaseId: 'ready-1' })
     })
 
     test('a failing /compact is told, never thrown', async ($, on) => {

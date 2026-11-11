@@ -12,7 +12,7 @@ import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeS
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_TEXTS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, BriefingKind, GitState, OwedComment, Source } from './compaction/briefing'
-import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, CLEAR_MARK_PREFIX, CLEAR_MARK_TTL_MS, ENGINE_VERSION_NOTICE, clearMarkOf, compactionClearMarkKey, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { machineRegisteredNote, registrationFailedToast, registrationOf, registrationShownNote, registrationStep } from './plan/registration'
 import { approvalRequestOf, permissionShownNote, signInShownNote } from './plan/approval'
@@ -183,6 +183,9 @@ const claimedRelease = atom({ plugin: '50arms', key: 'claimedRelease' } as const
 // true while the plugin's own compaction-by-clear runs its /clear: the conversation that opens inside it is the one to resume (a person's own /clear, or the ready loop's, is not). $.state, like the ready loop's
 // phase, so a reload of the module at the turn's end cannot lose it
 const compactionClear = atom({ plugin: '50arms', key: 'compactionClear' } as const, false)
+// whether a session start has been seen by this process: false in a NEW process (it starts with no $.state), which is what makes its first start the one that may find a predecessor's clear mark; a reload
+// of the module keeps it, and a /clear carries it
+const startSeen = atom({ plugin: '50arms', key: 'startSeen' } as const, false)
 // who is compacting, one entry per agent so overlapping compactions (parallel sub-agents crossing the one process-wide threshold together, or a main-agent compaction among them) never
 // overwrite each other. Claude Code's classic SessionStart input names no agent (2.1.299), so a `session.compact` proposal that passed enters its agent here and the `compact` restart reads the
 // entries to decide whether the MAIN agent is briefed. `main` is the main agent's entry (epoch ms of its proposal) or null. An agent's entry is `done` once core finished its compaction (the
@@ -254,6 +257,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     engineCompact: read($, engineCompact),
     claimedRelease: read($, claimedRelease),
     compactionClear: read($, compactionClear),
+    startSeen: read($, startSeen),
     compacting: read($, compacting),
     runningAgents: read($, runningAgents),
     reports: read($, reports),
@@ -309,6 +313,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, engineCompact, () => carried.engineCompact),
     update($, claimedRelease, () => carried.claimedRelease),
     update($, compactionClear, () => carried.compactionClear),
+    update($, startSeen, () => carried.startSeen),
     update($, compacting, () => carried.compacting),
     update($, runningAgents, () => carried.runningAgents),
     update($, reports, () => carried.reports),
@@ -3037,9 +3042,9 @@ async function renderStart($: any, start: NonNullable<PendingStart>): Promise<st
 
 // A conversation the plugin's own /clear opened (the ready loop's, or a compaction by clear) is fresh: it is told what a new session is told. Any other start is told by its source.
 const isFreshStart = (start: NonNullable<PendingStart>): boolean => start.loopReset === true || start.compactionClear === true
+// which resume briefing follows a start: a compaction by clear's (whatever source the new process's first start has) or a compaction's (null: a start nothing resumes)
+const briefingKindOf = (start: NonNullable<PendingStart>): BriefingKind | null => (start.compactionClear === true ? 'cleared' : start.source === 'compact' ? 'compacted' : null)
 // the dashboard event whose text a start is told (null: a start with no event text, such as a person's own /clear): the one answer for the start's text and for the line that stands for it when its reads fail
-// which resume briefing follows a start: a compaction's or a compaction by clear's (null: a start nothing resumes)
-const briefingKindOf = (start: NonNullable<PendingStart>): BriefingKind | null => (start.source === 'compact' ? 'compacted' : start.compactionClear === true ? 'cleared' : null)
 const startEventOf = (start: NonNullable<PendingStart>): DashboardEvent | null => (isFreshStart(start) ? 'session_start' : sessionEvent(start.source))
 
 // the stamp and, when there is one, the session start line: the entries a hook adds to the model's context.
@@ -3531,9 +3536,10 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   await update($, diskMeasured, () => null)
   if (!restart.briefsMain) return below
   const loopResetting = (await read($, readyLoop))?.phase === 'resetting'
-  const clearedForCompaction = e.source === 'clear' && (await read($, compactionClear))
-  // the mark is for this one start
-  if (clearedForCompaction) await update($, compactionClear, () => false)
+  // a process's first start is read after the carried values are back, so a /clear (which carries it) is never one
+  const firstOfProcess = !(await read($, startSeen))
+  await update($, startSeen, () => true)
+  const clearedForCompaction = await takeCompactionClearMark($, e, firstOfProcess)
   const start: NonNullable<PendingStart> = {
     sessionId: e.session_id,
     source: e.source,
@@ -4251,9 +4257,11 @@ async function armSubAgents($: any, file: ControlFile): Promise<void> {
 
 // The file's unexpired release, if the plugin has not spent it: spent now (kept in $.store, so one release is acted on once however many turns follow) and returned.
 async function spendReadyRelease($: any, file: ControlFile): Promise<string | null> {
-  // keyed by the id the relay names the control file by (the dashboard session id, which a /clear does not change: `mcpSessionId`), never the engine's, which the clear itself moves: a new process after a
-  // clear has an empty $.state and a new engine id, and still finds the record of the release the relay's file may keep holding
-  const key = usedReleaseKey((await mcpSessionId($, String(await $.session.id()))).id)
+  // the record is keyed by the release itself, never by a session or engine id: a clear that ends the process leaves a new process with a new engine id and an empty $.state, whose relay names its file by its own
+  // id, while the dashboard keeps sending the same release until it expires. Whatever id names the file, a release this store has seen spent is spent.
+  const waiting = file.kind === 'control' && file.control !== null ? file.control.releaseId : null
+  if (waiting === null) return null
+  const key = usedReleaseKey(waiting)
   const now = await $.clock.now()
   const releaseId = readyRelease(file, spentReleaseId(await storeOp($, { op: 'get', key })), now)
   if (releaseId === null) return null
@@ -4297,23 +4305,51 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
     if (spent === null) clearInProgress = false
   }
   if (spent === null) return
-  detach($, 'Compaction clear', clearForCompaction($))
+  detach($, 'Compaction clear', clearForCompaction($, spent))
 }
 
 const sessionIsIdleForClear = async ($: any): Promise<boolean> => (await readyIsIdle($)) && (await read($, readyShells)).length === 0
 
-// the plugin's own clear for a compaction, run with `clearInProgress` already taken by startReadyCompaction and given back here: the session start the engine raises while it runs is the one
-// `compactionClear` marks (onClassicSessionStart). A failure is one line to the person (detach), and the dashboard re-asks once the release has expired.
-async function clearForCompaction($: any): Promise<void> {
+// the plugin's own clear for a compaction, run with `clearInProgress` already taken by startReadyCompaction and given back here. The start of the conversation it opens must resume, so a mark is made first: in $.state
+// (the clear's own start, in this process) and in $.store (a clear that ends the process: the new process's first start takes it, takeCompactionClearMark). A failure is one line to the person (detach), and the
+// dashboard re-asks once the release has expired.
+async function clearForCompaction($: any, releaseId: string): Promise<void> {
+  const cwd = await $.session.cwd()
+  const now = await $.clock.now()
+  const key = compactionClearMarkKey(releaseId)
   await update($, compactionClear, () => true)
+  if (typeof cwd === 'string') await storeOp($, { op: 'set', key, value: { releaseId, cwd, at: now, until: now + CLEAR_MARK_TTL_MS } })
   try {
     const { failure } = await clearCommand($)
     if (failure !== null) throw new Error(failure)
   } finally {
     clearInProgress = false
-    // a clear that did not happen raised no start to consume the mark
+    // a clear that did not happen raised no start to take the marks; one that did has them taken already
     await update($, compactionClear, () => false)
+    await storeOp($, { op: 'delete', key })
   }
+}
+
+// a start in the folder the session was in, or one of its sub-folders either way (the session's folder and a start event's can differ by a sub-folder)
+const sameFolder = (a: string, b: string): boolean => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
+
+// The marks of a compaction clear for the start `e` of a conversation: its own in $.state (a /clear start in the process that ran the clear) and the $.store's (the clear's own start, or the first start of a new process, any
+// source: the clear ended the process that made the mark). A store mark is taken only for a start in the folder it was made in, and an expired one is dropped; whatever is taken is gone, so one mark resumes one start.
+async function takeCompactionClearMark($: any, e: any, firstOfProcess: boolean): Promise<boolean> {
+  const own = e.source === 'clear' && (await read($, compactionClear))
+  if (own) await update($, compactionClear, () => false)
+  if (!own && !firstOfProcess) return false
+  const cwd = typeof e.cwd === 'string' ? e.cwd : null
+  const now = await $.clock.now()
+  let taken = false
+  for (const key of await storeOp($, { op: 'keys' })) {
+    if (!key.startsWith(CLEAR_MARK_PREFIX)) continue
+    const mark = clearMarkOf(await storeOp($, { op: 'get', key }))
+    if (mark !== null && mark.until > now && !(cwd !== null && sameFolder(mark.cwd, cwd))) continue
+    await storeOp($, { op: 'delete', key })
+    if (mark !== null && mark.until > now) taken = true
+  }
+  return own || taken
 }
 
 // The agent's ready is written to the control file by the relay, after its tool call returned, so it can land after the turn that made it already ended (an idle

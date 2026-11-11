@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { CLEAR_RESUME_OPENING, CLEAR_RESUME_PROCEDURE, briefingText } from '../hooks/compaction/briefing'
-import { parseControlFile } from '../hooks/compaction/control'
+import { compactionClearMarkKey, parseControlFile } from '../hooks/compaction/control'
 import { relayLine } from '../hooks/relay/delivery'
 import { CLEARED_SESSION_ID, CLOCK_START, EVENT_TEXT, OWN_SESSION, RECORD_PATH, SESSION_ID, HOME_DIR, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -163,7 +163,7 @@ for (const surface of SURFACES) {
       expect(d.restartCalls).toHaveLength(0)
     })
 
-    test("a person's own /clear after a compaction clear is only a clear: no second resume prompt, and the module flag did not outlive the first", async ($, on) => {
+    test("a person's own /clear after a compaction clear is only a clear: no second resume prompt", async ($, on) => {
       const d = await started($, on)
       let release = () => {}
       d.world.clearHold = new Promise<void>(resolve => (release = resolve))
@@ -218,29 +218,136 @@ for (const surface of SURFACES) {
       expect(prompt).toContain(CLEAR_RESUME_OPENING)
     })
 
-    // the clear ends the process in the desktop app: the next conversation runs in a NEW process, with an empty $.state and the engine's new id, while the relay's file (named by the dashboard session id) may still hold the release
-    test('a new process with an empty $.state and a new engine id does not act on the release again, and a new release clears again', async ($, on) => {
-      const d = await started($, on)
-      // the engine id is the dashboard session id until a clear changes it (the relay names its files by the id the MCP server booted with)
-      d.world.sessionId = SESSION_ID
-      const relayFile = `${HOME_DIR}/.config/danxbot/compaction/${SESSION_ID}.json`
-      d.world.files[relayFile] = READY('clear', 'r1', SESSION_ID)
-      await $.turn.complete(TURN)
-      await d.clock.settle()
-      expect(d.clearRuns).toHaveLength(1)
-      // the new process: nothing of the old one's $.state, a new engine id (the kit's /clear moved it), the same file with the same unexpired release
+    // The clear ends the process in the desktop app: the next conversation runs in a NEW process. It has an empty $.state, a new engine id that its `session.start` makes the boot id, and the relay of that process names its file
+    // by its own session id; the dashboard keeps sending the same release until it expires. Whichever id the file sits under, the spent record (keyed by the release itself) holds the release spent.
+    for (const [where, fileAt] of [
+      ['the dashboard session id', () => SESSION_ID],
+      ['the new engine id', (d: any) => d.world.sessionId],
+    ] as const) {
+      test(`a new process with an empty $.state whose relay file is under ${where} does not act on the release again`, async ($, on) => {
+        const d = await started($, on)
+        d.world.sessionId = SESSION_ID
+        const relayFile = (id: string) => `${HOME_DIR}/.config/danxbot/compaction/${id}.json`
+        d.world.files[relayFile(SESSION_ID)] = READY('clear', 'r1', SESSION_ID)
+        await $.turn.complete(TURN)
+        await d.clock.settle()
+        expect(d.clearRuns).toHaveLength(1)
+        // the new process, in the engine's order: an empty $.state, then `session.start` under the new id, then the relay's file for it holding the same unexpired release
+        d.wipeState()
+        expect(d.world.sessionId).not.toBe(SESSION_ID)
+        await $.session.start({ cwd: '/work', surface, isInteractive: true } as any)
+        const id = fileAt(d)
+        d.world.files[relayFile(id)] = READY('clear', 'r1', id)
+        await $.turn.complete(TURN)
+        await d.clock.settle()
+        expect(d.clearRuns).toHaveLength(1)
+        // a new release is a new clear (only when the file is the one this process reads)
+        if (id === d.world.sessionId) {
+          d.world.files[relayFile(id)] = READY('clear', 'r2', id)
+          await $.turn.complete(TURN)
+          await d.clock.settle()
+          expect(d.clearRuns).toHaveLength(2)
+        }
+      })
+    }
+
+    // The mark of a clear in progress outlives the process the clear ends: it is a $.store record keyed by the release, with the folder and an expiry, and the new process's first start (any source) takes it once.
+    const MARK_TTL = 10 * 60_000
+    const mark = (over: Record<string, unknown> = {}) => ({ releaseId: 'r1', cwd: '/work', at: CLOCK_START, until: CLOCK_START + MARK_TTL, ...over })
+    const NEW_PROCESS_ID = 'sess-new-process'
+    async function newProcessStarts($: any, d: any, source: string) {
       d.wipeState()
-      expect(d.world.sessionId).not.toBe(SESSION_ID)
+      d.world.sessionId = NEW_PROCESS_ID
+      await $.session.start({ cwd: '/work', surface, isInteractive: true } as any)
+      await $.classic.SessionStart({ source, cwd: '/work', session_id: NEW_PROCESS_ID, transcript_path: '/work/new.jsonl' })
+      await d.clock.settle()
+    }
+
+    for (const source of ['startup', 'resume', 'clear', 'compact']) {
+      test(`a new process whose predecessor left the clear mark: its first start (${source}) gets exactly one cleared resume prompt, and a second start none`, async ($, on) => {
+        const d = await started($, on)
+        d.stored.set(compactionClearMarkKey('r1'), mark())
+        await newProcessStarts($, d, source)
+        expect(resumes(d)).toHaveLength(1)
+        expect(resumes(d)[0]).toContain(CLEAR_RESUME_PROCEDURE)
+        expect(d.stored.has(compactionClearMarkKey('r1'))).toBe(false)
+        await $.classic.SessionStart({ source: 'resume', cwd: '/work', session_id: NEW_PROCESS_ID, transcript_path: '/work/new.jsonl' })
+        await d.clock.settle()
+        expect(resumes(d)).toHaveLength(1)
+      })
+    }
+
+    test('a mark that has expired, or one left for another folder, is not a resume', async ($, on) => {
+      const d = await started($, on)
+      d.stored.set(compactionClearMarkKey('old'), mark({ releaseId: 'old', until: CLOCK_START - 1 }))
+      d.stored.set(compactionClearMarkKey('elsewhere'), mark({ releaseId: 'elsewhere', cwd: '/another/folder' }))
+      await newProcessStarts($, d, 'startup')
+      expect(resumes(d)).toHaveLength(0)
+    })
+
+    test('a start that is not the new process first one, and not the clear itself, leaves the mark alone', async ($, on) => {
+      const d = await started($, on)
+      // this process has started already: a later resume start is none of a mark's business (the mark is a predecessor's, left after it)
+      await $.classic.SessionStart({ source: 'startup', cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl' })
+      d.stored.set(compactionClearMarkKey('r1'), mark())
+      await $.classic.SessionStart({ source: 'resume', cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl' })
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(0)
+      expect(d.stored.has(compactionClearMarkKey('r1'))).toBe(true)
+    })
+
+    test('the mark is written before the clear and gone once its start has taken it', async ($, on) => {
+      const d = await started($, on)
+      let release = () => {}
+      d.world.clearHold = new Promise<void>(resolve => (release = resolve))
+      d.world.files[CONTROL_FILE] = READY('clear', 'r1')
       await $.turn.complete(TURN)
       await d.clock.settle()
-      expect(d.clearRuns).toHaveLength(1)
-      d.world.files[relayFile] = READY('clear', 'r2', SESSION_ID)
+      expect(d.stored.get(compactionClearMarkKey('r1'))).toMatchObject({ releaseId: 'r1', cwd: '/work/repo', until: expect.any(Number) })
+      await engineClearsDuring($, d, release)
+      expect(d.stored.has(compactionClearMarkKey('r1'))).toBe(false)
+    })
+
+    test('a clear that did not happen leaves no mark behind', async ($, on) => {
+      const d = await started($, on)
+      d.world.clearFails = 'no'
+      d.world.files[CONTROL_FILE] = READY('clear', 'r9')
       await $.turn.complete(TURN)
       await d.clock.settle()
-      expect(d.clearRuns).toHaveLength(2)
+      expect(d.stored.has(compactionClearMarkKey('r9'))).toBe(false)
     })
 
     // a plugin reload keeps $.state and drops the module's variables, so the mark of a clear in progress is a $.state value: a conversation that opens while it is set is the one to resume
+    // a start that is not a /clear is never the plugin's clear's start, so it leaves the mark for the clear's own
+    test('a resume start while the plugin clear runs gets no cleared resume and leaves the mark for the clear start', async ($, on) => {
+      const d = await started($, on)
+      d.seedState('compactionClear', true)
+      await $.classic.SessionStart({ source: 'resume', cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl' })
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(0)
+      d.world.sessionId = CLEARED_SESSION_ID
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID, transcript_path: '/work/cleared.jsonl' })
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(1)
+    })
+
+    // the mark is for one start: a person's own /clear that lands first takes it, and the plugin clear's start after it finds none
+    test("a person's own /clear start that lands while the plugin clear is held takes the mark once: the clear's own start is no second resume", async ($, on) => {
+      const d = await started($, on)
+      let release = () => {}
+      d.world.clearHold = new Promise<void>(resolve => (release = resolve))
+      d.world.files[CONTROL_FILE] = READY('clear')
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      const person = `${CLEARED_SESSION_ID}-person`
+      d.world.sessionId = person
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: person, transcript_path: '/work/person.jsonl' })
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(1)
+      await engineClearsDuring($, d, release)
+      expect(resumes(d)).toHaveLength(1)
+    })
+
     test("the mark of a compaction clear in progress lives in $.state: a clear start that finds it set is resumed", async ($, on) => {
       const d = await started($, on)
       d.seedState('compactionClear', true)
@@ -250,7 +357,7 @@ for (const surface of SURFACES) {
       expect(resumes(d)).toHaveLength(1)
     })
 
-    test('the release a clear acted on is not acted on again by the conversation it opened (the relay names its file by the dashboard session id), and a new release clears again', async ($, on) => {
+    test('in the same process the conversation a clear opened does not clear again for the release the clear acted on, and a new release clears again', async ($, on) => {
       const d = await started($, on)
       let release = () => {}
       d.world.clearHold = new Promise<void>(resolve => (release = resolve))
