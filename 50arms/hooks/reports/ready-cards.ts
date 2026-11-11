@@ -5,7 +5,7 @@
 
 export type ReadyCard = { id: string; title: string }
 
-// CP-103 (DX-7127): a card whose plan review can run now (the dashboard's `review_runnable`), named with the pending gate (`next_pre_gate`).
+// A card whose plan review can run now (the dashboard's `review_runnable`), named with the pending gate (`next_pre_gate`).
 export type ReviewableCard = { id: string; title: string; gate: string }
 
 // A card row as `isReadyCard` judges it, after `parseCardRow` proved every field present and well typed.
