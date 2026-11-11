@@ -240,6 +240,10 @@ declare module 'claude-code' {
       engineCompact: 'unread' | 'runs' | 'older' | 'unreadable'
       // the release the plugin claimed to start a compaction with (one compare-and-set, so a ready starts once)
       claimedRelease: string | null
+      // a compaction clear is running, so the clear start it raises resumes the cleared conversation (carried across the clear; a reload keeps it).
+      compactionClear: boolean
+      // this process has already seen a session start; a /clear carries it, so only a new process's first start reads as one.
+      startSeen: boolean
       // who is compacting, one entry per agent (see CompactingState).
       compacting: CompactingState
       // the reports' memory (see ReportState).
