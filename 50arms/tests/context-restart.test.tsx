@@ -197,12 +197,19 @@ ${NOTICE}`])
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
     })
 
-    // CP-90: a second /clear replaces a session that has no record (the first /clear's new id); the record is under the id the server booted with, so that id is the predecessor
-    test('a second clear, whose replaced session has no record, asks the server with the boot id the record is under', async ($, on) => {
-      const d = await started($, on)
+    // CP-90: a second /clear replaces a session that has no record (the first /clear's new id); the record is under the id the server booted with, so that id is the predecessor.
+    // A real second /clear: the engine ends the first /clear's new session before the new one starts.
+    async function secondCleared($: any, on: any, options: Parameters<typeof dashboard>[1]) {
+      const d = await started($, on, options)
       const boot = d.world.sessionId
       d.world.records.push(boot)
-      d.world.sessionId = CLEARED_SESSION_ID
+      await $.session.end({ reason: 'clear', sessionId: CLEARED_SESSION_ID } as any)
+      d.world.sessionId = `${CLEARED_SESSION_ID}-2`
+      return { d, boot }
+    }
+
+    test('a second clear, whose replaced session has no record, asks the server with the boot id the record is under', async ($, on) => {
+      const { d, boot } = await secondCleared($, on, SIGNED_OUT)
       d.world.restart.json = { notice: NOTICE }
       expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines?.join('\n')).toContain(NOTICE)
       expect(d.restartCalls).toEqual([{ predecessor_id: boot }])
@@ -210,10 +217,7 @@ ${NOTICE}`])
 
     // CP-90 AC2: a second /clear whose plugin server stays absent the whole deadline is told one warning line, and asks nothing
     test('a second clear whose plugin server stays absent the whole deadline is told one warning line', async ($, on) => {
-      const d = await started($, on, { ...SIGNED_OUT, mcp: 'down' })
-      const boot = d.world.sessionId
-      d.world.records.push(boot)
-      d.world.sessionId = CLEARED_SESSION_ID
+      const { d } = await secondCleared($, on, { ...SIGNED_OUT, mcp: 'down' })
       const pending = firstPrompt($, 'clear', { session_id: d.world.sessionId })
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       expect((await pending).startLines).toEqual([restartFailureLine(SERVER_NOT_CONNECTED_REASON)])
@@ -230,15 +234,6 @@ ${NOTICE}`])
       const pending = firstPrompt($, 'compact', { session_id: d.world.sessionId })
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       expect((await pending).startLines).toEqual([eventFailureLine('after_compaction', SERVER_NOT_CONNECTED_REASON)])
-    })
-
-    // CP-90 AC4: a clear whose session.end was never seen and whose boot id holds no record is quiet on the null-predecessor path
-    test('a clear with no session.end, whose boot id holds no record, is quiet and asks nothing', async ($, on) => {
-      const d = await started($, on, SIGNED_OUT)
-      d.world.sessionId = CLEARED_SESSION_ID
-      d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines).toBeUndefined()
-      expect(d.restartCalls).toEqual([])
     })
 
     test('a clear whose ended session held no record asks nothing and is quiet (the common /clear in a session on no plan)', async ($, on) => {

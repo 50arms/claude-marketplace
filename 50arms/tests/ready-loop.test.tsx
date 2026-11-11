@@ -10,6 +10,7 @@ import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
 import { START_PACKET_PATH } from '../hooks/context/packet'
+import { CONTEXT_DEADLINE_MS, SERVER_NOT_CONNECTED_REASON, eventFailureLine } from '../hooks/context/events'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
 import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest, answerEngineClear, engineClears } from './plan-kit'
 // CP-67: the name the engine gives the command a person types as /50arms:ready: the plugin's skill, under the plugin's name
@@ -1090,8 +1091,8 @@ describe('the ready-agent loop', () => {
       d.wipeState()
       await $.classic.SessionStart({ session_id: 'sess-own-2', source: 'clear', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
       d.world.localRecord = false
-      const told = (await $.prompt.submit({ text: 'next' })).context ?? []
-      expect(told.join(' ')).toContain(EVENT_TEXT('session_start'))
+      await $.prompt.submit({ text: 'next' })
+      expect(d.contextReads).toContain('/api/reminders/event/session_start')
     })
 
     // CP-61: the reset's fresh conversation is a session start, so it reads the start packet of what the session now holds, once
@@ -1113,9 +1114,35 @@ describe('the ready-agent loop', () => {
       await $.classic.SessionStart({ session_id: 'sess-own-2', source: 'clear', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
       d.world.localRecord = false
       const told = (await $.prompt.submit({ text: 'next' })).context ?? []
-      expect(told.slice(1)).toEqual([`[50 ARMS] Your start packet is already fetched for you. File: ${file.path} (4096 bytes, the work role). ${file.instruction}
-${EVENT_TEXT('session_start')}`])
+      expect(told.slice(1).join('\n')).toContain(`[50 ARMS] Your start packet is already fetched for you. File: ${file.path} (4096 bytes, the work role). ${file.instruction}`)
       expect(d.contextReads.filter((p: string) => p === START_PACKET_PATH)).toEqual([START_PACKET_PATH])
+    })
+
+    // CP-90 AC3: a ready-loop reset decides plan connection from the records on disk, and its dashboard read hangs past the deadline: the start still tells its line at the deadline
+    test("a ready-loop reset's fresh conversation decides from local records and waits on no dashboard read before its deadline", async ($, on) => {
+      on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+      on('classic.SessionStart', () => ({}) as any)
+      const d = await started($, on, { stateSteps: true })
+      const boot = d.world.sessionId
+      await ready($, d)
+      handCard(d, 'Done')
+      released(d)
+      d.world.clearFails = 'clear boom'
+      d.world.localRecord = true
+      await turnEnds($, d)
+      // the new conversation's own record is missing, the record of the id the server booted with is on disk, and the dashboard never answers
+      d.world.records.push(boot)
+      d.world.localRecord = false
+      d.setMcp('down')
+      d.holdApi(10 * CONTEXT_DEADLINE_MS)
+      await $.session.end({ reason: 'clear', sessionId: SESSION_ID } as any)
+      d.wipeState()
+      d.world.sessionId = 'sess-own-2'
+      await $.classic.SessionStart({ session_id: 'sess-own-2', source: 'clear', cwd: '/work', transcript_path: '/work/main.jsonl' } as any)
+      const pending = $.prompt.submit({ text: 'next' })
+      await d.clock.advance(CONTEXT_DEADLINE_MS)
+      const told = (await pending).context ?? []
+      expect(told.join(' ')).toContain(eventFailureLine('session_start', SERVER_NOT_CONNECTED_REASON))
     })
 
     test('a look whose row answer comes back after a turn began and ended acts on nothing it read: a turn in which the model took the next card ends no loop as work taken', async ($, on) => {

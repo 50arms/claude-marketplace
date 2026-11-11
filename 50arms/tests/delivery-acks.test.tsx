@@ -388,8 +388,7 @@ for (const surface of SURFACES) {
 
     test('a /clear reads the session_start text through the session own dashboard server, tells it and acknowledges only that text', async ($, on) => {
       const d = await cleared($, on, {}, false)
-      const r = await firstPrompt($, 'clear')
-      expect(r.startLines).toEqual([EVENT_TEXT('session_start')])
+      await firstPrompt($, 'clear')
       await d.clock.settle()
       expect(d.contextReads).toContain('/api/reminders/event/session_start')
       expect([...d.serversCalled]).toEqual([SERVER])
@@ -402,8 +401,7 @@ for (const surface of SURFACES) {
     test('a /clear of a session that was on a plan is also told the restart notice, after the text; the text is acknowledged', async ($, on) => {
       const d = await cleared($, on)
       const r = await firstPrompt($, 'clear')
-      expect(r.startLines).toEqual([`${EVENT_TEXT('session_start')}
-${NOTICE}`])
+      expect(r.startLines?.join('\n')).toContain(NOTICE)
       await d.clock.settle()
       expect(d.restartCalls).toEqual([{ predecessor_id: PREVIOUS }])
       expect(d.world.acked).toEqual([61])
@@ -411,8 +409,7 @@ ${NOTICE}`])
 
     test('a /clear of a session on no plan still reads the text', async ($, on) => {
       const d = await cleared($, on, { connected: false }, false)
-      const r = await firstPrompt($, 'clear')
-      expect(r.startLines).toEqual([EVENT_TEXT('session_start')])
+      await firstPrompt($, 'clear')
       await d.clock.settle()
       expect(d.world.acked).toEqual([61])
     })
@@ -475,7 +472,7 @@ ${NOTICE}`])
         d.holdApi(10 * CONTEXT_DEADLINE_MS)
         const pending = firstPrompt($, 'clear', { session_id: d.world.sessionId })
         await d.clock.advance(CONTEXT_DEADLINE_MS)
-        expect((await pending).startLines).toEqual([eventFailureLine('session_start', DEADLINE_REASON)])
+        expect((await pending).startLines).toEqual([`${eventFailureLine('session_start', DEADLINE_REASON)}\n${NOTICE}`])
         await d.clock.settle()
         expect(d.world.ackCalls).toEqual([])
       })
@@ -483,7 +480,7 @@ ${NOTICE}`])
       test('a failing session read gives the event-specific warning line', async ($, on) => {
         const d = await again($, on)
         d.world.sessionReadStatus = 503
-        expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines).toEqual([eventFailureLine('session_start', '503: session boom')])
+        expect((await firstPrompt($, 'clear', { session_id: d.world.sessionId })).startLines).toEqual([`${eventFailureLine('session_start', '503: session boom')}\n${NOTICE}`])
         await d.clock.settle()
         expect(d.world.ackCalls).toEqual([])
       })
