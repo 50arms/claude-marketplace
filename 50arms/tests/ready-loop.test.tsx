@@ -1746,6 +1746,8 @@ describe('the ready-agent loop', () => {
       await pastStale(d)
       expect(d.world.permissionAsks).toBe(2)
       expect(d.toasts.filter((t: string) => t.includes(APPROVAL_URL))).toEqual([])
+      const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       await answersLate(d, ask.release)
     })
 
@@ -1759,6 +1761,8 @@ describe('the ready-agent loop', () => {
       d.world.permissionAskHold = null
       await pastStale(d)
       expect(d.toasts.filter((t: string) => t.includes(APPROVAL_URL))).toEqual([])
+      const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       d.world.permissionAskDeny = 'request_permission refused'
       await answersLate(d, ask.release)
     })

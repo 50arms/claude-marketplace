@@ -353,7 +353,7 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(45_000)
       await d.clock.settle()
-      expect(d.toasts).not.toContain('Signed in')
+      expect(d.toasts).toEqual([])
       expect(await texts(band)).not.toContain('signed out')
       expect(await bandLabelOf(band)).toContain('PLAN-23')
       expect(await buttons(band)).not.toContain('Sign in')
@@ -445,7 +445,9 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(45_000)
       await d.clock.settle()
+      expect(d.toasts).toEqual([])
       expect(await texts(band)).not.toContain('signed out')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
     })
 
     // DX-4548: a request stays open while its session lives, so the wait has no round limit
@@ -464,7 +466,9 @@ for (const surface of SURFACES) {
       d.world.signIn.approved = true
       await d.clock.advance(5_000)
       await d.clock.settle()
+      expect(d.toasts).toEqual([])
       expect(await texts(band)).not.toContain('signed out')
+      expect(await bandLabelOf(band)).toContain('PLAN-23')
     })
 
     test('a call that throws is one toast, and the key is released', async ($, on) => {

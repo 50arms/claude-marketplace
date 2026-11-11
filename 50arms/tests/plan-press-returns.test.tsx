@@ -36,7 +36,7 @@ for (const surface of SURFACES) {
       const press = band.press({ key: 'revoke' })
       await d.clock.advance(1_000)
       await press
-      expect(d.toasts.filter((t: string) => t.startsWith('Revoked'))).toEqual([])
+      expect(d.toasts).toEqual([])
       expect(await text(band)).toContain('50 Arms: access revoked by dana')
       expect(d.relay.told).toHaveLength(1)
       d.holdApi(0)
