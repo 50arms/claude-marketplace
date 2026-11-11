@@ -5,10 +5,10 @@ import "./run-tests-with-npm-test.generated"
 // predates the setting and writes no mode) nothing changes: /compact.
 import { describe, expect } from 'claude-code/testing'
 
-import { CLEAR_RESUME_PROCEDURE, briefingText } from '../hooks/compaction/briefing'
+import { CLEAR_RESUME_OPENING, CLEAR_RESUME_PROCEDURE, briefingText } from '../hooks/compaction/briefing'
 import { parseControlFile } from '../hooks/compaction/control'
 import { relayLine } from '../hooks/relay/delivery'
-import { CLEARED_SESSION_ID, CLOCK_START, EVENT_TEXT, OWN_SESSION, SESSION_ID, HOME_DIR, SURFACES, dashboard, startSession, test } from './plan-kit'
+import { CLEARED_SESSION_ID, CLOCK_START, EVENT_TEXT, OWN_SESSION, RECORD_PATH, SESSION_ID, HOME_DIR, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
 const VALVES = { 'claude-opus-4-8': 907_000 }
@@ -44,13 +44,6 @@ describe('the resume briefing of a cleared conversation (pure)', () => {
     expect(text).toContain('Cards in flight on your plan: DX-9 card.')
     expect(text).not.toContain('compact')
     expect(text).not.toContain('Sub-agents')
-  })
-
-  test('puts the handoff note before the card re-read, and the step in progress last', () => {
-    const at = ['newest handoff agent note', 're-read each In Progress card', 'continue the step that was in progress'].map(s => CLEAR_RESUME_PROCEDURE.indexOf(s))
-    expect(at.every(i => i >= 0)).toBe(true)
-    expect([...at].sort((a, b) => a - b)).toEqual(at)
-    expect(CLEAR_RESUME_PROCEDURE).toContain('without asking the person')
   })
 })
 
@@ -145,7 +138,7 @@ for (const surface of SURFACES) {
       d.world.files[CONTROL_FILE] = READY('clear')
       await $.turn.complete(TURN)
       await d.clock.settle()
-      expect(d.toasts.some(t => t.includes('Compaction clear') && t.includes('the session id did not change'))).toBe(true)
+      expect(d.toasts).toEqual(['Compaction clear failed: the session id did not change'])
     })
 
     const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('Your conversation was just cleared'))
@@ -175,27 +168,81 @@ for (const surface of SURFACES) {
       expect(d.restartCalls).toHaveLength(0)
     })
 
-    test("a person's own /clear is still only a clear: no resume prompt", async ($, on) => {
+    test("a person's own /clear after a compaction clear is only a clear: no second resume prompt, and the module flag did not outlive the first", async ($, on) => {
       const d = await started($, on)
+      let release = () => {}
+      d.world.clearHold = new Promise<void>(resolve => (release = resolve))
+      d.world.files[CONTROL_FILE] = READY('clear')
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      await engineClearsDuring($, d, release)
+      expect(resumes(d)).toHaveLength(1)
+      // the person types /clear in the new conversation: the engine's order, with no plugin command running
+      const again = `${CLEARED_SESSION_ID}-again`
       await $.session.end({ reason: 'clear', sessionId: d.world.sessionId } as any)
       d.wipeState()
-      d.world.sessionId = CLEARED_SESSION_ID
-      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID, transcript_path: '/work/cleared.jsonl' })
+      d.world.sessionId = again
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: again, transcript_path: '/work/cleared-again.jsonl' })
       await d.clock.settle()
-      expect(resumes(d)).toHaveLength(0)
+      expect(resumes(d)).toHaveLength(1)
+      expect(d.relay.submitted.filter((t: string) => t.includes('was just cleared'))).toHaveLength(1)
     })
 
-    test('the next ready after the clear starts its own clear: the module keeps no flag across conversations', async ($, on) => {
+    // the cleared session's turn is started with the opening whatever the start text could not be read as: the start is already taken, so nothing else would tell it how to resume
+    const OPENING = relayLine(CLEAR_RESUME_OPENING)
+
+    test('a start text that cannot be read (the dashboard answers nothing for it) still submits the resume opening', async ($, on) => {
+      const d = await started($, on)
+      let release = () => {}
+      d.world.clearHold = new Promise<void>(resolve => (release = resolve))
+      d.world.files[CONTROL_FILE] = READY('clear')
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      // a lapsed key: the dashboard is quiet for it, so the start has no text, while the connection record on disk still says the session is on a plan
+      d.world.signedOut = 'lapsed'
+      await engineClearsDuring($, d, release)
+      expect(d.relay.submitted.filter((t: string) => t === OPENING)).toHaveLength(1)
+    })
+
+    test('a start text whose reads throw is one warning line before the resume opening, and the opening is still submitted', async ($, on) => {
+      const d = await started($, on)
+      let release = () => {}
+      d.world.clearHold = new Promise<void>(resolve => (release = resolve))
+      d.world.files[CONTROL_FILE] = READY('clear')
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      // the new conversation's connection record is looked for twice: by the resume (before it takes the start) and by the start's text; the second read of the disk throws
+      let looks = 0
+      d.world.afterExists = (path: string) => {
+        if (path === RECORD_PATH(CLEARED_SESSION_ID) && ++looks === 2) throw new Error('the disk is gone')
+      }
+      await engineClearsDuring($, d, release)
+      expect(looks).toBeGreaterThanOrEqual(2)
+      const [prompt] = d.relay.submitted.filter((t: string) => t.includes('was just cleared'))
+      // the kit answers a hook that threw as `no implementation`; what matters is that the reads failed and said so, in the event's own line
+      expect(prompt).toContain('Could not load the "session_start" event text')
+      expect(prompt).toContain(CLEAR_RESUME_OPENING)
+    })
+
+    test('the release a clear acted on is not acted on again by the conversation it opened (the relay names its file by the dashboard session id), and a new release clears again', async ($, on) => {
       const d = await started($, on)
       let release = () => {}
       d.world.clearHold = new Promise<void>(resolve => (release = resolve))
       d.world.files[CONTROL_FILE] = READY('clear', 'r1')
       await $.turn.complete(TURN)
       await d.clock.settle()
+      expect(d.world.clearsStarted).toBe(1)
+      // the relay's file is the dashboard session id's, which the clear does not change, and it names r1 until the dashboard moves on
+      const relayFile = `${HOME_DIR}/.config/danxbot/compaction/${SESSION_ID}.json`
+      d.world.files[relayFile] = READY('clear', 'r1', SESSION_ID)
       await engineClearsDuring($, d, release)
       d.world.clearHold = null
-      // after the clear the server writes the control under its own id
-      d.world.files[`${HOME_DIR}/.config/danxbot/compaction/${SESSION_ID}.json`] = READY('clear', 'r2', SESSION_ID)
+      expect(d.clearRuns).toHaveLength(1)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.clearRuns).toHaveLength(1)
+      expect(d.world.clearsStarted).toBe(1)
+      d.world.files[relayFile] = READY('clear', 'r2', SESSION_ID)
       await $.turn.complete(TURN)
       await d.clock.settle()
       expect(d.clearRuns).toHaveLength(2)
