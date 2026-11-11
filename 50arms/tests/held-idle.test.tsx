@@ -107,7 +107,7 @@ for (const surface of SURFACES) {
 
     test('a failed detail read allows the stop with one line and leaves the ready-cards check working', async ($, on) => {
       const d = await started($, on)
-      d.world.readyRows[BOARD] = [{ id: 'DX-9', type: 'Story', title: 'Ready', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0 }]
+      d.world.readyRows[BOARD] = [{ id: 'DX-9', type: 'Story', title: 'Ready', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, review_runnable: false, next_pre_gate: null }]
       d.world.reportReplies[`GET ${DETAIL}`] = { status: 404, body: { error: 'Not found' } }
       expect((await $.classic.Stop(STOP)).block).toBe(blockReason([{ id: 'DX-9', title: 'Ready' }]))
       await d.clock.settle()
@@ -126,7 +126,7 @@ for (const surface of SURFACES) {
     test('idle held cards and ready cards ride the one block', async ($, on) => {
       const d = await started($, on)
       d.world.heldRows = [held('DX-1', null)]
-      d.world.readyRows[BOARD] = [{ id: 'DX-9', type: 'Story', title: 'Ready', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0 }]
+      d.world.readyRows[BOARD] = [{ id: 'DX-9', type: 'Story', title: 'Ready', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, review_runnable: false, next_pre_gate: null }]
       expect((await $.classic.Stop(STOP)).block).toBe(`${reason('DX-1')}\n\n${blockReason([{ id: 'DX-9', title: 'Ready' }])}`)
     })
   })
