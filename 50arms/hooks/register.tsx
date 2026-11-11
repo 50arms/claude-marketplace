@@ -10,7 +10,7 @@ import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
-import { COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
+import { CLEAR_RESUME_OPENING, CLEAR_RESUME_PROCEDURE, COMPACTING_NOTE_TTL_MS, RESUME_OPENING, RESUME_PROCEDURE, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from './compaction/briefing'
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
@@ -2560,13 +2560,9 @@ async function resetSession($: any, token: LookToken, sessionId: string, release
   }
 }
 
-async function runReset($: any, sessionId: string, releaseId: string): Promise<boolean> {
-  const goesOn = async (): Promise<boolean> => (await read($, readyLoop)) !== null && (await readyIsIdle($)) && (await read($, readyShells)).length === 0
-  if (!(await goesOn())) {
-    if ((await read($, readyShells)).length > 0) await tellReadyOnce($, READY_SHELL_HOLDS_RESET)
-    return false
-  }
-  await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'resetting', rejoining: true }))
+// Claude Code's own /clear, run by the plugin: the ready loop's released clear and a compaction by clear are both this one command. A /clear proves itself by the session's id changing: `refused` is the
+// engine's reason when it threw, `failure` is why it did not clear (the refusal, or an id that stayed), null when it cleared.
+async function clearCommand($: any): Promise<{ refused: string | null; failure: string | null }> {
   const before = await $.session.id()
   let refused: string | null = null
   try {
@@ -2574,11 +2570,21 @@ async function runReset($: any, sessionId: string, releaseId: string): Promise<b
   } catch (err: any) {
     refused = errMessage(err)
   }
+  return { refused, failure: refused ?? (before === (await $.session.id()) ? 'the session id did not change' : null) }
+}
+
+async function runReset($: any, sessionId: string, releaseId: string): Promise<boolean> {
+  const goesOn = async (): Promise<boolean> => (await read($, readyLoop)) !== null && (await readyIsIdle($)) && (await read($, readyShells)).length === 0
+  if (!(await goesOn())) {
+    if ((await read($, readyShells)).length > 0) await tellReadyOnce($, READY_SHELL_HOLDS_RESET)
+    return false
+  }
+  await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'resetting', rejoining: true }))
+  const { refused, failure } = await clearCommand($)
   if (refused !== null && stoppedByPerson(refused)) {
     await leaveReady($, READY_STOPPED)
     return false
   }
-  const failure = refused ?? (before === (await $.session.id()) ? 'the session id did not change' : null)
   if (failure !== null) {
     await tellReadyOnce($, readyFailed('resetting this session', failure))
     return false
@@ -3374,11 +3380,13 @@ async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<st
 // or resume, still asks the restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
   // the ready-agent loop's reset opens a fresh conversation in a session that is still working: it is told what a new session is told
-  const event = start.loopReset === true ? 'session_start' : sessionEvent(start.source)
+  // a compaction by clear opens a fresh conversation too: told what a new session is told, then the resume briefing
+  const fresh = start.loopReset === true || start.compactionClear === true
+  const event = fresh ? 'session_start' : sessionEvent(start.source)
   if (event === null) return start.source === 'clear' ? clearNotice($, start) : null
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
   const connected = await isPlanConnected($, start.sessionId)
-  const askRestart = start.source !== 'compact' && start.loopReset !== true
+  const askRestart = start.source !== 'compact' && !fresh
   const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return null
@@ -3387,8 +3395,9 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
     const plan = await sessionPlan($)
     if (plan.kind === 'connected') {
       const line = await eventContext($, event)
-      // a compaction is followed by the resume briefing, in the same first turn as the registry's text
-      return { line: start.source === 'compact' ? [line, await compactionBriefing($)].filter(x => x !== null).join('\n') : line, askRestart: false }
+      // a compaction, and a compaction by clear, are followed by the resume briefing, in the same first turn as the registry's text
+      const briefed = start.source === 'compact' ? 'compacted' : start.compactionClear === true ? 'cleared' : null
+      return { line: briefed !== null ? [line, await compactionBriefing($, briefed)].filter(x => x !== null).join('\n') : line, askRestart: false }
     }
     if (plan.kind === 'failed') return fault(plan.reason)
     // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
@@ -3499,12 +3508,21 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   await update($, diskMeasured, () => null)
   if (!restart.briefsMain) return below
   const loopResetting = (await read($, readyLoop))?.phase === 'resetting'
-  const start: NonNullable<PendingStart> = { sessionId: e.session_id, source: e.source, transcriptPath: path, predecessorId: ended, ...(loopResetting && e.source === 'clear' ? { loopReset: true as const } : {}) }
+  const clearedForCompaction = compactionClearing && e.source === 'clear'
+  const start: NonNullable<PendingStart> = {
+    sessionId: e.session_id,
+    source: e.source,
+    transcriptPath: path,
+    predecessorId: ended,
+    ...(loopResetting && e.source === 'clear' ? { loopReset: true as const } : {}),
+    ...(clearedForCompaction ? { compactionClear: true as const } : {}),
+  }
   await update($, pendingStart, () => start)
   // a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
   // the main agent's OWN compaction (`restart.own`). A restart with no entry at all (an unattributed sub-agent compaction, a host without session.compact) is briefed passively and starts no turn.
   // The isRunning read is a deliberate fast path: a running turn carries the briefing on its next tool result, with no reads or take here.
-  if (restart.own && !(await read($, turn)).isRunning) detach($, 'Resume after compaction', resumeAfterCompaction($))
+  // The same for a compaction by clear: the new conversation holds nothing, so the plugin starts its turn with the resume briefing (only a plan-connected session gets one, as for a compaction).
+  if ((restart.own || clearedForCompaction) && !(await read($, turn)).isRunning) detach($, 'Resume after compaction', resumeAfterCompaction($))
   return below
 }
 
@@ -3526,8 +3544,9 @@ async function resumeAfterCompaction($: any): Promise<void> {
     return
   }
   // the procedure needs no dashboard read: a start whose reads failed (only a warning line) still tells the agent how to resume
-  const failure = await submitEvent($, relayLine(text.includes(RESUME_PROCEDURE) ? text : `${text}
-${RESUME_OPENING}`))
+  const [procedure, opening] = start.compactionClear === true ? [CLEAR_RESUME_PROCEDURE, CLEAR_RESUME_OPENING] : [RESUME_PROCEDURE, RESUME_OPENING]
+  const failure = await submitEvent($, relayLine(text.includes(procedure) ? text : `${text}
+${opening}`))
   if (failure === null) return
   // the session did not take the prompt: the briefing is still owed, to the next prompt or tool result
   await restoreStart($, start)
@@ -4055,6 +4074,8 @@ async function onReportStop($: any, e: any, next: any) {
 
 // The last reason told to the person that the control file is unreadable; the same reason is told once.
 let compactionFaultTold: string | null = null
+// true while the plugin's own compaction-by-clear runs its /clear: the conversation that opens inside it is the one to resume (a person's own /clear, or the ready loop's, is not)
+let compactionClearing = false
 // the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
 let relayOlderTold: string | null = null
 // the person was told once that the engine's release could not be read, so sub-agent compaction waits for the first compaction event
@@ -4225,9 +4246,32 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
 // /compact, which the host runs once the session is idle. Never from inside a turn or a command hook. The file's unexpired release is the ready.
 // The compaction reaches PreCompact and `session.compact` as trigger `manual`. The command takes no arguments: the control carries no instructions.
 // A failure is one line to the person, and the dashboard re-asks once the release has expired.
+// With the team's `clear` mode the compaction is a clear instead: the conversation resets, the handoff lives on the cards, and the new conversation is briefed to resume from them (onClassicSessionStart).
+// A /compact can run beside a sub-agent (it carries on through one); a /clear would end its work, so it waits for the session to be as idle as the ready loop's clear needs: no sub-agent and no background
+// command. It waits BEFORE spending the release, so the next check (every COMPACTION_IDLE_CHECK_MS) tries again while the release lasts.
 async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
+  const clears = file.kind === 'control' && file.control !== null && file.control.mode === 'clear'
+  if (clears && !(await sessionIsIdleForClear($))) return
   if ((await spendReadyRelease($, file)) === null) return
-  detach($, 'Compaction', $.command.run({ command: 'compact' }))
+  if (clears) detach($, 'Compaction clear', clearForCompaction($))
+  else detach($, 'Compaction', $.command.run({ command: 'compact' }))
+}
+
+const sessionIsIdleForClear = async ($: any): Promise<boolean> => (await readyIsIdle($)) && (await read($, readyShells)).length === 0
+
+// the plugin's own clear for a compaction: the session start the engine raises while it runs is the one `compactionClearing` marks (onClassicSessionStart). A failure is one line to the person
+// (detach), and the dashboard re-asks once the release has expired.
+async function clearForCompaction($: any): Promise<void> {
+  // no ready-loop look takes over while the clear runs, the same hold the loop's own clear keeps
+  readyResetting = true
+  compactionClearing = true
+  try {
+    const { failure } = await clearCommand($)
+    if (failure !== null) throw new Error(failure)
+  } finally {
+    compactionClearing = false
+    readyResetting = false
+  }
 }
 
 // The agent's ready is written to the control file by the relay, after its tool call returned, so it can land after the turn that made it already ended (an idle
@@ -4384,7 +4428,7 @@ async function briefingSource<T>(readSource: () => Promise<T>): Promise<Source<T
   }
 }
 
-async function compactionBriefing($: any): Promise<string> {
+async function compactionBriefing($: any, kind: 'compacted' | 'cleared'): Promise<string> {
   const v = await read($, view)
   const owed = await briefingSource<OwedComment[]>(async () => {
     const r = await api($, 'GET', '/api/plan-sessions/me/owed-comments')
@@ -4397,7 +4441,9 @@ async function compactionBriefing($: any): Promise<string> {
     return list
   })
   const cards = await briefingSource<BriefingCard[]>(async () => v.inProgress.map(c => ({ id: c.id, title: c.title })))
+  // a cleared conversation's briefing names no sub-agents (the clear waits for none to run), so the list is not read for it
   const agents = await briefingSource<BriefingAgent[]>(async () => {
+    if (kind === 'cleared') return []
     const listed: { id: string; type: string; description: string; status: string }[] = await $.agent.list()
     return listed.filter(a => a.type !== 'teammate' && a.status === 'running').map(a => ({ id: a.id, type: a.type, description: a.description }))
   })
@@ -4408,7 +4454,7 @@ async function compactionBriefing($: any): Promise<string> {
     if (state === null) throw new Error('git status printed nothing readable')
     return state
   })
-  return briefingText({ plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, owed, cards, agents, git })
+  return briefingText({ plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, owed, cards, agents, git }, kind)
 }
 
 // the plugin's `dashboard_url` option, as the engine passed it to register (the last resort of blockedOrigin)

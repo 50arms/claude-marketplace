@@ -102,9 +102,18 @@ export const RESUME_PROCEDURE = "Resume now, without asking the person, in this 
 // the briefing's opening, alone: a resume prompt whose dashboard reads failed still carries it
 export const RESUME_OPENING = `[50 ARMS] Your conversation was just compacted. ${RESUME_PROCEDURE}`
 
-export function briefingText(input: BriefingInput): string {
+// how the main agent picks up after a compaction that CLEARED the conversation (the team's `clear` compaction mode): nothing of the work before it is left in the conversation, so the
+// handoff note and the cards are the whole memory, and no skill is loaded. The clear only ever runs with no sub-agent working, so there is no step for them.
+export const CLEAR_RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) load again the skills your work needs, because a cleared conversation has none loaded; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) continue the step that was in progress."
+
+export const CLEAR_RESUME_OPENING = `[50 ARMS] Your conversation was just cleared, so it holds nothing of the work before it: the handoff you wrote lives on your cards. ${CLEAR_RESUME_PROCEDURE}`
+
+// `kind` is how the conversation was replaced: 'compacted' (a summary stands in for it) or 'cleared' (nothing does; the sub-agents line is left out, see CLEAR_RESUME_PROCEDURE)
+export function briefingText(input: BriefingInput, kind: 'compacted' | 'cleared' = 'compacted'): string {
   const plan = input.plan === null ? 'You are on no plan.' : `Your plan is ${input.plan.ref} ${oneLine(input.plan.name, 80)}.`
-  return `${RESUME_OPENING} ${owedLine(input.owed)} ${plan} ${cardsLine(input.cards)} ${agentsLine(input.agents)} ${gitLine(input.git)}`
+  const opening = kind === 'cleared' ? CLEAR_RESUME_OPENING : RESUME_OPENING
+  const agents = kind === 'cleared' ? '' : `${agentsLine(input.agents)} `
+  return `${opening} ${owedLine(input.owed)} ${plan} ${cardsLine(input.cards)} ${agents}${gitLine(input.git)}`
 }
 
 // a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes

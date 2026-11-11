@@ -45,11 +45,16 @@ export type GateControl = {
   windowTokens: number
   releaseUntilMs: number | null
   releaseId: string | null
+  // what the plugin does once the agent says ready: `compact` runs Claude Code's /compact, `clear` clears the conversation (the team's compaction setting, which the dashboard sends and the relay writes).
+  // A file with no `mode` is a relay older than the setting: it never cleared, so it reads as `compact`.
+  mode: CompactionMode
   // null when the relay that wrote the file is older than this plugin and wrote no `agents` or no `valves` (relay 0.1.311 wrote neither, 0.1.315-0.1.317 only `agents`): the
   // MAIN agent's handshake above is complete without them, and every sub-agent feature (arming, asks, the per-agent gate) is off. Claude Code hot-loads a new plugin version into a
   // live session but the session's MCP relay keeps its version until the server restarts, so a plugin must work beside an older relay.
   subagents: SubagentControl | null
 }
+
+export type CompactionMode = 'compact' | 'clear'
 
 export type SubagentControl = {
   // each sub-agent's own control by agent id; `{}` while none has been recommended
@@ -123,6 +128,8 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
   if (c.windowTokens <= c.passAtTokens) return { kind: 'bad', reason: 'windowTokens must be above passAtTokens' }
   const release = releaseProblem(c)
   if (release !== null) return { kind: 'bad', reason: release }
+  // an absent mode is a relay older than the setting; one that is present but neither value is real corruption and stays `bad`
+  if (c.mode !== undefined && c.mode !== 'compact' && c.mode !== 'clear') return { kind: 'bad', reason: 'mode must be "compact" or "clear"' }
   // a field that is absent means a relay older than this plugin (the main handshake stays whole); one that is present but malformed is real corruption and stays `bad`
   const agents = c.agents === undefined ? null : parseAgents(c.agents)
   if (typeof agents === 'string') return { kind: 'bad', reason: agents }
@@ -136,6 +143,7 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
       windowTokens: c.windowTokens,
       releaseUntilMs: c.releaseUntilMs as number | null,
       releaseId: c.releaseId as string | null,
+      mode: c.mode === 'clear' ? 'clear' : 'compact',
       subagents: agents === null || valves === null ? null : { agents, valves },
     },
   }
