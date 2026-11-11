@@ -84,8 +84,9 @@ describe('sub-agents in the control file (pure)', () => {
     expect(armedPercentOf({ kind: 'bad', reason: 'x' })).toBeNull()
   })
 
-  test("the main agent's store record key is its session's", () => {
-    expect(usedReleaseKey('s1')).toBe('compaction-used-release:s1')
+  test("the main agent's store record key names the release, and the desktop session when there is one", () => {
+    expect(usedReleaseKey(null, 'r1')).toBe('compaction-used-release:r1')
+    expect(usedReleaseKey('local_h', 'r1')).toBe('compaction-used-release:local_h:r1')
   })
 })
 

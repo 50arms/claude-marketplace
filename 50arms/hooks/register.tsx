@@ -12,7 +12,7 @@ import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeS
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_TEXTS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, BriefingKind, GitState, OwedComment, Source } from './compaction/briefing'
-import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, CLEAR_MARK_PREFIX, CLEAR_MARK_TTL_MS, ENGINE_VERSION_NOTICE, clearMarkOf, compactionClearMarkKey, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
+import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, CLEAR_MARK_TTL_MS, ENGINE_VERSION_NOTICE, clearMarkOf, compactionClearMarkKey, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleReleaseKeys, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { machineRegisteredNote, registrationFailedToast, registrationOf, registrationShownNote, registrationStep } from './plan/registration'
 import { approvalRequestOf, permissionShownNote, signInShownNote } from './plan/approval'
@@ -4153,6 +4153,24 @@ async function contextReading($: any): Promise<{ tokens: number | null; window: 
   return { tokens: count(context?.tokens), window: count(context?.window) }
 }
 
+// The store keeps one record per spent release under USED_RELEASE_PREFIX: the oldest past USED_RELEASE_KEEP go.
+async function pruneReleaseRecords($: any): Promise<void> {
+  const entries: { key: string; at: number }[] = []
+  for (const key of await storeOp($, { op: 'keys' })) {
+    if (!key.startsWith(USED_RELEASE_PREFIX)) continue
+    const rec: any = await storeOp($, { op: 'get', key })
+    entries.push({ key, at: typeof rec?.at === 'number' ? rec.at : 0 })
+  }
+  for (const key of staleReleaseKeys(entries)) await storeOp($, { op: 'delete', key })
+}
+
+// The desktop's own id for this session (`CLAUDE_CODE_HOST_SESSION_ID`, the one the sidebar names it by): every process of one desktop session sees it, a clear that ends the process keeps it, and no other session has it. A terminal
+// host does not set it (null): a terminal's clear keeps its process, so nothing needs to outlive it.
+async function hostSessionId($: any): Promise<string | null> {
+  const id = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
+  return typeof id === 'string' && id !== '' ? id : null
+}
+
 // The store keeps one record per session under `prefix` (a compaction's spent release, the ready loop's spent clear, or its judged mark) of every session ever held: the oldest sessions' past USED_RELEASE_KEEP go, the way pruneCursors does for the relay cursors.
 async function pruneSessionRecords($: any, prefix: string): Promise<void> {
   const entries: { key: string; at: number }[] = []
@@ -4257,11 +4275,11 @@ async function armSubAgents($: any, file: ControlFile): Promise<void> {
 
 // The file's unexpired release, if the plugin has not spent it: spent now (kept in $.store, so one release is acted on once however many turns follow) and returned.
 async function spendReadyRelease($: any, file: ControlFile): Promise<string | null> {
-  // the record is keyed by the release itself, never by a session or engine id: a clear that ends the process leaves a new process with a new engine id and an empty $.state, whose relay names its file by its own
-  // id, while the dashboard keeps sending the same release until it expires. Whatever id names the file, a release this store has seen spent is spent.
+  // the record names the release and the desktop session (never the engine id, which a clear moves): a clear that ends the process leaves a new process with a new engine id and an empty $.state, whose relay names its file
+  // by its own id, while the dashboard keeps sending the same release until it expires. The desktop session's host id is the same in every process of the session, so the release stays spent for it.
   const waiting = file.kind === 'control' && file.control !== null ? file.control.releaseId : null
   if (waiting === null) return null
-  const key = usedReleaseKey(waiting)
+  const key = usedReleaseKey(await hostSessionId($), waiting)
   const now = await $.clock.now()
   const releaseId = readyRelease(file, spentReleaseId(await storeOp($, { op: 'get', key })), now)
   if (releaseId === null) return null
@@ -4274,7 +4292,7 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
   })
   if (!won) return null
   await storeOp($, { op: 'set', key, value: { releaseId, at: now } })
-  await pruneSessionRecords($, USED_RELEASE_PREFIX)
+  await pruneReleaseRecords($)
   return releaseId
 }
 
@@ -4314,11 +4332,10 @@ const sessionIsIdleForClear = async ($: any): Promise<boolean> => (await readyIs
 // (the clear's own start, in this process) and in $.store (a clear that ends the process: the new process's first start takes it, takeCompactionClearMark). A failure is one line to the person (detach), and the
 // dashboard re-asks once the release has expired.
 async function clearForCompaction($: any, releaseId: string): Promise<void> {
-  const cwd = await $.session.cwd()
+  const host = await hostSessionId($)
   const now = await $.clock.now()
-  const key = compactionClearMarkKey(releaseId)
   await update($, compactionClear, () => true)
-  if (typeof cwd === 'string') await storeOp($, { op: 'set', key, value: { releaseId, cwd, at: now, until: now + CLEAR_MARK_TTL_MS } })
+  if (host !== null) await storeOp($, { op: 'set', key: compactionClearMarkKey(host), value: { releaseId, at: now, until: now + CLEAR_MARK_TTL_MS } })
   try {
     const { failure } = await clearCommand($)
     if (failure !== null) throw new Error(failure)
@@ -4326,30 +4343,24 @@ async function clearForCompaction($: any, releaseId: string): Promise<void> {
     clearInProgress = false
     // a clear that did not happen raised no start to take the marks; one that did has them taken already
     await update($, compactionClear, () => false)
-    await storeOp($, { op: 'delete', key })
+    if (host !== null) await storeOp($, { op: 'delete', key: compactionClearMarkKey(host) })
   }
 }
 
-// a start in the folder the session was in, or one of its sub-folders either way (the session's folder and a start event's can differ by a sub-folder)
-const sameFolder = (a: string, b: string): boolean => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
-
-// The marks of a compaction clear for the start `e` of a conversation: its own in $.state (a /clear start in the process that ran the clear) and the $.store's (the clear's own start, or the first start of a new process, any
-// source: the clear ended the process that made the mark). A store mark is taken only for a start in the folder it was made in, and an expired one is dropped; whatever is taken is gone, so one mark resumes one start.
+// The marks of a compaction clear for the start `e` of a conversation: the one in $.state (a /clear start in the process that ran the clear) and this desktop session's own in $.store (the clear's own start, or the first start of
+// a new process, any source: the clear ended the process that made the mark). Only this session's own key is read, taken and deleted (an expired one is dropped without a resume), so another session's mark is never touched
+// and one mark resumes one start. A host with no host id has no store mark.
 async function takeCompactionClearMark($: any, e: any, firstOfProcess: boolean): Promise<boolean> {
   const own = e.source === 'clear' && (await read($, compactionClear))
   if (own) await update($, compactionClear, () => false)
   if (!own && !firstOfProcess) return false
-  const cwd = typeof e.cwd === 'string' ? e.cwd : null
-  const now = await $.clock.now()
-  let taken = false
-  for (const key of await storeOp($, { op: 'keys' })) {
-    if (!key.startsWith(CLEAR_MARK_PREFIX)) continue
-    const mark = clearMarkOf(await storeOp($, { op: 'get', key }))
-    if (mark !== null && mark.until > now && !(cwd !== null && sameFolder(mark.cwd, cwd))) continue
-    await storeOp($, { op: 'delete', key })
-    if (mark !== null && mark.until > now) taken = true
-  }
-  return own || taken
+  const host = await hostSessionId($)
+  if (host === null) return own
+  const key = compactionClearMarkKey(host)
+  const mark = clearMarkOf(await storeOp($, { op: 'get', key }))
+  if (mark === null) return own
+  await storeOp($, { op: 'delete', key })
+  return own || mark.until > (await $.clock.now())
 }
 
 // The agent's ready is written to the control file by the relay, after its tool call returned, so it can land after the turn that made it already ended (an idle
