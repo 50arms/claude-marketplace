@@ -27,8 +27,10 @@ recommendation:` (advice, not an order), or on your own initiative or a handoff.
    unpushed SHA, and the sub-agents still running on it.
 7. **Re-verify before saying ready.** Re-run `git status`, re-read every card you wrote,
    re-check which sub-agents are still running.
-8. **Say what compaction affects**, in the handoff note: context is replaced by a summary; the
-   tree, commits, pushes and running sub-agents carry on unchanged.
+8. **Say what compaction affects**, in the handoff note: context is replaced by a summary (when
+   the recommendation says clear, by nothing: your cards and this note are the whole memory); the
+   tree, commits and pushes carry on unchanged, and so do running sub-agents after a compaction
+   (a clear waits until none runs).
 9. **Say ready, only after a recommendation.** A `[50 ARMS] Compaction recommendation:` you
    decided to act on is answered by `50arms_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`, after
    step 7. Until you do, nothing compacts. After ready, end your turn: the plugin starts the

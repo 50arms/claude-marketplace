@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
-import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, parseControlFile, readyRelease, staleUsedReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
+import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, parseControlFile, readyRelease, staleReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import type { AgentControl, ControlFile, GateControl, GateInput, ModelValves } from '../hooks/compaction/control'
 import { BAD_SESSION_ID, BAD_SESSION_ID_PATH, CLOCK_START, EVENT_TEXT, CLEARED_SESSION_ID, HOME_DIR, OWN_SESSION, SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
@@ -21,7 +21,7 @@ const PASS_AT = 907_000
 const VALVES = { 'claude-haiku-5-5': 180_000, 'claude-sonnet-5-5': 600_000, 'claude-opus-4-8': 907_000 }
 // DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
 type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: ModelValves }
-const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
+const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, mode: 'compact', agents: {}, valves: VALVES, ...over })
 const fileText = (control: WireControl | null, askedAt: string | null = null, sessionId: string = OWN_SESSION.session_id): string => JSON.stringify({ v: 1, sessionId, control, askedAt })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
 const withControl = (over: Partial<WireControl> = {}): ControlFile => {
@@ -90,7 +90,7 @@ describe('a plugin ahead of its relay (pure, DX-5314)', () => {
 // The wire, relay to plugin: this literal is the file the relay writes for a released operator session (the relay's own test packages/platform-mcp/__tests__/compaction-control.test.ts
 // builds the same from the dashboard's frame, and 50 Arms' operator-session.test.ts feeds the dashboard's control through the relay). The plugin reads the pass-at size from it.
 describe('the wire shape (pure)', () => {
-  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"claude-haiku-5-5":180000,"claude-sonnet-5-5":600000,"claude-opus-4-8":907000}},"askedAt":null}'
+  const RELAY_FILE = '{"v":1,"sessionId":"sess-own","control":{"floorTokens":250000,"passAtTokens":907000,"windowTokens":1000000,"releaseUntilMs":1800000000000,"releaseId":"2026-10-14T11:59:00.000Z","agents":{"a1":{"passAtTokens":600000}},"valves":{"claude-haiku-5-5":180000,"claude-sonnet-5-5":600000,"claude-opus-4-8":907000},"mode":"clear"},"askedAt":null}'
 
   test('the file the relay writes is read whole, and its pass-at size is the safety valve (the plugin has no margin of its own)', () => {
     const file = parse(RELAY_FILE)
@@ -102,6 +102,7 @@ describe('the wire shape (pure)', () => {
         windowTokens: 1_000_000,
         releaseUntilMs: 1_800_000_000_000,
         releaseId: '2026-10-14T11:59:00.000Z',
+        mode: 'clear',
         subagents: {
           agents: { a1: { passAtTokens: 600_000 } },
           valves: VALVES,
@@ -191,10 +192,15 @@ describe('the gate (pure)', () => {
 })
 
 describe('spent releases in the store (pure)', () => {
-  test('the oldest sessions past the keep count are stale', () => {
-    const entries = Array.from({ length: USED_RELEASE_KEEP + 2 }, (_, i) => ({ key: usedReleaseKey(`s${i}`), at: i }))
-    expect(staleUsedReleaseKeys(entries)).toEqual([usedReleaseKey('s0'), usedReleaseKey('s1')])
-    expect(staleUsedReleaseKeys(entries.slice(2))).toEqual([])
+  test('the oldest releases past the keep count are stale', () => {
+    const entries = Array.from({ length: USED_RELEASE_KEEP + 2 }, (_, i) => ({ key: usedReleaseKey('local_h', `2026-11-11T05:${String(i).padStart(2, '0')}:00.000Z`), at: i }))
+    expect(staleReleaseKeys(entries)).toEqual([entries[0]!.key, entries[1]!.key])
+    expect(staleReleaseKeys(entries.slice(2))).toEqual([])
+  })
+
+  test('the record key holds the desktop session id when there is one, and a release id that is a timestamp whole', () => {
+    expect(usedReleaseKey('local_h', '2026-11-11T05:00:00.000Z')).toBe('compaction-used-release:local_h:2026-11-11T05:00:00.000Z')
+    expect(usedReleaseKey(null, '2026-11-11T05:00:00.000Z')).toBe('compaction-used-release:2026-11-11T05:00:00.000Z')
   })
 
 })
@@ -414,10 +420,11 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       d.world.files[CONTROL_FILE] = READY('ready-1')
       await $.turn.complete(TURN)
-      expect(d.stored.get(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)).toEqual({ releaseId: 'ready-1', at: expect.any(Number) })
+      // keyed by the release (and the desktop session's host id when it has one), never the engine id: whichever process of the session reads the file, the release is spent once
+      expect(d.stored.get(usedReleaseKey(null, 'ready-1'))).toEqual({ releaseId: 'ready-1', at: expect.any(Number) })
     })
 
-    test("the store keeps the newest sessions' spent releases only", async ($, on) => {
+    test("the store keeps the newest spent releases only", async ($, on) => {
       const d = await started($, on)
       for (let i = 0; i < USED_RELEASE_KEEP + 5; i++) d.stored.set(`${USED_RELEASE_PREFIX}old-${i}`, { releaseId: 'r', at: 100 + i })
       d.stored.set('relayCursor:not-ours', { planId: 1, cursor: 'c', at: 1 })
@@ -425,7 +432,7 @@ for (const surface of SURFACES) {
       await $.turn.complete(TURN)
       const kept = [...d.stored.keys()].filter(k => k.startsWith(USED_RELEASE_PREFIX))
       expect(kept).toHaveLength(USED_RELEASE_KEEP)
-      expect(kept).toContain(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)
+      expect(kept).toContain(usedReleaseKey(null, 'ready-1'))
       expect(kept).not.toContain(`${USED_RELEASE_PREFIX}old-0`)
       expect(d.stored.has('relayCursor:not-ours')).toBe(true)
     })
@@ -667,7 +674,7 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('manual'))).block).toBeUndefined()
       await $.turn.complete(TURN)
       expect(compactRuns(d)).toEqual([])
-      expect(d.stored.get(`${USED_RELEASE_PREFIX}${OWN_SESSION.session_id}`)).toMatchObject({ releaseId: 'ready-1' })
+      expect(d.stored.get(usedReleaseKey(null, 'ready-1'))).toMatchObject({ releaseId: 'ready-1' })
     })
 
     test('a failing /compact is told, never thrown', async ($, on) => {

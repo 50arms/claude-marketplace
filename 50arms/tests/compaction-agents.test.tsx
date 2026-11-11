@@ -18,7 +18,7 @@ const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const entry = (over: Partial<AgentControl> = {}): AgentControl => ({ passAtTokens: 600_000, ...over })
 // DX-5314: the file's control as the relay writes it (`agents` and `valves` beside the main fields); the parsed GateControl groups the two as `subagents`
 type WireControl = Omit<GateControl, 'subagents'> & { agents?: Record<string, AgentControl>; valves?: ModelValves }
-const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, agents: {}, valves: VALVES, ...over })
+const gateControl = (over: Partial<WireControl> = {}): WireControl => ({ floorTokens: 250_000, passAtTokens: 907_000, windowTokens: WINDOW, releaseUntilMs: null, releaseId: null, mode: 'compact', agents: {}, valves: VALVES, ...over })
 const fileText = (control: WireControl | null): string => JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, control, askedAt: null })
 const parse = (text: string | null): ControlFile => parseControlFile(text, OWN_SESSION.session_id)
 const withControl = (over: Partial<WireControl> = {}): ControlFile => {
@@ -84,8 +84,9 @@ describe('sub-agents in the control file (pure)', () => {
     expect(armedPercentOf({ kind: 'bad', reason: 'x' })).toBeNull()
   })
 
-  test("the main agent's store record key is its session's", () => {
-    expect(usedReleaseKey('s1')).toBe('compaction-used-release:s1')
+  test("the main agent's store record key names the release, and the desktop session when there is one", () => {
+    expect(usedReleaseKey(null, 'r1')).toBe('compaction-used-release:r1')
+    expect(usedReleaseKey('local_h', 'r1')).toBe('compaction-used-release:local_h:r1')
   })
 })
 

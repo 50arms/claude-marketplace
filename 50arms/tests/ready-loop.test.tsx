@@ -2017,6 +2017,57 @@ describe('the ready-agent loop', () => {
     expect(d.world.readyMark).toBe(REPO)
   })
 
+  // the plugin has ONE /clear in progress at a time: the ready loop's released clear and a compaction by clear (the team's `clear` mode) never overlap, whichever starts first
+  describe('a /clear and a compaction by clear never run together', () => {
+    const compactionFile = (mode: string, releaseId: string) =>
+      JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, askedAt: null, control: { floorTokens: 250_000, passAtTokens: 907_000, windowTokens: 1_000_000, releaseUntilMs: Date.parse('2026-10-03T12:00:00.000Z'), releaseId, mode, agents: {}, valves: { 'claude-opus-4-8': 907_000 } } })
+    const COMPACTION_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
+
+    // pins: whichever mode the compaction is in, while the ready loop's /clear runs the compaction release starts nothing (no second /clear, no /compact); the release stays for a later check
+    for (const mode of ['clear', 'compact']) {
+      test(`a ${mode} compaction release that lands while the ready loop's /clear runs starts nothing beside it`, async ($, on) => {
+        const d = await started($, on)
+        await ready($, d)
+        handCard(d, 'Done')
+        released(d)
+        const clear = held()
+        d.world.clearHold = clear.promise
+        await tick(d)
+        d.world.clearHold = null
+        expect(d.world.clearsStarted).toBe(1)
+        d.world.files[COMPACTION_FILE] = compactionFile(mode, 'c1')
+        await turnEnds($, d)
+        await tick(d)
+        expect(d.world.clearsStarted).toBe(1)
+        expect(d.compactRuns).toEqual([])
+        clear.release()
+        await d.clock.settle()
+        expect(d.clearRuns).toHaveLength(1)
+      })
+    }
+
+    // pins the other direction: the ready loop's released clear waits while a compaction clear runs (no second /clear beside it) and still runs once that clear has ended
+    test("a released ready-loop clear that comes while a compaction clear runs waits for it, runs no second /clear beside it, and runs once it has ended", async ($, on) => {
+      const d = await started($, on)
+      await ready($, d)
+      d.world.files[COMPACTION_FILE] = compactionFile('clear', 'c1')
+      const compaction = held()
+      d.world.clearHold = compaction.promise
+      await turnEnds($, d)
+      d.world.clearHold = null
+      expect(d.world.clearsStarted).toBe(1)
+      handCard(d, 'Done')
+      released(d)
+      await tick(d)
+      await turnEnds($, d)
+      expect(d.world.clearsStarted).toBe(1)
+      compaction.release()
+      await d.clock.settle()
+      await tick(d)
+      expect(d.clearRuns).toHaveLength(2)
+    })
+  })
+
   test('the rejoin after a /clear that ran past the stale bound is timed from the clear: one mark, told once', async ($, on) => {
     const d = await started($, on)
     await ready($, d)

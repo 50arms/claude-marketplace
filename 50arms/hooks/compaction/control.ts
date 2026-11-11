@@ -45,11 +45,16 @@ export type GateControl = {
   windowTokens: number
   releaseUntilMs: number | null
   releaseId: string | null
+  // what the plugin does once the agent says ready: `compact` runs Claude Code's /compact, `clear` clears the conversation (the team's compaction setting, which the dashboard sends and the relay writes).
+  // A file with no `mode` is a relay older than the setting: it never cleared, so it reads as `compact`.
+  mode: CompactionMode
   // null when the relay that wrote the file is older than this plugin and wrote no `agents` or no `valves` (relay 0.1.311 wrote neither, 0.1.315-0.1.317 only `agents`): the
   // MAIN agent's handshake above is complete without them, and every sub-agent feature (arming, asks, the per-agent gate) is off. Claude Code hot-loads a new plugin version into a
   // live session but the session's MCP relay keeps its version until the server restarts, so a plugin must work beside an older relay.
   subagents: SubagentControl | null
 }
+
+export type CompactionMode = 'compact' | 'clear'
 
 export type SubagentControl = {
   // each sub-agent's own control by agent id; `{}` while none has been recommended
@@ -77,12 +82,27 @@ const MODEL_ID = /^claude-[a-z]+-\S+$/
 // `absent`: no file (the relay has not written one yet). `control: null`: the session is not under the handshake.
 export type ControlFile = { kind: 'absent' } | { kind: 'control'; control: GateControl | null } | { kind: 'bad'; reason: string }
 
-// The spent main-agent releases are kept in $.store, one record per session. The newest USED_RELEASE_KEEP SESSIONS' records stay, so the store does not grow with
-// every session ever held.
+// The spent main-agent releases are kept in $.store, one record per RELEASE, never keyed by the engine id: a clear that ends the process leaves a new process with a new engine id and an empty $.state, and the relay's file may
+// still hold the same release (the dashboard re-sends it until it expires), which must read as spent. The key is `<host id>:<release id>` when the session has a host id (`CLAUDE_CODE_HOST_SESSION_ID`: the desktop's own session
+// id, which every process of that session sees, so two sessions never share a record even for a release id minted in the same millisecond), else just the release id (a terminal host's clear keeps its process). A release
+// id is a timestamp and holds ':' itself, so a key is never split at one: the newest USED_RELEASE_KEEP records stay (staleReleaseKeys), so the store does not grow with every release ever spent.
 export const USED_RELEASE_PREFIX = 'compaction-used-release:'
 export const USED_RELEASE_KEEP = 40
 export type UsedRelease = { releaseId: string; at: number }
-export const usedReleaseKey = (sessionId: string): string => `${USED_RELEASE_PREFIX}${sessionId}`
+export const usedReleaseKey = (hostId: string | null, releaseId: string): string => `${USED_RELEASE_PREFIX}${hostId === null ? '' : `${hostId}:`}${releaseId}`
+
+// The mark of a compaction clear in progress, kept in $.store because the clear can end the process and everything in $.state with it. It is the desktop session's (key `<host id>`: every process of one desktop session sees the
+// same host id and no other session does), written before the clear runs, taken once by the start of the conversation that follows (the clear's own start, or the new process's first start of any source) and
+// dropped with it. It names the release it was written for and when it expires, so a mark the new process never found cannot resume a much later start. A host with no host id (a terminal) writes none.
+export const CLEAR_MARK_PREFIX = 'compaction-clear-mark:'
+export const CLEAR_MARK_TTL_MS = 10 * 60_000
+export type ClearMark = { releaseId: string; at: number; until: number }
+export const compactionClearMarkKey = (hostId: string): string => `${CLEAR_MARK_PREFIX}${hostId}`
+// the mark a stored record is, null for anything else
+export function clearMarkOf(record: unknown): ClearMark | null {
+  const r = record as Partial<ClearMark> | null | undefined
+  return r !== null && r !== undefined && typeof r === 'object' && typeof r.releaseId === 'string' && typeof r.at === 'number' && typeof r.until === 'number' ? (r as ClearMark) : null
+}
 // The session a per-session record key belongs to (a session id holds no ':').
 const sessionOfKey = (key: string, prefix: string): string => key.slice(prefix.length).split(':')[0]
 export function staleSessionKeys(entries: { key: string; at: number }[], prefix: string): string[] {
@@ -94,7 +114,13 @@ export function staleSessionKeys(entries: { key: string; at: number }[], prefix:
   const stale = new Set([...newest].sort((a, b) => b[1] - a[1]).slice(USED_RELEASE_KEEP).map(([session]) => session))
   return entries.filter(e => stale.has(sessionOfKey(e.key, prefix))).map(e => e.key)
 }
-export const staleUsedReleaseKeys = (entries: { key: string; at: number }[]): string[] => staleSessionKeys(entries, USED_RELEASE_PREFIX)
+// the records past the newest USED_RELEASE_KEEP, oldest first
+export const staleReleaseKeys = (entries: { key: string; at: number }[]): string[] =>
+  [...entries]
+    .sort((a, b) => b.at - a.at)
+    .slice(USED_RELEASE_KEEP)
+    .sort((a, b) => a.at - b.at)
+    .map(e => e.key)
 // The release a stored record spent, null for none or a record that is not one.
 export const spentReleaseId = (record: unknown): string | null => {
   const r = record as Partial<UsedRelease> | null | undefined
@@ -123,6 +149,8 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
   if (c.windowTokens <= c.passAtTokens) return { kind: 'bad', reason: 'windowTokens must be above passAtTokens' }
   const release = releaseProblem(c)
   if (release !== null) return { kind: 'bad', reason: release }
+  // an absent mode is a relay older than the setting; one that is present but neither value is real corruption and stays `bad`
+  if (c.mode !== undefined && c.mode !== 'compact' && c.mode !== 'clear') return { kind: 'bad', reason: 'mode must be "compact" or "clear"' }
   // a field that is absent means a relay older than this plugin (the main handshake stays whole); one that is present but malformed is real corruption and stays `bad`
   const agents = c.agents === undefined ? null : parseAgents(c.agents)
   if (typeof agents === 'string') return { kind: 'bad', reason: agents }
@@ -136,6 +164,7 @@ export function parseControlFile(text: string | null, sessionId: string): Contro
       windowTokens: c.windowTokens,
       releaseUntilMs: c.releaseUntilMs as number | null,
       releaseId: c.releaseId as string | null,
+      mode: c.mode === 'clear' ? 'clear' : 'compact',
       subagents: agents === null || valves === null ? null : { agents, valves },
     },
   }
