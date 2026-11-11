@@ -415,7 +415,9 @@ describe('the ready-agent loop', () => {
       d.world.reposAnswer = { status: 403, body: { error: 'forbidden', permission: 'boards.view' } }
       await ready($, d)
       await tick(d)
-      expect(d.toasts.filter((t: string) => t.includes(APPROVAL_URL))).toHaveLength(1)
+      expect(d.toasts.filter((t: string) => t.includes(APPROVAL_URL))).toEqual([])
+      const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       expect(d.world.readyMark).toBe(null)
       d.world.reposAnswer = null
       d.world.permissionClaim = 'approved'
@@ -1743,7 +1745,9 @@ describe('the ready-agent loop', () => {
       d.world.permissionAskHold = null
       await pastStale(d)
       expect(d.world.permissionAsks).toBe(2)
-      expect(d.toasts.filter((t: string) => t.includes(APPROVAL_URL))).toHaveLength(1)
+      expect(d.toasts.filter((t: string) => t.includes(APPROVAL_URL))).toEqual([])
+      const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       await answersLate(d, ask.release)
     })
 
@@ -1756,7 +1760,9 @@ describe('the ready-agent loop', () => {
       await ready($, d)
       d.world.permissionAskHold = null
       await pastStale(d)
-      expect(d.toasts.filter((t: string) => t.includes(APPROVAL_URL))).toHaveLength(1)
+      expect(d.toasts.filter((t: string) => t.includes(APPROVAL_URL))).toEqual([])
+      const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
       d.world.permissionAskDeny = 'request_permission refused'
       await answersLate(d, ask.release)
     })
@@ -1946,14 +1952,14 @@ describe('the ready-agent loop', () => {
       expect(d.world.readyMark).toBe(REPO)
     })
 
-    test('with the key gone behind the gate, /50arms:ready shows the approval link in a toast and on the band', async ($, on) => {
+    test('with the key gone behind the gate, /50arms:ready shows the approval link on the band, in no toast', async ($, on) => {
       const d = await started($, on)
       await ready($, d)
       refused(d)
       await tick(d)
       d.world.signedOut = 'lapsed'
       await ready($, d)
-      expect(d.toasts.some((t: string) => t.includes(APPROVAL_URL))).toBe(true)
+      expect(d.toasts.some((t: string) => t.includes(APPROVAL_URL))).toBe(false)
       const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
       expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
     })

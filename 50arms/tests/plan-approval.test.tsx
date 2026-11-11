@@ -4,8 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // answer (a normal connect, a refusal, a denied call) shows nothing.
 import { describe, expect } from 'claude-code/testing'
 
-import { approvalRequestOf, signInToast } from '../hooks/plan/approval'
-import { APPROVAL_TOAST_MS } from '../hooks/plan/config'
+import { APPROVE_SIGN_IN_LABEL, approvalRequestOf } from '../hooks/plan/approval'
 import { test, dashboard, startSession, browserCalls, linksOf } from './plan-kit'
 
 const URL_A = 'https://50arms.example/connect/aaaa'
@@ -43,17 +42,22 @@ describe('approvalRequestOf', () => {
 describe('session_connect while signed out', () => {
   // DX-4630: the link and code are shown the moment the request exists; no browser call is made for them, so a slow or refused
   // browser cannot delay or hide them.
-  test('approval_required toasts the link and the confirm code with no browser call, whatever the browser would have done', async ($, on) => {
+  // CP-100: the band is the only place the request shows; a model's `session_connect` answering `approval_required` sets the band's
+  // sign-in request, and nothing is toasted.
+  test('approval_required draws the link and the confirm code in the band, with no toast and no browser call', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
     stillPending(d)
     answering(on, [required(URL_A)])
     await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
     d.calls.length = 0
+    d.toasts.length = 0
     await $.tool.call(CALL)
     await d.clock.settle()
     expect(browserCalls(d)).toEqual([])
-    expect(d.toasts.at(-1)).toBe(signInToast({ url: URL_A, code: 'NXGUF88G' }))
-    expect(d.toastTimeouts.at(-1)).toBe(APPROVAL_TOAST_MS)
+    expect((await linksOf(band)).map(l => ({ href: l.href, label: l.label }))).toContainEqual({ href: URL_A, label: APPROVE_SIGN_IN_LABEL })
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code NXGUF88G')
+    expect(d.toasts).toEqual([])
   })
 
   // The shape core gives a hook for an MCP tool (the engine's own typings, ToolCallResult): `{ ref, result, text }`
@@ -69,7 +73,7 @@ describe('session_connect while signed out', () => {
     await d.clock.settle()
     expect(ran.text).toBe(text)
     expect(browserCalls(d)).toEqual([])
-    expect(d.toasts.at(-1)).toContain('NXGUF88G')
+    expect(d.toasts).toEqual([])
   })
 
   // DX-4630: the model learns the person already has the link and code, so it opens nothing itself.
@@ -89,7 +93,7 @@ describe('session_connect while signed out', () => {
     expect(note[0]).toContain('NXGUF88G')
   })
 
-  test('the same request repeated shows its toast once; a new request swaps the link and the code', async ($, on) => {
+  test('the same request repeated shows no toast; a new request swaps the link and the code', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
     stillPending(d)
     answering(on, [required(URL_A), required(URL_A), required(URL_B, 'ZZZZ1111')])
@@ -101,10 +105,9 @@ describe('session_connect while signed out', () => {
     await $.tool.call(CALL)
     await $.tool.call(CALL)
     await d.clock.settle()
-    expect(d.toasts.filter(t => t.includes('NXGUF88G'))).toHaveLength(1)
+    expect(d.toasts).toEqual([])
     await $.tool.call(CALL)
     await d.clock.settle()
-    expect(d.toasts.at(-1)).toContain('ZZZZ1111')
     expect(browserCalls(d)).toEqual([])
     const hrefs = (await linksOf(band)).map(l => l.href)
     expect(hrefs).toContain(URL_B)
@@ -112,16 +115,36 @@ describe('session_connect while signed out', () => {
     expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code ZZZZ1111')
   })
 
+  // CP-100: the incident's sequence: the model's first call answers approval_required, its second (in flight, then answered) approval_pending for the same request, and a third approval_pending again
+  test('approval_required then approval_pending then approval_pending of the same request keeps the band link and code, with no toast', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    stillPending(d)
+    answering(on, [required(URL_A), pending, pending])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
+    d.toasts.length = 0
+    for (let i = 0; i < 3; i++) {
+      await $.tool.call(CALL)
+      await d.clock.settle()
+      expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+      expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code NXGUF88G')
+    }
+    expect(d.toasts).toEqual([])
+  })
+
   // DX-4548: a request is shown by its URL, not by the answer's state: one this session has not shown appears even as approval_pending
   test('approval_pending of a request not yet shown shows its link and code', async ($, on) => {
-    const d = dashboard(on)
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    stillPending(d)
     answering(on, [pending])
     await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
     d.calls.length = 0
     await $.tool.call(CALL)
     await d.clock.settle()
     expect(browserCalls(d)).toEqual([])
-    expect(d.toasts.some(t => t.includes('NXGUF88G') && t.includes(URL_A))).toBe(true)
+    expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code NXGUF88G')
   })
 
   for (const [name, text] of [

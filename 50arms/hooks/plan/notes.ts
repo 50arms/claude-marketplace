@@ -15,12 +15,6 @@ export function revokeNote(d: { ended: boolean }): string {
   return `[50 Arms plan] ${state} with the band's Revoke button. Do not call session_connect or any other 50 Arms dashboard tool, and do not write to /api/plans/mine routes, until the operator signs this session in again with the band's Sign in: a person's approval is needed, and none of your calls can reconnect it.`
 }
 
-// the toast of a Disconnect: the plan or card left.
-export const disconnectedToast = (left: { ref: string }) => `Disconnected from ${left.ref}`
-
-// the toast of a Revoke that ended the sign-in: the agent it freed, when the session held one.
-export const revokedToast = (agentName: string | null) => `Revoked this session's sign-in${agentName === null ? '' : ` and freed team agent ${agentName}`}`
-
 // the band's Sign in button signed this session in: the model did not press it, so it is told, as a disconnect
 // tells it. `target` is the plan the sign-in asked to rejoin (`PLAN-n`; null: none, so where it lands is the dashboard's to say); `connected`
 // is false when that connect was refused.

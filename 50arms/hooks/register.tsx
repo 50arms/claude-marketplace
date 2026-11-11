@@ -15,7 +15,7 @@ import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from 
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, ENGINE_VERSION_NOTICE, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { machineRegisteredNote, registrationFailedToast, registrationOf, registrationShownNote, registrationStep } from './plan/registration'
-import { approvalRequestOf, permissionShownNote, permissionToast, signInShownNote, signInToast } from './plan/approval'
+import { approvalRequestOf, permissionShownNote, signInShownNote } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
 import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_REVOKED, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
@@ -28,7 +28,6 @@ import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
 import { eventsReason, eventsWarning, footerLabel, footerTone, needsYouShown, sessionTitle, unmarkedTitle, type TitleActivity } from './plan/words'
 import {
-  APPROVAL_TOAST_MS,
   CALL_ERROR_MAX,
   COMMAND,
   FAILURE_TOAST_MAX,
@@ -39,10 +38,7 @@ import {
   MIN_GAP_MS,
   PERMISSION_POLL_MS,
   PERMISSION_TOLD_MAX,
-  SIGNED_IN_TOAST,
-  keyRevokedLabel,
   SIGN_IN_DENIED_TOAST,
-  SIGN_IN_EXPIRED_TOAST,
   SIGN_IN_MIN_ROUND_MS,
   MIN_USAGE_TICK_MS,
   USAGE_PATH,
@@ -69,7 +65,7 @@ import { connectTargetOf, planTarget } from './plan/target'
 import { holdKey } from './plan/hold'
 import type { BandHold } from './plan/hold'
 import type { ToolOutcome } from './plan/mcp'
-import { disconnectNote, disconnectedToast, revokeNote, revokedToast, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
+import { disconnectNote, revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { NO_AGENT, signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
@@ -752,21 +748,13 @@ function notToldToast($: any, cause: unknown, text: string): void {
   $.ui.toast(`Could not tell the model: ${String(cause).slice(0, TOAST_ERROR_MAX)}${NOTE_MARKER}${text}`)
 }
 
-// a permission request's toast: link and code together, for the longest the host allows. The band draws the same link and
-// code from `permissionRequests`; no page is opened by the plugin, the person follows the link.
-const toastPermission = ($: any, approval: ApprovalRequest) => $.ui.toast(permissionToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
-
 // the tool answer, with the note that the person already has the link and code, as context the model reads after the result.
 const withPermissionNote = (ran: any, approval: ApprovalRequest) => ({ ...ran, context: [...(ran.context ?? []), permissionShownNote(approval)] })
 
-// the sign-in request's toast: link and code together, for the longest the host allows.
-const toastSignIn = ($: any, approval: ApprovalRequest) => $.ui.toast(signInToast(approval), { timeoutMs: APPROVAL_TOAST_MS })
-
 // a sign-in request, drawn the moment it exists: the band reads it from $.state and draws its link and confirm
-// code, and the toast carries both. The plugin opens no page: the person follows the link.
+// code (CP-100: the band is the only place they show, never a toast). The plugin opens no page: the person follows the link.
 async function showSignInRequest($: any, approval: ApprovalRequest): Promise<void> {
   await update($, signInRequest, () => approval)
-  toastSignIn($, approval)
 }
 
 // the machine registration watch, one at a time and shared by whoever asks (the load, the model's session_connect, a press of Sign in, the ready loop's sign-in): it
@@ -899,7 +887,6 @@ async function withBusy($: any, key: string, work: () => Promise<void>, release:
 async function accessEnded($: any, outcome: ToolOutcome): Promise<boolean> {
   const by = outcomeRevokedBy(outcome)
   if (by === null && !isSignedOut(outcome)) return false
-  $.ui.toast(by !== null ? `${keyRevokedLabel(by)}. This session must stop.` : 'Signed out. Sign in from the band.')
   detach($, 'Plan refresh', refresh($, true))
   return true
 }
@@ -946,7 +933,6 @@ function disconnect($: any, hold: BandHold): Promise<void> {
       return
     }
     if (left === 'refused') return
-    $.ui.toast(disconnectedToast(left).slice(0, FAILURE_TOAST_MAX))
     // the band goes to no work at once (the agent stays), then reads the truth; the model, which did not make the call, is told in its chat
     await update($, view, cur => leftView(cur))
     detach($, 'Plan update', tellModel($, disconnectNote(left)).then(() => refresh($, true)))
@@ -967,7 +953,6 @@ function revoke($: any, hold: BandHold): Promise<void> {
     }
     // a sign-in watch running now (the model's own connect, begun before the person pressed Revoke) must not hold "Signing in…" on a band that offers Sign in
     await abortSignInWatch($)
-    $.ui.toast(revokedToast(hold.agent?.name ?? null).slice(0, FAILURE_TOAST_MAX))
     // the band goes to no work at once, then reads the truth (a revoked key reads "access revoked" and offers Sign in)
     await update($, view, cur => ({ ...leftView(cur), agent: null }))
     detach($, 'Plan update', tellModel($, revokeNote({ ended: true })).then(() => refresh($, true)))
@@ -1074,7 +1059,6 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         if (step.kind === 'waiting') {
           if (shown !== null && step.request.url !== shown.url) {
             // the request watched is over without a decision reaching this call: it lapsed, and this answer is its renewal
-            $.ui.toast(SIGN_IN_EXPIRED_TOAST)
             if (!watch.byPress) await tell(shown, signInExpiredNote(shown.code))
             if (!watch.byPress && publicIdOf(step.request.url) === undefined) {
               $.ui.toast(signInFailedToast('the renewed approval request had no id'))
@@ -1109,7 +1093,6 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
           return
         }
         if (step.kind === 'revoked') {
-          $.ui.toast(`${keyRevokedLabel(step.by)}. This session must stop.`)
           if ('forReadyLoop' in watch) await leaveReady($, readyRevoked(step.by))
           await refresh($, true)
           return
@@ -1132,7 +1115,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
           return
         }
         // signed in (even if the plan was refused): the view reads the truth
-        $.ui.toast(step.kind === 'done' ? SIGNED_IN_TOAST : step.message)
+        if (step.kind !== 'done') $.ui.toast(step.message)
         // the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
         const target = typeof (watch.args as any).target === 'string' ? (watch.args as any).target : null
         await tell(shown, watch.byPress ? signInNote(target, step.kind === 'done') : signInApprovedNote(shownRequest().code, target))
@@ -1151,10 +1134,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
 // (the model's own sign-in) says its link and code again instead of starting a second wait.
 async function startSignIn($: any): Promise<void> {
   const waiting = await read($, signInRequest)
-  if (waiting !== null) {
-    toastSignIn($, waiting)
-    return
-  }
+  if (waiting !== null) return
   registrationStoppedAt = null
   const args = await signInArgs($)
   void watchSignIn($, { args, byPress: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
@@ -2902,7 +2882,7 @@ async function onSessionConnect($: any, e: any, next: any) {
 }
 
 // the model asked for a permission: keep the request for the band, which draws its approval link and code at once
-// (no page is opened by the plugin), and toast both.
+// (no page is opened by the plugin); never a toast (CP-100).
 async function onRequestPermission($: any, e: any, next: any) {
   const ran = await next(e)
   const request = permissionRequestOf(ran.text, e.permissions)
@@ -2910,12 +2890,11 @@ async function onRequestPermission($: any, e: any, next: any) {
   return withPermissionNote(ran, await showPermissionRequest($, request))
 }
 
-// a permission request is kept for the band, which draws its approval link and code at once, and toasted
+// a permission request is kept for the band, which draws its approval link and code at once
 async function showPermissionRequest($: any, request: PermissionRequest) {
   await update($, permissionRequests, cur => [...cur.filter(r => r.publicId !== request.publicId), request])
   await syncPermissionPoll($)
   const approval = asApproval(request)
-  toastPermission($, approval)
   return approval
 }
 
@@ -4248,7 +4227,6 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
 // A failure is one line to the person, and the dashboard re-asks once the release has expired.
 async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
   if ((await spendReadyRelease($, file)) === null) return
-  $.ui.toast('Compacting now: your agent said it is ready.')
   detach($, 'Compaction', $.command.run({ command: 'compact' }))
 }
 

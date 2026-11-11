@@ -85,9 +85,6 @@ export const FAILURE_TOAST_MAX = 200
 export const CALL_ERROR_MAX = 200
 export const ERROR_BODY_MAX = 200
 
-// the host caps a toast at 60 s; the approval toast carries the confirm code the person compares with the page.
-export const APPROVAL_TOAST_MS = 60_000
-
 // What the fallback toast puts between its reason and the model row it could not append.
 export const NOTE_MARKER = ' | It was to read: '
 
@@ -187,9 +184,7 @@ export const SIGNED_OUT_PATTERN = /Not signed in to the .+ dashboard/
 export const SIGNED_OUT_LABEL = `${BRAND}: signed out`
 export const SIGN_IN_LABEL = 'Sign in'
 export const SIGNING_IN_LABEL = 'Signing in…'
-export const SIGNED_IN_TOAST = 'Signed in'
 // a sign-in request has no round limit (it stays open while its session lives); these end it
-export const SIGN_IN_EXPIRED_TOAST = 'Sign in expired. A new request is open.'
 // the shortest a watch's round may take: the MCP's own ~45 s wait normally paces it; an answer that returns at once must not spin it
 export const SIGN_IN_MIN_ROUND_MS = 5_000
 export const SIGN_IN_DENIED_TOAST = 'Sign in was denied.'

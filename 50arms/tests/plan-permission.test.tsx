@@ -1,12 +1,11 @@
 import "./run-tests-with-npm-test.generated"
 // DX-4435 (parent DX-4432): the model's `request_permission` (dashboard MCP, DX-4434) answers at once with an approval URL and
-// confirm code. DX-4630: the plugin opens no page; it toasts the link, the code and the permissions asked for, the band counts the requests
+// confirm code. DX-4630: the plugin opens no page; it draws the link and the code in the band, which counts the requests
 // still open and links the newest one's page with its code, and a request leaves the count when it is decided or expires.
 import { describe, expect } from 'claude-code/testing'
 
 import { PERMISSION_POLL_MS } from '../hooks/plan/config'
 import { claimStatus, permissionRequestOf } from '../hooks/plan/permission'
-import { permissionToast } from '../hooks/plan/approval'
 import { test, SURFACES, browserCalls, dashboard, linksOf, startSession } from './plan-kit'
 import { RELAY_MARKER } from '../hooks/relay/config'
 
@@ -72,23 +71,24 @@ describe('claimStatus', () => {
 })
 
 describe('request_permission', () => {
-  test('toasts the link, the code and the permissions asked for at once, opens no page, and tells the model so', async ($, on) => {
+  test('toasts nothing, opens no page, draws the link and code in the band, and tells the model so', async ($, on) => {
     const d = dashboard(on)
     answering(on, [answer('approval_required', URL_A, 'CODE1'), answer('approval_pending', URL_A, 'CODE1')])
     await startSession($, d, 'desktop')
+    const band = await $.ui.mount(BAND)
     d.calls.length = 0
+    d.toasts.length = 0
     const ran = await $.tool.call(CALL(['team.members.view', 'boards.view']))
     await d.clock.settle()
     expect(browserCalls(d)).toEqual([])
-    expect(d.toasts.at(-1)).toBe(permissionToast({ url: URL_A, code: 'CODE1', permissions: ['team.members.view', 'boards.view'] }))
-    expect(d.toasts.at(-1)).toContain('permission team.members.view, boards.view')
-    expect(d.toasts.at(-1)).toContain(`${URL_A} and check that confirm code CODE1 matches`)
-    expect(d.toastTimeouts.at(-1)).toBe(60_000)
+    expect(d.toasts).toEqual([])
+    expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('code CODE1')
     const note = ran.context.filter((c: string) => c.includes('approval link'))
     expect(note).toHaveLength(1)
     expect(note[0]).toContain('Do not open the link yourself')
-    expect(note[0]).toContain('in a notification')
-    expect(note[0]).not.toContain('band')
+    expect(note[0]).toContain('in the band')
+    expect(note[0]).not.toContain('notification')
     await $.tool.call(CALL(['team.members.view', 'boards.view']))
     await d.clock.settle()
     expect(browserCalls(d)).toEqual([])
