@@ -752,7 +752,7 @@ function notToldToast($: any, cause: unknown, text: string): void {
 const withPermissionNote = (ran: any, approval: ApprovalRequest) => ({ ...ran, context: [...(ran.context ?? []), permissionShownNote(approval)] })
 
 // a sign-in request, drawn the moment it exists: the band reads it from $.state and draws its link and confirm
-// code (CP-100: the band is the only place they show, never a toast). The plugin opens no page: the person follows the link.
+// code (the band is the only place they show, never a toast). The plugin opens no page: the person follows the link.
 async function showSignInRequest($: any, approval: ApprovalRequest): Promise<void> {
   await update($, signInRequest, () => approval)
 }
@@ -1131,7 +1131,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
 }
 
 // The button's press returns at once: the sign-in waits minutes for a person, and a press must not. A watch already running
-// (the model's own sign-in) says its link and code again instead of starting a second wait.
+// (the model's own sign-in) leaves the band showing its link and code: the press does nothing instead of starting a second wait.
 async function startSignIn($: any): Promise<void> {
   const waiting = await read($, signInRequest)
   if (waiting !== null) return
@@ -2882,7 +2882,7 @@ async function onSessionConnect($: any, e: any, next: any) {
 }
 
 // the model asked for a permission: keep the request for the band, which draws its approval link and code at once
-// (no page is opened by the plugin); never a toast (CP-100).
+// (no page is opened by the plugin); never a toast.
 async function onRequestPermission($: any, e: any, next: any) {
   const ran = await next(e)
   const request = permissionRequestOf(ran.text, e.permissions)
