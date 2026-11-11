@@ -55,6 +55,20 @@ describe('the agent name in the title', () => {
     expect(sessionTitle(BARE, { ...on(0), agentBlock: 'agent_not_held' } as any, OFF, WORKING)).toBe(`${DOWN}${BARE}`)
     expect(sessionTitle('Fix: the login page', { ...on(0), agentBlock: 'agent_not_held' } as any, OFF, WORKING)).toBe(`${DOWN}Fix: the login page`)
   })
+
+  // DEC-728: a connected session's title always names its agent, so a plan or card title that lost the name gets it back
+  test('comes back on a connected session holding its agent whose plan or card title lacks it', async () => {
+    expect(sessionTitle(BARE, on(0), OFF, WORKING)).toBe(`${UP}${TITLE}`)
+    expect(sessionTitle(`${HAND}${BARE}`, on(2), OFF, WORKING)).toBe(`${HAND}${TITLE}`)
+    const onCard = { ...on(0), connected: null, card: { id: 'DX-1', title: 'A card' } }
+    expect(sessionTitle('DX-1 A card', onCard, OFF, WORKING)).toBe(`${UP}50 Arms I: DX-1 A card`)
+  })
+
+  test('is never added to a title that already names someone, a title of the person\'s own, or a session on neither a plan nor a card', async () => {
+    expect(sessionTitle("Kofi: PLAN-18 Card plugins", on(0), OFF, WORKING)).toBe(`${UP}Kofi: PLAN-18 Card plugins`)
+    expect(sessionTitle('Fix the login page', on(0), OFF, WORKING)).toBe(`${UP}Fix the login page`)
+    expect(sessionTitle(BARE, { ...EMPTY, phase: 'ready', agent: AGENT } as any, OFF, WORKING)).toBe(BARE)
+  })
 })
 
 describe('the hand', () => {
@@ -246,6 +260,32 @@ describe('a connect answer whose naming is needed (CP-93)', () => {
     expect(d.world.appSession.title).toBe(`${UP}${NEEDED.title}`)
     expect(connectCalls(d).filter((c: any) => c.args.title !== undefined).map((c: any) => c.args)).toEqual([{ target: 'DX-7061', title: NEEDED.title }])
     expect(JSON.stringify(ran)).toContain(NOT_RENAME)
+  })
+
+  // DEC-728: a launch token's first session_connect signs the session in and connects it in one call, so the plugin's view still reads
+  // signed out when the naming runs; the agent name 50 Arms gave must survive that.
+  test("a session signed in by this same connect (a launch token) keeps the agent name in 50 Arms' exact title", async ($, on) => {
+    let d: any
+    d = await desktop(
+      $,
+      on,
+      'Dunnock',
+      OLD_TITLE,
+      () =>
+        on('tool.call', { tool: CONNECT }, () => {
+          d.world.signedOut = null
+          return cardConnect(NEEDED)
+        }),
+      { signedOut: 'signed-out' },
+    )
+    const app = d.world.appSession
+    const before = app.set.length
+    await $.tool.call({ tool: CONNECT, target: 'DX-7061', launch_token: 'one-use' } as any)
+    await d.clock.settle()
+    const written = app.set.slice(before).map((t: string) => unmarkedTitle(t))
+    expect(written.length).toBeGreaterThan(0)
+    for (const t of written) expect(t).toBe(NEEDED.title)
+    expect(unmarkedTitle(app.title)).toBe(NEEDED.title)
   })
 
   test('a pickup that connects the session names the thread the same way, with the same note', async ($, on) => {

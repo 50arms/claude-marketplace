@@ -76,6 +76,20 @@ export function withoutAgentName(title: string): string {
   return title.replace(AGENT_NAME_PREFIX, '')
 }
 
+// A connected session's title always names its agent: a title that opens on its plan or card ref with no `{Agent}: ` before it
+// gets the held agent's name back. Any other title (one that already names someone, or a person's own) is left alone.
+const REF_FIRST = /^(?=[A-Z][A-Z0-9]*-\d+\b)/u
+export function withAgentName(title: string, agentName: string): string {
+  return REF_FIRST.test(title) ? `${agentName}: ${title}` : title
+}
+
+// the title's agent name follows the connection: dropped once the session holds no agent, put back while it holds one on a plan or card
+function namedForConnection(title: string, v: PlanView): string {
+  if (holdsNoAgent(v)) return withoutAgentName(title)
+  if (v.agent !== null && (v.connected !== null || v.card !== null)) return withAgentName(title, v.agent.name)
+  return title
+}
+
 // the session title with ONE mark at most (operator, 2026-10-24): red when the connection is lost (titleConnection); else, while Needs You
 // is shown (needsYouShown), the waiting mark when nothing of the session runs (no turn, no sub-agent: it has done all it can) and the hand
 // while something still does; else the building mark while a sub-agent runs; else the hourglass while the session waits for a sub-agent slot
@@ -85,7 +99,7 @@ export function withoutAgentName(title: string): string {
 export function sessionTitle(title: string, v: PlanView, relay: RelayState, activity: TitleActivity): string {
   if (v.phase === 'loading') return title
   const marked = unmarkedTitle(title)
-  const base = holdsNoAgent(v) ? withoutAgentName(marked) : marked
+  const base = namedForConnection(marked, v)
   if (base === '') return base
   const connection = titleConnection(v, relay)
   if (connection === 'down') return `${DISCONNECTED_TITLE_MARK}${base}`

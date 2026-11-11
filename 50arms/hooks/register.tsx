@@ -558,11 +558,11 @@ async function applyNaming($: any, target: unknown, naming: any): Promise<string
   if (!(await read($, desktopHosted))) return null
   const exact = naming.title.trim()
   // the model's connect already succeeded on the server: a failure here is told, never thrown out of the hook
+  // The connect just succeeded, so the session holds the agent the title names: the exact title is set as 50 Arms gave it, never run through
+  // the view (which can still read signed out when this same call signed the session in, e.g. a launch token's first connect). The mark
+  // follows from the sync the connect's own view refresh runs.
   try {
-    await underTitleLock(async () => {
-      const want = sessionTitle(exact, await read($, view), await read($, relay), await titleActivity($))
-      await setAppTitle($, want)
-    })
+    await underTitleLock(() => setAppTitle($, exact))
   } catch (err) {
     $.ui.toast(`Setting the thread title failed: ${errMessage(err)}`.slice(0, TOAST_ERROR_MAX))
     return null
