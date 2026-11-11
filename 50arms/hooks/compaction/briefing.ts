@@ -108,10 +108,19 @@ export const CLEAR_RESUME_PROCEDURE = "Resume now, without asking the person, in
 
 export const CLEAR_RESUME_OPENING = `[50 ARMS] Your conversation was just cleared, so it holds nothing of the work before it: the handoff you wrote lives on your cards. ${CLEAR_RESUME_PROCEDURE}`
 
-// `kind` is how the conversation was replaced: 'compacted' (a summary stands in for it) or 'cleared' (nothing does; the sub-agents line is left out, see CLEAR_RESUME_PROCEDURE)
-export function briefingText(input: BriefingInput, kind: 'compacted' | 'cleared' = 'compacted'): string {
+// how the conversation was replaced: 'compacted' (a summary stands in for it) or 'cleared' (nothing does)
+export type BriefingKind = 'compacted' | 'cleared'
+
+// the one lookup from a kind to what the resume prompt carries for it: the procedure (a start text that holds it needs no opening) and the opening that stands alone when the start text could not be read
+export const RESUME_TEXTS: Record<BriefingKind, { procedure: string; opening: string }> = {
+  compacted: { procedure: RESUME_PROCEDURE, opening: RESUME_OPENING },
+  cleared: { procedure: CLEAR_RESUME_PROCEDURE, opening: CLEAR_RESUME_OPENING },
+}
+
+// the sub-agents line is left out of a cleared briefing (see CLEAR_RESUME_PROCEDURE)
+export function briefingText(input: BriefingInput, kind: BriefingKind = 'compacted'): string {
   const plan = input.plan === null ? 'You are on no plan.' : `Your plan is ${input.plan.ref} ${oneLine(input.plan.name, 80)}.`
-  const opening = kind === 'cleared' ? CLEAR_RESUME_OPENING : RESUME_OPENING
+  const opening = RESUME_TEXTS[kind].opening
   const agents = kind === 'cleared' ? '' : `${agentsLine(input.agents)} `
   return `${opening} ${owedLine(input.owed)} ${plan} ${cardsLine(input.cards)} ${agents}${gitLine(input.git)}`
 }

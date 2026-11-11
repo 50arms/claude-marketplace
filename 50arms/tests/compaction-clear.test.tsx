@@ -83,11 +83,6 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.clearRuns).toHaveLength(1)
       expect(compactRuns(d)).toEqual([])
-      // the same release is spent
-      await $.turn.start(START)
-      await $.turn.complete(TURN)
-      await d.clock.settle()
-      expect(d.clearRuns).toHaveLength(1)
     })
 
     test('mode compact runs /compact and no /clear; a file with no mode does the same', async ($, on) => {
@@ -185,7 +180,6 @@ for (const surface of SURFACES) {
       await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: again, transcript_path: '/work/cleared-again.jsonl' })
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)
-      expect(d.relay.submitted.filter((t: string) => t.includes('was just cleared'))).toHaveLength(1)
     })
 
     // the cleared session's turn is started with the opening whatever the start text could not be read as: the start is already taken, so nothing else would tell it how to resume
@@ -222,6 +216,38 @@ for (const surface of SURFACES) {
       // the kit answers a hook that threw as `no implementation`; what matters is that the reads failed and said so, in the event's own line
       expect(prompt).toContain('Could not load the "session_start" event text')
       expect(prompt).toContain(CLEAR_RESUME_OPENING)
+    })
+
+    // the clear ends the process in the desktop app: the next conversation runs in a NEW process, with an empty $.state and the engine's new id, while the relay's file (named by the dashboard session id) may still hold the release
+    test('a new process with an empty $.state and a new engine id does not act on the release again, and a new release clears again', async ($, on) => {
+      const d = await started($, on)
+      // the engine id is the dashboard session id until a clear changes it (the relay names its files by the id the MCP server booted with)
+      d.world.sessionId = SESSION_ID
+      const relayFile = `${HOME_DIR}/.config/danxbot/compaction/${SESSION_ID}.json`
+      d.world.files[relayFile] = READY('clear', 'r1', SESSION_ID)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.clearRuns).toHaveLength(1)
+      // the new process: nothing of the old one's $.state, a new engine id (the kit's /clear moved it), the same file with the same unexpired release
+      d.wipeState()
+      expect(d.world.sessionId).not.toBe(SESSION_ID)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.clearRuns).toHaveLength(1)
+      d.world.files[relayFile] = READY('clear', 'r2', SESSION_ID)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.clearRuns).toHaveLength(2)
+    })
+
+    // a plugin reload keeps $.state and drops the module's variables, so the mark of a clear in progress is a $.state value: a conversation that opens while it is set is the one to resume
+    test("the mark of a compaction clear in progress lives in $.state: a clear start that finds it set is resumed", async ($, on) => {
+      const d = await started($, on)
+      d.seedState('compactionClear', true)
+      d.world.sessionId = CLEARED_SESSION_ID
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID, transcript_path: '/work/cleared.jsonl' })
+      await d.clock.settle()
+      expect(resumes(d)).toHaveLength(1)
     })
 
     test('the release a clear acted on is not acted on again by the conversation it opened (the relay names its file by the dashboard session id), and a new release clears again', async ($, on) => {

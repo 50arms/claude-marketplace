@@ -2023,6 +2023,7 @@ describe('the ready-agent loop', () => {
       JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, askedAt: null, control: { floorTokens: 250_000, passAtTokens: 907_000, windowTokens: 1_000_000, releaseUntilMs: Date.parse('2026-10-03T12:00:00.000Z'), releaseId, mode, agents: {}, valves: { 'claude-opus-4-8': 907_000 } } })
     const COMPACTION_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
 
+    // pins: whichever mode the compaction is in, while the ready loop's /clear runs the compaction release starts nothing (no second /clear, no /compact); the release stays for a later check
     for (const mode of ['clear', 'compact']) {
       test(`a ${mode} compaction release that lands while the ready loop's /clear runs starts nothing beside it`, async ($, on) => {
         const d = await started($, on)
@@ -2045,6 +2046,7 @@ describe('the ready-agent loop', () => {
       })
     }
 
+    // pins the other direction: the ready loop's released clear waits while a compaction clear runs (no second /clear beside it) and still runs once that clear has ended
     test("a released ready-loop clear that comes while a compaction clear runs waits for it, runs no second /clear beside it, and runs once it has ended", async ($, on) => {
       const d = await started($, on)
       await ready($, d)
