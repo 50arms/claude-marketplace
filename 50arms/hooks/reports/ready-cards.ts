@@ -5,6 +5,9 @@
 
 export type ReadyCard = { id: string; title: string }
 
+// CP-103 (DX-7127): a card whose plan review can run now (the dashboard's `review_runnable`), named with the pending gate (`next_pre_gate`).
+export type ReviewableCard = { id: string; title: string; gate: string }
+
 // A card row as `isReadyCard` judges it, after `parseCardRow` proved every field present and well typed.
 export type CardRow = {
   id: string
@@ -16,6 +19,8 @@ export type CardRow = {
   open_problem_count: number
   waiting_on: boolean
   conflict_on_active_count: number
+  review_runnable: boolean
+  next_pre_gate: string | null
 }
 
 // The dispatchable card types: Epic and Feature are containers, a Task is a leaf nobody dispatches.
@@ -29,6 +34,8 @@ const JUDGED_FIELDS: Record<string, (value: unknown) => boolean> = {
   open_problem_count: v => typeof v === 'number',
   waiting_on: v => typeof v === 'boolean',
   conflict_on_active_count: v => typeof v === 'number',
+  review_runnable: v => typeof v === 'boolean',
+  next_pre_gate: v => v === null || typeof v === 'string',
 }
 
 // `GET /api/issues` page size (its maximum): a plan's ToDo cards never approach it, and a truncated page fails loudly below.
@@ -77,6 +84,13 @@ export function isReadyCard(card: CardRow): boolean {
   )
 }
 
+// Whether a card's plan review can run now and nobody is working it: the dashboard's `review_runnable` (readied, live, unheld, unblocked, its
+// next PRE gate needing neither a build nor a person, so never `plan-design`) holds, with no session holding the card and no live dispatch on it.
+// Its `depends_on` / `conflict_on` edges are no part of it: that is the case this names, a build waiting while its review can start.
+export function isReviewableCard(card: CardRow): boolean {
+  return card.review_runnable && card.next_pre_gate !== null && card.assigned_agent === null && card.dispatch === null
+}
+
 export type Read<T> = { ok: true; value: T } | { ok: false; reason: string }
 
 // A board id is a positive integer: the dashboard names every board by its per-team ref number.
@@ -91,20 +105,23 @@ export function planOf(body: unknown): Read<{ planId: number; boards: number[] }
   return { ok: true, value: { planId: b.id, boards: b.boards as number[] } }
 }
 
-// One board's `GET /api/issues` body: its ready cards, in the order read. A truncated page or a row it cannot judge fails the whole read.
-export function readyCardsOf(body: unknown): Read<ReadyCard[]> {
+// One board's `GET /api/issues` body: its ready cards and, apart from them, its cards whose review can run now, in the order read (a ready
+// card's review is covered by "dispatch it", so it is never listed twice). A truncated page or a row it cannot judge fails the whole read.
+export function readyCardsOf(body: unknown): Read<{ ready: ReadyCard[]; reviewable: ReviewableCard[] }> {
   const b = body as { issues?: unknown; total?: unknown } | null
   if (b === null || typeof b !== 'object' || !Array.isArray(b.issues) || typeof b.total !== 'number') {
     return { ok: false, reason: 'bad_response: GET /api/issues answered no issues list and total' }
   }
   if (b.total > b.issues.length) return { ok: false, reason: `too_many_cards: the plan has ${b.total} ToDo cards on one board, more than one read returns` }
-  const cards: ReadyCard[] = []
+  const ready: ReadyCard[] = []
+  const reviewable: ReviewableCard[] = []
   for (const raw of b.issues) {
     const card = parseCardRow(raw)
     if (card === null) return { ok: false, reason: 'bad_response: a card row lacks a field the check judges' }
-    if (isReadyCard(card)) cards.push({ id: card.id, title: card.title })
+    if (isReadyCard(card)) ready.push({ id: card.id, title: card.title })
+    else if (isReviewableCard(card)) reviewable.push({ id: card.id, title: card.title, gate: card.next_pre_gate as string })
   }
-  return { ok: true, value: cards }
+  return { ok: true, value: { ready, reviewable } }
 }
 
 function truncate(title: string): string {
@@ -119,6 +136,16 @@ export function blockReason(cards: readonly ReadyCard[]): string {
   return (
     `Your plan has ${cards.length} ready, unblocked card${cards.length === 1 ? '' : 's'} nobody is working: ${listed.join('; ')}${more}. ` +
     'Dispatch each now, or record on the card why it cannot run (dependency, problem, block).'
+  )
+}
+
+// The block reason for review-runnable cards (at least one): each named with its pending gate, and the instruction.
+export function reviewReason(cards: readonly ReviewableCard[]): string {
+  const listed = cards.slice(0, MAX_LISTED_CARDS).map(c => `${c.id} ${truncate(c.title)} (${c.gate})`)
+  const more = cards.length > listed.length ? `, and ${cards.length - listed.length} more` : ''
+  return (
+    `Your plan has ${cards.length} card${cards.length === 1 ? '' : 's'} whose plan review can run now while ${cards.length === 1 ? 'its' : 'their'} build waits: ${listed.join('; ')}${more}. ` +
+    'Start each review now, or record on the card why it cannot run (problem, block).'
   )
 }
 

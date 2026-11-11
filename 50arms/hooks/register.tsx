@@ -89,8 +89,8 @@ import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShe
 import { subagentKey } from './compaction/subagent-key'
 import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
-import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, skippedLine } from './reports/ready-cards'
-import type { ReadyCard } from './reports/ready-cards'
+import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, reviewReason, skippedLine } from './reports/ready-cards'
+import type { ReadyCard, ReviewableCard } from './reports/ready-cards'
 import { detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
 import type { HeldCard, WorkMarks } from './reports/held-idle'
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
@@ -4031,7 +4031,7 @@ async function reportShellEnds($: any, event: 'Stop' | 'SubagentStop', e: any): 
 }
 
 // What the ready-cards read came to: the ready cards, nothing to say, or why it failed.
-type ReadyRead = { kind: 'cards'; cards: ReadyCard[]; held: HeldCard[]; heldSkipped: string | null } | { kind: 'quiet' } | { kind: 'failed'; reason: string }
+type ReadyRead = { kind: 'cards'; cards: ReadyCard[]; reviewable: ReviewableCard[]; held: HeldCard[]; heldSkipped: string | null } | { kind: 'quiet' } | { kind: 'failed'; reason: string }
 
 // the answers that end the read quietly, the ordinary ones for a session with nothing to check: it holds no usable key (signed
 // out, or a person revoked it: its own tools say so), or the dashboard has it on no plan (409 `session_not_connected`). Any other
@@ -4059,11 +4059,13 @@ async function readReadyCards($: any): Promise<ReadyRead> {
     api($, 'GET', detailPath(plan.value.planId)),
   ])
   const cards: ReadyCard[] = []
+  const reviewable: ReviewableCard[] = []
   for (const r of boards) {
     if (!r.ok) return { kind: 'failed', reason: errText(r) }
     const read = readyCardsOf(r.body)
     if (!read.ok) return { kind: 'failed', reason: read.reason }
-    cards.push(...read.value)
+    cards.push(...read.value.ready)
+    reviewable.push(...read.value.reviewable)
   }
   // the held-idle read fails open on its own (a dashboard without the route never costs the ready-cards check)
   let held: HeldCard[] = []
@@ -4074,7 +4076,7 @@ async function readReadyCards($: any): Promise<ReadyRead> {
     if (idle.ok) held = idle.value
     else heldSkipped = idle.reason
   }
-  return { kind: 'cards', cards, held, heldSkipped }
+  return { kind: 'cards', cards, reviewable, held, heldSkipped }
 }
 
 // the main session's stop. Reports the shells' ends, then blocks the stop once while the plan has ready cards nobody holds.
@@ -4092,7 +4094,7 @@ async function onReportStop($: any, e: any, next: any) {
   if (verdict.kind === 'failed') $.ui.toast(skippedLine(verdict.reason))
   if (verdict.kind === 'cards' && verdict.heldSkipped !== null) $.ui.toast(heldSkippedLine(verdict.heldSkipped))
   // one block carries both reasons, each only when it has cards
-  const reasons = verdict.kind === 'cards' ? [...(verdict.held.length > 0 ? [heldIdleReason(verdict.held)] : []), ...(verdict.cards.length > 0 ? [blockReason(verdict.cards)] : [])] : []
+  const reasons = verdict.kind === 'cards' ? [...(verdict.held.length > 0 ? [heldIdleReason(verdict.held)] : []), ...(verdict.cards.length > 0 ? [blockReason(verdict.cards)] : []), ...(verdict.reviewable.length > 0 ? [reviewReason(verdict.reviewable)] : [])] : []
   if (reasons.length > 0) return { ...r, block: reasons.join('\n\n') }
   return r
 }

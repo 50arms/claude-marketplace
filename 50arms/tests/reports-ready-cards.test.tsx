@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, pauseOf } from '../hooks/reports/pause'
-import { READY_CARDS_DEADLINE_MS, blockReason, isReadyCard, parseCardRow, planOf, readyCardsOf } from '../hooks/reports/ready-cards'
+import { READY_CARDS_DEADLINE_MS, blockReason, isReadyCard, isReviewableCard, parseCardRow, planOf, readyCardsOf, reviewReason } from '../hooks/reports/ready-cards'
 import type { CardRow } from '../hooks/reports/ready-cards'
 import { test, CLOCK_START, SURFACES, answerReportEvents, dashboard, forceRefresh, startSession } from './plan-kit'
 
@@ -15,7 +15,7 @@ const GPT_BOARD = 9
 const INSTRUCTION = 'Dispatch each now, or record on the card why it cannot run (dependency, problem, block).'
 
 function card(over: Partial<CardRow> = {}): CardRow {
-  return { id: 'DX-1', type: 'Story', title: 'A card', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, ...over }
+  return { id: 'DX-1', type: 'Story', title: 'A card', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, review_runnable: false, next_pre_gate: null, ...over }
 }
 
 describe('ready (pure)', () => {
@@ -46,6 +46,8 @@ describe('ready (pure)', () => {
     expect(parseCardRow(card({ waiting_on: 'false' as any }))).toBeNull()
     expect(parseCardRow(card({ conflict_on_active_count: '0' as any }))).toBeNull()
     expect(parseCardRow(card({ assigned_agent: 7 as any }))).toBeNull()
+    expect(parseCardRow(card({ review_runnable: 'true' as any }))).toBeNull()
+    expect(parseCardRow(card({ next_pre_gate: 7 as any }))).toBeNull()
     expect(parseCardRow(card())).toEqual(card())
     expect(readyCardsOf({ issues: [card(), noDispatch], total: 2 })).toEqual({ ok: false, reason: 'bad_response: a card row lacks a field the check judges' })
   })
@@ -56,6 +58,31 @@ describe('ready (pure)', () => {
     expect(planOf({ id: '23', boards: [] }).ok).toBe(false)
     for (const bad of [0, -1, 1.5, '7', null, NaN]) expect(planOf({ id: 23, boards: [7, bad] }).ok).toBe(false)
     expect(planOf({ id: 23 }).ok).toBe(false)
+  })
+
+  test('a held card whose review can run is reviewable, named with its gate; a ready card is listed only as ready', () => {
+    const held = card({ id: 'DX-2', waiting_on: true, review_runnable: true, next_pre_gate: 'plan-dependency' })
+    const ready = card({ id: 'DX-3', review_runnable: true, next_pre_gate: 'plan-architecture' })
+    expect(readyCardsOf({ issues: [held, ready, card({ id: 'DX-4', waiting_on: true })], total: 3 })).toEqual({
+      ok: true,
+      value: { ready: [{ id: 'DX-3', title: 'A card' }], reviewable: [{ id: 'DX-2', title: 'A card', gate: 'plan-dependency' }] },
+    })
+  })
+
+  test('a review-runnable card somebody holds or has a live dispatch on is not reviewable', () => {
+    const runnable = { waiting_on: true, review_runnable: true, next_pre_gate: 'plan-dependency' }
+    expect(isReviewableCard(card(runnable))).toBe(true)
+    expect(isReviewableCard(card({ ...runnable, assigned_agent: 'some-session' }))).toBe(false)
+    expect(isReviewableCard(card({ ...runnable, dispatch: { started_at: 1 } }))).toBe(false)
+    expect(isReviewableCard(card({ ...runnable, review_runnable: false }))).toBe(false)
+  })
+
+  test('the review reason names each card with its gate, counts the rest and ends with the one instruction', () => {
+    const cards = Array.from({ length: 6 }, (_, i) => ({ id: `DX-${i + 1}`, title: `Card ${i + 1}`, gate: 'plan-dependency' }))
+    expect(reviewReason(cards)).toBe(
+      'Your plan has 6 cards whose plan review can run now while their build waits: DX-1 Card 1 (plan-dependency); DX-2 Card 2 (plan-dependency); DX-3 Card 3 (plan-dependency); DX-4 Card 4 (plan-dependency); DX-5 Card 5 (plan-dependency), and 1 more. Start each review now, or record on the card why it cannot run (problem, block).',
+    )
+    expect(reviewReason([cards[0]])).toBe('Your plan has 1 card whose plan review can run now while its build waits: DX-1 Card 1 (plan-dependency). Start each review now, or record on the card why it cannot run (problem, block).')
   })
 
   test('a truncated page fails loudly instead of missing cards', () => {
@@ -103,6 +130,7 @@ for (const surface of SURFACES) {
     }
     const reads = (d: any) => d.reports.filter((r: any) => r.method === 'GET' && r.path !== PAUSE_PATH)
     const pauseReads = (d: any) => d.reports.filter((r: any) => r.path === PAUSE_PATH)
+    const CARD_BLOCK = blockReason([{ id: 'DX-1', title: 'A card' }])
     const STOP = { stop_hook_active: false, background_tasks: [] } as any
 
     test('ready cards block the stop once, naming at most five and counting the rest', async ($, on) => {
@@ -120,11 +148,32 @@ for (const surface of SURFACES) {
         board: BOARD,
         query: {
           filter: { plan_id: 23, status_derived: 'ToDo' },
-          fields: { dispatch: true, blocked: true, open_problem_count: true, waiting_on: true, conflict_on_active_count: true },
+          fields: { dispatch: true, blocked: true, open_problem_count: true, waiting_on: true, conflict_on_active_count: true, review_runnable: true, next_pre_gate: true },
           limit: 1000,
           sort: 'priority',
         },
       })
+    })
+
+    test('a held card with a runnable review blocks the stop, naming it and its gate; a held card with none, and a reviewable card already worked, do not', async ($, on) => {
+      const d = await started($, on)
+      d.world.readyRows[BOARD] = [
+        card({ id: 'DX-2', title: 'Waits on DX-1', waiting_on: true, review_runnable: true, next_pre_gate: 'plan-dependency' }),
+        card({ id: 'DX-3', title: 'Waits, nothing to review', waiting_on: true }),
+        card({ id: 'DX-4', title: 'Held by a session', waiting_on: true, review_runnable: true, next_pre_gate: 'plan-dependency', assigned_agent: 'someone' }),
+        card({ id: 'DX-5', title: 'In dispatch', waiting_on: true, review_runnable: true, next_pre_gate: 'plan-dependency', dispatch: { started_at: 1 } }),
+      ]
+      expect((await $.classic.Stop(STOP)).block).toBe(reviewReason([{ id: 'DX-2', title: 'Waits on DX-1', gate: 'plan-dependency' }]))
+      d.world.readyRows[BOARD] = [card({ id: 'DX-3', waiting_on: true }), card({ id: 'DX-4', waiting_on: true, review_runnable: true, next_pre_gate: 'plan-dependency', assigned_agent: 'someone' })]
+      expect((await $.classic.Stop(STOP)).block).toBeUndefined()
+    })
+
+    test('ready cards and review-runnable cards share one block, ready first', async ($, on) => {
+      const d = await started($, on)
+      d.world.readyRows[BOARD] = [card(), card({ id: 'DX-2', waiting_on: true, review_runnable: true, next_pre_gate: 'plan-dependency' })]
+      expect((await $.classic.Stop(STOP)).block).toBe(`${CARD_BLOCK}
+
+${reviewReason([{ id: 'DX-2', title: 'A card', gate: 'plan-dependency' }])}`)
     })
 
     test('no ready card: the stop goes on', async ($, on) => {
@@ -225,7 +274,6 @@ for (const surface of SURFACES) {
     })
 
     const AGENT_PAUSE = (until: string) => ({ limit: 'agent', state: 'agent_waiting', reason: 'waiting for a build', ends_when: null, since: '2026-10-13T20:00:00.000Z', until, held: 0 })
-    const CARD_BLOCK = blockReason([{ id: 'DX-1', title: 'A card' }])
 
     test('a session in an unexpired agent pause is not reminded, and no card is read: only the pause read is made', async ($, on) => {
       const d = await started($, on)
