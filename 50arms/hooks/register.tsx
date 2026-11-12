@@ -2933,7 +2933,11 @@ async function onSessionConnect($: any, e: any, next: any) {
   const target = connectTargetOf(e.target)
   let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
   // the model's own leave of a plan or card, accepted, is a natural break; the band's Disconnect (the plugin's own call) is a person's press and clears nothing
-  if (e.disconnect === true && target !== null && !raisedByPlugin(next.origin) && answerOf(ran).ok) clearAtBreak = true
+  if (e.disconnect === true && target !== null && !raisedByPlugin(next.origin)) {
+    const outcome = answerOf(ran)
+    if (outcome.ok) clearAtBreak = true
+    await noteBreak($, outcome.ok ? 'flag-set' : 'leave-not-accepted', { call: 'session_connect', target: e.target, ...outcomeFacts(ran, outcome) })
+  }
   const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
   if (named !== null) ran = withNamedNote(ran, named)
   const registration = registrationOf(ran.text)
@@ -2993,7 +2997,11 @@ async function onAckCall($: any, e: any, next: any) {
     detach($, 'Plan refresh', refresh($, true))
   }
   // the model's own pause, accepted, is a natural break
-  if (typeof e.method === 'string' && e.method.toUpperCase() === 'PUT' && e.path === PAUSE_PATH && answerOf(ran).ok) clearAtBreak = true
+  if (typeof e.method === 'string' && e.method.toUpperCase() === 'PUT' && e.path === PAUSE_PATH) {
+    const outcome = answerOf(ran)
+    if (outcome.ok) clearAtBreak = true
+    await noteBreak($, outcome.ok ? 'flag-set' : 'pause-not-accepted', { call: '50arms_api PUT pause', ...outcomeFacts(ran, outcome) })
+  }
   await touchRecordClock($, e, next)
   const answer = answerOf(ran)
   // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
@@ -3772,6 +3780,8 @@ async function remindToRecord($: any): Promise<void> {
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
   if (e.agentId === undefined) {
+    // a break is waiting for this turn end: the record shows the host raised the event (a missing turn-complete after a flag-set means it did not, or a step below threw before the decision)
+    if (clearAtBreak) await noteBreak($, 'turn-complete', { isAborted: e.isAborted === true, reason: e.reason })
     // `prompts` is set inside the updater, which sees the turn as it is when the write happens
     let prompts = [] as string[]
     await update($, turn, cur => {
@@ -4467,7 +4477,7 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
 async function clearAtNaturalBreak($: any): Promise<void> {
   if (!clearAtBreak) return
   clearAtBreak = false
-  // each gate's value, read once: the plugin has no log, so a skip says which gate held in one toast (the only record there is of a clear that did not happen)
+  // each gate's value, read once, is recorded with the outcome
   const gates = {
     inProgress: clearInProgress,
     readyLoop: (await read($, readyLoop)) !== null,
@@ -4477,10 +4487,12 @@ async function clearAtNaturalBreak($: any): Promise<void> {
     shells: (await read($, readyShells)).length,
   }
   if (gates.inProgress || gates.readyLoop || gates.compacting || gates.turnRunning || gates.agents > 0 || gates.shells > 0 || clearInProgress) {
-    $.ui.toast(`50 Arms: natural-break clear skipped (${Object.entries(gates).map(([k, v]) => `${k}=${typeof v === 'boolean' ? (v ? 'yes' : 'no') : v}`).join(', ')})`)
+    await noteBreak($, 'skipped', gates)
     return
   }
   clearInProgress = true
+  // written before the clear: a clear that ends the process leaves no later chance to write
+  await noteBreak($, 'clear-attempted', gates)
   detach($, 'Natural-break clear', clearCommandOnce($))
 }
 
@@ -4488,9 +4500,35 @@ async function clearCommandOnce($: any): Promise<void> {
   try {
     const { failure } = await clearCommand($)
     if (failure !== null) throw new Error(failure)
+    await noteBreak($, 'clear-done', {})
+  } catch (err: any) {
+    await noteBreak($, 'clear-failed', { error: errMessage(err).slice(0, 300) })
+    throw err
   } finally {
     clearInProgress = false
   }
+}
+
+// What a natural-break decision leaves for an agent to read afterwards (the plugin has no log): the newest NATURAL_BREAK_KEEP entries, one `$.store` key, so the file is
+// ~/.claude/plugins/store/<plugin>-<hash>.json, the one `$.store` writes (`50arms_inline-*.json` for the preview folder, `50arms_50arms-*.json` for the cache copy). It never throws:
+// a diagnostic that failed must not turn a clear into a failure.
+const NATURAL_BREAK_KEY = 'naturalBreakLog'
+const NATURAL_BREAK_KEEP = 60
+async function noteBreak($: any, stage: string, facts: Record<string, unknown>): Promise<void> {
+  try {
+    const at = new Date(await $.clock.now()).toISOString()
+    const prior = await storeOp($, { op: 'get', key: NATURAL_BREAK_KEY })
+    const entries = Array.isArray(prior) ? prior : []
+    const entry = { at, stage, session: await hostSessionId($), engineSession: await $.session.id(), ...facts }
+    await storeOp($, { op: 'set', key: NATURAL_BREAK_KEY, value: [...entries, entry].slice(-NATURAL_BREAK_KEEP) })
+  } catch (err: any) {
+    $.ui.toast(`50 Arms: the natural-break record could not be written: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+  }
+}
+
+// how the host handed a call's answer to the hook: the fields answerOf reads, with a head of the text
+function outcomeFacts(ran: any, outcome: { ok: boolean; status: number }): Record<string, unknown> {
+  return { ok: outcome.ok, status: outcome.status, isError: ran?.isError === true, denied: ran?.deny !== undefined, hasText: typeof ran?.text === 'string', textHead: typeof ran?.text === 'string' ? ran.text.slice(0, 160) : null }
 }
 
 const sessionIsIdleForClear = async ($: any): Promise<boolean> => (await readyIsIdle($)) && (await read($, readyShells)).length === 0

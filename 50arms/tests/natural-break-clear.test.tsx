@@ -85,26 +85,54 @@ for (const surface of SURFACES) {
       expect(d.clearRuns).toHaveLength(0)
     })
 
-    // No log facility exists in the plugin, so a skipped break says which gate held it in the one line a person can see and copy
-    test('a turn end that skips the clear says which gate held it, once', async ($, on) => {
+    // The plugin has no log, so every decision is kept in `$.store` (key naturalBreakLog) for an agent to read afterwards
+    const record = (d: any) => (d.stored.get('naturalBreakLog') ?? []) as any[]
+    const stages = (d: any) => record(d).map(r => r.stage)
+
+    test('a pause with nothing running records the flag, the turn end with every gate, and the clear', async ($, on) => {
+      const d = await started($, on)
+      await pause($)
+      expect(stages(d)).toEqual(['flag-set'])
+      expect(record(d)[0]).toMatchObject({ call: '50arms_api PUT pause', ok: true, status: 200, isError: false, hasText: true })
+      await endTurn($, d)
+      expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-done'])
+      expect(record(d)[2]).toMatchObject({ inProgress: false, readyLoop: false, compacting: false, turnRunning: false, agents: 0, shells: 0 })
+    })
+
+    test('a skipped break records the gate that held it', async ($, on) => {
       const d = await started($, on)
       await $.tool.call({ tool: 'Bash', command: 'sleep 99 &' } as any)
       await pause($)
       await endTurn($, d)
-      const said = d.toasts.filter(t => t.includes('natural-break clear skipped'))
-      expect(said).toHaveLength(1)
-      expect(said[0]).toContain('shells=1')
-      expect(said[0]).toContain('agents=0')
-      await endTurn($, d)
-      expect(d.toasts.filter(t => t.includes('natural-break clear skipped'))).toHaveLength(1)
+      expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'skipped'])
+      expect(record(d)[2]).toMatchObject({ shells: 1, agents: 0, turnRunning: false })
     })
 
-    test('a clear that goes ahead says nothing', async ($, on) => {
+    test('a leave records its flag', async ($, on) => {
       const d = await started($, on)
+      await leave($)
+      expect(record(d)[0]).toMatchObject({ stage: 'flag-set', call: 'session_connect', target: 'PLAN-23' })
+    })
+
+    test('a refused leave records why it set no flag', async ($, on) => {
+      const d = await started($, on, JSON.stringify({ ok: false, status: 409, body: { error: 'card_mismatch' } }), true)
+      await leave($)
+      expect(record(d).at(-1)).toMatchObject({ stage: 'leave-not-accepted', ok: false, isError: true })
+    })
+
+    test('a clear the host refuses is recorded with its error', async ($, on) => {
+      const d = await started($, on)
+      d.world.clearFails = 'the host refused the clear'
       await pause($)
       await endTurn($, d)
-      expect(d.clearRuns).toHaveLength(1)
-      expect(d.toasts.filter(t => t.includes('natural-break clear'))).toHaveLength(0)
+      expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-failed'])
+      expect(String(record(d).at(-1).error).length).toBeGreaterThan(0)
+    })
+
+    test('a turn end with no break waiting records nothing', async ($, on) => {
+      const d = await started($, on)
+      await endTurn($, d)
+      expect(record(d)).toEqual([])
     })
 
     test('a plain turn end with no leave or pause clears nothing', async ($, on) => {
