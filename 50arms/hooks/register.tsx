@@ -1248,7 +1248,7 @@ type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
 // plan still set: a refresh runs at every turn end, as session.measure fires). Signed-out and revoked views, an unloaded one and an error say no.
 const isSignedIn = (v: any): boolean => v.phase === 'ready' || (v.phase === 'loading' && v.connected !== null)
 
-// THE test for 50 Arms talking to the model about its work (CP-75): signed in AND holding its team agent. The mantra's owing (applyLoaded) and every record/card
+// THE test for 50 Arms talking to the model about its work: signed in AND holding its team agent. The mantra's owing (applyLoaded) and every record/card
 // reminder (the sub-agent and side-session reminders, the handoff and no-recent-write ones) ask it, so a session that is not signed in hears only the sign-in invitation.
 const isSignedInWithAgent = (v: any): boolean => v.phase === 'ready' && v.agentBlock === null
 const signedInWithAgent = async ($: any): Promise<boolean> => isSignedInWithAgent(await read($, view))
@@ -3477,7 +3477,7 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
     if (plan.kind === 'failed') return fault(plan.reason)
     // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
     if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
-    // a signed-out resume is the one a restart leaves without a key: the notice is for it. A signed-out startup carries the one invitation to sign in and nothing else: no notice, no lookup, no failure line (CP-75)
+    // a signed-out resume is the one a restart leaves without a key: the notice is for it. A signed-out startup carries the one invitation to sign in and nothing else: no notice, no lookup, no failure line
     if (plan.kind === 'signed-out') return start.source === 'startup' ? { line: SIGN_IN_INVITATION, askRestart: false } : { line: null, askRestart }
     return { line: null, askRestart }
   }
