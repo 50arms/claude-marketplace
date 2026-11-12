@@ -11,9 +11,17 @@ effective text (or the board's override of it, DX-4144), never a copy:
 
 - the main session: the module's `classic.SessionStart` hook (`50arms/hooks/register.tsx`, source
   `startup|resume|compact`), ONLY once the session is signed in (DX-5554; before it, DX-3421
-  gated it on a connected plan): a session with no dashboard key gets no 50 Arms text at all, at
-  session start, resume or compaction, not even a one-line nudge; the trigger to sign in is
-  `50arms:plan-workflow`'s own skill description, not a hook line. Signed in, on a plan or not,
+  gated it on a connected plan). A session with no usable key (never approved, or lapsed) gets one
+  gentle line at its `startup` and nothing else, at session start, resume, compaction or a sub-agent:
+  `SIGN_IN_INVITATION` (`50arms/hooks/context/events.ts`, the plugin's own words, since 50 Arms cannot be
+  asked before the sign-in) says 50 Arms is installed, that the model may mention once that it can track
+  planning or building as a plan with cards and that the Sign in button on the band connects the session,
+  and not to push it. A session whose key a person revoked gets no line. The mantra is owed from then
+  on: the start that found no usable key sets the `mantraOwed` state, and the first load that finds the
+  session signed in with its team agent (`applyLoaded` → `giveOwedMantra`, whichever way it signed in: the
+  band's Sign in, the model's approved `session_connect`, a ready command, a key that works again) turns
+  it into a pending start (`source: 'sign-in'`), so the next prompt or tool result carries the
+  `session_start` text, without the restart notice, and each later sub-agent start gets its own. Signed in, on a plan or not,
   the hook asks 50 Arms (`50arms_api` on the session's own server) for the
   EFFECTIVE text of one of four events (`session_start` | `session_resume` |
   `after_compaction` | `sub_agent_start`, `GET /api/reminders/event/:event`) — the mantra
@@ -23,7 +31,7 @@ effective text (or the board's override of it, DX-4144), never a copy:
   carries the agent-scoped lines alone;
 - every sub-agent, any type or plugin, of a signed-in session (DX-3384 final sweep widened this
   from `50arms:worker-*` only; DX-5554 widened DX-3421's "plan-connected" gate to "signed in" —
-  a sub-agent of a session with no key gets nothing): the module's `classic.SubagentStart` hook
+  a sub-agent of a session with no key gets nothing, not even the invitation): the module's `classic.SubagentStart` hook
   (additionalContext), event `sub_agent_start`;
 - every dispatched worker: its profile's `{{reminder:mantra}}`, resolved by 50 Arms per
   dispatch against the card's board (DX-4144: one mantra; the dispatch fork is gone).
@@ -40,7 +48,7 @@ holds for every one of those readers. No prose states how many sub-agents to run
 `50arms/hooks/register.tsx` hands the model three things, each a hook of the module and none a script. The pure parts are `50arms/hooks/context/*`; every `$` call stays in `register.tsx`.
 
 - **Time stamp** (`context/stamp.ts`): `prompt.submit` and `tool.call` (every call that is not denied) add `MM/DD/YYYY HH:MM:SS ±HH:MM +Δ` to `context`; the date only on the first stamp or a new local day. The last stamp is `$.state` `lastStamp`. Operator decision PBLM-1915: both on every prompt and after every tool call.
-- **Event text** (`context/events.ts`): a session start (`startup`, `resume`, `compact`) and `classic.SubagentStart` add the registry's `GET /api/reminders/event/:event` text for every session `GET /api/plan-sessions/me` finds signed in, on a plan or not (DX-5554; a registered session on no plan is a `session` row whose `plan_id` is null). A session on no plan's start or resume then also asks the restart notice, told after its event text. The compaction briefing follows only a plan-connected session's text. A failed fetch is ONE warning line naming the event and the reason; a signed-out or revoked session, one the MCP's agent gate holds (no team agent yet, or released at a resume: the dashboard's 403 `{state, instruction}` on the model's first dashboard call tells the model, since no `session_connect` ran in the new process), and a plugin server that never connects are quiet; a failed plan read is a line only for a session whose connection record is on disk. A session start first polls `$.tool.list()` for the plugin's own `50arms_api` (up to `STALE_GRACE_MS`; the old standby server never waits), then ONE deadline (`CONTEXT_DEADLINE_MS`, 8 s) covers all the reads of the start or of a sub-agent start together and answers a timeout line when it passes.
+- **Event text** (`context/events.ts`): a session start (`startup`, `resume`, `compact`) and `classic.SubagentStart` add the registry's `GET /api/reminders/event/:event` text for every session `GET /api/plan-sessions/me` finds signed in, on a plan or not (DX-5554; a registered session on no plan is a `session` row whose `plan_id` is null). A session on no plan's start or resume then also asks the restart notice, told after its event text. The compaction briefing follows only a plan-connected session's text. A failed fetch is ONE warning line naming the event and the reason; a revoked session, one the MCP's agent gate holds (no team agent yet, or released at a resume: the dashboard's 403 `{state, instruction}` on the model's first dashboard call tells the model, since no `session_connect` ran in the new process), and a plugin server that never connects are quiet; a failed plan read is a line only for a session whose connection record is on disk. A session start first polls `$.tool.list()` for the plugin's own `50arms_api` (up to `STALE_GRACE_MS`; the old standby server never waits), then ONE deadline (`CONTEXT_DEADLINE_MS`, 8 s) covers all the reads of the start or of a sub-agent start together and answers a timeout line when it passes.
 - **When a session start is told**: the engine has not bound the session when `classic.SessionStart` runs (desktop/headless startup, resume, fork), so `$.mcp.call` and `$.tool.list` throw there. That hook records `{sessionId, source, transcriptPath, predecessorId}` in `$.state` `pendingStart` (and, for a `compact` start while no main turn runs, detaches the resume prompt, below); the next `prompt.submit` or main-loop `tool.call` result (never a sub-agent's) takes it once and adds the event text and restart notice to `context`. `classic.SubagentStart` runs bound and adds its text to `additionalContext`.
 - **Restart notice**: a session that is not on a plan (or has no key yet), on `startup`, `resume` or `clear`, calls the dashboard server's `restart_notice` tool (it works before sign-in and runs its own 8 s deadline) and says its `{notice}`. Arguments by source (`restartAsk`): `startup` none (the server scans the project); `resume`, which a desktop fork reports too, `transcript_path` (the server finds the ancestor in the transcript's copied prefix); `clear` `predecessor_id`, the session id the `session.end` hook saw end (`$.state` `endedSession`), and only when that session held a connection record (it was on a plan; any other `/clear` is quiet and asks nothing). A resume missing its transcript path is a warning line, never a project scan. `{notice: null}` is quiet; a `{stopped: {reason, detail, fix}}` answer, an error result, a rejected call or a malformed answer is ONE warning line, never quiet. The server finds the earlier session; the plugin reads no connection record.
 - Every dashboard call goes through the session's own server (`$.mcp.call`), never a spawn of the `platform-mcp` CLI. `scripts/measure-injection.mjs` measures the stamp by running its pure `stamp`; the event text is the registry's and has no offline text to count.

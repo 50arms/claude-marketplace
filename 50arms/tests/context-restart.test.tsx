@@ -4,12 +4,14 @@ import "./run-tests-with-npm-test.generated"
 // tells the model that answer and surfaces a stop. Both surfaces: the model's context and the failure line.
 import { describe, expect } from 'claude-code/testing'
 
-import { CONTEXT_DEADLINE_MS, restartFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, SIGN_IN_INVITATION, restartFailureLine } from '../hooks/context/events'
 import { BLOCKED_LINE } from '../hooks/plan/config'
 import { test, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call session_connect' } })
+
+// a signed-out startup is told the one sign-in invitation and nothing else (CP-75); a signed-out resume or clear is the one told the restart notice
 
 const TRANSCRIPT = '/work/main.jsonl'
 // DX-4234: what the restart notice is asked with, by the source the session started from (the server's `restart_notice` contract): a resume (a
@@ -37,8 +39,8 @@ for (const surface of SURFACES) {
         const d = await started($, on)
         d.world.restart.json = { notice: NOTICE }
         const r = await firstPrompt($, source)
-        expect(r.startLines).toEqual([NOTICE])
-        expect(d.restartCalls).toEqual([ARGS[source]])
+        expect(r.startLines).toEqual([source === 'startup' ? SIGN_IN_INVITATION : NOTICE])
+        expect(d.restartCalls).toEqual(source === 'startup' ? [] : [ARGS[source]])
       })
     }
 
@@ -62,18 +64,27 @@ for (const surface of SURFACES) {
     test('`{notice: null}` is quiet (a project that never connected a plan hears nothing)', async ($, on) => {
       const d = await started($, on)
       d.world.restart.json = { notice: null }
-      expect((await firstPrompt($, 'startup')).startLines).toBeUndefined()
-      expect(d.restartCalls).toEqual([{}])
+      expect((await firstPrompt($, 'startup')).startLines).toEqual([SIGN_IN_INVITATION])
+      expect(d.restartCalls).toEqual([])
     })
 
     for (const signedOut of ['signed-out', 'lapsed', 'revoked'] as const) {
       test(`a ${signedOut} session is told the notice: the plans read cannot answer, the tool needs no key`, async ($, on) => {
         const d = await started($, on, { connected: false, signedOut })
         d.world.restart.json = { notice: NOTICE }
-        expect((await firstPrompt($, 'startup')).startLines).toEqual([NOTICE])
-        expect(d.restartCalls).toEqual([{}])
+        // a revoked key is not an invitation to sign in: the person revoked it
+        expect((await firstPrompt($, 'startup')).startLines).toEqual([signedOut === 'revoked' ? NOTICE : SIGN_IN_INVITATION])
+        expect(d.restartCalls).toEqual(signedOut === 'revoked' ? [{}] : [])
       })
     }
+
+    // CP-75: a signed-out start is the one sign-in line and nothing else, even when the restart lookup would fail: it is never asked
+    test('a signed-out startup is exactly the sign-in invitation: the restart lookup is not made, so no notice and no failure line', async ($, on) => {
+      const d = await started($, on)
+      d.world.restart.json = stopped('lookup_failed', 'no session key')
+      expect((await firstPrompt($, 'startup')).startLines).toEqual([SIGN_IN_INVITATION])
+      expect(d.restartCalls).toEqual([])
+    })
 
     test('a signed-out session is never told the notice after a compaction or a fork, and the tool is not called', async ($, on) => {
       const d = await started($, on)
@@ -95,8 +106,8 @@ ${NOTICE}`])
       test(`a \`${reason}\` stop is one warning line naming the reason and detail, never quiet`, async ($, on) => {
         const d = await started($, on)
         d.world.restart.json = stopped(reason, 'the detail')
-        const r = await firstPrompt($, 'startup')
-        expect(r.startLines).toEqual([restartFailureLine(`${reason}: the detail. continue without it; call session_connect`)])
+        const r = await firstPrompt($, 'resume')
+        expect(r.startLines).toEqual([(restartFailureLine(`${reason}: the detail. continue without it; call session_connect`))])
         expect(r.startLines![0]).toMatch(/^⚠ Could not load the restart notice \(.*\)\. Tell the operator if this session should be plan-connected\.$/)
       })
     }
@@ -104,7 +115,7 @@ ${NOTICE}`])
     test('a call the engine rejects is the warning line with the rejection', async ($, on) => {
       const d = await started($, on)
       d.world.restart.deny = 'boom'
-      const r = await firstPrompt($, 'startup')
+      const r = await firstPrompt($, 'resume')
       expect(r.startLines![0]).toContain('Could not load the restart notice (error: ')
       expect(r.startLines![0]).toContain('boom')
     })
@@ -112,7 +123,7 @@ ${NOTICE}`])
     test("a call auto mode's classifier refuses is the warning line with the person's sentence and the fix, never the engine's raw words", async ($, on) => {
       const d = await started($, on)
       d.world.restart.deny = CLASSIFIER_REFUSAL
-      const line = (await firstPrompt($, 'startup')).startLines![0]!
+      const line = (await firstPrompt($, 'resume')).startLines![0]!
       expect(line).toContain(BLOCKED_LINE)
       expect(line).toContain('mcp__plugin_50arms_platform__*')
       expect(line).not.toContain('error: ')
@@ -122,14 +133,14 @@ ${NOTICE}`])
     test('an error result is the warning line with its text', async ($, on) => {
       const d = await started($, on)
       d.world.restart.raw = { content: [{ type: 'text', text: 'tool blew up' }], isError: true }
-      expect((await firstPrompt($, 'startup')).startLines).toEqual([restartFailureLine('error: tool blew up')])
+      expect((await firstPrompt($, 'resume')).startLines).toEqual([(restartFailureLine('error: tool blew up'))])
     })
 
     for (const [name, text] of [['text that is not JSON', 'nope'], ['an answer with neither a notice nor a stop', '{}'], ['an empty notice', '{"notice":""}'], ['a non-string notice', '{"notice":3}']] as const) {
       test(`${name} is a failure, never papered over`, async ($, on) => {
         const d = await started($, on)
         d.world.restart.raw = { content: [{ type: 'text', text }], isError: false }
-        const r = await firstPrompt($, 'startup')
+        const r = await firstPrompt($, 'resume')
         expect(r.startLines![0]).toContain('Could not load the restart notice (bad_response')
       })
     }
@@ -137,10 +148,10 @@ ${NOTICE}`])
     test('the server owns the restart_notice deadline: its lookup_timeout stop at 8 s arrives with its fix text, not a plugin timeout line', async ($, on) => {
       const d = await started($, on)
       d.world.restart = { json: stopped('lookup_timeout', 'the lookup did not finish within 8000 ms'), delayMs: CONTEXT_DEADLINE_MS }
-      const pending = firstPrompt($, 'startup')
+      const pending = firstPrompt($, 'resume')
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       const r = await pending
-      expect(r.startLines).toEqual([restartFailureLine('lookup_timeout: the lookup did not finish within 8000 ms. continue without it; call session_connect')])
+      expect(r.startLines).toEqual([(restartFailureLine('lookup_timeout: the lookup did not finish within 8000 ms. continue without it; call session_connect'))])
       expect(r.startLines![0]).toContain('call session_connect')
     })
 
@@ -163,7 +174,7 @@ ${NOTICE}`])
     test('a slow answer inside the deadline is told', async ($, on) => {
       const d = await started($, on)
       d.world.restart = { json: { notice: NOTICE }, delayMs: 6_000 }
-      const pending = firstPrompt($, 'startup')
+      const pending = firstPrompt($, 'resume')
       await d.clock.advance(6_000)
       expect((await pending).startLines).toEqual([NOTICE])
     })

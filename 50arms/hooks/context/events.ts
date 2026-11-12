@@ -7,12 +7,20 @@ import { mcpText } from '../plan/mcp'
 // The wording is a 50 Arms registry row (`GET /api/reminders/event/:event`, the `plan_restart.waiting_events` reminder); this file
 // carries no wording of its own but the two failure lines.
 
-// 50 Arms' four events. A SessionStart `source` of `clear` or `fork` has none: it is told nothing.
+// 50 Arms' four events. A SessionStart `source` of `clear` or `fork` has none: it is told nothing. A session that signs in after its start is told `session_start`.
 export type DashboardEvent = 'session_start' | 'session_resume' | 'after_compaction' | 'sub_agent_start'
+
+// The `source` of the pending start a sign-in leaves: the conversation began without a usable key, so the session start's text was not told then and is told now.
+export const SIGN_IN_SOURCE = 'sign-in'
+
+// What a session that has no usable key is told at its start, in place of every 50 Arms event text: the plugin's own line, because 50 Arms cannot be asked before the sign-in.
+export const SIGN_IN_INVITATION =
+  "50 Arms is installed in this session. When the person wants to plan or build something, you may mention once that 50 Arms can track it as a plan with cards, and that the Sign in button on the 50 Arms band connects this session. Don't push it, and continue normally if they don't sign in."
 
 export function sessionEvent(source: unknown): DashboardEvent | null {
   switch (source) {
     case 'startup':
+    case SIGN_IN_SOURCE:
       return 'session_start'
     case 'resume':
       return 'session_resume'
