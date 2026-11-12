@@ -72,9 +72,9 @@ test("the operator session runs every gate on its review grade; the builder only
   assert.match(gates, /A builder pushes its card branch, reports the tip SHA and stops/);
 });
 
-test("the operator session runs and re-runs the gates as gate workers, then lands the branch itself", () => {
+test("the operator session runs and re-runs the gates as gate workers, then has the branch landed", () => {
   assert.match(gates, /The operator session runs each gate not yet `pass` \(all but `plan-design`, below\) through its own gate worker, at the gate's review grade, which the board sets: the gate instruction route answers it with its model and effort when the worker starts/);
-  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\); the operator session sends the builder only the blocking findings to fix, and lands the branch once every gate passes \("Delivery" below\)\./);
+  assert.match(gates, /briefed by profile and card \(plan-workflow "Sub-agents"\); the operator session sends the builder only the blocking findings to fix, and has the branch landed once every gate passes \("Delivery" below\)\./);
   assert.match(gates, /the operator session re-runs a POST gate/);
 });
 
@@ -85,10 +85,10 @@ test("the section tells no one to spawn or dispatch a gate agent", () => {
 test("the Two callers table and Flow agree with the Gates section", () => {
   assert.doesNotMatch(callers, /one sub-agent per gate/);
   assert.match(callers, /Gates: run by the operator session, each in its own gate worker/);
-  assert.match(callers, /push the card branch, report its tip SHA, stop; the operator session lands it: push to the target branch/);
+  assert.match(callers, /push the card branch, report its tip SHA, stop; a lander lands it \("Delivery" below\): push to the target branch/);
   assert.match(flow, /5\. Pass its POST gates \("Gates" below\)\./);
-  assert.match(flow, /An operator-session sub-agent stops at its pushed card branch: it reports the tip SHA and ends, and never lands the branch, transitions `complete` or writes the retro\./);
-  assert.match(flow, /Landing is the operator session's job, for its own work and for a sub-agent's pushed card branch alike/);
+  assert.match(flow, /An operator-session builder stops at its pushed card branch: it reports the tip SHA and ends, and never lands the branch, transitions `complete` or writes the retro\./);
+  assert.match(flow, /Landing is the lander's job, and every step of it/);
 });
 
 // A builder briefed `work <CARD-ID>` runs the `work` profile, whose operator-session lines leave the landing, `complete` and the
@@ -101,7 +101,7 @@ test("no skill tells an operator-session sub-agent to land its own card when tol
 
 test("plan-workflow's Sub-agents section carries the matching rule once", () => {
   assert.match(subAgents, /The builder only builds, at its card's build grade\. You run each gate not yet `pass` through its own gate worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate \(`GET \/api\/board-task-profiles\?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e\.g\. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`\), at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the gate instruction route's answer, and pick the matching `50arms:worker-<model>-<effort>`\./);
-  assert.match(subAgents, /Once the POST gates pass, land it and complete the card\./);
+  assert.match(subAgents, /Once the POST gates pass, a lander sub-agent lands it \(brief `work <CARD-ID>` plus "land it by issue-workflow's Delivery and report the sha; do not complete it"\), and you complete the card and write the retro from its report\./);
   assert.match(subAgents, /Story points decide process \(a card, gates, splitting\), never the agent grade\./);
 });
 

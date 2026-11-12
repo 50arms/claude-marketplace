@@ -50,11 +50,11 @@ const landStep = (n) => {
   return notRequired.slice(from, to === -1 ? undefined : to);
 };
 
-// The section is the lander's (the operator session), written in its voice, and says how a sub-agent's pushed card branch
+// The section is the lander's (an orchestrator's lander sub-agent, or a session holding the card itself), written in its voice, and says how a sub-agent's pushed card branch
 // reaches the target: rebase it onto the target, run the repo's finalize or push, then complete and write the retro.
 test("the section is addressed to the lander, and a sub-agent never lands", () => {
-  assert.match(delivery, /It is the lander's job: the operator session, landing its own work or an operator-session sub-agent's pushed card branch once every POST gate on it passes/);
-  assert.match(delivery, /An operator-session sub-agent never lands: it pushes its card branch, reports the tip and stops \(Flow step 6\)\./);
+  assert.match(delivery, /It is the lander's job: for an orchestrator, which does no work itself, a lander sub-agent it briefs once every POST gate on the pushed card branch passes \("Gates"\), which lands it and reports the sha, then the orchestrator completes the card and writes the retro/);
+  assert.match(delivery, /A builder sub-agent never lands: it pushes its card branch, reports the tip and stops \(Flow step 6\)\./);
   assert.doesNotMatch(delivery, /Applies to a session that lands a card/);
 });
 
@@ -135,7 +135,7 @@ test("the caller table and flow step 6 name the target branch, never main, and p
 test("Git: a sub-agent pushes only its card branch; the target receives work only through Delivery", () => {
   const from = skill.indexOf("## Git");
   const git = flat(skill.slice(from, skill.indexOf("\n## ", from + 1)));
-  assert.match(git, /An operator-session sub-agent pushes only its card branch, never the target branch: the operator session lands it\./);
+  assert.match(git, /An operator-session builder pushes only its card branch, never the target branch: its lander lands it\./);
   assert.match(git, /The target branch receives work only as "Delivery" above says\./);
   assert.doesNotMatch(git, /push \(to the target branch, or to the card's branch/);
 });
