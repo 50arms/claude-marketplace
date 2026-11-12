@@ -126,7 +126,7 @@ for (const surface of SURFACES) {
     test('the ready-cards report leaves out a card a running sub-agent was briefed on, and says nothing when none is left; once none runs it names it (CP-49)', async ($, on) => {
       on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
       const d = await started($, on)
-      const row = (id: string) => ({ id, type: 'Story', title: `Ready ${id}`, assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0 })
+      const row = (id: string) => ({ id, type: 'Story', title: `Ready ${id}`, assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, review_runnable: false, next_pre_gate: null })
       d.world.readyRows[BOARD] = [row('DX-9'), row('DX-8')]
       await $.agent.spawn({ prompt: 'gate-reviewer DX-9 code-quality', subagentType: 'general-purpose' })
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
