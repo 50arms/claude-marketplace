@@ -499,7 +499,7 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   if (loaded.phase === 'signed-out' && !(await registrationRecentlyStopped($))) detach($, 'Machine registration', watchRegistration($))
   else if (loaded.phase === 'ready') await abortRegistrationWatch($)
   // signed in, with its team agent: whatever the session's start could not tell it, it is told now
-  if (loaded.phase === 'ready' && loaded.agentBlock === null) await giveOwedMantra($)
+  if (isSignedInWithAgent(loaded)) await giveOwedMantra($)
 }
 
 // A conversation whose start found the session without a usable key is owed the mantra once the session is signed in (and can ask for it). The owing is taken
@@ -1247,6 +1247,11 @@ type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
 // THE signed-in test for the relay and the usage report: a loaded view (ready), or a refresh of a connected session (loading with the
 // plan still set: a refresh runs at every turn end, as session.measure fires). Signed-out and revoked views, an unloaded one and an error say no.
 const isSignedIn = (v: any): boolean => v.phase === 'ready' || (v.phase === 'loading' && v.connected !== null)
+
+// THE test for 50 Arms talking to the model about its work (CP-75): signed in AND holding its team agent. The mantra's owing (applyLoaded) and every record/card
+// reminder (the sub-agent and side-session reminders, the handoff and no-recent-write ones) ask it, so a session that is not signed in hears only the sign-in invitation.
+const isSignedInWithAgent = (v: any): boolean => v.phase === 'ready' && v.agentBlock === null
+const signedInWithAgent = async ($: any): Promise<boolean> => isSignedInWithAgent(await read($, view))
 
 // send this session's rate-limit windows to 50 Arms. Every signed-in session reports, on a plan or not
 // (50 Arms places the session on an account from this report, then paces and resumes it); a session that is not signed in reports nothing and
@@ -3226,7 +3231,7 @@ async function wslHome($: any): Promise<string | null> {
 // The desktop app's notice that a side session this session started ended a turn arrives as a prompt too, and it also carries the reminder to
 // archive that session once its work is finished.
 async function onPromptStamp($: any, e: any, next: any) {
-  const side = isSideSessionNotice(e.text) ? [SIDE_SESSION_DONE_REMINDER] : []
+  const side = isSideSessionNotice(e.text) && (await signedInWithAgent($)) ? [SIDE_SESSION_DONE_REMINDER] : []
   return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT)), ...side] })
 }
 
@@ -3650,7 +3655,7 @@ async function onSubagentStop($: any, e: any, next: any) {
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
   // the reminder is for the MAIN session that started the sub-agent: context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn
-  detach($, 'Telling the session', tellModel($, SUBAGENT_DONE_REMINDER))
+  if (await signedInWithAgent($)) detach($, 'Telling the session', tellModel($, SUBAGENT_DONE_REMINDER))
   return r
 }
 
@@ -3673,7 +3678,7 @@ async function onRecordCall($: any, e: any, next: any) {
 // a Write of a handoff-like file that git does not track gets the reminder beside its result (never a block: where an agent writes is its own)
 async function onHandoffWrite($: any, e: any, next: any) {
   const r = await next(e)
-  if (raisedByPlugin(next.origin) || r.deny !== undefined || !looksLikeHandoff(e.file_path, e.content)) return r
+  if (raisedByPlugin(next.origin) || r.deny !== undefined || !looksLikeHandoff(e.file_path, e.content) || !(await signedInWithAgent($))) return r
   // no git, a missing directory or an unreadable path is "not tracked": the name already matched and the reminder costs nothing
   const file = String(e.file_path)
   const dir = file.slice(0, file.length - baseName(file).length)
@@ -3691,7 +3696,7 @@ async function remindToRecord($: any): Promise<void> {
     reminder = due.reminder
     return due.clock
   })
-  if (reminder !== null) await tellModel($, reminder)
+  if (reminder !== null && (await signedInWithAgent($))) await tellModel($, reminder)
 }
 
 // the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this).

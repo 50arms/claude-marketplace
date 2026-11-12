@@ -178,3 +178,44 @@ for (const surface of SURFACES) {
     })
   })
 }
+
+// CP-75: a session that is not signed in hears only the sign-in invitation: none of the record reminders reaches it.
+for (const surface of SURFACES) {
+  describe(`the record reminders to a signed-out session on ${surface}`, () => {
+    async function started($: any, on: any, signedOut: 'signed-out' | 'lapsed' | 'revoked' | null) {
+      on('classic.SessionStart', () => ({}) as any)
+      on('classic.SubagentStop', () => ({}) as any)
+      on('turn.complete', () => ({ text: 'done' }) as any)
+      on('tool.call', () => ({ result: {}, text: '{"ok":true,"status":200,"body":{}}' }) as any)
+      const d = dashboard(on, signedOut === null ? undefined : { signedOut, connected: false })
+      await startSession($, d, surface)
+      return d
+    }
+    const RECORD_TEXTS = [SUBAGENT_DONE_REMINDER, SIDE_SESSION_DONE_REMINDER, NO_RECENT_RECORD_REMINDER, HANDOFF_FILE_REMINDER]
+
+    for (const signedOut of ['signed-out', 'lapsed', 'revoked'] as const) {
+      test(`${signedOut}: a stopped sub-agent, a side-session notice, a handoff write and a long stretch tell the model nothing`, async ($, on) => {
+        const d = await started($, on, signedOut)
+        await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
+        await d.clock.settle()
+        expect((await $.prompt.submit({ text: NOTE })).context ?? []).not.toContain(SIDE_SESSION_DONE_REMINDER)
+        d.world.processes['git'] = { exitCode: 1, stdout: '' }
+        expect((await $.tool.call({ tool: 'Write', file_path: '/repo/.junk/handoff.md', content: 'x' } as any)).context ?? []).not.toContain(HANDOFF_FILE_REMINDER)
+        await $.tool.call({ tool: API, method: 'GET', path: '/api/issues/CP-15' } as any)
+        await d.clock.advance(RECORD_AFTER_MS)
+        await $.turn.start({ turnId: 't1' } as any)
+        await $.turn.complete(TURN)
+        await d.clock.settle()
+        for (const t of RECORD_TEXTS) expect(d.relay.told).not.toContain(t)
+      })
+    }
+
+    test('signed in: the same four reminders still arrive', async ($, on) => {
+      const d = await started($, on, null)
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'x' })
+      await d.clock.settle()
+      expect(d.relay.told).toContain(SUBAGENT_DONE_REMINDER)
+      expect((await $.prompt.submit({ text: NOTE })).context ?? []).toContain(SIDE_SESSION_DONE_REMINDER)
+    })
+  })
+}
