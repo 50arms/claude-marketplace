@@ -9,8 +9,7 @@ import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, SUBAGENT_D
 import type { RecordClock } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
 import { FOREGROUND_LOCK_TIMEOUT_MS, foregroundLockArgv, foregroundLockNotice, parseForegroundLockAnswer } from './context/foreground'
-import { heldReason, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
-import type { HeldNotice } from './context/interim-notice'
+import { ownRunningShells, subagentStopRefusal } from './context/own-background'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_TEXTS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -154,8 +153,6 @@ const pendingStart = atom({ plugin: '50arms', key: 'pendingStart' } as const, nu
 // the mantra this conversation is still owed: a start that found the session without a usable key (signed out, or its key revoked) could not ask 50 Arms for it. The first load that finds the
 // session signed in turns this into a pending start (`source: 'sign-in'`), so the mantra reaches the model on its next prompt or tool result, from the moment it signs in.
 const mantraOwed = atom({ plugin: '50arms', key: 'mantraOwed' } as const, false)
-// the interim sub-agent notices held back from the model (hooks/context/interim-notice.ts), kept by $.state across a reload of the module
-const heldNotices = atom({ plugin: '50arms', key: 'heldNotices' } as const, [] as HeldNotice[])
 // The machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
 // notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home found once per session.
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
@@ -273,7 +270,6 @@ async function carryAcrossConversation($: any): Promise<void> {
     runningAgents: read($, runningAgents),
     reports: read($, reports),
     workMarks: read($, workMarks),
-    heldNotices: read($, heldNotices),
     agentBriefs: read($, agentBriefs),
     relayOutbox: read($, relayOutbox),
     ackInFlight: read($, ackInFlight),
@@ -332,7 +328,6 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, runningAgents, () => carried.runningAgents),
     update($, reports, () => carried.reports),
     update($, workMarks, () => carried.workMarks),
-    update($, heldNotices, () => carried.heldNotices),
     update($, agentBriefs, () => carried.agentBriefs),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
@@ -3253,58 +3248,8 @@ async function wslHome($: any): Promise<string | null> {
 // The desktop app's notice that a side session this session started ended a turn arrives as a prompt too, and it also carries the reminder to
 // archive that session once its work is finished.
 async function onPromptStamp($: any, e: any, next: any) {
-  const held = await holdInterimNotice($, e)
-  if (held !== null) return { drop: held }
   const side = isSideSessionNotice(e.text) && (await signedInWithAgent($)) ? [SIDE_SESSION_DONE_REMINDER] : []
   return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT)), ...side] })
-}
-
-// An interim sub-agent notice (the sub-agent ended a turn with a command of its own still running) is kept from the model: it notifies again with its
-// result, and a wake-up for every interim one is a paid turn. The result for the same task, or the wait running out (releaseDueNotices), settles it.
-// Returns the reason shown to the person when the notice is held, else null (the prompt goes on). A reload cancels the timer, so each prompt re-arms it.
-async function holdInterimNotice($: any, e: any): Promise<string | null> {
-  const notice = taskNoticeOf(e.origin, e.text)
-  if (notice === null) {
-    await armNoticeRelease($)
-    return null
-  }
-  const now = await $.clock.now()
-  let holds = false
-  await update($, heldNotices, cur => {
-    const r = receive(cur, notice, e.text, now)
-    holds = r.holds
-    return r.held
-  })
-  await armNoticeRelease($)
-  return holds ? heldReason(notice.taskId) : null
-}
-
-let noticeTimer: { cancel: () => void } | null = null
-
-// One pending timer, a slice of the wait for the soonest held notice (a handle, so a module variable).
-async function armNoticeRelease($: any): Promise<void> {
-  const held = await read($, heldNotices)
-  const wait = nextWakeMs(held, await $.clock.now())
-  noticeTimer?.cancel()
-  noticeTimer = wait === null ? null : $.clock.after(wait, () => detach($, 'Held sub-agent notice', releaseDueNotices($)))
-}
-
-// The held notices whose wait is over are told to the model, as a prompt a plugin sends (it wakes an idle session and queues behind a running turn).
-async function releaseDueNotices($: any): Promise<void> {
-  noticeTimer = null
-  const now = await $.clock.now()
-  let due: HeldNotice[] = []
-  await update($, heldNotices, cur => {
-    const split = splitDue(cur, now)
-    due = split.due
-    return split.rest
-  })
-  await armNoticeRelease($)
-  for (const h of due) {
-    const text = releasedText(h, now)
-    const failure = await submitEvent($, text)
-    if (failure !== null) notToldToast($, failure, text)
-  }
 }
 
 // each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
@@ -3320,6 +3265,8 @@ async function onToolStamp($: any, e: any, next: any) {
   if (r.deny === undefined && typeof r.result?.backgroundTaskId === 'string') {
     const started = r.result.backgroundTaskId as string
     await update($, readyShells, cur => (cur.includes(started) ? cur : [...cur, started]))
+    // CP-108: a sub-agent's own background command is remembered under it, so its turn end can be refused while the command runs
+    if (typeof e.agentId === 'string' && e.agentId !== '') noteOwnShell(e.agentId, started, e)
   }
   // the main loop's result carries the notes appended so far: they are read (a sub-agent's or a fork's result is not the main loop's)
   if (e.agentId === undefined && (await read($, turn)).pending.length > 0) await update($, turn, cur => toolResultSent(cur))
@@ -3725,7 +3672,18 @@ async function onSubagentStart($: any, e: any, next: any) {
   return withLine(withLine(r, eventLine), pacing)
 }
 
+// CP-108: the background commands each sub-agent started (its agent id to task id and label). The engine loses the wake-up of a sub-agent that ends its turn
+// to wait for one, so such a turn end is refused (onSubagentStop). A reload starts empty, which fails open: a sub-agent is then never held on a guess.
+const ownShells = new Map<string, { taskId: string; label: string }[]>()
+function noteOwnShell(agentId: string, taskId: string, e: any): void {
+  const label = String(e.description ?? e.command ?? taskId).replace(/\s+/g, ' ').slice(0, 120)
+  ownShells.set(agentId, [...(ownShells.get(agentId) ?? []).filter(s => s.taskId !== taskId), { taskId, label }])
+}
+
 async function onSubagentStop($: any, e: any, next: any) {
+  const running = typeof e.agent_id === 'string' ? ownRunningShells(ownShells.get(e.agent_id) ?? [], e.background_tasks) : []
+  if (running.length > 0) return { block: subagentStopRefusal(running) }
+  if (typeof e.agent_id === 'string') ownShells.delete(e.agent_id)
   await noteRunningAgent($, e.agent_id, false)
   if (typeof e.agent_id === 'string') await update($, agentBriefs, cur => briefEnded(cur, e.agent_id))
   const r = await onSubagentChange($, e, next, false)
