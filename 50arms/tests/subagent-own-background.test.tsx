@@ -52,6 +52,43 @@ for (const surface of SURFACES) {
       expect(allowed.block).toBeUndefined()
     })
 
+    test('a secret-shaped token in the command never reaches the refusal text', async ($, on) => {
+      const { answer } = await started($, on)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
+      answer(BACKGROUNDED('b1'))
+      const secret = 'sk9f8a7b6c5d4e3f2a1b0c9d8e7'
+      await $.tool.call({ tool: 'Bash', command: `API_KEY=${secret} npm test`, description: `run with ${secret}`, run_in_background: true, agentId: 'a1' } as any)
+      const refused = await $.classic.SubagentStop(STOP('a1', [shell('b1')]))
+      expect(refused.block).not.toContain(secret)
+      expect(refused.block).not.toContain('API_KEY')
+      answer(BACKGROUNDED('b2'))
+      await $.classic.SubagentStart({ agent_id: 'a2', agent_type: 'general-purpose' })
+      await $.tool.call({ tool: 'Bash', command: `API_KEY=${secret} npm test`, run_in_background: true, agentId: 'a2' } as any)
+      const noDescription = await $.classic.SubagentStop(STOP('a2', [shell('b2')]))
+      expect(noDescription.block).not.toContain(secret)
+      expect(noDescription.block).toContain('b2: b2')
+    })
+
+    test('stopping again with no tool call since the refusal is allowed, however long the command runs', async ($, on) => {
+      const { answer } = await started($, on)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
+      answer(BACKGROUNDED('b1'))
+      await $.tool.call({ tool: 'Bash', command: 'npm run dev', description: 'dev server', run_in_background: true, agentId: 'a1' } as any)
+      expect((await $.classic.SubagentStop(STOP('a1', [shell('b1')]))).block).toBeDefined()
+      expect((await $.classic.SubagentStop({ ...STOP('a1', [shell('b1')]), stop_hook_active: true })).block).toBeUndefined()
+    })
+
+    test('a sub-agent that waits with tool calls and stops while the command still runs is refused again', async ($, on) => {
+      const { answer } = await started($, on)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
+      answer(BACKGROUNDED('b1'))
+      await $.tool.call({ tool: 'Bash', command: 'npm test', description: 'the suite', run_in_background: true, agentId: 'a1' } as any)
+      expect((await $.classic.SubagentStop(STOP('a1', [shell('b1')]))).block).toBeDefined()
+      answer({ result: {}, text: 'still running' })
+      await $.tool.call({ tool: 'Bash', command: 'sleep 60', agentId: 'a1' } as any)
+      expect((await $.classic.SubagentStop({ ...STOP('a1', [shell('b1')]), stop_hook_active: true })).block).toBeDefined()
+    })
+
     test('a sub-agent that started none is not held by a command of another agent or of the main session', async ($, on) => {
       const { answer } = await started($, on)
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })

@@ -3261,6 +3261,8 @@ async function onToolStamp($: any, e: any, next: any) {
   // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (probed against the real engine). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
   // Returning here also skips the lastStamp bookkeeping. A test pins that it is seated.
   if (raisedByPlugin(next.origin)) return r
+  // CP-108: a sub-agent's own tool call is work since its last refused stop
+  if (typeof e.agentId === 'string') refusedIdle.delete(e.agentId)
   // a background shell a ready-agent loop must not reset under, whether or not the loop is on yet: `reportShellEnds` clears the list
   if (r.deny === undefined && typeof r.result?.backgroundTaskId === 'string') {
     const started = r.result.backgroundTaskId as string
@@ -3675,15 +3677,25 @@ async function onSubagentStart($: any, e: any, next: any) {
 // CP-108: the background commands each sub-agent started (its agent id to task id and label). The engine loses the wake-up of a sub-agent that ends its turn
 // to wait for one, so such a turn end is refused (onSubagentStop). A reload starts empty, which fails open: a sub-agent is then never held on a guess.
 const ownShells = new Map<string, { taskId: string; label: string }[]>()
+// the sub-agents refused once whose next stop has had no tool call of their own since: that second stop goes through, so a command that never ends cannot
+// hold a sub-agent that has stopped working for good. A tool call of the sub-agent (a wait in the foreground) clears it, and the next stop is refused again.
+const refusedIdle = new Set<string>()
 function noteOwnShell(agentId: string, taskId: string, e: any): void {
-  const label = String(e.description ?? e.command ?? taskId).replace(/\s+/g, ' ').slice(0, 120)
+  // the call's own description, redacted; a command is never read (hooks/reports/label.ts)
+  const label = labelOf(e.description) || taskId
   ownShells.set(agentId, [...(ownShells.get(agentId) ?? []).filter(s => s.taskId !== taskId), { taskId, label }])
 }
 
 async function onSubagentStop($: any, e: any, next: any) {
   const running = typeof e.agent_id === 'string' ? ownRunningShells(ownShells.get(e.agent_id) ?? [], e.background_tasks) : []
-  if (running.length > 0) return { block: subagentStopRefusal(running) }
-  if (typeof e.agent_id === 'string') ownShells.delete(e.agent_id)
+  if (running.length > 0 && !refusedIdle.has(e.agent_id)) {
+    refusedIdle.add(e.agent_id)
+    return { block: subagentStopRefusal(running) }
+  }
+  if (typeof e.agent_id === 'string') {
+    ownShells.delete(e.agent_id)
+    refusedIdle.delete(e.agent_id)
+  }
   await noteRunningAgent($, e.agent_id, false)
   if (typeof e.agent_id === 'string') await update($, agentBriefs, cur => briefEnded(cur, e.agent_id))
   const r = await onSubagentChange($, e, next, false)
