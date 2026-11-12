@@ -85,6 +85,28 @@ for (const surface of SURFACES) {
       expect(d.clearRuns).toHaveLength(0)
     })
 
+    // No log facility exists in the plugin, so a skipped break says which gate held it in the one line a person can see and copy
+    test('a turn end that skips the clear says which gate held it, once', async ($, on) => {
+      const d = await started($, on)
+      await $.tool.call({ tool: 'Bash', command: 'sleep 99 &' } as any)
+      await pause($)
+      await endTurn($, d)
+      const said = d.toasts.filter(t => t.includes('natural-break clear skipped'))
+      expect(said).toHaveLength(1)
+      expect(said[0]).toContain('shells=1')
+      expect(said[0]).toContain('agents=0')
+      await endTurn($, d)
+      expect(d.toasts.filter(t => t.includes('natural-break clear skipped'))).toHaveLength(1)
+    })
+
+    test('a clear that goes ahead says nothing', async ($, on) => {
+      const d = await started($, on)
+      await pause($)
+      await endTurn($, d)
+      expect(d.clearRuns).toHaveLength(1)
+      expect(d.toasts.filter(t => t.includes('natural-break clear'))).toHaveLength(0)
+    })
+
     test('a plain turn end with no leave or pause clears nothing', async ($, on) => {
       const d = await started($, on)
       await endTurn($, d)

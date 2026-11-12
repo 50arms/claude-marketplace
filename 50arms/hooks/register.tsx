@@ -4467,7 +4467,19 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
 async function clearAtNaturalBreak($: any): Promise<void> {
   if (!clearAtBreak) return
   clearAtBreak = false
-  if (clearInProgress || (await read($, readyLoop)) !== null || (await mainIsCompacting($)) || !(await sessionIsIdleForClear($)) || clearInProgress) return
+  // each gate's value, read once: the plugin has no log, so a skip says which gate held in one toast (the only record there is of a clear that did not happen)
+  const gates = {
+    inProgress: clearInProgress,
+    readyLoop: (await read($, readyLoop)) !== null,
+    compacting: await mainIsCompacting($),
+    turnRunning: (await read($, turn)).isRunning,
+    agents: (await read($, runningAgents)).length,
+    shells: (await read($, readyShells)).length,
+  }
+  if (gates.inProgress || gates.readyLoop || gates.compacting || gates.turnRunning || gates.agents > 0 || gates.shells > 0 || clearInProgress) {
+    $.ui.toast(`50 Arms: natural-break clear skipped (${Object.entries(gates).map(([k, v]) => `${k}=${typeof v === 'boolean' ? (v ? 'yes' : 'no') : v}`).join(', ')})`)
+    return
+  }
   clearInProgress = true
   detach($, 'Natural-break clear', clearCommandOnce($))
 }
