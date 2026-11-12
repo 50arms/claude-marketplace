@@ -2992,7 +2992,7 @@ async function onAckCall($: any, e: any, next: any) {
   if (isRecordWrite(e.method, e.path) || (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && e.path === PAUSE_PATH)) {
     detach($, 'Plan refresh', refresh($, true))
   }
-  // CP-104: the model's own pause, accepted, is a natural break
+  // the model's own pause, accepted, is a natural break
   if (typeof e.method === 'string' && e.method.toUpperCase() === 'PUT' && e.path === PAUSE_PATH && answerOf(ran).ok) clearAtBreak = true
   await touchRecordClock($, e, next)
   const answer = answerOf(ran)
@@ -4230,7 +4230,7 @@ let compactionFaultTold: string | null = null
 // true from the moment the plugin has decided to run a /clear until it has ended: the ready loop's released clear and a compaction by clear are never in progress together, whichever decided first
 // (the decision and this flag are set with no await between them)
 let clearInProgress = false
-// CP-104: the model left its plan or card, or fully paused, and the session is at a natural break: the next main turn end clears it when nothing runs. Set by the model's own call that the
+// the model left its plan or card, or fully paused, and the session is at a natural break: the next main turn end clears it when nothing runs. Set by the model's own call that the
 // dashboard accepted; spent at that turn end whether or not it cleared (work still running means nothing new happens). A module variable, not $.state: a clear ends it either way.
 let clearAtBreak = false
 // the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
@@ -4432,7 +4432,7 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
 // A failure is one line to the person, and the dashboard re-asks once the release has expired.
 // A control `mode` of `clear` is the main agent's own choice (it said `clear: true` on its ready, only when it knew nothing runs): the compaction is a clear instead, the conversation resets, the handoff lives on the cards,
 // and the new conversation is briefed to resume from them (onClassicSessionStart).
-// A /compact can run beside a sub-agent (it carries on through one); a /clear would end its work. So a `clear` ready that finds a sub-agent or a background command running (CP-104) compacts instead, and never waits:
+// A /compact can run beside a sub-agent (it carries on through one); a /clear would end its work. So a `clear` ready that finds a sub-agent or a background command running compacts instead, and never waits:
 // the agent's choice was a clear only for a session with nothing running, and a busy one must still shrink on time.
 // Nothing starts while a /clear is in progress (the ready loop's, or an earlier compaction's): its release stays in the file for the next check.
 async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
@@ -4462,7 +4462,7 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
   detach($, 'Compaction clear', clearForCompaction($, spent))
 }
 
-// CP-104: the turn ended after the model left its plan or card, or paused: clear the session when nothing runs (no sub-agent, no background command), as the ready loop's own clear needs. The break is spent here
+// the turn ended after the model left its plan or card, or paused: clear the session when nothing runs (no sub-agent, no background command), as the ready loop's own clear needs. The break is spent here
 // whatever happens. Left to others: a ready-list session (its loop owns the clear), a compaction already running, and a /clear in progress. A failed /clear is one line to the person.
 async function clearAtNaturalBreak($: any): Promise<void> {
   if (!clearAtBreak) return
