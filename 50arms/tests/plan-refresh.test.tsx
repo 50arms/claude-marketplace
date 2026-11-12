@@ -1,6 +1,7 @@
 import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
+import { isRecordWrite } from '../hooks/context/record'
 import { test, bandLabelOf, SURFACES, dashboard, footerText, forceRefresh, mountIndicator, needsYouBadgeOf, startSession } from './plan-kit'
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
@@ -139,3 +140,39 @@ describe('the refresh lock', () => {
     expect(loads()).toBe(before + 1)
   })
 })
+
+const API = 'mcp__plugin_50arms_platform__50arms_api'
+
+describe('a plan or card write (pure)', () => {
+  test('only a non-GET call on an issue or plan path is a record write', () => {
+    expect(isRecordWrite('POST', '/api/issues/CP-15/notes')).toBe(true)
+    expect(isRecordWrite('patch', '/api/plans/66/records/1')).toBe(true)
+    expect(isRecordWrite('POST', '/api/issues')).toBe(true)
+    expect(isRecordWrite('POST', '/api/plans')).toBe(true)
+    expect(isRecordWrite('POST', '/api/issues-other')).toBe(false)
+    expect(isRecordWrite('GET', '/api/issues/CP-15')).toBe(false)
+    expect(isRecordWrite('POST', '/api/plan-sessions/me/events/5/ack')).toBe(false)
+    expect(isRecordWrite(undefined, undefined)).toBe(false)
+  })
+})
+
+for (const surface of SURFACES) {
+  describe(`a plan or card write refreshes the plan on ${surface}`, () => {
+    for (const path of ['/api/issues', '/api/plans']) {
+      test(`a POST to ${path} refreshes the plan, a GET does not`, async ($, on) => {
+        on('classic.SessionStart', () => ({}) as any)
+        on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+        const d = dashboard(on)
+        await startSession($, d, surface)
+        const reads = () => d.api.filter((a: any) => a.method === 'GET').length
+        const api = (method: string) => $.tool.call({ tool: API, method, path } as any)
+        await api('GET')
+        await d.clock.settle()
+        const before = reads()
+        await api('POST')
+        await d.clock.settle()
+        expect(reads()).toBeGreaterThan(before)
+      })
+    }
+  })
+}

@@ -15,8 +15,8 @@ effective text (or the board's override of it, DX-4144), never a copy:
   session start, resume or compaction, not even a one-line nudge; the trigger to sign in is
   `50arms:plan-workflow`'s own skill description, not a hook line. Signed in, on a plan or not,
   the hook asks 50 Arms (`50arms_api` on the session's own server) for the
-  EFFECTIVE text of one of four events (`session_start` | `session_resume` |
-  `after_compaction` | `sub_agent_start`, `GET /api/reminders/event/:event`) — the mantra
+  EFFECTIVE text of one of six events (`session_start` | `session_resume` |
+  `after_compaction` | `sub_agent_start` | `sub_agent_stop` | `side_session_turn_end`, `GET /api/reminders/event/:event`) — the mantra
   (plan override, else the session's board override, else the row) followed by that event's
   own short lines, never a hand-typed duplicate of the mantra body. The dashboard decides the lines
   (DX-5554): a plan-connected session's text ends with the plan-only line, a session on no plan's

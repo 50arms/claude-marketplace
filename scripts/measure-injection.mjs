@@ -3,12 +3,12 @@
 // measure-injection.mjs — DX-3053.
 //
 // Prints what every marketplace plugin's hooks hand the model in a session, per plugin and per hook, with byte counts and
-// totals per cadence class (per-turn, per-tool-call). scripts/check-injection-budget.mjs gates a publish on those totals.
+// the per-turn total. scripts/check-injection-budget.mjs gates a publish on those totals.
 //
 // WHAT IS MEASURED (DX-4234, DX-4235). A plugin's hooks are one native hooks module (`hooks.json` `modules`); there are no
 // command hooks to run (50arms/tests/plugin-modules.test.mjs pins that shape for 50 Arms). The only
-// standing text a module hands the model is the time stamp on each prompt (prompt.submit) and after each tool call
-// (tool.call): the pure `stamp` of <plugin>/hooks/context/stamp.ts, the very text register.tsx hands the model. It is run
+// standing text a module hands the model is the time stamp on each prompt (prompt.submit; a tool call is never stamped):
+// the pure `stamp` of <plugin>/hooks/context/stamp.ts, the very text register.tsx hands the model. It is run
 // here, at its widest (the first stamp, which carries the date). Everything else a module says is the dashboard's (the
 // registry's event text, the restart notice, a ready-cards block), fetched only for a plan-connected session, with no
 // offline text to count. A plugin with `modules` and no stamp.ts is an error row, never zero bytes.
@@ -38,7 +38,7 @@ function loadHooksJson(pluginDir) {
   return JSON.parse(fs.readFileSync(hooksPath, "utf8"));
 }
 
-// The stamp a module hands the model on a prompt and after a tool call, run through node's type stripping (stamp.ts is
+// The stamp a module hands the model on a prompt, run through node's type stripping (stamp.ts is
 // pure, so nothing else loads). Bytes include the line's newline.
 const STAMP_SCRIPT = `const { stamp } = await import(process.env.STAMP_MODULE);
 console.log(stamp(Date.UTC(2026, 8, 28, 7, 12, 3), -360, null).line);`;
@@ -57,9 +57,9 @@ function measureFunctionHooks(plugin, hooksJson) {
     ).length;
   } catch (err) {
     const error = fs.existsSync(stampPath) ? err.message.split("\n")[0] : `${module} is missing: the time stamp cannot be measured`;
-    return [row("prompt.submit", "unconditional", { bytes: 0, error }), row("tool.call", "every-tool-call", { bytes: 0, error })];
+    return [row("prompt.submit", "unconditional", { bytes: 0, error })];
   }
-  return [row("prompt.submit", "unconditional", { bytes, error: null }), row("tool.call", "every-tool-call", { bytes, error: null })];
+  return [row("prompt.submit", "unconditional", { bytes, error: null })];
 }
 
 function measure() {
@@ -71,10 +71,9 @@ function measure() {
   return rows;
 }
 
-// Reported separately, never summed together (AC 32510): per-turn (prompt.submit) and per-tool-call (tool.call).
+// The per-turn total (prompt.submit): the only cadence a module stamps.
 function summarize(rows) {
-  const sum = (event) => rows.filter((r) => r.event === event).reduce((total, r) => total + r.bytes, 0);
-  return { perTurnUnconditional: sum("prompt.submit"), perToolCall: sum("tool.call") };
+  return { perTurnUnconditional: rows.filter((r) => r.event === "prompt.submit").reduce((total, r) => total + r.bytes, 0) };
 }
 
 function printHuman(rows, totals) {
@@ -83,9 +82,8 @@ function printHuman(rows, totals) {
     const tag = r.error ? ` [ERROR: ${r.error}]` : "";
     console.log(`  ${r.plugin.padEnd(20)} ${r.event.padEnd(14)} kind=${r.kind.padEnd(16)} bytes=${r.bytes}${tag}`);
   }
-  console.log("\n=== Totals (never summed together: different cadences) ===");
+  console.log("\n=== Totals ===");
   console.log(`  per-turn (prompt.submit):   ${totals.perTurnUnconditional} bytes`);
-  console.log(`  per-tool-call (tool.call):  ${totals.perToolCall} bytes`);
 }
 
 const rows = measure();

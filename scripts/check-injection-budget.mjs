@@ -19,22 +19,17 @@
 //   - session-start (SessionStart, fires at startup): 26,373B. Not gated any more (DX-4235): a plugin's hooks are one
 //     native module with no command hooks, and what a module says at a session start is the dashboard's (registry and
 //     server) text, delivered for a plan-connected session only, with no offline bytes to count.
-// This gate also folds in PostToolUse's unconditional per-tool-call total
-// (23B, the same clock's after-each-tool-call stamp, tool.call since DX-4234) into the "per-turn"
-// figure — a turn typically includes at least one tool call, so the
-// ceiling should police the combined standing weight of a turn, not just
-// its UserPromptSubmit half. measure-injection.mjs's own totals stay
-// un-summed (AC 32510) — this combination happens only here, for the gate.
+// Only prompts are stamped (CP-52): a tool call carries no time stamp, so the
+// gate polices the prompt stamp alone.
 //
 // Ceilings give MODEST headroom over the measured DX-3347 numbers: enough
 // to absorb ordinary content growth (a skill body gaining a paragraph, the
 // clock format picking up a few characters), nowhere near enough to let a
 // standing per-turn mandate sneak back in unnoticed (the pre-DX-3347 shape
 // measured 3,715B/turn — DX-3278 comment 6976).
-//   PER_TURN_CEILING_BYTES = 200        — ~4.3x the measured 46B combined
-//                                         (23B UserPromptSubmit + 23B
-//                                         PostToolUse); ~18x under the
-//                                         pre-DX-3347 3,715B/turn total.
+//   PER_TURN_CEILING_BYTES = 200        — ~8.7x the measured 23B prompt
+//                                         stamp; ~18x under the pre-DX-3347
+//                                         3,715B/turn total.
 export const CEILING_DECISION_CARD = "DX-3347";
 export const PER_TURN_CEILING_BYTES = 200;
 
@@ -50,14 +45,14 @@ const MEASURE_SCRIPT = path.join(REPO_ROOT, "scripts", "measure-injection.mjs");
 // over-budget) totals fixture and prove the check FAILS (AC 32514) without
 // needing to build a real oversized hook script.
 export function evaluateBudget(totals, ceilings = { perTurn: PER_TURN_CEILING_BYTES }) {
-  const perTurnCombined = totals.perTurnUnconditional + totals.perToolCall;
+  const perTurn = totals.perTurnUnconditional;
   const failures = [];
-  if (perTurnCombined > ceilings.perTurn) {
+  if (perTurn > ceilings.perTurn) {
     failures.push(
-      `per-turn (UserPromptSubmit ${totals.perTurnUnconditional}B + PostToolUse ${totals.perToolCall}B = ${perTurnCombined}B) exceeds the ${ceilings.perTurn}B ceiling set by ${CEILING_DECISION_CARD}`
+      `per-turn (the prompt stamp, ${perTurn}B) exceeds the ${ceilings.perTurn}B ceiling set by ${CEILING_DECISION_CARD}`
     );
   }
-  return { ok: failures.length === 0, perTurnCombined, failures };
+  return { ok: failures.length === 0, perTurn, failures };
 }
 
 function measureRealTotals() {
@@ -83,7 +78,7 @@ function main() {
   const result = evaluateBudget(totals);
   if (result.ok) {
     console.log(
-      `Injection budget OK — per-turn ${result.perTurnCombined}B (ceiling ${PER_TURN_CEILING_BYTES}B).`
+      `Injection budget OK — per-turn ${result.perTurn}B (ceiling ${PER_TURN_CEILING_BYTES}B).`
     );
     process.exit(0);
   }

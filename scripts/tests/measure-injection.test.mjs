@@ -21,9 +21,9 @@ function run() {
   return JSON.parse(out.toString("utf8"));
 }
 
-test("measure-injection reports the two cadence totals, never summed together", () => {
+test("measure-injection reports the per-turn total alone: only prompts are stamped", () => {
   const { totals, rows } = run();
-  assert.deepEqual(Object.keys(totals).sort(), ["perToolCall", "perTurnUnconditional"]);
+  assert.deepEqual(Object.keys(totals).sort(), ["perTurnUnconditional"]);
   assert.ok(rows.length > 0, "expected at least one measured hook row");
   // Every row is byte-accounted or explicitly flagged as an error — never
   // silently absent (AC 32508's "never mistaken for a hook that emits
@@ -33,19 +33,17 @@ test("measure-injection reports the two cadence totals, never summed together", 
   }
 });
 
-test("the function hooks' time stamp is measured on prompt.submit and tool.call, and counted into the per-turn and per-tool-call totals (DX-4234)", () => {
+test("the function hooks' time stamp is measured on prompt.submit only, a tool call is never stamped, and it is counted into the per-turn total (DX-4234, CP-52)", () => {
   const { rows, totals } = run();
   const prompt = rows.filter((r) => r.event === "prompt.submit");
-  const tool = rows.filter((r) => r.event === "tool.call");
+  assert.deepEqual(rows.filter((r) => r.event === "tool.call"), [], "a tool call carries no stamp");
   assert.equal(prompt.length, 1, "expected the 50 Arms module's prompt.submit stamp to be measured");
-  assert.equal(tool.length, 1, "expected the 50 Arms module's tool.call stamp to be measured");
-  for (const r of [...prompt, ...tool]) {
+  for (const r of prompt) {
     assert.equal(r.error, null);
     // the widest stamp, the first (it carries the date): `MM/DD/YYYY HH:MM:SS +HH:MM +0` and a newline
     assert.equal(r.bytes, "09/28/2026 01:12:03 -06:00 +0\n".length);
   }
   assert.equal(totals.perTurnUnconditional, prompt[0].bytes);
-  assert.equal(totals.perToolCall, tool[0].bytes);
 });
 
 test("a plugin with modules and no stamp.ts is an error row, never zero bytes (DX-4234)", () => {

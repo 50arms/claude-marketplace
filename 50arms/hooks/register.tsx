@@ -3086,7 +3086,7 @@ const startEventOf = (start: NonNullable<PendingStart>): DashboardEvent | null =
 // the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
 // (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
 // the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
-async function stampEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
+async function clockDiskStartEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
   const pending = takeStart ? await takePendingStart($) : null
   const line = trigger === 'prompt' ? await timeLine($) : null
   const disk = await diskLine($, trigger, agent)
@@ -3224,7 +3224,7 @@ async function wslHome($: any): Promise<string | null> {
 // archive that session once its work is finished (the registry's side_session_turn_end text). A finished sub-agent's reminder to record its result,
 // owed by the main session, rides this prompt too when it has not ridden a tool result.
 async function onPromptStamp($: any, e: any, next: any) {
-  const entries = await stampEntries($, true, 'prompt', MAIN_AGENT)
+  const entries = await clockDiskStartEntries($, true, 'prompt', MAIN_AGENT)
   const side = isSideSessionNotice(e.text) ? await eventReminder($, 'side_session_turn_end') : null
   return next({ ...e, context: [...(e.context ?? []), ...entries, ...(side === null ? [] : [side]), ...(await subagentStopEntries($))] })
 }
@@ -3253,7 +3253,7 @@ async function onToolStamp($: any, e: any, next: any) {
   const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
   // a finished sub-agent's reminder to record its result is the MAIN session's, handed with its next action
   const stopped = e.agentId === undefined ? await subagentStopEntries($) : []
-  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...stopped] }
+  return { ...r, context: [...(r.context ?? []), ...(await clockDiskStartEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...stopped] }
 }
 
 // what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -3556,7 +3556,7 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
 }
 
 // SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. The session is not bound yet on a
-// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see stampEntries).
+// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see clockDiskStartEntries).
 // The one exception: a compaction that ends with no turn running detaches the resume prompt, whose reads wait for the session to bind.
 async function onClassicSessionStart($: any, e: any, next: any) {
   // first, so every read below (the ended session, the start's own `loopReset`) sees what the ended conversation held
