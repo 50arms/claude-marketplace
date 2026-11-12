@@ -8,6 +8,13 @@ description: 'THE planning workflow when a human is in the loop beyond a quick c
 The plan in the dashboard DB is the record; chat is not. The mantra's rules apply
 throughout; this skill is the plan mechanics.
 
+You are the plan's orchestrator and do no work yourself: building, landing (rebase, conflicts,
+the land command), live and browser checks, investigations and deploy steps each go to a
+sub-agent, even a 1-point one. You dispatch, decide, record on cards and the plan, and talk with
+people; the one exception is a person in the loop (a comment or the chat) who needs an answer
+now, which you answer yourself. That keeps you available to answer people, take each sub-agent's
+result the moment it completes, and delegate the new work 50 Arms sends.
+
 ## Start (every new, resumed or compacted session)
 
 1. Sign in: `session_connect`, with `target` the plan's `PLAN-n` when you know it (a plan link in the
@@ -182,10 +189,10 @@ From the dashboard:
   settled it. A problem a person answered is never deleted: the dashboard refuses the delete. An
   unanswered question you asked that no longer applies is yours to delete, even after a person
   commented on it (the comments stay on the card). A design problem takes no added solution; when it no longer applies, archive its designs, which removes it. A new build card alone records nothing.
-- `commented on problem` → a follow-up: reply with a comment on that problem. A comment that
-  decides the question (for example "do it this other way") is not yet an answer: only a
-  person's accepted solution answers. Edit the problem's solutions to state what they said (change
-  one, or add one), mark that solution recommended, then tell them to accept it. Never delete the
+- `commented on problem` → a follow-up: reply with a comment on that problem. A comment that states
+  what should happen is the person's answer however it is phrased (an outcome wrapped in "why do we
+  still...?" is still an outcome): when it settles the problem, edit or add the solution that states
+  it and answer it yourself as below, never asking them to accept it. Never delete the
   problem. If they have already said the answer (in this comment, an earlier one, or in your
   session thread with them) or told you to accept it for them, answer a question or action
   problem yourself with `provenance` on the answer route: `source` `comment` with `source_ref`
@@ -194,7 +201,7 @@ From the dashboard:
   decided and you as who recorded it. Do not call `request_permission` for `cards.answer` for
   this, and never ask them to click it when they have already said it. Design and docs-review
   problems are the person's alone: no provenance and no permission lets you answer one.
-  One that asks, thinks aloud or says it is unsure decides nothing, however concrete its idea:
+  Only one that states no outcome (it asks, thinks aloud or says it is unsure) decides nothing, however concrete its idea:
   answer what it asks in full (the exact calculation, a worked example) and leave the problem
   open. An option you write from it names every point you added and is never marked
   recommended until they confirm it.
@@ -269,8 +276,8 @@ forwards it on every call). A "fresh worktree" brief →
 `git worktree list` first; the card may carry unpushed prior work. Nobody working a card you
 hold → record why on the card, then release it (`DELETE /api/issues/<id>/assigned-agent`, or
 `rollback_pickup` without `keep_assignment`): a card nobody is working is assigned to no agent (DEC-116),
-and your stop is blocked while you hold one (the held-idle check; a `PUT /api/work-marks` on a card you
-work yourself counts as working it). Before reporting a card in flight,
+and your stop is blocked while you hold one (the held-idle check; a live `PUT /api/work-marks` on the card
+counts as working it). Before reporting a card in flight,
 re-read it and confirm In Progress.
 
 ## Notes
@@ -293,8 +300,9 @@ every plan card is Done or Cancelled. Your record verifications and your own sig
 to the person: the app warns them and asks them to confirm when they were not done.
 
 Before the person signs off (the `session_connect` briefing has no `signOffs.human`), every plan card
-Done or Cancelled → verify each goal, rule and caveat end to end against the running system and
-the shipped code (the mantra's evidence rule), so the person gets that advice before they sign:
+Done or Cancelled → have a sub-agent verify each goal, rule and caveat end to end against the running
+system and the shipped code (the mantra's evidence rule) and return its evidence, so the person gets
+that advice before they sign; you record it:
 
 - Holds → `PUT /api/plans/mine/records/:recordId/agent-verification` `{verdict, note,
   content_hash}`: `implemented` (as designed) or `accepted` (a deviation we live with), the
@@ -390,7 +398,9 @@ by how much work it is (issue-workflow's creation guide, § Build grade), then r
 The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
 worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate (`GET /api/board-task-profiles?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e.g. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`), at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
 gate instruction route's answer, and pick the matching `50arms:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
-on its pushed tip; a gate never changes the build grade. Once the POST gates pass, land it and complete the card.
+on its pushed tip; a gate never changes the build grade. Once the POST gates pass, a lander sub-agent lands it (brief `work <CARD-ID>` plus "land it by
+issue-workflow's Delivery and report the sha; do not complete it"), and you complete the card and write
+the retro from its report.
 A card carrying `plan-design` goes to no builder until a person chooses a design. Once the PRE gates before it
 have passed and it carries no design yet, start its designer, unless one you started is still on
 it: `gate-designer <CARD-ID>`, with the model and effort the gate's review grade means, read from the gate instruction route. Run it again only for a design event above that owes it a turn, or for a question about how something looks or behaves on screen while designs are on (mantra item 3), even when its design gate has already passed, whoever found it (you, a reviewer's `fail`). Write the question in an agent note on the card first: the brief is only `gate-designer <CARD-ID>`, so the designer reads it from the card. A builder that meets one makes the design itself and reports what it published: that card now waits on its design problem, so run no POST gate on its tip and release the card.

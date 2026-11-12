@@ -16,7 +16,7 @@ Creating or slicing a card: load `references/card-creation-and-reference.md` fir
 | Worktree | prepared before you start | its own isolated worktree (Agent `isolation: "worktree"` or the repo's worktree command), never the shared checkout |
 | Claim | already claimed before you start — never send `pickup` | `pickup` with `manual:true` (below) |
 | Gates | your dispatch instructions carry them | Gates: run by the operator session, each in its own gate worker ("Gates" below) |
-| Merge + end | your dispatch instructions | push the card branch, report its tip SHA, stop; the operator session lands it: push to the target branch (or open a pull request when "Delivery" below says so), then `complete` + retro |
+| Merge + end | your dispatch instructions | push the card branch, report its tip SHA, stop; a lander lands it ("Delivery" below): push to the target branch (or open a pull request when "Delivery" below says so), then `complete` + retro |
 
 The dispatched worker's own mechanics (how it ends, halts and merges) are in the instructions its dispatch gave it.
 
@@ -41,10 +41,10 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    many parts of the system, never the default.
 5. Pass its POST gates ("Gates" below).
 6. End: a dispatched worker follows the end order its dispatch instructions give. An
-   operator-session sub-agent stops at its pushed card branch: it reports the tip SHA and ends,
+   operator-session builder stops at its pushed card branch: it reports the tip SHA and ends,
    and never lands the branch, transitions `complete` or writes the retro. Landing is the
-   operator session's job, for its own work and for a sub-agent's pushed card branch alike, and
-   every step of it (merge first, then `complete`, then the retro) is in "Delivery" below.
+   lander's job, and every step of it (merge first, then `complete`, then the retro) is in
+   "Delivery" below.
    A phase card leaves `Notes from Phase N` as an agent note on the next phase card.
    A card with an open problem never becomes Done: `complete`, a board drop or move to Done
    and a container roll-up are refused (409 `open_problems_block_completion`).
@@ -63,7 +63,7 @@ grade, which the board sets: the gate instruction route answers it with its mode
 before the builder starts; POST gates run on its pushed tip. The builder only builds, at its card's build
 grade, and a gate never changes that grade. A builder pushes its card branch, reports the tip SHA and stops.
 Gate workers are briefed by profile and card (plan-workflow "Sub-agents"); the operator session sends the
-builder only the blocking findings to fix, and lands the branch once every gate passes ("Delivery" below). Whoever runs a gate:
+builder only the blocking findings to fix, and has the branch landed once every gate passes ("Delivery" below). Whoever runs a gate:
 
 1. Fetch the board's gate text through `50arms_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, by its ref number>`.
@@ -254,9 +254,10 @@ Every user-facing bug report, one block per bug:
 ## Delivery: push or pull request
 
 Delivery lands a card's finished work on its target branch, then completes the card. It is the
-lander's job: the operator session, landing its own work or an operator-session sub-agent's
-pushed card branch once every POST gate on it passes ("Gates"), or any session building a card
-in a repo no dashboard worker serves. An operator-session sub-agent never lands: it pushes its
+lander's job: for an orchestrator, which does no work itself, a lander sub-agent it briefs once every
+POST gate on the pushed card branch passes ("Gates"), which lands it and reports the sha, then the
+orchestrator completes the card and writes the retro; else the session holding the card itself, or any
+session building a card in a repo no dashboard worker serves. A builder sub-agent never lands: it pushes its
 card branch, reports the tip and stops (Flow step 6). A dispatched worker ends as its dispatch
 instructions say.
 
@@ -318,8 +319,8 @@ into that branch. Never code over a branch missing a dependency's code.
 
 ## Git
 
-- Commit each verified, coherent unit without asking, then push. An operator-session sub-agent
-  pushes only its card branch, never the target branch: the operator session lands it. The
+- Commit each verified, coherent unit without asking, then push. An operator-session builder
+  pushes only its card branch, never the target branch: its lander lands it. The
   target branch receives work only as "Delivery" above says. Diverged → `git pull --rebase`;
   resolve conflicts by reading both sides and keeping both intents (`-Xours`/`-Xtheirs` and
   whole-file overwrites are forbidden); re-run tests. Push fails
