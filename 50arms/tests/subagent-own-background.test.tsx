@@ -48,8 +48,20 @@ for (const surface of SURFACES) {
       await $.tool.call({ tool: 'Bash', command: 'npm test', description: 'the suite', run_in_background: true, agentId: 'a1' } as any)
       const refused = await $.classic.SubagentStop(STOP('a1', [shell('b1')]))
       expect(refused.block).toBe(subagentStopRefusal([{ taskId: 'b1', label: 'the suite' }]))
+      // the foreground wait is a tool call of its own, so the loop guard does not apply: only the command's finish lets the stop through
+      answer({ result: {}, text: 'waited' })
+      await $.tool.call({ tool: 'Bash', command: 'sleep 60', agentId: 'a1' } as any)
       const allowed = await $.classic.SubagentStop(STOP('a1', [shell('b1', 'completed')]))
       expect(allowed.block).toBeUndefined()
+    })
+
+    test('a first stop that finds its own command already finished is allowed', async ($, on) => {
+      const { answer } = await started($, on)
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
+      answer(BACKGROUNDED('b1'))
+      await $.tool.call({ tool: 'Bash', command: 'npm test', description: 'the suite', run_in_background: true, agentId: 'a1' } as any)
+      expect((await $.classic.SubagentStop(STOP('a1', [shell('b1', 'completed')]))).block).toBeUndefined()
+      expect((await $.classic.SubagentStop(STOP('a1', []))).block).toBeUndefined()
     })
 
     test('a secret-shaped token in the command never reaches the refusal text', async ($, on) => {
