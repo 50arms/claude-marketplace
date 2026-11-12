@@ -45,8 +45,8 @@ export type GateControl = {
   windowTokens: number
   releaseUntilMs: number | null
   releaseId: string | null
-  // what the plugin does once the agent says ready: `compact` runs Claude Code's /compact, `clear` clears the conversation (the team's compaction setting, which the dashboard sends and the relay writes).
-  // A file with no `mode` is a relay older than the setting: it never cleared, so it reads as `compact`.
+  // what the plugin does once the agent says ready: `compact` runs Claude Code's /compact, `clear` clears the conversation when nothing runs in the session (the main agent's own choice, `clear: true` on its ready, which the dashboard sends and the relay writes).
+  // A file with no `mode` is a relay older than the choice: it never cleared, so it reads as `compact`.
   mode: CompactionMode
   // null when the relay that wrote the file is older than this plugin and wrote no `agents` or no `valves` (relay 0.1.311 wrote neither, 0.1.315-0.1.317 only `agents`): the
   // MAIN agent's handshake above is complete without them, and every sub-agent feature (arming, asks, the per-agent gate) is off. Claude Code hot-loads a new plugin version into a

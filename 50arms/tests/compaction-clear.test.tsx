@@ -1,8 +1,8 @@
 import "./run-tests-with-npm-test.generated"
-// DX-7106 (PLAN-116): a compaction of a desktop session is a CLEAR when the team's compaction setting says `clear` (DX-6732, DEC-459). The dashboard sends the setting as `mode` in the
+// DX-7106 (PLAN-116): a compaction of a desktop session is a CLEAR when the control's mode says `clear` (the main agent's own choice on its ready, DX-7133). The dashboard sends the choice as `mode` in the
 // session's compaction control (`compact` | `clear`), the MCP relay writes it into the compaction file, and the plugin reads it there: with `clear` the agent's ready makes the plugin run
 // the ready loop's own /clear (not /compact), and the fresh conversation is told what a new session is told plus a resume briefing that points at the cards. With `compact` (or a relay that
-// predates the setting and writes no mode) nothing changes: /compact.
+// predates the choice and writes no mode) nothing changes: /compact.
 import { describe, expect } from 'claude-code/testing'
 
 import { CLEAR_RESUME_OPENING, CLEAR_RESUME_PROCEDURE, briefingText } from '../hooks/compaction/briefing'
@@ -26,7 +26,7 @@ describe('the control file carries the compaction mode (pure)', () => {
     expect(parse(fileText(control({ mode: 'compact' })))).toMatchObject({ kind: 'control', control: { mode: 'compact' } })
   })
 
-  test('a file with no mode is a relay older than the setting: it compacts, as it always did', () => {
+  test('a file with no mode is a relay older than the choice: it compacts, as it always did', () => {
     expect(parse(fileText(control({ mode: undefined })))).toMatchObject({ kind: 'control', control: { mode: 'compact' } })
   })
 
@@ -98,26 +98,30 @@ for (const surface of SURFACES) {
       expect(d.clearRuns).toHaveLength(0)
     })
 
-    test('the clear waits while a sub-agent or a background command runs, keeps the release, and runs once they have ended', async ($, on) => {
+    test('a clear ready while a sub-agent runs compacts instead (never waits and never clears), and spends the release', async ($, on) => {
       on('classic.SubagentStart', () => ({}) as any)
-      on('classic.SubagentStop', () => ({}) as any)
-      on('classic.Stop', () => ({}) as any)
-      on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg1' }, text: 'running' }) as any)
       const d = await started($, on)
       await $.classic.SubagentStart({ agent_id: 'a1b2c3', agent_type: '50arms:worker-sonnet-high' } as any)
       d.world.files[CONTROL_FILE] = READY('clear')
       await $.turn.complete(TURN)
       await d.clock.settle()
       expect(d.clearRuns).toHaveLength(0)
-      await $.classic.SubagentStop({ agent_id: 'a1b2c3', agent_type: '50arms:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '/x/agent-a1b2c3.jsonl', background_tasks: [] } as any)
+      expect(compactRuns(d)).toHaveLength(1)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(compactRuns(d)).toHaveLength(1)
+    })
+
+    test('a clear ready while a background command runs compacts instead', async ($, on) => {
+      on('classic.Stop', () => ({}) as any)
+      on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg1' }, text: 'running' }) as any)
+      const d = await started($, on)
       await $.tool.call({ tool: 'Bash', command: 'sleep 99 &' } as any)
+      d.world.files[CONTROL_FILE] = READY('clear')
       await $.turn.complete(TURN)
       await d.clock.settle()
       expect(d.clearRuns).toHaveLength(0)
-      await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as any)
-      await $.turn.complete(TURN)
-      await d.clock.settle()
-      expect(d.clearRuns).toHaveLength(1)
+      expect(compactRuns(d)).toHaveLength(1)
     })
 
     test('a clear the engine refuses is one line to the person and starts no second /compact', async ($, on) => {

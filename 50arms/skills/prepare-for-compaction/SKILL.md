@@ -27,13 +27,15 @@ recommendation:` (advice, not an order), or on your own initiative or a handoff.
    unpushed SHA, and the sub-agents still running on it.
 7. **Re-verify before saying ready.** Re-run `git status`, re-read every card you wrote,
    re-check which sub-agents are still running.
-8. **Say what compaction affects**, in the handoff note: context is replaced by a summary (when
-   the recommendation says clear, by nothing: your cards and this note are the whole memory); the
-   tree, commits and pushes carry on unchanged, and so do running sub-agents after a compaction
-   (a clear waits until none runs).
+8. **Say what compaction affects**, in the handoff note: context is replaced by a summary (after a
+   clear, by nothing: your cards and this note are the whole memory); the tree, commits and pushes
+   carry on unchanged, and so do running sub-agents after a compaction (a clear ends them).
 9. **Say ready, only after a recommendation.** A `[50 ARMS] Compaction recommendation:` you
    decided to act on is answered by `50arms_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`, after
    step 7. Until you do, nothing compacts. After ready, end your turn: the plugin starts the
    compaction when the turn ends (the ready lasts about ten minutes, so do not start long work
-   first). `409 compaction_not_requested` means you were not asked: keep working. Your own
+   first). `409 compaction_not_requested` means you were not asked: keep working.
+   **Clear or compact is your choice.** Send `{"clear": true}` only when nothing runs (no sub-agent,
+   no background command) and it is a natural break; otherwise send `{}`, a ready for a compaction.
+   A `clear: true` that finds work running is compacted instead. Your own
    `/compact`, or one the person types, needs no ready.

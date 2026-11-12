@@ -4422,9 +4422,10 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
 // /compact, which the host runs once the session is idle. Never from inside a turn or a command hook. The file's unexpired release is the ready.
 // The compaction reaches PreCompact and `session.compact` as trigger `manual`. The command takes no arguments: the control carries no instructions.
 // A failure is one line to the person, and the dashboard re-asks once the release has expired.
-// With the team's `clear` mode the compaction is a clear instead: the conversation resets, the handoff lives on the cards, and the new conversation is briefed to resume from them (onClassicSessionStart).
-// A /compact can run beside a sub-agent (it carries on through one); a /clear would end its work, so it waits for the session to be as idle as the ready loop's clear needs: no sub-agent and no background
-// command. It waits BEFORE spending the release, so the next check (every COMPACTION_IDLE_CHECK_MS) tries again while the release lasts.
+// A control `mode` of `clear` is the main agent's own choice (it said `clear: true` on its ready, only when it knew nothing runs): the compaction is a clear instead, the conversation resets, the handoff lives on the cards,
+// and the new conversation is briefed to resume from them (onClassicSessionStart).
+// A /compact can run beside a sub-agent (it carries on through one); a /clear would end its work. So a `clear` ready that finds a sub-agent or a background command running (CP-104) compacts instead, and never waits:
+// the agent's choice was a clear only for a session with nothing running, and a busy one must still shrink on time.
 // Nothing starts while a /clear is in progress (the ready loop's, or an earlier compaction's): its release stays in the file for the next check.
 async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
   if (clearInProgress) return
@@ -4434,8 +4435,7 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
     await spendReadyRelease($, file)
     return
   }
-  const clears = file.kind === 'control' && file.control !== null && file.control.mode === 'clear'
-  if (clears && !(await sessionIsIdleForClear($))) return
+  const clears = file.kind === 'control' && file.control !== null && file.control.mode === 'clear' && (await sessionIsIdleForClear($))
   if (!clears) {
     if ((await spendReadyRelease($, file)) === null) return
     detach($, 'Compaction', $.command.run({ command: 'compact' }))

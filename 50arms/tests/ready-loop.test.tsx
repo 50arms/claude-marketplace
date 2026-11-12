@@ -2017,7 +2017,7 @@ describe('the ready-agent loop', () => {
     expect(d.world.readyMark).toBe(REPO)
   })
 
-  // the plugin has ONE /clear in progress at a time: the ready loop's released clear and a compaction by clear (the team's `clear` mode) never overlap, whichever starts first
+  // the plugin has ONE /clear in progress at a time: the ready loop's released clear and a compaction by clear (a control `mode` of `clear`) never overlap, whichever starts first
   describe('a /clear and a compaction by clear never run together', () => {
     const compactionFile = (mode: string, releaseId: string) =>
       JSON.stringify({ v: 1, sessionId: OWN_SESSION.session_id, askedAt: null, control: { floorTokens: 250_000, passAtTokens: 907_000, windowTokens: 1_000_000, releaseUntilMs: Date.parse('2026-10-03T12:00:00.000Z'), releaseId, mode, agents: {}, valves: { 'claude-opus-4-8': 907_000 } } })
