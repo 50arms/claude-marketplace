@@ -1,7 +1,7 @@
 import "./run-tests-with-npm-test.generated"
-// CP-104 (PLAN-134): a session that has nothing running and just left its plan or card, or fully paused, is at a natural break: the plugin clears it when the turn ends
-// instead of letting its context grow. The model's own `session_connect` with `disconnect: true` and its `PUT /api/plan-sessions/me/pause` are the two calls. Anything still
-// running (a sub-agent, a background command) means nothing new happens.
+// CP-104 (PLAN-134): a session that has nothing running and just left its plan or card is at a natural break: the plugin clears it when the turn ends
+// instead of letting its context grow. The model's own `session_connect` with `disconnect: true` is the call. A pause never clears: the dashboard always gives it an expiry, so the session
+// is still waiting on its plan. Anything still running (a sub-agent, a background command) means nothing new happens.
 import { describe, expect } from 'claude-code/testing'
 
 import { SURFACES, dashboard, startSession, test } from './plan-kit'
@@ -52,14 +52,17 @@ for (const surface of SURFACES) {
       expect(d.clearRuns).toHaveLength(1)
     })
 
-    test('a full pause with nothing running clears when the turn ends', async ($, on) => {
+    test('a pause, timed or not, never clears: the dashboard always gives it an expiry', async ($, on) => {
       const d = await started($, on)
       await pause($)
       await endTurn($, d)
-      expect(d.clearRuns).toHaveLength(1)
+      await $.tool.call({ tool: API, method: 'PUT', path: PAUSE, body: { reason: 'a build', waits_on: 'dependency', expires_in_minutes: 55 } } as any)
+      await endTurn($, d)
+      expect(d.clearRuns).toHaveLength(0)
+      expect(record(d)).toEqual([])
     })
 
-    test('a refused leave or pause clears nothing', async ($, on) => {
+    test('a refused leave clears nothing', async ($, on) => {
       const d = await started($, on, JSON.stringify({ ok: false, status: 409, body: { error: 'card_mismatch' } }), true)
       await leave($)
       await endTurn($, d)
@@ -80,7 +83,7 @@ for (const surface of SURFACES) {
     test('a background command still running means nothing new happens', async ($, on) => {
       const d = await started($, on)
       await $.tool.call({ tool: 'Bash', command: 'sleep 99 &' } as any)
-      await pause($)
+      await leave($)
       await endTurn($, d)
       expect(d.clearRuns).toHaveLength(0)
     })
@@ -89,11 +92,11 @@ for (const surface of SURFACES) {
     const record = (d: any) => (d.stored.get('naturalBreakLog') ?? []) as any[]
     const stages = (d: any) => record(d).map(r => r.stage)
 
-    test('a pause with nothing running records the flag, the turn end with every gate, and the clear', async ($, on) => {
+    test('a leave with nothing running records the flag, the turn end with every gate, and the clear', async ($, on) => {
       const d = await started($, on)
-      await pause($)
+      await leave($)
       expect(stages(d)).toEqual(['flag-set'])
-      expect(record(d)[0]).toMatchObject({ call: '50arms_api PUT pause', ok: true, status: 200, isError: false, hasText: true })
+      expect(record(d)[0]).toMatchObject({ call: 'session_connect', ok: true, status: 200, isError: false, hasText: true })
       await endTurn($, d)
       expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-done'])
       expect(record(d)[2]).toMatchObject({ inProgress: false, readyLoop: false, compacting: false, turnRunning: false, agents: 0, shells: 0 })
@@ -102,7 +105,7 @@ for (const surface of SURFACES) {
     test('a skipped break records the gate that held it', async ($, on) => {
       const d = await started($, on)
       await $.tool.call({ tool: 'Bash', command: 'sleep 99 &' } as any)
-      await pause($)
+      await leave($)
       await endTurn($, d)
       expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'skipped'])
       expect(record(d)[2]).toMatchObject({ shells: 1, agents: 0, turnRunning: false })
@@ -123,7 +126,7 @@ for (const surface of SURFACES) {
     test('a clear the host refuses is recorded with its error', async ($, on) => {
       const d = await started($, on)
       d.world.clearFails = 'the host refused the clear'
-      await pause($)
+      await leave($)
       await endTurn($, d)
       expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-failed'])
       expect(String(record(d).at(-1).error).length).toBeGreaterThan(0)
@@ -135,7 +138,7 @@ for (const surface of SURFACES) {
       expect(record(d)).toEqual([])
     })
 
-    test('a plain turn end with no leave or pause clears nothing', async ($, on) => {
+    test('a plain turn end with no leave clears nothing', async ($, on) => {
       const d = await started($, on)
       await endTurn($, d)
       expect(d.clearRuns).toHaveLength(0)

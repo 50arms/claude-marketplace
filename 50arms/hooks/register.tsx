@@ -2932,7 +2932,7 @@ async function onSessionConnect($: any, e: any, next: any) {
   if (e.registration_only === true) return next(e)
   const target = connectTargetOf(e.target)
   let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
-  // the model's own leave of a plan or card, accepted, is a natural break; the band's Disconnect (the plugin's own call) is a person's press and clears nothing
+  // the model's own leave of a plan or card, accepted, is a natural break (a pause never is: the dashboard always gives it an expiry); the band's Disconnect (the plugin's own call) is a person's press and clears nothing
   if (e.disconnect === true && target !== null && !raisedByPlugin(next.origin)) {
     const outcome = answerOf(ran)
     if (outcome.ok) clearAtBreak = true
@@ -2995,12 +2995,6 @@ async function onAckCall($: any, e: any, next: any) {
   // The agent's own pause or resume (PUT / DELETE of its pause) changes the title's pause mark the same way, so it re-reads at once too.
   if (isRecordWrite(e.method, e.path) || (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && e.path === PAUSE_PATH)) {
     detach($, 'Plan refresh', refresh($, true))
-  }
-  // the model's own pause, accepted, is a natural break
-  if (typeof e.method === 'string' && e.method.toUpperCase() === 'PUT' && e.path === PAUSE_PATH) {
-    const outcome = answerOf(ran)
-    if (outcome.ok) clearAtBreak = true
-    await noteBreak($, outcome.ok ? 'flag-set' : 'pause-not-accepted', { call: '50arms_api PUT pause', ...outcomeFacts(ran, outcome) })
   }
   await touchRecordClock($, e, next)
   const answer = answerOf(ran)
@@ -4240,7 +4234,7 @@ let compactionFaultTold: string | null = null
 // true from the moment the plugin has decided to run a /clear until it has ended: the ready loop's released clear and a compaction by clear are never in progress together, whichever decided first
 // (the decision and this flag are set with no await between them)
 let clearInProgress = false
-// the model left its plan or card, or fully paused, and the session is at a natural break: the next main turn end clears it when nothing runs. Set by the model's own call that the
+// the model left its plan or card, and the session is at a natural break: the next main turn end clears it when nothing runs. Set by the model's own call that the
 // dashboard accepted; spent at that turn end whether or not it cleared (work still running means nothing new happens). A module variable, not $.state: a clear ends it either way.
 let clearAtBreak = false
 // the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
@@ -4472,7 +4466,7 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
   detach($, 'Compaction clear', clearForCompaction($, spent))
 }
 
-// the turn ended after the model left its plan or card, or paused: clear the session when nothing runs (no sub-agent, no background command), as the ready loop's own clear needs. The break is spent here
+// the turn ended after the model left its plan or card: clear the session when nothing runs (no sub-agent, no background command), as the ready loop's own clear needs. The break is spent here
 // whatever happens. Left to others: a ready-list session (its loop owns the clear), a compaction already running, and a /clear in progress. A failed /clear is one line to the person.
 async function clearAtNaturalBreak($: any): Promise<void> {
   if (!clearAtBreak) return
