@@ -160,7 +160,7 @@ for (const surface of SURFACES) {
       expect(prompt).toContain('Cards in flight on your plan: DX-9')
       // told once: the next prompt and tool result add no second start text
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
       expect(resumes(d)).toHaveLength(1)
       // and no restart notice: the clear is the plugin's own
       expect(d.restartCalls).toHaveLength(0)

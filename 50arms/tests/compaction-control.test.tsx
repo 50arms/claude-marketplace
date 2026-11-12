@@ -809,7 +809,7 @@ for (const surface of SURFACES) {
       await $.prompt.submit({ text: 'go' })
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
-      const told = tool.context!.slice(1)
+      const told = tool.context!
       expect(told).toHaveLength(1)
       const [registry, briefing] = told[0]!.split('\n')
       expect(registry).toBe(EVENT_TEXT('after_compaction'))
@@ -829,7 +829,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await $.prompt.submit({ text: 'go' })
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
-      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
+      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context![0]!
       expect(told).toContain('Work not pushed: not known (git status exited 128).')
       expect(told).toContain('Sub-agents running: none.')
     })
@@ -842,11 +842,11 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await $.prompt.submit({ text: 'go' })
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
-      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
+      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context![0]!
       expect(told).toContain('DX-5075 Some card, comment 17031 from Dan [Sent, waiting 2 min]: "Cover retry too"')
       d.world.reportReplies['GET /api/plan-sessions/me/owed-comments'] = { status: 503, body: { error: 'down' } }
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
-      const failed = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]!
+      const failed = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context![0]!
       expect(failed).toContain('Comments you still owe an answer: NOT KNOWN, the read failed')
     })
 

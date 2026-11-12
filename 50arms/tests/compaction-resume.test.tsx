@@ -95,7 +95,7 @@ for (const surface of SURFACES) {
       await restartMain($)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(0)
-      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)
+      const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!
       expect(told).toHaveLength(1)
       expect(told[0]).toContain(TOLD('after_compaction').split('\n')[0])
       expect(told[0]).toContain(RESUME_PROCEDURE)
@@ -185,7 +185,7 @@ for (const surface of SURFACES) {
       expect(d.relay.submitted).toEqual([])
       expect(d.relay.told.filter((t: string) => t.includes(RESUME_PROCEDURE))).toHaveLength(1)
       d.world.contextDelayMs = 0
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
     })
 
     test('a turn that began during the reads and ends with no further tool result tells the briefing once as a prompt, not stranded', async ($, on) => {
@@ -231,7 +231,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.relay.submitted).toEqual([])
       d.world.contextDelayMs = 0
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)[0]).toContain(RESUME_PROCEDURE)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context![0]).toContain(RESUME_PROCEDURE)
     })
 
     test('a startup, resume or clear starts no prompt', async ($, on) => {

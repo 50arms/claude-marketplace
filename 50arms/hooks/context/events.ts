@@ -7,8 +7,9 @@ import { mcpText } from '../plan/mcp'
 // The wording is a 50 Arms registry row (`GET /api/reminders/event/:event`, the `plan_restart.waiting_events` reminder); this file
 // carries no wording of its own but the two failure lines.
 
-// 50 Arms' four events. A SessionStart `source` of `clear` or `fork` has none: it is told nothing.
-export type DashboardEvent = 'session_start' | 'session_resume' | 'after_compaction' | 'sub_agent_start'
+// 50 Arms' events whose text the plugin tells. A SessionStart `source` of `clear` or `fork` has none: it is told nothing. The last two are reminders
+// that ride the main session's next action: a sub-agent stopped, a side session ended a turn.
+export type DashboardEvent = 'session_start' | 'session_resume' | 'after_compaction' | 'sub_agent_start' | 'sub_agent_stop' | 'side_session_turn_end'
 
 export function sessionEvent(source: unknown): DashboardEvent | null {
   switch (source) {
@@ -31,6 +32,16 @@ export type RestartAsk = { kind: 'ask'; args: Record<string, string> } | { kind:
 export function restartAsk(start: { source: string; transcriptPath: string | null }): RestartAsk {
   if (start.source !== 'resume') return { kind: 'ask', args: {} }
   return start.transcriptPath === null ? { kind: 'failed', reason: 'no_transcript_path: SessionStart resume carried no transcript_path' } : { kind: 'ask', args: { transcript_path: start.transcriptPath } }
+}
+
+/**
+ * Whether a prompt is the desktop app's notice that a side session this session started ended a turn. The app words it two ways, both
+ * measured in live transcripts: a `<system-reminder>` note that opens `The session "<title>" you started (local_<id>) finished a turn`
+ * (with `and then reported that it was waiting on the user` after it when that is so), and, when the starter was idle, a
+ * `<side-sessions-event>` message beside it. Either marks the event; a person's own prompt carries neither.
+ */
+export function isSideSessionNotice(text: unknown): boolean {
+  return typeof text === 'string' && (text.includes('<side-sessions-event>') || /The session ".*" you started \(local_[\w-]+\) finished a turn/.test(text))
 }
 
 export const eventPath = (event: DashboardEvent) => `/api/reminders/event/${event}`

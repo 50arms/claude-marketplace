@@ -1,13 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampTold, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
+import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
-import { stampDecision, stampForgotten } from './context/stamp'
-import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, subagentDoneReminder, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue } from './context/record'
-import type { RecordClock } from './context/record'
-import { wholeSuiteReminder } from './context/whole-suite'
+import { stamp as nextStamp } from './context/stamp'
+import { isRecordWrite } from './context/record'
 import { FOREGROUND_LOCK_TIMEOUT_MS, foregroundLockArgv, foregroundLockNotice, parseForegroundLockAnswer } from './context/foreground'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
@@ -143,11 +141,10 @@ const MCP_ID_RETRY_MS = 30_000
 const bootEngineId = atom({ plugin: '50arms', key: 'bootEngineId' } as const, null as string | null)
 
 const turn = atom({ plugin: '50arms', key: 'turn' } as const, IDLE as TurnState)
-// the last time stamp handed to each agent (the main thread and each sub-agent; prompt or tool call), which the agent's next one counts its +delta and its date from: a tool call is stamped only
-// after TOOL_STAMP_EVERY_MS since its agent's last one. Cleared at every session start (the model lost what it was told).
-const stampTold = atom({ plugin: '50arms', key: 'stampTold' } as const, {} as StampTold)
-// the sub-agents that finished whose reminder to record their result the main session has not been handed yet: it rides the main loop's next tool result or prompt.
-const subagentsDone = atom({ plugin: '50arms', key: 'subagentsDone' } as const, 0)
+// a sub-agent has stopped and the main session has not been handed the reminder to record its result yet: it rides the main loop's next tool result or prompt, one reminder however many stopped.
+const subagentStopped = atom({ plugin: '50arms', key: 'subagentStopped' } as const, false)
+// the last time stamp handed to the model (a prompt's), which the next one counts its +delta and its date from.
+const lastStamp = atom({ plugin: '50arms', key: 'lastStamp' } as const, null as StampState)
 // a session start the model has not been told about. On a desktop or headless startup, resume and fork the engine has not bound the
 // session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
 // prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
@@ -209,8 +206,6 @@ const workMarks = atom({ plugin: '50arms', key: 'workMarks' } as const, {} as Wo
 const relayOutbox = atom({ plugin: '50arms', key: 'relayOutbox' } as const, [] as PendingEvent[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] as AckInFlight)
-// when the session last wrote its plan or a card (or was last reminded, or first called the dashboard), what the no-recent-record reminder counts from. $.state, so a reload keeps it.
-const recordClock = atom({ plugin: '50arms', key: 'recordClock' } as const, { since: null } as RecordClock)
 
 // Every $.state value of the plugin is carried across a /clear (a scan test holds the two lists below to the atoms declared above). claude.exe 2.1.317 empties a plugin's
 // whole $.state when a /clear opens the next conversation (measured with a probe module: `session.end` still reads the ending conversation's values, `classic.SessionStart` (source `clear`)
@@ -245,6 +240,8 @@ async function carryAcrossConversation($: any): Promise<void> {
     mcpIds: read($, mcpIds),
     bootEngineId: read($, bootEngineId),
     turn: read($, turn),
+    subagentStopped: read($, subagentStopped),
+    lastStamp: read($, lastStamp),
     pendingStart: read($, pendingStart),
     diskTold: read($, diskTold),
     diskMeasured: read($, diskMeasured),
@@ -265,11 +262,8 @@ async function carryAcrossConversation($: any): Promise<void> {
     runningAgents: read($, runningAgents),
     reports: read($, reports),
     workMarks: read($, workMarks),
-    stampTold: read($, stampTold),
-    subagentsDone: read($, subagentsDone),
     relayOutbox: read($, relayOutbox),
     ackInFlight: read($, ackInFlight),
-    recordClock: read($, recordClock),
   }
   carriedState = Object.fromEntries(await Promise.all(Object.entries(reads).map(async ([key, value]) => [key, await value] as const)))
 }
@@ -302,6 +296,8 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, mcpIds, () => carried.mcpIds),
     update($, bootEngineId, () => carried.bootEngineId),
     update($, turn, () => carried.turn),
+    update($, subagentStopped, () => carried.subagentStopped),
+    update($, lastStamp, () => carried.lastStamp),
     update($, pendingStart, () => carried.pendingStart),
     update($, diskTold, () => carried.diskTold),
     update($, diskMeasured, () => carried.diskMeasured),
@@ -322,11 +318,8 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, runningAgents, () => carried.runningAgents),
     update($, reports, () => carried.reports),
     update($, workMarks, () => carried.workMarks),
-    update($, stampTold, () => carried.stampTold),
-    update($, subagentsDone, () => carried.subagentsDone),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
-    update($, recordClock, () => carried.recordClock),
   ])
   // a fresh conversation (or another session taking this one's place) in the same process: what the dashboard shows may have moved while they were in the old one. Loaded from here, so
   // the load and its lock live in the new conversation's $.state, never across the emptying
@@ -2959,7 +2952,6 @@ async function onAckCall($: any, e: any, next: any) {
   if (isRecordWrite(e.method, e.path) || (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && e.path === PAUSE_PATH)) {
     detach($, 'Plan refresh', refresh($, true))
   }
-  await touchRecordClock($, e, next)
   const answer = answerOf(ran)
   // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
   // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
@@ -3016,17 +3008,16 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   return r
 }
 
-// the time line for `agent`, counted from the last one that agent was handed (each agent reads its own context, so +delta is its own gap). A prompt is always stamped; a tool call only
-// when the agent's last stamp is a stretch old, else null (hooks/context/stamp.ts, stampDecision).
-async function timeLine($: any, trigger: 'prompt' | 'tool', agent: string): Promise<string | null> {
+// the time line. One stamp per prompt (never a tool call), counted from the last one.
+async function timeLine($: any): Promise<string> {
   const now = await $.clock.now()
   const offsetMinutes = -new Date(now).getTimezoneOffset()
-  // the line is set inside the updater, which sees the stamps as they are when the write happens
-  let line: string | null = null
-  await update($, stampTold, told => {
-    const d = stampDecision(told, agent, now, offsetMinutes, trigger)
-    line = d.line
-    return d.told
+  // the line is set inside the updater, which sees the last stamp as it is when the write happens
+  let line = ''
+  await update($, lastStamp, last => {
+    const next = nextStamp(now, offsetMinutes, last)
+    line = next.line
+    return next.state
   })
   return line
 }
@@ -3042,19 +3033,25 @@ async function takePendingStart($: any): Promise<PendingStart> {
   return taken
 }
 
-async function takeSubagentsDone($: any): Promise<number> {
-  let taken = 0
-  await update($, subagentsDone, cur => {
+async function takeSubagentStopped($: any): Promise<boolean> {
+  let taken = false
+  await update($, subagentStopped, cur => {
     taken = cur
-    return 0
+    return false
   })
   return taken
 }
 
-// the reminder to record finished sub-agents' results, handed with the main session's next action; empty when none finished since the last one
-async function subagentDoneEntries($: any): Promise<string[]> {
-  const count = await takeSubagentsDone($)
-  return count === 0 ? [] : [subagentDoneReminder(count)]
+// a registry reminder's line: the event's text, or one failure line (a lookup that breaks or passes the deadline is never silence)
+async function eventReminder($: any, event: DashboardEvent): Promise<string | null> {
+  return withinDeadline($, CONTEXT_DEADLINE_MS, readEventContext($, event), () => eventFailureLine(event, DEADLINE_REASON))
+}
+
+// the reminder to record finished sub-agents' results, handed with the main session's next action (a prompt or a tool result); none when no sub-agent stopped since the last one
+async function subagentStopEntries($: any): Promise<string[]> {
+  if (!(await takeSubagentStopped($))) return []
+  const line = await eventReminder($, 'sub_agent_stop')
+  return line === null ? [] : [line]
 }
 
 async function takeEndedSession($: any): Promise<string | null> {
@@ -3085,14 +3082,13 @@ const briefingKindOf = (start: NonNullable<PendingStart>): BriefingKind | null =
 // the dashboard event whose text a start is told (null: a start with no event text, such as a person's own /clear): the one answer for the start's text and for the line that stands for it when its reads fail
 const startEventOf = (start: NonNullable<PendingStart>): DashboardEvent | null => (isFreshStart(start) ? 'session_start' : sessionEvent(start.source))
 
-// the stamp (a prompt's always, a tool call's only after a stretch), the disk notice and, when there is one, the session start line: the entries a hook adds to the model's context.
+// the entries a hook adds to the model's context: the time stamp (a prompt's only: a tool call is never stamped), the disk notice and, when there is one, the session start line.
 // the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
 // (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
 // the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
 async function stampEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
   const pending = takeStart ? await takePendingStart($) : null
-  // the stamp beside a session start is the first the model reads after it, so a start is stamped like a prompt
-  const line = await timeLine($, pending === null ? trigger : 'prompt', agent)
+  const line = trigger === 'prompt' ? await timeLine($) : null
   const disk = await diskLine($, trigger, agent)
   const head = [...(line === null ? [] : [line]), ...(disk === null ? [] : [disk])]
   if (pending === null) return head
@@ -3225,20 +3221,22 @@ async function wslHome($: any): Promise<string | null> {
 
 // the prompt as typed (a task notification included) reaches the model with its time beside it, and with the session start it carries, if any.
 // The desktop app's notice that a side session this session started ended a turn arrives as a prompt too, and it also carries the reminder to
-// archive that session once its work is finished.
+// archive that session once its work is finished (the registry's side_session_turn_end text). A finished sub-agent's reminder to record its result,
+// owed by the main session, rides this prompt too when it has not ridden a tool result.
 async function onPromptStamp($: any, e: any, next: any) {
-  const side = isSideSessionNotice(e.text) ? [SIDE_SESSION_DONE_REMINDER] : []
-  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT)), ...side, ...(await subagentDoneEntries($))] })
+  const entries = await stampEntries($, true, 'prompt', MAIN_AGENT)
+  const side = isSideSessionNotice(e.text) ? await eventReminder($, 'side_session_turn_end') : null
+  return next({ ...e, context: [...(e.context ?? []), ...entries, ...(side === null ? [] : [side]), ...(await subagentStopEntries($))] })
 }
 
-// each tool call's result reaches the model with the time it finished beside it; a denied call has no result to put it beside. The MAIN loop's
-// result also carries the session start, if any: a call with an `agentId` is a sub-agent's or an engine fork's, and the start is the main session's
+// a tool call's result is never stamped (the time rides prompts only); the MAIN loop's result carries the session start, if any, the disk notice, and
+// a finished sub-agent's reminder to record its result; a denied call has no result to put them beside. A call with an `agentId` is a sub-agent's or an engine fork's, and the start and the reminder are the main session's
 async function onToolStamp($: any, e: any, next: any) {
   const r = await next(e)
   // a plugin's own `$.mcp.call` (this one's dashboard reads) is raised as a `tool.call` too, with no agentId. Its result goes to the plugin,
-  // never the model, so a stamp or the start text put beside it is lost, and the stamp would move the clock the model reads. The signal is the
+  // never the model, so the start text or a reminder put beside it is lost. The signal is the
   // documented `next.origin` (`e.origin` does not exist on tool.call): `engine` for the model's call, the plugin's name for one it raised (probed against the real engine). These calls also carry `toolu_plugin_` ids on 2.1.295, which is not relied on.
-  // Returning here also skips the stampTold bookkeeping. A test pins that it is seated.
+  // Returning here also skips the session start, the disk notice and the finished sub-agent's reminder, which would be lost. A test pins that it is seated.
   if (raisedByPlugin(next.origin)) return r
   // a background shell a ready-agent loop must not reset under, whether or not the loop is on yet: `reportShellEnds` clears the list
   if (r.deny === undefined && typeof r.result?.backgroundTaskId === 'string') {
@@ -3253,11 +3251,9 @@ async function onToolStamp($: any, e: any, next: any) {
   if (r.deny !== undefined) return r
   // a sub-agent's compaction briefs that sub-agent, in its own tool result
   const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
-  // a Bash call that starts a whole test suite (no test file named) gets a reminder beside its result; it rides this handler because no other tool.call handler may sit on a Bash call
-  const reminder = e.tool === 'Bash' ? wholeSuiteReminder(e.command) : null
   // a finished sub-agent's reminder to record its result is the MAIN session's, handed with its next action
-  const recordReminders = e.agentId === undefined ? await subagentDoneEntries($) : []
-  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...(reminder === null ? [] : [reminder]), ...recordReminders] }
+  const stopped = e.agentId === undefined ? await subagentStopEntries($) : []
+  return { ...r, context: [...(r.context ?? []), ...(await stampEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...stopped] }
 }
 
 // what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
@@ -3480,11 +3476,11 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   return done.line === null ? notice : notice === null ? done.line : [done.line, notice].join('\n')
 }
 
-async function readSubagentContext($: any): Promise<string | null> {
+// the registry's text for an event told outside a session start (a sub-agent's start or stop, a side session's turn end): every signed-in session, on a plan or not
+async function readEventContext($: any, event: DashboardEvent): Promise<string | null> {
   const plan = await sessionPlan($)
-  // every signed-in session's sub-agent, on a plan or not
-  if (plan.kind === 'connected' || plan.kind === 'not-connected') return eventContext($, 'sub_agent_start')
-  return plan.kind === 'failed' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine('sub_agent_start', plan.reason) : null
+  if (plan.kind === 'connected' || plan.kind === 'not-connected') return eventContext($, event)
+  return plan.kind === 'failed' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine(event, plan.reason) : null
 }
 
 // the entries still within COMPACTING_NOTE_TTL_MS
@@ -3575,8 +3571,6 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   // every start, a sub-agent's compaction included, loses what the model was told: the disk notice is told again and measured afresh
   await update($, diskTold, () => ({}))
   await update($, diskMeasured, () => null)
-  // ... and its time stamp, which every agent is handed again with its next call
-  await update($, stampTold, () => ({}))
   if (!restart.briefsMain) return below
   const loopResetting = (await read($, readyLoop))?.phase === 'resetting'
   // a process's first start is read after the carried values are back, so a /clear (which carries it) is never one
@@ -3639,7 +3633,7 @@ async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
   // its activity row opens
   detach($, '50 Arms activity report', reportSubagentStart($, e))
-  const eventLine = await withinDeadline($, CONTEXT_DEADLINE_MS, readSubagentContext($), () => eventFailureLine('sub_agent_start', DEADLINE_REASON))
+  const eventLine = await eventReminder($, 'sub_agent_start')
   const pacing = await pacingLine(pacingEnv($))
   return withLine(withLine(r, eventLine), pacing)
 }
@@ -3650,51 +3644,9 @@ async function onSubagentStop($: any, e: any, next: any) {
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
   // the reminder is for the MAIN session that started the sub-agent: context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn, and a message of
-  // its own to the main session costs a turn per sub-agent. It is counted here and handed with the main session's next tool result or prompt (subagentDoneEntries).
-  await update($, subagentsDone, n => n + 1)
-  // the stopped sub-agent is stamped afresh if the same id ever calls again
-  await update($, stampTold, told => stampForgotten(told, e.agent_id))
+  // its own to the main session costs a turn per sub-agent. It is owed here and handed with the main session's next tool result or prompt (subagentStopEntries), one for all that stopped.
+  await update($, subagentStopped, () => true)
   return r
-}
-
-// a dashboard call the session made starts or restarts its record clock; a write to its plan or a card restarts it
-// (called after `next(e)`: a plugin-raised call or a sub-agent's leaves the clock alone)
-async function touchRecordClock($: any, e: any, next: any): Promise<void> {
-  if (raisedByPlugin(next.origin) || e.agentId !== undefined) return
-  const record = isRecordWrite(e.method, e.path)
-  const now = await $.clock.now()
-  await update($, recordClock, cur => clockAfterCall(cur, record, now))
-}
-
-// session_connect: the 50arms_api calls go through onAckCall, the one handler allowed on that tool
-async function onRecordCall($: any, e: any, next: any) {
-  const r = await next(e)
-  await touchRecordClock($, e, next)
-  return r
-}
-
-// a Write of a handoff-like file that git does not track gets the reminder beside its result (never a block: where an agent writes is its own)
-async function onHandoffWrite($: any, e: any, next: any) {
-  const r = await next(e)
-  if (raisedByPlugin(next.origin) || r.deny !== undefined || !looksLikeHandoff(e.file_path, e.content)) return r
-  // no git, a missing directory or an unreadable path is "not tracked": the name already matched and the reminder costs nothing
-  const file = String(e.file_path)
-  const dir = file.slice(0, file.length - baseName(file).length)
-  const tracked = await $.process.run(['git', '-C', dir, 'ls-files', '--error-unmatch', '--', String(e.file_path)], { timeoutMs: GIT_STATUS_TIMEOUT_MS }).then((p: any) => p.exitCode === 0, () => false)
-  return tracked ? r : { ...r, context: [...(r.context ?? []), HANDOFF_FILE_REMINDER] }
-}
-
-// the main loop's turn ended after a stretch of work with no write to its plan or cards
-async function remindToRecord($: any): Promise<void> {
-  const now = await $.clock.now()
-  // `reminder` is set inside the updater, which sees the clock as it is when the write happens (the same capture as `prompts` in onTurnComplete)
-  let reminder = null as string | null
-  await update($, recordClock, cur => {
-    const due = recordDue(cur, now)
-    reminder = due.reminder
-    return due.clock
-  })
-  if (reminder !== null) await tellModel($, reminder)
 }
 
 // the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this).
@@ -3719,7 +3671,6 @@ async function onTurnComplete($: any, e: any, next: any) {
     if (e.isAborted === true && (await read($, readyLoop)) !== null) detach($, 'Ready list', leaveReady($, READY_STOPPED))
     else detach($, 'Ready list', syncReady($))
     await syncTitleOnTurn($)
-    await remindToRecord($)
   } else {
     // a sub-agent's turn ended, cleanly or not: its activity row closes
     detach($, '50 Arms activity report', reportSubagentEnd($, e.agentId))
@@ -4611,8 +4562,6 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: `mcp__${DESKTOP_SESSION_SERVER}__set_session_title` }, onModelSetTitle)
   on('tool.call', { tool: toolName('request_permission') }, onRequestPermission)
   on('tool.call', { tool: toolName('50arms_api') }, onAckCall)
-  on('tool.call', { tool: toolName('session_connect') }, onRecordCall)
-  on('tool.call', { tool: 'Write' }, onHandoffWrite)
   on('turn.start', onTurnStart)
   on('turn.complete', onTurnComplete)
   // an automatic compaction is held while the session is under the handshake; the agent's ready starts /compact itself (startReadyCompaction)

@@ -132,10 +132,6 @@ export type ReadyLoop = { phase: 'joining' | 'waiting' | 'working' | 'resetting'
 // the last time stamp handed to the model: when (epoch ms) and which local day (YYYYMMDD) it was; null before the first.
 export type StampState = { at: number; day: string } | null
 
-// the last time stamp handed to each agent (the main thread is 'main', a sub-agent its id): a tool call's stamp is sent again only after a stretch, and +delta and the date count from the agent's own
-// last one (hooks/context/stamp.ts). An agent never stamped has no entry.
-export type StampTold = Record<string, NonNullable<StampState>>
-
 // the disk notice last handed to each agent (the main thread is 'main', a sub-agent its id): its text and when (epoch ms). An agent with nothing to be told has no entry.
 export type DiskTold = Record<string, { text: string; at: number }>
 // the last disk measurement: the notice text it produced ('' when all is well) and when (epoch ms); null before the first or after a session start.
@@ -209,10 +205,10 @@ declare module 'claude-code' {
       readyLoop: ReadyLoop | null
       // the background shells the session started and the engine still lists as running: the ready loop's clear waits for them
       readyShells: string[]
-      // the last time stamp handed to each agent (see StampTold): a tool call stamps only after a stretch since its agent's last one, which the next counts its +delta and its date from.
-      stampTold: StampTold
-      // how many sub-agents have finished whose reminder to record their result has not yet reached the main session (it rides the main loop's next tool result or prompt).
-      subagentsDone: number
+      // the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
+      lastStamp: StampState
+      // whether a sub-agent has stopped whose reminder to record its result the main session has not been handed yet: it rides the main loop's next tool result or prompt, however many stopped.
+      subagentStopped: boolean
       // the disk notice last told to each agent (see DiskTold), so a tool call repeats it only on a change or after a few minutes.
       diskTold: DiskTold
       // the last disk measurement (see DiskMeasured), reused by tool calls for a minute.
@@ -262,8 +258,6 @@ declare module 'claude-code' {
       ackInFlight: AckInFlight
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
       runningAgents: string[]
-      // when the session last wrote its plan or a card, was last reminded, or first called the dashboard (epoch ms; null: none yet): the no-recent-record reminder counts from it.
-      recordClock: { since: number | null }
       // the cards this session marked as its own work (PUT /api/work-marks), card id to the epoch ms the mark was set; the held-idle Stop check counts them as worked.
       workMarks: Record<string, number>
     }

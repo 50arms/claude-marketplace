@@ -202,7 +202,7 @@ for (const surface of SURFACES) {
   })
 
   describe(`silence and failures on ${surface}`, () => {
-    test('a session that is not signed in makes no report call on any activity event, and its tool results still carry the time stamp', async ($, on) => {
+    test('a session that is not signed in makes no report call on any activity event, and its tool results carry no time stamp', async ($, on) => {
       on('tool.call', () => BACKGROUNDED as any)
       answerReportEvents(on)
       const d = dashboard(on, { signedOut: 'signed-out' })
@@ -215,7 +215,7 @@ for (const surface of SURFACES) {
       await $.classic.SubagentStop({ agent_id: 'a1b2c3', stop_hook_active: false, agent_transcript_path: '/x/agent-a1b2c3.jsonl', agent_type: 'Explore', background_tasks: [] } as any)
       await d.clock.settle()
       expect(d.reports).toEqual([])
-      expect(r.context).toHaveLength(1)
+      expect(r.context).toHaveLength(0)
     })
 
     test("a signed-in session on no plan reports its sub-agents too: they are rows of the account's running-agent count (DX-5593)", async ($, on) => {

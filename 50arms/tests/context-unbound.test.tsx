@@ -89,7 +89,7 @@ for (const surface of SURFACES) {
       // the engine compacts mid-turn (bound): SessionStart records it, no prompt is coming
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
-      expect(tool.context!.slice(1)).toEqual([TOLD('after_compaction')])
+      expect(tool.context!).toEqual([TOLD('after_compaction')])
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
     })
@@ -101,8 +101,8 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const sub = await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)
-      expect(sub.context).toHaveLength(1)
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([TOLD('after_compaction')])
+      expect(sub.context).toHaveLength(0)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!).toEqual([TOLD('after_compaction')])
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
     })
 
@@ -115,7 +115,7 @@ for (const surface of SURFACES) {
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       expect((await $.tool.call({ tool: 'Bash', command: 'rm' } as any)).context).toBeUndefined()
       answer = { result: {}, text: 'done' }
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!.slice(1)).toEqual([TOLD('after_compaction')])
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!).toEqual([TOLD('after_compaction')])
     })
 
     test('the start records the session id SessionStart was given, not the one $.session.id() answers', async ($, on) => {
@@ -143,8 +143,8 @@ for (const surface of SURFACES) {
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
       expect(tool.text).toBe('done')
-      expect(tool.context).toHaveLength(2)
-      expect(tool.context![1]).toContain('after_compaction')
+      expect(tool.context).toHaveLength(1)
+      expect(tool.context![0]).toContain('after_compaction')
     })
   })
 }
