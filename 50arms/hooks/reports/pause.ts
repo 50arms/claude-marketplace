@@ -16,7 +16,7 @@ export function pauseOf(body: unknown, now: number): PauseRead {
   if (pause === undefined || typeof pause !== 'object') return { kind: 'failed', reason: `bad_response: GET ${PAUSE_PATH} answered no pause field` }
   const p = pause as { limit?: unknown; until?: unknown; reason?: unknown; waits_on?: unknown }
   if (p.limit !== 'agent') return { kind: 'free' }
-  // CP-51 / DX-6631: a pause that waits on an event (`pacing`, `person`, `dependency`) has `until: null` and ends only on that event, so it is paused, never expired
+  // a pause that waits on an event (`pacing`, `person`, `dependency`) has `until: null` and ends only on that event, so it is paused, never expired
   const untimed = p.until === null
   const until = typeof p.until === 'string' ? Date.parse(p.until) : NaN
   if ((!untimed && Number.isNaN(until)) || typeof p.reason !== 'string') return { kind: 'failed', reason: `bad_response: GET ${PAUSE_PATH} answered an agent pause with no end time (null or a date) or no reason` }
