@@ -2932,6 +2932,8 @@ async function onSessionConnect($: any, e: any, next: any) {
   if (e.registration_only === true) return next(e)
   const target = connectTargetOf(e.target)
   let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
+  // the model's own leave of a plan or card, accepted, is a natural break; the band's Disconnect (the plugin's own call) is a person's press and clears nothing
+  if (e.disconnect === true && target !== null && !raisedByPlugin(next.origin) && answerOf(ran).ok) clearAtBreak = true
   const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
   if (named !== null) ran = withNamedNote(ran, named)
   const registration = registrationOf(ran.text)
@@ -2990,6 +2992,8 @@ async function onAckCall($: any, e: any, next: any) {
   if (isRecordWrite(e.method, e.path) || (typeof e.method === 'string' && e.method.toUpperCase() !== 'GET' && e.path === PAUSE_PATH)) {
     detach($, 'Plan refresh', refresh($, true))
   }
+  // CP-104: the model's own pause, accepted, is a natural break
+  if (typeof e.method === 'string' && e.method.toUpperCase() === 'PUT' && e.path === PAUSE_PATH && answerOf(ran).ok) clearAtBreak = true
   await touchRecordClock($, e, next)
   const answer = answerOf(ran)
   // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
@@ -3782,6 +3786,7 @@ async function onTurnComplete($: any, e: any, next: any) {
     await armKeepalive($, false)
     // the agent's ready, said during this turn, starts the compaction now that the turn is over
     await syncCompaction($, { start: true })
+    await clearAtNaturalBreak($)
     // a person's Stop takes the session off the ready list; any other turn's end is when finished work is noticed
     if (e.isAborted === true && (await read($, readyLoop)) !== null) detach($, 'Ready list', leaveReady($, READY_STOPPED))
     else detach($, 'Ready list', syncReady($))
@@ -4225,6 +4230,9 @@ let compactionFaultTold: string | null = null
 // true from the moment the plugin has decided to run a /clear until it has ended: the ready loop's released clear and a compaction by clear are never in progress together, whichever decided first
 // (the decision and this flag are set with no await between them)
 let clearInProgress = false
+// CP-104: the model left its plan or card, or fully paused, and the session is at a natural break: the next main turn end clears it when nothing runs. Set by the model's own call that the
+// dashboard accepted; spent at that turn end whether or not it cleared (work still running means nothing new happens). A module variable, not $.state: a clear ends it either way.
+let clearAtBreak = false
 // the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
 let relayOlderTold: string | null = null
 // the person was told once that the engine's release could not be read, so sub-agent compaction waits for the first compaction event
@@ -4452,6 +4460,25 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
   }
   if (spent === null) return
   detach($, 'Compaction clear', clearForCompaction($, spent))
+}
+
+// CP-104: the turn ended after the model left its plan or card, or paused: clear the session when nothing runs (no sub-agent, no background command), as the ready loop's own clear needs. The break is spent here
+// whatever happens. Left to others: a ready-list session (its loop owns the clear), a compaction already running, and a /clear in progress. A failed /clear is one line to the person.
+async function clearAtNaturalBreak($: any): Promise<void> {
+  if (!clearAtBreak) return
+  clearAtBreak = false
+  if (clearInProgress || (await read($, readyLoop)) !== null || (await mainIsCompacting($)) || !(await sessionIsIdleForClear($)) || clearInProgress) return
+  clearInProgress = true
+  detach($, 'Natural-break clear', clearCommandOnce($))
+}
+
+async function clearCommandOnce($: any): Promise<void> {
+  try {
+    const { failure } = await clearCommand($)
+    if (failure !== null) throw new Error(failure)
+  } finally {
+    clearInProgress = false
+  }
 }
 
 const sessionIsIdleForClear = async ($: any): Promise<boolean> => (await readyIsIdle($)) && (await read($, readyShells)).length === 0
