@@ -4,6 +4,8 @@ import type { Register, SessionRateLimit } from 'claude-code'
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
+import { ROLE_PATH, roleBlock, roleFailureLine, roleHash, roleOf, roleOwedOnConnect } from './context/role'
+import type { RoleTold } from './context/role'
 import { stamp as nextStamp } from './context/stamp'
 import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue } from './context/record'
 import type { RecordClock } from './context/record'
@@ -152,6 +154,8 @@ const pendingStart = atom({ plugin: '50arms', key: 'pendingStart' } as const, nu
 // the mantra this conversation is still owed: a start that found the session without a usable key (signed out, or its key revoked) could not ask 50 Arms for it. The first load that finds the
 // session signed in turns this into a pending start (`source: 'sign-in'`), so the mantra reaches the model on its next prompt or tool result, from the moment it signs in.
 const mantraOwed = atom({ plugin: '50arms', key: 'mantraOwed' } as const, false)
+// the role (profile and text hash) 50 Arms' hook context last handed this conversation (CP-76): a connect owes the role only when it differs from this one
+const roleTold = atom({ plugin: '50arms', key: 'roleTold' } as const, null as RoleTold)
 // The machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
 // notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home found once per session.
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
@@ -610,6 +614,9 @@ async function applyNaming($: any, target: unknown, naming: any): Promise<string
 
 // the model is told the plugin named the thread, so it does not rename it as the connect answer's naming block asks
 const withNamedNote = (ran: any, named: string) => ({ ...ran, context: [...(ran.context ?? []), `The plugin set this thread's title to "${named}" and connected again with it; do not rename the thread.`] })
+
+// the role a connect owes, added to the connect's own result as context (nothing when it owes none)
+const withRoleNote = (ran: any, role: string | null) => (role === null ? ran : { ...ran, context: [...(ran.context ?? []), role] })
 
 // The model's own rename of the desktop thread runs under the same lock as the plugin's title writers, so a title-mark sync's read and write
 // never straddle it, and the plugin remembers the title the model set. The sync that follows puts the state mark back. The plugin's own calls to the
@@ -2924,6 +2931,9 @@ async function onSessionConnect($: any, e: any, next: any) {
   let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
   const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
   if (named !== null) ran = withNamedNote(ran, named)
+  const held = answerOf(ran)
+  // a connect to a plan or a card hands the model that work's role as context, at once (CP-76); a leave, a sign-in only and the plugin's own connects hand none
+  if (e.disconnect !== true && !raisedByPlugin(next.origin) && held.ok && (connectedPlanOf(held) !== null || target?.kind === 'card')) ran = withRoleNote(ran, await roleContext($, 'connect'))
   const registration = registrationOf(ran.text)
   if (registration !== null) {
     // an unregistered machine: the band shows the link and code, and the model is told to send the person there (and woken when they accept)
@@ -2985,11 +2995,16 @@ async function onAckCall($: any, e: any, next: any) {
   // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
   // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
   let named: string | null = null
+  let role: string | null = null
   if (answer.ok && isPickup(e)) {
     const connected = (await wholeAnswer($, answer)).body
     if (connected?.connectedByPickup === true) {
       await reportActivityOnConnect($)
-      if (!raisedByPlugin(next.origin)) named = await applyNaming($, CARD_TRANSITION_PATH.exec(e.path)?.[1], connected.naming)
+      if (!raisedByPlugin(next.origin)) {
+        named = await applyNaming($, CARD_TRANSITION_PATH.exec(e.path)?.[1], connected.naming)
+        // the pickup connected the session to the card: the card's role comes as context, as a session_connect's does (CP-76)
+        role = await roleContext($, 'connect')
+      }
     }
   }
   // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
@@ -2999,7 +3014,7 @@ async function onAckCall($: any, e: any, next: any) {
   }
   const id = ackedEventId(e.method, e.path)
   if (id !== null && answer.ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
-  return named === null ? ran : withNamedNote(ran, named)
+  return withRoleNote(named === null ? ran : withNamedNote(ran, named), role)
 }
 
 // what the session is doing now, for its title's mark: any sub-agent running, and the main loop's turn
@@ -3413,6 +3428,23 @@ async function eventContext($: any, event: DashboardEvent): Promise<string | nul
   return toldLine(eventText(await api($, 'GET', eventPath(event))), reason => eventFailureLine(event, reason))
 }
 
+// The session's role as hook context (CP-76). `start`: a session start, resume, compaction or sign-in owes it whatever was told before (the conversation lost it).
+// `connect`: a connect to a plan or a card owes it only when it differs from the role the conversation holds, and then says it replaces the earlier one.
+// A session on neither a plan nor a card has none (null); a read that broke is one line naming why.
+async function roleContext($: any, when: 'start' | 'connect'): Promise<string | null> {
+  const got = roleOf(await api($, 'GET', ROLE_PATH))
+  if (got.kind === 'failed') return roleFailureLine(got.reason)
+  if (got.kind === 'nothing') return null
+  const { role } = got
+  let line: string | null = null
+  await update($, roleTold, told => {
+    if (when === 'connect' && !roleOwedOnConnect(told, role)) return told
+    line = roleBlock(role, when === 'connect' && told !== null)
+    return { profile: role.profile, hash: roleHash(role.text) }
+  })
+  return line
+}
+
 // a session that is not on a plan (or has no key yet) but replaced one that was is told which plan and what waits there. The
 // session's own dashboard server finds the earlier session and answers; its `restart_notice` tool works before sign-in and owns its
 // lookup's 8 s deadline (a `lookup_timeout` stop carries the server's fix text), so the plugin sets no deadline of its own around the call. A stop
@@ -3470,13 +3502,14 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
     if (plan.kind !== 'failed' && plan.kind !== 'unreachable') await update($, mantraOwed, () => plan.kind === 'signed-out' || plan.kind === 'silent')
     if (plan.kind === 'connected') {
       const line = await eventContext($, event)
-      // a compaction, and a compaction by clear, are followed by the resume briefing, in the same first turn as the registry's text
+      const role = await roleContext($, 'start')
+      // a compaction, and a compaction by clear, are followed by the resume briefing, in the same first turn as the registry's text and the role
       const briefed = briefingKindOf(start)
-      return { line: briefed !== null ? [line, await compactionBriefing($, briefed)].filter(x => x !== null).join('\n') : line, askRestart: false }
+      return { line: [line, role, briefed !== null ? await compactionBriefing($, briefed) : null].filter(x => x !== null).join('\n') || null, askRestart: false }
     }
     if (plan.kind === 'failed') return fault(plan.reason)
     // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
-    if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
+    if (plan.kind === 'not-connected') return { line: [await eventContext($, event), await roleContext($, 'start')].filter(x => x !== null).join('\n') || null, askRestart }
     // a signed-out resume is the one a restart leaves without a key: the notice is for it. A signed-out startup carries the one invitation to sign in and nothing else: no notice, no lookup, no failure line
     if (plan.kind === 'signed-out') return start.source === 'startup' ? { line: SIGN_IN_INVITATION, askRestart: false } : { line: null, askRestart }
     return { line: null, askRestart }
