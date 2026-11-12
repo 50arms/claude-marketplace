@@ -139,6 +139,44 @@ for (const surface of SURFACES) {
       expect(d.toasts).toEqual(['Compaction clear failed: the session id did not change'])
     })
 
+    // CP-60: a person's own /compact (or Claude Code's) is running: the plugin notes it from the moment core starts it until the session restarts from it. A ready that arrives meanwhile is
+    // answered by that compaction: it starts no second /compact and no /clear, is spent, and a later release acts as usual
+    for (const mode of ['compact', 'clear'] as const) {
+      test(`a ready that arrives while a compaction is running starts no ${mode === 'clear' ? 'clear' : 'second compaction'} and is spent: nothing runs for it afterwards, a later release still acts`, async ($, on) => {
+        let release = () => {}
+        const hold = new Promise<void>(resolve => (release = resolve))
+        on('session.compact', async () => {
+          await hold
+          return { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] } as any
+        })
+        const d = await started($, on)
+        d.world.files[CONTROL_FILE] = fileText(control({ mode }))
+        const running = $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }] } as any)
+        await d.clock.settle()
+        d.world.files[CONTROL_FILE] = READY(mode, 'ready-1')
+        await $.turn.complete(TURN)
+        await d.clock.advance(5_000)
+        await d.clock.advance(5_000)
+        expect(compactRuns(d)).toEqual([])
+        expect(d.clearRuns).toEqual([])
+        release()
+        await running
+        await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: d.world.sessionId, transcript_path: '/work/main.jsonl' } as any)
+        await d.clock.settle()
+        await $.turn.complete(TURN)
+        await d.clock.advance(5_000)
+        // the running compaction did what that ready asked for: nothing runs for it once the compaction has ended either
+        expect(compactRuns(d)).toEqual([])
+        expect(d.clearRuns).toEqual([])
+        // a later release acts as usual
+        d.world.files[CONTROL_FILE] = READY(mode, 'ready-2')
+        await $.turn.complete(TURN)
+        await d.clock.settle()
+        expect(compactRuns(d)).toHaveLength(mode === 'compact' ? 1 : 0)
+        expect(d.clearRuns).toHaveLength(mode === 'clear' ? 1 : 0)
+      })
+    }
+
     const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('Your conversation was just cleared'))
 
     test('the fresh conversation is told a new session start and gets ONE resume prompt: the cleared procedure, the plan and its cards', async ($, on) => {

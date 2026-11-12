@@ -4060,8 +4060,7 @@ async function reportCompactionEnd($: any): Promise<void> {
 // A plan or card connect landed (a first connect, a move or a reconnect): the dashboard's row has no activity yet, or a stale one, so the session's current
 // activity is sent now. The view is not loaded yet at this point (its refresh is detached), so the send does not wait on it.
 async function reportActivityOnConnect($: any): Promise<void> {
-  const now = await $.clock.now()
-  const busy = liveCompacting(await read($, compacting), now).main !== null
+  const busy = await mainIsCompacting($)
   await sendTurnActivity($, busy ? 'compacting' : (await read($, turn)).isRunning ? 'in_turn' : 'idle')
 }
 
@@ -4391,6 +4390,11 @@ async function armSubAgents($: any, file: ControlFile): Promise<void> {
   await update($, armedPercent, () => wanted)
 }
 
+// whether the main agent's compaction is running: its entry stands from the moment core starts it until the session restarts from it (or it is skipped, fails, or outlives its TTL)
+async function mainIsCompacting($: any): Promise<boolean> {
+  return liveCompacting(await read($, compacting), await $.clock.now()).main !== null
+}
+
 // The file's unexpired release, if the plugin has not spent it: spent now (kept in $.store, so one release is acted on once however many turns follow) and returned.
 async function spendReadyRelease($: any, file: ControlFile): Promise<string | null> {
   // the record names the release and the desktop session (never the engine id, which a clear moves): a clear that ends the process leaves a new process with a new engine id and an empty $.state, whose relay names its file
@@ -4424,6 +4428,12 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
 // Nothing starts while a /clear is in progress (the ready loop's, or an earlier compaction's): its release stays in the file for the next check.
 async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
   if (clearInProgress) return
+  // the main agent's compaction is already running, so it has already done what this ready asked for: the release is spent without a second /compact or a /clear, as a person's own /compact
+  // spends a waiting ready. A later release acts as usual
+  if (await mainIsCompacting($)) {
+    await spendReadyRelease($, file)
+    return
+  }
   const clears = file.kind === 'control' && file.control !== null && file.control.mode === 'clear'
   if (clears && !(await sessionIsIdleForClear($))) return
   if (!clears) {
