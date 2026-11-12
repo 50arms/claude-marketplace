@@ -325,7 +325,7 @@ for (const surface of SURFACES) {
 
     // The mark of a clear in progress outlives the process the clear ends: it is a $.store record of the desktop session (its host id), with an expiry. The new process of that session takes it with its first start, any source.
     const MARK_TTL = 10 * 60_000
-    const mark = (over: Record<string, unknown> = {}) => ({ releaseId: 'r1', at: CLOCK_START, until: CLOCK_START + MARK_TTL, ...over })
+    const mark = (over: Record<string, unknown> = {}) => ({ releaseId: 'r1', at: CLOCK_START, until: CLOCK_START + MARK_TTL, holds: [], ...over })
     const NEW_PROCESS_ID = 'sess-new-process'
     const markKeys = (d: any) => [...d.stored.keys()].filter(k => k.startsWith(CLEAR_MARK_PREFIX))
     async function newProcessStarts($: any, d: any, source: string) {

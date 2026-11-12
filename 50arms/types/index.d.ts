@@ -146,8 +146,8 @@ export type DiskHome = { home: string } | { fault: string } | null
 export type CompactingState = { main: number | null; agents: Record<string, { at: number; done: boolean }> }
 
 // `loopReset`: the ready-agent loop's own /clear, whose fresh conversation is told the start text as a new session is.
-// `compactionClear`: the plugin's own /clear that stands for a compaction (a control `mode` of `clear`): told the same, then the resume briefing.
-export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null; loopReset?: true; compactionClear?: true } | null
+// `compactionClear`: a /clear the plugin ran for a session that still held work (a compaction by clear, a natural-break clear): told the same, then the resume briefing. `reconnect`: what it held, to reconnect it to when the clear left it unconnected.
+export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null; loopReset?: true; compactionClear?: true; reconnect?: string[] } | null
 
 // what the reports remember between events: what this session reported opening and still owes a close. `agents`: by activity id
 // (`agent-<id>`), each running sub-agent whose start was posted, with the time (epoch ms) of its last post (the start or a liveness
@@ -243,7 +243,7 @@ declare module 'claude-code' {
       // the release the plugin claimed to start a compaction with (one compare-and-set, so a ready starts once)
       claimedRelease: string | null
       // a compaction clear is running, so the clear start it raises resumes the cleared conversation (carried across the clear; a reload keeps it).
-      compactionClear: boolean
+      compactionClear: string[] | null
       // this process has already seen a session start; a /clear carries it, so only a new process's first start reads as one.
       startSeen: boolean
       // who is compacting, one entry per agent (see CompactingState).

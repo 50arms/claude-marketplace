@@ -188,9 +188,9 @@ const engineCompact = atom({ plugin: '50arms', key: 'engineCompact' } as const, 
 // the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
 // check and a person's own /compact racing each other start (or spend) a ready exactly once.
 const claimedRelease = atom({ plugin: '50arms', key: 'claimedRelease' } as const, null as string | null)
-// true while the plugin's own compaction-by-clear runs its /clear: the conversation that opens inside it is the one to resume (a person's own /clear, or the ready loop's, is not). $.state, like the ready loop's
+// the targets the session held, while the plugin's own clear for a session that still holds work (a compaction by clear, a natural-break clear) runs its /clear, null otherwise: the conversation that opens inside it is the one to resume (a person's own /clear, or the ready loop's, is not). $.state, like the ready loop's
 // phase, so a reload of the module at the turn's end cannot lose it
-const compactionClear = atom({ plugin: '50arms', key: 'compactionClear' } as const, false)
+const compactionClear = atom({ plugin: '50arms', key: 'compactionClear' } as const, null as string[] | null)
 // whether a session start has been seen by this process: false in a NEW process (it starts with no $.state), which is what makes its first start the one that may find a predecessor's clear mark; a reload
 // of the module keeps it, and a /clear carries it
 const startSeen = atom({ plugin: '50arms', key: 'startSeen' } as const, false)
@@ -3653,14 +3653,15 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   // a process's first start is read after the carried values are back, so a /clear (which carries it) is never one
   const firstOfProcess = !(await read($, startSeen))
   await update($, startSeen, () => true)
-  const clearedForCompaction = await takeCompactionClearMark($, e, firstOfProcess)
+  const clearedHolds = await takeCompactionClearMark($, e, firstOfProcess)
+  const clearedForCompaction = clearedHolds !== null
   const start: NonNullable<PendingStart> = {
     sessionId: e.session_id,
     source: e.source,
     transcriptPath: path,
     predecessorId: ended,
     ...(loopResetting && e.source === 'clear' ? { loopReset: true as const } : {}),
-    ...(clearedForCompaction ? { compactionClear: true as const } : {}),
+    ...(clearedHolds !== null ? { compactionClear: true as const, reconnect: clearedHolds.holds } : {}),
   }
   await update($, pendingStart, () => start)
   // a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
@@ -3671,6 +3672,21 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   return below
 }
 
+// `session_connect` to each target a cleared session held, as the model would; the refusals, one per target that did not connect. The plan view is read again either way.
+async function reconnectHeld($: any, targets: string[]): Promise<string[]> {
+  const failed: string[] = []
+  for (const target of targets) {
+    try {
+      const outcome = connectToolOutcome(await $.mcp.call(SERVER, 'session_connect', { target }))
+      if (!outcome.ok) failed.push(`${target}: ${refusalText(outcome)}`)
+    } catch (err: any) {
+      failed.push(`${target}: ${errMessage(err).slice(0, CALL_ERROR_MAX)}`)
+    }
+  }
+  detach($, 'Plan refresh', refresh($, true))
+  return failed
+}
+
 // the main agent's resume prompt, by the relay's one prompt path (submitEvent). Only a session on a plan gets one (its connection record is on disk, as
 // isPlanConnected says; any other session stays quiet). The pending start is TAKEN first, so the briefing it renders is in this prompt and the prompt's own
 // stamp hook finds none (told once). A turn that began while the reads ran is the person's: the built briefing goes into that running turn as a note (no prompt queues
@@ -3678,14 +3694,21 @@ async function onClassicSessionStart($: any, e: any, next: any) {
 async function resumeAfterCompaction($: any): Promise<void> {
   // checked before the start is taken: a session that is not on a plan leaves it for the prompt or tool result that tells it (or nothing)
   const pending = await read($, pendingStart)
-  if (pending === null || !(await isPlanConnected($, pending.sessionId))) return
+  if (pending === null) return
+  const owed = pending.reconnect ?? []
+  const connected = await isPlanConnected($, pending.sessionId)
+  if (!connected && owed.length === 0) return
   const start = await takePendingStart($)
   if (start === null) return
+  // a clear that left the session unconnected (the new conversation has no connection record): it is connected again to what it held, and told when that was refused
+  const reconnectFailures = connected ? [] : await reconnectHeld($, owed)
   // the procedure needs no dashboard read: a start whose reads failed (only a warning line) or said nothing (no text at all: a key the dashboard is quiet for, a plugin server that is not loaded) still tells the agent how to resume
   const { procedure, opening } = RESUME_TEXTS[briefingKindOf(start) ?? 'compacted']
   const rendered = await renderStart($, start)
-  const text = rendered === null ? opening : rendered.includes(procedure) ? rendered : `${rendered}
+  const briefing = rendered === null ? opening : rendered.includes(procedure) ? rendered : `${rendered}
 ${opening}`
+  const text = reconnectFailures.length === 0 ? briefing : `${briefing}
+The clear left you unconnected and reconnecting failed (${reconnectFailures.join('; ')}): call session_connect for what you held first.`
   if ((await read($, turn)).isRunning) {
     // by the relay's one note path, so a turn that ends with no tool result after it still tells the briefing as a prompt
     if ((await appendTrackedNote($, text)) !== null) await restoreStart($, start)
@@ -4463,7 +4486,7 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
     if (spent === null) clearInProgress = false
   }
   if (spent === null) return
-  detach($, 'Compaction clear', clearForCompaction($, spent))
+  detach($, 'Compaction clear', clearForCompaction($, spent, await heldTargets($)))
 }
 
 // the turn ended after the model left its plan or card: clear the session when nothing runs (no sub-agent, no background command), as the ready loop's own clear needs. The break is spent here
@@ -4485,15 +4508,34 @@ async function clearAtNaturalBreak($: any): Promise<void> {
     return
   }
   clearInProgress = true
+  // the leave's own refresh may still be loading: what the session holds is read after it, never from a view that still shows what it left
+  let holds: string[]
+  try {
+    await refresh($, true)
+    holds = await heldTargets($)
+  } catch (err) {
+    clearInProgress = false
+    throw err
+  }
   // written before the clear: a clear that ends the process leaves no later chance to write
-  await noteBreak($, 'clear-attempted', gates)
-  detach($, 'Natural-break clear', clearCommandOnce($))
+  await noteBreak($, 'clear-attempted', { ...gates, holds })
+  detach($, 'Natural-break clear', clearCommandOnce($, holds))
 }
 
-async function clearCommandOnce($: any): Promise<void> {
+// what the session holds now, as the targets `session_connect` names: its plan, and its card
+async function heldTargets($: any): Promise<string[]> {
+  const v = await read($, view)
+  return [...(v.connected === null ? [] : [planTarget(v.connected.id)]), ...(v.card === null ? [] : [v.card.id])]
+}
+
+// A session that holds nothing (the leave was of the only thing it held) has nothing to brief or reconnect: it gets the plain /clear. One that still holds a plan or card gets the compaction by
+// clear's own path: the cleared resume briefing, and a reconnect to what it held when the clear left it unconnected.
+async function clearCommandOnce($: any, holds: string[]): Promise<void> {
   try {
-    const { failure } = await clearCommand($)
-    if (failure !== null) throw new Error(failure)
+    if (holds.length === 0) {
+      const { failure } = await clearCommand($)
+      if (failure !== null) throw new Error(failure)
+    } else await clearForCompaction($, 'natural-break', holds)
     await noteBreak($, 'clear-done', {})
   } catch (err: any) {
     await noteBreak($, 'clear-failed', { error: errMessage(err).slice(0, 300) })
@@ -4530,18 +4572,18 @@ const sessionIsIdleForClear = async ($: any): Promise<boolean> => (await readyIs
 // the plugin's own clear for a compaction, run with `clearInProgress` already taken by startReadyCompaction and given back here. The start of the conversation it opens must resume, so a mark is made first: in $.state
 // (the clear's own start, in this process) and in $.store (a clear that ends the process: the new process's first start takes it, takeCompactionClearMark). A failure is one line to the person (detach), and the
 // dashboard re-asks once the release has expired.
-async function clearForCompaction($: any, releaseId: string): Promise<void> {
+async function clearForCompaction($: any, releaseId: string, holds: string[]): Promise<void> {
   const host = await hostSessionId($)
   const now = await $.clock.now()
-  await update($, compactionClear, () => true)
-  if (host !== null) await storeOp($, { op: 'set', key: compactionClearMarkKey(host), value: { releaseId, at: now, until: now + CLEAR_MARK_TTL_MS } })
+  await update($, compactionClear, () => holds)
+  if (host !== null) await storeOp($, { op: 'set', key: compactionClearMarkKey(host), value: { releaseId, at: now, until: now + CLEAR_MARK_TTL_MS, holds } })
   try {
     const { failure } = await clearCommand($)
     if (failure !== null) throw new Error(failure)
   } finally {
     clearInProgress = false
     // a clear that did not happen raised no start to take the marks; one that did has them taken already
-    await update($, compactionClear, () => false)
+    await update($, compactionClear, () => null)
     if (host !== null) await storeOp($, { op: 'delete', key: compactionClearMarkKey(host) })
   }
 }
@@ -4549,17 +4591,18 @@ async function clearForCompaction($: any, releaseId: string): Promise<void> {
 // The marks of a compaction clear for the start `e` of a conversation: the one in $.state (a /clear start in the process that ran the clear) and this desktop session's own in $.store (the clear's own start, or the first start of
 // a new process, any source: the clear ended the process that made the mark). Only this session's own key is read, taken and deleted (an expired one is dropped without a resume), so another session's mark is never touched
 // and one mark resumes one start. A host with no host id has no store mark.
-async function takeCompactionClearMark($: any, e: any, firstOfProcess: boolean): Promise<boolean> {
-  const own = e.source === 'clear' && (await read($, compactionClear))
-  if (own) await update($, compactionClear, () => false)
-  if (!own && !firstOfProcess) return false
+async function takeCompactionClearMark($: any, e: any, firstOfProcess: boolean): Promise<{ holds: string[] } | null> {
+  const own = e.source === 'clear' ? await read($, compactionClear) : null
+  if (own !== null) await update($, compactionClear, () => null)
+  if (own === null && !firstOfProcess) return null
+  const ours = own === null ? null : { holds: own }
   const host = await hostSessionId($)
-  if (host === null) return own
+  if (host === null) return ours
   const key = compactionClearMarkKey(host)
   const mark = clearMarkOf(await storeOp($, { op: 'get', key }))
-  if (mark === null) return own
+  if (mark === null) return ours
   await storeOp($, { op: 'delete', key })
-  return own || mark.until > (await $.clock.now())
+  return ours ?? (mark.until > (await $.clock.now()) ? { holds: mark.holds } : null)
 }
 
 // The agent's ready is written to the control file by the relay, after its tool call returned, so it can land after the turn that made it already ended (an idle

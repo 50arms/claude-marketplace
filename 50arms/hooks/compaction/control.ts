@@ -96,12 +96,13 @@ export const usedReleaseKey = (hostId: string | null, releaseId: string): string
 // dropped with it. It names the release it was written for and when it expires, so a mark the new process never found cannot resume a much later start. A host with no host id (a terminal) writes none.
 export const CLEAR_MARK_PREFIX = 'compaction-clear-mark:'
 export const CLEAR_MARK_TTL_MS = 10 * 60_000
-export type ClearMark = { releaseId: string; at: number; until: number }
+// `holds`: the targets (`PLAN-n`, a card id) the session held when the clear began, which the new conversation is reconnected to if the clear left it unconnected
+export type ClearMark = { releaseId: string; at: number; until: number; holds: string[] }
 export const compactionClearMarkKey = (hostId: string): string => `${CLEAR_MARK_PREFIX}${hostId}`
 // the mark a stored record is, null for anything else
 export function clearMarkOf(record: unknown): ClearMark | null {
   const r = record as Partial<ClearMark> | null | undefined
-  return r !== null && r !== undefined && typeof r === 'object' && typeof r.releaseId === 'string' && typeof r.at === 'number' && typeof r.until === 'number' ? (r as ClearMark) : null
+  return r !== null && r !== undefined && typeof r === 'object' && typeof r.releaseId === 'string' && typeof r.at === 'number' && typeof r.until === 'number' && Array.isArray(r.holds) && r.holds.every(h => typeof h === 'string') ? (r as ClearMark) : null
 }
 // The session a per-session record key belongs to (a session id holds no ':').
 const sessionOfKey = (key: string, prefix: string): string => key.slice(prefix.length).split(':')[0]

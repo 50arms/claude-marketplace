@@ -4,7 +4,8 @@ import "./run-tests-with-npm-test.generated"
 // is still waiting on its plan. Anything still running (a sub-agent, a background command) means nothing new happens.
 import { describe, expect } from 'claude-code/testing'
 
-import { SURFACES, dashboard, startSession, test } from './plan-kit'
+import { CLEAR_RESUME_PROCEDURE } from '../hooks/compaction/briefing'
+import { CLEARED_SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const API = 'mcp__plugin_50arms_platform__50arms_api'
 const CONNECT = 'mcp__plugin_50arms_platform__session_connect'
@@ -14,7 +15,7 @@ const OK = JSON.stringify({ ok: true, status: 200, body: {} })
 
 for (const surface of SURFACES) {
   describe(`a natural-break clear on ${surface}`, () => {
-    async function started($: any, on: any, connectText = OK, connectFails = false) {
+    async function started($: any, on: any, connectText = OK, connectFails = false, options: Record<string, unknown> = {}) {
       on('turn.complete', () => ({ text: 'done' }) as any)
       on('classic.SessionStart', () => ({}) as any)
       on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
@@ -23,7 +24,7 @@ for (const surface of SURFACES) {
       on('tool.call', { tool: CONNECT }, () => ({ result: {}, text: connectText, isError: connectFails }) as any)
       on('tool.call', { tool: API }, () => ({ result: {}, text: OK, isError: false }) as any)
       on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg1' }, text: 'running' }) as any)
-      const d = dashboard(on)
+      const d = dashboard(on, options as any)
       await startSession($, d, surface)
       return d
     }
@@ -130,6 +131,53 @@ for (const surface of SURFACES) {
       await endTurn($, d)
       expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-failed'])
       expect(String(record(d).at(-1).error).length).toBeGreaterThan(0)
+    })
+
+    // A clear of a session that still holds a plan or card opens a conversation that holds nothing: it is briefed (the cleared resume prompt) and, when the clear left it unconnected, reconnected to what it held.
+    const STEPS = { stateSteps: true }
+    const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('Your conversation was just cleared'))
+    const connects = (d: any) => d.calls.filter((c: any) => c.tool === 'session_connect' && !c.args.disconnect)
+    async function clearedAfterLeave($: any, d: any, leftWorld: () => void) {
+      let release = () => {}
+      d.world.clearHold = new Promise<void>(resolve => (release = resolve))
+      leftWorld()
+      await $.tool.call({ tool: CONNECT, target: 'DX-5', disconnect: true } as any)
+      await d.clock.settle()
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(d.world.clearsStarted).toBe(1)
+      await $.session.end({ reason: 'clear', sessionId: d.world.sessionId } as any)
+      d.wipeState()
+      d.world.sessionId = CLEARED_SESSION_ID
+      await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: CLEARED_SESSION_ID, transcript_path: '/work/cleared.jsonl' })
+      release()
+      await d.clock.settle()
+    }
+
+    test('a card leave that leaves the plan held: the cleared conversation gets ONE cleared resume prompt naming the plan, and no reconnect while it is still connected', async ($, on) => {
+      const d = await started($, on, OK, false, STEPS)
+      await clearedAfterLeave($, d, () => void 0)
+      expect(d.clearRuns).toHaveLength(1)
+      expect(resumes(d)).toHaveLength(1)
+      expect(resumes(d)[0]).toContain(CLEAR_RESUME_PROCEDURE)
+      expect(resumes(d)[0]).toContain('Your plan is PLAN-23')
+      expect(connects(d)).toHaveLength(0)
+    })
+
+    test('a clear that left the new conversation unconnected reconnects it to the plan it held, then briefs it', async ($, on) => {
+      const d = await started($, on, OK, false, STEPS)
+      d.world.localRecord = false
+      await clearedAfterLeave($, d, () => void 0)
+      expect(connects(d).map((c: any) => c.args.target)).toEqual(['PLAN-23'])
+      expect(resumes(d)).toHaveLength(1)
+    })
+
+    test('a leave of the only thing held clears with no briefing and no reconnect: nothing is held afterwards', async ($, on) => {
+      const d = await started($, on, OK, false, STEPS)
+      await clearedAfterLeave($, d, () => void (d.world.planId = null))
+      expect(d.clearRuns).toHaveLength(1)
+      expect(resumes(d)).toHaveLength(0)
+      expect(connects(d)).toHaveLength(0)
     })
 
     test('a turn end with no break waiting records nothing', async ($, on) => {

@@ -37,5 +37,7 @@ recommendation:` (advice, not an order), or on your own initiative or a handoff.
    first). `409 compaction_not_requested` means you were not asked: keep working.
    **Clear or compact is your choice.** Send `{"clear": true}` only when nothing runs (no sub-agent,
    no background command) and it is a natural break; otherwise send `{}`, a ready for a compaction.
-   A `clear: true` that finds work running is compacted instead. Your own
+   A `clear: true` that finds work running is compacted instead. A plugin clear of a session that still holds
+   a plan or card briefs the new conversation and reconnects it. Only a leave clears at a natural break;
+   a pause, which always has an expiry, never does. Your own
    `/compact`, or one the person types, needs no ready.
