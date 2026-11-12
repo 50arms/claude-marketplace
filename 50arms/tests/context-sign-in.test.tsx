@@ -41,8 +41,8 @@ for (const surface of SURFACES) {
       expect(await prompt($)).toEqual([EVENT_TEXT('session_start')])
       expect(await prompt($)).toEqual([])
       expect(EVENT_PATHS(d.contextReads)).toEqual(['/api/reminders/event/session_start'])
-      // only the start's own ask: the sign-in's start asks no restart notice
-      expect(d.restartCalls).toEqual([{}])
+      // the signed-out startup asked no restart notice, and the sign-in's start asks none
+      expect(d.restartCalls).toEqual([])
       const sub = await $.classic.SubagentStart(START)
       await d.clock.settle()
       expect(sub.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])

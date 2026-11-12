@@ -3472,8 +3472,8 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
     if (plan.kind === 'failed') return fault(plan.reason)
     // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
     if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
-    // a signed-out session is the one a restart leaves without a key: the notice is for it too. Its start carries the one invitation to sign in, and nothing of the mantra
-    if (plan.kind === 'signed-out') return { line: start.source === 'startup' ? SIGN_IN_INVITATION : null, askRestart }
+    // a signed-out resume is the one a restart leaves without a key: the notice is for it. A signed-out startup carries the one invitation to sign in and nothing else: no notice, no lookup, no failure line (CP-75)
+    if (plan.kind === 'signed-out') return start.source === 'startup' ? { line: SIGN_IN_INVITATION, askRestart: false } : { line: null, askRestart }
     return { line: null, askRestart }
   }
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
