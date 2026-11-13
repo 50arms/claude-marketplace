@@ -13,11 +13,6 @@ export const INTERIM_HOLD_MS = 30 * 60 * 1000
 // The wall clock decides when a notice is due, so a timer is only ever a slice of the wait (`$.clock.after` does not count the time the computer sleeps).
 export const INTERIM_WAKE_MS = 30_000
 
-// Whether a sub-agent that just stopped is only paused on background work of its own. `$.agent.list()` says `waiting` for exactly that (the engine's word
-// for an agent held on work it owns: the same fact the interim notice's `<note>` states), so a stop of such an agent is an interim one: its result is
-// still to come, and nothing is told about it as finished. UNVERIFIED live: that the list already shows `waiting` when `classic.SubagentStop` runs.
-export const isPausedForOwnWork = (agent: { status?: unknown }): boolean => agent.status === 'waiting'
-
 export type HeldNotice = { taskId: string; text: string; heldAt: number }
 
 export type TaskNotice = { taskId: string; interim: boolean }

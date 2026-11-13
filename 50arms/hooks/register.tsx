@@ -5,12 +5,12 @@ import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanVie
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue, subagentDoneReminder } from './context/record'
-import type { RecordClock, StoppedAgent } from './context/record'
+import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, announcedBy, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue, spawnedAfter, subagentDoneReminder } from './context/record'
+import type { RecordClock, SpawnedAgents } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
 import { FOREGROUND_LOCK_TIMEOUT_MS, foregroundLockArgv, foregroundLockNotice, parseForegroundLockAnswer } from './context/foreground'
-import { heldReason, isPausedForOwnWork, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
-import type { HeldNotice } from './context/interim-notice'
+import { heldReason, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
+import type { HeldNotice, TaskNotice } from './context/interim-notice'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_TEXTS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -212,6 +212,8 @@ const workMarks = atom({ plugin: '50arms', key: 'workMarks' } as const, {} as Wo
 // the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
 // the card ids each admitted sub-agent spawn was briefed on, claimed by the sub-agent that starts (reports/held-idle.ts); the held-idle Stop check counts a card a running sub-agent was briefed on as worked.
 const agentBriefs = atom({ plugin: '50arms', key: 'agentBriefs' } as const, NO_BRIEFS as Briefs)
+// what the plugin kept of each sub-agent when it spawned: its description, whether it runs in the background, whether the main loop spawned it (context/record.ts); the finish notice reads it.
+const spawnedAgents = atom({ plugin: '50arms', key: 'spawnedAgents' } as const, {} as SpawnedAgents)
 const relayOutbox = atom({ plugin: '50arms', key: 'relayOutbox' } as const, [] as PendingEvent[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] as AckInFlight)
@@ -275,6 +277,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     workMarks: read($, workMarks),
     heldNotices: read($, heldNotices),
     agentBriefs: read($, agentBriefs),
+    spawnedAgents: read($, spawnedAgents),
     relayOutbox: read($, relayOutbox),
     ackInFlight: read($, ackInFlight),
     recordClock: read($, recordClock),
@@ -334,6 +337,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, workMarks, () => carried.workMarks),
     update($, heldNotices, () => carried.heldNotices),
     update($, agentBriefs, () => carried.agentBriefs),
+    update($, spawnedAgents, () => carried.spawnedAgents),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
     update($, recordClock, () => carried.recordClock),
@@ -3250,7 +3254,8 @@ async function onPromptStamp($: any, e: any, next: any) {
   const held = await holdInterimNotice($, e)
   if (held !== null) return { drop: held }
   const side = isSideSessionNotice(e.text) && (await signedInWithAgent($)) ? [SIDE_SESSION_DONE_REMINDER] : []
-  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT)), ...side] })
+  const finished = await finishNotice($, taskNoticeOf(e.origin, e.text))
+  return next({ ...e, context: [...(e.context ?? []), ...(await stampEntries($, true, 'prompt', MAIN_AGENT)), ...side, ...finished] })
 }
 
 // An interim sub-agent notice (the sub-agent ended a turn with a command of its own still running) is kept from the model: it notifies again with its
@@ -3742,37 +3747,33 @@ async function onSubagentStart($: any, e: any, next: any) {
   return withLine(withLine(r, eventLine), pacing)
 }
 
-// The stopping sub-agent as the engine lists it (its parent, its description, whether it only paused on work of its own), or null when that cannot be read:
-// a failed read or an agent the list does not name is a toast, never a guess about who started it.
-async function listedAgent($: any, id: string): Promise<StoppedAgent | null> {
-  try {
-    const listed: StoppedAgent[] = await $.agent.list()
-    const found = listed.find(a => a.id === id)
-    if (found !== undefined) return found
-    $.ui.toast(`50 Arms could not tell whether sub-agent ${id} was started by this session: it is not in the agent list, so its finish was not reported.`)
-  } catch (err: any) {
-    $.ui.toast(`50 Arms could not read the agent list for sub-agent ${id}, so its finish was not reported: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
-  }
-  return null
-}
-
 async function onSubagentStop($: any, e: any, next: any) {
   await noteRunningAgent($, e.agent_id, false)
   const id = typeof e.agent_id === 'string' && e.agent_id !== '' ? e.agent_id : null
-  const signedIn = await signedInWithAgent($)
-  const stopped = signedIn && id !== null ? await listedAgent($, id) : null
-  // read before the brief is dropped: it names the cards the finish notice carries
-  const cards = id === null ? [] : ((await read($, agentBriefs)).byAgent[id] ?? [])
-  // a stop that only paused on background work of its own is no end: the brief stays for the stop that is
-  if (id !== null && !(stopped !== null && isPausedForOwnWork(stopped))) await update($, agentBriefs, cur => briefEnded(cur, id))
+  const agent = id === null ? undefined : (await read($, spawnedAgents))[id]
+  const by = announcedBy(agent)
+  // read before the brief ends: it names the cards a foreground agent's finish carries
+  const cards = id === null || by !== 'stop' ? [] : ((await read($, agentBriefs)).byAgent[id] ?? [])
+  // a background agent's brief stays until its final notice ends it: a stop is no end for it (it fires at every turn's end, and the agent may only be waiting on background work)
+  if (id !== null && by !== 'notice') await update($, agentBriefs, cur => briefEnded(cur, id))
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
-  // the reminder is for the MAIN session that started the sub-agent, and only for its real finish (never a nested sub-agent's, never an interim pause):
-  // context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn
-  const reminder = stopped === null ? null : subagentDoneReminder(stopped, cards)
-  if (reminder !== null) detach($, 'Telling the session', tellModel($, reminder))
+  // the reminder is for the MAIN session that started the sub-agent: context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn.
+  // Only a foreground sub-agent's stop is its finish (announcedBy): a background one's is its task notice (finishNotice), which the engine sends only when no work of its own is left.
+  if (by === 'stop' && agent !== undefined && id !== null && (await signedInWithAgent($))) detach($, 'Telling the session', tellModel($, subagentDoneReminder(id, agent, cards)))
   return r
+}
+
+// A final task notice for a sub-agent the main loop spawned in the background is that agent's finish (an interim notice is held before it gets here): the
+// reminder to put its result on its card rides the notice's own prompt. The agent's brief ends with it, so a resume that ends again names no stale card.
+async function finishNotice($: any, notice: TaskNotice | null): Promise<string[]> {
+  if (notice === null || notice.interim) return []
+  const agent = (await read($, spawnedAgents))[notice.taskId]
+  if (announcedBy(agent) !== 'notice' || agent === undefined || !(await signedInWithAgent($))) return []
+  const cards = (await read($, agentBriefs)).byAgent[notice.taskId] ?? []
+  await update($, agentBriefs, cur => briefEnded(cur, notice.taskId))
+  return [subagentDoneReminder(notice.taskId, agent, cards)]
 }
 
 // a dashboard call the session made starts or restarts its record clock; a write to its plan or a card restarts it
@@ -4846,6 +4847,11 @@ export const register: Register = (on, options) => {
     if (started.deny === undefined) {
       const now = await $.clock.now()
       await update($, agentBriefs, cur => briefSpawned(cur, e.prompt, now))
+      // the spawn's answer is the one place the new agent's id is known before its start: what its finish notice needs is kept under it
+      if (typeof started.agentId === 'string' && started.agentId !== '') {
+        const spawned = { description: typeof e.description === 'string' ? e.description : '', background: e.background === true, direct: e.parentAgentId === undefined }
+        await update($, spawnedAgents, cur => spawnedAfter(cur, started.agentId, spawned))
+      }
     }
     return started
   })

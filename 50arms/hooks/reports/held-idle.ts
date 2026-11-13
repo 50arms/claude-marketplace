@@ -67,10 +67,10 @@ export function briefSpawned(b: Briefs, prompt: unknown, now: number): Briefs {
   return { ...b, pending: [...fresh(b, now), { ids: cardIdsIn(prompt), at: now }] }
 }
 
-// A sub-agent started: it takes the oldest unclaimed brief (none: it was briefed on no card the plugin saw).
+// A sub-agent started: it takes the oldest unclaimed brief (none: a resumed agent keeps the brief it had, any other was briefed on no card the plugin saw).
 export function briefClaimed(b: Briefs, agentId: string, now: number): Briefs {
   const [first, ...rest] = fresh(b, now)
-  return { pending: rest, byAgent: { ...b.byAgent, [agentId]: first?.ids ?? [] } }
+  return { pending: rest, byAgent: { ...b.byAgent, [agentId]: first?.ids ?? b.byAgent[agentId] ?? [] } }
 }
 
 // A sub-agent ended.
