@@ -21,7 +21,7 @@ describe('the side-session notice (pure)', () => {
 })
 
 describe('the sub-agent finish notice (pure)', () => {
-  const agent = { description: 'Build the search box', background: true, direct: true }
+  const agent = { description: 'Build the search box', background: true, direct: true, profile: null }
   test('it names the agent by description and id, the cards its brief named, and keeps the one shared sentence', () => {
     expect(subagentDoneReminder('a1', agent, [])).toBe(`The sub-agent "Build the search box" (a1) you started just finished. ${SUBAGENT_DONE_ACTION}`)
     expect(subagentDoneReminder('a1', agent, ['CP-1', 'CP-2'])).toBe(`The sub-agent "Build the search box" (a1) you started just finished (its brief named CP-1, CP-2). ${SUBAGENT_DONE_ACTION}`)
@@ -45,6 +45,14 @@ describe('the sub-agent finish notice (pure)', () => {
     expect(cur['a0']).toBeUndefined()
     expect(cur[`a${SPAWNED_KEPT + 4}`]).toEqual(agent)
     expect(spawnedAfter({ a1: agent }, 'a1', { ...agent, description: 'again' })['a1']?.description).toBe('again')
+  })
+  test("a respawn (a resume) whose prompt names no profile keeps the profile its earlier brief named; one that names a profile takes it (CP-109)", () => {
+    const work = { profile: 'work', target: { kind: 'card' as const, id: 'CP-15' }, gate: null }
+    const research = { profile: 'research', target: { kind: 'plan' as const, id: 'PLAN-66' }, gate: null }
+    const first = spawnedAfter({}, 'a1', { ...agent, profile: work })
+    expect(spawnedAfter(first, 'a1', { ...agent, description: 'carry on' })['a1']).toEqual({ ...agent, description: 'carry on', profile: work })
+    expect(spawnedAfter(first, 'a1', { ...agent, profile: research })['a1']?.profile).toEqual(research)
+    expect(spawnedAfter(first, 'a2', agent)['a2']?.profile).toBeNull()
   })
 })
 
@@ -139,10 +147,10 @@ for (const surface of SURFACES) {
       await stopAgent($)
       const r = await notice($, FINAL('a1'))
       expect(r.drop).toBeUndefined()
-      expect(finishesIn(r)).toEqual([subagentDoneReminder('a1', { description: 'Build the search box', background: true, direct: true }, ['CP-15'])])
+      expect(finishesIn(r)).toEqual([subagentDoneReminder('a1', { description: 'Build the search box', background: true, direct: true, profile: null }, ['CP-15'])])
       // the brief ended with the finish: a later notice for the same task (a resume that ends again) names no card
       const again = await notice($, FINAL('a1'))
-      expect(finishesIn(again)).toEqual([subagentDoneReminder('a1', { description: 'Build the search box', background: true, direct: true }, [])])
+      expect(finishesIn(again)).toEqual([subagentDoneReminder('a1', { description: 'Build the search box', background: true, direct: true, profile: null }, [])])
       expect(d.relay.told.filter((t: string) => t.startsWith('The sub-agent '))).toEqual([])
     })
 
@@ -171,7 +179,7 @@ for (const surface of SURFACES) {
       const r = await stopAgent($)
       await d.clock.settle()
       expect(r.additionalContext ?? []).toEqual([])
-      expect(finishes(d)).toEqual([subagentDoneReminder('a1', { description: 'Review it', background: false, direct: true }, ['CP-9'])])
+      expect(finishes(d)).toEqual([subagentDoneReminder('a1', { description: 'Review it', background: false, direct: true, profile: null }, ['CP-9'])])
     })
 
     test('an agent this session never saw spawn (started before the plugin loaded) tells nothing', async ($, on) => {
@@ -296,7 +304,7 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       return d
     }
-    const FINISH = subagentDoneReminder('a1', { description: 'Build it', background: false, direct: true }, [])
+    const FINISH = subagentDoneReminder('a1', { description: 'Build it', background: false, direct: true, profile: null }, [])
     const RECORD_TEXTS = [FINISH, SIDE_SESSION_DONE_REMINDER, NO_RECENT_RECORD_REMINDER, HANDOFF_FILE_REMINDER]
 
     for (const signedOut of ['signed-out', 'lapsed', 'revoked'] as const) {

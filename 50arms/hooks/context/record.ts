@@ -1,6 +1,8 @@
 // a session can end at any time and only the dashboard and git survive, so the plugin reminds it to record state at three moments no API call marks.
 // This is the pure half: the texts, the thresholds and the questions the handlers ask. Nothing here reads a clock, a file or a session.
 
+import type { ProfileBrief } from '../compaction/briefing'
+
 // the one shared sentence of a sub-agent's finish: the notice names the agent (and the cards its brief named) before it
 export const SUBAGENT_DONE_ACTION = 'Before doing anything else, put its result on its card (an agent note with what it did, the evidence and the commit), so it survives this session ending.'
 
@@ -8,18 +10,19 @@ const DESCRIPTION_MAX = 80
 
 /**
  * What the plugin keeps of a sub-agent at the moment it is spawned (the `agent.spawn` hook answers its id there): its description, whether it runs
- * in the background, and whether the main loop spawned it (`direct`) rather than another sub-agent.
+ * in the background, whether the main loop spawned it (`direct`) rather than another sub-agent, and the profile line its brief opened with (`profile`, null: none),
+ * which the briefing after that agent's own compaction names. Keyed by the id the spawn answered, never matched by spawn order, so concurrent spawns cannot swap profiles.
  */
-export type SpawnedAgent = { description: string; background: boolean; direct: boolean }
+export type SpawnedAgent = { description: string; background: boolean; direct: boolean; profile: ProfileBrief | null }
 export type SpawnedAgents = Record<string, SpawnedAgent>
 
 // the newest spawns kept: a finished agent may be resumed any time, but never more than this many are remembered
 export const SPAWNED_KEPT = 200
 
-/** The record after a spawn: the agent is the newest, and a respawn (a resume) of an id replaces its entry. */
+/** The record after a spawn: the agent is the newest, and a respawn (a resume) of an id replaces its entry, keeping the profile its earlier brief named when the resume's prompt names none. */
 export function spawnedAfter(cur: SpawnedAgents, id: string, agent: SpawnedAgent): SpawnedAgents {
   const { [id]: _replaced, ...rest } = cur
-  const next = { ...rest, [id]: agent }
+  const next = { ...rest, [id]: { ...agent, profile: agent.profile ?? _replaced?.profile ?? null } }
   const ids = Object.keys(next)
   return ids.length <= SPAWNED_KEPT ? next : Object.fromEntries(ids.slice(ids.length - SPAWNED_KEPT).map(k => [k, next[k] as SpawnedAgent]))
 }

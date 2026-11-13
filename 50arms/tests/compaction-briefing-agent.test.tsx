@@ -3,10 +3,11 @@ import "./run-tests-with-npm-test.generated"
 // so the plugin notes WHO compacts at the `session.compact` proposal that passed and reads that note when the `compact` start arrives. A sub-agent's compaction briefs THAT sub-agent
 // (once, in its next tool result, never the main agent's prompt); the main agent's own compaction briefing is unchanged.
 // CP-109 (DEC-832): a sub-agent briefed with a profile line (`work CP-109`, `research PLAN-122`) is told to fetch that profile's instruction again, since
-// the compaction dropped the mantra and role text it carried; and every signed-in session's sub-agent is briefed, plan-connected or not.
+// the compaction dropped the mantra and role text it carried; and every signed-in session's sub-agent is briefed, plan-connected or not. The profile is kept under
+// the id the spawn's answer carries, never matched to a start by spawn order, so starts in any order, a resume and a start that never comes cannot swap profiles.
 import { describe, expect } from 'claude-code/testing'
 
-import { subagentBriefingText } from '../hooks/compaction/briefing'
+import { profileBriefIn, subagentBriefingText } from '../hooks/compaction/briefing'
 import { SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
@@ -54,6 +55,18 @@ describe('the sub-agent briefing text (pure)', () => {
   test('a brief with no profile line names no fetch', () => {
     expect(subagentBriefingText({ id: 'a1', type: null, description: null, profile: null })).not.toMatch(/agent-profiles/)
   })
+
+  test('a profile line is the whole first non-blank line: `<profile> <card or plan id>`, plus a gate only for a gate reviewer', () => {
+    expect(profileBriefIn('work CP-109\nRepo: the claude-plugins checkout')).toEqual(WORK)
+    expect(profileBriefIn('research PLAN-122')).toEqual(RESEARCH)
+    expect(profileBriefIn('gate-reviewer DX-9 code-quality\r\nthe tip is abc123')).toEqual(REVIEWER)
+    expect(profileBriefIn('gate-reviewer DX-9 plan-dependency')).toEqual({ ...REVIEWER, gate: 'plan-dependency' })
+    expect(profileBriefIn('\n  gate-designer DX-12  \nmore')).toEqual({ profile: 'gate-designer', target: { kind: 'card', id: 'DX-12' }, gate: null })
+    // prose that mentions a card, a card on a later line, a third word that names no gate, or no brief at all is no profile line
+    for (const prompt of ['Build DX-1 on its branch', 'work on DX-1', 'work CP-1 urgent', 'gate-reviewer DX-9 quality', 'work DX-1 code-quality now', 'explore the repo\nwork DX-1', 'Work DX-1', '', undefined, 7]) {
+      expect(profileBriefIn(prompt)).toBeNull()
+    }
+  })
 })
 
 for (const surface of SURFACES) {
@@ -72,7 +85,9 @@ for (const surface of SURFACES) {
         return (mode === 'skip' ? { skip: 'no' } : COMPACTED) as any
       })
       on('classic.SubagentStop', () => ({}) as any)
-      on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
+      // the id each spawn's answer carries, in spawn order (undefined: an answer with no id)
+      const spawnIds: (string | undefined)[] = []
+      on('agent.spawn', () => ({ model: 'm', agentId: spawnIds.shift() }) as any)
       on('classic.SubagentStart', () => ({}) as any)
       const d = dashboard(on, {})
       d.world.agents = [AGENT, { ...AGENT, id: 'a2', description: 'the other task' }]
@@ -81,7 +96,12 @@ for (const surface of SURFACES) {
       const compactStart = () => $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'own', transcript_path: '/work/main.jsonl' })
       const prompt = async () => ((await $.prompt.submit({ text: 'hello' })).context ?? []) as string[]
       const toolResult = async (agentId?: string) => (((await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)).context ?? []) as string[])
-      return { d, core, hold, propose, compactStart, prompt, toolResult, stop: (id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: AGENT.type }) }
+      const spawn = async (id: string | undefined, prompt: string) => {
+        spawnIds.push(id)
+        await $.agent.spawn({ prompt, subagentType: AGENT.type })
+      }
+      const start = (id: string) => $.classic.SubagentStart({ agent_id: id, agent_type: AGENT.type })
+      return { d, core, hold, propose, compactStart, prompt, toolResult, spawn, start, stop: (id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: AGENT.type }) }
     }
     const briefings = (lines: string[]) => lines.filter(l => l.includes('Your conversation was just compacted'))
 
@@ -196,11 +216,50 @@ for (const surface of SURFACES) {
 
     test("a sub-agent spawned with a profile line is told to fetch that profile's instruction again (CP-109)", async ($, on) => {
       const k = await started($, on)
-      await $.agent.spawn({ prompt: 'research PLAN-122\nread the plan and report', subagentType: AGENT.type })
-      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: AGENT.type })
+      await k.spawn('a1', 'research PLAN-122\nread the plan and report')
+      await k.start('a1')
       await k.propose('a1')
       await k.compactStart()
       expect(briefings(await k.toolResult('a1'))).toEqual([subagentBriefingText({ id: 'a1', type: AGENT.type, description: AGENT.description, profile: RESEARCH })])
+    })
+
+    test('two sub-agents whose starts arrive in the reverse order of their spawns each get their own profile', async ($, on) => {
+      const k = await started($, on)
+      await k.spawn('a1', 'work CP-109')
+      await k.spawn('a2', 'research PLAN-122')
+      await k.start('a2')
+      await k.start('a1')
+      await Promise.all([k.propose('a1'), k.propose('a2')])
+      await k.compactStart()
+      await k.compactStart()
+      expect(briefings(await k.toolResult('a1'))).toEqual([subagentBriefingText({ id: 'a1', type: AGENT.type, description: AGENT.description, profile: WORK })])
+      expect(briefings(await k.toolResult('a2'))).toEqual([subagentBriefingText({ id: 'a2', type: AGENT.type, description: 'the other task', profile: RESEARCH })])
+    })
+
+    test('a resumed sub-agent that starts while a new brief waits keeps its own profile, and the new agent gets the waiting one', async ($, on) => {
+      const k = await started($, on)
+      await k.spawn('a1', 'work CP-109')
+      await k.start('a1')
+      await k.stop('a1')
+      await k.spawn('a2', 'research PLAN-122')
+      // a1 resumes before a2 starts: a match by spawn order would hand it a2's brief
+      await k.start('a1')
+      await k.propose('a1')
+      await k.compactStart()
+      expect(briefings(await k.toolResult('a1'))).toEqual([subagentBriefingText({ id: 'a1', type: AGENT.type, description: AGENT.description, profile: WORK })])
+      await k.start('a2')
+      await k.propose('a2')
+      await k.compactStart()
+      expect(briefings(await k.toolResult('a2'))).toEqual([subagentBriefingText({ id: 'a2', type: AGENT.type, description: 'the other task', profile: RESEARCH })])
+    })
+
+    test('a spawn whose answer carries no agent id gives its agent no profile', async ($, on) => {
+      const k = await started($, on)
+      await k.spawn(undefined, 'work CP-109')
+      await k.start('a1')
+      await k.propose('a1')
+      await k.compactStart()
+      expect(briefings(await k.toolResult('a1'))).toEqual([subagentBriefingText({ id: 'a1', type: AGENT.type, description: AGENT.description, profile: null })])
     })
 
     // a session on no plan: its sub-agent is spawned (with a profile line or not), started, compacted, and read back in its next tool result
@@ -209,7 +268,7 @@ for (const surface of SURFACES) {
       on('classic.PreCompact', () => ({}) as any)
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       on('session.compact', async () => COMPACTED as any)
-      on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
+      on('agent.spawn', () => ({ model: 'm', agentId: 'a1' }) as any)
       on('classic.SubagentStart', () => ({}) as any)
       const d = dashboard(on, options)
       d.world.agents = [AGENT]

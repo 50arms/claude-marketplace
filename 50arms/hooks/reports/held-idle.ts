@@ -47,33 +47,15 @@ export function liveMarks(marks: WorkMarks, now: number): Set<string> {
 // The sub-agents' briefs. A running sub-agent of the session that was briefed on a card is working it, even before it has
 // claimed it or between its tool calls, when the dashboard shows no activity on the card. The plugin sees a spawn's prompt (`agent.spawn`) but
 // not which agent id it gets, so each admitted spawn's card ids wait in `pending` (oldest first) and the next sub-agent start takes the oldest.
-// The brief's profile line rides along too, for the briefing that agent gets after its own compaction (register.tsx takeAgentBriefing).
 export const BRIEF_PENDING_TTL_MS = 5 * 60_000
-
-// A brief's first line names the agent profile the sub-agent fetches and what for: `work ABC-12`, `research PLAN-<n>`, `gate-reviewer ABC-12 code-quality`
-// (a gate reviewer also names its gate). The sub-agent's first call is `GET /api/agent-profiles/<profile>/instruction?card=<id>` (`?plan=PLAN-<n>` for a plan, `&gate=` for a gate).
-export type ProfileBrief = { profile: string; target: { kind: 'card' | 'plan'; id: string }; gate: string | null }
-export type AgentBrief = { ids: string[]; profile: ProfileBrief | null }
-export type Briefs = { pending: (AgentBrief & { at: number })[]; byAgent: Record<string, AgentBrief> }
+export type Briefs = { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
 export const NO_BRIEFS: Briefs = { pending: [], byAgent: {} }
 
 const CARD_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g
-// the whole first line, nothing else on it: prose that only mentions a card ("Build ABC-1 on its branch") is no profile line
-const PROFILE_LINE = /^([a-z][a-z0-9-]*) ([A-Z][A-Z0-9]*-\d+)(?: ([a-z][a-z0-9-]*))?$/
-const PLAN_REF = /^PLAN-\d+$/
 
 // The card ids a brief names, each once.
 export function cardIdsIn(text: unknown): string[] {
   return typeof text === 'string' ? [...new Set(text.match(CARD_ID) ?? [])] : []
-}
-
-// The profile a brief's first non-blank line names, or null when that line is not a profile line.
-export function profileBriefIn(text: unknown): ProfileBrief | null {
-  if (typeof text !== 'string') return null
-  const m = PROFILE_LINE.exec(text.trimStart().split(/\r?\n/)[0]!.trim())
-  if (m === null) return null
-  const id = m[2]!
-  return { profile: m[1]!, target: { kind: PLAN_REF.test(id) ? 'plan' : 'card', id }, gate: m[3] ?? null }
 }
 
 function fresh(b: Briefs, now: number): Briefs['pending'] {
@@ -82,19 +64,13 @@ function fresh(b: Briefs, now: number): Briefs['pending'] {
 
 // A spawn the engine admitted, briefed with `prompt`.
 export function briefSpawned(b: Briefs, prompt: unknown, now: number): Briefs {
-  return { ...b, pending: [...fresh(b, now), { ids: cardIdsIn(prompt), profile: profileBriefIn(prompt), at: now }] }
+  return { ...b, pending: [...fresh(b, now), { ids: cardIdsIn(prompt), at: now }] }
 }
 
-// A sub-agent started: it takes the oldest unclaimed brief (none: a resumed agent keeps the brief it had, any other was briefed on no card and no profile the plugin saw).
+// A sub-agent started: it takes the oldest unclaimed brief (none: a resumed agent keeps the brief it had, any other was briefed on no card the plugin saw).
 export function briefClaimed(b: Briefs, agentId: string, now: number): Briefs {
   const [first, ...rest] = fresh(b, now)
-  const brief: AgentBrief = first === undefined ? (b.byAgent[agentId] ?? { ids: [], profile: null }) : { ids: first.ids, profile: first.profile }
-  return { pending: rest, byAgent: { ...b.byAgent, [agentId]: brief } }
-}
-
-// The profile a still-running sub-agent's brief named, or null (no profile line, or an agent the plugin holds no brief for).
-export function briefProfile(b: Briefs, agentId: string): ProfileBrief | null {
-  return b.byAgent[agentId]?.profile ?? null
+  return { pending: rest, byAgent: { ...b.byAgent, [agentId]: first?.ids ?? b.byAgent[agentId] ?? [] } }
 }
 
 // A sub-agent ended.
@@ -105,7 +81,7 @@ export function briefEnded(b: Briefs, agentId: string): Briefs {
 
 // The card ids a still-running sub-agent was briefed on.
 export function briefedCards(b: Briefs, running: readonly string[]): Set<string> {
-  return new Set(running.flatMap(id => b.byAgent[id]?.ids ?? []))
+  return new Set(running.flatMap(id => b.byAgent[id] ?? []))
 }
 
 // Whether a held card is idle: nothing is on it right now (`activity` is null: no sub-agent of this session and no tool call) and the

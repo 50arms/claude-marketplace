@@ -3,8 +3,6 @@
 // sub-agents still running (they carry on through a compaction) and the work not yet pushed. Pure: register.tsx reads each source (the plan view, the
 // engine's agent list, git) and hands them here; a source that could not be read arrives as `unavailable` with its reason, never as an empty one.
 
-import type { ProfileBrief } from '../reports/held-idle'
-
 export type Source<T> = { ok: true; value: T } | { ok: false; reason: string }
 
 export type BriefingCard = { id: string; title: string }
@@ -127,9 +125,27 @@ export function briefingText(input: BriefingInput, kind: BriefingKind = 'compact
   return `${opening} ${owedLine(input.owed)} ${plan} ${cardsLine(input.cards)} ${agents}${gitLine(input.git)}`
 }
 
+// A brief's first line names the agent profile the sub-agent fetches and what for: `work ABC-12`, `research PLAN-<n>`, `gate-reviewer ABC-12 code-quality`
+// (a gate reviewer also names its gate). The sub-agent's first call is `GET /api/agent-profiles/<profile>/instruction?card=<id>` (`?plan=PLAN-<n>` for a plan, `&gate=` for a gate).
+export type ProfileBrief = { profile: string; target: { kind: 'card' | 'plan'; id: string }; gate: string | null }
+
+// the whole first line, nothing else on it: prose that only mentions a card ("Build ABC-1 on its branch") is no profile line, and a third word is read only when it
+// names a quality gate (`code-*`, `plan-*`), so `work ABC-1 urgent` is no profile line either
+const PROFILE_LINE = /^([a-z][a-z0-9-]*) ([A-Z][A-Z0-9]*-\d+)(?: ((?:code|plan)-[a-z0-9-]+))?$/
+const PLAN_REF = /^PLAN-\d+$/
+
+// The profile a brief's first non-blank line names, or null when that line is not a profile line.
+export function profileBriefIn(text: unknown): ProfileBrief | null {
+  if (typeof text !== 'string') return null
+  const m = PROFILE_LINE.exec(text.trimStart().split(/\r?\n/)[0]!.trim())
+  if (m === null) return null
+  const id = m[2]!
+  return { profile: m[1]!, target: { kind: PLAN_REF.test(id) ? 'plan' : 'card', id }, gate: m[3] ?? null }
+}
+
 // a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
 // from its summary and the progress notes it kept before compacting, so the briefing names who it is and points at them. `type` and `description` are null when the engine no longer lists the agent.
-// `profile` is the profile line its brief opened with (null: none). The compaction dropped the mantra and role text that profile's instruction carried, so the
+// `profile` is the profile line its brief opened with (null: none; register.tsx keeps it under the id the spawn answered). The compaction dropped the mantra and role text that profile's instruction carried, so the
 // briefing names the one call that fetches them again, before anything else; such an agent's card or plan is its own, so it is not told they are its parent's.
 export type SubagentBriefingInput = { id: string; type: string | null; description: string | null; profile: ProfileBrief | null }
 

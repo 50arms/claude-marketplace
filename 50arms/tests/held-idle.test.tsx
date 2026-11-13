@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // a failed or slow read never blocks.
 import { describe, expect } from 'claude-code/testing'
 
-import { BRIEF_PENDING_TTL_MS, NO_BRIEFS, WORK_MARK_TTL_MS, briefClaimed, briefEnded, briefProfile, briefSpawned, briefedCards, cardIdsIn, heldIdleOf, heldIdleReason, liveMarks, marksAfter, profileBriefIn } from '../hooks/reports/held-idle'
+import { BRIEF_PENDING_TTL_MS, NO_BRIEFS, WORK_MARK_TTL_MS, briefClaimed, briefEnded, briefSpawned, briefedCards, cardIdsIn, heldIdleOf, heldIdleReason, liveMarks, marksAfter } from '../hooks/reports/held-idle'
 import { READY_CARDS_DEADLINE_MS, blockReason } from '../hooks/reports/ready-cards'
 import { test, SURFACES, answerReportEvents, dashboard, startSession } from './plan-kit'
 
@@ -52,26 +52,6 @@ describe('held idle (pure)', () => {
     expect([...briefedCards(briefEnded(b, 'a1'), ['a1'])]).toEqual([])
     const stale = briefClaimed(briefSpawned(NO_BRIEFS, 'work DX-1', 0), 'a1', BRIEF_PENDING_TTL_MS)
     expect([...briefedCards(stale, ['a1'])]).toEqual([])
-  })
-
-  test('a brief whose first line is `<profile> <card or plan id> [gate]` carries that profile to the agent that takes it, so its compaction briefing can name the fetch (CP-109)', () => {
-    expect(profileBriefIn('work CP-109\nRepo: the claude-plugins checkout')).toEqual({ profile: 'work', target: { kind: 'card', id: 'CP-109' }, gate: null })
-    expect(profileBriefIn('research PLAN-122')).toEqual({ profile: 'research', target: { kind: 'plan', id: 'PLAN-122' }, gate: null })
-    expect(profileBriefIn('gate-reviewer DX-9 code-quality\r\nthe tip is abc123')).toEqual({ profile: 'gate-reviewer', target: { kind: 'card', id: 'DX-9' }, gate: 'code-quality' })
-    expect(profileBriefIn('\n  gate-designer DX-12  \nmore')).toEqual({ profile: 'gate-designer', target: { kind: 'card', id: 'DX-12' }, gate: null })
-    // only a whole first line of that shape is a profile line: prose that mentions a card, a card named on a later line, or no brief at all is none
-    for (const prompt of ['Build DX-1 on its branch', 'work on DX-1', 'work DX-1 code quality now', 'explore the repo\nwork DX-1', 'Work DX-1', '', undefined, 7]) {
-      expect(profileBriefIn(prompt)).toBeNull()
-    }
-    let b = briefSpawned(NO_BRIEFS, 'research PLAN-122\nread the plan', 0)
-    b = briefSpawned(b, 'explore the repo', 1)
-    b = briefClaimed(briefClaimed(b, 'a1', 2), 'a2', 3)
-    expect(briefProfile(b, 'a1')).toEqual({ profile: 'research', target: { kind: 'plan', id: 'PLAN-122' }, gate: null })
-    expect(briefProfile(b, 'a2')).toBeNull()
-    expect(briefProfile(b, 'a9')).toBeNull()
-    expect(briefProfile(briefEnded(b, 'a1'), 'a1')).toBeNull()
-    // a sub-agent that started with no brief the plugin saw takes none
-    expect(briefProfile(briefClaimed(NO_BRIEFS, 'a3', 0), 'a3')).toBeNull()
   })
 
   test('the reason names at most five cards, counts the rest and gives the release call', () => {

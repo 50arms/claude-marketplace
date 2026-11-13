@@ -265,8 +265,8 @@ declare module 'claude-code' {
       // the interim sub-agent notices held back from the model, each with the task id it names and the epoch ms it was first held (see hooks/context/interim-notice.ts).
       heldNotices: { taskId: string; text: string; heldAt: number }[]
       agentBriefs: { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
-      // what the plugin kept of each sub-agent at its spawn (description, background, spawned by the main loop), by agent id, the newest 200 (see hooks/context/record.ts).
-      spawnedAgents: Record<string, { description: string; background: boolean; direct: boolean }>
+      // what the plugin kept of each sub-agent at its spawn (description, background, spawned by the main loop, the profile line its brief opened with), by agent id, the newest 200 (see hooks/context/record.ts).
+      spawnedAgents: Record<string, { description: string; background: boolean; direct: boolean; profile: { profile: string; target: { kind: 'card' | 'plan'; id: string }; gate: string | null } | null }>
     }
   }
 }
