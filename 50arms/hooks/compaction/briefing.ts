@@ -129,7 +129,7 @@ export function briefingText(input: BriefingInput, kind: BriefingKind = 'compact
 
 // a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
 // from its summary and the progress notes it kept before compacting, so the briefing names who it is and points at them. `type` and `description` are null when the engine no longer lists the agent.
-// CP-109 (DEC-832): `profile` is the profile line its brief opened with (null: none). The compaction dropped the mantra and role text that profile's instruction carried, so the
+// `profile` is the profile line its brief opened with (null: none). The compaction dropped the mantra and role text that profile's instruction carried, so the
 // briefing names the one call that fetches them again, before anything else; such an agent's card or plan is its own, so it is not told they are its parent's.
 export type SubagentBriefingInput = { id: string; type: string | null; description: string | null; profile: ProfileBrief | null }
 

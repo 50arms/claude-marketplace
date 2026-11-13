@@ -55,21 +55,15 @@ describe('held idle (pure)', () => {
   })
 
   test('a brief whose first line is `<profile> <card or plan id> [gate]` carries that profile to the agent that takes it, so its compaction briefing can name the fetch (CP-109)', () => {
-    expect(profileBriefIn('work CP-109
-Repo: the claude-plugins checkout')).toEqual({ profile: 'work', target: { kind: 'card', id: 'CP-109' }, gate: null })
+    expect(profileBriefIn('work CP-109\nRepo: the claude-plugins checkout')).toEqual({ profile: 'work', target: { kind: 'card', id: 'CP-109' }, gate: null })
     expect(profileBriefIn('research PLAN-122')).toEqual({ profile: 'research', target: { kind: 'plan', id: 'PLAN-122' }, gate: null })
-    expect(profileBriefIn('gate-reviewer DX-9 code-quality
-the tip is abc123')).toEqual({ profile: 'gate-reviewer', target: { kind: 'card', id: 'DX-9' }, gate: 'code-quality' })
-    expect(profileBriefIn('
-  gate-designer DX-12  
-more')).toEqual({ profile: 'gate-designer', target: { kind: 'card', id: 'DX-12' }, gate: null })
+    expect(profileBriefIn('gate-reviewer DX-9 code-quality\r\nthe tip is abc123')).toEqual({ profile: 'gate-reviewer', target: { kind: 'card', id: 'DX-9' }, gate: 'code-quality' })
+    expect(profileBriefIn('\n  gate-designer DX-12  \nmore')).toEqual({ profile: 'gate-designer', target: { kind: 'card', id: 'DX-12' }, gate: null })
     // only a whole first line of that shape is a profile line: prose that mentions a card, a card named on a later line, or no brief at all is none
-    for (const prompt of ['Build DX-1 on its branch', 'work on DX-1', 'work DX-1 code quality now', 'explore the repo
-work DX-1', 'Work DX-1', '', undefined, 7]) {
+    for (const prompt of ['Build DX-1 on its branch', 'work on DX-1', 'work DX-1 code quality now', 'explore the repo\nwork DX-1', 'Work DX-1', '', undefined, 7]) {
       expect(profileBriefIn(prompt)).toBeNull()
     }
-    let b = briefSpawned(NO_BRIEFS, 'research PLAN-122
-read the plan', 0)
+    let b = briefSpawned(NO_BRIEFS, 'research PLAN-122\nread the plan', 0)
     b = briefSpawned(b, 'explore the repo', 1)
     b = briefClaimed(briefClaimed(b, 'a1', 2), 'a2', 3)
     expect(briefProfile(b, 'a1')).toEqual({ profile: 'research', target: { kind: 'plan', id: 'PLAN-122' }, gate: null })

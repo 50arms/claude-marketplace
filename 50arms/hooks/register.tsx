@@ -3615,7 +3615,7 @@ async function forgetCompactingAgent($: any, agentId: unknown): Promise<void> {
 }
 
 // the briefing of the sub-agent whose tool result this is, once its own compaction finished: once, to that sub-agent only, for every session signed in with its team agent, on a plan,
-// holding a card or neither (CP-109, DEC-832: a session that is not signed in gets no 50 Arms text at all). The engine's list names its type and task; a list that fails is toasted and
+// holding a card or neither (a session that is not signed in gets no 50 Arms text at all). The engine's list names its type and task; a list that fails is toasted and
 // the briefing names the id alone. The profile line its brief opened with (agentBriefs) makes the briefing name the fetch of that profile's instruction again.
 async function takeAgentBriefing($: any, agentId: string): Promise<string | null> {
   const now = await $.clock.now()

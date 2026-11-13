@@ -73,6 +73,7 @@ for (const surface of SURFACES) {
       })
       on('classic.SubagentStop', () => ({}) as any)
       on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
+      on('classic.SubagentStart', () => ({}) as any)
       const d = dashboard(on, {})
       d.world.agents = [AGENT, { ...AGENT, id: 'a2', description: 'the other task' }]
       await startSession($, d, surface)
@@ -209,6 +210,7 @@ for (const surface of SURFACES) {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       on('session.compact', async () => COMPACTED as any)
       on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
+      on('classic.SubagentStart', () => ({}) as any)
       const d = dashboard(on, options)
       d.world.agents = [AGENT]
       return d

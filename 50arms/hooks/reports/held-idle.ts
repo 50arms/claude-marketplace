@@ -47,10 +47,10 @@ export function liveMarks(marks: WorkMarks, now: number): Set<string> {
 // The sub-agents' briefs. A running sub-agent of the session that was briefed on a card is working it, even before it has
 // claimed it or between its tool calls, when the dashboard shows no activity on the card. The plugin sees a spawn's prompt (`agent.spawn`) but
 // not which agent id it gets, so each admitted spawn's card ids wait in `pending` (oldest first) and the next sub-agent start takes the oldest.
-// CP-109: the brief's profile line rides along, for the briefing that agent gets after its own compaction (register.tsx takeAgentBriefing).
+// The brief's profile line rides along too, for the briefing that agent gets after its own compaction (register.tsx takeAgentBriefing).
 export const BRIEF_PENDING_TTL_MS = 5 * 60_000
 
-// A brief's first line names the agent profile the sub-agent fetches and what for: `work CP-109`, `research PLAN-122`, `gate-reviewer DX-9 code-quality`
+// A brief's first line names the agent profile the sub-agent fetches and what for: `work ABC-12`, `research PLAN-<n>`, `gate-reviewer ABC-12 code-quality`
 // (a gate reviewer also names its gate). The sub-agent's first call is `GET /api/agent-profiles/<profile>/instruction?card=<id>` (`?plan=PLAN-<n>` for a plan, `&gate=` for a gate).
 export type ProfileBrief = { profile: string; target: { kind: 'card' | 'plan'; id: string }; gate: string | null }
 export type AgentBrief = { ids: string[]; profile: ProfileBrief | null }
@@ -58,7 +58,7 @@ export type Briefs = { pending: (AgentBrief & { at: number })[]; byAgent: Record
 export const NO_BRIEFS: Briefs = { pending: [], byAgent: {} }
 
 const CARD_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g
-// the whole first line, nothing else on it: prose that only mentions a card ("Build DX-1 on its branch") is no profile line
+// the whole first line, nothing else on it: prose that only mentions a card ("Build ABC-1 on its branch") is no profile line
 const PROFILE_LINE = /^([a-z][a-z0-9-]*) ([A-Z][A-Z0-9]*-\d+)(?: ([a-z][a-z0-9-]*))?$/
 const PLAN_REF = /^PLAN-\d+$/
 
