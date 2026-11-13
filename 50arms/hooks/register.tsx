@@ -4070,12 +4070,15 @@ async function movesOffReportedPlan($: any, planId: number): Promise<boolean> {
   return from !== null && from !== planId
 }
 
-// Resolves whether the dashboard took the report, so a caller that must resend on a refusal can tell (reportShellEnds).
-async function report($: any, what: string, method: string, path: string, body: object): Promise<boolean> {
+// What became of a report: `sent` (the dashboard took it), `retry` (a transient failure: no answer, a 5xx, 408 or 429, so the report may go again)
+// or `refused` (any other refusal, which the dashboard would refuse again: it is not retried).
+export type ReportOutcome = 'sent' | 'retry' | 'refused'
+
+async function report($: any, what: string, method: string, path: string, body: object): Promise<ReportOutcome> {
   const r = await api($, method, path, { body })
-  if (r.ok) return true
+  if (r.ok) return 'sent'
   $.ui.toast(`50 Arms ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
-  return false
+  return r.status === 0 || r.status >= 500 || r.status === 408 || r.status === 429 ? 'retry' : 'refused'
 }
 
 // the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. Only a session on a plan or holding a
@@ -4183,9 +4186,9 @@ async function reportShellEnds($: any, event: 'Stop' | 'SubagentStop', e: any): 
   const now = await $.clock.now()
   const ended = endedShells((await read($, reports)).shells, tasks)
   if (ended.length === 0) return
-  // an id stays owed until the dashboard has taken its end: a refused or failed post keeps it, and the next Stop or SubagentStop sends it again (CP-132)
-  const sent = await report($, 'activity', 'POST', ACTIVITY_PATH, { activities: ended.map(id => shellRow(id, null, now, now)) })
-  if (!sent) return
+  // an id stays owed only on a transient failure: the next Stop or SubagentStop sends it again (CP-132). A refusal the dashboard would repeat is dropped
+  const outcome = await report($, 'activity', 'POST', ACTIVITY_PATH, { activities: ended.map(id => shellRow(id, null, now, now)) })
+  if (outcome === 'retry') return
   await update($, reports, cur => ({ ...cur, shells: cur.shells.filter(s => !ended.includes(s)) }))
 }
 
