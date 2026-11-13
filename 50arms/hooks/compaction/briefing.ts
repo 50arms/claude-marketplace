@@ -3,6 +3,8 @@
 // sub-agents still running (they carry on through a compaction) and the work not yet pushed. Pure: register.tsx reads each source (the plan view, the
 // engine's agent list, git) and hands them here; a source that could not be read arrives as `unavailable` with its reason, never as an empty one.
 
+import type { ProfileBrief } from '../reports/held-idle'
+
 export type Source<T> = { ok: true; value: T } | { ok: false; reason: string }
 
 export type BriefingCard = { id: string; title: string }
@@ -127,12 +129,24 @@ export function briefingText(input: BriefingInput, kind: BriefingKind = 'compact
 
 // a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
 // from its summary and the progress notes it kept before compacting, so the briefing names who it is and points at them. `type` and `description` are null when the engine no longer lists the agent.
-export type SubagentBriefingInput = { id: string; type: string | null; description: string | null }
+// CP-109 (DEC-832): `profile` is the profile line its brief opened with (null: none). The compaction dropped the mantra and role text that profile's instruction carried, so the
+// briefing names the one call that fetches them again, before anything else; such an agent's card or plan is its own, so it is not told they are its parent's.
+export type SubagentBriefingInput = { id: string; type: string | null; description: string | null; profile: ProfileBrief | null }
 
 // How long the plugin keeps the note of an agent whose compaction proposal passed: a compaction that never delivered a start must not name the agent for a later, different compaction.
 export const COMPACTING_NOTE_TTL_MS = 10 * 60_000
 
+const RESUME_FROM = 'from your summary and from the progress notes you kept before compacting, then carry on with the task you were given and report back to the session that spawned you.'
+
+function profileFetch(p: ProfileBrief): string {
+  const line = `${p.profile} ${p.target.id}${p.gate === null ? '' : ` ${p.gate}`}`
+  const path = `/api/agent-profiles/${p.profile}/instruction?${p.target.kind}=${p.target.id}${p.gate === null ? '' : `&gate=${p.gate}`}`
+  return `The compaction dropped the mantra and your role text, so fetch them again first: your brief's first line is \`${line}\`, so your next call is \`50arms_api\` \`GET ${path}\`, and the \`instruction\` it returns is your task, as at your start: follow it.`
+}
+
 export function subagentBriefingText(input: SubagentBriefingInput): string {
   const label = `${input.id}${input.type === null ? '' : ` (${input.type})`}${input.description === null ? '' : ` ${oneLine(input.description, 80)}`}`
-  return `[50 ARMS] Your conversation was just compacted. You are sub-agent ${label}. Resume from your summary and from the progress notes you kept before compacting, then carry on with the task you were given and report back to the session that spawned you. The plan and cards are your parent's, not yours.`
+  const opening = `[50 ARMS] Your conversation was just compacted. You are sub-agent ${label}.`
+  if (input.profile === null) return `${opening} Resume ${RESUME_FROM} The plan and cards are your parent's, not yours.`
+  return `${opening} ${profileFetch(input.profile)} Then resume ${RESUME_FROM}`
 }

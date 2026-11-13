@@ -94,7 +94,7 @@ import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, reviewReason, skippedLine } from './reports/ready-cards'
 import type { ReadyCard, ReviewableCard } from './reports/ready-cards'
-import { NO_BRIEFS, briefClaimed, briefEnded, briefSpawned, briefedCards, detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
+import { NO_BRIEFS, briefClaimed, briefEnded, briefProfile, briefSpawned, briefedCards, detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
 import type { Briefs, HeldCard, WorkMarks } from './reports/held-idle'
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
 import type { PauseRead } from './reports/pause'
@@ -3614,8 +3614,9 @@ async function forgetCompactingAgent($: any, agentId: unknown): Promise<void> {
   })
 }
 
-// the briefing of the sub-agent whose tool result this is, once its own compaction finished: once, to that sub-agent only, and only when the session is on a plan (an unconnected
-// session gets no 50 Arms text at all). The engine's list names its type and task; a list that fails is toasted and the briefing names the id alone.
+// the briefing of the sub-agent whose tool result this is, once its own compaction finished: once, to that sub-agent only, for every session signed in with its team agent, on a plan,
+// holding a card or neither (CP-109, DEC-832: a session that is not signed in gets no 50 Arms text at all). The engine's list names its type and task; a list that fails is toasted and
+// the briefing names the id alone. The profile line its brief opened with (agentBriefs) makes the briefing name the fetch of that profile's instruction again.
 async function takeAgentBriefing($: any, agentId: string): Promise<string | null> {
   const now = await $.clock.now()
   let waiting = false
@@ -3626,7 +3627,7 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
     const { [agentId]: _taken, ...rest } = live.agents
     return { ...live, agents: rest }
   })
-  if (!waiting || !(await isPlanConnected($, String(await $.session.id())))) return null
+  if (!waiting || !(await signedInWithAgent($))) return null
   let listed: { id: string; type: string; description: string }[] = []
   try {
     listed = await $.agent.list()
@@ -3634,7 +3635,7 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
     $.ui.toast(`The sub-agent briefing could not read the agent list: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
   }
   const found = listed.find(a => a.id === agentId)
-  return subagentBriefingText({ id: agentId, type: found?.type ?? null, description: found?.description ?? null })
+  return subagentBriefingText({ id: agentId, type: found?.type ?? null, description: found?.description ?? null, profile: briefProfile(await read($, agentBriefs), agentId) })
 }
 
 // SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. The session is not bound yet on a
