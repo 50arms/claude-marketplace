@@ -4072,7 +4072,7 @@ async function movesOffReportedPlan($: any, planId: number): Promise<boolean> {
 
 // What became of a report: `sent` (the dashboard took it), `retry` (a transient failure: no answer, a 5xx, 408 or 429, so the report may go again)
 // or `refused` (any other refusal, which the dashboard would refuse again: it is not retried).
-export type ReportOutcome = 'sent' | 'retry' | 'refused'
+type ReportOutcome = 'sent' | 'retry' | 'refused'
 
 async function report($: any, what: string, method: string, path: string, body: object): Promise<ReportOutcome> {
   const r = await api($, method, path, { body })
