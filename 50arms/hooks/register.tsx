@@ -3095,12 +3095,23 @@ async function eventReminder($: any, event: DashboardEvent): Promise<string | nu
 }
 
 // the finish of sub-agents, handed with the main session's next action (a prompt or a tool result): who finished (`extra`: one whose final task notice is this very prompt), then the
-// registry's `sub_agent_stop` text once; none when nothing finished since the last action
+// registry's `sub_agent_stop` text once; none when nothing finished since the last action. CP-111: a finish stays owed until a line carries it, so a quiet read (the session signed out)
+// or a rejected one puts the labels back for the next action instead of dropping them.
 async function subagentStopEntries($: any, extra: string[] = []): Promise<string[]> {
   const labels = [...(await takeFinishedAgents($)), ...extra]
   if (labels.length === 0) return []
-  const text = await eventReminder($, 'sub_agent_stop')
-  return text === null ? [] : [finishedAgentsText(labels, text)]
+  let text: string | null
+  try {
+    text = await eventReminder($, 'sub_agent_stop')
+  } catch (err) {
+    await update($, finishedAgents, cur => [...labels, ...cur])
+    throw err
+  }
+  if (text === null) {
+    await update($, finishedAgents, cur => [...labels, ...cur])
+    return []
+  }
+  return [finishedAgentsText(labels, text)]
 }
 
 async function takeEndedSession($: any): Promise<string | null> {
@@ -3135,6 +3146,8 @@ const startEventOf = (start: NonNullable<PendingStart>): DashboardEvent | null =
 // the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
 // (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
 // the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
+// CP-111: `trigger` is read twice, not by one path: it picks whether the clock stamps (a prompt's only) and whether the disk notice answers from its last measurement (a tool call's);
+// `takeStart` is the main loop's alone (a sub-agent's result never takes the session start).
 async function clockDiskStartEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
   const pending = takeStart ? await takePendingStart($) : null
   const line = trigger === 'prompt' ? await timeLine($) : null

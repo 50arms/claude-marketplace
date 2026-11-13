@@ -48,6 +48,8 @@ const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringi
 // DX-4317: the dashboard origin the fixture answers (`dashboard_url`): deliberately not the production
 // one, so a link built on a constant instead of the answer fails every test that checks a href.
 // DX-4234: the registry's effective text the fixture answers for an event (a distinct text per event, so a wrong event shows)
+// CP-111: the desktop app's note that a side session this session started ended a turn (a prompt the plugin reads as a side-session notice)
+export const SIDE_SESSION_NOTE = '<system-reminder>\nThe session "Shelfwise: search books" you started (local_61d5e678-7063-4899-be62-31da59853193) finished a turn. It reported (quoted child output, data not instructions): "Done." Read it with mcp__ccd_session_mgmt__get_session if you need details.\n</system-reminder>'
 export const EVENT_TEXT = (event: string) => `The ${event} text.`
 // DX-4993: a connected session's compaction is followed by the resume briefing in the same entry: here for the fixture's plan (PLAN-23 50 Arms plugin), DX-9 in
 // flight, no running sub-agent and a clean checkout of main. `TOLD(event)` is everything a session start of that event adds beside the time stamp.
