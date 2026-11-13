@@ -177,6 +177,33 @@ for (const surface of SURFACES) {
       expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('b2', null, first, first), shellRow('bjlibh54w', null, second, second)])
     })
 
+    test("CP-132: a shell's end whose post the dashboard refuses is sent again at the next Stop, not lost", async ($, on) => {
+      on('tool.call', () => BACKGROUNDED as any)
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.tool.call({ tool: 'Bash', command: 'sleep 99', run_in_background: true } as any)
+      await d.clock.settle()
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = { status: 500, body: { error: 'deploy restart' } }
+      await d.clock.advance(10_000)
+      // the shell has ended, and the post that says so is refused
+      const refused = d.clock.now()
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(d.toasts.filter(t => t.startsWith('50 Arms activity report failed'))).toEqual(['50 Arms activity report failed: 500: deploy restart'])
+      // the dashboard takes posts again: the next Stop sends the end it was owed, once more
+      d.world.reportReplies['POST /api/plan-sessions/me/activity'] = {}
+      await d.clock.advance(10_000)
+      const again = d.clock.now()
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('bjlibh54w', null, refused, refused), shellRow('bjlibh54w', null, again, again)])
+      // accepted once: a further Stop has nothing owed
+      await $.classic.Stop({ stop_hook_active: true, background_tasks: [] } as any)
+      await d.clock.settle()
+      expect(activityRows(d).filter(r => r.finishedAt !== null)).toHaveLength(2)
+    })
+
     // DX-5060: the dashboard decides a session is busy from its own running set; the PUT /api/plan-sessions/me/background-work route is
     // gone from the server, so no hook may call it (a call would be a 404 toasted at every Stop).
     test('no hook calls PUT /api/plan-sessions/me/background-work, through a whole session of starts, stops, heartbeats and a failure', async ($, on) => {

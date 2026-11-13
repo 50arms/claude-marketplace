@@ -4070,9 +4070,12 @@ async function movesOffReportedPlan($: any, planId: number): Promise<boolean> {
   return from !== null && from !== planId
 }
 
-async function report($: any, what: string, method: string, path: string, body: object): Promise<void> {
+// Resolves whether the dashboard took the report, so a caller that must resend on a refusal can tell (reportShellEnds).
+async function report($: any, what: string, method: string, path: string, body: object): Promise<boolean> {
   const r = await api($, method, path, { body })
-  if (!r.ok) $.ui.toast(`50 Arms ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
+  if (r.ok) return true
+  $.ui.toast(`50 Arms ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
+  return false
 }
 
 // the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. Only a session on a plan or holding a
@@ -4180,8 +4183,10 @@ async function reportShellEnds($: any, event: 'Stop' | 'SubagentStop', e: any): 
   const now = await $.clock.now()
   const ended = endedShells((await read($, reports)).shells, tasks)
   if (ended.length === 0) return
+  // an id stays owed until the dashboard has taken its end: a refused or failed post keeps it, and the next Stop or SubagentStop sends it again (CP-132)
+  const sent = await report($, 'activity', 'POST', ACTIVITY_PATH, { activities: ended.map(id => shellRow(id, null, now, now)) })
+  if (!sent) return
   await update($, reports, cur => ({ ...cur, shells: cur.shells.filter(s => !ended.includes(s)) }))
-  postActivity($, ended.map(id => shellRow(id, null, now, now)))
 }
 
 // What the ready-cards read came to: the ready cards, nothing to say, or why it failed.
