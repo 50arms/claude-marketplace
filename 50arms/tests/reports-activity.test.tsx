@@ -152,6 +152,31 @@ for (const surface of SURFACES) {
       expect(activityRows(d).filter(r => r.finishedAt !== null)).toHaveLength(2)
     })
 
+    test("CP-132: a shell a sub-agent started finishes when its SubagentStop snapshot lists it completed, and stays open while the snapshot lists it running", async ($, on) => {
+      let answer: any = BACKGROUNDED
+      on('tool.call', () => answer)
+      answerReportEvents(on)
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      await $.classic.SubagentStart(START)
+      await $.tool.call({ tool: 'Bash', command: 'sleep 99', run_in_background: true, agentId: 'a1b2c3' } as any)
+      answer = { ...BACKGROUNDED, result: { ...BACKGROUNDED.result, backgroundTaskId: 'b2' } }
+      await $.tool.call({ tool: 'Bash', command: 'sleep 5', run_in_background: true, agentId: 'a1b2c3' } as any)
+      await d.clock.settle()
+      await d.clock.advance(10_000)
+      const first = d.clock.now()
+      // the sub-agent stops with bjlibh54w still running, and b2 completed: only b2 finishes
+      await $.classic.SubagentStop({ agent_id: 'a1b2c3', stop_hook_active: false, agent_transcript_path: '/x/agent-a1b2c3.jsonl', agent_type: 'Explore', background_tasks: [shell('bjlibh54w'), shell('b2', 'completed')] } as any)
+      await d.clock.settle()
+      expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('b2', null, first, first)])
+      await d.clock.advance(10_000)
+      const second = d.clock.now()
+      // a later snapshot lists bjlibh54w completed too: it finishes now, with no snapshot of a parent involved
+      await $.classic.SubagentStop({ agent_id: 'a1b2c3', stop_hook_active: false, agent_transcript_path: '/x/agent-a1b2c3.jsonl', agent_type: 'Explore', background_tasks: [shell('bjlibh54w', 'completed')] } as any)
+      await d.clock.settle()
+      expect(activityRows(d).filter(r => r.finishedAt !== null)).toEqual([shellRow('b2', null, first, first), shellRow('bjlibh54w', null, second, second)])
+    })
+
     // DX-5060: the dashboard decides a session is busy from its own running set; the PUT /api/plan-sessions/me/background-work route is
     // gone from the server, so no hook may call it (a call would be a 404 toasted at every Stop).
     test('no hook calls PUT /api/plan-sessions/me/background-work, through a whole session of starts, stops, heartbeats and a failure', async ($, on) => {
