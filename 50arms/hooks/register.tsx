@@ -84,7 +84,8 @@ import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, r
 import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
-import { spawnGuard } from './plan/pacing-guard'
+import { spawnGuard, spawnNotice } from './plan/pacing-guard'
+import { workerStartGuard } from './plan/worker-start'
 import { pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
@@ -4855,6 +4856,9 @@ export const register: Register = (on, options) => {
     }
     return started
   })
+  // the Agent tool's one tool.call handler: a `50arms:worker` start with no model or no effort is refused (worker-start.ts); every other call goes on, and a spawn the
+  // pacing guard moved to haiku says so in the call's result (a pass-through after `next`, like the time stamp)
+  on('tool.call', { tool: 'Agent' }, (_$, e, next) => workerStartGuard(e, ev => spawnNotice(ev, next)))
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onClassicSessionStart)

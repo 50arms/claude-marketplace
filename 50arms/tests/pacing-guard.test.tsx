@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { PACED_STOP, REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { MOVED_PREFIX, PACED_STOP, REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, movedNotice, requestedModel, spawnGuard, spawnNotice, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -93,7 +93,7 @@ describe('decideSpawn (the decision table)', () => {
 describe('the agent.spawn hook', () => {
   // what the cache holds, as a new sub-agent sees it: the line of the last answer, as an UNFORCED read serves it inside the minute after any read
   const subagentLine = async ($: any, d: any): Promise<string | null> => {
-    const r = await $.classic.SubagentStart({ agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' } as any)
+    const r = await $.classic.SubagentStart({ agent_id: 'a1', agent_type: '50arms:worker' } as any)
     // DX-4686: the start's live check is detached from the hook; let it end before the test does
     await d.clock.settle()
     return (r.additionalContext ?? []).find((t: string) => t === 'Pacing line.') ?? null
@@ -715,6 +715,111 @@ describe('a second session in the same process', () => {
   })
 })
 
+// CP-45 / DEC-314: a spawn pacing moved to haiku is told to the session that asked for it
+describe('a moved spawn says so', () => {
+  const claimed = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 2, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: true, claim_id: 'c1', refusal: null }
+  const guardOn = (body: unknown) => {
+    resetPacing()
+    const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+    return spawnGuard(env)
+  }
+  const spawnE = (over: Record<string, unknown>) => ({ tool_use_id: 'toolu_1', prompt: 'gate-reviewer CP-1 code-quality', background: false, fork: false, parentModel: 'opus', ...over }) as any
+  const toolCall = (ran: Record<string, unknown> = {}) => async () => ({ result: {}, text: 'ran', isError: false, ...ran }) as any
+
+  test('the notice begins with the words plan-workflow quotes', () => {
+    expect(MOVED_PREFIX).toBe('Usage pacing moved this sub-agent')
+    expect(movedNotice('50arms:worker', 'opus', 'haiku').startsWith(MOVED_PREFIX)).toBe(true)
+  })
+
+  test("a spawn is placed by the call's model, never by its parent's; a fork and a call without one take the parent's", () => {
+    expect(requestedModel({ fork: false, model: 'haiku', parentModel: 'opus' })).toBe('haiku')
+    expect(requestedModel({ fork: false, model: 'sonnet', parentModel: 'opus' })).toBe('sonnet')
+    expect(requestedModel({ fork: false, model: undefined, parentModel: 'opus' })).toBe('opus')
+    expect(requestedModel({ fork: true, model: 'haiku', parentModel: 'opus' })).toBe('opus')
+  })
+
+  // gate finding 3: a spawn with exactly one free slot is moved (isTight), so the retry text must not promise that 'a slot free' is enough
+  test('the notice says a re-run needs more than one free slot, because a spawn taking the last free slot is moved again', () => {
+    const text = movedNotice('50arms:worker', 'opus', 'haiku')
+    expect(text).toContain('only when the budget leaves more than one slot free')
+    expect(text).toContain('a spawn that takes the last free slot is moved again')
+    expect(text).not.toMatch(/once a slot is free/)
+    // the claim the text rests on: one free slot is tight and moves an Opus spawn, two do not
+    expect(decideSpawn(v({ budget: 1, subAgents: 0 }), 'opus')).toEqual({ kind: 'downgrade', model: 'haiku' })
+    expect(decideSpawn(v({ budget: 2, subAgents: 0 }), 'opus')).toEqual({ kind: 'allow' })
+  })
+
+  // gate finding 7: a call that is not a worker names the model it asked for, never just 'general-purpose'
+  test('a non-worker spawn asked on opus says what it asked for: its type and its model', async () => {
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: 'general-purpose', model: 'opus' })
+    await guard(e, async x => ({ model: x.model, agentId: 'a' }) as any)
+    const r = await spawnNotice(e, toolCall())
+    expect(r.context?.[0]).toContain('you asked for general-purpose on opus')
+  })
+
+  // gate finding 4: a workflow agent's tool_use_id is the Workflow call's, so nothing would ever read (or delete) its entry
+  test('a workflow agent is moved but not recorded, so no entry is left behind and its Workflow call is not told', async () => {
+    const seen: any[] = []
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: 'general-purpose', model: 'opus', workflow: { runId: 'wf_1', agentIndex: 1 } })
+    await guard(e, async x => (seen.push(x), { model: x.model, agentId: 'a' }) as any)
+    expect(seen[0].model).toBe('haiku')
+    expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
+  })
+
+  // a resume ignores a changed `model` (a hook can only refuse one), so nothing is rewritten and nothing is told
+  test('a resumed run is neither rewritten nor recorded as moved', async () => {
+    const seen: any[] = []
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: 'general-purpose', model: 'opus', resume: 'agent_1' })
+    await guard(e, async x => (seen.push(x), { model: x.model, agentId: 'a' }) as any)
+    expect(seen[0].model).toBe('opus')
+    expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
+  })
+
+  test('a haiku worker taking the last free slot is not moved (it is already on haiku), and says nothing', async () => {
+    const seen: any[] = []
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: '50arms:worker', model: 'haiku' })
+    await guard(e, async x => (seen.push(x), { model: 'haiku', agentId: 'a' }) as any)
+    expect(seen[0]).toBe(e)
+    const r = await spawnNotice(e, toolCall())
+    expect(r.context).toBeUndefined()
+  })
+
+  test("an opus worker taking the last free slot runs on haiku, and the Agent call's result says it was moved", async () => {
+    const seen: any[] = []
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: '50arms:worker', model: 'opus' })
+    await guard(e, async x => (seen.push(x), { model: x.model, agentId: 'a' }) as any)
+    expect(seen[0].model).toBe('haiku')
+    const r = await spawnNotice(e, toolCall({ context: ['earlier'] }))
+    expect(r.context).toEqual(['earlier', movedNotice('50arms:worker', 'opus', 'haiku')])
+    expect(r.context?.[1]).toContain('you asked for 50arms:worker on opus')
+    expect(r.context?.[1]).toContain('it runs on haiku')
+    // told once: the same call asked again has nothing to say
+    expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
+  })
+
+  test('a spawn the engine refused after the move has no notice to give, and a call that was denied is returned as it came', async () => {
+    const guard = guardOn(claimed)
+    const e = spawnE({ subagentType: '50arms:worker', model: 'opus' })
+    await guard(e, async () => ({ deny: 'host refused' }) as any)
+    expect((await spawnNotice(e, toolCall())).context).toBeUndefined()
+    const denied = { deny: 'no' } as any
+    expect(await spawnNotice(e, async () => denied)).toBe(denied)
+  })
+
+  test('a spawn with room is not moved and its call result is untouched', async () => {
+    const guard = guardOn({ ...claimed, budget: 9 })
+    const e = spawnE({ subagentType: '50arms:worker', model: 'opus' })
+    await guard(e, async x => ({ model: x.model ?? 'opus', agentId: 'a' }) as any)
+    const ran = await toolCall()()
+    expect(await spawnNotice(e, async () => ran)).toBe(ran)
+  })
+})
+
 describe('what register wires', () => {
   test('agent.spawn carries the pacing guard, and no tool.call handler can carry it', () => {
     const wired: { event: string; matcher: unknown }[] = []
@@ -728,11 +833,13 @@ describe('what register wires', () => {
     expect(matched.length).toBeGreaterThan(0)
     const toolOf = (w: { matcher: unknown }) => (w.matcher as { tool?: string })?.tool ?? ''
     // `Write` and `Skill` are the two other tools: onHandoffWrite and onReadySkill are pass-throughs that only append context after `next` (the skill's, only when the ready skill loads), so the guard never sits on them
+    // `Agent` is another: the one handler there refuses only a `50arms:worker` start with no model or effort (worker-start.test.tsx) and otherwise only appends the moved-spawn notice after `next`; it never denies a save
     // CP-93: the desktop's `set_session_title` is the third: onModelSetTitle holds the title lock around the model's rename, a tool that writes no commit, push or card
-    for (const w of matched.filter(w => !/__50arms_api$/.test(toolOf(w)) && toolOf(w) !== 'Write' && toolOf(w) !== 'Skill' && toolOf(w) !== 'mcp__ccd_session_mgmt__set_session_title')) expect(toolOf(w)).toMatch(/^mcp__(plugin_50arms_platform|platform)__(session_connect|request_permission)$/)
+    for (const w of matched.filter(w => !/__50arms_api$/.test(toolOf(w)) && toolOf(w) !== 'Write' && toolOf(w) !== 'Skill' && toolOf(w) !== 'Agent' && toolOf(w) !== 'mcp__ccd_session_mgmt__set_session_title')) expect(toolOf(w)).toMatch(/^mcp__(plugin_50arms_platform|platform)__(session_connect|request_permission)$/)
     // DX-5846: 50arms_api carries every card write, so exactly ONE handler may sit on it: onAckCall, a pass-through that acts only on the acknowledgement route
     // (POST /api/plan-sessions/me/events/<N>/ack); a second one would reach every card write, push and commit the guard must stay off
     expect(matched.filter(w => /__50arms_api$/.test(toolOf(w)))).toHaveLength(1)
+    expect(matched.filter(w => toolOf(w) === 'Agent')).toHaveLength(1)
   })
 })
 

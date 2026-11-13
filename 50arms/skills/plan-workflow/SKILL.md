@@ -391,13 +391,12 @@ person can clear is an open problem there too (see "Pausing").
 Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and
 the sub-agent's first call fetches that profile's instruction for the card, which is its whole
 task, so the brief repeats nothing the profile or the card says. Build a card with
-`Agent({subagent_type:"50arms:worker-<model>-<effort>", prompt:"work <CARD-ID>"})`. Add the worktree rule
+`Agent({subagent_type:"50arms:worker", model:"<model>", effort:"<effort>", prompt:"work <CARD-ID>"})`. Add the worktree rule
 below only when the card wouldn't cover it. Set the card's build grade (`effort_level`) first, by how complex its hardest step is, never
-by how much work it is (issue-workflow's creation guide, § Build grade), then read the model and effort that grade means from the dashboard (the card read answers them) when you start the worker, and pick the
-`50arms:worker-<model>-<effort>` agent with that model and effort; never `general-purpose`. Story points decide process (a card, gates, splitting), never the agent grade.
+by how much work it is (issue-workflow's creation guide, § Build grade), then start the worker with the model and effort the dashboard answers for it (the card read answers them for a builder), passing both in the Agent call exactly as answered; never `general-purpose`, and never a model or effort you chose yourself. A `50arms:worker` start with no model or no effort is refused, and the refusal names what to pass. An agent cannot be started at `minimal`: a grade at `minimal` starts at `low`, and you note on the card that it ran at `low`. A sub-agent doing work that has no card of its own takes the grade of its hardest step, picked from the same ladder (issue-workflow's creation guide, § Build grade); with no card to read, read the grade's model and effort from the board: `GET /api/boards/<board>` with `fields.effort_ladder`. Story points decide process (a card, gates, splitting), never the agent grade.
 The builder only builds, at its card's build grade. You run each gate not yet `pass` through its own gate
-worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate (`GET /api/board-task-profiles?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e.g. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`), at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the
-gate instruction route's answer, and pick the matching `50arms:worker-<model>-<effort>`. PRE gates run before the builder starts; POST gates run
+worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate (`GET /api/board-task-profiles?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e.g. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`), at the gate's review grade, which the board sets: when you start its `50arms:worker`, pass the model and effort the
+gate instruction route answers in the Agent call. PRE gates run before the builder starts; POST gates run
 on its pushed tip; a gate never changes the build grade. Once the POST gates pass, a lander sub-agent lands it (brief `work <CARD-ID>` plus "land it by
 issue-workflow's Delivery and report the sha; do not complete it"), and you complete the card and write
 the retro from its report.
@@ -449,7 +448,10 @@ work-in-progress commit), tell no one, and never do the work yourself instead. T
 knows; 50 Arms wakes you with the message that lets you continue, and you then carry on where you
 were. A pacing text that asks for more than this is outdated: follow this section.
 
-- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
+- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full. The Agent call's result then says
+  `Usage pacing moved this sub-agent`: it did not run at the grade you chose, so what it reports (a gate's verdict above all) is not work at that grade. Run it again at its
+  grade only when the budget leaves more than one slot free (a spawn that takes the last free slot is moved again); never record or act on its result
+  as if it had run at its grade.
 - **Over pace, or the budget full**: stop as above. Agents already running are left to finish.
 - **Critical**: stop as above (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused), and tell
   each running sub-agent to stop where it is and report back; once told to continue, continue each with `SendMessage`.

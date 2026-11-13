@@ -7,7 +7,7 @@ import { describe, expect } from 'claude-code/testing'
 import { LIVENESS_MS, agentRow, endedShells, shellRow } from '../hooks/reports/activity'
 import { test, SURFACES, activityRows, answerReportEvents, dashboard, finishes, forceRefresh, startSession } from './plan-kit'
 
-const START = { agent_id: 'a1b2c3', agent_type: '50arms:worker-sonnet-high' }
+const START = { agent_id: 'a1b2c3', agent_type: '50arms:worker' }
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 // the engine's result of a Bash call it moved to the background: the id it lists the shell under in `background_tasks`
 const BACKGROUNDED = { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bjlibh54w' }, text: 'Command running in background with ID: bjlibh54w' }
@@ -48,7 +48,7 @@ for (const surface of SURFACES) {
       const now = d.clock.now()
       await $.classic.SubagentStart(START)
       await d.clock.settle()
-      expect(activityRows(d)).toEqual([agentRow('agent-a1b2c3', '50arms:worker-sonnet-high', now, null)])
+      expect(activityRows(d)).toEqual([agentRow('agent-a1b2c3', '50arms:worker', now, null)])
     })
 
     test("its turn's end posts its finish, for a clean stop and for a failed sub-agent (no SubagentStop, no clear)", async ($, on) => {
@@ -243,7 +243,7 @@ for (const surface of SURFACES) {
       const now = d.clock.now()
       await $.classic.SubagentStart(START)
       await d.clock.settle()
-      expect(activityRows(d)).toEqual([agentRow('agent-a1b2c3', '50arms:worker-sonnet-high', now, null)])
+      expect(activityRows(d)).toEqual([agentRow('agent-a1b2c3', '50arms:worker', now, null)])
     })
 
     test('a report the dashboard refuses, or one the engine cannot send, is one toast each, never swallowed', async ($, on) => {

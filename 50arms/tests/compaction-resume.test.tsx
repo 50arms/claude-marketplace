@@ -9,7 +9,7 @@ import { CLEARED_SESSION_ID, SESSION_ID, SURFACES, TOLD, dashboard, startSession
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
-const AGENT = { id: 'a1', type: '50arms:worker-sonnet-high', description: 'build the thing', status: 'running' }
+const AGENT = { id: 'a1', type: '50arms:worker', description: 'build the thing', status: 'running' }
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const START = { prompt: 'go', turnId: 't1' } as any
 const COMPACT = { source: 'compact', cwd: '/work', session_id: 'sess-own', transcript_path: '/work/main.jsonl' }
@@ -56,7 +56,7 @@ for (const surface of SURFACES) {
       expect(prompt).toContain(RESUME_PROCEDURE)
       expect(prompt).toContain('Your plan is PLAN-23 50 Arms plugin.')
       expect(prompt).toContain('Cards in flight on your plan: DX-9')
-      expect(prompt).toContain('Sub-agents still running (they carried on through the compaction): a1 (50arms:worker-sonnet-high) build the thing.')
+      expect(prompt).toContain('Sub-agents still running (they carried on through the compaction): a1 (50arms:worker) build the thing.')
       expect(prompt).toContain('Work not pushed')
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(1)

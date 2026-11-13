@@ -100,7 +100,7 @@ test("no skill tells an operator-session sub-agent to land its own card when tol
 });
 
 test("plan-workflow's Sub-agents section carries the matching rule once", () => {
-  assert.match(subAgents, /The builder only builds, at its card's build grade\. You run each gate not yet `pass` through its own gate worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate \(`GET \/api\/board-task-profiles\?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e\.g\. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`\), at the gate's review grade, which the board sets: when you start its worker, read its model and effort from the gate instruction route's answer, and pick the matching `50arms:worker-<model>-<effort>`\./);
+  assert.match(subAgents, /The builder only builds, at its card's build grade\. You run each gate not yet `pass` through its own gate worker, briefed `<reviewer profile> <CARD-ID> <gate>` with the profile the board names for that gate \(`GET \/api\/board-task-profiles\?board=<board>&task_id=<gate>&enabled=true` answers it as `profileName`, e\.g\. `dependency-reviewer` for `plan-dependency`; never assume `gate-reviewer`\), at the gate's review grade, which the board sets: when you start its `50arms:worker`, pass the model and effort the gate instruction route answers in the Agent call\./);
   assert.match(subAgents, /Once the POST gates pass, a lander sub-agent lands it \(brief `work <CARD-ID>` plus "land it by issue-workflow's Delivery and report the sha; do not complete it"\), and you complete the card and write the retro from its report\./);
   assert.match(subAgents, /Story points decide process \(a card, gates, splitting\), never the agent grade\./);
 });
@@ -166,7 +166,7 @@ test("what a designer does lives only in its profile: neither skill repeats it",
 // sub-agent's first call fetches that profile's instruction for the card.
 test("plan-workflow delegates every profile-shaped job as <profile> <CARD-ID>, never a hand-written brief", () => {
   assert.match(subAgents, /Delegate by agent profile and card: the brief's first line is `<profile> <CARD-ID>`, and the sub-agent's first call fetches that profile's instruction for the card, which is its whole task, so the brief repeats nothing the profile or the card says\./);
-  assert.match(subAgents, /`Agent\(\{subagent_type:"50arms:worker-<model>-<effort>", prompt:"work <CARD-ID>"\}\)`/);
+  assert.match(subAgents, /`Agent\(\{subagent_type:"50arms:worker", model:"<model>", effort:"<effort>", prompt:"work <CARD-ID>"\}\)`/);
   const briefs = [...subAgents.matchAll(/`((?:work|<reviewer profile>|gate-designer) <CARD-ID>[^`]*)`|prompt:"([^"]*)"/g)].map((m) => m[1] ?? m[2]);
   assert.deepEqual([...new Set(briefs)].sort(), ["<reviewer profile> <CARD-ID> <gate>", "gate-designer <CARD-ID>", "work <CARD-ID>"]);
   assert.doesNotMatch(subAgents, /Delegate by card id/);

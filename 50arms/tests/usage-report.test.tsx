@@ -179,7 +179,7 @@ describe('the report', () => {
   test("measuredAt advances when a sub-agent finishes: its burn moved the parent's figure (R-9)", async ($, on) => {
     const d = await measuredSession($, on)
     await d.clock.advance(USAGE_TICK_MS)
-    await $.classic.SubagentStop({ agent_id: 'a1', agent_type: '50arms:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
+    await $.classic.SubagentStop({ agent_id: 'a1', agent_type: '50arms:worker', stop_hook_active: false, agent_transcript_path: '' })
     await d.clock.advance(USAGE_TICK_MS)
     expect(reports(d).at(-1).body.measuredAt).toBe(iso(CLOCK_START + USAGE_TICK_MS))
   })
@@ -193,8 +193,8 @@ describe('the report', () => {
   })
 })
 
-const start = ($: any, id: string) => $.classic.SubagentStart({ agent_id: id, agent_type: '50arms:worker-sonnet-high' })
-const stop = ($: any, id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: '50arms:worker-sonnet-high', stop_hook_active: false, agent_transcript_path: '' })
+const start = ($: any, id: string) => $.classic.SubagentStart({ agent_id: id, agent_type: '50arms:worker' })
+const stop = ($: any, id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: '50arms:worker', stop_hook_active: false, agent_transcript_path: '' })
 
 describe('the agents', () => {
   test('are not counted by the plugin: the report carries none, and a start or stop changes nothing in it (DX-5593)', async ($, on) => {

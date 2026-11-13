@@ -2,7 +2,7 @@ import "./designated-test-container.mjs";
 // DX-5899 (PLAN-44 G-7) — an orchestrator briefs a worker sub-agent as `<profile> <CARD-ID>` (`gate-designer ABC-12`), and the
 // sub-agent's first call fetches that agent profile's instruction for the card from the dashboard
 // (`GET /api/agent-profiles/:profile/instruction?card=<id>`, the same text a dispatch of that profile receives). Every
-// `50arms:worker-*` agent carries the one line that says so, ahead of the plain card brief's fallback to issue-workflow, and a
+// worker agent (`worker.md` and the `worker-<model>-<effort>` files) carries the one line that says so, ahead of the plain card brief's fallback to issue-workflow, and a
 // refused fetch ends the task instead of the worker improvising from the brief alone.
 
 import { test } from "node:test";
@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const agentsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../agents");
 const agents = readdirSync(agentsDir)
-  .filter((name) => name.startsWith("worker-") && name.endsWith(".md"))
+  .filter((name) => /^worker(-[a-z]+-[a-z]+)?\.md$/.test(name))
   .map((name) => ({ name, text: readFileSync(path.join(agentsDir, name), "utf8").replace(/\s+/g, " ") }));
 
 const PROFILE_LINE =
@@ -21,7 +21,8 @@ const PROFILE_LINE =
 const CARD_FALLBACK = "Otherwise, if the brief names a card, load `50arms:issue-workflow` and work it.";
 
 test("there are worker agents to check", () => {
-  assert.ok(agents.length >= 7, agents.map((a) => a.name).join(", "));
+  // worker.md (no fixed pair) beside the seven worker-<model>-<effort> files, which stay until their removal card
+  assert.ok(agents.some((a) => a.name === "worker.md") && agents.length >= 8, agents.map((a) => a.name).join(", "));
 });
 
 for (const { name, text } of agents) {

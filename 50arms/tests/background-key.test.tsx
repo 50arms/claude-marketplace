@@ -8,7 +8,7 @@ import { STALE_MCP_LINE, isStaleMcpRefusal } from '../hooks/relay/refusal'
 import { TOAST_ERROR_MAX } from '../hooks/plan/config'
 import { test, SURFACES, answerReportEvents, activityRows, dashboard, startSession } from './plan-kit'
 
-const START = { agent_id: 'a1b2c3', agent_type: '50arms:worker-sonnet-high' }
+const START = { agent_id: 'a1b2c3', agent_type: '50arms:worker' }
 
 for (const surface of SURFACES) {
   describe(`hook reports carry the background key, on ${surface}`, () => {
