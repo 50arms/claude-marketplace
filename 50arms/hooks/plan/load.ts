@@ -101,7 +101,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   // a session on nothing has no pause to show; one on a plan or a card reads it with the load
   const onNothing = connectedId === null && holds.card === null
   const pause = onNothing ? null : await readPause(call, Date.parse(refreshedAt))
-  const pausedUntil = pause?.until ?? null
+  const paused = pause !== null
   const pausedWaitsOn = pause?.waitsOn ?? null
   // the repo a new process takes the ready loop up for: the mark's, or the dashboard loop's, since a session on a job holds no mark. A loop it cannot read is no part of the band: it is
   // carried as `readyLoopFault` for the loop's own reader to tell, so a fault there never turns the band of a session that was never in a loop into an error
@@ -113,7 +113,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     readyLoopFault = String(err?.message ?? err)
   }
   const readyRepo = typeof session?.ready?.repo === 'string' ? session.ready.repo : (serverLoop?.repo ?? null)
-  const noPlan = { dashboardUrl, connected: null, listener, pausedUntil, pausedWaitsOn, readyRepo, readyLoopFault, ...holds }
+  const noPlan = { dashboardUrl, connected: null, listener, paused, pausedWaitsOn, readyRepo, readyLoopFault, ...holds }
   if (connectedId === null) {
     if (holds.card === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
     // a held card shows its checklist progress as the donut; a card read that fails is the load's error, as a plan read's is
@@ -146,7 +146,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, listener, pausedUntil, pausedWaitsOn, readyRepo, readyLoopFault, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
+  const base = { dashboardUrl, connected, listener, paused, pausedWaitsOn, readyRepo, readyLoopFault, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
 
   // The in-progress bucket: its list is only as complete as the total says, so an answer without a numeric total is an error.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
@@ -170,13 +170,13 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   }
 }
 
-// When the agent's pause ends and what it waits on, or null. The plugin's call carries `background: true` (register.tsx `api`), so this GET never ends the pause it reads.
-// An unexpired agent pause is the only one that counts (pauseOf); a failed or malformed answer is no mark, never a failed load, since the mark is display only.
-async function readPause(call: Call, now: number): Promise<{ until: number; waitsOn: string | null } | null> {
+// What the agent's pause waits on, or null when it is not paused. The plugin's call carries `background: true` (register.tsx `api`), so this GET never ends the pause it reads.
+// An unexpired or untimed agent pause is the only one that counts (pauseOf); a failed or malformed answer is no mark, never a failed load, since the mark is display only.
+async function readPause(call: Call, now: number): Promise<{ waitsOn: string | null } | null> {
   const r = await call('GET', PAUSE_PATH)
   if (!r.ok) return null
   const read = pauseOf(r.body, now)
-  return read.kind === 'paused' ? { until: read.until, waitsOn: read.waitsOn } : null
+  return read.kind === 'paused' ? { waitsOn: read.waitsOn } : null
 }
 
 // the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays

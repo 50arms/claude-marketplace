@@ -2,11 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, sessionEvent } from './context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { isRecordWrite } from './context/record'
+import { announcedBy, finishedAgentLabel, finishedAgentsText, isRecordWrite, spawnedAfter } from './context/record'
+import type { SpawnedAgents } from './context/record'
 import { FOREGROUND_LOCK_TIMEOUT_MS, foregroundLockArgv, foregroundLockNotice, parseForegroundLockAnswer } from './context/foreground'
+import { heldReason, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
+import type { HeldNotice, TaskNotice } from './context/interim-notice'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { COMPACTING_NOTE_TTL_MS, RESUME_TEXTS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
@@ -90,8 +93,8 @@ import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, reviewReason, skippedLine } from './reports/ready-cards'
 import type { ReadyCard, ReviewableCard } from './reports/ready-cards'
-import { detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
-import type { HeldCard, WorkMarks } from './reports/held-idle'
+import { NO_BRIEFS, briefClaimed, briefEnded, briefSpawned, briefedCards, detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
+import type { Briefs, HeldCard, WorkMarks } from './reports/held-idle'
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
 import type { PauseRead } from './reports/pause'
 import { storeDoor, type StoreCall, type StoreIo } from './store/recover'
@@ -141,14 +144,19 @@ const MCP_ID_RETRY_MS = 30_000
 const bootEngineId = atom({ plugin: '50arms', key: 'bootEngineId' } as const, null as string | null)
 
 const turn = atom({ plugin: '50arms', key: 'turn' } as const, IDLE as TurnState)
-// a sub-agent has stopped and the main session has not been handed the reminder to record its result yet: it rides the main loop's next tool result or prompt, one reminder however many stopped.
-const subagentStopped = atom({ plugin: '50arms', key: 'subagentStopped' } as const, false)
+// the sub-agents (named by description, id and brief cards) that finished and whose finish the main session has not been told yet: it rides the main loop's next tool result or prompt, one text however many finished.
+const finishedAgents = atom({ plugin: '50arms', key: 'finishedAgents' } as const, [] as string[])
 // the last time stamp handed to the model (a prompt's), which the next one counts its +delta and its date from.
 const lastStamp = atom({ plugin: '50arms', key: 'lastStamp' } as const, null as StampState)
 // a session start the model has not been told about. On a desktop or headless startup, resume and fork the engine has not bound the
 // session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
 // prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
 const pendingStart = atom({ plugin: '50arms', key: 'pendingStart' } as const, null as PendingStart)
+// the mantra this conversation is still owed: a start that found the session without a usable key (signed out, or its key revoked) could not ask 50 Arms for it. The first load that finds the
+// session signed in turns this into a pending start (`source: 'sign-in'`), so the mantra reaches the model on its next prompt or tool result, from the moment it signs in.
+const mantraOwed = atom({ plugin: '50arms', key: 'mantraOwed' } as const, false)
+// the interim sub-agent notices held back from the model (hooks/context/interim-notice.ts), kept by $.state across a reload of the module
+const heldNotices = atom({ plugin: '50arms', key: 'heldNotices' } as const, [] as HeldNotice[])
 // The machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
 // notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home found once per session.
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
@@ -181,9 +189,9 @@ const engineCompact = atom({ plugin: '50arms', key: 'engineCompact' } as const, 
 // the release the plugin has claimed to start a compaction with. The claim is one compare-and-set on this atom, made before any other await of the start, so a turn's end, an idle
 // check and a person's own /compact racing each other start (or spend) a ready exactly once.
 const claimedRelease = atom({ plugin: '50arms', key: 'claimedRelease' } as const, null as string | null)
-// true while the plugin's own compaction-by-clear runs its /clear: the conversation that opens inside it is the one to resume (a person's own /clear, or the ready loop's, is not). $.state, like the ready loop's
+// the targets the session held, while the plugin's own clear for a session that still holds work (a compaction by clear, a natural-break clear) runs its /clear, null otherwise: the conversation that opens inside it is the one to resume (a person's own /clear, or the ready loop's, is not). $.state, like the ready loop's
 // phase, so a reload of the module at the turn's end cannot lose it
-const compactionClear = atom({ plugin: '50arms', key: 'compactionClear' } as const, false)
+const compactionClear = atom({ plugin: '50arms', key: 'compactionClear' } as const, null as string[] | null)
 // whether a session start has been seen by this process: false in a NEW process (it starts with no $.state), which is what makes its first start the one that may find a predecessor's clear mark; a reload
 // of the module keeps it, and a /clear carries it
 const startSeen = atom({ plugin: '50arms', key: 'startSeen' } as const, false)
@@ -203,6 +211,10 @@ const reports = atom({ plugin: '50arms', key: 'reports' } as const, { agents: {}
 // the cards this session marked as its own work (PUT /api/work-marks), by card id with the time set; the held-idle Stop check counts them as worked (reports/held-idle.ts).
 const workMarks = atom({ plugin: '50arms', key: 'workMarks' } as const, {} as WorkMarks)
 // the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
+// the card ids each admitted sub-agent spawn was briefed on, claimed by the sub-agent that starts (reports/held-idle.ts); the held-idle Stop check counts a card a running sub-agent was briefed on as worked.
+const agentBriefs = atom({ plugin: '50arms', key: 'agentBriefs' } as const, NO_BRIEFS as Briefs)
+// what the plugin kept of each sub-agent when it spawned: its description, whether it runs in the background, whether the main loop spawned it (context/record.ts); the finish notice reads it.
+const spawnedAgents = atom({ plugin: '50arms', key: 'spawnedAgents' } as const, {} as SpawnedAgents)
 const relayOutbox = atom({ plugin: '50arms', key: 'relayOutbox' } as const, [] as PendingEvent[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] as AckInFlight)
@@ -240,9 +252,10 @@ async function carryAcrossConversation($: any): Promise<void> {
     mcpIds: read($, mcpIds),
     bootEngineId: read($, bootEngineId),
     turn: read($, turn),
-    subagentStopped: read($, subagentStopped),
+    finishedAgents: read($, finishedAgents),
     lastStamp: read($, lastStamp),
     pendingStart: read($, pendingStart),
+    mantraOwed: read($, mantraOwed),
     diskTold: read($, diskTold),
     diskMeasured: read($, diskMeasured),
     diskHome: read($, diskHome),
@@ -262,6 +275,9 @@ async function carryAcrossConversation($: any): Promise<void> {
     runningAgents: read($, runningAgents),
     reports: read($, reports),
     workMarks: read($, workMarks),
+    heldNotices: read($, heldNotices),
+    agentBriefs: read($, agentBriefs),
+    spawnedAgents: read($, spawnedAgents),
     relayOutbox: read($, relayOutbox),
     ackInFlight: read($, ackInFlight),
   }
@@ -296,9 +312,10 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, mcpIds, () => carried.mcpIds),
     update($, bootEngineId, () => carried.bootEngineId),
     update($, turn, () => carried.turn),
-    update($, subagentStopped, () => carried.subagentStopped),
+    update($, finishedAgents, () => carried.finishedAgents),
     update($, lastStamp, () => carried.lastStamp),
     update($, pendingStart, () => carried.pendingStart),
+    update($, mantraOwed, () => carried.mantraOwed),
     update($, diskTold, () => carried.diskTold),
     update($, diskMeasured, () => carried.diskMeasured),
     update($, diskHome, () => carried.diskHome),
@@ -318,6 +335,9 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, runningAgents, () => carried.runningAgents),
     update($, reports, () => carried.reports),
     update($, workMarks, () => carried.workMarks),
+    update($, heldNotices, () => carried.heldNotices),
+    update($, agentBriefs, () => carried.agentBriefs),
+    update($, spawnedAgents, () => carried.spawnedAgents),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
   ])
@@ -491,6 +511,22 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   // a watch that stopped on an error is not started again by every load: each restart would toast the failure again
   if (loaded.phase === 'signed-out' && !(await registrationRecentlyStopped($))) detach($, 'Machine registration', watchRegistration($))
   else if (loaded.phase === 'ready') await abortRegistrationWatch($)
+  // signed in, with its team agent: whatever the session's start could not tell it, it is told now
+  if (isSignedInWithAgent(loaded)) await giveOwedMantra($)
+}
+
+// A conversation whose start found the session without a usable key is owed the mantra once the session is signed in (and can ask for it). The owing is taken
+// here and becomes a pending start, told with the next prompt or tool result like a session start: a sign-in the person made at the band, the model's own approved
+// `session_connect` and a ready command's all end in a load, so this is the one place they meet.
+async function giveOwedMantra($: any): Promise<void> {
+  let owed = false
+  await update($, mantraOwed, cur => {
+    owed = cur
+    return false
+  })
+  if (!owed) return
+  const start: NonNullable<PendingStart> = { sessionId: String(await $.session.id()), source: SIGN_IN_SOURCE, transcriptPath: null, predecessorId: null }
+  await update($, pendingStart, cur => cur ?? start)
 }
 
 // a load that failed outside the load itself (its deadline, a throw): the view goes to the error phase, told once on the change into it.
@@ -1224,6 +1260,11 @@ type UsageReading = { limits: readonly SessionRateLimit[] } | { error: string }
 // THE signed-in test for the relay and the usage report: a loaded view (ready), or a refresh of a connected session (loading with the
 // plan still set: a refresh runs at every turn end, as session.measure fires). Signed-out and revoked views, an unloaded one and an error say no.
 const isSignedIn = (v: any): boolean => v.phase === 'ready' || (v.phase === 'loading' && v.connected !== null)
+
+// THE test for 50 Arms talking to the model about its work: signed in AND holding its team agent. The mantra's owing (applyLoaded) and every record/card
+// reminder (the sub-agent and side-session reminders, the handoff and no-recent-write ones) ask it, so a session that is not signed in hears only the sign-in invitation.
+const isSignedInWithAgent = (v: any): boolean => v.phase === 'ready' && v.agentBlock === null
+const signedInWithAgent = async ($: any): Promise<boolean> => isSignedInWithAgent(await read($, view))
 
 // send this session's rate-limit windows to 50 Arms. Every signed-in session reports, on a plan or not
 // (50 Arms places the session on an account from this report, then paces and resumes it); a session that is not signed in reports nothing and
@@ -2894,6 +2935,12 @@ async function onSessionConnect($: any, e: any, next: any) {
   if (e.registration_only === true) return next(e)
   const target = connectTargetOf(e.target)
   let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
+  // the model's own leave of a plan or card, accepted, is a natural break (a pause never is: the dashboard always gives it an expiry); the band's Disconnect (the plugin's own call) is a person's press and clears nothing
+  if (e.disconnect === true && target !== null && !raisedByPlugin(next.origin)) {
+    const outcome = answerOf(ran)
+    if (outcome.ok) clearAtBreak = true
+    await noteBreak($, outcome.ok ? 'flag-set' : 'leave-not-accepted', { call: 'session_connect', target: e.target, ...outcomeFacts(ran, outcome) })
+  }
   const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
   if (named !== null) ran = withNamedNote(ran, named)
   const registration = registrationOf(ran.text)
@@ -3033,11 +3080,11 @@ async function takePendingStart($: any): Promise<PendingStart> {
   return taken
 }
 
-async function takeSubagentStopped($: any): Promise<boolean> {
-  let taken = false
-  await update($, subagentStopped, cur => {
+async function takeFinishedAgents($: any): Promise<string[]> {
+  let taken: string[] = []
+  await update($, finishedAgents, cur => {
     taken = cur
-    return false
+    return []
   })
   return taken
 }
@@ -3047,11 +3094,13 @@ async function eventReminder($: any, event: DashboardEvent): Promise<string | nu
   return withinDeadline($, CONTEXT_DEADLINE_MS, readEventContext($, event), () => eventFailureLine(event, DEADLINE_REASON))
 }
 
-// the reminder to record finished sub-agents' results, handed with the main session's next action (a prompt or a tool result); none when no sub-agent stopped since the last one
-async function subagentStopEntries($: any): Promise<string[]> {
-  if (!(await takeSubagentStopped($))) return []
-  const line = await eventReminder($, 'sub_agent_stop')
-  return line === null ? [] : [line]
+// the finish of sub-agents, handed with the main session's next action (a prompt or a tool result): who finished (`extra`: one whose final task notice is this very prompt), then the
+// registry's `sub_agent_stop` text once; none when nothing finished since the last action
+async function subagentStopEntries($: any, extra: string[] = []): Promise<string[]> {
+  const labels = [...(await takeFinishedAgents($)), ...extra]
+  if (labels.length === 0) return []
+  const text = await eventReminder($, 'sub_agent_stop')
+  return text === null ? [] : [finishedAgentsText(labels, text)]
 }
 
 async function takeEndedSession($: any): Promise<string | null> {
@@ -3224,9 +3273,60 @@ async function wslHome($: any): Promise<string | null> {
 // archive that session once its work is finished (the registry's side_session_turn_end text). A finished sub-agent's reminder to record its result,
 // owed by the main session, rides this prompt too when it has not ridden a tool result.
 async function onPromptStamp($: any, e: any, next: any) {
+  const held = await holdInterimNotice($, e)
+  if (held !== null) return { drop: held }
   const entries = await clockDiskStartEntries($, true, 'prompt', MAIN_AGENT)
-  const side = isSideSessionNotice(e.text) ? await eventReminder($, 'side_session_turn_end') : null
-  return next({ ...e, context: [...(e.context ?? []), ...entries, ...(side === null ? [] : [side]), ...(await subagentStopEntries($))] })
+  const side = isSideSessionNotice(e.text) && (await signedInWithAgent($)) ? await eventReminder($, 'side_session_turn_end') : null
+  const finished = await finishNoticeLabel($, taskNoticeOf(e.origin, e.text))
+  return next({ ...e, context: [...(e.context ?? []), ...entries, ...(side === null ? [] : [side]), ...(await subagentStopEntries($, finished))] })
+}
+
+// An interim sub-agent notice (the sub-agent ended a turn with a command of its own still running) is kept from the model: it notifies again with its
+// result, and a wake-up for every interim one is a paid turn. The result for the same task, or the wait running out (releaseDueNotices), settles it.
+// Returns the reason shown to the person when the notice is held, else null (the prompt goes on). A reload cancels the timer, so each prompt re-arms it.
+async function holdInterimNotice($: any, e: any): Promise<string | null> {
+  const notice = taskNoticeOf(e.origin, e.text)
+  if (notice === null) {
+    await armNoticeRelease($)
+    return null
+  }
+  const now = await $.clock.now()
+  let holds = false
+  await update($, heldNotices, cur => {
+    const r = receive(cur, notice, e.text, now)
+    holds = r.holds
+    return r.held
+  })
+  await armNoticeRelease($)
+  return holds ? heldReason(notice.taskId) : null
+}
+
+let noticeTimer: { cancel: () => void } | null = null
+
+// One pending timer, a slice of the wait for the soonest held notice (a handle, so a module variable).
+async function armNoticeRelease($: any): Promise<void> {
+  const held = await read($, heldNotices)
+  const wait = nextWakeMs(held, await $.clock.now())
+  noticeTimer?.cancel()
+  noticeTimer = wait === null ? null : $.clock.after(wait, () => detach($, 'Held sub-agent notice', releaseDueNotices($)))
+}
+
+// The held notices whose wait is over are told to the model, as a prompt a plugin sends (it wakes an idle session and queues behind a running turn).
+async function releaseDueNotices($: any): Promise<void> {
+  noticeTimer = null
+  const now = await $.clock.now()
+  let due: HeldNotice[] = []
+  await update($, heldNotices, cur => {
+    const split = splitDue(cur, now)
+    due = split.due
+    return split.rest
+  })
+  await armNoticeRelease($)
+  for (const h of due) {
+    const text = releasedText(h, now)
+    const failure = await submitEvent($, text)
+    if (failure !== null) notToldToast($, failure, text)
+  }
 }
 
 // a tool call's result is never stamped (the time rides prompts only); the MAIN loop's result carries the session start, if any, the disk notice, and
@@ -3256,11 +3356,11 @@ async function onToolStamp($: any, e: any, next: any) {
   return { ...r, context: [...(r.context ?? []), ...(await clockDiskStartEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...stopped] }
 }
 
-// what the dashboard says of this session's plan. `silent`: nothing can be said, never a line: the plugin's server is not there, or
-// the session holds no key or a person revoked it (its own tools already tell the model). `failed`: the read itself broke (a dashboard fault).
+// what the dashboard says of this session's plan. `signed-out`: the session holds no usable key (never approved, or lapsed): a session start gives it the one sign-in invitation. `silent`:
+// nothing can be said, never a line: a person revoked its key, or the agent gate holds it (its own tools already tell the model). `failed`: the read itself broke (a dashboard fault).
 // `connected` carries the plan the session is on (the relay starts from it); `unreachable` is the plugin's server not connected yet (quiet to
 // the model, retried by the relay's start).
-type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connected' } | { kind: 'silent' } | { kind: 'unreachable' } | { kind: 'failed'; reason: string; refusal?: Refusal }
+type SessionPlan = { kind: 'connected'; planId: number } | { kind: 'not-connected' } | { kind: 'signed-out' } | { kind: 'silent' } | { kind: 'unreachable' } | { kind: 'failed'; reason: string; refusal?: Refusal }
 
 // The ONE place a key that is gone or revoked is made quiet (its own tools say so, never a failure line): this read is the first of every
 // context lookup, so a later read that finds the key gone in between is an ordinary failure line.
@@ -3277,6 +3377,7 @@ function meIsQuiet(r: Api): boolean {
 async function sessionPlan($: any): Promise<SessionPlan> {
   const r = await api($, 'GET', '/api/plan-sessions/me')
   if (r.unreachable === true) return { kind: 'unreachable' }
+  if (isSignedOut(r)) return { kind: 'signed-out' }
   // the agent gate holds the session (no team agent yet, or a resume after the agent was released): quiet here, because the dashboard's 403 {state, instruction} on the model's first dashboard call is what tells the model what to do
   if (meIsQuiet(r)) return { kind: 'silent' }
   if (!r.ok) return { kind: 'failed', reason: errText(r), refusal: r.refusal }
@@ -3451,13 +3552,16 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   if (event === null) return start.source === 'clear' ? clearNotice($, start) : null
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
   const connected = await isPlanConnected($, start.sessionId)
-  const askRestart = start.source !== 'compact' && !isFreshStart(start)
+  // a sign-in's start is the same session going on: it asks no restart notice
+  const askRestart = start.source !== 'compact' && start.source !== SIGN_IN_SOURCE && !isFreshStart(start)
   const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return null
   if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)
+    // a key that works asks for the mantra now; one that does not leaves the conversation owing it (giveOwedMantra)
+    if (plan.kind !== 'failed' && plan.kind !== 'unreachable') await update($, mantraOwed, () => plan.kind === 'signed-out' || plan.kind === 'silent')
     if (plan.kind === 'connected') {
       const line = await eventContext($, event)
       // a compaction, and a compaction by clear, are followed by the resume briefing, in the same first turn as the registry's text
@@ -3467,7 +3571,8 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
     if (plan.kind === 'failed') return fault(plan.reason)
     // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
     if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
-    // a signed-out session is the one a restart leaves without a key: the notice is for it too
+    // a signed-out resume is the one a restart leaves without a key: the notice is for it. A signed-out startup carries the one invitation to sign in and nothing else: no notice, no lookup, no failure line
+    if (plan.kind === 'signed-out') return start.source === 'startup' ? { line: SIGN_IN_INVITATION, askRestart: false } : { line: null, askRestart }
     return { line: null, askRestart }
   }
   const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
@@ -3576,14 +3681,15 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   // a process's first start is read after the carried values are back, so a /clear (which carries it) is never one
   const firstOfProcess = !(await read($, startSeen))
   await update($, startSeen, () => true)
-  const clearedForCompaction = await takeCompactionClearMark($, e, firstOfProcess)
+  const clearedHolds = await takeCompactionClearMark($, e, firstOfProcess)
+  const clearedForCompaction = clearedHolds !== null
   const start: NonNullable<PendingStart> = {
     sessionId: e.session_id,
     source: e.source,
     transcriptPath: path,
     predecessorId: ended,
     ...(loopResetting && e.source === 'clear' ? { loopReset: true as const } : {}),
-    ...(clearedForCompaction ? { compactionClear: true as const } : {}),
+    ...(clearedHolds !== null ? { compactionClear: true as const, reconnect: clearedHolds.holds } : {}),
   }
   await update($, pendingStart, () => start)
   // a compaction that ends while no turn runs (the plugin's own after a ready, or a typed /compact) leaves nothing to carry the briefing: the plugin starts the turn, but only for
@@ -3594,6 +3700,21 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   return below
 }
 
+// `session_connect` to each target a cleared session held, as the model would; the refusals, one per target that did not connect. The plan view is read again either way.
+async function reconnectHeld($: any, targets: string[]): Promise<string[]> {
+  const failed: string[] = []
+  for (const target of targets) {
+    try {
+      const outcome = connectToolOutcome(await $.mcp.call(SERVER, 'session_connect', { target }))
+      if (!outcome.ok) failed.push(`${target}: ${refusalText(outcome)}`)
+    } catch (err: any) {
+      failed.push(`${target}: ${errMessage(err).slice(0, CALL_ERROR_MAX)}`)
+    }
+  }
+  detach($, 'Plan refresh', refresh($, true))
+  return failed
+}
+
 // the main agent's resume prompt, by the relay's one prompt path (submitEvent). Only a session on a plan gets one (its connection record is on disk, as
 // isPlanConnected says; any other session stays quiet). The pending start is TAKEN first, so the briefing it renders is in this prompt and the prompt's own
 // stamp hook finds none (told once). A turn that began while the reads ran is the person's: the built briefing goes into that running turn as a note (no prompt queues
@@ -3601,14 +3722,21 @@ async function onClassicSessionStart($: any, e: any, next: any) {
 async function resumeAfterCompaction($: any): Promise<void> {
   // checked before the start is taken: a session that is not on a plan leaves it for the prompt or tool result that tells it (or nothing)
   const pending = await read($, pendingStart)
-  if (pending === null || !(await isPlanConnected($, pending.sessionId))) return
+  if (pending === null) return
+  const owed = pending.reconnect ?? []
+  const connected = await isPlanConnected($, pending.sessionId)
+  if (!connected && owed.length === 0) return
   const start = await takePendingStart($)
   if (start === null) return
+  // a clear that left the session unconnected (the new conversation has no connection record): it is connected again to what it held, and told when that was refused
+  const reconnectFailures = connected ? [] : await reconnectHeld($, owed)
   // the procedure needs no dashboard read: a start whose reads failed (only a warning line) or said nothing (no text at all: a key the dashboard is quiet for, a plugin server that is not loaded) still tells the agent how to resume
   const { procedure, opening } = RESUME_TEXTS[briefingKindOf(start) ?? 'compacted']
   const rendered = await renderStart($, start)
-  const text = rendered === null ? opening : rendered.includes(procedure) ? rendered : `${rendered}
+  const briefing = rendered === null ? opening : rendered.includes(procedure) ? rendered : `${rendered}
 ${opening}`
+  const text = reconnectFailures.length === 0 ? briefing : `${briefing}
+The clear left you unconnected and reconnecting failed (${reconnectFailures.join('; ')}): call session_connect for what you held first.`
   if ((await read($, turn)).isRunning) {
     // by the relay's one note path, so a turn that ends with no tool result after it still tells the briefing as a prompt
     if ((await appendTrackedNote($, text)) !== null) await restoreStart($, start)
@@ -3630,6 +3758,10 @@ async function restoreStart($: any, start: NonNullable<PendingStart>): Promise<v
 // and, first, the registry's sub_agent_start text when its parent session is on a plan
 async function onSubagentStart($: any, e: any, next: any) {
   await noteRunningAgent($, e.agent_id, true)
+  if (typeof e.agent_id === 'string' && e.agent_id !== '') {
+    const now = await $.clock.now()
+    await update($, agentBriefs, cur => briefClaimed(cur, e.agent_id, now))
+  }
   const r = await onSubagentChange($, e, next, true)
   // its activity row opens
   detach($, '50 Arms activity report', reportSubagentStart($, e))
@@ -3640,19 +3772,43 @@ async function onSubagentStart($: any, e: any, next: any) {
 
 async function onSubagentStop($: any, e: any, next: any) {
   await noteRunningAgent($, e.agent_id, false)
+  const id = typeof e.agent_id === 'string' && e.agent_id !== '' ? e.agent_id : null
+  const agent = id === null ? undefined : (await read($, spawnedAgents))[id]
+  const by = announcedBy(agent)
+  // read before the brief ends: it names the cards a foreground agent's finish carries
+  const cards = id === null || by !== 'stop' ? [] : ((await read($, agentBriefs)).byAgent[id] ?? [])
+  // a background agent's brief stays until its final notice ends it: a stop is no end for it (it fires at every turn's end, and the agent may only be waiting on background work)
+  if (id !== null && by !== 'notice') await update($, agentBriefs, cur => briefEnded(cur, id))
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
-  // the reminder is for the MAIN session that started the sub-agent: context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn, and a message of
-  // its own to the main session costs a turn per sub-agent. It is owed here and handed with the main session's next tool result or prompt (subagentStopEntries), one for all that stopped.
-  await update($, subagentStopped, () => true)
+  // the finish is for the MAIN session that started the sub-agent: context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn, and a message of
+  // its own to the main session costs a turn per sub-agent. It is owed here and handed with the main session's next tool result or prompt (subagentStopEntries), one text for all that finished.
+  // Only a foreground sub-agent's stop is its finish (announcedBy): a background one's is its task notice (finishNoticeLabel), which the engine sends only when no work of its own is left.
+  if (by === 'stop' && agent !== undefined && id !== null && (await signedInWithAgent($))) {
+    const label = finishedAgentLabel(id, agent, cards)
+    await update($, finishedAgents, cur => [...cur, label])
+  }
   return r
+}
+
+// A final task notice for a sub-agent the main loop spawned in the background is that agent's finish (an interim notice is held before it gets here): the
+// finish rides the notice's own prompt (with the registry's `sub_agent_stop` text). The agent's brief ends with it, so a resume that ends again names no stale card.
+async function finishNoticeLabel($: any, notice: TaskNotice | null): Promise<string[]> {
+  if (notice === null || notice.interim) return []
+  const agent = (await read($, spawnedAgents))[notice.taskId]
+  if (announcedBy(agent) !== 'notice' || agent === undefined || !(await signedInWithAgent($))) return []
+  const cards = (await read($, agentBriefs)).byAgent[notice.taskId] ?? []
+  await update($, agentBriefs, cur => briefEnded(cur, notice.taskId))
+  return [finishedAgentLabel(notice.taskId, agent, cards)]
 }
 
 // the main loop's turn ended (a sub-agent's `turn.complete` carries its agentId and is not this).
 async function onTurnComplete($: any, e: any, next: any) {
   const r = await next(e)
   if (e.agentId === undefined) {
+    // a break is waiting for this turn end: the record shows the host raised the event (a missing turn-complete after a flag-set means it did not, or a step below threw before the decision)
+    if (clearAtBreak) await noteBreak($, 'turn-complete', { isAborted: e.isAborted === true, reason: e.reason })
     // `prompts` is set inside the updater, which sees the turn as it is when the write happens
     let prompts = [] as string[]
     await update($, turn, cur => {
@@ -3667,6 +3823,7 @@ async function onTurnComplete($: any, e: any, next: any) {
     await armKeepalive($, false)
     // the agent's ready, said during this turn, starts the compaction now that the turn is over
     await syncCompaction($, { start: true })
+    await clearAtNaturalBreak($)
     // a person's Stop takes the session off the ready list; any other turn's end is when finished work is noticed
     if (e.isAborted === true && (await read($, readyLoop)) !== null) detach($, 'Ready list', leaveReady($, READY_STOPPED))
     else detach($, 'Ready list', syncReady($))
@@ -3944,8 +4101,7 @@ async function reportCompactionEnd($: any): Promise<void> {
 // A plan or card connect landed (a first connect, a move or a reconnect): the dashboard's row has no activity yet, or a stale one, so the session's current
 // activity is sent now. The view is not loaded yet at this point (its refresh is detached), so the send does not wait on it.
 async function reportActivityOnConnect($: any): Promise<void> {
-  const now = await $.clock.now()
-  const busy = liveCompacting(await read($, compacting), now).main !== null
+  const busy = await mainIsCompacting($)
   await sendTurnActivity($, busy ? 'compacting' : (await read($, turn)).isRunning ? 'in_turn' : 'idle')
 }
 
@@ -3986,10 +4142,11 @@ async function reportSubagentEnd($: any, agentId: string): Promise<void> {
 async function reportShellStart($: any, e: any, r: any): Promise<void> {
   const taskId = r.deny === undefined ? r.result?.backgroundTaskId : undefined
   if (typeof taskId !== 'string' || taskId === '') return
+  // every signed-in session reports its shells, plan or card or neither, the same rule its sub-agent rows follow
+  if ((await reportingState($)) !== 'on') return
   const planId = await openingPlan($)
-  if (planId === null) return
   const now = await $.clock.now()
-  await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId], planId }))
+  await update($, reports, cur => ({ ...cur, shells: [...cur.shells.filter(s => s !== taskId), taskId], planId: planId ?? cur.planId }))
   postActivity($, [shellRow(taskId, labelOf(e.description), now, null)])
 }
 
@@ -4069,11 +4226,13 @@ async function readReadyCards($: any): Promise<ReadyRead> {
   let heldSkipped: string | null = null
   if (!detail.ok) heldSkipped = errText(detail)
   else {
-    const idle = heldIdleOf(detail.body, liveMarks(await read($, workMarks), await $.clock.now()))
+    const idle = heldIdleOf(detail.body, new Set([...liveMarks(await read($, workMarks), await $.clock.now()), ...briefedCards(await read($, agentBriefs), await read($, runningAgents))]))
     if (idle.ok) held = idle.value
     else heldSkipped = idle.reason
   }
-  return { kind: 'cards', cards, reviewable, held, heldSkipped }
+  // a ready card a running sub-agent of the session was briefed on is being worked: it is left out, and with every card left out the report says nothing
+  const worked = briefedCards(await read($, agentBriefs), await read($, runningAgents))
+  return { kind: 'cards', cards: cards.filter(c => !worked.has(c.id)), reviewable, held, heldSkipped }
 }
 
 // the main session's stop. Reports the shells' ends, then blocks the stop once while the plan has ready cards nobody holds.
@@ -4107,6 +4266,9 @@ let compactionFaultTold: string | null = null
 // true from the moment the plugin has decided to run a /clear until it has ended: the ready loop's released clear and a compaction by clear are never in progress together, whichever decided first
 // (the decision and this flag are set with no await between them)
 let clearInProgress = false
+// the model left its plan or card, and the session is at a natural break: the next main turn end clears it when nothing runs. Set by the model's own call that the
+// dashboard accepted; spent at that turn end whether or not it cleared (work still running means nothing new happens). A module variable, not $.state: a clear ends it either way.
+let clearAtBreak = false
 // the relay-older-than-plugin notice last shown (null while the control is whole); shown once, and again if it changes or the session returns to a whole control and falls back
 let relayOlderTold: string | null = null
 // the person was told once that the engine's release could not be read, so sub-agent compaction waits for the first compaction event
@@ -4272,6 +4434,11 @@ async function armSubAgents($: any, file: ControlFile): Promise<void> {
   await update($, armedPercent, () => wanted)
 }
 
+// whether the main agent's compaction is running: its entry stands from the moment core starts it until the session restarts from it (or it is skipped, fails, or outlives its TTL)
+async function mainIsCompacting($: any): Promise<boolean> {
+  return liveCompacting(await read($, compacting), await $.clock.now()).main !== null
+}
+
 // The file's unexpired release, if the plugin has not spent it: spent now (kept in $.store, so one release is acted on once however many turns follow) and returned.
 async function spendReadyRelease($: any, file: ControlFile): Promise<string | null> {
   // the record names the release and the desktop session (never the engine id, which a clear moves): a clear that ends the process leaves a new process with a new engine id and an empty $.state, whose relay names its file
@@ -4299,14 +4466,20 @@ async function spendReadyRelease($: any, file: ControlFile): Promise<string | nu
 // /compact, which the host runs once the session is idle. Never from inside a turn or a command hook. The file's unexpired release is the ready.
 // The compaction reaches PreCompact and `session.compact` as trigger `manual`. The command takes no arguments: the control carries no instructions.
 // A failure is one line to the person, and the dashboard re-asks once the release has expired.
-// With the team's `clear` mode the compaction is a clear instead: the conversation resets, the handoff lives on the cards, and the new conversation is briefed to resume from them (onClassicSessionStart).
-// A /compact can run beside a sub-agent (it carries on through one); a /clear would end its work, so it waits for the session to be as idle as the ready loop's clear needs: no sub-agent and no background
-// command. It waits BEFORE spending the release, so the next check (every COMPACTION_IDLE_CHECK_MS) tries again while the release lasts.
+// A control `mode` of `clear` is the main agent's own choice (it said `clear: true` on its ready, only when it knew nothing runs): the compaction is a clear instead, the conversation resets, the handoff lives on the cards,
+// and the new conversation is briefed to resume from them (onClassicSessionStart).
+// A /compact can run beside a sub-agent (it carries on through one); a /clear would end its work. So a `clear` ready that finds a sub-agent or a background command running compacts instead, and never waits:
+// the agent's choice was a clear only for a session with nothing running, and a busy one must still shrink on time.
 // Nothing starts while a /clear is in progress (the ready loop's, or an earlier compaction's): its release stays in the file for the next check.
 async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
   if (clearInProgress) return
-  const clears = file.kind === 'control' && file.control !== null && file.control.mode === 'clear'
-  if (clears && !(await sessionIsIdleForClear($))) return
+  // the main agent's compaction is already running, so it has already done what this ready asked for: the release is spent without a second /compact or a /clear, as a person's own /compact
+  // spends a waiting ready. A later release acts as usual
+  if (await mainIsCompacting($)) {
+    await spendReadyRelease($, file)
+    return
+  }
+  const clears = file.kind === 'control' && file.control !== null && file.control.mode === 'clear' && (await sessionIsIdleForClear($))
   if (!clears) {
     if ((await spendReadyRelease($, file)) === null) return
     detach($, 'Compaction', $.command.run({ command: 'compact' }))
@@ -4322,7 +4495,85 @@ async function startReadyCompaction($: any, file: ControlFile): Promise<void> {
     if (spent === null) clearInProgress = false
   }
   if (spent === null) return
-  detach($, 'Compaction clear', clearForCompaction($, spent))
+  detach($, 'Compaction clear', clearForCompaction($, spent, await heldTargets($)))
+}
+
+// the turn ended after the model left its plan or card: clear the session when nothing runs (no sub-agent, no background command), as the ready loop's own clear needs. The break is spent here
+// whatever happens. Left to others: a ready-list session (its loop owns the clear), a compaction already running, and a /clear in progress. A failed /clear is one line to the person.
+async function clearAtNaturalBreak($: any): Promise<void> {
+  if (!clearAtBreak) return
+  clearAtBreak = false
+  // each gate's value, read once, is recorded with the outcome
+  const gates = {
+    inProgress: clearInProgress,
+    readyLoop: (await read($, readyLoop)) !== null,
+    compacting: await mainIsCompacting($),
+    turnRunning: (await read($, turn)).isRunning,
+    agents: (await read($, runningAgents)).length,
+    shells: (await read($, readyShells)).length,
+  }
+  if (gates.inProgress || gates.readyLoop || gates.compacting || gates.turnRunning || gates.agents > 0 || gates.shells > 0 || clearInProgress) {
+    await noteBreak($, 'skipped', gates)
+    return
+  }
+  clearInProgress = true
+  // the leave's own refresh may still be loading: what the session holds is read after it, never from a view that still shows what it left
+  let holds: string[]
+  try {
+    await refresh($, true)
+    holds = await heldTargets($)
+  } catch (err) {
+    clearInProgress = false
+    throw err
+  }
+  // written before the clear: a clear that ends the process leaves no later chance to write
+  await noteBreak($, 'clear-attempted', { ...gates, holds })
+  detach($, 'Natural-break clear', clearCommandOnce($, holds))
+}
+
+// what the session holds now, as the targets `session_connect` names: its plan, and its card
+async function heldTargets($: any): Promise<string[]> {
+  const v = await read($, view)
+  return [...(v.connected === null ? [] : [planTarget(v.connected.id)]), ...(v.card === null ? [] : [v.card.id])]
+}
+
+// A session that holds nothing (the leave was of the only thing it held) has nothing to brief or reconnect: it gets the plain /clear. One that still holds a plan or card gets the compaction by
+// clear's own path: the cleared resume briefing, and a reconnect to what it held when the clear left it unconnected.
+async function clearCommandOnce($: any, holds: string[]): Promise<void> {
+  try {
+    if (holds.length === 0) {
+      const { failure } = await clearCommand($)
+      if (failure !== null) throw new Error(failure)
+    } else await clearForCompaction($, 'natural-break', holds)
+    await noteBreak($, 'clear-done', {})
+  } catch (err: any) {
+    await noteBreak($, 'clear-failed', { error: errMessage(err).slice(0, 300) })
+    throw err
+  } finally {
+    clearInProgress = false
+  }
+}
+
+// What a natural-break decision leaves for an agent to read afterwards (the plugin has no log): the newest NATURAL_BREAK_KEEP entries, one `$.store` key, so the file is
+// ~/.claude/plugins/store/<plugin>-<hash>.json, the one `$.store` writes (`50arms_inline-*.json` for the preview folder, `50arms_50arms-*.json` for the cache copy). It never throws:
+// a diagnostic that failed must not turn a clear into a failure.
+const NATURAL_BREAK_KEY = 'naturalBreakLog'
+const NATURAL_BREAK_KEEP = 60
+async function noteBreak($: any, stage: string, facts: Record<string, unknown>): Promise<void> {
+  try {
+    const at = new Date(await $.clock.now()).toISOString()
+    const prior = await storeOp($, { op: 'get', key: NATURAL_BREAK_KEY })
+    const entries = Array.isArray(prior) ? prior : []
+    const entry = { at, stage, session: await hostSessionId($), engineSession: await $.session.id(), ...facts }
+    await storeOp($, { op: 'set', key: NATURAL_BREAK_KEY, value: [...entries, entry].slice(-NATURAL_BREAK_KEEP) })
+  } catch (err: any) {
+    $.ui.toast(`50 Arms: the natural-break record could not be written: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+  }
+}
+
+// how the host handed a call's answer to the hook: the fields answerOf reads, with a head of the text
+function outcomeFacts(ran: any, outcome: { ok: boolean; status: number }): Record<string, unknown> {
+  return { ok: outcome.ok, status: outcome.status, isError: ran?.isError === true, denied: ran?.deny !== undefined, hasText: typeof ran?.text === 'string', textHead: typeof ran?.text === 'string' ? ran.text.slice(0, 160) : null }
 }
 
 const sessionIsIdleForClear = async ($: any): Promise<boolean> => (await readyIsIdle($)) && (await read($, readyShells)).length === 0
@@ -4330,18 +4581,18 @@ const sessionIsIdleForClear = async ($: any): Promise<boolean> => (await readyIs
 // the plugin's own clear for a compaction, run with `clearInProgress` already taken by startReadyCompaction and given back here. The start of the conversation it opens must resume, so a mark is made first: in $.state
 // (the clear's own start, in this process) and in $.store (a clear that ends the process: the new process's first start takes it, takeCompactionClearMark). A failure is one line to the person (detach), and the
 // dashboard re-asks once the release has expired.
-async function clearForCompaction($: any, releaseId: string): Promise<void> {
+async function clearForCompaction($: any, releaseId: string, holds: string[]): Promise<void> {
   const host = await hostSessionId($)
   const now = await $.clock.now()
-  await update($, compactionClear, () => true)
-  if (host !== null) await storeOp($, { op: 'set', key: compactionClearMarkKey(host), value: { releaseId, at: now, until: now + CLEAR_MARK_TTL_MS } })
+  await update($, compactionClear, () => holds)
+  if (host !== null) await storeOp($, { op: 'set', key: compactionClearMarkKey(host), value: { releaseId, at: now, until: now + CLEAR_MARK_TTL_MS, holds } })
   try {
     const { failure } = await clearCommand($)
     if (failure !== null) throw new Error(failure)
   } finally {
     clearInProgress = false
     // a clear that did not happen raised no start to take the marks; one that did has them taken already
-    await update($, compactionClear, () => false)
+    await update($, compactionClear, () => null)
     if (host !== null) await storeOp($, { op: 'delete', key: compactionClearMarkKey(host) })
   }
 }
@@ -4349,17 +4600,18 @@ async function clearForCompaction($: any, releaseId: string): Promise<void> {
 // The marks of a compaction clear for the start `e` of a conversation: the one in $.state (a /clear start in the process that ran the clear) and this desktop session's own in $.store (the clear's own start, or the first start of
 // a new process, any source: the clear ended the process that made the mark). Only this session's own key is read, taken and deleted (an expired one is dropped without a resume), so another session's mark is never touched
 // and one mark resumes one start. A host with no host id has no store mark.
-async function takeCompactionClearMark($: any, e: any, firstOfProcess: boolean): Promise<boolean> {
-  const own = e.source === 'clear' && (await read($, compactionClear))
-  if (own) await update($, compactionClear, () => false)
-  if (!own && !firstOfProcess) return false
+async function takeCompactionClearMark($: any, e: any, firstOfProcess: boolean): Promise<{ holds: string[] } | null> {
+  const own = e.source === 'clear' ? await read($, compactionClear) : null
+  if (own !== null) await update($, compactionClear, () => null)
+  if (own === null && !firstOfProcess) return null
+  const ours = own === null ? null : { holds: own }
   const host = await hostSessionId($)
-  if (host === null) return own
+  if (host === null) return ours
   const key = compactionClearMarkKey(host)
   const mark = clearMarkOf(await storeOp($, { op: 'get', key }))
-  if (mark === null) return own
+  if (mark === null) return ours
   await storeOp($, { op: 'delete', key })
-  return own || mark.until > (await $.clock.now())
+  return ours ?? (mark.until > (await $.clock.now()) ? { holds: mark.holds } : null)
 }
 
 // The agent's ready is written to the control file by the relay, after its tool call returned, so it can land after the turn that made it already ended (an idle
@@ -4574,7 +4826,19 @@ export const register: Register = (on, options) => {
   on('turn.step', { agentId: /.+/ }, noteAgentStep)
   on('session.measure', onMeasure)
   // usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
-  on('agent.spawn', ($, e, next) => spawnGuard(pacingEnv($))(e, next))
+  on('agent.spawn', async ($, e, next) => {
+    const started = await spawnGuard(pacingEnv($))(e, next)
+    if (started.deny === undefined) {
+      const now = await $.clock.now()
+      await update($, agentBriefs, cur => briefSpawned(cur, e.prompt, now))
+      // the spawn's answer is the one place the new agent's id is known before its start: what its finish notice needs is kept under it
+      if (typeof started.agentId === 'string' && started.agentId !== '') {
+        const spawned = { description: typeof e.description === 'string' ? e.description : '', background: e.background === true, direct: e.parentAgentId === undefined }
+        await update($, spawnedAgents, cur => spawnedAfter(cur, started.agentId, spawned))
+      }
+    }
+    return started
+  })
   on('classic.SubagentStart', onSubagentStart)
   on('classic.SubagentStop', onSubagentStop)
   on('classic.SessionStart', onClassicSessionStart)

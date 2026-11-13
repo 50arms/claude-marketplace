@@ -6,9 +6,9 @@
 // pause-neutral read (every other call carrying the session header to a card or plan route is the agent's own call and ends its pause).
 export const PAUSE_PATH = '/api/plan-sessions/me/pause'
 
-export type PauseRead = { kind: 'free' } | { kind: 'nothing' } | { kind: 'paused'; reason: string; until: number; waitsOn: string | null } | { kind: 'failed'; reason: string }
+export type PauseRead = { kind: 'free' } | { kind: 'nothing' } | { kind: 'paused'; reason: string; until: number | null; waitsOn: string | null } | { kind: 'failed'; reason: string }
 
-// The answer of one read at wall-clock `now` (epoch ms). Only an unexpired AGENT pause quiets a hook: no pause, a usage-limit pause (its own
+// The answer of one read at wall-clock `now` (epoch ms). Only an unexpired (or untimed) AGENT pause quiets a hook: no pause, a usage-limit pause (its own
 // mechanism, which the hooks never keyed on) and an agent pause past its expiry (the server ends it on its next tick) are all free.
 export function pauseOf(body: unknown, now: number): PauseRead {
   const pause = (body as { pause?: unknown } | null)?.pause
@@ -16,10 +16,13 @@ export function pauseOf(body: unknown, now: number): PauseRead {
   if (pause === undefined || typeof pause !== 'object') return { kind: 'failed', reason: `bad_response: GET ${PAUSE_PATH} answered no pause field` }
   const p = pause as { limit?: unknown; until?: unknown; reason?: unknown; waits_on?: unknown }
   if (p.limit !== 'agent') return { kind: 'free' }
+  // a pause that waits on an event (`pacing`, `person`, `dependency`) has `until: null` and ends only on that event, so it is paused, never expired
+  const untimed = p.until === null
   const until = typeof p.until === 'string' ? Date.parse(p.until) : NaN
-  if (Number.isNaN(until) || typeof p.reason !== 'string') return { kind: 'failed', reason: `bad_response: GET ${PAUSE_PATH} answered an agent pause with no expiry or reason` }
+  if ((!untimed && Number.isNaN(until)) || typeof p.reason !== 'string') return { kind: 'failed', reason: `bad_response: GET ${PAUSE_PATH} answered an agent pause with no end time (null or a date) or no reason` }
   // `waits_on` names what the pause waits on (`pacing`: a sub-agent slot held back by usage pacing); the title's hourglass reads it
   const waitsOn = typeof p.waits_on === 'string' ? p.waits_on : null
+  if (untimed) return { kind: 'paused', reason: p.reason, until: null, waitsOn }
   return until > now ? { kind: 'paused', reason: p.reason, until, waitsOn } : { kind: 'free' }
 }
 

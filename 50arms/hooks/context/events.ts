@@ -7,13 +7,21 @@ import { mcpText } from '../plan/mcp'
 // The wording is a 50 Arms registry row (`GET /api/reminders/event/:event`, the `plan_restart.waiting_events` reminder); this file
 // carries no wording of its own but the two failure lines.
 
-// 50 Arms' events whose text the plugin tells. A SessionStart `source` of `clear` or `fork` has none: it is told nothing. The last two are reminders
-// that ride the main session's next action: a sub-agent stopped, a side session ended a turn.
+// 50 Arms' events whose text the plugin tells. A SessionStart `source` of `clear` or `fork` has none: it is told nothing. A session that signs in after its start is told `session_start`.
+// The last two are reminders that ride the main session's next action: a sub-agent stopped, a side session ended a turn.
 export type DashboardEvent = 'session_start' | 'session_resume' | 'after_compaction' | 'sub_agent_start' | 'sub_agent_stop' | 'side_session_turn_end'
+
+// The `source` of the pending start a sign-in leaves: the conversation began without a usable key, so the session start's text was not told then and is told now.
+export const SIGN_IN_SOURCE = 'sign-in'
+
+// What a session that has no usable key is told at its start, in place of every 50 Arms event text: the plugin's own line, because 50 Arms cannot be asked before the sign-in.
+export const SIGN_IN_INVITATION =
+  "50 Arms is installed in this session. When the person wants to plan or build something, you may mention once that 50 Arms can track it as a plan with cards, and that the Sign in button on the 50 Arms band connects this session. Don't push it, and continue normally if they don't sign in."
 
 export function sessionEvent(source: unknown): DashboardEvent | null {
   switch (source) {
     case 'startup':
+    case SIGN_IN_SOURCE:
       return 'session_start'
     case 'resume':
       return 'session_resume'
@@ -56,7 +64,8 @@ export function eventText(r: Api): Told {
   if (!r.ok) return { kind: 'failed', reason: errText(r) }
   const text = r.body?.effective_text
   if (typeof text !== 'string') return { kind: 'failed', reason: 'bad_response: the dashboard answered no effective_text' }
-  if (text === '') return { kind: 'failed', reason: 'empty_response: the dashboard returned an empty text' }
+  // an empty text is the registry saying there is nothing to tell for this event (e.g. sub_agent_start), not a failed lookup
+  if (text === '') return { kind: 'nothing' }
   return { kind: 'text', text }
 }
 

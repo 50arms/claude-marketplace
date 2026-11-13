@@ -45,8 +45,8 @@ export type GateControl = {
   windowTokens: number
   releaseUntilMs: number | null
   releaseId: string | null
-  // what the plugin does once the agent says ready: `compact` runs Claude Code's /compact, `clear` clears the conversation (the team's compaction setting, which the dashboard sends and the relay writes).
-  // A file with no `mode` is a relay older than the setting: it never cleared, so it reads as `compact`.
+  // what the plugin does once the agent says ready: `compact` runs Claude Code's /compact, `clear` clears the conversation when nothing runs in the session (the main agent's own choice, `clear: true` on its ready, which the dashboard sends and the relay writes).
+  // A file with no `mode` is a relay older than the choice: it never cleared, so it reads as `compact`.
   mode: CompactionMode
   // null when the relay that wrote the file is older than this plugin and wrote no `agents` or no `valves` (relay 0.1.311 wrote neither, 0.1.315-0.1.317 only `agents`): the
   // MAIN agent's handshake above is complete without them, and every sub-agent feature (arming, asks, the per-agent gate) is off. Claude Code hot-loads a new plugin version into a
@@ -96,12 +96,13 @@ export const usedReleaseKey = (hostId: string | null, releaseId: string): string
 // dropped with it. It names the release it was written for and when it expires, so a mark the new process never found cannot resume a much later start. A host with no host id (a terminal) writes none.
 export const CLEAR_MARK_PREFIX = 'compaction-clear-mark:'
 export const CLEAR_MARK_TTL_MS = 10 * 60_000
-export type ClearMark = { releaseId: string; at: number; until: number }
+// `holds`: the targets (`PLAN-n`, a card id) the session held when the clear began, which the new conversation is reconnected to if the clear left it unconnected
+export type ClearMark = { releaseId: string; at: number; until: number; holds: string[] }
 export const compactionClearMarkKey = (hostId: string): string => `${CLEAR_MARK_PREFIX}${hostId}`
 // the mark a stored record is, null for anything else
 export function clearMarkOf(record: unknown): ClearMark | null {
   const r = record as Partial<ClearMark> | null | undefined
-  return r !== null && r !== undefined && typeof r === 'object' && typeof r.releaseId === 'string' && typeof r.at === 'number' && typeof r.until === 'number' ? (r as ClearMark) : null
+  return r !== null && r !== undefined && typeof r === 'object' && typeof r.releaseId === 'string' && typeof r.at === 'number' && typeof r.until === 'number' && Array.isArray(r.holds) && r.holds.every(h => typeof h === 'string') ? (r as ClearMark) : null
 }
 // The session a per-session record key belongs to (a session id holds no ':').
 const sessionOfKey = (key: string, prefix: string): string => key.slice(prefix.length).split(':')[0]

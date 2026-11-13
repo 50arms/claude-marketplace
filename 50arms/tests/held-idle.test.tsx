@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // a failed or slow read never blocks.
 import { describe, expect } from 'claude-code/testing'
 
-import { WORK_MARK_TTL_MS, heldIdleOf, heldIdleReason, liveMarks, marksAfter } from '../hooks/reports/held-idle'
+import { BRIEF_PENDING_TTL_MS, NO_BRIEFS, WORK_MARK_TTL_MS, briefClaimed, briefEnded, briefSpawned, briefedCards, cardIdsIn, heldIdleOf, heldIdleReason, liveMarks, marksAfter } from '../hooks/reports/held-idle'
 import { READY_CARDS_DEADLINE_MS, blockReason } from '../hooks/reports/ready-cards'
 import { test, SURFACES, answerReportEvents, dashboard, startSession } from './plan-kit'
 
@@ -37,6 +37,21 @@ describe('held idle (pure)', () => {
     expect(marksAfter(set, 'DELETE', '/api/work-marks', MARK, 2000)).toEqual({})
     expect([...liveMarks(set, 1000 + WORK_MARK_TTL_MS - 1)]).toEqual(['DX-1'])
     expect([...liveMarks(set, 1000 + WORK_MARK_TTL_MS)]).toEqual([])
+  })
+
+  test("a card a running sub-agent was briefed on is worked; an agent that ended, or a stale unclaimed brief, covers nothing (CP-49)", () => {
+    expect(cardIdsIn('Build DX-1 and CP-49, then DX-1 again; not xDX-2y or 12')).toEqual(['DX-1', 'CP-49'])
+    expect(cardIdsIn(undefined)).toEqual([])
+    let b = briefSpawned(NO_BRIEFS, 'work DX-1', 0)
+    b = briefSpawned(b, 'explore the repo', 1)
+    b = briefClaimed(b, 'a1', 2)
+    b = briefClaimed(b, 'a2', 3)
+    expect([...briefedCards(b, ['a1'])]).toEqual(['DX-1'])
+    expect([...briefedCards(b, ['a2'])]).toEqual([])
+    expect([...briefedCards(b, [])]).toEqual([])
+    expect([...briefedCards(briefEnded(b, 'a1'), ['a1'])]).toEqual([])
+    const stale = briefClaimed(briefSpawned(NO_BRIEFS, 'work DX-1', 0), 'a1', BRIEF_PENDING_TTL_MS)
+    expect([...briefedCards(stale, ['a1'])]).toEqual([])
   })
 
   test('the reason names at most five cards, counts the rest and gives the release call', () => {
@@ -95,6 +110,31 @@ for (const surface of SURFACES) {
       expect((await $.classic.Stop(STOP)).block).toBeUndefined()
       await $.tool.call({ tool: API, method: 'DELETE', path: '/api/work-marks', body: { resource: MARK.resource } })
       expect((await $.classic.Stop(STOP)).block).toBe(reason('DX-1'))
+    })
+
+    test('a card a running sub-agent was briefed on does not block the stop; once none runs, it does (CP-49)', async ($, on) => {
+      on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
+      const d = await started($, on)
+      d.world.heldRows = [held('DX-1', null), held('DX-2', null)]
+      await $.agent.spawn({ prompt: 'Build DX-1 on its branch', subagentType: 'general-purpose' })
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
+      expect((await $.classic.Stop(STOP)).block).toBe(reason('DX-2'))
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] })
+      expect((await $.classic.Stop(STOP)).block).toBe(heldIdleReason([{ id: 'DX-1', title: 'Card DX-1' }, { id: 'DX-2', title: 'Card DX-2' }]))
+    })
+
+    test('the ready-cards report leaves out a card a running sub-agent was briefed on, and says nothing when none is left; once none runs it names it (CP-49)', async ($, on) => {
+      on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
+      const d = await started($, on)
+      const row = (id: string) => ({ id, type: 'Story', title: `Ready ${id}`, assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, review_runnable: false, next_pre_gate: null })
+      d.world.readyRows[BOARD] = [row('DX-9'), row('DX-8')]
+      await $.agent.spawn({ prompt: 'gate-reviewer DX-9 code-quality', subagentType: 'general-purpose' })
+      await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
+      expect((await $.classic.Stop(STOP)).block).toBe(blockReason([{ id: 'DX-8', title: 'Ready DX-8' }]))
+      d.world.readyRows[BOARD] = [row('DX-9')]
+      expect((await $.classic.Stop(STOP)).block).toBeUndefined()
+      await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] })
+      expect((await $.classic.Stop(STOP)).block).toBe(blockReason([{ id: 'DX-9', title: 'Ready DX-9' }]))
     })
 
     test('a mark past its 30 minutes no longer counts', async ($, on) => {

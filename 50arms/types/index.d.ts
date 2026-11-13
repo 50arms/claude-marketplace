@@ -76,9 +76,9 @@ export type PlanView = {
   // null when the plan read gave no count (the band then shows none); `needsYouError` says why.
   needsYou: number | null
   needsYouError: string | null
-  // when the agent's own pause ends (epoch ms), read at each load by the one call that does not end a pause; null when it is not paused,
-  // its pause has expired, or the pause read gave no usable answer (the mark is display only). Only the title's pause mark reads it.
-  pausedUntil: number | null
+  // whether the agent is in an unexpired or untimed pause (a pause on an event has no end time), read at each load; false when it is not paused,
+  // its pause has expired, or the pause read gave no usable answer. The title's pause mark reads it.
+  paused: boolean
   // what the pause waits on (its `waits_on`, e.g. `pacing` while a sub-agent slot is held back by usage pacing); null when not paused or the pause names none.
   pausedWaitsOn: string | null
   // what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
@@ -146,8 +146,8 @@ export type DiskHome = { home: string } | { fault: string } | null
 export type CompactingState = { main: number | null; agents: Record<string, { at: number; done: boolean }> }
 
 // `loopReset`: the ready-agent loop's own /clear, whose fresh conversation is told the start text as a new session is.
-// `compactionClear`: the plugin's own /clear that stands for a compaction (the team's `clear` mode): told the same, then the resume briefing.
-export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null; loopReset?: true; compactionClear?: true } | null
+// `compactionClear`: a /clear the plugin ran for a session that still held work (a compaction by clear, a natural-break clear): told the same, then the resume briefing. `reconnect`: what it held, to reconnect it to when the clear left it unconnected.
+export type PendingStart = { sessionId: string; source: string; transcriptPath: string | null; predecessorId: string | null; loopReset?: true; compactionClear?: true; reconnect?: string[] } | null
 
 // what the reports remember between events: what this session reported opening and still owes a close. `agents`: by activity id
 // (`agent-<id>`), each running sub-agent whose start was posted, with the time (epoch ms) of its last post (the start or a liveness
@@ -207,8 +207,8 @@ declare module 'claude-code' {
       readyShells: string[]
       // the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState
-      // whether a sub-agent has stopped whose reminder to record its result the main session has not been handed yet: it rides the main loop's next tool result or prompt, however many stopped.
-      subagentStopped: boolean
+      // the sub-agents that finished and whose finish the main session has not been told yet: it rides the main loop's next tool result or prompt, one text however many finished.
+      finishedAgents: string[]
       // the disk notice last told to each agent (see DiskTold), so a tool call repeats it only on a change or after a few minutes.
       diskTold: DiskTold
       // the last disk measurement (see DiskMeasured), reused by tool calls for a minute.
@@ -217,6 +217,8 @@ declare module 'claude-code' {
       diskHome: DiskHome
       // the session start waiting for the next prompt or main-loop tool result (see PendingStart).
       pendingStart: PendingStart
+      // the mantra this conversation is still owed: its start found the session without a usable key (see giveOwedMantra).
+      mantraOwed: boolean
       // the id of the session a /clear just ended (session.end), until the start of the session that replaced it takes it.
       endedSession: string | null
       // the id the session's MCP server runs under at its start (set once): the id the engine answers until a /clear changes it, so no lookup is needed while they agree.
@@ -243,7 +245,7 @@ declare module 'claude-code' {
       // the release the plugin claimed to start a compaction with (one compare-and-set, so a ready starts once)
       claimedRelease: string | null
       // a compaction clear is running, so the clear start it raises resumes the cleared conversation (carried across the clear; a reload keeps it).
-      compactionClear: boolean
+      compactionClear: string[] | null
       // this process has already seen a session start; a /clear carries it, so only a new process's first start reads as one.
       startSeen: boolean
       // who is compacting, one entry per agent (see CompactingState).
@@ -260,6 +262,11 @@ declare module 'claude-code' {
       runningAgents: string[]
       // the cards this session marked as its own work (PUT /api/work-marks), card id to the epoch ms the mark was set; the held-idle Stop check counts them as worked.
       workMarks: Record<string, number>
+      // the interim sub-agent notices held back from the model, each with the task id it names and the epoch ms it was first held (see hooks/context/interim-notice.ts).
+      heldNotices: { taskId: string; text: string; heldAt: number }[]
+      agentBriefs: { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
+      // what the plugin kept of each sub-agent at its spawn (description, background, spawned by the main loop), by agent id, the newest 200 (see hooks/context/record.ts).
+      spawnedAgents: Record<string, { description: string; background: boolean; direct: boolean }>
     }
   }
 }

@@ -44,6 +44,46 @@ export function liveMarks(marks: WorkMarks, now: number): Set<string> {
   return new Set(Object.entries(marks).filter(([, at]) => now - at < WORK_MARK_TTL_MS).map(([id]) => id))
 }
 
+// The sub-agents' briefs. A running sub-agent of the session that was briefed on a card is working it, even before it has
+// claimed it or between its tool calls, when the dashboard shows no activity on the card. The plugin sees a spawn's prompt (`agent.spawn`) but
+// not which agent id it gets, so each admitted spawn's card ids wait in `pending` (oldest first) and the next sub-agent start takes the oldest.
+export const BRIEF_PENDING_TTL_MS = 5 * 60_000
+export type Briefs = { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
+export const NO_BRIEFS: Briefs = { pending: [], byAgent: {} }
+
+const CARD_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g
+
+// The card ids a brief names, each once.
+export function cardIdsIn(text: unknown): string[] {
+  return typeof text === 'string' ? [...new Set(text.match(CARD_ID) ?? [])] : []
+}
+
+function fresh(b: Briefs, now: number): Briefs['pending'] {
+  return b.pending.filter(p => now - p.at < BRIEF_PENDING_TTL_MS)
+}
+
+// A spawn the engine admitted, briefed with `prompt`.
+export function briefSpawned(b: Briefs, prompt: unknown, now: number): Briefs {
+  return { ...b, pending: [...fresh(b, now), { ids: cardIdsIn(prompt), at: now }] }
+}
+
+// A sub-agent started: it takes the oldest unclaimed brief (none: a resumed agent keeps the brief it had, any other was briefed on no card the plugin saw).
+export function briefClaimed(b: Briefs, agentId: string, now: number): Briefs {
+  const [first, ...rest] = fresh(b, now)
+  return { pending: rest, byAgent: { ...b.byAgent, [agentId]: first?.ids ?? b.byAgent[agentId] ?? [] } }
+}
+
+// A sub-agent ended.
+export function briefEnded(b: Briefs, agentId: string): Briefs {
+  const { [agentId]: _gone, ...rest } = b.byAgent
+  return { ...b, byAgent: rest }
+}
+
+// The card ids a still-running sub-agent was briefed on.
+export function briefedCards(b: Briefs, running: readonly string[]): Set<string> {
+  return new Set(running.flatMap(id => b.byAgent[id] ?? []))
+}
+
 // Whether a held card is idle: nothing is on it right now (`activity` is null: no sub-agent of this session and no tool call) and the
 // session has not marked it as its own work.
 export function isHeldIdle(card: DetailCard, marked: ReadonlySet<string>): boolean {

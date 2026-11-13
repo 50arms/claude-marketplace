@@ -102,7 +102,7 @@ export const RESUME_PROCEDURE = "Resume now, without asking the person, in this 
 // the briefing's opening, alone: a resume prompt whose dashboard reads failed still carries it
 export const RESUME_OPENING = `[50 ARMS] Your conversation was just compacted. ${RESUME_PROCEDURE}`
 
-// how the main agent picks up after a compaction that CLEARED the conversation (the team's `clear` compaction mode): nothing of the work before it is left in the conversation, so the
+// how the main agent picks up after a compaction that CLEARED the conversation (a control mode of `clear`): nothing of the work before it is left in the conversation, so the
 // handoff note and the cards are the whole memory, and no skill is loaded. The clear only ever runs with no sub-agent working, so there is no step for them (and `briefingText` leaves the sub-agents line out).
 export const CLEAR_RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) load again the skills your work needs, because a cleared conversation has none loaded; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) continue the step that was in progress."
 

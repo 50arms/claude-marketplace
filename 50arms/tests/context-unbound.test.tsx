@@ -5,7 +5,7 @@ import "./run-tests-with-npm-test.generated"
 // fake `$` of the earlier suites could not.
 import { describe, expect } from 'claude-code/testing'
 
-import { eventFailureLine } from '../hooks/context/events'
+import { SIGN_IN_INVITATION, eventFailureLine } from '../hooks/context/events'
 import { test, TOLD, OTHER_SESSION, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
@@ -50,13 +50,14 @@ for (const surface of SURFACES) {
     }
 
     for (const source of ['startup', 'resume'] as const) {
-      test(`a restarted (signed-out) ${source} is told the restart notice on the first prompt, once`, async ($, on) => {
+      test(`a signed-out ${source} is told ${source === 'startup' ? 'only the sign-in invitation' : 'the restart notice'} on the first prompt, once`, async ($, on) => {
         const { d } = await unboundStart($, on, source, { connected: false, signedOut: 'signed-out' })
         d.world.restart.json = { notice: NOTICE }
         const first = await $.prompt.submit({ text: 'hello' })
-        expect(first.context!.slice(1)).toEqual([NOTICE])
+        // a signed-out startup is told the one sign-in invitation and nothing else (CP-75); a resume is told the notice
+        expect(first.context!.slice(1)).toEqual([source === 'startup' ? SIGN_IN_INVITATION : NOTICE])
         expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
-        expect(d.restartCalls).toEqual([source === 'resume' ? { transcript_path: '/work/main.jsonl' } : {}])
+        expect(d.restartCalls).toEqual(source === 'resume' ? [{ transcript_path: '/work/main.jsonl' }] : [])
       })
     }
 
