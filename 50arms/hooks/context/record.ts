@@ -1,8 +1,29 @@
 // a session can end at any time and only the dashboard and git survive, so the plugin reminds it to record state at three moments no API call marks.
 // This is the pure half: the texts, the thresholds and the questions the handlers ask. Nothing here reads a clock, a file or a session.
 
-export const SUBAGENT_DONE_REMINDER =
-  'A sub-agent you started just finished. Before doing anything else, put its result on its card (an agent note with what it did, the evidence and the commit), so it survives this session ending.'
+import { isPausedForOwnWork } from './interim-notice'
+
+// the one shared sentence of a sub-agent's finish: the notice names the agent (and the cards its brief named) before it
+export const SUBAGENT_DONE_ACTION = 'Before doing anything else, put its result on its card (an agent note with what it did, the evidence and the commit), so it survives this session ending.'
+
+const DESCRIPTION_MAX = 80
+
+/** A sub-agent as `$.agent.list()` lists it, as far as the finish notice reads it. `parentId` is absent when the main loop started it. */
+export type StoppedAgent = { id: string; description: string; status: string; parentId?: string }
+
+/**
+ * What the main session is told when one of its own sub-agents finished, or null when the stop is not that: a nested sub-agent (its result goes to its
+ * parent, not to the main session) or an interim stop (it only paused on background work of its own, and will stop again with its result). The
+ * agent is named by its description and id, and by the cards its brief named.
+ */
+export function subagentDoneReminder(agent: StoppedAgent, cards: readonly string[]): string | null {
+  if (typeof agent.parentId === 'string' && agent.parentId !== '') return null
+  if (isPausedForOwnWork(agent)) return null
+  const words = agent.description.replace(/\s+/g, ' ').trim()
+  const label = words === '' ? agent.id : `"${words.length > DESCRIPTION_MAX ? `${words.slice(0, DESCRIPTION_MAX)}…` : words}" (${agent.id})`
+  const named = cards.length === 0 ? '' : ` (its brief named ${cards.join(', ')})`
+  return `The sub-agent ${label} you started just finished${named}. ${SUBAGENT_DONE_ACTION}`
+}
 
 export const SIDE_SESSION_DONE_REMINDER =
   'A side session you started just ended a turn. Once its work is finished (its card Done or its branch landed, nothing of its own still open), archive it now with archive_session: a finished side session is never left idle. If its work is not finished, leave it running.'

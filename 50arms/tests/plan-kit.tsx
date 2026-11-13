@@ -416,7 +416,7 @@ export function dashboard(
     // result (`raw`), or a rejection (`deny`). `delayMs` / `hangs`: it answers late / never.
     restart: {} as { json?: unknown; raw?: unknown; deny?: string; delayMs?: number; hangs?: boolean },
     // DX-4508: this session's sub-agents as `$.agent.list()` answers them (the engine's own list), none by default
-    agents: [] as { id: string; type: string; description: string; status: string }[],
+    agents: [] as { id: string; type: string; description: string; status: string; parentId?: string }[],
     titleSeen: undefined as string | undefined,
     // DX-4235: the boards GET /api/plans/mine names for the session's plan, each board's ToDo card rows as GET /api/issues answers them
     // (the ready-cards check), and a per-route override of a report or ready-cards answer (`<METHOD> <path>`): an error status (with

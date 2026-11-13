@@ -5,11 +5,11 @@ import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanVie
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
-import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, SUBAGENT_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue } from './context/record'
-import type { RecordClock } from './context/record'
+import { HANDOFF_FILE_REMINDER, baseName, SIDE_SESSION_DONE_REMINDER, clockAfterCall, isRecordWrite, isSideSessionNotice, looksLikeHandoff, recordDue, subagentDoneReminder } from './context/record'
+import type { RecordClock, StoppedAgent } from './context/record'
 import { wholeSuiteReminder } from './context/whole-suite'
 import { FOREGROUND_LOCK_TIMEOUT_MS, foregroundLockArgv, foregroundLockNotice, parseForegroundLockAnswer } from './context/foreground'
-import { heldReason, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
+import { heldReason, isPausedForOwnWork, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
 import type { HeldNotice } from './context/interim-notice'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
@@ -3742,14 +3742,36 @@ async function onSubagentStart($: any, e: any, next: any) {
   return withLine(withLine(r, eventLine), pacing)
 }
 
+// The stopping sub-agent as the engine lists it (its parent, its description, whether it only paused on work of its own), or null when that cannot be read:
+// a failed read or an agent the list does not name is a toast, never a guess about who started it.
+async function listedAgent($: any, id: string): Promise<StoppedAgent | null> {
+  try {
+    const listed: StoppedAgent[] = await $.agent.list()
+    const found = listed.find(a => a.id === id)
+    if (found !== undefined) return found
+    $.ui.toast(`50 Arms could not tell whether sub-agent ${id} was started by this session: it is not in the agent list, so its finish was not reported.`)
+  } catch (err: any) {
+    $.ui.toast(`50 Arms could not read the agent list for sub-agent ${id}, so its finish was not reported: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
+  }
+  return null
+}
+
 async function onSubagentStop($: any, e: any, next: any) {
   await noteRunningAgent($, e.agent_id, false)
-  if (typeof e.agent_id === 'string') await update($, agentBriefs, cur => briefEnded(cur, e.agent_id))
+  const id = typeof e.agent_id === 'string' && e.agent_id !== '' ? e.agent_id : null
+  const signedIn = await signedInWithAgent($)
+  const stopped = signedIn && id !== null ? await listedAgent($, id) : null
+  // read before the brief is dropped: it names the cards the finish notice carries
+  const cards = id === null ? [] : ((await read($, agentBriefs)).byAgent[id] ?? [])
+  // a stop that only paused on background work of its own is no end: the brief stays for the stop that is
+  if (id !== null && !(stopped !== null && isPausedForOwnWork(stopped))) await update($, agentBriefs, cur => briefEnded(cur, id))
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
-  // the reminder is for the MAIN session that started the sub-agent: context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn
-  if (await signedInWithAgent($)) detach($, 'Telling the session', tellModel($, SUBAGENT_DONE_REMINDER))
+  // the reminder is for the MAIN session that started the sub-agent, and only for its real finish (never a nested sub-agent's, never an interim pause):
+  // context a SubagentStop hook returns goes back to the stopping sub-agent and wakes it for a turn
+  const reminder = stopped === null ? null : subagentDoneReminder(stopped, cards)
+  if (reminder !== null) detach($, 'Telling the session', tellModel($, reminder))
   return r
 }
 
