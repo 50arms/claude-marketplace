@@ -53,7 +53,7 @@ export function eventText(r: Api): Told {
   if (!r.ok) return { kind: 'failed', reason: errText(r) }
   const text = r.body?.effective_text
   if (typeof text !== 'string') return { kind: 'failed', reason: 'bad_response: the dashboard answered no effective_text' }
-  // an empty text is the registry saying there is nothing to tell for this event (DX-6709: sub_agent_start), not a failed lookup (CP-82)
+  // an empty text is the registry saying there is nothing to tell for this event (e.g. sub_agent_start), not a failed lookup
   if (text === '') return { kind: 'nothing' }
   return { kind: 'text', text }
 }
