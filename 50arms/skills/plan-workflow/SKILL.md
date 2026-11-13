@@ -42,9 +42,9 @@ result the moment it completes, and delegate the new work 50 Arms sends.
      who can raise it, `raised_by`), or that ending another session frees its agent; call
      `session_connect` again once they say one is free.
    Until an agent is held, every other dashboard call answers that same state: do no other
-   dashboard work. You hold the agent only while this session is connected: a revoked key, a
-   session that stopped responding for a minute (a crash) or a pause past the hold timeout frees
-   it at once, and signing in again takes the next free agent, never necessarily the same one.
+   dashboard work. You hold the agent while this session is connected, however long you wait. Only an
+   explicit disconnect, a revoked key or a session that stopped responding for a minute (a crash)
+   frees it, and signing in again takes the next free agent, never necessarily the same one.
 3. What you work on: a plan → `session_connect({target: "PLAN-n"})`; none in the list fits → create one.
    One card on no plan (a one-off, a quick fix, an epic that is not a plan) →
    `session_connect({target: "<card id>"})` instead; a card on a plan is refused `card_on_plan` (connect to
@@ -219,7 +219,7 @@ From the dashboard:
 - `[plan events] digest — N agent/machine events since the last update:` → one record of agent
   and machine activity held up to 10 min, its events listed under it: read it, act only where it
   names a card of yours.
-- a usage-pacing or auto-resume message from 50 Arms → carry on, or stop and wait, as "Usage pacing" says.
+- a usage-pacing or auto-resume message from 50 Arms → follow it as "Usage pacing" says.
 - `[50 ARMS] Compaction recommendation:` → advice, not an order. Never compact while a conversation with a person is still open: something they said or asked still needs an answer or action that depends on this session's context. Time is only a hint (a message within the last few minutes usually means they are still talking); once the exchange is finished and its outcome is on the cards and plan, compacting is safe at once. Then give the recommendation no answer (it comes again later) and never call compaction-ready; say ready only while you work on your own. Otherwise judge from what is left and what
   you are doing now whether compacting is worth it. If yes, load `50arms:prepare-for-compaction`,
   run it, then call `50arms_api` `POST /api/plan-sessions/me/compaction-ready` with `{}`. If no,
@@ -329,7 +329,7 @@ each reminder with "still waiting": pause. A session with nothing to do right no
 never stays active just to wait.
 
 1. Record why on the card first (a problem, an agent note, `depends_on`, or the real block), and
-   any state not yet recorded: a pause often ends in a disconnect after which you cannot write.
+   any state not yet recorded.
    The pause is only the signal, never the record. Waiting on a person is always an open problem
    on a card of this plan, worded for the step left now (no note or comment reaches Needs You).
    One problem per question: put it on the work card it decides, never a container, and give every
@@ -338,14 +338,22 @@ never stays active just to wait.
    session (its card's own record and `depends_on` already show that wait). That includes a check that needs an ordinary act of theirs (a
    review): an `action` problem asks for it now; never wait for it to happen on its own.
 2. Call `50arms_api` `PUT /api/plan-sessions/me/pause` with `{reason, waits_on, ends_when?,
-   expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when` says
-   what would end the wait. `waits_on` is required, the cause you pick: `person` for an open
-   problem, an approval or any answer only a person gives; `dependency` for another card, a build,
-   a deploy or any other work you wait on; `other` when none fits. Never pause for usage pacing:
-   when pacing stops you, you only stop (see "Usage pacing"). The pause lasts at most `expires_in_minutes` (default 120, at most
-   720) and ends by itself then; call again to renew it. A usage-limit pause already in force
-   refuses it (409): that one ends by itself when the limit resets. `reason` is at most 300
-   characters. A dispatched worker cannot pause (409): only a registered non-worker session can.
+   cards?, expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when`
+   says what would end the wait. `waits_on` is required, the event you wait for:
+   - `pacing`: usage pacing refused your sub-agents (no slot to start one, the account over pace or at its
+     sub-agent budget). Ends when pacing lets the account start agents again.
+   - `person`: an open problem, an approval or any answer only a person gives (409
+     `person_wait_without_problem` without an open problem on your plan or card: file it first).
+   - `dependency`: other cards, their ids in `cards` (required); ends when every one is Done or
+     Cancelled, or one is blocked or has its landing returned (409 `pause_cards_finished` when all are already finished).
+   - `other`: none of these (a build or deploy with no card). It needs `expires_in_minutes` (at most
+     720) and ends by itself then.
+   A pause on `pacing`, `person` or `dependency` has no time limit (`expires_in_minutes` is refused):
+   it ends only on its event or one of the ends below, and you stay connected with your agent however
+   long it lasts, so it never needs renewing.
+   Pick the cause you actually wait on, since only that event ends the pause. A usage-limit pause already in force refuses it (409): that
+   one ends by itself when the limit resets. `reason` is at most 300 characters. A dispatched worker
+   cannot pause (409): only a registered non-worker session can.
 3. Then go idle. A pause is not a `block` (nothing on a card changes), not a stop, and not a
    place to hide: never pause while an unclaimed ready card exists, and never as a way to leave
    work undone.
@@ -357,10 +365,10 @@ stop, a usage-pacing change that lets your account start agents again while your
 `pacing` (on pace, with no count cap or a budget above the sub-agents running; the message is delivered
 at once, so a pause taken after a pacing refusal needs no manual wake; a pause on any other cause
 holds that message), your own next dashboard call (the plugin's background reads do not count) other than the pause
-calls themselves, your own `DELETE /api/plan-sessions/me/pause`, the expiry, or your session going
+calls themselves, your own `DELETE /api/plan-sessions/me/pause`, an `other` pause's expiry, or your session going
 silent.
 
-The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message. A pause that runs out with nothing held still ends in one message (`Your pause ended (your stated wait ran out). Nothing is left to deliver.`): take that turn to re-check your cards, and pause again if there is still nothing to do.
+The `Your pause ended (<cause>). N messages were held …` line is everything held, in one message. A pause that ends on its event or its expiry with nothing held still ends in one message (`Your pause ended (<cause>). Nothing is left to deliver.`): take that turn to re-check your cards, and pause again if there is still nothing to do.
 It arrives like a card comment from 50 Arms, attached to the card of the person's event that ended
 the pause, otherwise to the plan, otherwise to `SESSION`, but it is a notice (its text begins "This
 is a notice, not a card comment"), not a card comment. Over 30
@@ -371,14 +379,11 @@ messages themselves (a held nudge still means the cards it names are workable no
 ended on your own call needs no reply. Read the plan before resuming, since the cause names what
 changed.
 
-A pause longer than your team's agent hold timeout (default 60 minutes; a team owner or admin sets it
-on Team > Agents) disconnects your session: its key is revoked, its team agent goes back to the pool and
-it leaves every session list. A session holds an agent exactly while it is connected, and nothing
-remembers the agent you had. On waking, your next dashboard call is refused as a revoked key: sign in
-again (approval as for any new key), then `session_connect`, which takes the next free agent or answers
-`agent_limit_reached`. The pause-ended notice then says `Your agent <name> went back to the pool: this session was
-disconnected after <N> minutes paused. Sign in again with session_connect.` Until you hold an
-agent again work calls are refused with `agent_not_held` or `agent_needed`.
+While this session is connected to a plan or card and its event stream is open, its key does not expire and its agent stays
+its own, paused or not, whatever the pause: only an explicit disconnect, a revoked key or the session going silent ends
+that. It never spends a turn to keep them, and waking never needs a new sign-in. If it does end (a revoked key), your next
+dashboard call is refused: sign in again (approval as for any new key), then `session_connect`, which takes the next free agent
+or answers `agent_limit_reached`; until you hold an agent again work calls are refused with `agent_not_held` or `agent_needed`.
 
 ## Stopping
 
@@ -423,7 +428,7 @@ A working sub-agent is replaced only by agreement, never by your decision alone.
 
 Never end a turn while unblocked work could be dispatched (a running build, test or deploy
 is time to dispatch; a readied card waiting on a worker is not blocked), nor while work runs
-with no wake-up armed. The one exception is a pacing stop: then you only stop ("Usage pacing"). Checks and reviews that de-risk waiting work (verification,
+with no wake-up armed. The one exception is a pacing stop: then you record your state and pause on `pacing` ("Usage pacing"). Checks and reviews that de-risk waiting work (verification,
 cross-repo checks, a whole-change review) are dispatchable too. A review that needs no build (a plan gate a
 reviewer runs from cards and plans only) starts as soon as it is pending, alongside builds, even while its card's
 build waits on a `depends_on` partner.
@@ -447,17 +452,15 @@ spawn takes its slot from 50 Arms before it starts, so there is nothing for you 
 cannot be taken (50 Arms could not be reached or did not answer) is refused too, in the same
 `Usage pacing:` words, naming the failure.
 
-**When pacing stops you, just stop.** A refused sub-agent spawn, or a pacing message saying the account is
-over pace, critical, or at its sub-agent budget: end your turn and wait until you are told to continue. Do
-nothing else. Record nothing (no agent note, no block, no problem, no pause call, no
-work-in-progress commit), tell no one, and never do the work yourself instead. The pacer already
-knows; 50 Arms wakes you with the message that lets you continue, and you then carry on where you
-were. A pacing text that asks for more than this is outdated: follow this section.
+**When pacing stops you, pause on `pacing`.** A refused sub-agent spawn, or a pacing message saying the account is
+over pace, critical, or at its sub-agent budget: do not retry the spawn and do not do the work yourself instead. Put
+any state not yet recorded on its card (an agent note), then call `PUT /api/plan-sessions/me/pause` with
+`waits_on: "pacing"` ("Pausing") and go idle. 50 Arms wakes you with the message that lets you continue (a slot it
+offered you is held for you for 60 seconds), and you then carry on where you were. A usage-pacing pause needs no manual wake.
 
 - **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full.
-- **Over pace, or the budget full**: stop as above. Agents already running are left to finish.
-- **Critical**: stop as above (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused), and tell
-  each running sub-agent to stop where it is and report back; once told to continue, continue each with `SendMessage`.
+- **Over pace, or the budget full**: pause on `pacing` as above. Agents already running are left to finish.
+- **Critical**: pause as above after telling each running sub-agent to stop where it is and report back (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused); once told to continue, continue each with `SendMessage`.
 
 ## Liveness
 
@@ -471,3 +474,7 @@ Before an actual compaction, load `50arms:prepare-for-compaction`.
 Retiring this session (a handoff, not a compaction): as your last plan action, after the handoff
 agent note, call `session_connect({target, disconnect: true})` (`target` = the `PLAN-n` you are on). Moving to
 another plan needs no leave.
+Finished everything (every card of the plan terminal and landed, no open problem, nothing waiting on you): you may detach the
+same way, then load `50arms:ready` to wait at the top level on the ready list for your next assignment. Only then: until everything
+is finished you stay connected and listening, pausing when you have nothing to do, and a connected agent stays until it is explicitly
+disconnected.
