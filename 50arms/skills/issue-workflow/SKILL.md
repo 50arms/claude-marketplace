@@ -1,13 +1,14 @@
 ---
 name: issue-workflow
-description: 'The one workflow for working a card, and every dev rule that applies while doing it: claim, context, the ideal build (TDD, no legacy, fail loud, reuse), debugging, git and shell hygiene, gates, complete. Load before working a card, and before choosing a card type or slicing work (then also references/card-creation-and-reference.md).'
+description: 'The one workflow for working a card, and every dev rule that applies while doing it: claim, context, the ideal build (TDD, no legacy, fail loud, reuse), debugging, git and shell hygiene, gates, complete. Load before working a card, and before creating a card (then also references/card-creation-and-reference.md).'
 ---
 
 # Issue Workflow
 
 Dashboard Postgres is the only source of card truth; `50arms_api` is the whole surface
 (routes: `50arms_api_list`; contracts: `50arms_api_spec`) — never file operations.
-Creating or slicing a card: load `references/card-creation-and-reference.md` first.
+Creating a card: load `references/card-creation-and-reference.md` first. The type's rules come only from
+`GET /api/card-types`, and the create quotes the part it relies on as its `justification`.
 
 ## Two callers
 

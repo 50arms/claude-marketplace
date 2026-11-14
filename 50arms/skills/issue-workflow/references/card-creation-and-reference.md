@@ -1,62 +1,19 @@
 # Creating and sizing a card
 
-Load before creating a card, or before choosing a card's type, slices or build grade.
+Load before creating a card, or before choosing a card's type or build grade.
 
-## A decomposition drafted before this loaded is void
+## Type rules
 
-Picked a type, slice list or build grade before reading this? Discard it and re-derive from the
-gates below — they are the input to the decision, never a stamp on a draft. Before creating any
-Feature/Epic, print the Slice Plan (below) in your message; no plan, no create.
-
-## Types
-
-The team's card types are rows the team's admins edit, so no type list lives here. Before
-choosing a type, read them: `50arms_api` `GET /api/card-types`. Each row gives its guidance
-(`when_to_use`) and its fixed facts (kind, whether it is dispatched, its gates, and its parent
-and child types). Choose by that guidance, and create a child only under a parent type whose
-row allows it. A container type holds context and goal only, its status rolled up from its
-children; work written into a container's own body or AC is a defect.
-
-The type names the slicing rules below use (Story, Feature, Epic) stand for the team's seeded work and container types; the team's own rows from `GET /api/card-types` decide what each type may hold.
+Before creating a card, read its type's rules from `50arms_api` `GET /api/card-types`: each type's
+`when_to_use` says when to create a card of that type and when to create none, and its `facts` say
+what it may hold. Quote the part of those rules you rely on as the create's `justification`
+(`quote`, `reasoning`), with your reasoning, on the card and on every `phase_children[]` item.
 
 **What goes where.** A card's description is the background of the ask; what it must do goes in its
 AC and decision records, which the card page lists under the description (the skill's "Mechanics",
 Decisions).
 
 A docs change is made by the agent itself, never recorded as a proposal. Edit the docs pages on your own `docs-change/<name>` branch, cut from the target branch (never from the card branch) and holding only docs pages, then submit it through `50arms_api` `POST /api/issues/<card id>/docs-submissions` `{repo, branch, summary}`. The card gets a docs-review problem that a person approves.
-
-## The slice gate
-
-Scope is counted in vertical slices, never time, files or LOC. For each candidate slice write
-"Story N: <verb> X → a human can now see/do Y → one green commit", then check it: if only
-this card lands and no sibling ever does, is the running system observably better? No →
-the pieces interlock and are ONE Story, however large. One slice →
-Story; a few → Feature; many or several Features → Epic. Importance, risk or "feels big" are
-not slices. Never slice by layer (schema, client, routes) or by call site; each slice carries
-its own thin schema and plumbing. That rule shapes product slices. Once a Story's plan is written, its build
-may be split into execution batches: a core card first, then call-site batches by directory, each at the lowest
-build grade its steps allow. Batches depend on the core, merge into one integration branch, and reach the target
-branch together as the Story's one green commit.
-
-**Combine by default.** Split only when the whole is too large for one green commit, or the
-parts differ in nature (another subsystem, separately reusable). Same for phases: every
-phase costs a full dispatch.
-
-**A Story body with 2+ top-level `Layer`/`Part` headings, or an appendix as large as its
-requirements,** is showing its slices — flag it with the headings found and re-file it as a
-Feature.
-
-**Other repos' work doesn't count.** A card lives on one board; another repo's slice is its
-own card on its own board.
-
-**A container whose slices are known gets its child cards in the same turn it is filed.** A
-container is never dispatched and has no agent, so work written in its own text is never
-built. A child that must wait for another card carries a `depends_on` edge on it; waiting is
-never a reason to leave a slice unfiled. A childless container is only a placeholder while a
-question or action is open, recorded as a problem on it. Add children through
-`phase_children[]` (optional on create, and the convenient way to add them at create) or as
-child cards with `parent_id`.
-Which child types a parent type accepts comes from `GET /api/card-types`.
 
 ## Build grade
 
@@ -95,20 +52,11 @@ Review is triage-only.
 ## Quality gates
 
 A card carries its board's default gates for its type; `quality_gates` adds more, each with a
-`note` saying why, at creation or later. Add when the card…
-
-| Gate | Phase | …when the card |
-|---|---|---|
-| `plan-dependency` | PRE | likely overlaps in-flight work on the same surface, or may ask for something an open plan's design already covers |
-| `plan-design` | PRE | changes what a person sees or does in a UI and its look is not settled (a new screen, panel, dialog or flow; a changed layout); not when an approved design or an existing screen already shows it |
-| `plan-architecture` | PRE | is non-trivial design: new module boundaries, core invariants |
-| `plan-tdd` | PRE | has behaviour to pin test-first |
-| `code-architecture` / `code-quality` / `code-test-quality` | POST | needs that review of the finished diff before completion |
-| `code-design` | POST | is a complex UI build (a screen, panel or flow with many states) that must match its approved design closely |
-
-`plan-design` builds the card's designs with the repo's own mini app, and only a person
-choosing one passes it. A repo whose designs are off refuses the gate: raise that as an
-`action` problem for a person to turn designs on, never drop the UI work.
+`note` saying why, at creation or later. Each gate's own guidance
+(`quality_gate.<gate>.when_to_add`, listed in the reply to a card create) says when to add it;
+add only what the card's risk needs. `plan-design` builds the card's designs with the repo's own
+mini app, and only a person choosing one passes it. A repo whose designs are off refuses the
+gate: raise that as an `action` problem for a person to turn designs on, never drop the UI work.
 
 ## Triage opt-in
 
