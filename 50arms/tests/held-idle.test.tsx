@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // a failed or slow read never blocks.
 import { describe, expect } from 'claude-code/testing'
 
-import { BRIEF_PENDING_TTL_MS, NO_BRIEFS, NO_RECENT, RECENT_BRIEF_MS, briefClaimed, briefEnded, briefRecent, briefSpawned, briefedCards, cardIdsIn, heldIdleOf, heldIdleReason } from '../hooks/reports/held-idle'
+import { BRIEF_PENDING_TTL_MS, NO_BRIEFS, NO_RECENT, RECENT_BRIEF_MS, briefClaimed, briefEnded, briefRecent, briefSpawned, briefedCards, cardIdsIn, workedCards, heldIdleOf, heldIdleReason } from '../hooks/reports/held-idle'
 import { READY_CARDS_DEADLINE_MS, blockReason } from '../hooks/reports/ready-cards'
 import { test, SURFACES, answerReportEvents, dashboard, startSession } from './plan-kit'
 
@@ -33,19 +33,19 @@ describe('held idle (pure)', () => {
     b = briefSpawned(b, 'explore the repo', 1)
     b = briefClaimed(b, 'a1', 2)
     b = briefClaimed(b, 'a2', 3)
-    expect([...briefedCards(b, ['a1'], NO_RECENT, 4)]).toEqual(['DX-1'])
-    expect([...briefedCards(b, ['a2'], NO_RECENT, 4)]).toEqual([])
-    expect([...briefedCards(b, [], NO_RECENT, 4)]).toEqual([])
-    expect([...briefedCards(briefEnded(b, 'a1'), ['a1'], NO_RECENT, 4)]).toEqual([])
+    expect([...briefedCards(b, ['a1'])]).toEqual(['DX-1'])
+    expect([...briefedCards(b, ['a2'])]).toEqual([])
+    expect([...briefedCards(b, [])]).toEqual([])
+    expect([...briefedCards(briefEnded(b, 'a1'), ['a1'])]).toEqual([])
     const stale = briefClaimed(briefSpawned(NO_BRIEFS, 'work DX-1', 0), 'a1', BRIEF_PENDING_TTL_MS)
-    expect([...briefedCards(stale, ['a1'], NO_RECENT, BRIEF_PENDING_TTL_MS)]).toEqual([])
+    expect([...briefedCards(stale, ['a1'])]).toEqual([])
   })
 
   test('the cards of a sub-agent that ended stay worked for five minutes, then fall away (DX-7388)', () => {
     const b = briefClaimed(briefSpawned(NO_BRIEFS, 'work DX-1', 0), 'a1', 1)
     const recent = briefRecent(NO_RECENT, b, 'a1', 1000)
-    expect([...briefedCards(briefEnded(b, 'a1'), [], recent, 1000 + RECENT_BRIEF_MS - 1)]).toEqual(['DX-1'])
-    expect([...briefedCards(briefEnded(b, 'a1'), [], recent, 1000 + RECENT_BRIEF_MS)]).toEqual([])
+    expect([...workedCards(briefEnded(b, 'a1'), [], recent, 1000 + RECENT_BRIEF_MS - 1)]).toEqual(['DX-1'])
+    expect([...workedCards(briefEnded(b, 'a1'), [], recent, 1000 + RECENT_BRIEF_MS)]).toEqual([])
     expect(briefRecent(recent, b, 'a1', 1000 + RECENT_BRIEF_MS)).toEqual([{ ids: ['DX-1'], at: 1000 + RECENT_BRIEF_MS }])
   })
 
@@ -122,7 +122,6 @@ for (const surface of SURFACES) {
       d.world.readyRows[BOARD] = [row('DX-9')]
       expect((await $.classic.Stop(STOP)).block).toBeUndefined()
       await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] })
-      await d.clock.advance(RECENT_BRIEF_MS)
       expect((await $.classic.Stop(STOP)).block).toBe(blockReason([{ id: 'DX-9', title: 'Ready DX-9' }]))
     })
 

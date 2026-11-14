@@ -93,7 +93,7 @@ import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, reviewReason, skippedLine } from './reports/ready-cards'
 import type { ReadyCard, ReviewableCard } from './reports/ready-cards'
-import { NO_BRIEFS, NO_RECENT, briefClaimed, briefEnded, briefRecent, briefSpawned, briefedCards, detailPath, heldIdleOf, heldIdleReason, heldSkippedLine } from './reports/held-idle'
+import { NO_BRIEFS, NO_RECENT, briefClaimed, briefEnded, briefRecent, briefSpawned, briefedCards, workedCards, detailPath, heldIdleOf, heldIdleReason, heldSkippedLine } from './reports/held-idle'
 import type { Briefs, HeldCard, RecentBriefs } from './reports/held-idle'
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
 import type { PauseRead } from './reports/pause'
@@ -4229,12 +4229,12 @@ async function readReadyCards($: any): Promise<ReadyRead> {
   let heldSkipped: string | null = null
   if (!detail.ok) heldSkipped = errText(detail)
   else {
-    const idle = heldIdleOf(detail.body, briefedCards(await read($, agentBriefs), await read($, runningAgents), await read($, recentBriefs), await $.clock.now()))
+    const idle = heldIdleOf(detail.body, workedCards(await read($, agentBriefs), await read($, runningAgents), await read($, recentBriefs), await $.clock.now()))
     if (idle.ok) held = idle.value
     else heldSkipped = idle.reason
   }
   // a ready card a running sub-agent of the session was briefed on is being worked: it is left out, and with every card left out the report says nothing
-  const worked = briefedCards(await read($, agentBriefs), await read($, runningAgents), await read($, recentBriefs), await $.clock.now())
+  const worked = briefedCards(await read($, agentBriefs), await read($, runningAgents))
   return { kind: 'cards', cards: cards.filter(c => !worked.has(c.id)), reviewable, held, heldSkipped }
 }
 

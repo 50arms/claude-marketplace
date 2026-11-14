@@ -62,9 +62,14 @@ export function briefRecent(recent: RecentBriefs, b: Briefs, agentId: string, no
   return [...recent.filter(r => now - r.at < RECENT_BRIEF_MS), { ids: b.byAgent[agentId] ?? [], at: now }]
 }
 
-// The card ids a still-running sub-agent was briefed on, and those of a sub-agent that ended in the last few minutes.
-export function briefedCards(b: Briefs, running: readonly string[], recent: RecentBriefs, now: number): Set<string> {
-  return new Set([...running.flatMap(id => b.byAgent[id] ?? []), ...recent.filter(r => now - r.at < RECENT_BRIEF_MS).flatMap(r => r.ids)])
+// The card ids a still-running sub-agent was briefed on.
+export function briefedCards(b: Briefs, running: readonly string[]): Set<string> {
+  return new Set(running.flatMap(id => b.byAgent[id] ?? []))
+}
+
+// The cards the held-idle check counts as worked: those of a running sub-agent, and those of one that ended in the last few minutes. Only this check has the grace window.
+export function workedCards(b: Briefs, running: readonly string[], recent: RecentBriefs, now: number): Set<string> {
+  return new Set([...briefedCards(b, running), ...recent.filter(r => now - r.at < RECENT_BRIEF_MS).flatMap(r => r.ids)])
 }
 
 // Whether a held card is idle: nothing is on it right now (`activity` is null: no sub-agent of this session and no tool call) and no sub-agent
