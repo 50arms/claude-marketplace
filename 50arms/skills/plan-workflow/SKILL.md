@@ -276,8 +276,8 @@ forwards it on every call). A "fresh worktree" brief →
 `git worktree list` first; the card may carry unpushed prior work. Nobody working a card you
 hold → record why on the card, then release it (`DELETE /api/issues/<id>/assigned-agent`, or
 `rollback_pickup` without `keep_assignment`): a card nobody is working is assigned to no agent (DEC-116),
-and your stop is blocked while you hold one (the held-idle check; a live `PUT /api/work-marks` on the card
-counts as working it). Before reporting a card in flight,
+and your stop is blocked while you hold one (the held-idle check; a sub-agent briefed on the card, running or ended in the last
+few minutes, counts as working it). Before reporting a card in flight,
 re-read it and confirm In Progress.
 
 ## Notes

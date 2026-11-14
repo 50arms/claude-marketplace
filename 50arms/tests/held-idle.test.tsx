@@ -1,10 +1,10 @@
 import "./run-tests-with-npm-test.generated"
 // CP-34 / DEC-116: the held-idle Stop check, in the same Stop registration as the ready-cards check. A plan session's stop is blocked once while it
-// holds a card nothing is working (GET /api/plans/<id>/connected-session/detail: `activity` null, and no work mark of the session's own on it);
+// holds a card nothing is working (GET /api/plans/<id>/connected-session/detail: `activity` null, and no sub-agent of the session briefed on it, running or ended in the last few minutes);
 // a failed or slow read never blocks.
 import { describe, expect } from 'claude-code/testing'
 
-import { BRIEF_PENDING_TTL_MS, NO_BRIEFS, WORK_MARK_TTL_MS, briefClaimed, briefEnded, briefSpawned, briefedCards, cardIdsIn, heldIdleOf, heldIdleReason, liveMarks, marksAfter } from '../hooks/reports/held-idle'
+import { BRIEF_PENDING_TTL_MS, NO_BRIEFS, NO_RECENT, RECENT_BRIEF_MS, briefClaimed, briefEnded, briefRecent, briefSpawned, briefedCards, cardIdsIn, heldIdleOf, heldIdleReason } from '../hooks/reports/held-idle'
 import { READY_CARDS_DEADLINE_MS, blockReason } from '../hooks/reports/ready-cards'
 import { test, SURFACES, answerReportEvents, dashboard, startSession } from './plan-kit'
 
@@ -12,10 +12,9 @@ const BOARD = 7
 const DETAIL = '/api/plans/23/connected-session/detail'
 const API = 'mcp__plugin_50arms_platform__50arms_api'
 const held = (id: string, activity: string | null, title = `Card ${id}`) => ({ id, title, activity })
-const MARK = { resource: { type: 'issue', id: 'DX-1' }, note: 'landing it' }
 
 describe('held idle (pure)', () => {
-  test("a held card with no activity and no mark is idle; a sub-agent or tool on it, or the session's own mark, makes it active", () => {
+  test("a held card with no activity and no sub-agent briefed on it is idle; a sub-agent or tool on it, or a card the session has worked, makes it active", () => {
     const rows = [held('DX-1', null), held('DX-2', 'Agent: Build'), held('DX-3', 'Bash'), held('DX-4', null)]
     expect(heldIdleOf({ detail: { cards: rows } }, new Set())).toEqual({ ok: true, value: [{ id: 'DX-1', title: 'Card DX-1' }, { id: 'DX-4', title: 'Card DX-4' }] })
     expect(heldIdleOf({ detail: { cards: rows } }, new Set(['DX-1']))).toEqual({ ok: true, value: [{ id: 'DX-4', title: 'Card DX-4' }] })
@@ -27,18 +26,6 @@ describe('held idle (pure)', () => {
     }
   })
 
-  test('only a PUT of a mark on a card sets one, a DELETE clears it, and a mark lives 30 minutes', () => {
-    const set = marksAfter({}, 'PUT', '/api/work-marks', MARK, 1000)
-    expect(set).toEqual({ 'DX-1': 1000 })
-    expect(marksAfter(set, 'GET', '/api/work-marks', MARK, 2000)).toEqual(set)
-    expect(marksAfter(set, 'PUT', '/api/issues', MARK, 2000)).toEqual(set)
-    expect(marksAfter(set, 'PUT', '/api/work-marks', { resource: { type: 'problem', id: '4' } }, 2000)).toEqual(set)
-    expect(marksAfter(set, 'PUT', '/api/work-marks', {}, 2000)).toEqual(set)
-    expect(marksAfter(set, 'DELETE', '/api/work-marks', MARK, 2000)).toEqual({})
-    expect([...liveMarks(set, 1000 + WORK_MARK_TTL_MS - 1)]).toEqual(['DX-1'])
-    expect([...liveMarks(set, 1000 + WORK_MARK_TTL_MS)]).toEqual([])
-  })
-
   test("a card a running sub-agent was briefed on is worked; an agent that ended, or a stale unclaimed brief, covers nothing (CP-49)", () => {
     expect(cardIdsIn('Build DX-1 and CP-49, then DX-1 again; not xDX-2y or 12')).toEqual(['DX-1', 'CP-49'])
     expect(cardIdsIn(undefined)).toEqual([])
@@ -46,12 +33,20 @@ describe('held idle (pure)', () => {
     b = briefSpawned(b, 'explore the repo', 1)
     b = briefClaimed(b, 'a1', 2)
     b = briefClaimed(b, 'a2', 3)
-    expect([...briefedCards(b, ['a1'])]).toEqual(['DX-1'])
-    expect([...briefedCards(b, ['a2'])]).toEqual([])
-    expect([...briefedCards(b, [])]).toEqual([])
-    expect([...briefedCards(briefEnded(b, 'a1'), ['a1'])]).toEqual([])
+    expect([...briefedCards(b, ['a1'], NO_RECENT, 4)]).toEqual(['DX-1'])
+    expect([...briefedCards(b, ['a2'], NO_RECENT, 4)]).toEqual([])
+    expect([...briefedCards(b, [], NO_RECENT, 4)]).toEqual([])
+    expect([...briefedCards(briefEnded(b, 'a1'), ['a1'], NO_RECENT, 4)]).toEqual([])
     const stale = briefClaimed(briefSpawned(NO_BRIEFS, 'work DX-1', 0), 'a1', BRIEF_PENDING_TTL_MS)
-    expect([...briefedCards(stale, ['a1'])]).toEqual([])
+    expect([...briefedCards(stale, ['a1'], NO_RECENT, BRIEF_PENDING_TTL_MS)]).toEqual([])
+  })
+
+  test('the cards of a sub-agent that ended stay worked for five minutes, then fall away (DX-7388)', () => {
+    const b = briefClaimed(briefSpawned(NO_BRIEFS, 'work DX-1', 0), 'a1', 1)
+    const recent = briefRecent(NO_RECENT, b, 'a1', 1000)
+    expect([...briefedCards(briefEnded(b, 'a1'), [], recent, 1000 + RECENT_BRIEF_MS - 1)]).toEqual(['DX-1'])
+    expect([...briefedCards(briefEnded(b, 'a1'), [], recent, 1000 + RECENT_BRIEF_MS)]).toEqual([])
+    expect(briefRecent(recent, b, 'a1', 1000 + RECENT_BRIEF_MS)).toEqual([{ ids: ['DX-1'], at: 1000 + RECENT_BRIEF_MS }])
   })
 
   test('the reason names at most five cards, counts the rest and gives the release call', () => {
@@ -103,16 +98,7 @@ for (const surface of SURFACES) {
       expect(d.reports.filter((x: any) => x.path === DETAIL)).toEqual([])
     })
 
-    test("the session's own work mark makes the card active until it is cleared", async ($, on) => {
-      const d = await started($, on)
-      d.world.heldRows = [held('DX-1', null)]
-      await $.tool.call({ tool: API, method: 'PUT', path: '/api/work-marks', body: MARK })
-      expect((await $.classic.Stop(STOP)).block).toBeUndefined()
-      await $.tool.call({ tool: API, method: 'DELETE', path: '/api/work-marks', body: { resource: MARK.resource } })
-      expect((await $.classic.Stop(STOP)).block).toBe(reason('DX-1'))
-    })
-
-    test('a card a running sub-agent was briefed on does not block the stop; once none runs, it does (CP-49)', async ($, on) => {
+    test('a card a sub-agent was briefed on does not block the stop while it runs or for five minutes after; then it does (CP-49, DX-7388)', async ($, on) => {
       on('agent.spawn', () => ({ model: 'm', agentId: 'new' }) as any)
       const d = await started($, on)
       d.world.heldRows = [held('DX-1', null), held('DX-2', null)]
@@ -120,6 +106,8 @@ for (const surface of SURFACES) {
       await $.classic.SubagentStart({ agent_id: 'a1', agent_type: 'general-purpose' })
       expect((await $.classic.Stop(STOP)).block).toBe(reason('DX-2'))
       await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] })
+      expect((await $.classic.Stop(STOP)).block).toBe(reason('DX-2'))
+      await d.clock.advance(RECENT_BRIEF_MS)
       expect((await $.classic.Stop(STOP)).block).toBe(heldIdleReason([{ id: 'DX-1', title: 'Card DX-1' }, { id: 'DX-2', title: 'Card DX-2' }]))
     })
 
@@ -134,15 +122,8 @@ for (const surface of SURFACES) {
       d.world.readyRows[BOARD] = [row('DX-9')]
       expect((await $.classic.Stop(STOP)).block).toBeUndefined()
       await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] })
+      await d.clock.advance(RECENT_BRIEF_MS)
       expect((await $.classic.Stop(STOP)).block).toBe(blockReason([{ id: 'DX-9', title: 'Ready DX-9' }]))
-    })
-
-    test('a mark past its 30 minutes no longer counts', async ($, on) => {
-      const d = await started($, on)
-      d.world.heldRows = [held('DX-1', null)]
-      await $.tool.call({ tool: API, method: 'PUT', path: '/api/work-marks', body: MARK })
-      await d.clock.advance(WORK_MARK_TTL_MS)
-      expect((await $.classic.Stop(STOP)).block).toBe(reason('DX-1'))
     })
 
     test('a failed detail read allows the stop with one line and leaves the ready-cards check working', async ($, on) => {

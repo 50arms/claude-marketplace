@@ -93,8 +93,8 @@ import type { ActivityChange } from './reports/activity'
 import { labelOf } from './reports/label'
 import { READY_CARDS_DEADLINE_MS, blockReason, issuesQuery, planOf, readyCardsOf, reviewReason, skippedLine } from './reports/ready-cards'
 import type { ReadyCard, ReviewableCard } from './reports/ready-cards'
-import { NO_BRIEFS, briefClaimed, briefEnded, briefSpawned, briefedCards, detailPath, heldIdleOf, heldIdleReason, heldSkippedLine, liveMarks, marksAfter } from './reports/held-idle'
-import type { Briefs, HeldCard, WorkMarks } from './reports/held-idle'
+import { NO_BRIEFS, NO_RECENT, briefClaimed, briefEnded, briefRecent, briefSpawned, briefedCards, detailPath, heldIdleOf, heldIdleReason, heldSkippedLine } from './reports/held-idle'
+import type { Briefs, HeldCard, RecentBriefs } from './reports/held-idle'
 import { OLDER_DASHBOARD_LINE, PAUSE_PATH, isUnregisteredSession, pauseOf } from './reports/pause'
 import type { PauseRead } from './reports/pause'
 import { storeDoor, type StoreCall, type StoreIo } from './store/recover'
@@ -208,8 +208,8 @@ const compacting = atom({ plugin: '50arms', key: 'compacting' } as const, { main
 const runningAgents = atom({ plugin: '50arms', key: 'runningAgents' } as const, [] as string[])
 // the reports' memory between events (see ReportState).
 const reports = atom({ plugin: '50arms', key: 'reports' } as const, { agents: {}, shells: [], planId: null } as ReportState)
-// the cards this session marked as its own work (PUT /api/work-marks), by card id with the time set; the held-idle Stop check counts them as worked (reports/held-idle.ts).
-const workMarks = atom({ plugin: '50arms', key: 'workMarks' } as const, {} as WorkMarks)
+// the briefs of the sub-agents that ended in the last few minutes; the held-idle Stop check counts their cards as worked for that long (reports/held-idle.ts).
+const recentBriefs = atom({ plugin: '50arms', key: 'recentBriefs' } as const, NO_RECENT as RecentBriefs)
 // the relay's undelivered events, kept beside the module's own outbox (relay/outbox.ts says why): $.state outlives a reload of this module, the module variable does not.
 // the card ids each admitted sub-agent spawn was briefed on, claimed by the sub-agent that starts (reports/held-idle.ts); the held-idle Stop check counts a card a running sub-agent was briefed on as worked.
 const agentBriefs = atom({ plugin: '50arms', key: 'agentBriefs' } as const, NO_BRIEFS as Briefs)
@@ -274,7 +274,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     compacting: read($, compacting),
     runningAgents: read($, runningAgents),
     reports: read($, reports),
-    workMarks: read($, workMarks),
+    recentBriefs: read($, recentBriefs),
     heldNotices: read($, heldNotices),
     agentBriefs: read($, agentBriefs),
     spawnedAgents: read($, spawnedAgents),
@@ -334,7 +334,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, compacting, () => carried.compacting),
     update($, runningAgents, () => carried.runningAgents),
     update($, reports, () => carried.reports),
-    update($, workMarks, () => carried.workMarks),
+    update($, recentBriefs, () => carried.recentBriefs),
     update($, heldNotices, () => carried.heldNotices),
     update($, agentBriefs, () => carried.agentBriefs),
     update($, spawnedAgents, () => carried.spawnedAgents),
@@ -3010,11 +3010,6 @@ async function onAckCall($: any, e: any, next: any) {
       if (!raisedByPlugin(next.origin)) named = await applyNaming($, CARD_TRANSITION_PATH.exec(e.path)?.[1], connected.naming)
     }
   }
-  // the session's own work mark on a card (set or cleared) counts toward the held-idle check; only a mark the dashboard took
-  if (e.agentId === undefined && !raisedByPlugin(next.origin) && answer.ok) {
-    const now = await $.clock.now()
-    await update($, workMarks, cur => marksAfter(cur, e.method, e.path, e.body, now))
-  }
   const id = ackedEventId(e.method, e.path)
   if (id !== null && answer.ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
   return named === null ? ran : withNamedNote(ran, named)
@@ -3770,6 +3765,14 @@ async function onSubagentStart($: any, e: any, next: any) {
   return withLine(withLine(r, eventLine), pacing)
 }
 
+// a sub-agent's brief ends; its cards stay worked for a few minutes (briefRecent)
+async function endBrief($: any, agentId: string) {
+  const now = await $.clock.now()
+  const briefs = await read($, agentBriefs)
+  await update($, recentBriefs, cur => briefRecent(cur, briefs, agentId, now))
+  await update($, agentBriefs, cur => briefEnded(cur, agentId))
+}
+
 async function onSubagentStop($: any, e: any, next: any) {
   await noteRunningAgent($, e.agent_id, false)
   const id = typeof e.agent_id === 'string' && e.agent_id !== '' ? e.agent_id : null
@@ -3778,7 +3781,7 @@ async function onSubagentStop($: any, e: any, next: any) {
   // read before the brief ends: it names the cards a foreground agent's finish carries
   const cards = id === null || by !== 'stop' ? [] : ((await read($, agentBriefs)).byAgent[id] ?? [])
   // a background agent's brief stays until its final notice ends it: a stop is no end for it (it fires at every turn's end, and the agent may only be waiting on background work)
-  if (id !== null && by !== 'notice') await update($, agentBriefs, cur => briefEnded(cur, id))
+  if (id !== null && by !== 'notice') await endBrief($, id)
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
@@ -3799,7 +3802,7 @@ async function finishNoticeLabel($: any, notice: TaskNotice | null): Promise<str
   const agent = (await read($, spawnedAgents))[notice.taskId]
   if (announcedBy(agent) !== 'notice' || agent === undefined || !(await signedInWithAgent($))) return []
   const cards = (await read($, agentBriefs)).byAgent[notice.taskId] ?? []
-  await update($, agentBriefs, cur => briefEnded(cur, notice.taskId))
+  await endBrief($, notice.taskId)
   return [finishedAgentLabel(notice.taskId, agent, cards)]
 }
 
@@ -4226,12 +4229,12 @@ async function readReadyCards($: any): Promise<ReadyRead> {
   let heldSkipped: string | null = null
   if (!detail.ok) heldSkipped = errText(detail)
   else {
-    const idle = heldIdleOf(detail.body, new Set([...liveMarks(await read($, workMarks), await $.clock.now()), ...briefedCards(await read($, agentBriefs), await read($, runningAgents))]))
+    const idle = heldIdleOf(detail.body, briefedCards(await read($, agentBriefs), await read($, runningAgents), await read($, recentBriefs), await $.clock.now()))
     if (idle.ok) held = idle.value
     else heldSkipped = idle.reason
   }
   // a ready card a running sub-agent of the session was briefed on is being worked: it is left out, and with every card left out the report says nothing
-  const worked = briefedCards(await read($, agentBriefs), await read($, runningAgents))
+  const worked = briefedCards(await read($, agentBriefs), await read($, runningAgents), await read($, recentBriefs), await $.clock.now())
   return { kind: 'cards', cards: cards.filter(c => !worked.has(c.id)), reviewable, held, heldSkipped }
 }
 

@@ -16,34 +16,6 @@ export function detailPath(planId: number): string {
   return `/api/plans/${planId}/connected-session/detail`
 }
 
-// The work marks: the signal for the session's OWN direct work on a card (landing it, deploying it), which shows no sub-agent and no tool
-// activity on the card. A session about to work a card itself says so with `PUT /api/work-marks` on it; the card then counts as
-// worked while the mark lives. This is the ONE signal, chosen because the session makes it deliberately and the plugin sees it on the tool
-// call itself, so nothing about the card's history is guessed. A mark expires on its own after 30 minutes, as the dashboard's does, and
-// `DELETE /api/work-marks` ends it at once.
-export const WORK_MARK_PATH = '/api/work-marks'
-export const WORK_MARK_TTL_MS = 30 * 60_000
-
-// Card id -> epoch ms the mark was set (or renewed).
-export type WorkMarks = Record<string, number>
-
-// The marks after one `50arms_api` call of the session: a `PUT` of a mark on a card sets it, a `DELETE` of one clears it, anything else
-// (another path, a mark on a problem, design or decision, a malformed body) changes nothing.
-export function marksAfter(marks: WorkMarks, method: unknown, path: unknown, body: unknown, now: number): WorkMarks {
-  if (path !== WORK_MARK_PATH || typeof method !== 'string') return marks
-  const verb = method.toUpperCase()
-  if (verb !== 'PUT' && verb !== 'DELETE') return marks
-  const resource = (body as { resource?: { type?: unknown; id?: unknown } } | null)?.resource
-  if (resource?.type !== 'issue' || typeof resource.id !== 'string' || resource.id === '') return marks
-  const { [resource.id]: _gone, ...rest } = marks
-  return verb === 'PUT' ? { ...rest, [resource.id]: now } : rest
-}
-
-// The card ids whose mark is still alive at `now`.
-export function liveMarks(marks: WorkMarks, now: number): Set<string> {
-  return new Set(Object.entries(marks).filter(([, at]) => now - at < WORK_MARK_TTL_MS).map(([id]) => id))
-}
-
 // The sub-agents' briefs. A running sub-agent of the session that was briefed on a card is working it, even before it has
 // claimed it or between its tool calls, when the dashboard shows no activity on the card. The plugin sees a spawn's prompt (`agent.spawn`) but
 // not which agent id it gets, so each admitted spawn's card ids wait in `pending` (oldest first) and the next sub-agent start takes the oldest.
@@ -79,21 +51,32 @@ export function briefEnded(b: Briefs, agentId: string): Briefs {
   return { ...b, byAgent: rest }
 }
 
-// The card ids a still-running sub-agent was briefed on.
-export function briefedCards(b: Briefs, running: readonly string[]): Set<string> {
-  return new Set(running.flatMap(id => b.byAgent[id] ?? []))
+// The cards a sub-agent that ended a moment ago was briefed on stay worked for a few minutes: the session reads the agent's report and acts on it
+// between that agent's end and its next spawn, and the dashboard shows no activity on the card in that gap.
+export const RECENT_BRIEF_MS = 5 * 60_000
+export type RecentBriefs = { ids: string[]; at: number }[]
+export const NO_RECENT: RecentBriefs = []
+
+// The ended sub-agent `agentId`'s brief joins the recent ones (older ones fall away).
+export function briefRecent(recent: RecentBriefs, b: Briefs, agentId: string, now: number): RecentBriefs {
+  return [...recent.filter(r => now - r.at < RECENT_BRIEF_MS), { ids: b.byAgent[agentId] ?? [], at: now }]
 }
 
-// Whether a held card is idle: nothing is on it right now (`activity` is null: no sub-agent of this session and no tool call) and the
-// session has not marked it as its own work.
-export function isHeldIdle(card: DetailCard, marked: ReadonlySet<string>): boolean {
-  return card.activity === null && !marked.has(card.id)
+// The card ids a still-running sub-agent was briefed on, and those of a sub-agent that ended in the last few minutes.
+export function briefedCards(b: Briefs, running: readonly string[], recent: RecentBriefs, now: number): Set<string> {
+  return new Set([...running.flatMap(id => b.byAgent[id] ?? []), ...recent.filter(r => now - r.at < RECENT_BRIEF_MS).flatMap(r => r.ids)])
+}
+
+// Whether a held card is idle: nothing is on it right now (`activity` is null: no sub-agent of this session and no tool call) and no sub-agent
+// of the session was briefed on it while running or in the last few minutes (`worked`).
+export function isHeldIdle(card: DetailCard, worked: ReadonlySet<string>): boolean {
+  return card.activity === null && !worked.has(card.id)
 }
 
 export type Read<T> = { ok: true; value: T } | { ok: false; reason: string }
 
 // The detail's body: the held cards that are idle, in the order read. A card row it cannot judge fails the whole read.
-export function heldIdleOf(body: unknown, marked: ReadonlySet<string>): Read<HeldCard[]> {
+export function heldIdleOf(body: unknown, worked: ReadonlySet<string>): Read<HeldCard[]> {
   const cards = (body as { detail?: { cards?: unknown } } | null)?.detail?.cards
   if (!Array.isArray(cards)) return { ok: false, reason: 'bad_response: GET connected-session/detail answered no detail.cards list' }
   const idle: HeldCard[] = []
@@ -102,7 +85,7 @@ export function heldIdleOf(body: unknown, marked: ReadonlySet<string>): Read<Hel
     if (c === null || typeof c !== 'object' || typeof c.id !== 'string' || typeof c.title !== 'string' || !(c.activity === null || typeof c.activity === 'string')) {
       return { ok: false, reason: 'bad_response: a held card row lacks a field the check judges' }
     }
-    if (isHeldIdle({ id: c.id, title: c.title, activity: c.activity }, marked)) idle.push({ id: c.id, title: c.title })
+    if (isHeldIdle({ id: c.id, title: c.title, activity: c.activity }, worked)) idle.push({ id: c.id, title: c.title })
   }
   return { ok: true, value: idle }
 }
@@ -118,7 +101,7 @@ export function heldIdleReason(cards: readonly HeldCard[]): string {
   const more = cards.length > listed.length ? `, and ${cards.length - listed.length} more` : ''
   return (
     `You hold ${cards.length} card${cards.length === 1 ? '' : 's'} nobody is working: ${listed.join('; ')}${more}. ` +
-    'Work each now (a sub-agent, or mark your own work with PUT /api/work-marks), or record on the card why it waits and release it with ' +
+    'Work each now (a sub-agent), or record on the card why it waits and release it with ' +
     '`DELETE /api/issues/<id>/assigned-agent` (or `rollback_pickup` without `keep_assignment`). A card nobody is working is assigned to no agent.'
   )
 }
