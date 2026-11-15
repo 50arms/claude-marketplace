@@ -48,10 +48,10 @@ export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: strin
 
 export type PlanView = {
   // `loading` is both the first load (nothing known yet) and a connect answered with its numbers still pending (`connected` and `refreshedAt` set).
-  phase: 'loading' | 'ready' | 'error' | 'signed-out' | 'key-revoked' | 'blocked'
+  phase: 'loading' | 'ready' | 'unreachable' | 'load-failed' | 'signed-out' | 'key-revoked' | 'blocked'
+  // `unreachable`: the plugin's own MCP server is not connected (yet): the band says Disconnected and offers Sign in, and the session-start retry waits it out.
+  // `load-failed`: any other failed load (an answer too large for the host, an error answer, one that cannot be read, a missed deadline): the band says so with the reason and offers no Sign in, since the session's key was never in question.
   error: string | null
-  // the load failed because the plugin's own MCP server is not connected (yet), the one failure the session-start retry waits out
-  serverNotConnected: boolean
   // the dashboard origin the band's links are built on: the one the plan list answered, else (a failed or signed-out load) the
   // last one this machine saw answered; null only while none has ever been seen.
   dashboardUrl: string | null
@@ -59,7 +59,7 @@ export type PlanView = {
   // the session's team agent, and the stand-alone card it holds (a session holds a plan or a card, never both); null when it holds none.
   agent: SessionAgent | null
   card: HeldCard | null
-  // the held card's checklist progress (items passing over all items, a whole percent); null with no card or a card whose checklists hold no items.
+  // the held card's acceptance-criteria progress (criteria passing over all criteria, a whole percent); null with no card or a card with no criteria.
   cardPercent: number | null
   // the session signed in but holds no team agent, and the MCP's agent gate refuses its dashboard reads until one is held:
   // `agent_needed` (it proposes one), `agent_limit_reached` (the member's or team's cap on sessions signed in as an agent is full: the person ends another or raises the cap), `agent_not_held` (the agent was released; `session_connect` claims one again); null otherwise. The view is then `ready`.

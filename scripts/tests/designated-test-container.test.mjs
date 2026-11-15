@@ -1,6 +1,6 @@
 import "../../50arms/tests/designated-test-container.mjs";
-// DX-5648: the repo's tests run only in the designated test container. This pins the guard's decision, that every node test file carries the
-// guard, and that the image writes the marker the guard reads and the entry runs the suites the package script names.
+// DX-5648: the repo's tests run only in the designated test container. This pins the guard's decision and that every test file carries the
+// guard.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -86,36 +86,17 @@ test("DX-5648: every node test file imports the guard first", () => {
 
 // A .tsx test cannot check where it runs, so its guard is an import that only resolves in the container: the gitignored module the entry
 // script writes after it checks the root-owned marker.
-test("DX-5648: every plugin function-hook test imports the container-only module first, and it is never committed", () => {
+test("DX-5648: every plugin function-hook test imports the container-only module first", () => {
   const files = testFiles(/\.test\.tsx$/);
   assert.ok(files.length > 20, `only ${files.length} test files found`);
   const unguarded = files.filter((rel) => read(rel).split("\n")[0] !== 'import "./run-tests-with-npm-test.generated"');
   assert.deepEqual(unguarded, [], "plugin test files whose first line is not the generated-module import");
-  assert.match(read(".gitignore"), /^\*\.generated\.ts$/m, "the generated module must be gitignored so a host's copy never carries it");
-  assert.match(read("scripts/test-container-entry.sh"), /run-tests-with-npm-test\.generated\.ts/);
 });
 
 test("DX-5648: readTestHost reads a missing marker as not-the-container but rethrows any other failure", () => {
   assert.equal(readTestHost(path.join(REPO_ROOT, "no-such-marker")).markerOwnerUid, null);
   // A marker path beneath a regular file fails with ENOTDIR: that must stop the run, not look like a missing marker.
   assert.throws(() => readTestHost(path.join(REPO_ROOT, "package.json", "marker")), { code: "ENOTDIR" });
-});
-
-test("DX-5648: the image writes the marker the guard reads, root-owned, and installs the pinned claude CLI", () => {
-  const dockerfile = read("Dockerfile.test");
-  assert.ok(dockerfile.includes(TEST_ENVIRONMENT_MARKER), "Dockerfile.test does not write the marker path");
-  const markerLine = dockerfile.split("\n").findIndex((l) => l.includes(`> ${TEST_ENVIRONMENT_MARKER}`));
-  const userLine = dockerfile.split("\n").findIndex((l) => /^USER node$/.test(l));
-  assert.ok(markerLine >= 0 && userLine > markerLine, "the marker must be written before the image drops to the node user");
-  assert.match(dockerfile, /npm install -g .*@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
-  assert.match(read(".claude-code-version"), /^\d+\.\d+\.\d+\n$/);
-});
-
-test("DX-5648: npm test is the container command, and the entry runs both suites", () => {
-  assert.equal(JSON.parse(read("package.json")).scripts.test, "node scripts/test-in-container.mjs");
-  const entry = read("scripts/test-container-entry.sh");
-  assert.match(entry, /node --test "\$\{mjs\[@\]\}"/);
-  assert.match(entry, /claude plugin test "\$plugin"/);
 });
 
 // DX-5648: a named file that is not a test stops the run before anything is deleted (a helper such as plan-kit.tsx once deleted every

@@ -1,5 +1,5 @@
 import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
-import { CARD_CHECKLIST_FIELDS, EMPTY, ERROR_BODY_MAX, IN_PROGRESS_LIMIT, NEEDS_YOU_BUCKET_ID, PLAN_BAND_FIELDS, PREFIX_PATTERN, STATUS_KEYS } from './config'
+import { CARD_PROGRESS_FIELDS, EMPTY, ERROR_BODY_MAX, IN_PROGRESS_QUERY, NEEDS_YOU_BUCKET_ID, PLAN_BAND_FIELDS, PREFIX_PATTERN, STATUS_KEYS } from './config'
 import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './mcp'
 import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
@@ -79,12 +79,13 @@ export async function loadPlan(call: Call, refreshedAt: string): Promise<PlanVie
 async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   // the calling session's own route: its `session`, the `dashboard_url` and the `sessionListenerAttached`, read from that session's rows alone (never a plan list)
   const list = await call('GET', '/api/plan-sessions/me')
-  if (!list.ok) return { ...EMPTY, phase: 'error', error: errText(list), serverNotConnected: list.unreachable === true }
+  // only the plugin's own server not being connected reads as unreachable (the band says Disconnected and offers Sign in); any other failed read is a failed load
+  if (!list.ok) return { ...EMPTY, phase: list.unreachable === true ? 'unreachable' : 'load-failed', error: errText(list) }
 
   // the origin every link is built on. Without it no link can be right, so the load is an error.
   const dashboardUrl = readOrigin(list.body.dashboard_url)
   if (dashboardUrl === null) {
-    return { ...EMPTY, phase: 'error', error: 'GET /api/plan-sessions/me answered no valid dashboard_url (an http(s) origin): cannot build plan links' }
+    return { ...EMPTY, phase: 'load-failed', error: 'GET /api/plan-sessions/me answered no valid dashboard_url (an http(s) origin): cannot build plan links' }
   }
   // The session in this same response says WHICH plan; the plan itself is read by id below.
   const session = list.body.session
@@ -93,11 +94,11 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   // nextStep: string | null} cannot be read, so the load fails (never nulled to the no-status line).
   const listener = readListener(list.body.sessionListenerAttached)
   if (listener === MALFORMED_LISTENER) {
-    return { ...EMPTY, phase: 'error', error: 'GET /api/plan-sessions/me answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
+    return { ...EMPTY, phase: 'load-failed', error: 'GET /api/plan-sessions/me answered a sessionListenerAttached that is not {state: string, nextStep: string | null}: cannot show the event status' }
   }
   // the agent the session signs in as and the card it holds, from the same session row
   const holds = readSessionHolds(session)
-  if ('error' in holds) return { ...EMPTY, phase: 'error', error: holds.error }
+  if ('error' in holds) return { ...EMPTY, phase: 'load-failed', error: holds.error }
   // a session on nothing has no pause to show; one on a plan or a card reads it with the load
   const onNothing = connectedId === null && holds.card === null
   const pause = onNothing ? null : await readPause(call, Date.parse(refreshedAt))
@@ -116,11 +117,11 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const noPlan = { dashboardUrl, connected: null, listener, paused, pausedWaitsOn, readyRepo, readyLoopFault, ...holds }
   if (connectedId === null) {
     if (holds.card === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
-    // a held card shows its checklist progress as the donut; a card read that fails is the load's error, as a plan read's is
-    const cardR = await call('GET', `/api/issues/${holds.card.id}`, { query: { fields: CARD_CHECKLIST_FIELDS } })
-    if (!cardR.ok) return { ...EMPTY, ...noPlan, phase: 'error', error: errText(cardR) }
-    const percent = readChecklistPercent(cardR.body?.checklists, `GET /api/issues/${holds.card.id}`)
-    if (typeof percent === 'string') return { ...EMPTY, ...noPlan, phase: 'error', error: percent }
+    // a held card shows its acceptance-criteria progress as the donut; a card read that fails is the load's error, as a plan read's is
+    const cardR = await call('GET', `/api/issues/${holds.card.id}`, { query: { fields: CARD_PROGRESS_FIELDS } })
+    if (!cardR.ok) return { ...EMPTY, ...noPlan, phase: 'load-failed', error: errText(cardR) }
+    const percent = readAcPercent(cardR.body, `GET /api/issues/${holds.card.id}`)
+    if (typeof percent === 'string') return { ...EMPTY, ...noPlan, phase: 'load-failed', error: percent }
     return { ...EMPTY, ...noPlan, cardPercent: percent, phase: 'ready', error: null, refreshedAt }
   }
 
@@ -129,12 +130,13 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const [planR, inProg, boards] = await Promise.all([
     // the plan's every card id and its bucket counts come on this read (`PLAN_BAND_FIELDS`), whatever the plan's boards or size
     call('GET', `/api/plans/${connectedId}`, { query: { fields: PLAN_BAND_FIELDS } }),
-    call('GET', `/api/plans/${connectedId}/cards`, { query: { bucket: 'in-progress', sort: 'priority', order: 'desc', limit: IN_PROGRESS_LIMIT } }),
+    // the In Progress cards as the issues list's compact row (id, title, status, ...: about 0.5 KB each), never the plan's card-list rows (about 4.6 KB each: 14 cards went over the host's tool-result limit)
+    call('GET', '/api/issues', { query: IN_PROGRESS_QUERY(connectedId) }),
     // the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
     // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
     call('GET', '/api/boards'),
   ])
-  const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'error', error })
+  const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'load-failed', error })
   if (!planR.ok) return fail(errText(planR))
   const breakdown = readBreakdown(planR.body?.status_breakdown)
   if (breakdown === null) {
@@ -149,11 +151,11 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const base = { dashboardUrl, connected, listener, paused, pausedWaitsOn, readyRepo, readyLoopFault, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
 
   // The in-progress bucket: its list is only as complete as the total says, so an answer without a numeric total is an error.
-  if (!inProg.ok) return { ...EMPTY, ...base, phase: 'error', error: errText(inProg) }
+  if (!inProg.ok) return { ...EMPTY, ...base, phase: 'load-failed', error: errText(inProg) }
   if (typeof inProg.body.total !== 'number') {
-    return { ...EMPTY, ...base, phase: 'error', error: `GET /api/plans/${connectedId}/cards (in-progress) answered no total: cannot tell whether the list is complete` }
+    return { ...EMPTY, ...base, phase: 'load-failed', error: `GET /api/issues (In Progress cards of PLAN-${connectedId}) answered no total: cannot tell whether the list is complete` }
   }
-  const ipRows: any[] = inProg.body.cards ?? []
+  const ipRows: any[] = inProg.body.issues ?? []
   const inProgress: InProgressRow[] = ipRows.map(row => ({ id: row.id, title: row.title }))
   // the cards waiting on a person are the plan's `bucket_counts["needs-you"]`, the number its Needs You tab shows. An answer without it leaves the view
   // ready (the plan itself was read) with the count unknown (null, never a guessed 0) and the reason in `needsYouError`.
@@ -224,15 +226,12 @@ function readListener(raw: any): ListenerStatus | null | typeof MALFORMED_LISTEN
   return { state: raw.state, nextStep: raw.nextStep }
 }
 
-// The percent of a card's checklist items that pass (all its checklists together, rounded), null for a card with no items, or the reason the answer cannot be read.
-function readChecklistPercent(checklists: unknown, route: string): number | null | string {
-  if (!Array.isArray(checklists)) return `${route} answered no checklists list: cannot show the card's progress`
-  const items: any[] = []
-  for (const list of checklists) {
-    if (!Array.isArray(list?.items)) return `${route} answered a checklist without its items: cannot show the card's progress`
-    items.push(...list.items)
-  }
-  if (items.some(item => typeof item?.status !== 'string')) return `${route} answered a checklist item with no status: cannot show the card's progress`
-  if (items.length === 0) return null
-  return Math.round((items.filter(item => item.status === 'passing').length / items.length) * 100)
+// The percent of a card's acceptance criteria that pass (rounded), null for a card with none, or the reason the answer cannot be read.
+function readAcPercent(card: any, route: string): number | null | string {
+  const total = card?.ac_total
+  const done = card?.ac_done
+  const count = (n: unknown) => typeof n === 'number' && Number.isInteger(n) && n >= 0
+  if (!count(total) || !count(done) || done > total) return `${route} answered no acceptance-criteria counts: cannot show the card's progress`
+  if (total === 0) return null
+  return Math.round((done / total) * 100)
 }

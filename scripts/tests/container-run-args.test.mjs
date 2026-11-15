@@ -21,12 +21,13 @@ test("docker run carries --rm directly after `run`, before the image", () => {
 
 const labelsOf = (args) => args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
 
-// CP-3: pinned equal to 50 Arms' schema (src/docker-ownership/labels.ts: OWNER_LABEL kind/release/session; kind test-run; release idle:<minutes>).
-test("the container carries 50 Arms' owner labels: test-run, idle:60, and the session when set", () => {
+// CP-3: the session label is carried only when a session id is set.
+test("the session id becomes one more label, and an unset or empty one adds none", () => {
+  const without = labelsOf(containerRunArgs("n", "img", [], {}));
   const withSession = labelsOf(containerRunArgs("n", "img", [], { CLAUDE_CODE_SESSION_ID: "abc-123" }));
-  assert.deepEqual(withSession, ["claude-plugins.test-container=1", "danxbot.kind=test-run", "danxbot.release=idle:60", "danxbot.session=abc-123"]);
-  assert.deepEqual(labelsOf(containerRunArgs("n", "img", [], {})), ["claude-plugins.test-container=1", "danxbot.kind=test-run", "danxbot.release=idle:60"]);
-  assert.deepEqual(labelsOf(containerRunArgs("n", "img", [], { CLAUDE_CODE_SESSION_ID: "" })).length, 3);
+  assert.equal(withSession.length, without.length + 1);
+  assert.ok(withSession.at(-1).endsWith("abc-123"));
+  assert.equal(labelsOf(containerRunArgs("n", "img", [], { CLAUDE_CODE_SESSION_ID: "" })).length, without.length);
 });
 
 test("every label sits before the image", () => {

@@ -1,13 +1,14 @@
 ---
 name: issue-workflow
-description: 'The one workflow for working a card, and every dev rule that applies while doing it: claim, context, the ideal build (TDD, no legacy, fail loud, reuse), debugging, git and shell hygiene, gates, complete. Load before working a card, and before choosing a card type or slicing work (then also references/card-creation-and-reference.md).'
+description: 'The one workflow for working a card, and every dev rule that applies while doing it: claim, context, the ideal build (TDD, no legacy, fail loud, reuse), debugging, git and shell hygiene, gates, complete. Load before working a card, and before creating a card (then also references/card-creation-and-reference.md).'
 ---
 
 # Issue Workflow
 
 Dashboard Postgres is the only source of card truth; `50arms_api` is the whole surface
 (routes: `50arms_api_list`; contracts: `50arms_api_spec`) — never file operations.
-Creating or slicing a card: load `references/card-creation-and-reference.md` first.
+Creating a card: load `references/card-creation-and-reference.md` first. The type's rules come only from
+`GET /api/card-types`, and the create quotes the part it relies on as its `justification`.
 
 ## Two callers
 
@@ -33,7 +34,7 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    sooner delegating is cheaper than its ~60k-token start.
 2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip this
    step, the card is already yours.
-3. Its PRE gates have passed ("Gates" below); build test-first, to the rules under
+3. Its PRE gates have passed ("Gates" below); build to the rules under
    "Building" below.
 4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
    changes. Run only those: the touched files' own tests and their direct dependents (a prose
@@ -209,6 +210,11 @@ must name the invariant it enforces.
 (extend it) and the wrong location (move it) before writing anything new; name what you
 searched. "Can't reuse it because <constraint>" is a guess until you cite the `file:line`
 that enforces it.
+
+**Tests.** 50 Arms' product docs alone define what a valid test is: what to test and what never to test,
+at which layer, with which test doubles, how many tests a change gets, and when a test is deleted.
+Before you write, edit or delete a test, search the product docs for `testing standard: what to test`,
+read the page and follow it. Your repo's own docs may add rules for that repo.
 
 **Existing code.** Comments are authoritative on WHY but were true only when written: confirm
 the producer or mechanism they name still exists, follow a cited docblock to code. A comment

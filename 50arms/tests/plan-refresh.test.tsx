@@ -32,14 +32,15 @@ for (const surface of SURFACES) {
       expect(await needsYouBadgeOf(band)).toBe('⚠ 3')
     })
 
-    test('a refresh error shows `50 Arms: Disconnected` in the band', async ($, on) => {
+    test('a refresh error shows `50 Arms: plan load failed` in the band, never Disconnected', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       d.failList()
       await forceRefresh($, d)
-      expect(await label(band)).toContain('50 Arms: Disconnected')
-      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
+      expect(await label(band)).toContain('50 Arms: plan load failed (500: boom)')
+      expect(await label(band)).not.toContain('Disconnected')
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms load failed')
       // and it recovers on the next good load
       d.failList(false)
       await forceRefresh($, d)
@@ -64,9 +65,9 @@ describe('the dashboard cannot be read', () => {
       const d = dashboard(on, { mcp: 'flaky' })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
-      expect(await label(band)).toContain('50 Arms: Disconnected')
+      expect(await label(band)).toContain('50 Arms: plan load failed')
       expect(await label(band)).not.toContain('not connected in this session')
-      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms load failed')
     })
   }
 })

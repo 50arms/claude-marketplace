@@ -105,8 +105,10 @@ test("plan-workflow's Sub-agents section carries the matching rule once", () => 
   assert.match(subAgents, /Story points decide process \(a card, gates, splitting\), never the agent grade\./);
 });
 
-test("the creation guide points at GET /api/card-types for the parent-child rules", () => {
-  assert.match(creation, /GET \/api\/card-types/);
+// CP-133: a card type's rules live only in its `when_to_use` on GET /api/card-types, and every agent create quotes them as its `justification`.
+test("the creation guide sends the agent to GET /api/card-types for the type's rules and has the create quote them as its justification", () => {
+  assert.match(creation, /Before creating a card, read its type's rules from `50arms_api` `GET \/api\/card-types`/);
+  assert.match(creation, /Quote the part of those rules you rely on as the create's `justification` \(`quote`, `reasoning`\)/);
 });
 
 test("the creation guide carries no hard-coded parent-child list", () => {
@@ -172,9 +174,8 @@ test("plan-workflow delegates every profile-shaped job as <profile> <CARD-ID>, n
   assert.doesNotMatch(subAgents, /Delegate by card id/);
 });
 
-test("the creation guide lists both design gates with when to add each, and builds no designer of its own", () => {
-  assert.match(creation, /\| `plan-design` \| PRE \| changes what a person sees or does in a UI and its look is not settled/);
-  assert.match(creation, /\| `code-design` \| POST \| is a complex UI build .* that must match its approved design closely \|/);
+test("the creation guide sends each gate's when-to-add to its own guidance, and builds no designer of its own", () => {
+  assert.match(creation, /Each gate's own guidance \(`quality_gate.<gate>.when_to_add`, listed in the reply to a card create\) says when to add it/);
   assert.match(creation, /`plan-design` builds the card's designs with the repo's own mini app, and only a person choosing one passes it\./);
   assert.match(creation, /A repo whose designs are off refuses the gate: raise that as an `action` problem/);
   for (const gone of ["50arms:design", "worker-designer"]) {

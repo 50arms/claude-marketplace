@@ -52,9 +52,9 @@ describe('classification: the signed-out answer is its own state, not an error',
     expect(later).toMatchObject({ phase: 'signed-out', error: null })
   })
 
-  test('a generic failure, even one that mentions signing in, is still an error', async () => {
+  test('a generic failure, even one that mentions signing in, is a failed load', async () => {
     const v = await loadPlan(async () => ({ ok: false, status: 401, body: { error: 'Not signed in to the 50 Arms dashboard' } }), 't', null)
-    expect(v.phase).toBe('error')
+    expect(v.phase).toBe('load-failed')
   })
 })
 

@@ -54,12 +54,12 @@ for (const surface of SURFACES) {
       ['not a URL', 'localhost:5555 please'],
       ['not http(s)', 'ftp://plans.example.test'],
     ] as const) {
-      test(`${name}: the band says error, draws no link and the footer reads 50 Arms disconnected`, async ($, on) => {
+      test(`${name}: the band says the load failed, draws no link and the footer reads 50 Arms load failed`, async ($, on) => {
         const d = dashboard(on, { dashboardUrl: value })
         await startSession($, d, surface)
         const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
         const footer = await mountIndicator($, surface)
-        expect(await footerText(footer)).toBe('50 Arms disconnected')
+        expect(await footerText(footer)).toBe('50 Arms load failed')
         expect(await linksOf(band)).toEqual([])
         expect(await band.find({ key: 'open-plan' })).toBeUndefined()
       })
@@ -69,7 +69,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { dashboardUrl: NO_DASHBOARD_URL, connected: false })
       await startSession($, d, surface)
       const footer = await mountIndicator($, surface)
-      expect(await footerText(footer)).toBe('50 Arms disconnected')
+      expect(await footerText(footer)).toBe('50 Arms load failed')
     })
   })
 }

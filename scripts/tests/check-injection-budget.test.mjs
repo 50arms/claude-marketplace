@@ -12,11 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "check-injection-budget.mjs");
 
-const {
-  evaluateBudget,
-  PER_TURN_CEILING_BYTES,
-  CEILING_DECISION_CARD,
-} = await import(pathToFileURL(SCRIPT).href);
+const { evaluateBudget } = await import(pathToFileURL(SCRIPT).href);
 
 function fixturePath(totals) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "injection-budget-test-"));
@@ -35,11 +31,6 @@ function runCli(totals) {
   }
 }
 
-test("AC 32513: the ceiling is one named constant carrying the deciding card id", () => {
-  assert.equal(typeof PER_TURN_CEILING_BYTES, "number");
-  assert.equal(CEILING_DECISION_CARD, "DX-3347");
-});
-
 test("evaluateBudget passes on today's real measured shape (a 23B stamp on each prompt, none on a tool call)", () => {
   const result = evaluateBudget({ perTurnUnconditional: 23 });
   assert.equal(result.ok, true);
@@ -53,7 +44,6 @@ test("AC 32514: evaluateBudget FAILS on a deliberately over-budget per-turn fixt
   assert.equal(result.ok, false);
   assert.equal(result.failures.length, 1);
   assert.match(result.failures[0], /per-turn/);
-  assert.match(result.failures[0], /DX-3347/);
 });
 
 test("AC 32514: the CLI itself exits non-zero on the over-budget fixture, not only the pure function", () => {

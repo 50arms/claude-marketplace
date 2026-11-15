@@ -4,8 +4,8 @@ import "./designated-test-container.mjs";
 // machine, so a correction saved there never reaches a dispatched worker,
 // another repo or another machine (PLN-11 R-3). Two things came out of
 // carrying them home, each stated ONCE in the skill that owns the subject:
-//   - fix-agent-behavior is where a correction goes, and it says so in the one
-//     line every session sees (its description) and in its list of homes;
+//   - fix-agent-behavior is where a correction goes, and it says so in its list
+//     of homes;
 //   - story points never pick the agent grade (plan-workflow, where the
 //     agent grade is picked).
 
@@ -14,7 +14,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { load as parseYaml } from "js-yaml";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (rel) => readFileSync(path.join(here, rel), "utf8");
@@ -37,13 +36,6 @@ const count = (text, pattern) => [...flat(text).matchAll(new RegExp(pattern.sour
 
 const NEVER_A_MEMORY_FILE = /Never a memory file/;
 const POINTS_NEVER_GRADE = /Story points decide process \(a card, gates, splitting\), never the agent grade\./;
-
-test("the description every session sees sends a correction to the skill before it is saved anywhere", () => {
-  const frontmatter = fixBehavior.slice(4, fixBehavior.indexOf("\n---", 4));
-  const description = flat(parseYaml(frontmatter).description);
-  assert.match(description, /^Load when the user corrects how you work, before saving the correction anywhere\./);
-  assert.match(description, /never a memory file or a new skill\. A promise to behave differently/);
-});
 
 test("the list of homes rules a memory file out", () => {
   const locate = section(fixBehavior, "## 3. Locate the target and edit it");

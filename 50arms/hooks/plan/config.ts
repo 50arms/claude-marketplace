@@ -32,14 +32,17 @@ export const PERMISSION_TOLD_MAX = 100
 // The dashboard's six card statuses, in the order a view's breakdown is read.
 export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 'Cancelled'] as const
 
-// The in-progress bucket is listed at most this many rows long (a longer bucket is cut, its total still read).
+// The In Progress cards are listed at most this many rows long (a longer list is cut, its total still read).
 export const IN_PROGRESS_LIMIT = 15
+// ... as the issues list's compact row (the only part the band reads is its `id` and `title`), the most important first.
+export const IN_PROGRESS_QUERY = (planId: number) => ({ filter: { plan_id: planId, status_derived: 'In Progress' }, sort: 'priority', order: 'desc', limit: IN_PROGRESS_LIMIT })
 // `GET /api/plans/:id` is asked, besides its always-present counts (the status breakdown and the bucket counts, whose `needs-you` the band's badge shows),
 // for the plan's card ids (an opt-in field, a few bytes per card at any plan size). The band and the reply links need nothing more of a card, and the plan's card-list route answers whole
 // card rows (about 3 KB each), which past about 20 cards exceeds the host's tool-result limit.
 export const PLAN_BAND_FIELDS = { card_ids: true }
-// what the held card's read names: its checklists, each with its items and their status (`passing` is a ticked one)
-export const CARD_CHECKLIST_FIELDS = { checklists: true }
+// what the held card's read names: only the two counts of its acceptance criteria (live items, and the ones passing), never the checklists
+// themselves, whose items and every review round's findings make the answer grow past what the host accepts on a long-worked card
+export const CARD_PROGRESS_FIELDS = { ac_total: true, ac_done: true }
 // an issue prefix as a board names it (`ABC`, `XYZ`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10
@@ -101,7 +104,6 @@ export const EMPTY: PlanView = {
   readyLoopFault: null,
   phase: 'loading',
   error: null,
-  serverNotConnected: false,
   dashboardUrl: null,
   connected: null,
   agent: null,
@@ -165,6 +167,8 @@ export const REVOKE_GLYPH = '🔒'
 export const REVOKING_LABEL = 'Revoking…'
 // the footer when no team agent is known for the session: the dashboard holds none, or the load failed (the band then says Disconnected too).
 export const NO_AGENT_LABEL = '50 Arms disconnected'
+// the footer of a failed load that read no agent: the session's connection was not in question, so it never says disconnected
+export const LOAD_FAILED_LABEL = '50 Arms load failed'
 
 // The donut's size in px (Svg takes CSS pixels): the band line's.
 export const DONUT_BAND_PX = 16

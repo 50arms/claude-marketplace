@@ -40,7 +40,7 @@ export const test = makeTest(baseTest as any)
 const fsKey = (path: string): string => path.replace(/^(?:.*\/)?[A-Za-z]:/, '').replaceAll('\\', '/')
 
 export const SURFACES = ['terminal', 'desktop'] as const
-// CP-67: the plugin's skills (one folder each under 50arms/skills; plugin-modules.test.mjs holds this list to them). The engine refuses a command named
+// CP-67: the plugin's skills (one folder each under 50arms/skills). The test runtime refuses `node:fs` in a kit file ("a hooks module imports its own files by relative path and claude-code, nothing else"), so this list cannot be read from the folder and is kept by hand. The engine refuses a command named
 // after one: `$.command.register: "/<name>" refused: it is the plugin's /50arms:<name>` (claude.exe 2.1.309), and the kit refuses it the same way.
 export const PLUGIN_SKILLS = ['ready', 'fix-agent-behavior', 'issue-workflow', 'plan-workflow', 'prepare-for-compaction']
 
@@ -320,9 +320,10 @@ export function dashboard(
     reposAnswer: null as { status: number; body: any } | null,
     repos: [] as { name: string; github_remote: { owner: string; repo: string } | null }[],
     cardStatus: {} as Record<string, string>,
-    // card id -> the checklists GET /api/issues/<id> answers when `fields` names `checklists`; and a switch that makes that read answer 500
-    cardChecklists: {} as Record<string, { id: number; name: string; items: { id: number; label: string; status: string }[] }[]>,
-    cardChecklistFails: false,
+    // card id -> the acceptance-criteria counts GET /api/issues/<id> answers when `fields` names them (none seeded: a card with no criteria),
+    // or any object to answer as is; and a switch that makes that read answer 500
+    cardAc: {} as Record<string, Record<string, unknown>>,
+    cardAcFails: false,
     planRead: {} as Record<string, unknown>,
     clearFails: undefined as string | undefined,
     // a /clear that answers but changes nothing
@@ -548,21 +549,23 @@ export function dashboard(
         ...(query?.fields?.card_ids && options.planFieldsShape !== 'noCardIds' ? { card_ids: options.planFieldsShape === 'badCardIds' ? [...planCardIds, 7] : planCardIds } : {}),
       })
     }
-    const cards = /^\/api\/plans\/(\d+)\/cards$/.exec(path)
-    if (method === 'GET' && cards && query?.bucket === 'in-progress') {
+    // CP-135: the plan's card-list route answers whole card rows (measured on PLAN-129: about 4.6 KB each, 14 In Progress cards = 64,825 characters), which the
+    // host refuses past its limit; the issues list answers the compact row (about 0.5 KB) and takes the plan and status as its filter.
+    // CP-135: the In Progress cards come from the issues list (the compact row, about 0.5 KB each), with the plan and status as its filter; the plan's card-list route answers whole rows (about 4.6 KB each: 14 cards went over the host's limit)
+    if (method === 'GET' && path === '/api/issues' && query?.filter?.plan_id !== undefined) {
       if (options.inProgressFails) return reply({ error: 'in-progress boom' }, 500)
       return reply({
-        cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4 })),
+        issues: world.inProgress.slice(0, query.limit).map(c => ({ id: c.id, type: 'Story', title: c.title, status: 'In Progress', parent_id: null, priority: 4, rev: 1, created_at: 1, updated_at: 1, assigned_agent: null, content_hash: 'h'.repeat(64) })),
         ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
       })
     }
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
-    // the held card's checklist read (the band's donut): the checklists the test seeded for the card, each `{id, name, items: [{id, label, status}]}`; none seeded is a card with no checklist
-    if (method === 'GET' && issue && query?.fields?.checklists) {
-      if (world.cardChecklistFails) return reply({ error: 'checklist boom' }, 500)
-      return reply({ id: issue[1], title: 'x', checklists: world.cardChecklists[issue[1]] ?? [] })
+    // the held card's progress read (the band's donut): the acceptance-criteria counts the test seeded for the card; none seeded is a card with no criteria
+    if (method === 'GET' && issue && query?.fields?.ac_total) {
+      if (world.cardAcFails) return reply({ error: 'progress boom' }, 500)
+      return reply({ id: issue[1], title: 'x', ...(world.cardAc[issue[1]] ?? { ac_total: 0, ac_done: 0 }) })
     }
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
@@ -823,7 +826,7 @@ export function dashboard(
   const sequence: string[] = []
   const isReportCall = (a: any) =>
     (a.method === 'POST' && a.path === '/api/plan-sessions/me/activity') ||
-    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause' || a.path === '/api/plan-sessions/me/owed-comments' || /^\/api\/plans\/\d+\/connected-session\/detail$/.test(a.path)))
+    (a.method === 'GET' && (a.path === '/api/plans/mine' || (a.path === '/api/issues' && a.board !== undefined) || a.path === '/api/plan-sessions/me/pause' || a.path === '/api/plan-sessions/me/owed-comments' || /^\/api\/plans\/\d+\/connected-session\/detail$/.test(a.path)))
   // ... answered as the real routes answer them (50 Arms plan-sessions-routes, plans/mine, the issues list)
   function reportAnswer(a: any) {
     if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })

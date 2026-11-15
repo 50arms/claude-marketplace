@@ -34,8 +34,7 @@ for (const surface of SURFACES) {
       const planReads = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23')
       expect(planReads.length).toBeGreaterThan(0)
       for (const a of planReads) expect(a.query).toEqual({ fields: { card_ids: true } })
-      const cardLists = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23/cards')
-      for (const a of cardLists) expect(a.query.bucket).toBe('in-progress')
+      expect(d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23/cards')).toEqual([])
       expect(d.toasts).toEqual([])
     })
 
@@ -50,7 +49,7 @@ for (const surface of SURFACES) {
     test('the host notice on any call of the load is never the band text', async () => {
       const oversize = async () => ({ ok: false, status: 0, body: { error: HOST_OVERSIZE(85_234) } })
       const v = await loadPlan(oversize, 't')
-      expect(v.phase).toBe('error')
+      expect(v.phase).toBe('load-failed')
       expect(v.error).toBe('the dashboard answer was too large')
     })
   })
@@ -70,10 +69,10 @@ describe('what a failed call says to a person', () => {
 // DX-4490 / DX-4492: every dashboard list sorts by `?sort=<field>&order=asc|desc`; any other sort shape is a 400. The plan's card
 // lists ask for the most important first: field `priority`, order `desc`.
 for (const surface of SURFACES) {
-  describe(`the plan's card lists on ${surface}`, () => {
+  describe(`the In Progress cards list on ${surface}`, () => {
     test('ask the dashboard for a sort field and order it accepts', async ($, on) => {
       const { d } = await openBand($, on, surface)
-      const sorted = d.api.filter((a: any) => a.method === 'GET' && /^\/api\/plans\/[^/]+\/cards$/.test(a.path) && a.query?.sort !== undefined)
+      const sorted = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/issues' && a.query?.filter?.plan_id === 23)
       expect(sorted.length).toBeGreaterThan(0)
       for (const a of sorted) expect({ sort: a.query.sort, order: a.query.order }).toEqual({ sort: 'priority', order: 'desc' })
     })

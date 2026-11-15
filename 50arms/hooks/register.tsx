@@ -491,7 +491,7 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   if (loaded.phase === 'ready') await update($, modelPlan, () => null)
   await update($, view, cur => {
     told = []
-    if (loaded.phase === 'error' && cur.phase !== 'error' && !loaded.serverNotConnected) told.push(`Plan load failed: ${loaded.error}`)
+    if (loaded.phase === 'load-failed' && cur.phase !== 'load-failed') told.push(`Plan load failed: ${loaded.error}`)
     // the count's reason is told once and takes the links' own toast with it: both stand on the one plan read
     if (loaded.needsYouError && cur.needsYouError !== loaded.needsYouError) told.push(`Plan cards unavailable: ${loaded.needsYouError}`)
     // the card links' error: the replies are drawn as written
@@ -533,8 +533,8 @@ async function giveOwedMantra($: any): Promise<void> {
 async function failView($: any, error: string): Promise<void> {
   let first = false
   await update($, view, cur => {
-    first = cur.phase !== 'error'
-    return { ...cur, phase: 'error', error }
+    first = cur.phase !== 'load-failed'
+    return { ...cur, phase: 'load-failed', error }
   })
   if (first) $.ui.toast(`Plan load failed: ${error}`.slice(0, TOAST_ERROR_MAX))
   detach($, 'The session title mark', syncTitleMark($))
@@ -1072,7 +1072,9 @@ async function leaveCard($: any, card: NonNullable<BandHold['card']>): Promise<{
 let signInGeneration = 0
 
 // `forReadyLoop`: the ready-agent loop's own sign-in. The model did not ask for it and is told nothing; a sign-in that ends without a key takes the session off the list.
-type SignInWatch = { args: object } & ({ byPress: true; forReadyLoop?: true } | { byPress: false; known: ApprovalRequest })
+// `wasSignedOut` (a press): the view the press found had no working sign-in (signed out, a revoked key, or the agent gate), so a sign-in that lands is a real change the model is told of;
+// a press on a session that was signed in all along (an unreachable server) tells it nothing.
+type SignInWatch = { args: object } & ({ byPress: true; wasSignedOut: boolean; forReadyLoop?: true } | { byPress: false; known: ApprovalRequest })
 
 async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
   const generation = signInGeneration
@@ -1163,7 +1165,8 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         if (step.kind !== 'done') $.ui.toast(step.message)
         // the model did not press Sign in, so it is told it is signed in (and where), as connect tells it
         const target = typeof (watch.args as any).target === 'string' ? (watch.args as any).target : null
-        await tell(shown, watch.byPress ? signInNote(target, step.kind === 'done') : signInApprovedNote(shownRequest().code, target))
+        if (!watch.byPress) await tell(shown, signInApprovedNote(shownRequest().code, target))
+        else if (watch.wasSignedOut) await tell(shown, signInNote(target, step.kind === 'done'))
         await refresh($, true)
         if ('forReadyLoop' in watch) detach($, 'Ready list', syncReady($))
         return
@@ -1182,7 +1185,9 @@ async function startSignIn($: any): Promise<void> {
   if (waiting !== null) return
   registrationStoppedAt = null
   const args = await signInArgs($)
-  void watchSignIn($, { args, byPress: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
+  const found = await read($, view)
+  const wasSignedOut = found.phase === 'signed-out' || found.phase === 'key-revoked' || found.agentBlock !== null
+  void watchSignIn($, { args, byPress: true, wasSignedOut }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
 }
 
 // The sign-in's own `session_connect` arguments: the session's title, and the plan it was on (its `target`). On a revoked key the press also says a person
@@ -1232,12 +1237,12 @@ async function retryWhileNotConnected($: any): Promise<void> {
       return
     }
     const cur = await read($, view)
-    if (cur.phase !== 'error' || !cur.serverNotConnected) return
+    if (cur.phase !== 'unreachable') return
     await refresh($, true)
   }
   // the retries ran out: the reason is told once, here (applyLoaded stays quiet while a retry may still connect)
   const last = await read($, view)
-  if (last.phase === 'error' && last.serverNotConnected) $.ui.toast(`Plan load failed: ${last.error}`.slice(0, TOAST_ERROR_MAX))
+  if (last.phase === 'unreachable') $.ui.toast(`Plan load failed: ${last.error}`.slice(0, TOAST_ERROR_MAX))
 }
 
 // v0.10.0 pinned a status line; the footer is the PLAN-NN button alone, so unpin anything an older loaded version left.
@@ -1365,11 +1370,11 @@ async function onMeasure($: any, e: any, next: any) {
 
 // Which relay to run, from the view the last refresh read: the connected plan's, or the session's own (plan_id null) when signed in on no plan; none
 // when signed out or revoked.
-// A view that failed to load (`error`, `loading`) changes nothing: a read blip must not stop a working relay.
+// A view that failed to load (`unreachable`, `load-failed`, `loading`) changes nothing: a read blip must not stop a working relay.
 async function syncRelay($: any): Promise<void> {
   const v = await read($, view)
   // a blocked load says nothing of the key: the relay runs on, or is started by the watch, never stopped by it
-  if (v.phase === 'error' || v.phase === 'blocked' || (v.phase === 'loading' && v.connected === null)) return
+  if (v.phase === 'unreachable' || v.phase === 'load-failed' || v.phase === 'blocked' || (v.phase === 'loading' && v.connected === null)) return
   // a ready view on no plan runs the relay for the session's own records (plan_id null); any other view (signed out, revoked) runs none
   if (!isSignedIn(v)) {
     relayHalted = null
@@ -1439,7 +1444,7 @@ async function watchRelayOnce($: any): Promise<RelayWatch> {
     startRelay($, null)
     return 'done'
   }
-  if (v.phase !== 'error' && v.phase !== 'blocked' && v.phase !== 'loading') return 'done'
+  if (v.phase !== 'unreachable' && v.phase !== 'load-failed' && v.phase !== 'blocked' && v.phase !== 'loading') return 'done'
   const plan = await withinDeadline($, RELAY_READ_DEADLINE_MS, sessionPlan($), (): SessionPlan => ({ kind: 'failed', reason: DEADLINE_REASON }))
   // a run that started while the read was out is the newer word (a connect, a load)
   if (relayRun !== null) return 'done'
@@ -2402,7 +2407,7 @@ async function readyAccessStop($: any, r: Api): Promise<boolean> {
 async function startReadySignIn($: any): Promise<void> {
   const mine = ++readyWatchId
   await update($, readyLoop, cur => (cur === null ? null : { ...cur, signInAsked: true }))
-  const watched = watchSignIn($, { args: await readySignInArgs($), byPress: true, forReadyLoop: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
+  const watched = watchSignIn($, { args: await readySignInArgs($), byPress: true, wasSignedOut: true, forReadyLoop: true }).catch(err => toastCallFailedAndReload($, 'Sign in failed', err))
   // an old watch returning late must not clear the flag of the watch started after it, or the next leave would leave that one running. By its own id: `signInGeneration` moves at a /clear too, and a watch a /clear ended must be asked again.
   detach($, 'Ready list', watched.then(() => (mine === readyWatchId ? update($, readyLoop, cur => (cur === null ? null : { ...cur, signInAsked: false })) : undefined)))
 }

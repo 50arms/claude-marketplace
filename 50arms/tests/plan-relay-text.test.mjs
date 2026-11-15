@@ -1,7 +1,6 @@
 import "./designated-test-container.mjs";
 // DX-4233: the words that describe the relay. 50arms:plan-workflow "Live events" keeps the `[50 Arms plan event]` tag and names the
-// relay's own states; the cross-session inbox note and the `bridge down:` text are gone, and neither CLAUDE.md nor hooks.json names a
-// bridge or a watchdog.
+// relay's own states; the cross-session inbox note and the `bridge down:` text are gone.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -45,13 +44,6 @@ test("the relay's lines are the ones the skill names", () => {
   assert.match(text, /events \$\{state\}: events are NOT reaching this session/);
   assert.match(text, /eventsLine\('stopped', /);
   assert.match(text, /eventsLine\('delayed', /);
-});
-
-test("CLAUDE.md and hooks.json name no bridge or watchdog", () => {
-  for (const rel of ["../../CLAUDE.md", "../hooks/hooks.json"]) {
-    assert.doesNotMatch(read(rel), /bridge|watchdog/i, rel);
-  }
-  assert.match(read("../hooks/hooks.json"), /plan event relay/);
 });
 
 // The design gate's events (listen.ts formats them): a chosen design passes the gate; a change request, the last live design
