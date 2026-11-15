@@ -40,8 +40,9 @@ export const IN_PROGRESS_QUERY = (planId: number) => ({ filter: { plan_id: planI
 // for the plan's card ids (an opt-in field, a few bytes per card at any plan size). The band and the reply links need nothing more of a card, and the plan's card-list route answers whole
 // card rows (about 3 KB each), which past about 20 cards exceeds the host's tool-result limit.
 export const PLAN_BAND_FIELDS = { card_ids: true }
-// what the held card's read names: its checklists, each with its items and their status (`passing` is a ticked one)
-export const CARD_CHECKLIST_FIELDS = { checklists: true }
+// what the held card's read names: only the two counts of its acceptance criteria (live items, and the ones passing), never the checklists
+// themselves, whose items and every review round's findings make the answer grow past what the host accepts on a long-worked card
+export const CARD_PROGRESS_FIELDS = { ac_total: true, ac_done: true }
 // an issue prefix as a board names it (`ABC`, `XYZ`): capital letters, at most this many. Anything else in a boards
 // answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
 export const PREFIX_MAX = 10

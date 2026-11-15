@@ -1,5 +1,5 @@
 import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
-import { CARD_CHECKLIST_FIELDS, EMPTY, ERROR_BODY_MAX, IN_PROGRESS_QUERY, NEEDS_YOU_BUCKET_ID, PLAN_BAND_FIELDS, PREFIX_PATTERN, STATUS_KEYS } from './config'
+import { CARD_PROGRESS_FIELDS, EMPTY, ERROR_BODY_MAX, IN_PROGRESS_QUERY, NEEDS_YOU_BUCKET_ID, PLAN_BAND_FIELDS, PREFIX_PATTERN, STATUS_KEYS } from './config'
 import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './mcp'
 import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
@@ -117,10 +117,10 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const noPlan = { dashboardUrl, connected: null, listener, paused, pausedWaitsOn, readyRepo, readyLoopFault, ...holds }
   if (connectedId === null) {
     if (holds.card === null) return { ...EMPTY, ...noPlan, phase: 'ready', error: null, refreshedAt }
-    // a held card shows its checklist progress as the donut; a card read that fails is the load's error, as a plan read's is
-    const cardR = await call('GET', `/api/issues/${holds.card.id}`, { query: { fields: CARD_CHECKLIST_FIELDS } })
+    // a held card shows its acceptance-criteria progress as the donut; a card read that fails is the load's error, as a plan read's is
+    const cardR = await call('GET', `/api/issues/${holds.card.id}`, { query: { fields: CARD_PROGRESS_FIELDS } })
     if (!cardR.ok) return { ...EMPTY, ...noPlan, phase: 'load-failed', error: errText(cardR) }
-    const percent = readChecklistPercent(cardR.body?.checklists, `GET /api/issues/${holds.card.id}`)
+    const percent = readAcPercent(cardR.body, `GET /api/issues/${holds.card.id}`)
     if (typeof percent === 'string') return { ...EMPTY, ...noPlan, phase: 'load-failed', error: percent }
     return { ...EMPTY, ...noPlan, cardPercent: percent, phase: 'ready', error: null, refreshedAt }
   }
@@ -226,15 +226,12 @@ function readListener(raw: any): ListenerStatus | null | typeof MALFORMED_LISTEN
   return { state: raw.state, nextStep: raw.nextStep }
 }
 
-// The percent of a card's checklist items that pass (all its checklists together, rounded), null for a card with no items, or the reason the answer cannot be read.
-function readChecklistPercent(checklists: unknown, route: string): number | null | string {
-  if (!Array.isArray(checklists)) return `${route} answered no checklists list: cannot show the card's progress`
-  const items: any[] = []
-  for (const list of checklists) {
-    if (!Array.isArray(list?.items)) return `${route} answered a checklist without its items: cannot show the card's progress`
-    items.push(...list.items)
-  }
-  if (items.some(item => typeof item?.status !== 'string')) return `${route} answered a checklist item with no status: cannot show the card's progress`
-  if (items.length === 0) return null
-  return Math.round((items.filter(item => item.status === 'passing').length / items.length) * 100)
+// The percent of a card's acceptance criteria that pass (rounded), null for a card with none, or the reason the answer cannot be read.
+function readAcPercent(card: any, route: string): number | null | string {
+  const total = card?.ac_total
+  const done = card?.ac_done
+  const count = (n: unknown) => typeof n === 'number' && Number.isInteger(n) && n >= 0
+  if (!count(total) || !count(done) || done > total) return `${route} answered no acceptance-criteria counts: cannot show the card's progress`
+  if (total === 0) return null
+  return Math.round((done / total) * 100)
 }

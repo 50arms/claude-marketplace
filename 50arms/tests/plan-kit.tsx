@@ -320,9 +320,10 @@ export function dashboard(
     reposAnswer: null as { status: number; body: any } | null,
     repos: [] as { name: string; github_remote: { owner: string; repo: string } | null }[],
     cardStatus: {} as Record<string, string>,
-    // card id -> the checklists GET /api/issues/<id> answers when `fields` names `checklists`; and a switch that makes that read answer 500
-    cardChecklists: {} as Record<string, { id: number; name: string; items: { id: number; label: string; status: string }[] }[]>,
-    cardChecklistFails: false,
+    // card id -> the acceptance-criteria counts GET /api/issues/<id> answers when `fields` names them (none seeded: a card with no criteria),
+    // or any object to answer as is; and a switch that makes that read answer 500
+    cardAc: {} as Record<string, Record<string, unknown>>,
+    cardAcFails: false,
     planRead: {} as Record<string, unknown>,
     clearFails: undefined as string | undefined,
     // a /clear that answers but changes nothing
@@ -561,10 +562,10 @@ export function dashboard(
     const issue = /^\/api\/issues\/([A-Z]+-\d+)$/.exec(path)
     if (method === 'GET' && issue && [options.cardFails ?? []].flat().includes(issue[1])) return reply({ error: 'boom' }, 500)
     if (method === 'GET' && issue && options.cardOversize === issue[1]) return text({ oversize: true })
-    // the held card's checklist read (the band's donut): the checklists the test seeded for the card, each `{id, name, items: [{id, label, status}]}`; none seeded is a card with no checklist
-    if (method === 'GET' && issue && query?.fields?.checklists) {
-      if (world.cardChecklistFails) return reply({ error: 'checklist boom' }, 500)
-      return reply({ id: issue[1], title: 'x', checklists: world.cardChecklists[issue[1]] ?? [] })
+    // the held card's progress read (the band's donut): the acceptance-criteria counts the test seeded for the card; none seeded is a card with no criteria
+    if (method === 'GET' && issue && query?.fields?.ac_total) {
+      if (world.cardAcFails) return reply({ error: 'progress boom' }, 500)
+      return reply({ id: issue[1], title: 'x', ...(world.cardAc[issue[1]] ?? { ac_total: 0, ac_done: 0 }) })
     }
     if (method === 'GET' && issue) {
       const c = world.cards.find(x => x.id === issue[1])
