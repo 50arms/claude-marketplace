@@ -1,7 +1,6 @@
 import "./designated-test-container.mjs";
 // DX-4233: the words that describe the relay. 50arms:plan-workflow "Live events" keeps the `[50 Arms plan event]` tag and names the
-// relay's own states; the cross-session inbox note and the `bridge down:` text are gone, and neither CLAUDE.md nor hooks.json names a
-// bridge or a watchdog.
+// relay's own states; the cross-session inbox note and the `bridge down:` text are gone.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -40,7 +40,7 @@ export const test = makeTest(baseTest as any)
 const fsKey = (path: string): string => path.replace(/^(?:.*\/)?[A-Za-z]:/, '').replaceAll('\\', '/')
 
 export const SURFACES = ['terminal', 'desktop'] as const
-// CP-67: the plugin's skills (one folder each under 50arms/skills; plugin-modules.test.mjs holds this list to them). The engine refuses a command named
+// CP-67: the plugin's skills (one folder each under 50arms/skills). The test runtime refuses `node:fs` in a kit file ("a hooks module imports its own files by relative path and claude-code, nothing else"), so this list cannot be read from the folder and is kept by hand. The engine refuses a command named
 // after one: `$.command.register: "/<name>" refused: it is the plugin's /50arms:<name>` (claude.exe 2.1.309), and the kit refuses it the same way.
 export const PLUGIN_SKILLS = ['ready', 'fix-agent-behavior', 'issue-workflow', 'plan-workflow', 'prepare-for-compaction']
 

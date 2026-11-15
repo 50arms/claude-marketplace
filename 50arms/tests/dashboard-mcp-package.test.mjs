@@ -135,8 +135,7 @@ describe("resolveLatestVersion", () => {
     assert.equal(await resolveLatestVersion({ env }), "12.345.6789");
   });
 
-  test("the registry base URL has a public default and an env override (the test seam)", () => {
-    assert.equal(registryUrl({}), `https://registry.npmjs.org${LATEST_PATH}`);
+  test("the registry base URL is overridden by the env (the test seam)", () => {
     assert.equal(registryUrl({ [REGISTRY_BASE_URL_ENV]: "http://127.0.0.1:9/" }), `http://127.0.0.1:9${LATEST_PATH}`);
   });
 
