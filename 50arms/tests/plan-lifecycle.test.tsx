@@ -68,7 +68,7 @@ describe('the MCP server connects after session start', () => {
     expect(d.viewClaims()).toBe(1)
     for (const wait of NOT_CONNECTED_RETRY_MS) await d.clock.advance(wait)
     expect(d.viewClaims()).toBe(1)
-    expect(await text(await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND }))).toContain('Disconnected')
+    expect(await text(await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND }))).toContain('plan load failed')
   })
 
   test('a server that is up needs no retry', async ($, on) => {
@@ -81,15 +81,16 @@ describe('the MCP server connects after session start', () => {
 
 describe('what one load says about what it did not read', () => {
   for (const surface of ['terminal', 'desktop'] as const) {
-    test(`a response with no total is an error, never a complete list (${surface})`, async ($, on) => {
+    test(`a response with no total is a failed load, never a complete list (${surface})`, async ($, on) => {
       const d = dashboard(on, { noInProgressTotal: true })
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
-      expect(await text(band)).toContain('50 Arms: Disconnected')
+      expect(await text(band)).toContain('50 Arms: plan load failed')
+      expect(await text(band)).not.toContain('Disconnected')
       expect(await needsYouBadgeOf(band)).toBeUndefined()
-      expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('red')
-      const label = await band.find({ type: 'Text', text: /50 Arms: Disconnected/ })
-      expect(label?.props.color).toBe('red')
+      expect((await band.find({ type: 'Text', text: '●' }))?.props.color).toBe('yellow')
+      const label = await band.find({ type: 'Text', text: /50 Arms: plan load failed/ })
+      expect(label?.props.color).toBe('yellow')
       expect(label?.props.dimColor).toBeFalsy()
     })
   }
@@ -118,7 +119,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     // DX-4233: the deadline ends the load as an error shown now; the call that never settled still holds the lock, so a refresh in this window
     // starts no second load beside it
     await d.clock.advance(LOAD_DEADLINE_MS / 2 + 1_000)
-    expect(await text(band)).toContain('50 Arms: Disconnected')
+    expect(await text(band)).toContain('50 Arms: plan load failed')
     await ask($, d)
     expect(loadsOf(d)).toBe(1)
 
@@ -184,7 +185,7 @@ describe('the refresh lock and the busy list at a stale or new start', () => {
     await d.clock.settle()
     const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
     await d.clock.advance(LOAD_DEADLINE_MS + 1_000)
-    expect(await text(band)).toContain('50 Arms: Disconnected')
+    expect(await text(band)).toContain('50 Arms: plan load failed')
     d.release()
     await d.clock.settle()
     expect(loadsOf(d)).toBe(1)

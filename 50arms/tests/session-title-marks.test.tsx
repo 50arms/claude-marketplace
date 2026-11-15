@@ -85,7 +85,7 @@ describe('the hand', () => {
   })
 
   test('a failed or refused load draws no badge, so the title carries no hand', async () => {
-    expect(sessionTitle(TITLE, { ...on(3), phase: 'error' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(3), phase: 'unreachable' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
     expect(sessionTitle(TITLE, { ...on(3), phase: 'blocked' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
   })
 })
@@ -97,7 +97,7 @@ describe('the connection mark', () => {
   })
 
   test('red once a session that was connected lost it: a failed load, a revoked or lapsed key, no team agent, a stopped relay', async () => {
-    expect(titleConnection({ ...on(0), phase: 'error' }, OFF)).toBe('down')
+    expect(titleConnection({ ...on(0), phase: 'unreachable' }, OFF)).toBe('down')
     expect(titleConnection({ ...EMPTY, phase: 'key-revoked', revokedBy: 'Dan' } as any, OFF)).toBe('down')
     expect(titleConnection({ ...EMPTY, phase: 'signed-out', resumePlan: 18 } as any, OFF)).toBe('down')
     expect(titleConnection({ ...on(0), agentBlock: 'agent_not_held' }, OFF)).toBe('down')
@@ -112,7 +112,7 @@ describe('the connection mark', () => {
 
   test('no mark on a session that never connected, or one signed in on nothing', async () => {
     expect(titleConnection({ ...EMPTY, phase: 'signed-out' } as any, OFF)).toBeNull()
-    expect(titleConnection({ ...EMPTY, phase: 'error', error: 'server not connected' } as any, OFF)).toBeNull()
+    expect(titleConnection({ ...EMPTY, phase: 'unreachable', error: 'server not connected' } as any, OFF)).toBeNull()
     expect(titleConnection({ ...EMPTY, phase: 'ready', agent: AGENT } as any, OFF)).toBeNull()
     expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, WORKING)).toBe(BARE)
   })
@@ -128,7 +128,7 @@ describe('marks never stack', () => {
     expect(sessionTitle(`${HAND}${TITLE}`, on(1), OFF, WORKING)).toBe(`${HAND}${TITLE}`)
     expect(sessionTitle(`✋ ${TITLE}`, on(1), OFF, WORKING)).toBe(`${HAND}${TITLE}`)
     expect(sessionTitle(`✋️ 🔴 ✋ 🟢 ${TITLE}`, on(1), OFF, WORKING)).toBe(`${HAND}${TITLE}`)
-    expect(sessionTitle(`${HAND}${TITLE}`, { ...on(0), phase: 'error' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(`${HAND}${TITLE}`, { ...on(0), phase: 'unreachable' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
   })
 
   test('a mark later in the title is the title, never a mark', async () => {
@@ -358,13 +358,13 @@ describe('the desktop app title follows the view', () => {
     expect(app.set).toHaveLength(2)
   })
 
-  test('a failed load turns the mark red in place of the Needs You mark; the next good load brings it back', async ($, on) => {
+  test('a failed load (an error answer) drops the Needs You mark and claims no connection either way; the next good load brings it back', async ($, on) => {
     const d = dashboard(on)
     d.world.agent = { id: 9, name: 'Tendai', avatar_url: null }
     await startSession($, d, 'desktop')
     d.failList()
     await forceRefresh($, d)
-    expect(d.world.appSession.title).toBe(`${DOWN}Tendai: PLAN-23 Agent mode`)
+    expect(d.world.appSession.title).toBe('Tendai: PLAN-23 Agent mode')
     d.failList(false)
     await forceRefresh($, d)
     expect(d.world.appSession.title).toBe(`${WAIT}Tendai: PLAN-23 Agent mode`)
@@ -400,7 +400,7 @@ describe('the pause mark', () => {
     expect(sessionTitle(TITLE, paused(null), OFF, WORKING)).toBe(`${PAUSE}${TITLE}`)
     expect(sessionTitle(TITLE, paused(2), OFF, WORKING)).toBe(`${HAND}${TITLE}`)
     expect(sessionTitle(TITLE, { ...paused(2), agentBlock: 'agent_not_held' }, OFF, WORKING)).toBe(`${DOWN}${BARE}`)
-    expect(sessionTitle(TITLE, { ...paused(0), phase: 'error' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...paused(0), phase: 'unreachable' }, OFF, WORKING)).toBe(`${DOWN}${TITLE}`)
     expect(sessionTitle(TITLE, on(0), OFF, WORKING)).toBe(`${UP}${TITLE}`)
     expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out', paused: true } as any, OFF, WORKING)).toBe(BARE)
   })
@@ -497,7 +497,7 @@ describe('the building mark', () => {
     expect(sessionTitle(TITLE, paused(0), OFF, WORKING)).toBe(`${PAUSE}${TITLE}`)
     expect(sessionTitle(TITLE, on(2), OFF, SUBAGENT)).toBe(`${HAND}${TITLE}`)
     expect(sessionTitle(TITLE, { ...on(0), agentBlock: 'agent_not_held' }, OFF, SUBAGENT)).toBe(`${DOWN}${BARE}`)
-    expect(sessionTitle(TITLE, { ...on(0), phase: 'error' }, OFF, SUBAGENT)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(0), phase: 'unreachable' }, OFF, SUBAGENT)).toBe(`${DOWN}${TITLE}`)
     // a session that never connected carries no mark, sub-agents or not
     expect(sessionTitle(TITLE, { ...EMPTY, phase: 'signed-out' } as any, OFF, SUBAGENT)).toBe(BARE)
   })
@@ -610,7 +610,7 @@ describe('the waiting mark', () => {
     expect(sessionTitle(TITLE, paused(0), OFF, IDLE_NOW)).toBe(`${PAUSE}${TITLE}`)
     // red still outranks it, and a failed load hides Needs You
     expect(sessionTitle(TITLE, { ...on(2), agentBlock: 'agent_not_held' }, OFF, IDLE_NOW)).toBe(`${DOWN}${BARE}`)
-    expect(sessionTitle(TITLE, { ...on(2), phase: 'error' }, OFF, IDLE_NOW)).toBe(`${DOWN}${TITLE}`)
+    expect(sessionTitle(TITLE, { ...on(2), phase: 'unreachable' }, OFF, IDLE_NOW)).toBe(`${DOWN}${TITLE}`)
   })
 
   test('unmarkedTitle strips the waiting mark with or without the selector, in any run with the others', async () => {

@@ -50,8 +50,9 @@ export function renderBand(
     </Button>
   )
   const plan = v.connected
-  // a failed load reads Disconnected, so no (stale) needs-you count is drawn beside it.
-  const badge = v.phase === 'error' || v.phase === 'blocked' ? '' : needsYouBadge(v)
+  // a failed load draws no (stale) needs-you count beside it.
+  const loadFailed = v.phase === 'load-failed'
+  const badge = v.phase === 'unreachable' || loadFailed || v.phase === 'blocked' ? '' : needsYouBadge(v)
   const permissionLabel = permission === null ? '' : permissionBadge(permission.count)
   // the label takes the columns the controls leave (`columns`: the band's width, absent where the surface does not
   // say, then the layout's truncation alone applies), so the full plan name shows and only an overflowing one is cut.
@@ -95,11 +96,11 @@ export function renderBand(
   // `truncate-end` puts the … exactly where the name would run into them.
   const labelCols = columns === undefined || hasSvg ? undefined : bandLabelCols(columns, controls)
   const percent = viewPercent(v)
-  // a failed load is red (the label says Disconnected); no plan is yellow; a loaded plan is green.
-  const failed = v.phase === 'error' || signedOut || revoked
+  // a lost connection is red (the label says Disconnected); a failed load and no plan are yellow; a loaded plan is green.
+  const failed = v.phase === 'unreachable' || signedOut || revoked
   // auto mode blocking the plugin's calls is not a failure of the plan: yellow, with the sentence and fix on a line of its own (full width, wrapped)
   const blocked = v.phase === 'blocked'
-  const failedColor = failed ? DANGER : blocked ? WARNING : undefined
+  const failedColor = failed ? DANGER : blocked || loadFailed ? WARNING : undefined
   const indicator =
     percent === null ? (
       <Text color={failedColor ?? (plan === null ? WARNING : SUCCESS)}>●</Text>
@@ -120,7 +121,7 @@ export function renderBand(
         {parts !== null && linkUrl !== null && mdLink(E, plan !== null ? 'open-plan' : 'open-card', parts.ref, linkUrl)}
         {parts !== null && linkUrl === null && <Text dimColor wrap="truncate-end">{parts.ref}</Text>}
         {/* a failed load is full-strength red, not dimmed: dim red washes out and reads as decoration. */}
-        <Text color={failedColor} dimColor={!failed} wrap="truncate-end">
+        <Text color={failedColor} dimColor={!failed && !loadFailed} wrap="truncate-end">
           {'parts' in content ? bandNameText(content.parts) : content.state}
         </Text>
       </Box>

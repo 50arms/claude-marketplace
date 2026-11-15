@@ -48,10 +48,10 @@ export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: strin
 
 export type PlanView = {
   // `loading` is both the first load (nothing known yet) and a connect answered with its numbers still pending (`connected` and `refreshedAt` set).
-  phase: 'loading' | 'ready' | 'error' | 'signed-out' | 'key-revoked' | 'blocked'
+  phase: 'loading' | 'ready' | 'unreachable' | 'load-failed' | 'signed-out' | 'key-revoked' | 'blocked'
+  // `unreachable`: the plugin's own MCP server is not connected (yet): the band says Disconnected and offers Sign in, and the session-start retry waits it out.
+  // `load-failed`: any other failed load (an answer too large for the host, an error answer, one that cannot be read, a missed deadline): the band says so with the reason and offers no Sign in, since the session's key was never in question (CP-135).
   error: string | null
-  // the load failed because the plugin's own MCP server is not connected (yet), the one failure the session-start retry waits out
-  serverNotConnected: boolean
   // the dashboard origin the band's links are built on: the one the plan list answered, else (a failed or signed-out load) the
   // last one this machine saw answered; null only while none has ever been seen.
   dashboardUrl: string | null

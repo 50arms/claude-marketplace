@@ -82,11 +82,11 @@ for (const surface of SURFACES) {
       ['a thrown MCP call (timeout)', { mcp: 'flaky' }],
       ['a bad dashboard_url', { dashboardUrl: 'not a url' }],
     ] as const) {
-      test(`${name}: the button reads 50 Arms disconnected, never error text`, async ($, on) => {
+      test(`${name}: the button reads 50 Arms load failed, never error text`, async ($, on) => {
         const d = dashboard(on, options as any)
         d.world.agent = { id: 7, name: AGENT_NAME, avatar_url: null }
         await startSession($, d, surface)
-        expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
+        expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms load failed')
       })
     }
 
@@ -118,13 +118,13 @@ for (const surface of SURFACES) {
       })
     }
 
-    test('a session agent with no name fails the load loudly: the band says error and the footer names no agent', async ($, on) => {
+    test('a session agent with no name fails the load loudly: the band says the load failed and the footer names no agent', async ($, on) => {
       const d = dashboard(on)
       d.world.agent = { id: 7, name: '', avatar_url: null }
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
-      expect(await text(band)).toContain('Disconnected')
-      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
+      expect(await text(band)).toContain('plan load failed')
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms load failed')
     })
 
 

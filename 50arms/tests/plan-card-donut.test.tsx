@@ -87,7 +87,7 @@ for (const surface of SURFACES) {
       d.world.cardChecklists[CARD.id] = [{ id: 1, name: 'x', items: [{ id: 1, label: 'a' } as any] }]
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
-      expect(await text(band)).toContain('Disconnected')
+      expect(await text(band)).toContain('plan load failed')
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
     })
 
@@ -97,7 +97,7 @@ for (const surface of SURFACES) {
       d.world.cardChecklistFails = true
       await startSession($, d, surface)
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
-      expect(await text(band)).toContain('Disconnected')
+      expect(await text(band)).toContain('plan load failed')
       expect(await band.find({ type: 'Svg' })).toBeUndefined()
     })
 

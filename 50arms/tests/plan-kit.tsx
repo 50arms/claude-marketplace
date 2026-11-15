@@ -548,11 +548,13 @@ export function dashboard(
         ...(query?.fields?.card_ids && options.planFieldsShape !== 'noCardIds' ? { card_ids: options.planFieldsShape === 'badCardIds' ? [...planCardIds, 7] : planCardIds } : {}),
       })
     }
-    const cards = /^\/api\/plans\/(\d+)\/cards$/.exec(path)
-    if (method === 'GET' && cards && query?.bucket === 'in-progress') {
+    // CP-135: the plan's card-list route answers whole card rows (measured on PLAN-129: about 4.6 KB each, 14 In Progress cards = 64,825 characters), which the
+    // host refuses past its limit; the issues list answers the compact row (about 0.5 KB) and takes the plan and status as its filter.
+    // CP-135: the In Progress cards come from the issues list (the compact row, about 0.5 KB each), with the plan and status as its filter; the plan's card-list route answers whole rows (about 4.6 KB each: 14 cards went over the host's limit)
+    if (method === 'GET' && path === '/api/issues' && query?.filter?.plan_id !== undefined) {
       if (options.inProgressFails) return reply({ error: 'in-progress boom' }, 500)
       return reply({
-        cards: world.inProgress.map(c => ({ id: c.id, title: c.title, priority: 4 })),
+        issues: world.inProgress.slice(0, query.limit).map(c => ({ id: c.id, type: 'Story', title: c.title, status: 'In Progress', parent_id: null, priority: 4, rev: 1, created_at: 1, updated_at: 1, assigned_agent: null, content_hash: 'h'.repeat(64) })),
         ...(options.noInProgressTotal ? {} : { total: options.inProgressTotal ?? world.inProgress.length }),
       })
     }
@@ -823,7 +825,7 @@ export function dashboard(
   const sequence: string[] = []
   const isReportCall = (a: any) =>
     (a.method === 'POST' && a.path === '/api/plan-sessions/me/activity') ||
-    (a.method === 'GET' && (a.path === '/api/plans/mine' || a.path === '/api/issues' || a.path === '/api/plan-sessions/me/pause' || a.path === '/api/plan-sessions/me/owed-comments' || /^\/api\/plans\/\d+\/connected-session\/detail$/.test(a.path)))
+    (a.method === 'GET' && (a.path === '/api/plans/mine' || (a.path === '/api/issues' && a.board !== undefined) || a.path === '/api/plan-sessions/me/pause' || a.path === '/api/plan-sessions/me/owed-comments' || /^\/api\/plans\/\d+\/connected-session\/detail$/.test(a.path)))
   // ... answered as the real routes answer them (50 Arms plan-sessions-routes, plans/mine, the issues list)
   function reportAnswer(a: any) {
     if (a.path === '/api/plan-sessions/me/activity') return reply({ runningActivities: 1 })

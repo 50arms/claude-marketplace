@@ -1,5 +1,5 @@
 import type { PlanView, RelayState, StatusBreakdown } from '../../types'
-import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, DANGER, NO_AGENT_LABEL, PROBLEM_GLYPH, SUCCESS, WARNING, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, BLOCKED_LABEL, keyRevokedLabel } from './config'
+import { BAND_CONTROL_CHROME_COLS, BAND_GAP_COLS, BAND_INDICATOR_COLS, BAND_NAME_MIN_COLS, BAND_SPARE_COLS, BRAND, DANGER, NO_AGENT_LABEL, LOAD_FAILED_LABEL, PROBLEM_GLYPH, SUCCESS, WARNING, SIGNED_OUT_LABEL, KEY_REVOKED_FOOTER, NO_EVENT_STATUS, BLOCKED_LABEL, keyRevokedLabel } from './config'
 
 // the band badge's label: a warning glyph and the number of plan cards waiting on a person, the same number the plan's Needs You tab
 // shows (cards, not problems), '' for none (the badge is then not drawn). It is a link, not label text: see band.tsx.
@@ -45,7 +45,9 @@ function relayStoppedFor(v: PlanView, relay: RelayState): boolean {
 export function titleConnection(v: PlanView, relay: RelayState): 'up' | 'down' | null {
   if (v.phase === 'key-revoked') return 'down'
   const wasOn = v.connected !== null || v.card !== null || v.resumePlan !== null || v.agent !== null
-  if (v.phase === 'error' || v.phase === 'blocked' || v.phase === 'signed-out') return wasOn ? 'down' : null
+  if (v.phase === 'unreachable' || v.phase === 'blocked' || v.phase === 'signed-out') return wasOn ? 'down' : null
+  // a failed load says nothing of the connection: no mark claims it either way
+  if (v.phase === 'load-failed') return null
   if (v.agentBlock !== null) return 'down'
   if (v.connected === null && v.card === null) return null
   if (relayStoppedFor(v, relay)) return 'down'
@@ -55,14 +57,14 @@ export function titleConnection(v: PlanView, relay: RelayState): 'up' | 'down' |
 // whether the title carries a Needs You mark (the hand or the waiting mark): exactly when the band draws its Needs You badge, which a failed
 // load hides
 export function needsYouShown(v: PlanView): boolean {
-  return v.phase !== 'error' && v.phase !== 'blocked' && needsYouBadge(v) !== ''
+  return v.phase !== 'unreachable' && v.phase !== 'load-failed' && v.phase !== 'blocked' && needsYouBadge(v) !== ''
 }
 
-// Whether the band offers Sign in: always, while the session holds no working connection: signed out, a failed load, or the agent
+// Whether the band offers Sign in: always, while the session holds no working connection: signed out, the plugin's server unreachable, or the agent
 // gate holding a signed-in session, or a key a person revoked (its stop text stays; the press asks for a new approval a person must give). The
 // auto-mode block is not a sign-in fault (the key works; the fix is the permission rule BLOCKED_LINE names). A loading or loaded view has a connection.
 export function signInOffered(v: PlanView): boolean {
-  return v.phase === 'signed-out' || v.phase === 'error' || v.phase === 'key-revoked' || v.agentBlock !== null
+  return v.phase === 'signed-out' || v.phase === 'unreachable' || v.phase === 'key-revoked' || v.agentBlock !== null
 }
 
 // the session holds no team agent: key revoked, signed out, or an agent gate refusal (agent_not_held, agent_needed, agent_limit_reached); a failed load says nothing of the agent, so it keeps the name
@@ -156,8 +158,10 @@ function bandState(v: PlanView): string | null {
   if (v.phase === 'key-revoked') return keyRevokedLabel(v.revokedBy as string) // always set with the phase
   // auto mode blocks the plugin's own calls: never Disconnected. The plan the model connected is named when known; the band's second line says the fix.
   if (v.phase === 'blocked' && !v.connected) return BLOCKED_LABEL
-  // the operator's wording for ANY failed load, even one that kept the connected plan.
-  if (v.phase === 'error') return `${BRAND}: Disconnected`
+  // the plugin's own server is not connected: the one failed load that reads Disconnected.
+  if (v.phase === 'unreachable') return `${BRAND}: Disconnected`
+  // any other failed load keeps its reason (the toast's), and never says Disconnected: the session's key was not in question.
+  if (v.phase === 'load-failed') return `${BRAND}: plan load failed (${v.error as string})` // always set with the phase
   if (v.phase === 'loading' && !v.refreshedAt) return `${BRAND}: loading…`
   // a signed-in session the agent gate holds: no plan or card can be read until it holds a team agent
   if (v.agentBlock !== null) return `${BRAND}: ${AGENT_BLOCK_LABEL[v.agentBlock]}`
@@ -224,7 +228,7 @@ export function footerLabel(v: PlanView): string | null {
   if (v.phase === 'signed-out') return SIGNED_OUT_LABEL
   if (v.phase === 'key-revoked') return KEY_REVOKED_FOOTER
   if (v.phase === 'blocked' && !v.connected) return BLOCKED_LABEL
-  if (v.agent === null) return NO_AGENT_LABEL
+  if (v.agent === null) return v.phase === 'load-failed' ? LOAD_FAILED_LABEL : NO_AGENT_LABEL
   return v.connected ? `${v.agent.name}${NAME_SEP}${v.connected.ref}` : v.agent.name
 }
 
@@ -232,7 +236,7 @@ export function footerLabel(v: PlanView): string | null {
 // auto-mode block, the plan's failed load, a card waiting on a person), green when connected with an agent, none (the footer's own text colour) when disconnected.
 export function footerTone(v: PlanView): string | undefined {
   if (v.phase === 'signed-out' || v.phase === 'key-revoked') return DANGER
-  if (v.phase === 'blocked' || v.phase === 'error' || (v.needsYou ?? 0) > 0) return WARNING
+  if (v.phase === 'blocked' || v.phase === 'unreachable' || v.phase === 'load-failed' || (v.needsYou ?? 0) > 0) return WARNING
   return v.agent !== null && v.connected ? SUCCESS : undefined
 }
 

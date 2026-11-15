@@ -77,7 +77,7 @@ describe('the agent and its association in the band label', () => {
     })
     test('yellow for the auto-mode block, a failed load, and an open problem', () => {
       expect(footerTone({ ...ready, phase: 'blocked' })).toBe('yellow')
-      expect(footerTone({ ...ready, phase: 'error' })).toBe('yellow')
+      expect(footerTone({ ...ready, phase: 'unreachable' })).toBe('yellow')
       expect(footerTone({ ...ready, agent, connected: plan, needsYou: 2 })).toBe('yellow')
     })
     test('green when connected with an agent and no problems', () => {
@@ -137,7 +137,7 @@ for (const surface of SURFACES) {
       const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
       d.world.agent = { id: 6, name: '' } as any
       await forceRefresh($, d)
-      expect(await labelOf(band)).toBe('50 Arms: Disconnected')
+      expect(await labelOf(band)).toContain('50 Arms: plan load failed')
     })
 
     test('DX-5549: while the agent gate holds the session, the band says so (never Disconnected), the relay runs on no plan and an event wakes it', async ($, on) => {

@@ -65,9 +65,9 @@ for (const surface of SURFACES) {
       test(`${name} is a named error: no guessed 0%`, async ($, on) => {
         const d = dashboard(on, options as any)
         await startSession($, d, surface)
-        expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
+        expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms load failed')
         const band = await $.ui.mount({ plugin: '50arms', surface, ...BAND })
-        expect(await text(band)).toContain('Disconnected')
+        expect(await text(band)).toContain('plan load failed')
         expect(await band.find({ type: 'Svg' })).toBeUndefined()
       })
     }
@@ -75,7 +75,7 @@ for (const surface of SURFACES) {
     test('a status count that is not a number is the same error', async ($, on) => {
       const d = dashboard(on, { breakdown: { ...counts({ Done: 1 }), Review: '3' } })
       await startSession($, d, surface)
-      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms disconnected')
+      expect(await footerText(await mountIndicator($, surface))).toBe('50 Arms load failed')
     })
 
     test('the band line draws the donut: an Svg whose alt carries N% complete on the desktop, the glyph on the terminal', async ($, on) => {
