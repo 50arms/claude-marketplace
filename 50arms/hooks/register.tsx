@@ -1073,7 +1073,7 @@ let signInGeneration = 0
 
 // `forReadyLoop`: the ready-agent loop's own sign-in. The model did not ask for it and is told nothing; a sign-in that ends without a key takes the session off the list.
 // `wasSignedOut` (a press): the view the press found had no working sign-in (signed out, a revoked key, or the agent gate), so a sign-in that lands is a real change the model is told of;
-// a press on a session that was signed in all along (an unreachable server) tells it nothing (CP-135).
+// a press on a session that was signed in all along (an unreachable server) tells it nothing.
 type SignInWatch = { args: object } & ({ byPress: true; wasSignedOut: boolean; forReadyLoop?: true } | { byPress: false; known: ApprovalRequest })
 
 async function watchSignIn($: any, watch: SignInWatch): Promise<void> {

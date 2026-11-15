@@ -166,7 +166,7 @@ export const REVOKE_GLYPH = '🔒'
 export const REVOKING_LABEL = 'Revoking…'
 // the footer when no team agent is known for the session: the dashboard holds none, or the load failed (the band then says Disconnected too).
 export const NO_AGENT_LABEL = '50 Arms disconnected'
-// the footer of a failed load that read no agent: the session's connection was not in question, so it never says disconnected (CP-135)
+// the footer of a failed load that read no agent: the session's connection was not in question, so it never says disconnected
 export const LOAD_FAILED_LABEL = '50 Arms load failed'
 
 // The donut's size in px (Svg takes CSS pixels): the band line's.

@@ -130,7 +130,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
   const [planR, inProg, boards] = await Promise.all([
     // the plan's every card id and its bucket counts come on this read (`PLAN_BAND_FIELDS`), whatever the plan's boards or size
     call('GET', `/api/plans/${connectedId}`, { query: { fields: PLAN_BAND_FIELDS } }),
-    // the In Progress cards as the issues list's compact row (id, title, status, ...: about 0.5 KB each), never the plan's card-list rows (about 4.6 KB each: 14 cards went over the host's tool-result limit, CP-135)
+    // the In Progress cards as the issues list's compact row (id, title, status, ...: about 0.5 KB each), never the plan's card-list rows (about 4.6 KB each: 14 cards went over the host's tool-result limit)
     call('GET', '/api/issues', { query: IN_PROGRESS_QUERY(connectedId) }),
     // the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
     // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
