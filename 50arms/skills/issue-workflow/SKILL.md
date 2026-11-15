@@ -214,7 +214,9 @@ that enforces it.
 **Tests.** 50 Arms' product docs alone define what a valid test is: what to test and what never to test,
 at which layer, with which test doubles, how many tests a change gets, and when a test is deleted.
 Before you write, edit or delete a test, search the product docs for `testing standard: what to test`,
-read the page and follow it. Your repo's own docs may add rules for that repo.
+read the page and follow it. Your repo's own docs may add rules for that repo. Config is never
+tested, in any repo: no test checks that a config value is what it is set to, that two places hold
+the same value, or that a setting is present, and you never write, keep or propose one.
 
 **Existing code.** Comments are authoritative on WHY but were true only when written: confirm
 the producer or mechanism they name still exists, follow a cited docblock to code. A comment
