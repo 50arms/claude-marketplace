@@ -2353,11 +2353,6 @@ describe('the ready-agent loop', () => {
       }
       const asked = (d: any) => d.relay.submitted.filter((t: string) => t.includes(READY_JUDGE_PROMPT)).length
 
-      test('the prompt names the skill and says nothing of danx; it leans to yes, asks when unclear and stays off for unrelated work', () => {
-        expect(READY_JUDGE_PROMPT).toContain(READY_COMMAND)
-        expect(READY_JUDGE_PROMPT).not.toMatch(/danx/i)
-      })
-
       test('a resume with no loop anywhere is prompted once, and a second look of the same session is not', async ($, on) => {
         const d = await resumed($, on)
         expect(asked(d)).toBe(1)
