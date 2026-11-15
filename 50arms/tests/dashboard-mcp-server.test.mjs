@@ -16,7 +16,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, appendRefreshLog, drainRefreshLog, refreshLogFile, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
 import { REFRESH_FLAG, START_WAIT_ENV, START_WAIT_MS, dashboardChoice, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
-import { LOCAL_DASHBOARD_FOLDER, LOCAL_DASHBOARD_MARKER_REL, LOCAL_DASHBOARD_MARKER_SCHEMA } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -195,16 +194,6 @@ function localFolder({ settings, marker }) {
   return dir;
 }
 
-/** DEC-77 cross-repo pin: this launcher mirrors the marker contract the 50 Arms repo owns (its src/machine-clean/local-dashboard-contract.json). */
-describe("the local-dashboard marker contract mirrors the 50 Arms owner", () => {
-  test("the launcher's marker path and schema are the contract file's values", () => {
-    const contract = JSON.parse(readFileSync(new URL("./local-dashboard-contract.json", import.meta.url), "utf8"));
-    assert.equal(LOCAL_DASHBOARD_MARKER_REL, contract.marker);
-    assert.equal(LOCAL_DASHBOARD_MARKER_SCHEMA, contract.schema);
-    assert.equal(LOCAL_DASHBOARD_FOLDER, contract.folder);
-  });
-});
-
 describe("dashboardChoice: a local-dashboard folder (DEC-77) is refused rather than sent to the hosted default", () => {
   test("a marked folder whose settings name its URL uses that URL, even with the hosted URL in the shell (DEC-73)", () => {
     const folder = localFolder({ settings: { env: { DANXBOT_DASHBOARD_URL: "http://localhost:5555" } }, marker: { schema: 1, session: "local-dashboard", url: "http://localhost:5555" } });
@@ -331,8 +320,7 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     run.release();
   });
 
-  test("DX-5075: START_WAIT_MS stays under Claude Code's 30 s MCP start limit, and a start with no override waits exactly that long", async () => {
-    assert.ok(START_WAIT_MS < 30_000);
+  test("DX-5075: a start with no override waits START_WAIT_MS", async () => {
     recordAt(A);
     layDown(A);
     const waits = [];

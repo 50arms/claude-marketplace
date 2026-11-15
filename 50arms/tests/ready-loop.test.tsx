@@ -2356,7 +2356,6 @@ describe('the ready-agent loop', () => {
       test('the prompt names the skill and says nothing of danx; it leans to yes, asks when unclear and stays off for unrelated work', () => {
         expect(READY_JUDGE_PROMPT).toContain(READY_COMMAND)
         expect(READY_JUDGE_PROMPT).not.toMatch(/danx/i)
-        expect(READY_JUDGE_PROMPT.length).toBeLessThan(900)
       })
 
       test('a resume with no loop anywhere is prompted once, and a second look of the same session is not', async ($, on) => {

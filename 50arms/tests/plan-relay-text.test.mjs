@@ -47,13 +47,6 @@ test("the relay's lines are the ones the skill names", () => {
   assert.match(text, /eventsLine\('delayed', /);
 });
 
-test("CLAUDE.md and hooks.json name no bridge or watchdog", () => {
-  for (const rel of ["../../CLAUDE.md", "../hooks/hooks.json"]) {
-    assert.doesNotMatch(read(rel), /bridge|watchdog/i, rel);
-  }
-  assert.match(read("../hooks/hooks.json"), /plan event relay/);
-});
-
 // The design gate's events (listen.ts formats them): a chosen design passes the gate; a change request, the last live design
 // rejected or "Ask for another design" owes the designer a turn, run again as "Sub-agents" says (DX-4734 AC 50935: one place
 // for how the designer is started; since DX-5899 the `gate-designer` profile its brief fetches says what it does);

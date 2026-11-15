@@ -75,7 +75,6 @@ export const FOLDER_SETTINGS_FILES = [".claude/settings.local.json", ".claude/se
  * session meant for the local dashboard can never fall back to the hosted default.
  */
 // The marker contract is written by the repo's own local-dashboard session command; these values must match it.
-export const LOCAL_DASHBOARD_FOLDER = "local-dashboard";
 export const LOCAL_DASHBOARD_MARKER_REL = ".claude/local-dashboard.json";
 export const LOCAL_DASHBOARD_MARKER_SCHEMA = 1;
 

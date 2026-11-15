@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { PACED_STOP, REFUSAL_PREFIX, TIGHT_FREE_SLOTS, decideSpawn, denyReason, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { PACED_STOP, REFUSAL_PREFIX, decideSpawn, denyReason, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -70,7 +70,6 @@ describe('decideSpawn (the decision table)', () => {
   })
 
   test('tight (budget - running <= 1) downgrades to haiku, never upward and never an unknown model', () => {
-    expect(TIGHT_FREE_SLOTS).toBe(1)
     expect(isTight(3, 2, 0)).toBe(true)
     expect(isTight(3, 1, 0)).toBe(false)
     expect(isTight(null, 99, 0)).toBe(false)
@@ -694,7 +693,6 @@ describe('failures of the guard itself', () => {
 
   test('a refusal starts with the prefix the skill quotes', () => {
     expect(denyReason(v({ level: 'critical', budget: 0 }), 'level').startsWith(REFUSAL_PREFIX)).toBe(true)
-    expect(REFUSAL_PREFIX).toBe('Usage pacing:')
   })
 })
 

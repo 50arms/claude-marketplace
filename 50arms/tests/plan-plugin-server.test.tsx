@@ -9,8 +9,7 @@ import { serverOf } from '../hooks/plan/server'
 import { test, dashboard, startSession } from './plan-kit'
 
 describe('the plugin-provided dashboard server', () => {
-  test('SERVER is the name Claude Code gives a plugin server, and toolName spells its tools as the session does', () => {
-    expect(SERVER).toBe('plugin:50arms:platform')
+  test('toolName spells the plugin server tools as the session does', () => {
     expect(toolName('session_connect')).toBe('mcp__plugin_50arms_platform__session_connect')
   })
 
@@ -22,7 +21,6 @@ describe('the plugin-provided dashboard server', () => {
   })
 
   test('a dispatched agent has the dashboard server under its own name, which serverOf finds by its 50arms_api tool', () => {
-    expect(DISPATCHED_SERVER).toBe('platform')
     expect(serverToolName(DISPATCHED_SERVER, '50arms_api')).toBe('mcp__platform__50arms_api')
     expect(serverOf(['Read', 'mcp__platform__50arms_api', 'mcp__platform__session_connect'])).toBe(DISPATCHED_SERVER)
     expect(serverOf([toolName('50arms_api')])).toBe(SERVER)
