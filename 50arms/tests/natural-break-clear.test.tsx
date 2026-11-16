@@ -5,6 +5,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { CLEAR_RESUME_PROCEDURE } from '../hooks/compaction/briefing'
+import { DISCONNECT_GLYPH } from '../hooks/plan/config'
 import { CLEARED_SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const API = 'mcp__plugin_50arms_platform__50arms_api'
@@ -12,10 +13,15 @@ const CONNECT = 'mcp__plugin_50arms_platform__session_connect'
 const PAUSE = '/api/plan-sessions/me/pause'
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const OK = JSON.stringify({ ok: true, status: 200, body: {} })
+const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
+const REPO = 'acme-app'
+const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 
 for (const surface of SURFACES) {
   describe(`a natural-break clear on ${surface}`, () => {
     async function started($: any, on: any, connectText = OK, connectFails = false, options: Record<string, unknown> = {}) {
+      on('classic.PreCompact', () => ({}) as any)
+      on('session.compact', async () => COMPACTED as any)
       on('turn.complete', () => ({ text: 'done' }) as any)
       on('classic.SessionStart', () => ({}) as any)
       on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
@@ -65,6 +71,39 @@ for (const surface of SURFACES) {
 
     test('a refused leave clears nothing', async ($, on) => {
       const d = await started($, on, JSON.stringify({ ok: false, status: 409, body: { error: 'card_mismatch' } }), true)
+      await leave($)
+      await endTurn($, d)
+      expect(d.clearRuns).toHaveLength(0)
+    })
+
+    test("the band's Disconnect is a person's press and clears nothing", async ($, on) => {
+      const d = await started($, on)
+      const band = await $.ui.mount({ plugin: '50arms', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
+      await band.press({ key: 'disconnect' })
+      await d.clock.settle()
+      expect(d.calls.filter((c: any) => c.tool === 'session_connect' && c.args.disconnect)).toHaveLength(1)
+      await endTurn($, d)
+      expect(d.clearRuns).toHaveLength(0)
+    })
+
+    test('a session on the ready list is left to its own loop', async ($, on) => {
+      const d = await started($, on, OK, false, { connected: false })
+      d.world.agent = { id: 6, name: 'Tendai', avatar_url: null }
+      d.world.repos = [{ name: REPO, github_remote: { owner: 'acme', repo: 'app' } }]
+      d.world.processes.git = { stdout: 'git@github.com:Acme/App.git\n' }
+      await $.command.run({ command: '50arms:ready' })
+      await d.clock.settle()
+      expect(d.world.readyMark).toBe(REPO)
+      await leave($)
+      await endTurn($, d)
+      expect(d.clearRuns).toHaveLength(0)
+    })
+
+    test('a compaction already running is skipped, and the break is spent', async ($, on) => {
+      const d = await started($, on)
+      await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+      await d.clock.settle()
       await leave($)
       await endTurn($, d)
       expect(d.clearRuns).toHaveLength(0)
