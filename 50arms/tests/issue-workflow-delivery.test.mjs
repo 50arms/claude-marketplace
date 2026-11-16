@@ -67,14 +67,14 @@ test("the order is fixed: the target branch or pull request first, then complete
   assert.match(order, /citing the sha now on the target branch/);
 });
 
-test("required false: the lander rebases the card branch onto the target, tests, pushes, then completes", () => {
+test("required false: the lander runs the land command, resolving a conflict and running it again, then completes", () => {
   assert.match(notRequired, /\*\*`required` is `false`:\*\* land the card branch on the target branch yourself\./);
-  assert.ok(landStep(1).includes("git fetch origin") && landStep(1).includes("rebase origin/<target branch>"), landStep(1));
-  assert.match(landStep(1), /re-run the card's tests on the result/);
-  assert.match(landStep(2), /the repo's own finalize or land command/);
-  assert.ok(landStep(2).includes("push origin HEAD:<target branch>"), landStep(2));
-  assert.match(landStep(2), /never force it/);
-  assert.match(landStep(3), /^ 3\. Transition `complete` with a summary, then write the retro citing the sha now on the target branch/);
+  assert.match(landStep(1), /^ 1\. Run the repo's land command; on a conflict, resolve it as "Git" below says and run the command again\./);
+  assert.match(landStep(1), /The command decides what a landing re-tests\./);
+  assert.ok(landStep(1).includes("rebase the card branch onto `origin/<target branch>`") && landStep(1).includes("push origin HEAD:<target branch>"), landStep(1));
+  assert.match(landStep(1), /never forced/);
+  assert.doesNotMatch(landStep(1), /re-run the card's tests/);
+  assert.match(landStep(2), /^ 2\. Transition `complete` with a summary, then write the retro citing the sha now on the target branch/);
   assert.doesNotMatch(notRequired, /commit and push to the target branch/);
 });
 
