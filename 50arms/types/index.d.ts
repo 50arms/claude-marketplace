@@ -260,8 +260,8 @@ declare module 'claude-code' {
       ackInFlight: AckInFlight
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
       runningAgents: string[]
-      // the cards this session marked as its own work (PUT /api/work-marks), card id to the epoch ms the mark was set; the held-idle Stop check counts them as worked.
-      workMarks: Record<string, number>
+      // the briefs of the sub-agents that ended in the last few minutes, with the epoch ms each ended; the held-idle Stop check counts their cards as worked for that long.
+      recentBriefs: { ids: string[]; at: number }[]
       // the interim sub-agent notices held back from the model, each with the task id it names and the epoch ms it was first held (see hooks/context/interim-notice.ts).
       heldNotices: { taskId: string; text: string; heldAt: number }[]
       agentBriefs: { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
