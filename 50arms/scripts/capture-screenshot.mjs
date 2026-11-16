@@ -10,6 +10,7 @@
 //          [--width 1440] [--height 900] [--dpr 2]      (phone: --width 390 --height 844 --dpr 3)
 import { writeFileSync } from "node:fs";
 import { BUSY_SELECTOR, CAPTURE_DEFAULTS, SIGN_IN_FORM_SELECTOR, parseCaptureArgs } from "./lib/capture-args.mjs";
+import { WAIT_FOR_NOTICE, attachStep } from "./lib/capture-notices.mjs";
 import { runLoginCmd } from "./lib/login-cmd.mjs";
 import { PageErrors, redactUrls } from "./lib/page-errors.mjs";
 import { PAGE_RENDERS_CONTENT } from "./lib/page-programs.mjs";
@@ -94,6 +95,8 @@ async function main() {
     const shot = await session.send("Page.captureScreenshot", { format: "png" });
     writeFileSync(args.out, Buffer.from(shot.data, "base64"));
     console.log(`${args.out} (${args.width}x${args.height} @${args.dpr}x)`);
+    console.log(attachStep(args.out));
+    if (!args.waitFor) console.warn(WAIT_FOR_NOTICE);
     // The capture stands (text may be on screen); the cause of a half-broken page is still worth naming.
     if (pageErrors.size > 0) console.warn(`warning: uncaught page error(s) during load:
 ${pageErrors.format()}`);

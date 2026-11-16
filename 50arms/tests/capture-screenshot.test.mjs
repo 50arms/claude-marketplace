@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CAPTURE_DEFAULTS, CAPTURE_USAGE, parseCaptureArgs } from "../scripts/lib/capture-args.mjs";
 import { MAX_ERROR_CHARS, MAX_PAGE_ERRORS, PageErrors, describeException, redactUrls } from "../scripts/lib/page-errors.mjs";
+import { WAIT_FOR_NOTICE, attachStep } from "../scripts/lib/capture-notices.mjs";
 import { runLoginCmd } from "../scripts/lib/login-cmd.mjs";
 import { PROFILE_PREFIX, findBrowser, requireNode } from "../scripts/lib/cdp-browser.mjs";
 
@@ -193,6 +194,8 @@ test("a capture is full device resolution, exits by itself, and leaves no profil
     const ok = await run([`${base}/`, out, "--width", "600", "--height", "300", "--dpr", "2", "--wait-for", "#ready"]);
     assert.equal(ok.status, 0, ok.stderr);
     assert.equal(ok.killed, false, "the process ended on its own, not by the harness's kill timeout");
+    assert.ok(ok.stdout.includes(attachStep(out)), "prints the attach_file step");
+    assert.ok(!ok.stderr.includes(WAIT_FOR_NOTICE), "no notice when --wait-for was given");
     assert.deepEqual(pngSize(out), [1200, 600]);
     assert.deepEqual(leftovers(), []);
   }));
@@ -385,3 +388,17 @@ test("runLoginCmd runs the shell without a window", () => {
   assert.equal(opts.windowsHide, true);
   assert.equal(opts.shell, true);
 });
+
+test("the attach step names the absolute path, primary first, then replaces", () => {
+  const step = attachStep("rel/a.png");
+  assert.ok(step.includes(path.resolve("rel/a.png")));
+  assert.match(step, /primary: true/);
+  assert.match(step, /replaces: <attachment_id/);
+});
+
+test("a capture without --wait-for prints the notice", { skip: !browser }, () =>
+  withServer(async ({ base, dir, run }) => {
+    const r = await run([`${base}/`, path.join(dir, "n.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stderr.includes(WAIT_FOR_NOTICE));
+  }));
