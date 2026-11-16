@@ -37,9 +37,7 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
 3. Its PRE gates have passed ("Gates" below); build to the rules under
    "Building" below.
 4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
-   changes. Run only those: the touched files' own tests and their direct dependents (a prose
-   edit needs only the repo's text checks). A whole suite is for a broad change that touches
-   many parts of the system, never the default.
+   changes. Run the set the repo's affected-test command chooses (with none, the touched files' own tests and their direct dependents; a prose edit needs only the repo's text checks), never a whole suite by default.
 5. Pass its POST gates ("Gates" below).
 6. End: a dispatched worker follows the end order its dispatch instructions give. An
    operator-session builder stops at its pushed card branch: it reports the tip SHA and ends,
@@ -206,6 +204,8 @@ validation, optional-arg defaults, a bounded timeout, a bounded retry as insuran
 with one correct value, no helper without a caller, no delegate-only wrapper. A new layer
 must name the invariant it enforces.
 
+**Deterministic steps belong in commands, never in agent text.** A step a command or the system can do without judgement (fetch, rebase, choosing or running tests, lint, type-check, recording a result, a fixed sequence of calls) is built into that command, script, hook or route; agent text names only the command and the judgement calls it leaves to the agent.
+
 **Reuse before you build.** Search for the capability under other names, partial coverage
 (extend it) and the wrong location (move it) before writing anything new; name what you
 searched. "Can't reuse it because <constraint>" is a guess until you cite the `file:line`
@@ -289,13 +289,8 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 
 **`required` is `false`:** land the card branch on the target branch yourself.
 
-1. `git fetch origin`, then bring the card branch onto `origin/<target branch>` in its worktree
-   (`git -C <worktree> rebase origin/<target branch>`), resolving any conflict as "Git" below
-   says, and re-run the card's tests on the result.
-2. Run the repo's own finalize or land command when its instructions name one; otherwise push the
-   result: `git -C <worktree> push origin HEAD:<target branch>`. A push refused as not a
-   fast-forward means the target moved: fetch, rebase and test again, never force it.
-3. Transition `complete` with a summary, then write the retro citing the sha now on the target
+1. Run the repo's land command; on a conflict, resolve it as "Git" below says and run the command again. The command decides what a landing re-tests. A repo with no land command: rebase the card branch onto `origin/<target branch>` and push it, `git -C <worktree> push origin HEAD:<target branch>`, never forced.
+2. Transition `complete` with a summary, then write the retro citing the sha now on the target
    branch.
 
 **`required` is `true`:** the target branch is never pushed to.
