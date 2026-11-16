@@ -10,6 +10,9 @@ export const ENGINE_ORIGIN = 'engine'
 // a call a plugin raised itself (`$.mcp.call`, `$.tool.call`), any plugin's, not the model's. Its result goes to the plugin, never the model.
 export const raisedByPlugin = (origin: { plugin: string }): boolean => origin.plugin !== ENGINE_ORIGIN
 
+// the model's own leave of a plan or card (`session_connect` with `disconnect: true`) is a natural break; the band's Disconnect is the plugin's own call, a person's press, and is never one.
+export const isModelLeave = (e: { disconnect?: unknown }, target: unknown, origin: { plugin: string }): boolean => e.disconnect === true && target !== null && !raisedByPlugin(origin)
+
 // in auto permission mode the engine puts a hook-initiated `$.mcp.call` to its classifier like any tool call, and a call the
 // classifier "gave no verdict" on is refused: `$.mcp.call(<server>, <tool>) refused: The server-side auto mode classifier gave no verdict for
 // <tool>`. The plugin's own tool.check hook allows the calls it raises on its own server (`ownServerCheck` below, seated by the `on('tool.check', ...)` in register.tsx); when one is

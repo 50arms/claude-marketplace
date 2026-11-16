@@ -5,6 +5,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { CLEAR_RESUME_PROCEDURE } from '../hooks/compaction/briefing'
+import { isModelLeave } from '../hooks/relay/refusal'
 import { DISCONNECT_GLYPH } from '../hooks/plan/config'
 import { CLEARED_SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
 
@@ -232,3 +233,15 @@ for (const surface of SURFACES) {
     })
   })
 }
+
+describe('which leave is a natural break', () => {
+  const originOf = (plugin: string) => ({ plugin })
+  test("the model's leave is one; the band's Disconnect (the plugin's own call) is not", () => {
+    expect(isModelLeave({ disconnect: true }, 'PLAN-23', originOf('engine'))).toBe(true)
+    expect(isModelLeave({ disconnect: true }, 'PLAN-23', originOf('50arms'))).toBe(false)
+  })
+  test('a connect, or a leave naming no plan or card, is not one', () => {
+    expect(isModelLeave({}, 'PLAN-23', originOf('engine'))).toBe(false)
+    expect(isModelLeave({ disconnect: true }, null, originOf('engine'))).toBe(false)
+  })
+})
