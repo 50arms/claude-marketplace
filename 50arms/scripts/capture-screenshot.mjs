@@ -6,10 +6,11 @@
 // a page that is not the one asked for.
 //
 // usage  node "${CLAUDE_PLUGIN_ROOT}/scripts/capture-screenshot.mjs" <url> <out.png>
-//          [--login <single-use sign-in url>] [--wait-for <css selector>]
+//          [--login <single-use sign-in url> | --login-cmd <command whose last stdout line is that url>] [--wait-for <css selector>]
 //          [--width 1440] [--height 900] [--dpr 2]      (phone: --width 390 --height 844 --dpr 3)
 import { writeFileSync } from "node:fs";
 import { BUSY_SELECTOR, CAPTURE_DEFAULTS, SIGN_IN_FORM_SELECTOR, parseCaptureArgs } from "./lib/capture-args.mjs";
+import { runLoginCmd } from "./lib/login-cmd.mjs";
 import { PageErrors, redactUrls } from "./lib/page-errors.mjs";
 import { PAGE_RENDERS_CONTENT } from "./lib/page-programs.mjs";
 import { findBrowser, launchPage, poll, requireNode } from "./lib/cdp-browser.mjs";
@@ -53,7 +54,9 @@ const present = (selector) => `!!document.querySelector(${JSON.stringify(selecto
 
 async function main() {
   requireNode();
-  const args = parseCaptureArgs(process.argv.slice(2));
+  const parsed = parseCaptureArgs(process.argv.slice(2));
+  // --login-cmd runs before the browser starts, so a failing command costs no browser.
+  const args = parsed.loginCmd ? { ...parsed, login: runLoginCmd(parsed.loginCmd) } : parsed;
   const loadTimeout = CAPTURE_DEFAULTS.loadTimeoutMs;
   const { session, close } = await launchPage(findBrowser(), loadTimeout);
   // uncaught page errors, kept to name the cause when the page never renders or never becomes ready.
@@ -78,7 +81,7 @@ async function main() {
     await visit(session, mainFrameId, args.url, `GET ${args.url}`, loadTimeout);
     // A spent --login ticket leaves the sign-in form up: say so now, before the readiness wait times out.
     if (args.login && (await evaluate(session, present(SIGN_IN_FORM_SELECTOR)))) {
-      throw new Error("the page shows the sign-in form: the --login ticket did not sign this capture in");
+      throw new Error("the page shows the sign-in form: the sign-in ticket did not sign this capture in");
     }
     // Apps that hold an open stream never go network-idle: wait on readiness signals instead, bounded.
     // The app's own selector first, then nothing on screen may still be loading.

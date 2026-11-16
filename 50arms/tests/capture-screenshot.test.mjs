@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CAPTURE_DEFAULTS, CAPTURE_USAGE, parseCaptureArgs } from "../scripts/lib/capture-args.mjs";
 import { MAX_ERROR_CHARS, MAX_PAGE_ERRORS, PageErrors, describeException, redactUrls } from "../scripts/lib/page-errors.mjs";
+import { runLoginCmd } from "../scripts/lib/login-cmd.mjs";
 import { PROFILE_PREFIX, findBrowser, requireNode } from "../scripts/lib/cdp-browser.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -18,7 +19,7 @@ const { width, height, dpr, mobileBelowWidth } = CAPTURE_DEFAULTS;
 
 test("defaults to the desktop capture", () => {
   assert.deepEqual(parseCaptureArgs(["http://x/", "a.png"]), {
-    url: "http://x/", out: "a.png", login: null, waitFor: null, width, height, dpr, isMobile: false, readyTimeoutMs: CAPTURE_DEFAULTS.readyTimeoutMs,
+    url: "http://x/", out: "a.png", login: null, loginCmd: null, waitFor: null, width, height, dpr, isMobile: false, readyTimeoutMs: CAPTURE_DEFAULTS.readyTimeoutMs,
   });
 });
 
@@ -50,6 +51,8 @@ for (const [argv, message] of [
   [["u", "o.png", "--dpr", "0"], /--dpr must be a positive number/],
   [["u", "o.png", "--login"], /--login needs a value/],
   [["u", "o.png", "--login", "--width", "390"], /--login needs a value, got "--width"/],
+  [["u", "o.png", "--login", "http://l/", "--login-cmd", "x"], /--login and --login-cmd are mutually exclusive/],
+  [["u", "o.png", "--login-cmd"], /--login-cmd needs a value/],
   [["u", "o.png", "--scale", "1"], /unknown flag --scale/],
 ]) {
   test(`refuses ${JSON.stringify(argv)}`, () => assert.throws(() => parseCaptureArgs(argv), message));
@@ -350,4 +353,35 @@ test("issue-workflow's Show the work clause names the shipped tool, and the exam
   const phone = skill.match(/phone `(--width \d+ --height \d+ --dpr \d+)/)?.[1];
   assert.ok(phone, "the phone example is documented");
   assert.equal(parseCaptureArgs(["u", "p.png", ...phone.split(" ")]).isMobile, true);
+});
+
+test("--login-cmd is kept apart from the positionals", () => {
+  const r = parseCaptureArgs(["--login-cmd", "make dev-login", "u", "o.png"]);
+  assert.deepEqual([r.url, r.out, r.login, r.loginCmd], ["u", "o.png", null, "make dev-login"]);
+});
+
+test("runLoginCmd takes the last stdout line as the url", () => {
+  assert.equal(runLoginCmd("echo noise; echo 'https://app.localhost:1/in?t=s3cret'"), "https://app.localhost:1/in?t=s3cret");
+});
+
+test("runLoginCmd fails loudly with the command's stderr, never its stdout", () => {
+  assert.throws(() => runLoginCmd("echo oops-not-a-url; echo why-it-failed >&2; exit 3"), (e) => {
+    assert.match(e.message, /exited 3/);
+    assert.match(e.message, /why-it-failed/);
+    assert.doesNotMatch(e.message, /oops-not-a-url/);
+    return true;
+  });
+  assert.throws(() => runLoginCmd("echo not-a-url"), /printed no http\(s\) URL/);
+  assert.throws(() => runLoginCmd("true"), /printed no http\(s\) URL/);
+});
+
+test("runLoginCmd is bounded by a timeout", () => {
+  assert.throws(() => runLoginCmd("sleep 5", { timeoutMs: 200 }), /did not finish within 200 ms/);
+});
+
+test("runLoginCmd runs the shell without a window", () => {
+  let opts;
+  runLoginCmd("c", { run: (_c, o) => ((opts = o), { status: 0, stdout: "http://x/", stderr: "" }) });
+  assert.equal(opts.windowsHide, true);
+  assert.equal(opts.shell, true);
 });

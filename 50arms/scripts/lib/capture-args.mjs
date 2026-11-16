@@ -12,13 +12,13 @@ export const CAPTURE_DEFAULTS = {
   readyTimeoutMs: 15_000,
 };
 
-/** Still on screen after --login means the ticket was spent or refused. */
+/** Still on screen after --login or --login-cmd means the ticket was spent or refused. */
 export const SIGN_IN_FORM_SELECTOR = 'input[type="password"]';
 
 /** Present while any part of the page is still loading; the default readiness wait is for it to go. */
 export const BUSY_SELECTOR = '[aria-busy="true"]';
 
-const FLAG_VALUES = { login: "<url>", width: "<px>", height: "<px>", dpr: "<ratio>", "wait-for": "<css selector>", "ready-timeout": "<milliseconds>" };
+const FLAG_VALUES = { login: "<url>", "login-cmd": "<command>", width: "<px>", height: "<px>", dpr: "<ratio>", "wait-for": "<css selector>", "ready-timeout": "<milliseconds>" };
 const FLAGS = Object.keys(FLAG_VALUES);
 
 export const CAPTURE_USAGE =
@@ -32,7 +32,7 @@ function positive(flag, raw) {
   return n;
 }
 
-/** @returns {{url:string,out:string,login:string|null,waitFor:string|null,width:number,height:number,dpr:number,isMobile:boolean,readyTimeoutMs:number}} */
+/** @returns {{url:string,out:string,login:string|null,loginCmd:string|null,waitFor:string|null,width:number,height:number,dpr:number,isMobile:boolean,readyTimeoutMs:number}} */
 export function parseCaptureArgs(argv) {
   const positionals = [];
   const flags = {};
@@ -55,11 +55,15 @@ export function parseCaptureArgs(argv) {
   if (!out.toLowerCase().endsWith(".png")) {
     throw new Error(`out path must end in .png (attachments are PNG, not JPEG), got "${out}". ${CAPTURE_USAGE}`);
   }
+  if (flags.login !== undefined && flags["login-cmd"] !== undefined) {
+    throw new Error(`--login and --login-cmd are mutually exclusive. ${CAPTURE_USAGE}`);
+  }
   const width = flags.width === undefined ? CAPTURE_DEFAULTS.width : positive("width", flags.width);
   return {
     url,
     out,
     login: flags.login ?? null,
+    loginCmd: flags["login-cmd"] ?? null,
     waitFor: flags["wait-for"] ?? null,
     width,
     height: flags.height === undefined ? CAPTURE_DEFAULTS.height : positive("height", flags.height),
