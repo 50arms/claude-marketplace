@@ -106,8 +106,11 @@ export function restartNoticeText(result: { content?: { type: string; text?: str
   return answer.notice === null ? { kind: 'nothing' } : { kind: 'text', text: answer.notice }
 }
 
+// A sub-agent's start is the one event whose text is the mantra the sub-agent works by, so its failure line also says where to fetch it.
 export const eventFailureLine = (event: DashboardEvent, reason: string) =>
-  `⚠ Could not load the "${event}" event text from the 50 Arms reminder registry (${reason}). Tell the operator this event hook fetch failed.`
+  event === 'sub_agent_start'
+    ? `⚠ Could not load the mantra (the "${event}" event text) from the 50 Arms reminder registry (${reason}). Fetch it now with \`50arms_api\` \`GET ${eventPath(event)}\`, and tell the operator this event hook fetch failed.`
+    : `⚠ Could not load the "${event}" event text from the 50 Arms reminder registry (${reason}). Tell the operator this event hook fetch failed.`
 
 export const restartFailureLine = (reason: string) =>
   `⚠ Could not load the restart notice (${reason}). Tell the operator if this session should be plan-connected.`
@@ -119,3 +122,6 @@ export const CONTEXT_DEADLINE_MS = 8_000
 // The plugin's own server was not in the session's tool list by the deadline (said only for a session known to be on a plan).
 export const SERVER_NOT_CONNECTED_REASON = `server_not_connected: the 50 Arms dashboard server was not connected within ${CONTEXT_DEADLINE_MS / 1000}s`
 export const DEADLINE_REASON = `timeout: no response within ${CONTEXT_DEADLINE_MS / 1000}s`
+// A sub-agent's start found the plugin's server not connected (it never waits for one) or the session held (a revoked key, or the agent gate).
+export const SERVER_UNREACHABLE_REASON = 'server_not_connected: the 50 Arms dashboard server is not connected'
+export const SESSION_HELD_REASON = 'session_held: 50 Arms holds this session (its key was revoked, or it has no team agent yet)'

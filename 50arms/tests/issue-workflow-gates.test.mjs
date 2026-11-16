@@ -107,7 +107,8 @@ test("plan-workflow's Sub-agents section carries the matching rule once", () => 
 
 // CP-133: a card type's rules live only in its `when_to_use` on GET /api/card-types, and every agent create quotes them as its `justification`.
 test("the creation guide sends the agent to GET /api/card-types for the type's rules and has the create quote them as its justification", () => {
-  assert.match(creation, /Before creating a card, read its type's rules from `50arms_api` `GET \/api\/card-types`/);
+  assert.match(creation, /Before creating a card, read its type's rules from `50arms_api` `GET \/api\/card-types\?fields=\{"when_to_use":true,"facts":true\}`/);
+  assert.match(flat(skill), /The type's rules come only from `GET \/api\/card-types\?fields=\{"when_to_use":true,"facts":true\}`, and the create quotes/);
   assert.match(creation, /Quote the part of those rules you rely on as the create's `justification` \(`quote`, `reasoning`\)/);
 });
 

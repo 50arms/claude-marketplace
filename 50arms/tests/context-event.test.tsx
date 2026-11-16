@@ -5,7 +5,7 @@ import "./run-tests-with-npm-test.generated"
 // line, a session on no plan's the agent-scoped lines alone.
 import { describe, expect } from 'claude-code/testing'
 
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, SIGN_IN_INVITATION, eventFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, SERVER_UNREACHABLE_REASON, SESSION_HELD_REASON, SIGN_IN_INVITATION, eventFailureLine } from '../hooks/context/events'
 import { test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, EVENT_TEXT, TOLD, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
@@ -114,22 +114,33 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
-    test('DX-3421: a session with no record on disk whose plans read fails is quiet: it is not known to be on a plan', async ($, on) => {
+    test('DX-3421: a session with no record on disk whose plans read fails is quiet at its start and resume: it is not known to be on a plan', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.sessionReadStatus = 500
       expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
-      expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
       await d.clock.settle()
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
-    test('a session whose id is not a plain id has no connection record, even with one at the path such an id would name: a failed plans read is quiet at a sub-agent start', async ($, on) => {
+    // the dashboard leaves the mantra out of a plugin sub-agent's profile because this start delivers it, so a start that cannot is never silent
+    test('a session with no record on disk whose plans read fails tells its sub-agent the mantra could not be loaded and where to fetch it', async ($, on) => {
+      const d = await started($, on, { connected: false })
+      d.world.sessionReadStatus = 500
+      const r = await $.classic.SubagentStart(START)
+      await d.clock.settle()
+      expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: session boom')])
+      expect(r.additionalContext![0]).toContain('Could not load the mantra')
+      expect(r.additionalContext![0]).toContain('`50arms_api` `GET /api/reminders/event/sub_agent_start`')
+      expect(EVENT_PATHS(d.contextReads)).toEqual([])
+    })
+
+    test('a session whose id is not a plain id has no connection record, even with one at the path such an id would name: a failed plans read is still told to its sub-agent', async ($, on) => {
       const d = await started($, on)
       d.world.sessionId = BAD_SESSION_ID
       // a record at the path such an id would name, as the runtime resolves it, so a check that built the path would find it
       d.world.files[BAD_SESSION_ID_PATH] = '{}'
       d.world.sessionReadStatus = 500
-      expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
+      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: session boom')])
     })
 
     test('a connected session whose call is rejected (the dashboard times out) is told the one warning line too', async ($, on) => {
@@ -158,11 +169,30 @@ This session replaced one on PLAN-23; 3 events wait.`])
       })
     }
 
-    test('a session whose key a person revoked is quiet: its own tools tell the model', async ($, on) => {
+    test('a session whose key a person revoked is quiet at its start: its own tools tell the model; its sub-agent is told the mantra could not be loaded', async ($, on) => {
       const d = await started($, on, { signedOut: 'revoked' })
       expect((await firstPrompt($, 'startup')).startLines).toBeUndefined()
-      expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
+      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', SESSION_HELD_REASON)])
       await d.clock.settle()
+    })
+
+    for (const gate of ['agent_needed', 'agent_not_held'] as const) {
+      test(`a session the agent gate holds (${gate}) is quiet at its start; its sub-agent is told the mantra could not be loaded`, async ($, on) => {
+        const d = await started($, on)
+        d.world.agentGate = gate
+        expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
+        const r = await $.classic.SubagentStart(START)
+        await d.clock.settle()
+        expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', SESSION_HELD_REASON)])
+        expect(EVENT_PATHS(d.contextReads)).toEqual([])
+      })
+    }
+
+    test("a failed read adds the mantra's failure line only for the sub-agent's start: the other events keep their silence rules", async ($, on) => {
+      expect(eventFailureLine('sub_agent_start', 'x')).toContain('GET /api/reminders/event/sub_agent_start')
+      for (const event of ['session_start', 'session_resume', 'after_compaction', 'sub_agent_stop', 'side_session_turn_end'] as const) {
+        expect(eventFailureLine(event, 'x')).toBe(`⚠ Could not load the "${event}" event text from the 50 Arms reminder registry (x). Tell the operator this event hook fetch failed.`)
+      }
     })
 
     test('a CONNECTED session whose plugin server is not connected at the deadline is told so in one warning line, and the poll stops there', async ($, on) => {
@@ -250,11 +280,11 @@ This session replaced one on PLAN-23; 3 events wait.`])
       await d.clock.settle()
     })
 
-    test('a sub-agent start does not wait for a server that is not connected', async ($, on) => {
+    test('a sub-agent start does not wait for a server that is not connected: it is told the mantra could not be loaded at once', async ($, on) => {
       const d = await started($, on, { mcp: 'down' })
       const r = await $.classic.SubagentStart(START)
       await d.clock.settle()
-      expect(r.additionalContext).toBeUndefined()
+      expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', SERVER_UNREACHABLE_REASON)])
       expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 

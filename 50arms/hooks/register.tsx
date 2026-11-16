@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, eventFailureLine, eventPath, eventText, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, SERVER_UNREACHABLE_REASON, SESSION_HELD_REASON, eventFailureLine, eventPath, eventText, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
 import { announcedBy, finishedAgentLabel, finishedAgentsText, isRecordWrite, spawnedAfter } from './context/record'
@@ -3586,10 +3586,17 @@ async function sessionContext($: any, start: NonNullable<PendingStart>): Promise
   return done.line === null ? notice : notice === null ? done.line : [done.line, notice].join('\n')
 }
 
-// the registry's text for an event told outside a session start (a sub-agent's start or stop, a side session's turn end): every signed-in session, on a plan or not
+// the registry's text for an event told outside a session start (a sub-agent's start or stop, a side session's turn end): every signed-in session, on a plan or not.
+// A read that fails is quiet for a session not known to be on a plan, except at a sub-agent's start: the dashboard leaves the mantra out of a plugin sub-agent's own
+// text because this start delivers it, so every failed read there is one failure line that says where to fetch it (a signed-out session has no key to fetch with).
 async function readEventContext($: any, event: DashboardEvent): Promise<string | null> {
   const plan = await sessionPlan($)
   if (plan.kind === 'connected' || plan.kind === 'not-connected') return eventContext($, event)
+  if (event === 'sub_agent_start') {
+    if (plan.kind === 'failed') return eventFailureLine(event, plan.reason)
+    if (plan.kind === 'unreachable') return eventFailureLine(event, SERVER_UNREACHABLE_REASON)
+    return plan.kind === 'silent' ? eventFailureLine(event, SESSION_HELD_REASON) : null
+  }
   return plan.kind === 'failed' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine(event, plan.reason) : null
 }
 
