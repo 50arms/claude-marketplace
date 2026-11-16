@@ -1,6 +1,6 @@
 ---
 name: issue-workflow
-description: 'The one workflow for working a card, and every dev rule that applies while doing it: claim, context, the ideal build (build then test once, bugs test-first, no legacy, fail loud, reuse), debugging, git and shell hygiene, gates, complete. Load before working a card, and before creating a card (then also references/card-creation-and-reference.md).'
+description: 'The one workflow for working a card, and every dev rule that applies while doing it: claim, context, the ideal build (tests, no legacy, fail loud, reuse), debugging, git and shell hygiene, gates, complete. Load before working a card, and before creating a card (then also references/card-creation-and-reference.md).'
 ---
 
 # Issue Workflow
@@ -35,17 +35,11 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
 2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip this
    step, the card is already yours.
 3. Its PRE gates have passed ("Gates" below); build to the rules under
-   "Building" below: write all the code and its tests first, running no tests while you write
-   (a quick manual check is fine). Two exceptions:
-   - A bug, always, one you meet while building included: find its exact evidence, reproduce it,
-     write a test that fails because of it and run it to see it fail, then fix it.
-   - Large or complex work: split it into modules (the groups its tests already fall into). Write
-     one module's code and tests, run that module's tests until they pass, then start the next.
-4. Then run the tests your change affects once: the touched files' own tests and their direct
-   dependents (a prose edit needs only the repo's text checks). A whole suite is for a broad
-   change that touches many parts of the system, never the default. Fix every failure, re-run
-   only the failed tests until they pass, then make one final run of the affected tests on your
-   final tip. Tick every AC/checklist item and browser-test user-facing changes.
+   "Building" below.
+4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
+   changes. Run only those: the touched files' own tests and their direct dependents (a prose
+   edit needs only the repo's text checks). A whole suite is for a broad change that touches
+   many parts of the system, never the default.
 5. Pass its POST gates ("Gates" below).
 6. End: a dispatched worker follows the end order its dispatch instructions give. An
    operator-session builder stops at its pushed card branch: it reports the tip SHA and ends,
@@ -218,10 +212,9 @@ searched. "Can't reuse it because <constraint>" is a guess until you cite the `f
 that enforces it.
 
 **Tests.** 50 Arms' product docs alone define what a valid test is: what to test and what never to test,
-at which layer, with which test doubles, how many tests a change gets, and when a test is deleted.
+at which layer, with which test doubles, how many tests a change gets, when they run, and when a test is deleted.
 Before you write, edit or delete a test, search the product docs for `testing standard: what to test`,
-read the page and follow it. Your repo's own docs may add rules for that repo. Write tests with the code
-and run them when Flow steps 3 and 4 say: once the code is written, except a bug's test, which comes first.
+read the page and follow it. Your repo's own docs may add rules for that repo.
 
 **Existing code.** Comments are authoritative on WHY but were true only when written: confirm
 the producer or mechanism they name still exists, follow a cited docblock to code. A comment
