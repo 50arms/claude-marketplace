@@ -5,6 +5,8 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { CLEAR_RESUME_PROCEDURE } from '../hooks/compaction/briefing'
+import { isModelLeave } from '../hooks/relay/refusal'
+import { DISCONNECT_GLYPH } from '../hooks/plan/config'
 import { CLEARED_SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const API = 'mcp__plugin_50arms_platform__50arms_api'
@@ -12,10 +14,15 @@ const CONNECT = 'mcp__plugin_50arms_platform__session_connect'
 const PAUSE = '/api/plan-sessions/me/pause'
 const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
 const OK = JSON.stringify({ ok: true, status: 200, body: {} })
+const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
+const REPO = 'acme-app'
+const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 
 for (const surface of SURFACES) {
   describe(`a natural-break clear on ${surface}`, () => {
     async function started($: any, on: any, connectText = OK, connectFails = false, options: Record<string, unknown> = {}) {
+      on('classic.PreCompact', () => ({}) as any)
+      on('session.compact', async () => COMPACTED as any)
       on('turn.complete', () => ({ text: 'done' }) as any)
       on('classic.SessionStart', () => ({}) as any)
       on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
@@ -70,6 +77,39 @@ for (const surface of SURFACES) {
       expect(d.clearRuns).toHaveLength(0)
     })
 
+    test("the band's Disconnect is a person's press and clears nothing", async ($, on) => {
+      const d = await started($, on)
+      const band = await $.ui.mount({ plugin: '50arms', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+      expect((await band.find({ key: 'disconnect' }))?.text).toBe(DISCONNECT_GLYPH)
+      await band.press({ key: 'disconnect' })
+      await d.clock.settle()
+      expect(d.calls.filter((c: any) => c.tool === 'session_connect' && c.args.disconnect)).toHaveLength(1)
+      await endTurn($, d)
+      expect(d.clearRuns).toHaveLength(0)
+    })
+
+    test('a session on the ready list is left to its own loop', async ($, on) => {
+      const d = await started($, on, OK, false, { connected: false })
+      d.world.agent = { id: 6, name: 'Tendai', avatar_url: null }
+      d.world.repos = [{ name: REPO, github_remote: { owner: 'acme', repo: 'app' } }]
+      d.world.processes.git = { stdout: 'git@github.com:Acme/App.git\n' }
+      await $.command.run({ command: '50arms:ready' })
+      await d.clock.settle()
+      expect(d.world.readyMark).toBe(REPO)
+      await leave($)
+      await endTurn($, d)
+      expect(d.clearRuns).toHaveLength(0)
+    })
+
+    test('a compaction already running is skipped, and the break is spent', async ($, on) => {
+      const d = await started($, on)
+      await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
+      await d.clock.settle()
+      await leave($)
+      await endTurn($, d)
+      expect(d.clearRuns).toHaveLength(0)
+    })
+
     test('a sub-agent still running means nothing new happens, and the break is spent', async ($, on) => {
       const d = await started($, on)
       await $.classic.SubagentStart({ agent_id: 'a1b2c3', agent_type: '50arms:worker-sonnet-high' } as any)
@@ -97,7 +137,7 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       await leave($)
       expect(stages(d)).toEqual(['flag-set'])
-      expect(record(d)[0]).toMatchObject({ call: 'session_connect', ok: true, status: 200, isError: false, hasText: true })
+      expect(record(d)[0]).toMatchObject({ call: 'session_connect', target: 'PLAN-23', ok: true, status: 200, isError: false, hasText: true })
       await endTurn($, d)
       expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-done'])
       expect(record(d)[2]).toMatchObject({ inProgress: false, readyLoop: false, compacting: false, turnRunning: false, agents: 0, shells: 0 })
@@ -112,25 +152,19 @@ for (const surface of SURFACES) {
       expect(record(d)[2]).toMatchObject({ shells: 1, agents: 0, turnRunning: false })
     })
 
-    test('a leave records its flag', async ($, on) => {
-      const d = await started($, on)
-      await leave($)
-      expect(record(d)[0]).toMatchObject({ stage: 'flag-set', call: 'session_connect', target: 'PLAN-23' })
-    })
-
     test('a refused leave records why it set no flag', async ($, on) => {
       const d = await started($, on, JSON.stringify({ ok: false, status: 409, body: { error: 'card_mismatch' } }), true)
       await leave($)
       expect(record(d).at(-1)).toMatchObject({ stage: 'leave-not-accepted', ok: false, isError: true })
     })
 
-    test('a clear the host refuses is recorded with its error', async ($, on) => {
+    test('a clear that changes nothing is recorded with its error', async ($, on) => {
       const d = await started($, on)
-      d.world.clearFails = 'the host refused the clear'
+      d.world.clearDoesNothing = true
       await leave($)
       await endTurn($, d)
       expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-failed'])
-      expect(String(record(d).at(-1).error).length).toBeGreaterThan(0)
+      expect(record(d).at(-1).error).toBe('the session id did not change')
     })
 
     // A clear of a session that still holds a plan or card opens a conversation that holds nothing: it is briefed (the cleared resume prompt) and, when the clear left it unconnected, reconnected to what it held.
@@ -156,8 +190,10 @@ for (const surface of SURFACES) {
 
     test('a card leave that leaves the plan held: the cleared conversation gets ONE cleared resume prompt naming the plan, and no reconnect while it is still connected', async ($, on) => {
       const d = await started($, on, OK, false, STEPS)
-      await clearedAfterLeave($, d, () => void 0)
+      d.world.card = { id: 'DX-5', title: 'the card' }
+      await clearedAfterLeave($, d, () => void (d.world.card = null))
       expect(d.clearRuns).toHaveLength(1)
+      expect(record(d).find(r => r.stage === 'clear-attempted').holds).toEqual(['PLAN-23'])
       expect(resumes(d)).toHaveLength(1)
       expect(resumes(d)[0]).toContain(CLEAR_RESUME_PROCEDURE)
       expect(resumes(d)[0]).toContain('Your plan is PLAN-23')
@@ -193,3 +229,15 @@ for (const surface of SURFACES) {
     })
   })
 }
+
+describe('which leave is a natural break', () => {
+  const originOf = (plugin: string) => ({ plugin })
+  test("the model's leave is one; the band's Disconnect (the plugin's own call) is not", () => {
+    expect(isModelLeave({ disconnect: true }, 'PLAN-23', originOf('engine'))).toBe(true)
+    expect(isModelLeave({ disconnect: true }, 'PLAN-23', originOf('50arms'))).toBe(false)
+  })
+  test('a connect, or a leave naming no plan or card, is not one', () => {
+    expect(isModelLeave({}, 'PLAN-23', originOf('engine'))).toBe(false)
+    expect(isModelLeave({ disconnect: true }, null, originOf('engine'))).toBe(false)
+  })
+})

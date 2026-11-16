@@ -79,7 +79,7 @@ import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { StalePendingError, ackedEventId, clearInFlight, fromPending, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, shouldDropResend, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
 import { legacyRuleCheck, legacySettingsPaths } from './relay/legacy-rule'
-import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, raisedByPlugin, type Refusal } from './relay/refusal'
+import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, isModelLeave, raisedByPlugin, type Refusal } from './relay/refusal'
 import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
@@ -2941,7 +2941,7 @@ async function onSessionConnect($: any, e: any, next: any) {
   const target = connectTargetOf(e.target)
   let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
   // the model's own leave of a plan or card, accepted, is a natural break (a pause never is: the dashboard always gives it an expiry); the band's Disconnect (the plugin's own call) is a person's press and clears nothing
-  if (e.disconnect === true && target !== null && !raisedByPlugin(next.origin)) {
+  if (isModelLeave(e, target, next.origin)) {
     const outcome = answerOf(ran)
     if (outcome.ok) clearAtBreak = true
     await noteBreak($, outcome.ok ? 'flag-set' : 'leave-not-accepted', { call: 'session_connect', target: e.target, ...outcomeFacts(ran, outcome) })

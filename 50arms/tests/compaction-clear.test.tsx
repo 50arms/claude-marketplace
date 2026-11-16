@@ -56,7 +56,7 @@ for (const surface of SURFACES) {
     const START = { prompt: 'go', turnId: 't1' } as any
     const compactRuns = (d: any) => d.compactRuns as unknown[]
 
-    async function started($: any, on: any) {
+    async function started($: any, on: any, setup: (d: any) => void = () => {}) {
       on('turn.complete', () => ({ text: 'done' }) as any)
       on('classic.PreCompact', () => ({}) as any)
       on('classic.SessionStart', () => ({}) as any)
@@ -64,6 +64,7 @@ for (const surface of SURFACES) {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       const d = dashboard(on, { stateSteps: true })
       d.world.context = { tokens: 120_000, window: 1_000_000 }
+      setup(d)
       await startSession($, d, surface)
       return d
     }
@@ -206,6 +207,21 @@ for (const surface of SURFACES) {
       expect(resumes(d)).toHaveLength(1)
       // and no restart notice: the clear is the plugin's own
       expect(d.restartCalls).toHaveLength(0)
+    })
+
+    test('a compaction clear of a session holding a plan and a card briefs the fresh conversation with both, and reconnects it to both when the clear left it unconnected', async ($, on) => {
+      const d = await started($, on, w => {
+        w.world.card = { id: 'DX-5', title: 'the card' }
+        w.world.localRecord = false
+      })
+      let release = () => {}
+      d.world.clearHold = new Promise<void>(resolve => (release = resolve))
+      d.world.files[CONTROL_FILE] = READY('clear')
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      await engineClearsDuring($, d, release)
+      expect(d.calls.filter((c: any) => c.tool === 'session_connect' && !c.args.disconnect).map((c: any) => c.args.target).sort()).toEqual(['DX-5', 'PLAN-23'])
+      expect(resumes(d)).toHaveLength(1)
     })
 
     test("a person's own /clear after a compaction clear is only a clear: no second resume prompt", async ($, on) => {
