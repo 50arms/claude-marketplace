@@ -137,7 +137,7 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       await leave($)
       expect(stages(d)).toEqual(['flag-set'])
-      expect(record(d)[0]).toMatchObject({ call: 'session_connect', ok: true, status: 200, isError: false, hasText: true })
+      expect(record(d)[0]).toMatchObject({ call: 'session_connect', target: 'PLAN-23', ok: true, status: 200, isError: false, hasText: true })
       await endTurn($, d)
       expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-done'])
       expect(record(d)[2]).toMatchObject({ inProgress: false, readyLoop: false, compacting: false, turnRunning: false, agents: 0, shells: 0 })
@@ -152,25 +152,19 @@ for (const surface of SURFACES) {
       expect(record(d)[2]).toMatchObject({ shells: 1, agents: 0, turnRunning: false })
     })
 
-    test('a leave records its flag', async ($, on) => {
-      const d = await started($, on)
-      await leave($)
-      expect(record(d)[0]).toMatchObject({ stage: 'flag-set', call: 'session_connect', target: 'PLAN-23' })
-    })
-
     test('a refused leave records why it set no flag', async ($, on) => {
       const d = await started($, on, JSON.stringify({ ok: false, status: 409, body: { error: 'card_mismatch' } }), true)
       await leave($)
       expect(record(d).at(-1)).toMatchObject({ stage: 'leave-not-accepted', ok: false, isError: true })
     })
 
-    test('a clear the host refuses is recorded with its error', async ($, on) => {
+    test('a clear that changes nothing is recorded with its error', async ($, on) => {
       const d = await started($, on)
-      d.world.clearFails = 'the host refused the clear'
+      d.world.clearDoesNothing = true
       await leave($)
       await endTurn($, d)
       expect(stages(d)).toEqual(['flag-set', 'turn-complete', 'clear-attempted', 'clear-failed'])
-      expect(String(record(d).at(-1).error).length).toBeGreaterThan(0)
+      expect(record(d).at(-1).error).toBe('the session id did not change')
     })
 
     // A clear of a session that still holds a plan or card opens a conversation that holds nothing: it is briefed (the cleared resume prompt) and, when the clear left it unconnected, reconnected to what it held.
@@ -196,8 +190,10 @@ for (const surface of SURFACES) {
 
     test('a card leave that leaves the plan held: the cleared conversation gets ONE cleared resume prompt naming the plan, and no reconnect while it is still connected', async ($, on) => {
       const d = await started($, on, OK, false, STEPS)
-      await clearedAfterLeave($, d, () => void 0)
+      d.world.card = { id: 'DX-5', title: 'the card' }
+      await clearedAfterLeave($, d, () => void (d.world.card = null))
       expect(d.clearRuns).toHaveLength(1)
+      expect(record(d).find(r => r.stage === 'clear-attempted').holds).toEqual(['PLAN-23'])
       expect(resumes(d)).toHaveLength(1)
       expect(resumes(d)[0]).toContain(CLEAR_RESUME_PROCEDURE)
       expect(resumes(d)[0]).toContain('Your plan is PLAN-23')
