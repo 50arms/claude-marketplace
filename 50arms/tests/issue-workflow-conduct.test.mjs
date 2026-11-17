@@ -37,7 +37,7 @@ const TWO_PRODUCERS = /Two plausible producers → back each fix out alone and r
 test("the browser bullet has the agent open its own tab and pass its tabId on every call (PLAN-2 CAV-59)", () => {
   const shell = slice(skill, "## Shell");
   const bullet = shell.slice(shell.indexOf("- Browser checks:"));
-  assert.match(bullet, /the in-app browser tool only, never a headed browser on the desktop/);
+  assert.match(bullet, /The in-app browser tool only, never a headed browser on the desktop/);
   assert.match(bullet, OWN_TAB);
   assert.match(bullet, /none acts on the tab the user has fronted/);
   assert.match(bullet, /close the tabs you opened/);
