@@ -43,6 +43,25 @@ describe('a sign-in the model started', () => {
     expect(connectCalls(d)).toHaveLength(calls)
   })
 
+  // CP-142: the model is told through a prompt that settles only when the turn ends; the band must already have dropped the link and code
+  test('approved: the band link and code are gone when the model is told, before its turn ends', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    modelConnect(on)
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false } } as any)
+    await modelAsks($, d)
+    expect((await linksOf(band)).map(l => l.href)).toContain(APPROVAL_URL)
+    const prompts = d.relay.holdPrompts()
+    d.world.signIn.approved = true
+    await d.clock.advance(45_000)
+    // the tell is queued behind the running turn, which has not ended
+    expect(prompts.held()).toBeGreaterThan(0)
+    expect((await linksOf(band)).map(l => l.href)).not.toContain(APPROVAL_URL)
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).not.toContain(`code ${CONFIRM_CODE}`)
+    prompts.release()
+    await d.clock.settle()
+  })
+
   test('told once: the same request asked again and approved again tells nothing more', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
     modelConnect(on)

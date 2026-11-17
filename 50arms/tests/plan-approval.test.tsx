@@ -5,7 +5,6 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { APPROVE_SIGN_IN_LABEL, approvalRequestOf } from '../hooks/plan/approval'
-import { approvalsDrawn } from '../hooks/plan/hold'
 import { test, dashboard, startSession, browserCalls, linksOf } from './plan-kit'
 
 const URL_A = 'https://50arms.example/connect/aaaa'
@@ -27,30 +26,6 @@ function answering(on: any, texts: string[]) {
   let i = 0
   on('tool.call', { tool: 'mcp__plugin_50arms_platform__session_connect' }, () => ({ result: {}, text: texts[Math.min(i++, texts.length - 1)], isError: false }) as any)
 }
-
-describe('approvalsDrawn', () => {
-  const view = (o: object) => ({ phase: 'signed-out', connected: null, card: null, agentBlock: null, ...o }) as any
-  const request = { url: URL_A, code: 'NXGUF88G' }
-  const registration = { url: URL_B, code: 'REG1', noted: false }
-
-  test('a signed-out view keeps both prompts', () => {
-    expect(approvalsDrawn(view({}), request, registration)).toEqual({ signIn: request, registration })
-  })
-
-  for (const [name, v] of [
-    ['a ready view', view({ phase: 'ready' })],
-    ['a loading view holding a plan', view({ phase: 'loading', connected: { id: 1 } })],
-    ['a loading view holding a card', view({ phase: 'loading', card: { id: 'CP-1' } })],
-  ] as const) {
-    test(`${name} draws neither prompt, whatever the atoms carry`, () => {
-      expect(approvalsDrawn(v, request, registration)).toEqual({ signIn: null, registration: null })
-    })
-  }
-
-  test('a ready view whose agent is blocked still keeps the sign-in prompt', () => {
-    expect(approvalsDrawn(view({ phase: 'ready', agentBlock: { reason: 'agent_needed' } }), request, null).signIn).toEqual(request)
-  })
-})
 
 describe('approvalRequestOf', () => {
   test('reads only an approval_required answer with a web link and a code', () => {
@@ -168,6 +143,23 @@ describe('session_connect while signed out', () => {
     await $.tool.call(CALL)
     expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
     await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).not.toContain(URL_A)
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).not.toContain('code NXGUF88G')
+  })
+
+  // CP-142: the band draws from the view first: a request an atom still carries (its watch has not answered) is never drawn beside a connected view
+  test('a connected view draws no link and code even while the sign-in request atom still carries one', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    stillPending(d)
+    answering(on, [required(URL_A)])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
+    await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+    // the key is stored elsewhere (the person approved in another way) and the view reloads connected, while this watch's call still waits
+    d.world.signedOut = null
+    await $.command.run({ command: '50arms-plan' })
+    await d.clock.settle()
     expect((await linksOf(band)).map(l => l.href)).not.toContain(URL_A)
     expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).not.toContain('code NXGUF88G')
   })

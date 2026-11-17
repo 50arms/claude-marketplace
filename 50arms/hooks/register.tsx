@@ -1103,8 +1103,8 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         if (round === null) return
         const { r, startedAt } = round
         const step = signInStep(r)
-        // CP-142: any answer but "still waiting" ends the request: the band stops drawing its link and code now, not after the tells and the refresh below
-        if (step.kind !== 'waiting' && !ended()) await update($, signInRequest, () => null)
+        // CP-142: any answer but "still waiting" (or the registration the ready loop waits through) ends the request: the band stops drawing its link and code now, not after the tells and the refresh below
+        if (step.kind !== 'waiting' && step.kind !== 'registration' && !ended()) await update($, signInRequest, () => null)
         if (step.kind === 'waiting') {
           if (shown !== null && step.request.url !== shown.url) {
             // the request watched is over without a decision reaching this call: it lapsed, and this answer is its renewal
@@ -1131,7 +1131,6 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
             if ((await watchRegistration($)) === 'registered' && !ended()) {
               await update($, busy, cur => (cur.includes(busyKey.signIn) ? cur : [...cur, busyKey.signIn]))
               holdsBusy = true
-              shown = null
               await holdMinRound($, startedAt)
               if (ended()) return
               continue
