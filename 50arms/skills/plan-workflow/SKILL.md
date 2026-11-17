@@ -340,7 +340,7 @@ never stays active just to wait.
    - `person`: an open problem, an approval or any answer only a person gives (409
      `person_wait_without_problem` without an open problem on your plan or card: file it first).
    - `dependency`: other cards, their ids in `cards` (required); ends when every one is Done or
-     Cancelled, or one is blocked or has its landing returned (409 `pause_cards_finished` when all are already finished).
+     Cancelled, or one is blocked (409 `pause_cards_finished` when all are already finished).
    - `other`: none of these (a build or deploy with no card). It needs `expires_in_minutes` (at most
      720) and ends by itself then.
    A pause on `pacing`, `person` or `dependency` has no time limit (`expires_in_minutes` is refused):
