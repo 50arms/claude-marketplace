@@ -223,16 +223,15 @@ row, file, env), trace the seed and load path to what is authoritative at runtim
 jobs are incremental (delta + high-water mark): the 10th run costs what the 1st does. All
 code is your code — never "pre-existing, not mine".
 
-**Show the work.** Browser-visible work: attach a screenshot with `attach_file` and `primary: true`
-at the first working state, then `replaces: <attachment_id from that reply>` at each milestone and
-at completion, never a growing list. Frame the component you are working on with enough around
+**Show the work.** Browser-visible work: attach each capture with `attach_file` as the capture tool prints;
+it names the step (primary first, then replaces). Frame the component you are working on with enough around
 it to place it (scroll it into view, size the viewport to it), not the whole app. A browser-pane
 capture is for your own viewing (an 800px-wide JPEG); attach a full-resolution PNG instead,
 made by the plugin's own tool from any repo (it drives the machine's Chrome or Edge, so a
 containerised dispatch with no browser cannot run it):
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/capture-screenshot.mjs" <url> <out.png> [--login-cmd "<sign-in command>"]
 [--wait-for <selector>]` (defaults `--width 1440 --height 900 --dpr 2`; phone `--width 390 --height 844
---dpr 3`). Pass `--wait-for` whenever the app has a readiness signal (the wait for no `[aria-busy="true"]` element always follows it, and without it the page must also show visible content); it exits non-zero on a bad
+--dpr 3`). It exits non-zero on a bad
 response, a sign-in form, or a page that never becomes ready. For a live check of a local app pass the command that signs in, e.g. `--login-cmd "make live-check-session LOCALHOST=1 CARD=<id>"`: the script runs it and opens the one URL it prints, so you never carry a sign-in URL.
 
 ## Debugging
