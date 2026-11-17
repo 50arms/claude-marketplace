@@ -230,10 +230,10 @@ it to place it (scroll it into view, size the viewport to it), not the whole app
 capture is for your own viewing (an 800px-wide JPEG); attach a full-resolution PNG instead,
 made by the plugin's own tool from any repo (it drives the machine's Chrome or Edge, so a
 containerised dispatch with no browser cannot run it):
-`node "${CLAUDE_PLUGIN_ROOT}/scripts/capture-screenshot.mjs" <url> <out.png> [--login <dev-login-url>]
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/capture-screenshot.mjs" <url> <out.png> [--login-cmd "<sign-in command>"]
 [--wait-for <selector>]` (defaults `--width 1440 --height 900 --dpr 2`; phone `--width 390 --height 844
 --dpr 3`). Pass `--wait-for` whenever the app has a readiness signal (the wait for no `[aria-busy="true"]` element always follows it, and without it the page must also show visible content); it exits non-zero on a bad
-response, a sign-in form, or a page that never becomes ready.
+response, a sign-in form, or a page that never becomes ready. For a live check of a local app pass the command that signs in, e.g. `--login-cmd "make live-check-session LOCALHOST=1 CARD=<id>"`: the script runs it and opens the one URL it prints, so you never carry a sign-in URL.
 
 ## Debugging
 
@@ -353,7 +353,7 @@ into that branch. Never code over a branch missing a dependency's code.
 - Poll an LLM, dispatch or orchestrator no faster than every 60–120s.
 - A literal `\n` in an MCP string is two characters — use a real line break.
 - Never read or edit `dist/`/build output; `node_modules/` is read-only.
-- Browser checks: the in-app browser tool only, never a headed browser on the desktop. Open
+- Browser checks: run the repo's live-check command (danxbot: `make live-check-session LOCALHOST=1 CARD=<id>`), then open the one URL it prints in your own tab; close the tabs you opened. The in-app browser tool only, never a headed browser on the desktop. Open
   your own tab and pass its `tabId` on every call (none acts on the tab the user has
   fronted); close the tabs you opened. Make it with `tabs_create`, which opens it in the
   background so the person's tab and typing keep focus, then `navigate` it by `tabId`. Never
