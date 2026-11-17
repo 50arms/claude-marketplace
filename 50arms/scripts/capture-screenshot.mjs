@@ -10,7 +10,7 @@
 //          [--width 1440] [--height 900] [--dpr 2]      (phone: --width 390 --height 844 --dpr 3)
 import { writeFileSync } from "node:fs";
 import { BUSY_SELECTOR, CAPTURE_DEFAULTS, SIGN_IN_FORM_SELECTOR, parseCaptureArgs } from "./lib/capture-args.mjs";
-import { WAIT_FOR_NOTICE, attachStep } from "./lib/capture-notices.mjs";
+import { WAIT_FOR_NOTICE, attachStep, failureStep } from "./lib/capture-notices.mjs";
 import { runLoginCmd } from "./lib/login-cmd.mjs";
 import { PageErrors, redactUrls } from "./lib/page-errors.mjs";
 import { PAGE_RENDERS_CONTENT } from "./lib/page-programs.mjs";
@@ -62,6 +62,7 @@ async function main() {
   const { session, close } = await launchPage(findBrowser(), loadTimeout);
   // uncaught page errors, kept to name the cause when the page never renders or never becomes ready.
   const pageErrors = new PageErrors();
+  let stage = "setup";
   session.on((method, p) => {
     if (method === "Runtime.exceptionThrown") pageErrors.record(p.exceptionDetails);
   });
@@ -78,20 +79,25 @@ async function main() {
       mobile: args.isMobile,
     });
     // The single-use sign-in URL signs this throwaway profile in before the real page loads.
+    stage = "login";
     if (args.login) await visit(session, mainFrameId, args.login, "the --login visit", loadTimeout);
+    stage = "page";
     await visit(session, mainFrameId, args.url, `GET ${args.url}`, loadTimeout);
     // A spent --login ticket leaves the sign-in form up: say so now, before the readiness wait times out.
     if (args.login && (await evaluate(session, present(SIGN_IN_FORM_SELECTOR)))) {
+      stage = "sign-in-form";
       throw new Error("the page shows the sign-in form: the sign-in ticket did not sign this capture in");
     }
     // Apps that hold an open stream never go network-idle: wait on readiness signals instead, bounded.
     // The app's own selector first, then nothing on screen may still be loading.
+    stage = "ready";
     const ready = args.readyTimeoutMs;
     if (args.waitFor) await poll(`${args.waitFor} to appear`, ready, () => evaluate(session, present(args.waitFor)));
     await poll(`no ${BUSY_SELECTOR} element`, ready, () => evaluate(session, `!${present(BUSY_SELECTOR)}`));
     // Without --wait-for (the escape hatch for unusual pages): an app that threw while loading never mounts and
     // shows no busy element, so a blank page must not count as ready.
     if (!args.waitFor) await poll("the page to render visible content", ready, () => evaluate(session, PAGE_RENDERS_CONTENT));
+    stage = "capture";
     const shot = await session.send("Page.captureScreenshot", { format: "png" });
     writeFileSync(args.out, Buffer.from(shot.data, "base64"));
     console.log(`${args.out} (${args.width}x${args.height} @${args.dpr}x)`);
