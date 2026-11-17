@@ -106,8 +106,7 @@ A dispatched worker never claims: the dashboard picked the card up before spawni
 A `ToDo` card is an open dispatch request — working it unclaimed races a worker onto it.
 Transition `pickup` with `manual:true`, which stops anything auto-transitioning it. The
 server stamps your session id (`$CLAUDE_CODE_SESSION_ID`) as `assigned_agent` and ignores
-any name you send. Read `assigned_agent` back — anything but your session id (incl.
-`null`) is a failed claim: retry once, then stop. The hold clears only by an
+any name you send. The reply's `next_step` says what to check and do next. The hold clears only by an
 explicit transition from your session (`complete`/`cancel`/`block`/`rollback_pickup`), or,
 after a connecting pickup (below), when the session connects elsewhere or leaves. A
 sub-agent you run is still your card: pickup first, drive the terminal transition yourself.

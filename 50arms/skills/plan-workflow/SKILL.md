@@ -53,12 +53,9 @@ result the moment it completes, and delegate the new work 50 Arms sends.
 4. Your session title follows what you hold, `{Name}` being your agent's name: on a plan
    `{Name}: PLAN-NNN {short title}`, on a card `{Name}: {CARD-ID} {card title}`, on neither
    `{Name}`. The sign-in reply on no plan gives that title in `title` with `titleInstruction`; a
-   plan connect's `naming` block (status `needed`) gives the exact title. Rename the thread to it
-   (desktop `set_session_title`; terminal: ask the person to `/rename`); after a plan connect
-   asked for it, connect again with that `title`.
-5. Orient from the connect briefing, else read the plan's records, architecture and cards,
-   plus one batch read of its In-Progress/open-problem cards and the newest handoff agent note
-   (`agent_notes` on the card read).
+   plan connect's `naming` block (status `needed`) gives the exact title. Rename the thread as the reply's `nextStep` says
+   (desktop `set_session_title`; terminal: ask the person to `/rename`).
+5. Orient as the connect reply's `nextStep` says; the briefing lists the plan's records, architecture titles and `openCards`.
 6. Follow `session_connect`'s browser instruction as written.
 
 ## Where things go
