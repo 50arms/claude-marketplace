@@ -147,6 +147,19 @@ describe('session_connect while signed out', () => {
     expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).not.toContain('code NXGUF88G')
   })
 
+  // CP-142: a plan-less sign-in connect answers a bare `signed_in` state with no `ok`: it still ends the sign-in the band shows
+  test('a bare signed_in answer clears the band link and code at once', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    stillPending(d)
+    answering(on, [required(URL_A), JSON.stringify({ state: 'signed_in', instruction: 'This session is signed in.' })])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
+    await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+    await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).not.toContain(URL_A)
+  })
+
   // CP-142: the band draws from the view first: a request an atom still carries (its watch has not answered) is never drawn beside a connected view
   test('a connected view draws no link and code even while the sign-in request atom still carries one', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })

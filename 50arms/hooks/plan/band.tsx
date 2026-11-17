@@ -50,6 +50,7 @@ export function renderBand(
     </Button>
   )
   // CP-142: a connected view draws neither prompt, whatever the atoms still carry
+  // the sign-in request's link and code show in any phase of a view that holds no connection, until the request is approved, denied or expires (it is then cleared)
   const { signIn, registration } = approvalsDrawn(v, shownSignIn, shownRegistration)
   const plan = v.connected
   // a failed load draws no (stale) needs-you count beside it.
@@ -62,8 +63,6 @@ export function renderBand(
   // a Sign in button leads the controls whenever the session holds no working connection (signInOffered): signed out, a failed load, an agent block, a revoked key.
   const offerSignIn = signInOffered(v) && registration === null
   const signedOut = v.phase === 'signed-out'
-  // the sign-in request's link and code show whatever phase the load is in, until the request is approved, denied or expires (it is then cleared)
-  const approve = signIn
   // a revoked key is red too, and keeps its text beside Sign in
   const revoked = v.phase === 'key-revoked'
   const linkUrl = idUrl(plan, v.card, v.dashboardUrl)
@@ -84,7 +83,7 @@ export function renderBand(
   const controls = [
     ...(offerSignIn ? [{ label: SIGN_IN_LABEL, isButton: true }] : []),
     ...(registration !== null ? [{ label: REGISTER_MACHINE_LABEL, isButton: false }, { label: codeLabel(registration), isButton: false }] : []),
-    ...(approve !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(approve), isButton: false }] : []),
+    ...(signIn !== null ? [{ label: APPROVE_SIGN_IN_LABEL, isButton: false }, { label: codeLabel(signIn), isButton: false }] : []),
     ...(showBadge ? [{ label: badge, isButton: false }] : []),
     ...(permission !== null ? [{ label: permissionLabel, isButton: false }] : []),
     ...(permission !== null ? [{ label: codeLabel(permission.newest), isButton: false }] : []),
@@ -136,8 +135,8 @@ export function renderBand(
         )}
         {registration !== null && mdLink(E, 'register-machine', REGISTER_MACHINE_LABEL, registration.url)}
         {registration !== null && <Text key="registration-code">{codeLabel(registration)}</Text>}
-        {approve !== null && mdLink(E, 'approve-sign-in', APPROVE_SIGN_IN_LABEL, approve.url)}
-        {approve !== null && <Text key="sign-in-code">{codeLabel(approve)}</Text>}
+        {signIn !== null && mdLink(E, 'approve-sign-in', APPROVE_SIGN_IN_LABEL, signIn.url)}
+        {signIn !== null && <Text key="sign-in-code">{codeLabel(signIn)}</Text>}
         {/* the newest open permission request: its approval page, with the code to check against the page. */}
         {permission !== null && mdLink(E, 'open-permission', permissionLabel, permission.newest.url)}
         {permission !== null && <Text key="permission-code">{codeLabel(permission.newest)}</Text>}

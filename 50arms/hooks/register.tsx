@@ -2935,6 +2935,9 @@ async function afterPlanConnect($: any, e: any, next: any, plan: { id: number } 
   return ran
 }
 
+// whether a tool answer shows the session signed in, as the sign-in watch reads it (signInStep)
+const signedInAnswer = (ran: any): boolean => signInStep({ content: [{ type: 'text', text: typeof ran.text === 'string' ? ran.text : '' }] }).kind === 'done'
+
 // The model's `session_connect` (one tool for a plan, a card, or only a sign-in; `target` says which): show what it settled at once. A signed-out session's `approval_required`
 // answer draws the approval link and the code in the band, for any target; the plan page is not opened (there is no connection to show yet).
 async function onSessionConnect($: any, e: any, next: any) {
@@ -2950,8 +2953,9 @@ async function onSessionConnect($: any, e: any, next: any) {
   }
   const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
   if (named !== null) ran = withNamedNote(ran, named)
-  // CP-142: the model's own connect answered connected, so the session holds a key: the sign-in it waited on is over, and its link and code leave the band with this answer
-  if (!raisedByPlugin(next.origin) && answerOf(ran).ok && (await read($, signInRequest)) !== null) await abortSignInWatch($)
+  // CP-142: the model's own connect answered signed in, so the session holds a key: the sign-in it waited on is over, and its link and code leave the band with this answer
+  // (any answer the sign-in watch reads as signed in: a connect's `{ok: true}` envelope, or the bare `signed_in` / `agent_held` state of a plan-less one)
+  if (!raisedByPlugin(next.origin) && signedInAnswer(ran) && (await read($, signInRequest)) !== null) await abortSignInWatch($)
   const registration = registrationOf(ran.text)
   if (registration !== null) {
     // an unregistered machine: the band shows the link and code, and the model is told to send the person there (and woken when they accept)

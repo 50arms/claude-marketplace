@@ -1,3 +1,5 @@
+import type { ApprovalRequest } from './approval'
+import type { MachineRegistration } from './registration'
 import type { ConnectedPlan, HeldCard, PlanView, SessionAgent } from '../../types'
 
 // What the band's Disconnect acts on: what the view says the session holds. A session holds a plan or a card, never both, and its team agent beside either or alone.
@@ -17,8 +19,8 @@ export const holdKey = (h: BandHold): string => (h.plan !== null ? String(h.plan
 // CP-142: a sign-in or machine-registration prompt is the band of a session that holds no connection, so the band never draws one beside a
 // connected state (a signed-in view, or a plan or card held). The band derives what it draws from the view and these two atoms through this one
 // function, so a request an atom still carries (its watch has not yet cleared it) never shows beside a connection.
-export const holdsConnection = (v: PlanView): boolean => (v.phase === 'ready' && v.agentBlock === null) || (v.phase === 'loading' && (v.connected !== null || v.card !== null))
+const holdsConnection = (v: PlanView): boolean => (v.phase === 'ready' && v.agentBlock === null) || (v.phase === 'loading' && (v.connected !== null || v.card !== null))
 
-export function approvalsDrawn<S, R>(v: PlanView, signIn: S | null, registration: R | null): { signIn: S | null; registration: R | null } {
+export function approvalsDrawn(v: PlanView, signIn: ApprovalRequest | null, registration: MachineRegistration | null): { signIn: ApprovalRequest | null; registration: MachineRegistration | null } {
   return holdsConnection(v) ? { signIn: null, registration: null } : { signIn, registration }
 }
