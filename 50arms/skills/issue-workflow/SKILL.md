@@ -353,7 +353,7 @@ into that branch. Never code over a branch missing a dependency's code.
 - Poll an LLM, dispatch or orchestrator no faster than every 60–120s.
 - A literal `\n` in an MCP string is two characters — use a real line break.
 - Never read or edit `dist/`/build output; `node_modules/` is read-only.
-- Browser checks: run the repo's live-check command (the 50 Arms repo: `make live-check-session LOCALHOST=1 CARD=<id>`), then open the one URL it prints in your own tab; close the tabs you opened. The in-app browser tool only, never a headed browser on the desktop. Open
+- Browser checks: run the repo's live-check command (the 50 Arms repo: `make live-check-session LOCALHOST=1 CARD=<id>`), then open the one URL it prints in your own tab. The in-app browser tool only, never a headed browser on the desktop. Open
   your own tab and pass its `tabId` on every call (none acts on the tab the user has
   fronted); close the tabs you opened. Make it with `tabs_create`, which opens it in the
   background so the person's tab and typing keep focus, then `navigate` it by `tabId`. Never
