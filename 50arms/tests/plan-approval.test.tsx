@@ -132,6 +132,51 @@ describe('session_connect while signed out', () => {
     expect(d.toasts).toEqual([])
   })
 
+  // CP-142: the operator's incident: the model's next session_connect answers connected while the sign-in watch still waits; the band drops the
+  // link and code with that answer (no settle, no turn end) and never draws them beside the connected plan.
+  test('a connected answer clears the band link and code at once, within the same turn', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    stillPending(d)
+    answering(on, [required(URL_A), connected])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
+    await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+    await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).not.toContain(URL_A)
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).not.toContain('code NXGUF88G')
+  })
+
+  // CP-142: a plan-less sign-in connect answers a bare `signed_in` state with no `ok`: it still ends the sign-in the band shows
+  test('a bare signed_in answer clears the band link and code at once', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    stillPending(d)
+    answering(on, [required(URL_A), JSON.stringify({ state: 'signed_in', instruction: 'This session is signed in.' })])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
+    await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+    await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).not.toContain(URL_A)
+  })
+
+  // CP-142: the band draws from the view first: a request an atom still carries (its watch has not answered) is never drawn beside a connected view
+  test('a connected view draws no link and code even while the sign-in request atom still carries one', async ($, on) => {
+    const d = dashboard(on, { signedOut: 'signed-out' })
+    stillPending(d)
+    answering(on, [required(URL_A)])
+    await startSession($, d, 'desktop')
+    const band = await $.ui.mount({ plugin: '50arms', surface: 'desktop', ...BAND })
+    await $.tool.call(CALL)
+    expect((await linksOf(band)).map(l => l.href)).toContain(URL_A)
+    // the key is stored elsewhere (the person approved in another way) and the view reloads connected, while this watch's call still waits
+    d.world.signedOut = null
+    await $.command.run({ command: '50arms-plan' })
+    await d.clock.settle()
+    expect((await linksOf(band)).map(l => l.href)).not.toContain(URL_A)
+    expect((await band.findAll({ type: 'Text' })).map((t: any) => t.text)).not.toContain('code NXGUF88G')
+  })
+
   // DX-4548: a request is shown by its URL, not by the answer's state: one this session has not shown appears even as approval_pending
   test('approval_pending of a request not yet shown shows its link and code', async ($, on) => {
     const d = dashboard(on, { signedOut: 'signed-out' })
