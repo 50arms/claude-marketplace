@@ -6,7 +6,7 @@ import { REGISTER_MACHINE_LABEL } from './registration'
 import type { MachineRegistration } from './registration'
 import { donutMark } from './donut'
 import type { Handlers } from './handlers'
-import { bandHold, holdsAnything, holdsPlanOrCard } from './hold'
+import { approvalsDrawn, bandHold, holdsAnything, holdsPlanOrCard } from './hold'
 import { mdLink } from './links'
 import { permissionBadge } from './permission'
 import { bandContent, bandLabelCols, bandNameText, needsYouBadge, signInOffered, viewPercent } from './words'
@@ -34,14 +34,14 @@ export function renderBand(
   // the model's permission requests still open: how many, and the newest (its approval link and code are drawn); null when none.
   permission: { count: number; newest: ApprovalRequest } | null,
   // the sign-in request waiting for the person: its link and confirm code are drawn at once.
-  signIn: ApprovalRequest | null,
+  shownSignIn: ApprovalRequest | null,
   // The band's width in columns (`bodyColumns`); undefined in a test mount or a surface that does not say it, then only the
   // layout's `truncate-end` on the label applies.
   columns: number | undefined,
   // the plan's events held by a Stop until the person sends a message (a relay `held` on this plan): the call to action, drawn on its own line; null otherwise.
   held: string | null = null,
   // the machine's registration while it is open: its link and claim code are drawn, and Sign in is not offered until the person accepts; null otherwise.
-  registration: MachineRegistration | null = null,
+  shownRegistration: MachineRegistration | null = null,
 ): any {
   const { Box, Text, Button } = E
   const close = (
@@ -49,6 +49,8 @@ export function renderBand(
       {CLOSE_LABEL}
     </Button>
   )
+  // CP-142: a connected view draws neither prompt, whatever the atoms still carry
+  const { signIn, registration } = approvalsDrawn(v, shownSignIn, shownRegistration)
   const plan = v.connected
   // a failed load draws no (stale) needs-you count beside it.
   const loadFailed = v.phase === 'load-failed'

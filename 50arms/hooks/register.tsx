@@ -1103,6 +1103,8 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         if (round === null) return
         const { r, startedAt } = round
         const step = signInStep(r)
+        // CP-142: any answer but "still waiting" ends the request: the band stops drawing its link and code now, not after the tells and the refresh below
+        if (step.kind !== 'waiting' && !ended()) await update($, signInRequest, () => null)
         if (step.kind === 'waiting') {
           if (shown !== null && step.request.url !== shown.url) {
             // the request watched is over without a decision reaching this call: it lapsed, and this answer is its renewal
@@ -1129,6 +1131,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
             if ((await watchRegistration($)) === 'registered' && !ended()) {
               await update($, busy, cur => (cur.includes(busyKey.signIn) ? cur : [...cur, busyKey.signIn]))
               holdsBusy = true
+              shown = null
               await holdMinRound($, startedAt)
               if (ended()) return
               continue
@@ -2948,6 +2951,8 @@ async function onSessionConnect($: any, e: any, next: any) {
   }
   const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
   if (named !== null) ran = withNamedNote(ran, named)
+  // CP-142: the model's own connect answered connected, so the session holds a key: the sign-in it waited on is over, and its link and code leave the band with this answer
+  if (!raisedByPlugin(next.origin) && answerOf(ran).ok && (await read($, signInRequest)) !== null) await abortSignInWatch($)
   const registration = registrationOf(ran.text)
   if (registration !== null) {
     // an unregistered machine: the band shows the link and code, and the model is told to send the person there (and woken when they accept)
