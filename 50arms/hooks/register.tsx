@@ -1103,7 +1103,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
         if (round === null) return
         const { r, startedAt } = round
         const step = signInStep(r)
-        // CP-142: any answer but "still waiting" (or the registration the ready loop waits through) ends the request: the band stops drawing its link and code now, not after the tells and the refresh below
+        // any answer but "still waiting" (or the registration the ready loop waits through) ends the request: the band stops drawing its link and code now, not after the tells and the refresh below
         if (step.kind !== 'waiting' && step.kind !== 'registration' && !ended()) await update($, signInRequest, () => null)
         if (step.kind === 'waiting') {
           if (shown !== null && step.request.url !== shown.url) {
@@ -2953,7 +2953,7 @@ async function onSessionConnect($: any, e: any, next: any) {
   }
   const named = !raisedByPlugin(next.origin) && e.disconnect !== true ? await applyNaming($, e.target, answerOf(ran).body?.naming) : null
   if (named !== null) ran = withNamedNote(ran, named)
-  // CP-142: the model's own connect answered signed in, so the session holds a key: the sign-in it waited on is over, and its link and code leave the band with this answer
+  // the model's own connect answered signed in, so the session holds a key: the sign-in it waited on is over, and its link and code leave the band with this answer
   // (any answer the sign-in watch reads as signed in: a connect's `{ok: true}` envelope, or the bare `signed_in` / `agent_held` state of a plan-less one)
   if (!raisedByPlugin(next.origin) && signedInAnswer(ran) && (await read($, signInRequest)) !== null) await abortSignInWatch($)
   const registration = registrationOf(ran.text)

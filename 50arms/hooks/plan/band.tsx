@@ -49,7 +49,7 @@ export function renderBand(
       {CLOSE_LABEL}
     </Button>
   )
-  // CP-142: a connected view draws neither prompt, whatever the atoms still carry
+  // a connected view draws neither prompt, whatever the atoms still carry
   // the sign-in request's link and code show in any phase of a view that holds no connection, until the request is approved, denied or expires (it is then cleared)
   const { signIn, registration } = approvalsDrawn(v, shownSignIn, shownRegistration)
   const plan = v.connected
