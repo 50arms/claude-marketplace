@@ -287,7 +287,7 @@ the card saying which key is missing, then stop ("Needing a human"). Never guess
 
 **`required` is `false`:** land the card branch on the target branch yourself.
 
-1. Run the repo's land command; on a conflict, resolve it as "Git" below says and run the command again. The command decides what a landing re-tests. A repo with no land command: rebase the card branch onto `origin/<target branch>` and push it, `git -C <worktree> push origin HEAD:<target branch>`, never forced.
+1. Run the repo's land command; on a conflict, resolve it as "Git" below says and run the command again. The command decides what a landing re-tests. A repo with no land command: follow its own workflow (its contributing guide, rules or CI) when it has one, else the recommended one: rebase the card branch onto `origin/<target branch>`, run the repo's own tests and checks, and push it, `git -C <worktree> push origin HEAD:<target branch>`, never forced. Either way the 50 Arms steps stay yours: the claim, the ticked AC, the risk score, notes and decisions on the card and its plan, the work on the target branch before `complete`, then the retro.
 2. Transition `complete` with a summary, then write the retro citing the sha now on the target
    branch.
 
