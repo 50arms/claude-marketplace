@@ -146,10 +146,10 @@ first, then end `failed`.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
   progress, evidence, gate results, handoffs, blockers; trace, audit and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
-- **Decisions** — a decision record is the default home for anything important about a card.
-  A consequential decision (a business rule, an architecture choice, a design) is a decision
-  record on its card, `POST /api/issues/<id>/decision-records`, with a brief `title` (at most
-  80 characters), its description in `text`, `made_by` (`human` when a person made it, with
+- **Decisions** — a decision record holds one consequential choice (a business rule, an
+  architecture choice, a design) on its card; a plan's architecture goes in its architecture
+  sections, never in decision records. Record one with
+  `POST /api/issues/<id>/decision-records`: a brief `title` (at most 80 characters), its description in `text`, `made_by` (`human` when a person made it, with
   that person in `made_by_user_id`; `agent` when you did), `provenance` (a list of provenance records: for a person's decision at least
   one `{source, source_ref, quote}` quoting their words verbatim from a comment of theirs or
   your own session with them, so the server checks it; `{reasoning}` for your own why; a

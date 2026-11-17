@@ -61,9 +61,9 @@ result the moment it completes, and delegate the new work 50 Arms sends.
 ## Where things go
 
 Goal record = outcome measured against; rule record = constraint; caveat record = lasting
-trade-off; architecture section (one per concern) = design; card (on the board it changes) =
-actionable work; decision record on the card = a consequential decision, the default home for
-anything important about a card; card description = the background of the ask, never a
+trade-off; architecture section (one per concern) = the plan's architecture, never decision
+records; card (on the board it changes) = actionable work; decision record on the card = one
+consequential choice; card description = the background of the ask, never a
 decision or a solution detail (the card page lists the card's decisions under it); AC item = a
 step finishing an existing card; agent note on the card
 (`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
