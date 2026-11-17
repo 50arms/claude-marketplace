@@ -262,9 +262,9 @@ describe('a connect answer whose naming is needed (CP-93)', () => {
     expect(JSON.stringify(ran)).toContain(NOT_RENAME)
   })
 
-  // DEC-728: a launch token's first session_connect signs the session in and connects it in one call, so the plugin's view still reads
+  // DEC-728: a launched session's first session_connect (target, no token: it signs in by its grant, DX-7586) signs the session in and connects it in one call, so the plugin's view still reads
   // signed out when the naming runs; the agent name 50 Arms gave must survive that.
-  test("a session signed in by this same connect (a launch token) keeps the agent name in 50 Arms' exact title", async ($, on) => {
+  test("a session signed in by this same connect (a launched session's grant) keeps the agent name in 50 Arms' exact title", async ($, on) => {
     let d: any
     d = await desktop(
       $,
@@ -280,7 +280,7 @@ describe('a connect answer whose naming is needed (CP-93)', () => {
     )
     const app = d.world.appSession
     const before = app.set.length
-    await $.tool.call({ tool: CONNECT, target: 'DX-7061', launch_token: 'one-use' } as any)
+    await $.tool.call({ tool: CONNECT, target: 'DX-7061' } as any)
     await d.clock.settle()
     const written = app.set.slice(before).map((t: string) => unmarkedTitle(t))
     expect(written.length).toBeGreaterThan(0)

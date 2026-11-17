@@ -604,7 +604,7 @@ async function applyNaming($: any, target: unknown, naming: any): Promise<string
   const exact = naming.title.trim()
   // the model's connect already succeeded on the server: a failure here is told, never thrown out of the hook
   // The connect just succeeded, so the session holds the agent the title names: the exact title is set as 50 Arms gave it, never run through
-  // the view (which can still read signed out when this same call signed the session in, e.g. a launch token's first connect). The mark
+  // the view (which can still read signed out when this same call signed the session in, e.g. a launched session's first connect, which signs in by its grant). The mark
   // follows from the sync the connect's own view refresh runs.
   try {
     await underTitleLock(() => setAppTitle($, exact))
