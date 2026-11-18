@@ -39,7 +39,7 @@ export const readyMarkRefused = (why: string) => `This session left the ready li
 // a sign-in that found no team agent free: its own words, and how to try again
 export const readyNoAgentYet = (message: string) => `${message} Then run /${READY_TYPED}.`
 export const READY_NO_AGENT_AGAIN = `No team agent is free for this session. Run /${READY_TYPED} when one is.`
-const jobName = (job: ReadyJob): string => (job.kind === 'card' ? job.id : `plan ${job.id}`)
+const jobName = (job: ReadyJob): string => (job.kind === 'card' ? job.id : job.kind === 'plan' ? `plan ${job.id}` : `queue job ${job.queue_item_id}`)
 export const readyWorkTaken = (job: ReadyJob) =>
   `This session no longer holds ${jobName(job)}, and that work has not finished, so it left the ready list and kept its conversation. Run /${READY_TYPED} to rejoin.`
 export const readyJoinedOnWork = (repo: string, job: ReadyJob) => `This session is in the ready loop for ${repo}: once ${jobName(job)} has ended, it clears and joins the list.`
@@ -105,9 +105,11 @@ export function sessionIdOf(session: any): string {
   return session.session_id
 }
 
-// Whether the row holds a plan or a card. A row it cannot read is a failure, never "no work".
+// Whether the row holds a plan, a card or a queue job with neither (`queue_item_id`, CP-143 / DX-7720). A server that does not yet serve `queue_item_id` leaves it out: that reads as no job. A row it cannot read is a failure, never "no work".
 export function holdsWork(session: any): boolean {
-  if (typeof session?.plan_id === 'number' || typeof session?.card_id === 'string') return true
+  const job = session?.queue_item_id
+  if (job !== undefined && job !== null && typeof job !== 'number') throw new Error('bad_response: GET /api/plan-sessions/me answered a session whose queue_item_id cannot be read')
+  if (typeof session?.plan_id === 'number' || typeof session?.card_id === 'string' || typeof job === 'number') return true
   if (session?.plan_id === null && session?.card_id === null) return false
   throw new Error('bad_response: GET /api/plan-sessions/me answered a session whose plan_id and card_id cannot be read')
 }
@@ -132,7 +134,8 @@ export function serverLoopOf(body: any, route: string): ServerLoop | null {
   if (job === null) return { repo: loop.repo, job: null, ended: loop.ended, releaseId }
   if (job?.kind === 'card' && typeof job.id === 'string') return { repo: loop.repo, job: { kind: 'card', id: job.id }, ended: loop.ended, releaseId }
   if (job?.kind === 'plan' && typeof job.id === 'number') return { repo: loop.repo, job: { kind: 'plan', id: job.id }, ended: loop.ended, releaseId }
-  throw bad('whose job is not a card or a plan')
+  if (job?.kind === 'job' && typeof job.queue_item_id === 'number') return { repo: loop.repo, job: { kind: 'job', queue_item_id: job.queue_item_id }, ended: loop.ended, releaseId }
+  throw bad('whose job is not a card, a plan or a queue job')
 }
 
 // What `PUT /api/plan-sessions/me/ready` did: marked the session ready (`ready: true`), or, for a session that holds a plan or a card, joined the ready loop with that work as its job and

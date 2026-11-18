@@ -49,13 +49,17 @@ describe('reading a folder repo, a session row and a clear file', () => {
     expect(holdsWork({ plan_id: null, card_id: null })).toBe(false)
     expect(holdsWork({ plan_id: 23, card_id: null })).toBe(true)
     expect(holdsWork({ plan_id: null, card_id: 'DX-1' })).toBe(true)
-    for (const row of [null, undefined, {}, { plan_id: null }, { plan_id: '23', card_id: null }, { plan_id: null, card_id: 7 }]) expect(() => holdsWork(row)).toThrow('bad_response')
+    expect(holdsWork({ plan_id: null, card_id: null, queue_item_id: 70 })).toBe(true)
+    expect(holdsWork({ plan_id: null, card_id: null, queue_item_id: null })).toBe(false)
+    for (const row of [{ plan_id: null, card_id: null, queue_item_id: '70' }, null, undefined, {}, { plan_id: null }, { plan_id: '23', card_id: null }, { plan_id: null, card_id: 7 }]) expect(() => holdsWork(row)).toThrow('bad_response')
   })
 
   test("the server's ready loop reads as it answers it: no loop, a loop between jobs, or a job with the server's verdict; anything else is a failure, never no loop", () => {
     expect(serverLoopOf({ ready_loop: null }, ME)).toBe(null)
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: null, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: null, ended: false, releaseId: null })
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: true, release_id: 'r1' } }, ME)).toEqual({ repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: true, releaseId: 'r1' })
+    expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'job', queue_item_id: 70 }, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: { kind: 'job', queue_item_id: 70 }, ended: false, releaseId: null })
+    expect(() => serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'lock', id: 9 }, ended: false, release_id: null } }, ME)).toThrow('bad_response')
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'plan', id: 23 }, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: { kind: 'plan', id: 23 }, ended: false, releaseId: null })
     for (const body of [
       {},
@@ -76,6 +80,7 @@ describe('reading a folder repo, a session row and a clear file', () => {
     const route = 'PUT /api/plan-sessions/me/ready'
     expect(markAnswerOf({ ready: true, repo: REPO, since: 'x', ready_loop: null })).toEqual({ kind: 'marked' })
     expect(markAnswerOf({ ready: null, repo: REPO, since: null, ready_loop: { repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: false, release_id: null } })).toEqual({ kind: 'joined', job: { kind: 'card', id: 'DX-1' } })
+    expect(markAnswerOf({ ready: null, repo: REPO, since: null, ready_loop: { repo: REPO, job: { kind: 'job', queue_item_id: 70 }, ended: false, release_id: null } })).toEqual({ kind: 'joined', job: { kind: 'job', queue_item_id: 70 } })
     expect(markAnswerOf({ ready: null, repo: REPO, since: null, ready_loop: { repo: REPO, job: { kind: 'plan', id: 23 }, ended: true, release_id: null } })).toEqual({ kind: 'joined', job: { kind: 'plan', id: 23 } })
     for (const body of [{}, undefined, { ready: false }, { ready: 'yes' }, { ready: null, ready_loop: null }, { ready: null }, { ready: null, ready_loop: { repo: REPO, job: null, ended: false, release_id: null } }, { ready: null, ready_loop: { repo: REPO, job: { kind: 'card', id: 7 }, ended: false, release_id: null } }]) {
       expect(() => markAnswerOf(body)).toThrow(`bad_response: ${route} answered`)
