@@ -105,7 +105,7 @@ export function sessionIdOf(session: any): string {
   return session.session_id
 }
 
-// Whether the row holds a plan, a card or a queue job with neither (`queue_item_id`, CP-143 / DX-7720). A server that does not yet serve `queue_item_id` leaves it out: that reads as no job. A row it cannot read is a failure, never "no work".
+// Whether the row holds a plan, a card or a queue job with neither (`queue_item_id`). A server that does not yet serve `queue_item_id` leaves it out: that reads as no job. A row it cannot read is a failure, never "no work".
 export function holdsWork(session: any): boolean {
   const job = session?.queue_item_id
   if (job !== undefined && job !== null && typeof job !== 'number') throw new Error('bad_response: GET /api/plan-sessions/me answered a session whose queue_item_id cannot be read')
