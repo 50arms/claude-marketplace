@@ -164,7 +164,7 @@ const heldNotices = atom({ plugin: '50arms', key: 'heldNotices' } as const, [] a
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
 const diskMeasured = atom({ plugin: '50arms', key: 'diskMeasured' } as const, null as DiskMeasured)
 const diskHome = atom({ plugin: '50arms', key: 'diskHome' } as const, null as DiskHome)
-// the dashboard's app version (from its answers' `app_version`) and the version/folder pair whose checkout was last compared with it (hooks/context/app-version.ts). Not carried across a /clear or a /resume: that conversation is told afresh.
+// the dashboard's app version (from its answers' `app_version`) and the version/folder pair whose checkout was last compared with it (hooks/context/app-version.ts). Carried across a /clear or a /resume like every atom; the start that opens the next conversation resets the comparison, so that conversation is told afresh.
 const appVersion = atom({ plugin: '50arms', key: 'appVersion' } as const, { dashboard: null, checked: null } as AppVersionState)
 // the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
@@ -268,6 +268,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     desktopHosted: read($, desktopHosted),
     idleSince: read($, idleSince),
     olderDashboardTold: read($, olderDashboardTold),
+    appVersion: read($, appVersion),
     browserMissingTold: read($, browserMissingTold),
     leftoverArmingCleared: read($, leftoverArmingCleared),
     armedPercent: read($, armedPercent),
@@ -329,6 +330,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, desktopHosted, () => carried.desktopHosted),
     update($, idleSince, () => carried.idleSince),
     update($, olderDashboardTold, () => carried.olderDashboardTold),
+    update($, appVersion, () => carried.appVersion),
     update($, browserMissingTold, () => carried.browserMissingTold),
     update($, leftoverArmingCleared, () => carried.leftoverArmingCleared),
     update($, armedPercent, () => carried.armedPercent),
