@@ -350,8 +350,8 @@ into that branch. Never code over a branch missing a dependency's code.
 - After a long command the next step is `RC=$?` or `&&`/`||` — a trailing
   `tail`/`grep`/`echo` hides the real exit code.
 - Never leave stdin open for a prompt (`ssh`, `psql`, `sudo`, `npm login`, `-i`): close it
-  (`< /dev/null`) or use the non-interactive form (`sudo -n`, `ssh -o BatchMode=yes`). No
-  output for ~2 minutes in the background means hung.
+  (`< /dev/null`) or use the non-interactive form (`sudo -n`, `ssh -o BatchMode=yes`). Such a
+  command waits in silence, but so does a long test run: read its output before calling it hung.
 - Poll an LLM, dispatch or orchestrator no faster than every 60–120s.
 - A literal `\n` in an MCP string is two characters — use a real line break.
 - Never read or edit `dist/`/build output; `node_modules/` is read-only.
