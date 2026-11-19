@@ -139,6 +139,10 @@ export type DiskMeasured = { text: string; at: number } | null
 // where the machine's Windows home is, resolved once per session (a failure is kept too, so a stalled interop call is never retried per tool call).
 export type DiskHome = { home: string } | { fault: string } | null
 
+// CP-144: the dashboard's app version as its answers last carried it (`app_version`, null before the first), and the `<dashboard version>\n<cwd>` pair whose checkout was last compared (null: none yet).
+// A pair is compared once, so the rebase line is told once per version gap; a session start clears `checked` (the conversation lost what it was told).
+export type AppVersionState = { dashboard: string | null; checked: string | null }
+
 // a session start the model has not yet been told about: SessionStart records it (the engine has not bound the session yet, so it
 // cannot call the MCP), and the next prompt.submit or main-loop tool.call result consumes it.
 // who is compacting. `main` is the epoch ms of the main agent's compaction proposal (null: none); `agents` has one entry per sub-agent (bare id), `at` its proposal's time, or its
@@ -216,6 +220,8 @@ declare module 'claude-code' {
       diskMeasured: DiskMeasured
       // the machine's Windows home, resolved once per session (see DiskHome).
       diskHome: DiskHome
+      // the dashboard's app version and the last checkout comparison (see AppVersionState).
+      appVersion: AppVersionState
       // the session start waiting for the next prompt or main-loop tool result (see PendingStart).
       pendingStart: PendingStart
       // the mantra this conversation is still owed: its start found the session without a usable key (see giveOwedMantra).

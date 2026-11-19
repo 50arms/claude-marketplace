@@ -1,3 +1,4 @@
+import { validAppVersion } from '../context/app-version'
 import { approvalRequestOf } from './approval'
 import { ERROR_BODY_MAX, KEY_REVOKED_HALT, SIGNED_OUT_MARK, SIGNED_OUT_PATTERN } from './config'
 
@@ -30,7 +31,8 @@ export function connectedPlanOf(outcome: ToolOutcome): { id: number; name: strin
 // argument validation, an outdated MCP, a 5xx. So an `isError` result carries plain text, and anything
 // that is not an envelope is a failure here, never a success.
 // `replyFile`: the MCP sent 50arms_api's answer as a file (over its 100,000-character limit: `{ok, status, reply_file: {path, ...}}` and no `body`); `body` is then undefined until a reader reads that file.
-export type ToolOutcome = { ok: boolean; status: number; body: any; replyFile?: string }
+// `appVersion` (CP-144): the dashboard's app version, which the MCP copies from the `X-50Arms-Version` response header into the envelope's `app_version`; absent when the answer has none or a value that is no `major.minor.patch`.
+export type ToolOutcome = { ok: boolean; status: number; body: any; replyFile?: string; appVersion?: string }
 
 // An MCP tool result's envelope: api() and the band's session_connect calls use it.
 export function toolOutcome(r: any): ToolOutcome {
@@ -63,8 +65,10 @@ export function textOutcome(text: string, isError: boolean): ToolOutcome {
     return { ok: false, status: 0, body: { error: `the tool answered no {ok, status, body}: ${text.slice(0, ERROR_BODY_MAX)}` } }
   }
   const status = typeof parsed.status === 'number' ? parsed.status : 0
-  if (parsed.body === undefined && typeof parsed.reply_file?.path === 'string') return { ok: parsed.ok, status, body: undefined, replyFile: parsed.reply_file.path }
-  return { ok: parsed.ok, status, body: parsed.body }
+  const appVersion = validAppVersion(parsed.app_version)
+  const version = appVersion === undefined ? {} : { appVersion }
+  if (parsed.body === undefined && typeof parsed.reply_file?.path === 'string') return { ok: parsed.ok, status, body: undefined, replyFile: parsed.reply_file.path, ...version }
+  return { ok: parsed.ok, status, body: parsed.body, ...version }
 }
 
 // What a refusal says: the server's own message (or error), and for plan_mismatch which plan the

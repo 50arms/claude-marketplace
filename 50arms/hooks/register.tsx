@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, DiskHome, DiskMeasured, DiskTold } from '../types'
+import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, AppVersionState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, SERVER_UNREACHABLE_REASON, SESSION_HELD_REASON, eventFailureLine, eventPath, eventText, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { DashboardEvent, RestartAsk, Told } from './context/events'
 import { stamp as nextStamp } from './context/stamp'
@@ -12,6 +12,7 @@ import { heldReason, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf }
 import type { HeldNotice, TaskNotice } from './context/interim-notice'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
+import { APP_VERSION_FILE, appVersionLine, versionFaultLine } from './context/app-version'
 import { COMPACTING_NOTE_TTL_MS, RESUME_TEXTS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, BriefingKind, GitState, OwedComment, Source } from './compaction/briefing'
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, CLEAR_MARK_TTL_MS, ENGINE_VERSION_NOTICE, clearMarkOf, compactionClearMarkKey, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleReleaseKeys, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
@@ -163,6 +164,8 @@ const heldNotices = atom({ plugin: '50arms', key: 'heldNotices' } as const, [] a
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
 const diskMeasured = atom({ plugin: '50arms', key: 'diskMeasured' } as const, null as DiskMeasured)
 const diskHome = atom({ plugin: '50arms', key: 'diskHome' } as const, null as DiskHome)
+// CP-144: the dashboard's app version (from its answers' `app_version`) and the version/folder pair whose checkout was last compared with it (hooks/context/app-version.ts). Not carried across a /clear or a /resume: that conversation is told afresh.
+const appVersion = atom({ plugin: '50arms', key: 'appVersion' } as const, { dashboard: null, checked: null } as AppVersionState)
 // the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
 const endedSession = atom({ plugin: '50arms', key: 'endedSession' } as const, null as string | null)
@@ -3029,6 +3032,7 @@ async function onSessionConnect($: any, e: any, next: any) {
   if (e.registration_only === true) return next(e)
   const target = connectTargetOf(e.target)
   let ran = target?.kind === 'card' ? await afterCardConnect($, e, next) : await afterPlanConnect($, e, next, target)
+  await noteDashboardVersion($, answerOf(ran).appVersion)
   // the model's own leave of a plan or card, accepted, is a natural break (a pause never is: the dashboard always gives it an expiry); the band's Disconnect (the plugin's own call) is a person's press and clears nothing
   if (isModelLeave(e, target, next.origin)) {
     const outcome = answerOf(ran)
@@ -3097,6 +3101,7 @@ async function onAckCall($: any, e: any, next: any) {
     detach($, 'Plan refresh', refresh($, true))
   }
   const answer = answerOf(ran)
+  await noteDashboardVersion($, answer.appVersion)
   // a manual pickup by a session holding nothing connects it, as session_connect does, so the dashboard gets its activity at once. Its answer carries the connect's whole answer, which can pass the
   // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
   let named: string | null = null
@@ -3231,10 +3236,48 @@ async function clockDiskStartEntries($: any, takeStart: boolean, trigger: 'promp
   const pending = takeStart ? await takePendingStart($) : null
   const line = trigger === 'prompt' ? await timeLine($) : null
   const disk = await diskLine($, trigger, agent)
-  const head = [...(line === null ? [] : [line]), ...(disk === null ? [] : [disk])]
+  // CP-144: only the main agent is told its checkout is behind (the plugin knows the session's folder, never a sub-agent's own)
+  const behind = agent === MAIN_AGENT ? await appVersionNotice($) : null
+  const head = [...(line === null ? [] : [line]), ...(disk === null ? [] : [disk]), ...(behind === null ? [] : [behind])]
   if (pending === null) return head
   const start = await renderStart($, pending)
   return start === null ? head : [...head, start]
+}
+
+// CP-144: remember the app version a dashboard answer carried (`app_version`, which the MCP copies from the `X-50Arms-Version` header). It adds no request: only answers the session already got
+// are read, the model's own `50arms_api` / `session_connect` results and the plugin's own calls (both reach their tool's `tool.call` handler).
+async function noteDashboardVersion($: any, version: string | undefined): Promise<void> {
+  if (version === undefined) return
+  await update($, appVersion, cur => (cur.dashboard === version ? cur : { ...cur, dashboard: version }))
+}
+
+// The line telling the agent to rebase, or null. A dashboard version and a folder are compared ONCE (the pair is claimed before the slow reads, so hooks landing together tell it once, and a
+// pair already compared costs nothing): the checkout's version is `<git toplevel>/50ARMS_VERSION`, and a repo without that file carries none. A new dashboard version or another folder compares again.
+async function appVersionNotice($: any): Promise<string | null> {
+  const dashboard = (await read($, appVersion)).dashboard
+  if (dashboard === null) return null
+  const cwd = String(await $.session.cwd())
+  const pair = `${dashboard}\n${cwd}`
+  const claim = { won: false }
+  await update($, appVersion, cur => {
+    if (cur.checked === pair) return cur
+    claim.won = true
+    return { ...cur, checked: pair }
+  })
+  if (!claim.won) return null
+  try {
+    return appVersionLine(await checkoutVersionText($, cwd), dashboard)
+  } catch (err: any) {
+    return versionFaultLine(dashboard, String(err?.message ?? err))
+  }
+}
+
+// the content of the checkout's version file, or null when the folder is no git checkout or the repo has no such file
+async function checkoutVersionText($: any, cwd: string): Promise<string | null> {
+  const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd, timeoutMs: GIT_STATUS_TIMEOUT_MS })
+  if (top.exitCode !== 0) return null
+  const path = `${String(top.stdout).trim()}/${APP_VERSION_FILE}`
+  return (await $.fs.exists(path)) ? String(await $.fs.read(path)) : null
 }
 
 // The machine's free-space notice (hooks/context/disk.ts), in every repo: a person's prompt, a session start (it clears the memory, so the first
@@ -3775,6 +3818,8 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   // every start, a sub-agent's compaction included, loses what the model was told: the disk notice is told again and measured afresh
   await update($, diskTold, () => ({}))
   await update($, diskMeasured, () => null)
+  // the rebase line is told again too (CP-144): the dashboard's version stays, the comparison starts over
+  await update($, appVersion, cur => ({ ...cur, checked: null }))
   if (!restart.briefsMain) return below
   const loopResetting = (await read($, readyLoop))?.phase === 'resetting'
   // a process's first start is read after the carried values are back, so a /clear (which carries it) is never one
