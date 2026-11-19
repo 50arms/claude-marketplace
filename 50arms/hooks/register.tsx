@@ -2762,7 +2762,8 @@ async function leaveQueueJob($: any, itemId: number, error: string, quietWhenNot
 async function leaveOrphanedJob($: any): Promise<void> {
   if (queueJobBusy !== null) return
   const orphan = await read($, queueJobTaking)
-  if (orphan === null) return
+  // a take this module started while the read was out is its own, not an orphan
+  if (orphan === null || queueJobBusy !== null) return
   await leaveQueueJob($, orphan.item_id, RELOADED_WHILE_PREPARING, true)
 }
 

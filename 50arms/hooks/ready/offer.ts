@@ -70,7 +70,8 @@ export function jobPrompt(itemId: number, answer: unknown, prepared: { path: str
 // Shown to the person (never to the model) when a job is not worked here
 export const notTakenToast = (itemId: number, why: string) => `Queued job ${itemId} was not taken: ${why}`
 export const leftToast = (itemId: number, error: string) => `Queued job ${itemId} went back to the queue: ${error}`
-export const leaveFailedToast = (itemId: number, error: string, why: string) => `Queued job ${itemId} could not be prepared (${error}), and leaving it failed: ${why}`
+// the leave's own failure first: the job is still held by this session, which is what the person must act on
+export const leaveFailedToast = (itemId: number, error: string, why: string) => `Queued job ${itemId} is still held here: leaving it failed (${why}) after ${error}`
 export const busyToast = (itemId: number, busyWith: number) => `Queued job ${itemId} was not taken: this session is still preparing queued job ${busyWith}`
 export const malformedOfferLine = 'answered a record whose offer is not {item_id, assignment_id}'
 

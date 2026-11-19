@@ -4,8 +4,10 @@ import "./run-tests-with-npm-test.generated"
 // take's whole answer and the worktree's path. A failed command leaves the job (DELETE .../take with {error}), so it goes back to the queue, and the model is told nothing.
 import { describe, expect } from 'claude-code/testing'
 
-import { RELOADED_WHILE_PREPARING } from '../hooks/ready/offer'
-import { test, SURFACES, dashboard, startSession } from './plan-kit'
+import { NOT_HOLDER, RELOADED_WHILE_PREPARING, type Offer } from '../hooks/ready/offer'
+import { fromPending, toPending } from '../hooks/relay/outbox'
+import { STALE_PENDING_DETAIL } from '../hooks/relay/text'
+import { test, relayPhase, SURFACES, dashboard, startSession } from './plan-kit'
 
 const ITEM = 41
 const OFFER = { item_id: ITEM, assignment_id: 7 }
@@ -29,6 +31,19 @@ const ANSWER = {
 
 const told = (d: any): string[] => d.relay.delivered.map((x: { text: string }) => x.text)
 const calls = (d: any, method: string) => d.api.filter((a: any) => a.method === method && a.path === TAKE)
+// the take answer a told prompt carries: the JSON after its first line
+const answerIn = (prompt: string) => JSON.parse(prompt.slice(prompt.indexOf('\n') + 1))
+const makeRuns = (d: any) => d.runCalls.filter((argv: string[]) => argv[0] === 'make')
+// the outbox entry a module keeps for an offer record it took and has not delivered (what a reload finds)
+const SAVED = { planId: 23, cursor: 'c1', text: OFFER_TEXT, urgent: false, acks: [], offer: OFFER }
+
+describe('an offer kept across a reload', () => {
+  test('the outbox atom keeps a record\'s offer, and a record with none comes back with none', () => {
+    const queued = (cursor: string, offer: Offer | null) => ({ planId: 23, seq: 1, event: { cursor, text: OFFER_TEXT, urgent: false, acks: [], offer }, held: false })
+    const back = fromPending(toPending([queued('c1', OFFER), queued('c2', null)]), 23, 1)
+    expect(back.map(q => q.event.offer)).toEqual([OFFER, null])
+  })
+})
 
 for (const surface of SURFACES) {
   describe(`a queued job offered on ${surface}`, () => {
@@ -43,9 +58,70 @@ for (const surface of SURFACES) {
       expect(d.runCalls).toContainEqual(['make', 'add-worktree', 'BRANCH=landing-fix', 'AT=abc123'])
       expect(told(d)).toHaveLength(1)
       expect(told(d)[0]).toContain(WORKTREE_PATH)
-      expect(told(d)[0]).toContain(JSON.stringify(ANSWER, null, 2))
+      expect(answerIn(told(d)[0])).toEqual(ANSWER)
       expect(told(d).some(t => t.includes(OFFER_TEXT))).toBe(false)
       expect(calls(d, 'DELETE')).toEqual([])
+    })
+
+    test('a take that answers no worktree runs no command and tells the model the whole answer', async ($, on) => {
+      const d = dashboard(on)
+      const { worktree, worktree_command, ...plain } = ANSWER
+      d.world.takeReplies[ITEM] = { body: plain }
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      expect(makeRuns(d)).toEqual([])
+      expect(told(d)).toHaveLength(1)
+      expect(answerIn(told(d)[0])).toEqual(plain)
+      expect(calls(d, 'DELETE')).toEqual([])
+    })
+
+    test('a take answer whose worktree names no commit is left, and nothing runs or is told', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: { ...ANSWER, worktree: { branch: 'landing-fix' } } }
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      expect(makeRuns(d)).toEqual([])
+      expect(calls(d, 'DELETE')).toHaveLength(1)
+      expect(told(d)).toEqual([])
+    })
+
+    test('a worktree command that cannot run (the engine rejects it) leaves the job with that error', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: ANSWER }
+      d.world.processes['make'] = { stdout: '', throws: 'spawn make ENOENT' }
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      const left = calls(d, 'DELETE')
+      expect(left).toHaveLength(1)
+      expect(left[0].body.error).toContain('spawn make ENOENT')
+      expect(told(d)).toEqual([])
+    })
+
+    test('a job prompt the session refuses leaves the job', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: ANSWER }
+      d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+      await startSession($, d, surface)
+      d.relay.rejectPrompts('busy')
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      expect(calls(d, 'DELETE')).toHaveLength(1)
+      expect(told(d)).toEqual([])
+    })
+
+    test('a leave the dashboard refuses after a failed command tells the person both failures', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: ANSWER }
+      d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'boom' }
+      d.world.leaveReply = { status: 500, body: { error: 'leave boom' } }
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      expect(d.toasts.some((t: string) => t.includes('leave boom'))).toBe(true)
+      expect(told(d)).toEqual([])
     })
 
     test('a failed worktree command leaves the job with its error and tells the model nothing', async ($, on) => {
@@ -83,6 +159,39 @@ for (const surface of SURFACES) {
       expect(d.runCalls.slice(runsBefore).some((argv: string[]) => argv[0] === 'make')).toBe(false)
       expect(calls(d, 'DELETE')).toEqual([])
       expect(told(d)).toEqual([])
+    })
+
+    test('an offer record a reloaded module kept undelivered is taken by the plugin, never told as text', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: ANSWER }
+      d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+      d.seedState('relayOutbox', [SAVED])
+      await startSession($, d, surface)
+      await d.clock.settle()
+      expect(calls(d, 'POST')).toHaveLength(1)
+      expect(told(d)).toHaveLength(1)
+      expect(told(d).some(t => t.includes(OFFER_TEXT))).toBe(false)
+    })
+
+    test('a kept outbox entry whose offer is malformed stops the relay loudly and takes nothing', async ($, on) => {
+      const d = dashboard(on)
+      d.seedState('relayOutbox', [{ ...SAVED, offer: { item_id: 'x' } }])
+      await startSession($, d, surface)
+      await d.clock.settle()
+      expect(relayPhase(d)).toBe('stopped')
+      expect(d.relay.told.some((t: string) => t.includes(STALE_PENDING_DETAIL))).toBe(true)
+      expect(calls(d, 'POST')).toEqual([])
+      expect(told(d)).toEqual([])
+    })
+
+    test('a job a reloaded module was preparing whose take never landed is quiet when the dashboard says it is not held', async ($, on) => {
+      const d = dashboard(on)
+      d.seedState('queueJobTaking', OFFER)
+      d.world.leaveReply = { status: 403, body: { error: NOT_HOLDER } }
+      await startSession($, d, surface)
+      await d.clock.settle()
+      expect(calls(d, 'DELETE')).toHaveLength(1)
+      expect(d.toasts.some((t: string) => t.includes(`Queued job ${ITEM}`))).toBe(false)
     })
 
     test('a job a reloaded module was preparing is left at the next relay run', async ($, on) => {
