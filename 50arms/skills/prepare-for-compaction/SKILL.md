@@ -10,7 +10,7 @@ compaction. Load this once you have decided to compact: after a `[50 ARMS] Compa
 recommendation:` (advice, not an order), or on your own initiative or a handoff.
 
 1. **Decide first.** Never compact while a conversation with a person is still open: something they said or asked still needs an answer or action that depends on this session's context. Time is only a hint (a message within the last few minutes usually means they are still talking); once the exchange is finished and its outcome is on the cards and plan, compacting is safe at once. Then give the recommendation no answer (it comes again later) and never call compaction-ready; say ready only while you work on your own. Is compacting worth it given what is left and what you are doing right
-   now? Mid-way through a tight edit-test loop or about to finish: carry on, skip this
+   now? Mid-way through a tight edit loop or about to finish: carry on, skip this
    checklist, answer nothing. A long stretch of work ahead: continue.
 
 2. **Capture the tree now.** `git status` and `git diff --stat`: every modified and
