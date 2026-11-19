@@ -2402,7 +2402,7 @@ async function tellReadyOnce($: any, text: string): Promise<void> {
   if (changed) $.ui.toast(text.slice(0, FAILURE_TOAST_MAX))
 }
 
-// CP-147: the ready join was refused for want of a team agent (`agent_needed`, `agent_limit_reached`). The toast and the title mark say so to the person; the model is told the server's
+// the ready join was refused for want of a team agent (`agent_needed`, `agent_limit_reached`). The toast and the title mark say so to the person; the model is told the server's
 // instruction once per refusal state, so it can say what to do, and a retry that meets the same refusal tells nothing. A join (the mark) or a held agent clears the state, so the next refusal is told again.
 // Detached: a prompt's promise is not known to settle when it merges into a queued turn.
 async function tellAgentRefusal($: any, refusal: Record<string, unknown>): Promise<void> {
