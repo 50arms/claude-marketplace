@@ -415,7 +415,8 @@ design per card or per element of the same screen.
 
 Partition files before fanning out. Never background a long test run and
 end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits
-land. Every brief makes the sub-agent stop each background task it started before reporting,
+land. Never brief a hand-run type check, lint or build, or a way around a command's refusal to run one: the landing
+check runs them (the issue-workflow skill's "Flow" step 4). Every brief makes the sub-agent stop each background task it started before reporting,
 or name it. Stop a dispatch once its report is consumed. A report is a lead, not a finding:
 read the diff, confirm the push, check for leftover worktrees, commits or background tasks.
 

@@ -38,6 +38,7 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    "Building" below.
 4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
    changes. Run the set the repo's affected-test command chooses (with none, the touched files' own tests and their direct dependents; a prose edit needs only the repo's text checks), never a whole suite by default.
+   Never run a type check, lint or build by hand, in any form (a make target, a bare compiler or linter, the script behind a target), as a builder, lander or reviewer or in a brief: the landing check runs them once per batch, and only the fixer of a red batch re-runs the checks that failed. A command's refusal to run one is the answer, never something to route around. A repo with no land command checks as "Delivery" says.
 5. Pass its POST gates ("Gates" below).
 6. End: a dispatched worker follows the end order its dispatch instructions give. An
    operator-session builder stops at its pushed card branch: it reports the tip SHA and ends,
