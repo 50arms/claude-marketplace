@@ -438,7 +438,11 @@ export function dashboard(
     // DX-4993: what `git status --porcelain=v1 -b` prints in the session's directory (the resume briefing), or its exit code when it fails
     gitStatus: { exitCode: 0, stdout: '## main...origin/main\n' } as { exitCode: number; stdout: string },
     // What a `$.process.run` answers by its program (argv[0], for example `df` or `cmd.exe`); a program with no entry answers the git status above
-    processes: {} as Record<string, { exitCode?: number; stdout: string }>,
+    processes: {} as Record<string, { exitCode?: number; stdout: string; stderr?: string; throws?: string }>,
+    // A queued job's take (POST /api/dispatch-queue/<id>/take) answers this by item id (an item with no entry: the 403 a take of an offer this session does not hold gets),
+    // and its leave (DELETE, the same path) answers `leaveReply`, by default the route's 200 {id}
+    takeReplies: {} as Record<number, { status?: number; body: unknown }>,
+    leaveReply: undefined as { status: number; body: unknown } | undefined,
     // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
     rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[],
     // DX-4423: null while the session holds a key
@@ -657,6 +661,13 @@ export function dashboard(
       const from = query?.offset ?? 0
       return reply({ repos: world.repos.slice(from, from + (query?.limit ?? 50)).map(repoRow), total: world.repos.length })
     }
+    // a queued job's take and its leave (50 Arms dispatch-queue-routes): as each test scripts them
+    const queueTake = /^\/api\/dispatch-queue\/(\d+)\/take$/.exec(path)
+    if (method === 'POST' && queueTake) {
+      const scripted = world.takeReplies[Number(queueTake[1])]
+      return scripted === undefined ? reply({ error: 'dispatch_queue_take_not_offered' }, 403) : reply(scripted.body, scripted.status ?? 200)
+    }
+    if (method === 'DELETE' && queueTake) return world.leaveReply === undefined ? reply({ id: Number(queueTake[1]) }) : reply(world.leaveReply.body, world.leaveReply.status)
     const repoOne = /^\/api\/repos\/([^/]+)$/.exec(path)
     if (method === 'GET' && repoOne) {
       const row = world.repos.find(r => r.name === repoOne[1])
@@ -670,7 +681,7 @@ export function dashboard(
   // when `timeout_ms` passes on the fake clock; or {stopped}. A test scripts one-off answers (`script`) and feeds events (`push`).
   const server = {
     calls: [] as { plan_id: number; cursor: string | null; timeout_ms: number; transcript_path?: string }[],
-    buffer: [] as { cursor: string; text: string; urgent: boolean; acks: { eventId: number; attempt: number }[] }[],
+    buffer: [] as { cursor: string; text: string; urgent: boolean; acks: { eventId: number; attempt: number }[]; offer?: unknown }[],
     plan: undefined as number | undefined,
     script: [] as (() => any)[],
     stopped: undefined as { reason: string; detail: string; fix: string } | undefined,
@@ -1441,8 +1452,9 @@ export function dashboard(
     runCalls.push([...e.argv])
     const processHold = world.processHolds.findIndex(h => h.command === e.argv.join(' '))
     if (processHold !== -1) await world.processHolds.splice(processHold, 1)[0].hold
-    const answer: { exitCode?: number; stdout: string } = world.processes[e.argv[0]] ?? world.gitStatus
-    return { value: { exitCode: answer.exitCode ?? 0, stdout: answer.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as any
+    const answer: { exitCode?: number; stdout: string; stderr?: string; throws?: string } = world.processes[e.argv[0]] ?? world.gitStatus
+    if (answer.throws !== undefined) return { deny: answer.throws } as any
+    return { value: { exitCode: answer.exitCode ?? 0, stdout: answer.stdout, stderr: answer.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } } as any
   })
   on('session.id', () => ({ value: world.sessionId }) as any)
   // DX-5222: every `$.session.send` the plugin makes (the recipient as the engine spells it, and the text), and how the host answers it: delivered, refused or a rejection
@@ -1544,7 +1556,8 @@ export function dashboard(
     // events appear on the dashboard: a held wait answers at once
     // (DX-4721: every record the server answers carries a boolean `urgent`; a test that does not say is a not-urgent record)
     // (DX-5846: so does `acks`, the events the record asks the session to acknowledge; a test that does not say asks for none)
-    push: (...events: { cursor: string; text: string; urgent?: boolean; acks?: { eventId: number; attempt: number }[] }[]) => {
+    // (a queued job offered to the session carries `offer`; a test that does not say sends a record with none, as an older server does)
+    push: (...events: { cursor: string; text: string; urgent?: boolean; acks?: { eventId: number; attempt: number }[]; offer?: unknown }[]) => {
       server.buffer.push(...events.map(e => ({ urgent: false, acks: [], ...e })))
       server.wake?.()
     },

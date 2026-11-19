@@ -161,7 +161,8 @@ export type ReportState = { agents: Record<string, number>; shells: string[]; pl
 // It is listed only while it is NOT delivered: from being taken until `$.prompt.submit` (or the note append) is called for it, and again when the
 // session refused it. `again`: it was delivered once at its call (its cursor is stored, maybe behind later ones), so issuing it again stores no cursor.
 // `acks`: the events the record asks the session to acknowledge (empty for most records); required, so one written by the previous plugin version (which has none) is a fault when it is read back (fromPending).
-export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; acks: AckRef[]; again?: true }
+// `offer`: the queued job the record offers this session (the plugin takes it itself), written only on a record that has one.
+export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; acks: AckRef[]; offer?: { item_id: number; assignment_id: number }; again?: true }
 
 // one event the dashboard needs the session to acknowledge; `attempt` is how many times it has been sent (1 = the first send).
 export type AckRef = { eventId: number; attempt: number }
@@ -258,6 +259,9 @@ declare module 'claude-code' {
       relayOutbox: PendingEvent[]
       // the events issued to the session whose acknowledgement call has not succeeded yet (see AckInFlight): the relay drops a re-send of one the session already holds while its turn runs.
       ackInFlight: AckInFlight
+      // the queued job this module is taking and preparing, from just before its take until the model is told it or the job is left (null: none). A reload empties the module's own record of
+      // the work, so a relay run that finds this set with no module of its own on it leaves the job: the reloaded module can never finish it.
+      queueJobTaking: { item_id: number; assignment_id: number } | null
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
       runningAgents: string[]
       // the briefs of the sub-agents that ended in the last few minutes, with the epoch ms each ended; the held-idle Stop check counts their cards as worked for that long.

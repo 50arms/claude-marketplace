@@ -71,6 +71,7 @@ import { disconnectNote, revokeNote, signInApprovedNote, signInDeniedNote, signI
 import { NO_AGENT, signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
+import { busyToast, commandFailed, jobPrompt, leaveFailedToast, leftToast, notTakenToast, NOT_HOLDER, PROMPT_REFUSED, RELOADED_WHILE_PREPARING, takePath, takePlanOf, worktreePathOf, type Offer } from './ready/offer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
 import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
@@ -216,6 +217,7 @@ const agentBriefs = atom({ plugin: '50arms', key: 'agentBriefs' } as const, NO_B
 // what the plugin kept of each sub-agent when it spawned: its description, whether it runs in the background, whether the main loop spawned it (context/record.ts); the finish notice reads it.
 const spawnedAgents = atom({ plugin: '50arms', key: 'spawnedAgents' } as const, {} as SpawnedAgents)
 const relayOutbox = atom({ plugin: '50arms', key: 'relayOutbox' } as const, [] as PendingEvent[])
+const queueJobTaking = atom({ plugin: '50arms', key: 'queueJobTaking' } as const, null as Offer | null)
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] as AckInFlight)
 
@@ -280,6 +282,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     spawnedAgents: read($, spawnedAgents),
     relayOutbox: read($, relayOutbox),
     ackInFlight: read($, ackInFlight),
+    queueJobTaking: read($, queueJobTaking),
   }
   carriedState = Object.fromEntries(await Promise.all(Object.entries(reads).map(async ([key, value]) => [key, await value] as const)))
 }
@@ -340,6 +343,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, spawnedAgents, () => carried.spawnedAgents),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
+    update($, queueJobTaking, () => carried.queueJobTaking),
   ])
   // a fresh conversation (or another session taking this one's place) in the same process: what the dashboard shows may have moved while they were in the old one. Loaded from here, so
   // the load and its lock live in the new conversation's $.state, never across the emptying
@@ -1870,6 +1874,7 @@ async function restoreOutbox($: any, run: RelayRun): Promise<void> {
   }
   await persistOutbox($)
   if (outbox.length > 0) detach($, 'Plan event delivery', issueOutbox($))
+  detach($, 'Queued job', leaveOrphanedJob($))
 }
 
 // The delivered tail of the head event (issued, or dropped as a re-send): the cursor first, then the atom (a reload between the two repeats this event, where the other
@@ -1898,6 +1903,14 @@ async function issueOutbox($: any): Promise<void> {
       const resend = asks && shouldDropResend(next.event.acks, await read($, ackInFlight), (await read($, turn)).isRunning)
       if (resend) {
         if (outbox.includes(next)) await markDelivered($, next)
+        continue
+      }
+      // a queued job offered to this session: the plugin takes it and tells the model only once its worktree is ready (ready/offer.ts); the record's own text,
+      // which asks the model to take it, is never told. Delivered at once, so the take and the command never hold the events behind it
+      const offer = next.event.offer
+      if (offer !== null) {
+        await markDelivered($, next)
+        detach($, 'Queued job', takeQueueJob($, offer, next.event.urgent))
         continue
       }
       const issued = await issueEvent($, next.event.text, next.event.urgent)
@@ -2681,6 +2694,76 @@ async function resetAndMark($: any, sessionId: string, releaseId: string): Promi
   await pruneSessionRecords($, CLEAR_SPENT_PREFIX)
   await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'joining', told: null }))
   return true
+}
+
+// The queued job this module is taking and preparing now (ready/offer.ts), by item id; null when none. A module variable: a reload starts with none, which is how
+// `leaveOrphanedJob` tells a job a reloaded module left behind from one this module is still preparing.
+let queueJobBusy: number | null = null
+
+// The longest the repo's worktree command may run: the engine's own limit for one process
+const WORKTREE_COMMAND_TIMEOUT_MS = 600_000
+
+// A queued job offered to this session, taken by the plugin (ready/offer.ts): the take, then the repo's worktree command when the take answers a worktree, then one
+// prompt that tells the model the job with the take's whole answer and the worktree's path. A take that is refused holds nothing: the person is told, the model is not.
+// Anything that fails after the take leaves the job with the error (it goes back to the queue) and tells the model nothing. `queueJobTaking` holds the job from before its
+// take until the model is told it or it is left, so a reload in between leaves it at the next relay run (`leaveOrphanedJob`).
+async function takeQueueJob($: any, offer: Offer, urgent: boolean): Promise<void> {
+  if (queueJobBusy !== null) {
+    $.ui.toast(busyToast(offer.item_id, queueJobBusy).slice(0, TOAST_ERROR_MAX))
+    return
+  }
+  queueJobBusy = offer.item_id
+  try {
+    await update($, queueJobTaking, () => offer)
+    const taken = await api($, 'POST', takePath(offer.item_id), { body: { assignment_id: offer.assignment_id } })
+    if (!taken.ok) {
+      await update($, queueJobTaking, () => null)
+      $.ui.toast(notTakenToast(offer.item_id, errText(taken)).slice(0, TOAST_ERROR_MAX))
+      return
+    }
+    const plan = takePlanOf(taken.body)
+    if ('malformed' in plan) return await leaveQueueJob($, offer.item_id, plan.malformed)
+    let prepared: { path: string; worktree: { branch: string; commit: string } } | null = null
+    if (plan.worktree !== null) {
+      let run: { exitCode: number; stdout: string; stderr: string }
+      try {
+        const out = await $.process.run(plan.argv, { cwd: await $.session.cwd(), timeoutMs: WORKTREE_COMMAND_TIMEOUT_MS })
+        run = { exitCode: out.exitCode, stdout: String(out.stdout), stderr: String(out.stderr) }
+      } catch (err: any) {
+        return await leaveQueueJob($, offer.item_id, commandFailed(plan.argv, errMessage(err)))
+      }
+      const path = worktreePathOf(plan.argv, run)
+      if ('error' in path) return await leaveQueueJob($, offer.item_id, path.error)
+      prepared = { path: path.path, worktree: plan.worktree }
+    }
+    const issued = await issueEvent($, jobPrompt(offer.item_id, taken.body, prepared), urgent)
+    // the prompt is the engine's from its call (relay/outbox.ts): a reload from here on must not leave a job the model is being told
+    await update($, queueJobTaking, () => null)
+    const failure = await issued.done.catch((err: any) => notTakenLine(errMessage(err)))
+    if (failure !== null) await leaveQueueJob($, offer.item_id, PROMPT_REFUSED(failure))
+  } catch (err: any) {
+    // an unexpected fault (a state write, the session's directory) with the job maybe held: it is left, never kept untold
+    await leaveQueueJob($, offer.item_id, errMessage(err), true)
+  } finally {
+    queueJobBusy = null
+  }
+}
+
+// The job goes back to the queue with the error that kept it from being worked here, and the person is told; the model never is. `quietWhenNotHeld`: a leave the
+// dashboard refuses because the session does not hold the job (a take that never landed) says nothing.
+async function leaveQueueJob($: any, itemId: number, error: string, quietWhenNotHeld = false): Promise<void> {
+  const left = await api($, 'DELETE', takePath(itemId), { body: { error } })
+  await update($, queueJobTaking, () => null)
+  if (left.ok) $.ui.toast(leftToast(itemId, error).slice(0, TOAST_ERROR_MAX))
+  else if (!(quietWhenNotHeld && left.body?.error === NOT_HOLDER)) $.ui.toast(leaveFailedToast(itemId, error, errText(left)).slice(0, TOAST_ERROR_MAX))
+}
+
+// A job the module was taking when it was reloaded: the new module can never finish it, so it is left. A take that never landed holds nothing to give back.
+async function leaveOrphanedJob($: any): Promise<void> {
+  if (queueJobBusy !== null) return
+  const orphan = await read($, queueJobTaking)
+  if (orphan === null) return
+  await leaveQueueJob($, orphan.item_id, RELOADED_WHILE_PREPARING, true)
 }
 
 // The folder's repo as the team registered it. The names the setup guide gives a repo are read one by one, which the key may do as it stands; only a repo registered under another name needs the team's list, and so a person's
