@@ -134,7 +134,7 @@ export type DiskMeasured = { text: string; at: number } | null
 // where the machine's Windows home is, resolved once per session (a failure is kept too, so a stalled interop call is never retried per tool call).
 export type DiskHome = { home: string } | { fault: string } | null
 
-// CP-144: the dashboard's app version as its answers last carried it (`app_version`, null before the first), and the `<dashboard version>\n<cwd>` pair whose checkout was last compared (null: none yet).
+// the dashboard's app version as its answers last carried it (`app_version`, null before the first), and the `<dashboard version>\n<cwd>` pair whose checkout was last compared (null: none yet).
 // A pair is compared once, so the rebase line is told once per version gap; a session start clears `checked` (the conversation lost what it was told).
 export type AppVersionState = { dashboard: string | null; checked: string | null }
 

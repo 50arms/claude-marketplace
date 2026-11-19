@@ -1,11 +1,11 @@
-// CP-144 / DX-7767: the app has one version, `<major>.<minor>.<patch>`. The dashboard sends it as the `X-50Arms-Version` response header, and the dashboard MCP
+// The app has one version, `<major>.<minor>.<patch>`. The dashboard sends it as the `X-50Arms-Version` response header, and the dashboard MCP
 // copies it into the `app_version` field of its `50arms_api` and `session_connect` answers (the plugin never sees an HTTP header). The checkout carries its own in the file
 // `50ARMS_VERSION` at the git toplevel. A checkout a minor or major version behind the dashboard is told to rebase onto main; a patch difference never asks for one.
 // Everything here is pure: `register.tsx` gathers the facts through `$`.
 
 export const APP_VERSION_FILE = '50ARMS_VERSION'
 
-// three non-negative decimal integers joined by dots: no `v`, no suffix, no leading zeros (the contract on DX-7767, note 62547)
+// three non-negative decimal integers joined by dots: no `v`, no suffix, no leading zeros
 const APP_VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/
 
 export type AppVersion = { major: number; minor: number; patch: number }

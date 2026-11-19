@@ -31,7 +31,7 @@ export function connectedPlanOf(outcome: ToolOutcome): { id: number; name: strin
 // argument validation, an outdated MCP, a 5xx. So an `isError` result carries plain text, and anything
 // that is not an envelope is a failure here, never a success.
 // `replyFile`: the MCP sent 50arms_api's answer as a file (over its 100,000-character limit: `{ok, status, reply_file: {path, ...}}` and no `body`); `body` is then undefined until a reader reads that file.
-// `appVersion` (CP-144): the dashboard's app version, which the MCP copies from the `X-50Arms-Version` response header into the envelope's `app_version`; absent when the answer has none or a value that is no `major.minor.patch`.
+// `appVersion`: the dashboard's app version, which the MCP copies from the `X-50Arms-Version` response header into the envelope's `app_version`; absent when the answer has none or a value that is no `major.minor.patch`.
 export type ToolOutcome = { ok: boolean; status: number; body: any; replyFile?: string; appVersion?: string }
 
 // An MCP tool result's envelope: api() and the band's session_connect calls use it.

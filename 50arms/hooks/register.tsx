@@ -164,7 +164,7 @@ const heldNotices = atom({ plugin: '50arms', key: 'heldNotices' } as const, [] a
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
 const diskMeasured = atom({ plugin: '50arms', key: 'diskMeasured' } as const, null as DiskMeasured)
 const diskHome = atom({ plugin: '50arms', key: 'diskHome' } as const, null as DiskHome)
-// CP-144: the dashboard's app version (from its answers' `app_version`) and the version/folder pair whose checkout was last compared with it (hooks/context/app-version.ts). Not carried across a /clear or a /resume: that conversation is told afresh.
+// the dashboard's app version (from its answers' `app_version`) and the version/folder pair whose checkout was last compared with it (hooks/context/app-version.ts). Not carried across a /clear or a /resume: that conversation is told afresh.
 const appVersion = atom({ plugin: '50arms', key: 'appVersion' } as const, { dashboard: null, checked: null } as AppVersionState)
 // the session a /clear just ended: the session.end hook records its id and the SessionStart that follows takes it, so the restart notice
 // asks about exactly that predecessor.
@@ -3233,7 +3233,7 @@ async function clockDiskStartEntries($: any, takeStart: boolean, trigger: 'promp
   const pending = takeStart ? await takePendingStart($) : null
   const line = trigger === 'prompt' ? await timeLine($) : null
   const disk = await diskLine($, trigger, agent)
-  // CP-144: only the main agent is told its checkout is behind (the plugin knows the session's folder, never a sub-agent's own)
+  // only the main agent is told its checkout is behind (the plugin knows the session's folder, never a sub-agent's own)
   const behind = agent === MAIN_AGENT ? await appVersionNotice($) : null
   const head = [...(line === null ? [] : [line]), ...(disk === null ? [] : [disk]), ...(behind === null ? [] : [behind])]
   if (pending === null) return head
@@ -3241,7 +3241,7 @@ async function clockDiskStartEntries($: any, takeStart: boolean, trigger: 'promp
   return start === null ? head : [...head, start]
 }
 
-// CP-144: remember the app version a dashboard answer carried (`app_version`, which the MCP copies from the `X-50Arms-Version` header). It adds no request: only answers the session already got
+// remember the app version a dashboard answer carried (`app_version`, which the MCP copies from the `X-50Arms-Version` header). It adds no request: only answers the session already got
 // are read, the model's own `50arms_api` / `session_connect` results and the plugin's own calls (both reach their tool's `tool.call` handler).
 async function noteDashboardVersion($: any, version: string | undefined): Promise<void> {
   if (version === undefined) return
@@ -3815,7 +3815,7 @@ async function onClassicSessionStart($: any, e: any, next: any) {
   // every start, a sub-agent's compaction included, loses what the model was told: the disk notice is told again and measured afresh
   await update($, diskTold, () => ({}))
   await update($, diskMeasured, () => null)
-  // the rebase line is told again too (CP-144): the dashboard's version stays, the comparison starts over
+  // the rebase line is told again too: the dashboard's version stays, the comparison starts over
   await update($, appVersion, cur => ({ ...cur, checked: null }))
   if (!restart.briefsMain) return below
   const loopResetting = (await read($, readyLoop))?.phase === 'resetting'
