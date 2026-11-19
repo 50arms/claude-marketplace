@@ -1,5 +1,5 @@
-import type { CardLinks, ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
-import { CARD_PROGRESS_FIELDS, EMPTY, ERROR_BODY_MAX, IN_PROGRESS_QUERY, NEEDS_YOU_BUCKET_ID, PLAN_BAND_FIELDS, PREFIX_PATTERN, STATUS_KEYS } from './config'
+import type { ConnectedPlan, InProgressRow, ListenerStatus, PlanView, StatusBreakdown } from '../../types'
+import { CARD_PROGRESS_FIELDS, EMPTY, ERROR_BODY_MAX, IN_PROGRESS_QUERY, NEEDS_YOU_BUCKET_ID, STATUS_KEYS } from './config'
 import { agentBlockOf, isSignedOut, outcomeRevokedBy, type AgentBlock } from './mcp'
 import { readSessionHolds } from './agent'
 import type { Refusal } from '../relay/refusal'
@@ -125,16 +125,13 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     return { ...EMPTY, ...noPlan, cardPercent: percent, phase: 'ready', error: null, refreshedAt }
   }
 
-  // One load of everything about the connected plan: the plan itself (its status counts, bucket counts and card ids),
-  // the in-progress cards and the boards, together.
-  const [planR, inProg, boards] = await Promise.all([
-    // the plan's every card id and its bucket counts come on this read (`PLAN_BAND_FIELDS`), whatever the plan's boards or size
-    call('GET', `/api/plans/${connectedId}`, { query: { fields: PLAN_BAND_FIELDS } }),
+  // One load of everything about the connected plan: the plan itself (its status counts and bucket counts),
+  // and the in-progress cards, together.
+  const [planR, inProg] = await Promise.all([
+    // the status breakdown and the bucket counts are always on the plan read, whatever the plan's boards or size
+    call('GET', `/api/plans/${connectedId}`),
     // the In Progress cards as the issues list's compact row (id, title, status, ...: about 0.5 KB each), never the plan's card-list rows (about 4.6 KB each: 14 cards went over the host's tool-result limit)
     call('GET', '/api/issues', { query: IN_PROGRESS_QUERY(connectedId) }),
-    // the board prefixes, for the card links in assistant replies (GET /api/boards, boards.view: every
-    // non-archived board of the caller's team, each with `issue_prefix`). Read here, never at draw time.
-    call('GET', '/api/boards'),
   ])
   const fail = (error: string): PlanView => ({ ...EMPTY, ...noPlan, phase: 'load-failed', error })
   if (!planR.ok) return fail(errText(planR))
@@ -148,7 +145,7 @@ async function readPlan(call: Call, refreshedAt: string): Promise<PlanView> {
     name: session.plan_name ?? '',
     dashboardUrl,
   }
-  const base = { dashboardUrl, connected, listener, paused, pausedWaitsOn, readyRepo, readyLoopFault, ...holds, statusBreakdown: breakdown, links: readLinks(boards, planR.body.card_ids, `GET /api/plans/${connectedId}`) }
+  const base = { dashboardUrl, connected, listener, paused, pausedWaitsOn, readyRepo, readyLoopFault, ...holds, statusBreakdown: breakdown }
 
   // The in-progress bucket: its list is only as complete as the total says, so an answer without a numeric total is an error.
   if (!inProg.ok) return { ...EMPTY, ...base, phase: 'load-failed', error: errText(inProg) }
@@ -179,23 +176,6 @@ async function readPause(call: Call, now: number): Promise<{ waitsOn: string | n
   if (!r.ok) return null
   const read = pauseOf(r.body, now)
   return read.kind === 'paused' ? { waitsOn: read.waitsOn } : null
-}
-
-// the link data, or the one reason it could not be read. A failure here is the links' own state: the plan view stays
-// `ready` (the plan itself was read), the view says why replies are not linked, and replies are drawn as written.
-function readLinks(boards: Api, cardIds: unknown, route: string): CardLinks {
-  const error = (message: string): CardLinks => ({ state: 'error', message })
-  if (!boards.ok) return error(`GET /api/boards ${errText(boards)}`)
-  const list = boards.body?.boards
-  if (!Array.isArray(list) || list.length === 0) return error('GET /api/boards answered no list of boards')
-  const prefixes: unknown[] = list.map(b => b?.issue_prefix)
-  if (!prefixes.every((p): p is string => typeof p === 'string' && PREFIX_PATTERN.test(p))) {
-    return error('GET /api/boards answered a board with no issue_prefix of capital letters')
-  }
-  if (!Array.isArray(cardIds) || !cardIds.every((id): id is string => typeof id === 'string')) {
-    return error(`${route} answered no list of card ids: cannot tell which ids are the plan's`)
-  }
-  return { state: 'ready', prefixes: [...new Set(prefixes as string[])], planCardIds: cardIds }
 }
 
 // The origin of an http(s) URL string, or null: a trailing slash or path is dropped, a non-URL is refused.

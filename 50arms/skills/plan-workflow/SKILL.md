@@ -83,8 +83,7 @@ real failure or correction, card ids, or a 50 Arms feedback offer or its `FB-` r
 already there → give the id. A decision a card's open problem holds is never asked again in
 chat or in the app's end-of-turn next-step or question box: the turn's wrap-up only names the
 card id, and the problem itself stands alone, with plain background and a concrete example a
-newcomer to the subject can follow. Every card id in chat is a markdown link to that card
-(`[<card id>](<dashboard>/plans/<plan id>/cards/<card id>)`), never a plan or board page.
+newcomer to the subject can follow. 50 Arms refs are auto-linked. Do not link refs in the thread.
 
 Never tell a person to press a button or take a step you can do yourself. When you already know the
 answer, make the change: edit or delete the decision, problem or record, or answer for them with

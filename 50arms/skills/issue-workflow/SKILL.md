@@ -37,7 +37,7 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
 3. Its PRE gates have passed ("Gates" below); build to the rules under
    "Building" below.
 4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
-   changes. Run the set the repo's affected-test command chooses (with none, the touched files' own tests and their direct dependents; a prose edit needs only the repo's text checks), never a whole suite by default.
+   changes. Run no test while you write: on your final commit run the repo's affected-test command once (with none, the touched files' own tests and their direct dependents; a prose edit needs only the repo's text checks), then only the files that failed until green; never a whole suite, never module by module. A bug fix's test runs only there too: never first to see it fail, no pasted failure, no revert proof.
    Never run a type check, lint or build by hand, in any form (a make target, a bare compiler or linter, the script behind a target), as a builder, lander or reviewer or in a brief: the landing check runs them once per batch, and only the fixer of a red batch re-runs the checks that failed. A command's refusal to run one is the answer, never something to route around. A repo with no land command checks as "Delivery" says.
 5. Pass its POST gates ("Gates" below).
 6. End: a dispatched worker follows the end order its dispatch instructions give. An
@@ -247,8 +247,8 @@ matters.
    authorization, even against production; only a write crosses the line.
 5. Name the producer of the bad value: currently buggy, was buggy, wrong expectation, or
    external. A green neighbour is not the failing path — observe the exact artifact the
-   consumer sees. Two plausible producers → back each fix out alone and re-run; green after
-   fixing one proves nothing about the other.
+   consumer sees. Two plausible producers → read each one's code; green after fixing one
+   proves nothing about the other.
 6. Fix the mechanism, not the symptom (mechanism > architectural > observability co-shipped
    > defense). Retry as the primary fix is forbidden.
 7. Before the first edit, quote the `file:line` that enforces the rule your fix must satisfy.
@@ -327,7 +327,7 @@ into that branch. Never code over a branch missing a dependency's code.
   pushes only its card branch, never the target branch: its lander lands it. The
   target branch receives work only as "Delivery" above says. Diverged → `git pull --rebase`;
   resolve conflicts by reading both sides and keeping both intents (`-Xours`/`-Xtheirs` and
-  whole-file overwrites are forbidden); re-run tests. Push fails
+  whole-file overwrites are forbidden); then test as "Flow" step 4 says. Push fails
   (auth, headless credential prompt, no upstream) → report and stop. Never force-push without
   explicit authorization.
 - Never discard uncommitted work you didn't write — no `reset --hard`, `checkout`/`restore`

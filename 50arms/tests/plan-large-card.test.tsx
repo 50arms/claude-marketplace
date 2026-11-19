@@ -27,13 +27,12 @@ for (const surface of SURFACES) {
     })
 
     // DX-5933: a plan of 150 cards. The plan's card-list route answers whole rows (about 3 KB each) and the host refuses a result past its limit, which
-    // blanked the count and the links on any plan past about 20 cards: the band reads ids and the bucket counts off the plan read instead.
-    test('a 150-card plan: the count and the links load from the plan read, no card-list read of the plan is made, nothing is toasted', async ($, on) => {
+    // blanked the count on any plan past about 20 cards: the band reads the bucket counts off the plan read instead.
+    test('a 150-card plan: the count loads from the plan read, no card-list read of the plan is made, nothing is toasted', async ($, on) => {
       const { d, band } = await openBand($, on, surface, { extraPlanCards: 150 })
       expect(await needsYouBadgeOf(band)).toBe('⚠ 2')
       const planReads = d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23')
       expect(planReads.length).toBeGreaterThan(0)
-      for (const a of planReads) expect(a.query).toEqual({ fields: { card_ids: true } })
       expect(d.api.filter((a: any) => a.method === 'GET' && a.path === '/api/plans/23/cards')).toEqual([])
       expect(d.toasts).toEqual([])
     })
