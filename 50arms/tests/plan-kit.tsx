@@ -209,12 +209,8 @@ export function dashboard(
     connectThrows?: boolean
     // the first /api/plan-sessions/me call never settles until `release()`
     hangFirstLoad?: boolean
-    // DX-4448: GET /api/boards fails
-    boardsFail?: boolean
-    // ... answers boards the plugin cannot read: none at all, or a prefix that is not capital letters
-    boardsShape?: 'none' | 'badPrefix' | 'noKey'
-    // DX-5933: the plan read (GET /api/plans/:id) answers no card_ids, ids that are not all strings, or no bucket_counts
-    planFieldsShape?: 'noCardIds' | 'badCardIds' | 'noNeedsYou'
+    // DX-5933: the plan read (GET /api/plans/:id) answers no bucket_counts
+    planFieldsShape?: 'noNeedsYou'
     // ... and a plan holding this many more cards than the fixture's own (a large plan: 150 would have passed the host's limit with whole card rows)
     extraPlanCards?: number
     // DX-4458: DX-3, a needs-you card with 49 open problems (DX-4443's shape)
@@ -523,19 +519,6 @@ export function dashboard(
         ...(options.dashboardUrl === NO_DASHBOARD_URL ? {} : { dashboard_url: options.dashboardUrl === undefined ? DASHBOARD_URL : options.dashboardUrl }),
       })
     }
-    // DX-4448: the boards (50 Arms' own and gpt-manager's), whose `issue_prefix` the card links are built on
-    if (method === 'GET' && path === '/api/boards') {
-      if (options.boardsFail) return reply({ error: 'boards boom' }, 500)
-      if (options.boardsShape === 'none') return reply({ boards: [] })
-      if (options.boardsShape === 'noKey') return reply({})
-      if (options.boardsShape === 'badPrefix') return reply({ boards: [{ id: 'x', issue_prefix: 'dx-1' }] })
-      return reply({
-        boards: [
-          { id: 7, issue_prefix: 'DX' },
-          { id: 9, issue_prefix: 'SG' },
-        ],
-      })
-    }
     const planOne = /^\/api\/plans\/(\d+)$/.exec(path)
     if (method === 'GET' && planOne) {
       const p = plans.find(x => x.id === Number(planOne[1]))
@@ -547,10 +530,9 @@ export function dashboard(
         status: p.status,
         card_count: planCardIds.length,
         ...(options.noBreakdown ? {} : { status_breakdown: options.breakdown ?? DEFAULT_BREAKDOWN }),
-        // as the real route answers: `bucket_counts` always (the needs-you bucket counts CARDS holding an open problem), `card_ids` only when `fields` names it
+        // as the real route answers: `bucket_counts` always (the needs-you bucket counts CARDS holding an open problem)
         ...(options.planFieldsShape === 'noNeedsYou' ? {} : { bucket_counts: { 'needs-you': needsYouCards() } }),
         ...world.planRead,
-        ...(query?.fields?.card_ids && options.planFieldsShape !== 'noCardIds' ? { card_ids: options.planFieldsShape === 'badCardIds' ? [...planCardIds, 7] : planCardIds } : {}),
       })
     }
     // CP-135: the plan's card-list route answers whole card rows (measured on PLAN-129: about 4.6 KB each, 14 In Progress cards = 64,825 characters), which the

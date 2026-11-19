@@ -36,17 +36,9 @@ export const STATUS_KEYS = ['In Progress', 'ToDo', 'Backlog', 'Review', 'Done', 
 export const IN_PROGRESS_LIMIT = 15
 // ... as the issues list's compact row (the only part the band reads is its `id` and `title`), the most important first.
 export const IN_PROGRESS_QUERY = (planId: number) => ({ filter: { plan_id: planId, status_derived: 'In Progress' }, sort: 'priority', order: 'desc', limit: IN_PROGRESS_LIMIT })
-// `GET /api/plans/:id` is asked, besides its always-present counts (the status breakdown and the bucket counts, whose `needs-you` the band's badge shows),
-// for the plan's card ids (an opt-in field, a few bytes per card at any plan size). The band and the reply links need nothing more of a card, and the plan's card-list route answers whole
-// card rows (about 3 KB each), which past about 20 cards exceeds the host's tool-result limit.
-export const PLAN_BAND_FIELDS = { card_ids: true }
 // what the held card's read names: only the two counts of its acceptance criteria (live items, and the ones passing), never the checklists
 // themselves, whose items and every review round's findings make the answer grow past what the host accepts on a long-worked card
 export const CARD_PROGRESS_FIELDS = { ac_total: true, ac_done: true }
-// an issue prefix as a board names it (`ABC`, `XYZ`): capital letters, at most this many. Anything else in a boards
-// answer is an error (card-links.ts still escapes them, so a prefix can never change the matcher).
-export const PREFIX_MAX = 10
-export const PREFIX_PATTERN = new RegExp(`^[A-Z]{1,${PREFIX_MAX}}$`)
 
 // where the session reports its rate-limit windows, and how often it does so before 50 Arms has said (every answer carries
 // `report_every_ms`, the interval the dashboard sets, which the plugin then follows). The tick matters even when nothing moved: an idle
@@ -116,8 +108,6 @@ export const EMPTY: PlanView = {
   needsYouError: null,
   paused: false,
   pausedWaitsOn: null,
-  // nothing to link until a load reads the boards and the plan's cards
-  links: { state: 'ready', prefixes: [], planCardIds: [] },
   listener: null,
   agent: null,
   refreshedAt: null,

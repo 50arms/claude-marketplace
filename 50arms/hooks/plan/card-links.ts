@@ -1,9 +1,6 @@
-import type { ConnectedPlan } from '../../types'
-import { boardCardUrl, cardUrl } from './config'
-
-// card ids in an assistant reply drawn as markdown links. Pure: text + known prefixes + connected plan + the plan's
-// loaded card ids in, text out. No call is made here (the draw path never touches the network); the prefixes come from the
-// `view` atom, filled at refresh.
+// 50 Arms refs in an assistant reply drawn as markdown links to the dashboard's ref redirect (`/api/ref/<ref>`, DX-6878), which sends any kind of ref
+// (card, problem, decision, design, plan, feedback) to its page. Pure: text + dashboard origin in, text out. No call is made here (the draw path never touches
+// the network), so a look-alike (UTF-8, SHA-256) is drawn as a link the redirect answers not found (CP-73, DEC-720).
 
 // Markdown the ids must never be rewritten inside. One alternation, scanned left to right, so the earliest construct wins:
 // a code span (a run of N backticks to the next run of N), an inline or reference link or image, a reference definition,
@@ -48,25 +45,20 @@ function* segments(text: string): Generator<{ prose: boolean; text: string }> {
   yield* flush(fence === null)
 }
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-// Every `PREFIX-123` with a known prefix becomes `[PREFIX-123](url)`. A card in `planCardIds` links to its page on the connected
-// plan; any other known-prefix card to the plan-free board route. Unknown prefixes (UTF-8, SHA-256) and anything inside code,
-// fences, links or URLs are left as written. No prefixes known: the text comes back unchanged.
-export function linkCardIds(text: string, prefixes: string[], plan: ConnectedPlan, planCardIds: ReadonlySet<string>): string {
-  if (prefixes.length === 0) return text
-  const alt = prefixes.map(escapeRegExp).join('|')
-  // a word char, `-`, `/` or `.` before it, or a word char or `-` after it, makes it part of something else (a path, UTF-8-1)
-  const id = String.raw`(?<![A-Za-z0-9_\-/.])(?<card>(?:${alt})-\d+)(?![A-Za-z0-9_\-])`
-  const re = new RegExp(`${PROTECTED}|${id}`, 'gm')
+// Every `PREFIX-123` (1 to 4 capital letters, a dash, digits) becomes `[PREFIX-123](<dashboard>/api/ref/PREFIX-123)`, with no list of known prefixes, so a new
+// kind of ref needs no change here. Anything inside code, fences, links or URLs is left as written.
+export function linkRefs(text: string, dashboardUrl: string): string {
+  // a word char, `-`, `/` or `.` before it, or a word char after it, makes it part of something else (a path, XDX-12); a `-suffix` after the digits
+  // leaves the ref linked (DX-1431-IMPORTED links DX-1431)
+  const ref = String.raw`(?<![A-Za-z0-9_\-/.])(?<ref>[A-Z]{1,4}-\d+)(?![A-Za-z0-9_])`
+  const re = new RegExp(`${PROTECTED}|${ref}`, 'gm')
   let out = ''
   for (const seg of segments(text)) {
     out += seg.prose
       ? seg.text.replace(re, (hit: string, ...rest: any[]) => {
-          // the named group is the last argument; it is set only when the id alternative matched (a protected construct is kept)
-          const card: string | undefined = rest[rest.length - 1].card
-          if (card === undefined) return hit
-          return `[${card}](${planCardIds.has(card) ? cardUrl(plan, card) : boardCardUrl(plan, card)})`
+          // the named group is the last argument; it is set only when the ref alternative matched (a protected construct is kept)
+          const found: string | undefined = rest[rest.length - 1].ref
+          return found === undefined ? hit : `[${found}](${dashboardUrl}/api/ref/${found})`
         })
       : seg.text
   }

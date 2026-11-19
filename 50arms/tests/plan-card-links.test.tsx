@@ -1,40 +1,47 @@
-import "./run-tests-with-npm-test.generated"
-// DX-4448: card ids in an assistant reply are drawn as links to the card. The stored message is never touched (a rewrite
-// changes the drawing), and the draw reads only the `view` atom, so it makes no call.
+// CP-73, DEC-720: every `[A-Z]{1,4}-\d+` token in an assistant reply is drawn as a link to the dashboard's ref redirect. The stored message is never
+// touched (a rewrite changes the drawing), and the draw reads only the `view` atom, so it makes no call.
 import { describe, expect } from 'claude-code/testing'
 
-import { linkCardIds } from '../hooks/plan/card-links'
-import { test, bandLabelOf, AGENT_NAME, DASHBOARD_URL, SURFACES, answerPlanConnect, dashboard, footerText, holdAgent, forceRefresh, mountIndicator, needsYouBadgeOf, startSession } from './plan-kit'
+import { linkRefs } from '../hooks/plan/card-links'
+import { test, DASHBOARD_URL, SURFACES, dashboard, startSession } from './plan-kit'
 
-const plan = { id: 23, ref: 'PLAN-23', name: 'p', status: 'building', dashboardUrl: DASHBOARD_URL } as any
-const PREFIXES = ['DX', 'SG']
-const link = (text: string, planCards: string[] = ['DX-1']) => linkCardIds(text, PREFIXES, plan, new Set(planCards))
-const PLAN_URL = (id: string) => `[${id}](${DASHBOARD_URL}/plans/23/cards/${id})`
-const BOARD_URL = (id: string) => `[${id}](${DASHBOARD_URL}/board/${id})`
+const link = (text: string) => linkRefs(text, DASHBOARD_URL)
+const REF = (id: string) => `[${id}](${DASHBOARD_URL}/api/ref/${id})`
 
-describe('linkCardIds', () => {
-  test('a plan card links to its plan page, any other known-prefix card to the board route', () => {
-    expect(link('See DX-1 and SG-1017, then DX-4447.')).toBe(`See ${PLAN_URL('DX-1')} and ${BOARD_URL('SG-1017')}, then ${BOARD_URL('DX-4447')}.`)
+describe('linkRefs', () => {
+  test('every kind of ref links to the redirect, whatever its prefix', () => {
+    expect(link('See DX-1, PBLM-3722, DEC-5, DSGN-6, PLAN-3 and FB-30.')).toBe(`See ${REF('DX-1')}, ${REF('PBLM-3722')}, ${REF('DEC-5')}, ${REF('DSGN-6')}, ${REF('PLAN-3')} and ${REF('FB-30')}.`)
   })
 
-  test('unknown prefixes and look-alikes are untouched', () => {
-    const text = 'UTF-8, SHA-256, ISO-8601, XDX-12, DX-12-b, a/DX-12, FOO-123'
-    expect(link(text)).toBe(text)
-  })
-
-  test('no prefixes known: the text is unchanged', () => {
-    expect(linkCardIds('DX-1', [], plan, new Set())).toBe('DX-1')
+  test('look-alikes of another shape are untouched; those of the ref shape link', () => {
+    expect(link('XDX-12, a/DX-12, DX-, 12-3, ABCDE-1')).toBe('XDX-12, a/DX-12, DX-, 12-3, ABCDE-1')
+    expect(link('UTF-8')).toBe(REF('UTF-8'))
+    expect(link('DX-1431-IMPORTED')).toBe(`${REF('DX-1431')}-IMPORTED`)
   })
 
   test('inline code spans (any backtick run length) are untouched, the prose around them is not', () => {
-    expect(link('`DX-1` and ``a ` DX-2 ``, but DX-3')).toBe(`\`DX-1\` and \`\`a \` DX-2 \`\`, but ${BOARD_URL('DX-3')}`)
+    expect(link('`DX-1` and ``a ` DX-2 ``, but DX-3')).toBe(`\`DX-1\` and \`\`a \` DX-2 \`\`, but ${REF('DX-3')}`)
   })
 
   test('fenced code (backtick and tilde, closed or not) is untouched', () => {
-    const fenced = '```ts\nconst a = "DX-1"\n```'
-    expect(link(`DX-2\n${fenced}\nDX-3`)).toBe(`${BOARD_URL('DX-2')}\n${fenced}\n${BOARD_URL('DX-3')}`)
-    expect(link('~~~\nDX-1\n~~~')).toBe('~~~\nDX-1\n~~~')
-    expect(link('x DX-2\n```\nDX-1 never closed')).toBe(`x ${BOARD_URL('DX-2')}\n\`\`\`\nDX-1 never closed`)
+    const fenced = '```ts
+const a = "DX-1"
+```'
+    expect(link(`DX-2
+${fenced}
+DX-3`)).toBe(`${REF('DX-2')}
+${fenced}
+${REF('DX-3')}`)
+    expect(link('~~~
+DX-1
+~~~')).toBe('~~~
+DX-1
+~~~')
+    expect(link('x DX-2
+```
+DX-1 never closed')).toBe(`x ${REF('DX-2')}
+\`\`\`
+DX-1 never closed`)
   })
 
   test('existing markdown links, images, reference links, autolinks and bare URLs are untouched', () => {
@@ -51,11 +58,10 @@ describe('linkCardIds', () => {
     }
   })
 
-  test('a link beside a bare id: only the bare id is linked', () => {
-    expect(link('[DX-1](https://x.test) and DX-2')).toBe(`[DX-1](https://x.test) and ${BOARD_URL('DX-2')}`)
+  test('a link beside a bare ref: only the bare ref is linked', () => {
+    expect(link('[DX-1](https://x.test) and DX-2')).toBe(`[DX-1](https://x.test) and ${REF('DX-2')}`)
   })
 })
-
 
 const message = (text: string, extra: object = {}) =>
   ({ plugin: '50arms', component: 'AssistantMessage', props: { text, isFirstOfReply: true, ...extra } }) as any
@@ -63,28 +69,17 @@ const message = (text: string, extra: object = {}) =>
 const drawnText = async (ui: any): Promise<string | undefined> => (await ui.find({ type: 'Text' }))?.text
 
 for (const surface of SURFACES) {
-  describe(`card links in an assistant reply on ${surface}`, () => {
-    test('connected: the rewritten text reaches the engine drawing; a plan card of any status links to the plan, others to the board; no call is made', async ($, on) => {
+  describe(`ref links in an assistant reply on ${surface}`, () => {
+    test('signed in: the rewritten text reaches the engine drawing; no call is made', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
       const calls = d.calls.length
       const api = d.api.length
-      // DX-1 needs you, DX-9 is in progress, DX-30 is ToDo and DX-31 Done (neither in a bucket the view lists), SG-7 is the plan's card on
-      // its other board; SG-5 is on that board but not in the plan
-      const ui = await $.ui.mount({ ...message('DX-1 DX-9 DX-30 DX-31 SG-7 SG-5 UTF-8 DX-99'), surface })
-      expect(await drawnText(ui)).toBe(
-        [PLAN_URL('DX-1'), PLAN_URL('DX-9'), PLAN_URL('DX-30'), PLAN_URL('DX-31'), PLAN_URL('SG-7'), BOARD_URL('SG-5'), 'UTF-8', BOARD_URL('DX-99')].join(' '),
-      )
-      // DX-4448: the draw reads the view atom only
+      const ui = await $.ui.mount({ ...message('DX-1 PBLM-3722 DEC-5 `FB-30` x'), surface })
+      expect(await drawnText(ui)).toBe(`${REF('DX-1')} ${REF('PBLM-3722')} ${REF('DEC-5')} \`FB-30\` x`)
+      // the draw reads the view atom only
       expect(d.calls.length).toBe(calls)
       expect(d.api.length).toBe(api)
-    })
-
-    // DX-5933: on a 150-card plan every card id of the plan is still known, so the last one links to the plan, not the board
-    test('a 150-card plan: its last card links to the plan page', async ($, on) => {
-      const d = dashboard(on, { extraPlanCards: 150 })
-      await startSession($, d, surface)
-      expect(await drawnText(await $.ui.mount({ ...message('DX-1149 DX-1150'), surface }))).toBe(`${PLAN_URL('DX-1149')} ${BOARD_URL('DX-1150')}`)
     })
 
     test('the other props ride along as received', async ($, on) => {
@@ -92,19 +87,19 @@ for (const surface of SURFACES) {
       await startSession($, d, surface)
       const ui = await $.ui.mount({ ...message('DX-1', { isFirstOfReply: false, onScreen: null }), surface })
       expect((await ui.find({ type: 'Text', text: /^first=/ }))?.text).toBe('first=false onScreen=null')
-      expect(await drawnText(ui)).toBe(PLAN_URL('DX-1'))
+      expect(await drawnText(ui)).toBe(REF('DX-1'))
     })
 
     test('a reply with nothing to link is drawn as it is', async ($, on) => {
       const d = dashboard(on)
       await startSession($, d, surface)
-      expect(await drawnText(await $.ui.mount({ ...message('Nothing here, UTF-8 only.'), surface }))).toBe('Nothing here, UTF-8 only.')
+      expect(await drawnText(await $.ui.mount({ ...message('Nothing here, no ids.'), surface }))).toBe('Nothing here, no ids.')
     })
 
-    test('not connected: the reply is drawn as it is', async ($, on) => {
+    test('a session on no plan links too', async ($, on) => {
       const d = dashboard(on, { connected: false })
       await startSession($, d, surface)
-      expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
+      expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe(REF('DX-1'))
     })
 
     test('signed out: the reply is drawn as it is', async ($, on) => {
@@ -116,41 +111,6 @@ for (const surface of SURFACES) {
     test('before the first load finishes (the empty view) the reply is drawn as it is', async ($, on) => {
       dashboard(on)
       expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
-    })
-
-    // DX-4448: what the links stand on failing is the links' own error: the plan view stays ready and the reply stays as written
-    for (const [name, options] of [
-      ['the boards call failing', { boardsFail: true }],
-      ['a boards answer with no boards', { boardsShape: 'none' }],
-      ['a boards answer with a malformed prefix', { boardsShape: 'badPrefix' }],
-      ['a boards answer with no boards key', { boardsShape: 'noKey' }],
-      ['a plan read with no card_ids', { planFieldsShape: 'noCardIds' }],
-      ['a plan read with a card id that is not a string', { planFieldsShape: 'badCardIds' }],
-    ] as const) {
-      test(`${name}: the plan stays ready, the reply is drawn as it is`, async ($, on) => {
-        const d = dashboard(on, options as any)
-        answerPlanConnect(on, d)
-        await startSession($, d, surface)
-        await holdAgent($, d)
-        expect(await footerText(await mountIndicator($, surface))).toBe(`${AGENT_NAME} · PLAN-23`)
-        expect(await drawnText(await $.ui.mount({ ...message('DX-1'), surface }))).toBe('DX-1')
-        expect(d.toasts.filter(t => t.startsWith('Card links unavailable: '))).toHaveLength(1)
-      })
-    }
-
-    // DX-5933: the badge's count is the plan read's own `bucket_counts["needs-you"]`; an answer without it leaves the plan ready, the band with no
-    // count (never a guessed 0), and the reason told once. The links stand on `card_ids`, a separate field, and keep working.
-    test('a plan read with no needs-you count: the plan stays ready, no count is shown, the reason is told once, the links still work', async ($, on) => {
-      const d = dashboard(on, { planFieldsShape: 'noNeedsYou' })
-      await startSession($, d, surface)
-      await forceRefresh($, d)
-      const band = await $.ui.mount({ plugin: '50arms', surface, component: 'AbovePrompt', props: { hasSurvey: false } } as any)
-      const all = (await band.findAll({ type: 'Text' })).map((t: any) => t.text).join(' | ')
-      expect(all).not.toContain('Disconnected')
-      expect(await bandLabelOf(band)).toContain('PLAN-23')
-      expect(await needsYouBadgeOf(band)).toBeUndefined()
-      expect(d.toasts.filter(t => t.startsWith('Plan cards unavailable: GET /api/plans/23 answered no bucket_counts["needs-you"]'))).toHaveLength(1)
-      expect(d.toasts.filter(t => t.startsWith('Card links unavailable'))).toEqual([])
     })
   })
 }

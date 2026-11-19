@@ -24,7 +24,7 @@ import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROM
 import type { GithubOrigin, MarkAnswer, ServerLoop } from './ready/loop'
 import { sessionFilePath } from './relay/session-file'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
-import { linkCardIds } from './plan/card-links'
+import { linkRefs } from './plan/card-links'
 import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
 import type { Handlers } from './plan/handlers'
@@ -496,10 +496,7 @@ async function applyLoaded($: any, loaded: any): Promise<void> {
   await update($, view, cur => {
     told = []
     if (loaded.phase === 'load-failed' && cur.phase !== 'load-failed') told.push(`Plan load failed: ${loaded.error}`)
-    // the count's reason is told once and takes the links' own toast with it: both stand on the one plan read
     if (loaded.needsYouError && cur.needsYouError !== loaded.needsYouError) told.push(`Plan cards unavailable: ${loaded.needsYouError}`)
-    // the card links' error: the replies are drawn as written
-    if (loaded.links?.state === 'error' && cur.links?.state !== 'error' && !loaded.needsYouError) told.push(`Card links unavailable: ${loaded.links.message}`)
     if (loaded.phase === 'ready') return loaded
     const base = { ...loaded, resumePlan: cur.connected?.id ?? cur.resumePlan }
     return named === null || origin === null ? base : { ...base, dashboardUrl: origin, connected: { id: named.id, ref: `PLAN-${named.id}`, name: named.name, dashboardUrl: origin } }
@@ -964,7 +961,7 @@ function toastCallFailedAndReload($: any, what: string, err: any): void {
 const isoNow = async ($: any): Promise<string> => new Date(await $.clock.now()).toISOString()
 
 // what a session_connect answer for a plan settles, drawn at once from EMPTY, so nothing of the plan the session was on (its cards,
-// listener, links) stays under the new one. Kept: what is not plan-specific (the dashboard origin, the session's team agent). A leave puts the session on no plan.
+// listener) stays under the new one. Kept: what is not plan-specific (the dashboard origin, the session's team agent). A leave puts the session on no plan.
 const planIndependent = (cur: any) => ({ ...EMPTY, dashboardUrl: cur.dashboardUrl, agent: cur.agent })
 function leftView(cur: any): any {
   return { ...planIndependent(cur), phase: 'ready', refreshedAt: cur.refreshedAt }
@@ -4036,18 +4033,16 @@ async function drawSessionMode($: any, e: any, next: any) {
   return renderFooter($.ui.resolve(e), handlers($), label, footerTone(v), await next(e), e.surface)
 }
 
-// card ids in an assistant reply drawn as links. Reads only the `view` atom (filled at refresh): no network in the draw.
+// 50 Arms refs in an assistant reply drawn as links to the dashboard's ref redirect. Reads only the `view` atom (filled at refresh): no network in the draw.
 // The text is rewritten in the props and handed on (the engine's type declarations, ui.render: "rewrite `props`"), so the engine's own drawing
 // and any hook below stay in effect; the stored message is untouched, and `onScreen` rides along as received. Nothing to link
-// (not connected, no prefixes known, no card id in the text) leaves the event as it is.
+// (the view not loaded, no dashboard origin known, no ref in the text) leaves the event as it is.
 async function drawAssistantMessage($: any, e: any, next: any) {
   const v = await read($, view)
-  // links in error or nothing known: the reply is drawn as written. So is a text that is not a string (the engine's declarations type it `string`;
-  // this only guards the engine one day sending a block with none, which `linkCardIds` would throw on)
-  if (v.phase !== 'ready' || v.connected === null || v.links.state !== 'ready' || v.links.prefixes.length === 0 || typeof e.props.text !== 'string') {
-    return next(e)
-  }
-  const text = linkCardIds(e.props.text, v.links.prefixes, v.connected, new Set(v.links.planCardIds))
+  // a view not loaded or with no dashboard origin: the reply is drawn as written. So is a text that is not a string (the engine's declarations type it `string`;
+  // this only guards the engine one day sending a block with none, which `linkRefs` would throw on)
+  if (v.phase !== 'ready' || v.dashboardUrl === null || typeof e.props.text !== 'string') return next(e)
+  const text = linkRefs(e.props.text, v.dashboardUrl)
   return next(text === e.props.text ? e : { ...e, props: { ...e.props, text } })
 }
 

@@ -42,10 +42,6 @@ export type ListenerStatus = { state: string; nextStep: string | null }
 // Sign in, because a revoked agent must stop.
 // `blocked`: auto permission mode's classifier refused the plugin's own dashboard call: the band says so and names the
 // fix. `connected` is then the plan the model's own successful session_connect named, when it did one; nothing else of the plan is known.
-// `prefixes` are the issue prefixes (`ABC`, `XYZ`) of the dashboard's boards (GET /api/boards); `planCardIds` are the ids of
-// EVERY card on the connected plan, any status (`card_ids` on GET /api/plans/:id, unscoped by board, closed cards included). Empty when not connected.
-export type CardLinks = { state: 'ready'; prefixes: string[]; planCardIds: string[] } | { state: 'error'; message: string }
-
 export type PlanView = {
   // `loading` is both the first load (nothing known yet) and a connect answered with its numbers still pending (`connected` and `refreshedAt` set).
   phase: 'loading' | 'ready' | 'unreachable' | 'load-failed' | 'signed-out' | 'key-revoked' | 'blocked'
@@ -83,7 +79,6 @@ export type PlanView = {
   pausedWaitsOn: string | null
   // what card ids in an assistant reply are linked with, read at refresh (never at draw time). It is its OWN state: a
   // failed read of it leaves the plan view `ready`, shows one toast, and replies are then drawn as written.
-  links: CardLinks
   // The event listener as GET /api/plans answers it (`sessionListenerAttached`): the server's health state and
   // its next step; null when the answer carries none (a session on no plan, or no session row).
   listener: ListenerStatus | null
