@@ -1,6 +1,6 @@
-// 50 Arms refs in an assistant reply drawn as markdown links to the dashboard's ref redirect (`/api/ref/<ref>`, DX-6878), which sends any kind of ref
+// 50 Arms refs in an assistant reply drawn as markdown links to the dashboard's ref redirect (`/api/ref/<ref>`), which sends any kind of ref
 // (card, problem, decision, design, plan, feedback) to its page. Pure: text + dashboard origin in, text out. No call is made here (the draw path never touches
-// the network), so a look-alike (UTF-8, SHA-256) is drawn as a link the redirect answers not found (CP-73, DEC-720).
+// the network), so a look-alike (UTF-8, SHA-256) is drawn as a link the redirect answers not found.
 
 // Markdown the ids must never be rewritten inside. One alternation, scanned left to right, so the earliest construct wins:
 // a code span (a run of N backticks to the next run of N), an inline or reference link or image, a reference definition,
@@ -48,8 +48,8 @@ function* segments(text: string): Generator<{ prose: boolean; text: string }> {
 // Every `PREFIX-123` (1 to 4 capital letters, a dash, digits) becomes `[PREFIX-123](<dashboard>/api/ref/PREFIX-123)`, with no list of known prefixes, so a new
 // kind of ref needs no change here. Anything inside code, fences, links or URLs is left as written.
 export function linkRefs(text: string, dashboardUrl: string): string {
-  // a word char, `-`, `/` or `.` before it, or a word char after it, makes it part of something else (a path, XDX-12); a `-suffix` after the digits
-  // leaves the ref linked (DX-1431-IMPORTED links DX-1431)
+  // a word char, `-`, `/` or `.` before it, or a word char after it, makes it part of something else (a path, an id with a longer prefix); a `-suffix` after the digits
+  // leaves the ref linked (ABC-12-IMPORTED links ABC-12)
   const ref = String.raw`(?<![A-Za-z0-9_\-/.])(?<ref>[A-Z]{1,4}-\d+)(?![A-Za-z0-9_])`
   const re = new RegExp(`${PROTECTED}|${ref}`, 'gm')
   let out = ''
