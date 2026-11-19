@@ -1,5 +1,6 @@
 import type { AckInFlight, AckRef, PendingEvent } from '../../types'
 import { isAckList, type RelayEvent } from './answer'
+import { offerOf } from '../ready/offer'
 
 // the relay's outbox. The poll loop (plan_events_wait) takes events from the server and puts them here; a separate pump delivers them to
 // the session in the order the server sent them. The loop never waits on a delivery: a plugin's `$.prompt.submit` settles only when the queued
@@ -50,7 +51,7 @@ export const isStalled = (now: number, beat: number, since: number, limitMs: num
 
 // The part of the outbox that survives a reload (the delivery promise does not).
 export const toPending = (outbox: readonly Queued[]): PendingEvent[] =>
-  outbox.map(q => ({ planId: q.planId, cursor: q.event.cursor, text: q.event.text, urgent: q.event.urgent, acks: q.event.acks, ...(q.again === true ? { again: true as const } : {}) }))
+  outbox.map(q => ({ planId: q.planId, cursor: q.event.cursor, text: q.event.text, urgent: q.event.urgent, acks: q.event.acks, ...(q.event.offer ? { offer: q.event.offer } : {}), ...(q.again === true ? { again: true as const } : {}) }))
 
 // The outbox of a run on `planId`, from what a reload found: nothing is issued yet, and another plan's events are not this run's. The atom is in
 // the outbox's order, so the events get the sequence numbers `firstSeq`, `firstSeq + 1`, ... in that order.
@@ -61,7 +62,10 @@ export const fromPending = (pending: readonly PendingEvent[], planId: number | n
     .filter(p => p.planId === planId)
     .map((p, i) => {
       if (!isAckList(p.acks)) throw new StalePendingError(`a queued event (cursor ${p.cursor}) has no acks list`)
-      return { planId: p.planId, seq: firstSeq + i, event: { cursor: p.cursor, text: p.text, urgent: p.urgent, acks: p.acks }, held: false, ...(p.again === true ? { again: true as const } : {}) }
+      // `offer` is written only on a record that has one, as `again` is: an entry without it is a record with no offer
+      const offer = offerOf(p)
+      if (offer === 'malformed') throw new StalePendingError(`a queued event (cursor ${p.cursor}) has an offer that is not {item_id, assignment_id}`)
+      return { planId: p.planId, seq: firstSeq + i, event: { cursor: p.cursor, text: p.text, urgent: p.urgent, acks: p.acks, offer }, held: false, ...(p.again === true ? { again: true as const } : {}) }
     })
 
 // the dashboard re-sends an event the session has not acknowledged, `attempt` counting the sends. A session that already holds the
