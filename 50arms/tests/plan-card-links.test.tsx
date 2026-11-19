@@ -24,24 +24,10 @@ describe('linkRefs', () => {
   })
 
   test('fenced code (backtick and tilde, closed or not) is untouched', () => {
-    const fenced = '```ts
-const a = "DX-1"
-```'
-    expect(link(`DX-2
-${fenced}
-DX-3`)).toBe(`${REF('DX-2')}
-${fenced}
-${REF('DX-3')}`)
-    expect(link('~~~
-DX-1
-~~~')).toBe('~~~
-DX-1
-~~~')
-    expect(link('x DX-2
-```
-DX-1 never closed')).toBe(`x ${REF('DX-2')}
-\`\`\`
-DX-1 never closed`)
+    const fenced = '```ts\nconst a = "DX-1"\n```'
+    expect(link(`DX-2\n${fenced}\nDX-3`)).toBe(`${REF('DX-2')}\n${fenced}\n${REF('DX-3')}`)
+    expect(link('~~~\nDX-1\n~~~')).toBe('~~~\nDX-1\n~~~')
+    expect(link('x DX-2\n```\nDX-1 never closed')).toBe(`x ${REF('DX-2')}\n\`\`\`\nDX-1 never closed`)
   })
 
   test('existing markdown links, images, reference links, autolinks and bare URLs are untouched', () => {
