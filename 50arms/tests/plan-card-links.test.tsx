@@ -14,7 +14,7 @@ describe('linkRefs', () => {
   })
 
   test('look-alikes of another shape are untouched; those of the ref shape link', () => {
-    expect(link('XDX-12, a/DX-12, DX-, 12-3, ABCDE-1')).toBe('XDX-12, a/DX-12, DX-, 12-3, ABCDE-1')
+    expect(link('xDX-12, a/DX-12, DX-, 12-3, ABCDE-1')).toBe('xDX-12, a/DX-12, DX-, 12-3, ABCDE-1')
     expect(link('UTF-8')).toBe(REF('UTF-8'))
     expect(link('DX-1431-IMPORTED')).toBe(`${REF('DX-1431')}-IMPORTED`)
   })
