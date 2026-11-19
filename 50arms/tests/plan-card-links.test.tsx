@@ -1,3 +1,4 @@
+import "./run-tests-with-npm-test.generated"
 // CP-73, DEC-720: every `[A-Z]{1,4}-\d+` token in an assistant reply is drawn as a link to the dashboard's ref redirect. The stored message is never
 // touched (a rewrite changes the drawing), and the draw reads only the `view` atom, so it makes no call.
 import { describe, expect } from 'claude-code/testing'
