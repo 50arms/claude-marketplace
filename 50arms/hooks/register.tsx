@@ -21,7 +21,7 @@ import { machineRegisteredNote, registrationFailedToast, registrationOf, registr
 import { approvalRequestOf, permissionShownNote, signInShownNote } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
-import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_REVOKED, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
+import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_REVOKED, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyAgentRefusalNote, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
 import type { GithubOrigin, MarkAnswer, ServerLoop } from './ready/loop'
 import { sessionFilePath } from './relay/session-file'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
@@ -62,7 +62,7 @@ import { serverOf } from './plan/server'
 import { errText, loadPlan } from './plan/load'
 import { blockedOrigin, optionDashboardUrl } from './plan/origin'
 import type { Api } from './plan/load'
-import { agentBlockOf, connectToolOutcome, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
+import { agentBlockOf, agentRefusalOf, connectToolOutcome, connectedPlanOf, isServerNotConnected, isSignedOut, outcomeRevokedBy, refusalText, textOutcome, toolOutcome } from './plan/mcp'
 import { AGENT_RELEASE_DEADLINE_MS, AGENT_RELEASE_PATH, AGENT_RELEASE_TIMEOUT_REASON, PERSON_DISCONNECT_PATH, releaseFailureToast, revokeFailure } from './plan/agent'
 import { connectTargetOf, planTarget } from './plan/target'
 import { holdKey } from './plan/hold'
@@ -1162,6 +1162,7 @@ async function watchSignIn($: any, watch: SignInWatch): Promise<void> {
           // the key exists and only an agent is missing: the loop stays, and only another /50arms:ready can claim one, since the MCP's own gate is closed now
           if ('forReadyLoop' in watch && step.signedIn === true) {
             await tellReadyOnce($, readyNoAgentYet(step.message))
+            if (step.refusal !== undefined) await tellAgentRefusal($, step.refusal)
             await refresh($, true)
             return
           }
@@ -2365,7 +2366,7 @@ async function joinReady($: any, arg: string): Promise<string> {
   }
   if (arg !== '') return READY_USAGE
   // running it again starts the told-once memory afresh and keeps the rest: the phase the session is in, and an approval still open
-  await update($, readyLoop, cur => (cur === null ? joiningLoop() : { ...cur, told: null, claimAsked: true }))
+  await update($, readyLoop, cur => (cur === null ? joiningLoop() : { ...cur, told: null, agentBlockTold: null, claimAsked: true }))
   startReadyTicker($)
   detach($, 'Ready list', syncReady($))
   return READY_JOINING
@@ -2399,6 +2400,21 @@ async function tellReadyOnce($: any, text: string): Promise<void> {
     return { ...cur, told: text }
   })
   if (changed) $.ui.toast(text.slice(0, FAILURE_TOAST_MAX))
+}
+
+// CP-147: the ready join was refused for want of a team agent (`agent_needed`, `agent_limit_reached`). The toast and the title mark say so to the person; the model is told the server's
+// instruction once per refusal state, so it can say what to do, and a retry that meets the same refusal tells nothing. A join (the mark) or a held agent clears the state, so the next refusal is told again.
+// Detached: a prompt's promise is not known to settle when it merges into a queued turn.
+async function tellAgentRefusal($: any, refusal: Record<string, unknown>): Promise<void> {
+  const state = String(refusal.state)
+  const instruction = typeof refusal.instruction === 'string' ? refusal.instruction : NO_AGENT[state]
+  let first = false
+  await update($, readyLoop, cur => {
+    if (cur === null) return null
+    first = cur.agentBlockTold !== state
+    return first ? { ...cur, agentBlockTold: state } : cur
+  })
+  if (first) detach($, 'Ready list', tellModelAwake($, readyAgentRefusalNote({ ...refusal, instruction })))
 }
 
 // what a call says about the session's access: true when it ended the sync
@@ -2606,17 +2622,22 @@ async function claimReadyAgent($: any, asked: boolean, token: LookToken): Promis
   await lookGoesOn($, token)
   if (await readyAccessStop($, claimed)) return false
   if (claimed.ok && claimed.body?.state === 'agent_held') {
+    await update($, readyLoop, cur => (cur === null ? null : { ...cur, agentBlockTold: null }))
     detach($, 'Plan refresh', refresh($, true))
     return true
   }
   if (claimed.ok && typeof claimed.body?.state === 'string' && claimed.body.state in NO_AGENT) {
     await tellReadyOnce($, NO_AGENT[claimed.body.state])
+    await tellAgentRefusal($, claimed.body)
     return false
   }
-  if (agentBlockOf(claimed) === null) {
+  const refusal = agentRefusalOf(claimed)
+  if (refusal === null) {
     await tellReadyOnce($, readyFailed('claiming a team agent', errText(claimed)))
     return false
   }
+  // the gate's own answer (`agent_not_held`) says to call session_connect, which only a person's /50arms:ready may do (below); the two refusals that name a person's action are told to the model now
+  if (refusal.state !== 'agent_not_held') await tellAgentRefusal($, refusal)
   return claimThroughConnect($, asked)
 }
 
@@ -2876,11 +2897,11 @@ async function markReady($: any, token: LookToken): Promise<boolean> {
     }
     if (answer.kind === 'joined') {
       // on its job as a session handed one is: it waits for 50 Arms to ask for and release the clear, then clears and rejoins
-      await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'working', repo, told: null, signInAsked: false, permissionId: null }))
+      await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'working', repo, told: null, agentBlockTold: null, signInAsked: false, permissionId: null }))
       if (before.phase !== 'working') $.ui.toast(readyJoinedOnWork(repo, answer.job))
       return false
     }
-    await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'waiting', repo, rejoining: false, told: null, signInAsked: false, permissionId: null }))
+    await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'waiting', repo, rejoining: false, told: null, agentBlockTold: null, signInAsked: false, permissionId: null }))
     if (before.phase !== 'waiting') $.ui.toast(before.rejoining ? readyRejoined(repo) : readyJoined(repo))
     // a rejoin may have left the plan the band shows
     if (before.rejoining) detach($, 'Plan refresh', refresh($, true))

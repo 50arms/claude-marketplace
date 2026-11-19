@@ -24,7 +24,7 @@ export type SignInStep =
   // a person revoked the key while signing in: nothing more to do, and the view reads the truth
   | { kind: 'revoked'; by: string }
   // nothing more to do. `signedIn`: the key exists and only a team agent is missing
-  | { kind: 'stop'; message: string; signedIn?: true }
+  | { kind: 'stop'; message: string; signedIn?: true; refusal?: Record<string, unknown> }
 
 export const NO_AGENT: Record<string, string> = {
   agent_needed: 'Signed in, but no team agent exists for this session: a person on the team needs to create one.',
@@ -77,7 +77,7 @@ export function signInStep(result: any): SignInStep {
       return request === null ? { kind: 'stop', message: 'Sign in failed: the approval request had no usable link.' } : { kind: 'waiting', request }
     }
     if (parsed.state === 'request_refused') return { kind: 'stop', message: refusedMessage(parsed.body) }
-    return { kind: 'stop', message: STOPPED[parsed.state] ?? `Sign in stopped (${parsed.state}).`, ...(parsed.state in NO_AGENT ? { signedIn: true as const } : {}) }
+    return { kind: 'stop', message: STOPPED[parsed.state] ?? `Sign in stopped (${parsed.state}).`, ...(parsed.state in NO_AGENT ? { signedIn: true as const, refusal: parsed } : {}) }
   }
   const outcome = toolOutcome(result)
   return outcome.ok ? { kind: 'done' } : { kind: 'refused', message: `Signed in, but the plan connect was refused: ${refusalText(outcome)}` }

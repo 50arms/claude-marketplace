@@ -38,6 +38,11 @@ export const readyPermissionRefused = (why: string) => `This session left the re
 export const readyMarkRefused = (why: string) => `This session left the ready list: the dashboard refused to mark it ready (${why}). Run /${READY_TYPED} to try again.`
 // a sign-in that found no team agent free: its own words, and how to try again
 export const readyNoAgentYet = (message: string) => `${message} Then run /${READY_TYPED}.`
+// CP-147: what the model is told when the join is refused for want of a team agent: the server's own instruction, and the cap that stops it when the refusal names one
+export const readyAgentRefusalNote = (refusal: { instruction: string; cap?: unknown; limit?: unknown; held?: unknown; raised_by?: unknown }): string => {
+  const cap = typeof refusal.cap === 'string' ? ` The cap is the ${refusal.cap} cap: ${String(refusal.held)} of ${String(refusal.limit)} agent sessions are in use${typeof refusal.raised_by === 'string' ? `, and ${refusal.raised_by} can raise it` : ''}.` : ''
+  return `Ready list: ${refusal.instruction}${cap}`
+}
 export const READY_NO_AGENT_AGAIN = `No team agent is free for this session. Run /${READY_TYPED} when one is.`
 const jobName = (job: ReadyJob): string => (job.kind === 'card' ? job.id : job.kind === 'plan' ? `plan ${job.id}` : `queue job ${job.queue_item_id}`)
 export const readyWorkTaken = (job: ReadyJob) =>
@@ -61,7 +66,7 @@ export const readyJudgedKey = (sessionId: string): string => `${READY_JUDGED_PRE
 // What a restarted session off the list is told, once. The skill is the whole answer: the agent loads it, or leaves it.
 export const READY_JUDGE_PROMPT = `This session restarted and is not on the ready list. Decide now, once, whether the person is planning or working with 50 Arms in this conversation. If they are, or you are unsure how to read it, lean towards yes: load the ${READY_COMMAND} skill to put the session back on the list. If it is truly unclear, ask the person in one short question. If the work is unrelated to 50 Arms, do nothing and stay off the list. Do not mention this message to the person unless you ask them.`
 
-export const joiningLoop = (): ReadyLoop => ({ phase: 'joining', repo: null, rejoining: false, signInAsked: false, permissionId: null, told: null, agentName: null, claimAsked: true })
+export const joiningLoop = (): ReadyLoop => ({ phase: 'joining', repo: null, rejoining: false, signInAsked: false, permissionId: null, told: null, agentName: null, claimAsked: true, agentBlockTold: null })
 
 // The words a refused command carries when a person's Stop refused it: `remote-cancel` for a command the Stop interrupted, and Claude Code's hold for one issued after it.
 export const stoppedByPerson = (failure: string): boolean => /remote-cancel/i.test(failure) || heldForInput(failure)

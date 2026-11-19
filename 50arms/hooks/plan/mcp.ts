@@ -95,6 +95,12 @@ export function isSignedOut(o: ToolOutcome): boolean {
 export type AgentBlock = 'agent_needed' | 'agent_limit_reached' | 'agent_not_held'
 const AGENT_BLOCKS: readonly string[] = ['agent_needed', 'agent_limit_reached', 'agent_not_held']
 export function agentBlockOf(o: ToolOutcome): AgentBlock | null {
+  return agentRefusalOf(o)?.state ?? null
+}
+
+// The agent gate's refusal itself, with the server's `instruction` and the cap it names: the same answer `agentBlockOf` reads the state from.
+export type AgentRefusal = { state: AgentBlock; instruction: string; [field: string]: unknown }
+export function agentRefusalOf(o: ToolOutcome): AgentRefusal | null {
   if (o.ok) return null
   let refusal: any
   if (o.status === 0) {
@@ -110,7 +116,7 @@ export function agentBlockOf(o: ToolOutcome): AgentBlock | null {
     return null
   }
   if (refusal === null || typeof refusal !== 'object' || typeof refusal.instruction !== 'string') return null
-  return AGENT_BLOCKS.includes(refusal.state) ? (refusal.state as AgentBlock) : null
+  return AGENT_BLOCKS.includes(refusal.state) ? (refusal as AgentRefusal) : null
 }
 
 // who revoked the key, when the text is the MCP's stop halt for a key a person revoked (see KEY_REVOKED_HALT); null for

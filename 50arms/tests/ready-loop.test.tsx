@@ -643,6 +643,55 @@ describe('the ready-agent loop', () => {
     expect(d.clearRuns).toEqual([])
   })
 
+  // CP-147: the refusal's own instruction reaches the model, once per refusal state, so it can tell the person what to do
+  describe("an agent refusal's instruction reaches the model", () => {
+    const told = (d: any, text: string) => d.relay.submitted.filter((t: string) => t.includes(text))
+
+    test('agent_needed on the first join: told once, not on every retry, and a later success clears the state so the next refusal is told again', async ($, on) => {
+      const d = await started($, on)
+      d.world.agent = null
+      d.world.agentGate = 'agent_not_held'
+      d.world.agentClaim = { state: 'agent_needed', instruction: 'Ask a person to assign you an agent.' }
+      await ready($, d)
+      await tick(d)
+      await tick(d)
+      expect(told(d, 'Ask a person to assign you an agent.')).toHaveLength(1)
+      expect(d.toasts.filter((t: string) => t.includes('no team agent exists'))).toHaveLength(1)
+      d.world.agentClaim = null
+      await tick(d)
+      expect(d.world.readyMark).toBe(REPO)
+      d.world.agent = null
+      d.world.readyMark = null
+      d.world.agentClaim = { state: 'agent_needed', instruction: 'Ask a person to assign you an agent.' }
+      await tick(d)
+      expect(told(d, 'Ask a person to assign you an agent.')).toHaveLength(2)
+    })
+
+    test('agent_limit_reached from the sign-in: told once with the cap that stops it, and the other refusal state is told as its own', async ($, on) => {
+      const d = await started($, on)
+      d.world.signedOut = 'signed-out'
+      d.world.signIn.answer = { text: JSON.stringify({ state: 'agent_limit_reached', cap: 'member', limit: 1, held: 1, raised_by: 'a team owner or admin', instruction: 'No team agent is free. Tell the person.' }) }
+      await ready($, d)
+      const sent = told(d, 'No team agent is free. Tell the person.')
+      expect(sent).toHaveLength(1)
+      expect(sent[0]).toContain('member')
+      expect(sent[0]).toContain('a team owner or admin')
+      d.world.signedOut = null
+      d.world.signIn.answer = undefined
+      d.world.agent = null
+      d.world.agentGate = 'agent_limit_reached'
+      d.world.agentClaim = { state: 'agent_limit_reached', cap: 'member', limit: 1, held: 1, raised_by: 'a team owner or admin', instruction: 'No team agent is free. Tell the person.' }
+      await tick(d)
+      await tick(d)
+      expect(told(d, 'No team agent is free. Tell the person.')).toHaveLength(1)
+      // the gate's own refusal, answered to the claim call, carries its state and instruction as well
+      d.world.agentGate = 'agent_needed'
+      d.world.agentClaim = null
+      await tick(d)
+      expect(told(d, 'Propose one yourself.')).toHaveLength(1)
+    })
+  })
+
   test('with no agent free after losing one it says so once and waits, and rejoins when one is, since the MCP never refused it', async ($, on) => {
     const d = await started($, on)
     await ready($, d)
