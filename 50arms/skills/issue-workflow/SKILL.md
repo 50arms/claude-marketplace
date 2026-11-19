@@ -219,8 +219,7 @@ read the page and follow it. Your repo's own docs may add rules for that repo.
 the producer or mechanism they name still exists, follow a cited docblock to code. A comment
 or rule you find false is corrected in the same change. Before choosing where state lives (DB
 row, file, env), trace the seed and load path to what is authoritative at runtime. Recurring
-jobs are incremental (delta + high-water mark): the 10th run costs what the 1st does. All
-code is your code — never "pre-existing, not mine".
+jobs are incremental (delta + high-water mark): the 10th run costs what the 1st does.
 
 **Show the work.** Browser-visible work: attach each capture with `attach_file` as the capture tool prints;
 it names the step (primary first, then replaces). Frame the component you are working on with enough around
@@ -234,6 +233,11 @@ containerised dispatch with no browser cannot run it):
 response, a sign-in form, or a page that never becomes ready. For a live check of a local app pass the command that signs in, e.g. `--login-cmd "make live-check-session LOCALHOST=1 CARD=<id>"`: the script runs it and opens the one URL it prints, so you never carry a sign-in URL.
 
 ## Debugging
+
+A failing test, type error or check is fixed forward, now, by whoever meets it: read the code at
+the current commit and write the fix. Never run tests on an older commit, stash your change or
+bisect to find which change caused it or to show it was already failing: where it started never
+matters.
 
 1. State the question in one sentence and reproduce it; can't reproduce → stop.
 2. Hypothesis before tools: "I expect X because Y; wrong → evidence W."
