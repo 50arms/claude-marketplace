@@ -2,7 +2,7 @@
 // with `offer: {item_id, assignment_id}` (null on every other record). The plugin, not the model, takes such a job: it takes it with the offer's assignment id, runs the
 // repo's own worktree command when the take answers a `worktree`, and only then tells the model the job, with the take's whole answer and the worktree's path. A take ends
 // the offer, so the model could never take it again: everything it needs is in that one prompt. When anything after the take fails, the plugin leaves the job (it goes
-// back to the queue) with the error, and the model is told nothing. The pure part is here; every `$` call is in the hooks module.
+// back to the queue) with the error, and the model is told what failed (jobHandedBack) when the take had landed and its worktree could not be made. The pure part is here; every `$` call is in the hooks module.
 
 export type Offer = { item_id: number; assignment_id: number }
 
@@ -67,7 +67,30 @@ export function jobPrompt(itemId: number, answer: unknown, prepared: { path: str
   return `50 Arms assigned this session queued job ${itemId}, and the session has already taken it for you: never call its take route. ${where} Do what its \`instruction\` says. The job, as its take answered it:\n${JSON.stringify(answer, null, 2)}`
 }
 
-// Shown to the person (never to the model) when a job is not worked here
+// What the model is told when a job the plugin took is handed back: the job it was offered, the error it was left with (which names the command, its exit and the tail of its output, or why no
+// command ran) and that the job is no longer this session's, so the model repairs a local cause and never works the job. `answer` is the take's whole answer; its branch, commit and cards name the job.
+function jobLabel(itemId: number, answer: any): string {
+  const cards = Array.isArray(answer?.cards) ? answer.cards.map((c: any) => c?.card).filter(isText) : []
+  const named = [
+    isText(answer?.branch) ? `branch ${answer.branch}${isText(answer?.red_sha) ? ` at ${answer.red_sha}` : ''}` : null,
+    cards.length > 0 ? `cards ${cards.join(', ')}` : null,
+  ].filter((x): x is string => x !== null)
+  return `queued job ${itemId}${named.length > 0 ? ` (${named.join('; ')})` : ''}`
+}
+
+export function jobHandedBack(itemId: number, answer: unknown, error: string): string {
+  return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and the session took it, but could not prepare it: ${error}. The session handed the job back to the queue, so it no longer holds it: do not work it and never call its take route. If the cause is on this machine (a damaged install, a stale worktree, a missing tool), repair it now, before 50 Arms offers the job again; otherwise tell the person what failed.`
+}
+
+// The failures already told to the model, one entry per job and error, so an identical failure at the next offer of the same job wakes the session no more. The newest FAILURES_TOLD_MAX are kept.
+export type FailureTold = { item_id: number; error: string }
+export const FAILURES_TOLD_MAX = 20
+export const failureWasTold = (told: readonly FailureTold[], itemId: number, error: string) => told.some(t => t.item_id === itemId && t.error === error)
+export const withFailureTold = (told: readonly FailureTold[], itemId: number, error: string): FailureTold[] => [...told, { item_id: itemId, error }].slice(-FAILURES_TOLD_MAX)
+// a job the model was told (it holds it now) starts over: a later failure of it, even an identical one, is new
+export const withoutFailuresOf = (told: readonly FailureTold[], itemId: number): FailureTold[] => told.filter(t => t.item_id !== itemId)
+
+// Shown to the person when a job is not worked here
 export const notTakenToast = (itemId: number, why: string) => `Queued job ${itemId} was not taken: ${why}`
 export const leftToast = (itemId: number, error: string) => `Queued job ${itemId} went back to the queue: ${error}`
 // the leave's own failure first: the job is still held by this session, which is what the person must act on

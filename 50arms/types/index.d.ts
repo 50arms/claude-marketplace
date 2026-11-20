@@ -263,6 +263,8 @@ declare module 'claude-code' {
       // the queued job this module is taking and preparing, from just before its take until the model is told it or the job is left (null: none). A reload empties the module's own record of
       // the work, so a relay run that finds this set with no module of its own on it leaves the job: the reloaded module can never finish it.
       queueJobTaking: { item_id: number; assignment_id: number } | null
+      // the failures of a taken job already told to the model, one entry per job and error (the newest few): an identical failure of the same job at its next offer wakes the session no more.
+      queueFailuresTold: { item_id: number; error: string }[]
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
       runningAgents: string[]
       // the briefs of the sub-agents that ended in the last few minutes, with the epoch ms each ended; the held-idle Stop check counts their cards as worked for that long.

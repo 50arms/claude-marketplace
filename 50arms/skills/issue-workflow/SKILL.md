@@ -157,7 +157,7 @@ first, then end `failed`.
   `comments: {"expanded": true}` in a card's `fields` (`?expanded=true` on
   `GET /api/plans/:planId/comments`); `q: "<words>"` in the same place searches them.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
-  progress, gate results, handoffs, blockers; a trail of what you did and
+  progress, gate results, handoffs, blockers, citing `EV-<n>` refs; a trail of what you did and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
 - **Evidence records** — the answer to a question about how a system works, performs or fails
   (`EV-<n>`: its hypothesis, gathered blocks and verdict); what counts, when to record one and how:
