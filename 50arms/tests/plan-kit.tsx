@@ -361,6 +361,8 @@ export function dashboard(
     // (`session.card_id` / `card_title`); neither by default. A session with none of a plan, a card and an agent has no session row (`session: null`).
     agent: null as { id: number; name: string; avatar_url: string | null } | null,
     card: null as { id: string; title: string } | null,
+    // CP-149: the session holds a queued job (its plan_sessions row exists with no plan and no card)
+    holdsQueuedJob: false,
     // what DELETE /api/plan-sessions/me/card (the band's leave of a held card) answers: the leave works (default), a 500, or a 200 that names no card left
     cardLeave: 'ok' as 'ok' | 'boom' | 'noLeftCard',
     // the order the band's leaves and Revoke ran in: `plan`, `card`, `person-disconnect`, `release` of the team agent
@@ -1002,9 +1004,14 @@ export function dashboard(
     }
     // DX-5694: the turn activity sends (PUT /api/plan-sessions/me/turn-activity), kept in their own list so every suite that asserts on `reports` stays about its own subject
     if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/turn-activity') {
-      turnActivityCalls.push({ activity: e.args.body.activity, since: e.args.body.since })
       const over = world.reportReplies[`PUT ${e.args.path}`]
-      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
+      if (notConnected()) {
+        turnActivityCalls.push({ activity: e.args.body.activity, since: e.args.body.since })
+        return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
+      }
+      // CP-149: a session on no plan and no card has no plan_sessions row unless the test says it holds a queued job (`holdsQueuedJob`): the dashboard answers 404 and records nothing
+      if (world.planId === null && world.card === null && world.holdsQueuedJob !== true) return { value: reply({ error: 'session_not_found' }, 404) }
+      turnActivityCalls.push({ activity: e.args.body.activity, since: e.args.body.since })
       if (over?.deny !== undefined) return { deny: over.deny }
       if (over?.status !== undefined) return { value: reply(over.body ?? { error: 'turn activity boom' }, over.status) }
       return { value: reply({ status: 'updated' }) }

@@ -4261,27 +4261,30 @@ async function movesOffReportedPlan($: any, planId: number): Promise<boolean> {
   return from !== null && from !== planId
 }
 
-async function report($: any, what: string, method: string, path: string, body: object): Promise<void> {
+async function report($: any, what: string, method: string, path: string, body: object, quietWhenNoRow = false): Promise<void> {
   const r = await api($, method, path, { body })
-  if (!r.ok) $.ui.toast(`50 Arms ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
+  // CP-149: a signed-in session on no plan and no card may hold no `plan_sessions` row (404): that is no failure, it has nothing to report on
+  if (!r.ok && !(quietWhenNoRow && r.status === 404)) $.ui.toast(`50 Arms ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
 }
 
-// the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. Only a session on a plan or holding a
-// stand-alone card has a row to report it on. Detached like the other reports; a send the dashboard does not take is one toast (`report`), never swallowed.
+// the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. A session on a plan or holding a
+// stand-alone card has a row to report it on; so may a signed-in session holding only a queued job (CP-149: its job nudge and stall alarm read these), and one with no
+// row is answered 404, which is quiet. A session not signed in sends nothing. Detached like the other reports; a send the dashboard does not take is one toast (`report`), never swallowed.
 async function reportTurnActivity($: any, activity: TurnActivity): Promise<void> {
   const v = await read($, view)
-  if (v.connected === null && v.card === null) return
-  await sendTurnActivity($, activity)
+  const onPlanOrCard = v.connected !== null || v.card !== null
+  if (!onPlanOrCard && !isSignedIn(v)) return
+  await sendTurnActivity($, activity, !onPlanOrCard)
 }
 
-async function sendTurnActivity($: any, activity: TurnActivity): Promise<void> {
+async function sendTurnActivity($: any, activity: TurnActivity, quietWhenNoRow = false): Promise<void> {
   const now = await $.clock.now()
   let since = now
   await update($, turnReportedAt, last => {
     since = nextSince(now, last)
     return since
   })
-  detach($, '50 Arms turn activity report', report($, 'turn activity', 'PUT', TURN_ACTIVITY_PATH, turnActivityBody(activity, since)))
+  detach($, '50 Arms turn activity report', report($, 'turn activity', 'PUT', TURN_ACTIVITY_PATH, turnActivityBody(activity, since), quietWhenNoRow))
 }
 
 // The main agent's compaction ended (finished, skipped or failed): back to the turn it interrupted, else idle.

@@ -69,12 +69,12 @@ describe('the turn activity body (pure)', () => {
 
 for (const surface of SURFACES) {
   describe(`the turn activity reports on ${surface}`, () => {
-    async function started($: any, on: any, compact: () => unknown = () => COMPACTED, onPlan = true, onCard = false) {
+    async function started($: any, on: any, compact: () => unknown = () => COMPACTED, onPlan = true, onCard = false, options: object = {}) {
       on('classic.SessionStart', () => ({}) as any)
       on('classic.PreCompact', () => ({}) as any)
       on('session.compact', async () => compact() as any)
       on('turn.complete', () => ({ text: 'done' }) as any)
-      const d = dashboard(on)
+      const d = dashboard(on, options)
       answerPlanConnect(on, d)
       answerCardConnect(on, d)
       answerPickup(on, d)
@@ -185,8 +185,27 @@ for (const surface of SURFACES) {
       expect(sent(d)).toEqual(['compacting', 'idle'])
     })
 
-    test('a session holding neither a plan nor a card sends nothing', async ($, on) => {
+    test('a signed-in session holding neither a plan nor a card (a queued job only) sends in_turn and idle for its turn (CP-149)', async ($, on) => {
       const d = await started($, on, () => COMPACTED, false)
+      d.world.holdsQueuedJob = true
+      await $.turn.start(START)
+      await d.clock.settle()
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(sent(d)).toEqual(['in_turn', 'idle'])
+    })
+
+    test('a signed-in session with no plan_sessions row (404) shows no error and records nothing (CP-149)', async ($, on) => {
+      const d = await started($, on, () => COMPACTED, false)
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(sent(d)).toEqual([])
+      expect(d.toasts.filter((t: string) => t.startsWith('50 Arms turn activity report failed'))).toEqual([])
+    })
+
+    test('a session that is not signed in sends nothing (CP-149)', async ($, on) => {
+      const d = await started($, on, () => COMPACTED, false, false, { signedOut: 'lapsed' })
       await $.turn.start(START)
       await $.turn.complete(TURN)
       await d.clock.settle()
