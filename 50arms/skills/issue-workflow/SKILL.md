@@ -27,11 +27,15 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    set; on a plan, read its architecture and note overlapping siblings.
    Any investigation that takes more than a few commands (understanding unread code,
    reproducing a bug, debugging a failing test, proving an idea works) goes to a foreground
-   sub-agent (`Explore` to read, a worker agent grade to run things) that returns only the
-   conclusion with file:line evidence; keep a single lookup inline and read directly only
+   sub-agent; keep a single lookup inline and read directly only
    the lines you are about to edit. Everything you read stays in your context and is paid
    again on every later turn, so the larger your context and the more turns remain, the
    sooner delegating is cheaper than its ~60k-token start.
+   When you delegate an investigation whose answer "Evidence records" (under Debugging) says to record, brief a
+   `50arms:worker-*` agent to record it as an Evidence record on the card and to return only its `EV-<n>`
+   ref and verdict, or, when its hypothesis waits on a person's approval, the ref and that it waits; brief the
+   gathering again once the approval reaches you (`Explore` is read-only and cannot write one). Any other returns only its conclusion
+   with file:line references: `Explore` to read, a `50arms:worker-*` agent to run things.
 2. Operator-session sub-agent: claim it before any work (below). Dispatched worker: skip this
    step, the card is already yours.
 3. Its PRE gates have passed ("Gates" below); build to the rules under
@@ -153,8 +157,11 @@ first, then end `failed`.
   `comments: {"expanded": true}` in a card's `fields` (`?expanded=true` on
   `GET /api/plans/:planId/comments`); `q: "<words>"` in the same place searches them.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
-  progress, evidence, gate results, handoffs, blockers; trace, audit and
+  progress, gate results, handoffs, blockers; a trail of what you did and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
+- **Evidence records** — the answer to a question about how a system works, performs or fails
+  (`EV-<n>`: its hypothesis, gathered blocks and verdict); what counts, when to record one and how:
+  "Evidence records" under Debugging.
 - **Decisions** — a decision record holds one consequential choice (a business rule, an
   architecture choice, a design) on its card; a plan's architecture goes in its architecture
   sections, never in decision records. Record one with
@@ -249,17 +256,23 @@ bisect to find which change caused it or to show it was already failing: where i
 matters.
 
 1. State the question in one sentence and reproduce it; can't reproduce → stop.
-2. Hypothesis before tools: "I expect X because Y; wrong → evidence W."
-3. "What does X do now" → read its current definition before `git log`/`blame`.
-4. Capture evidence verbatim (file:line, exit codes, rows). Read-only probes need no
+2. Read the Evidence records on the subject first: the card's own and those of the cards it
+   depends on or names (a card's `evidence_records` field). They are a starting point, never a
+   finding. A verdict settles the question only when its rounds were gathered on the code and
+   environment you are working on, or when nothing changed since can affect its answer: then cite
+   it as `EV-<n>` and stop. Any other verdict is a lead: start your hypothesis from it, and record
+   what you find as a new round or a new verdict version of that record.
+3. Hypothesis before tools: "I expect X because Y; wrong → evidence W."
+4. "What does X do now" → read its current definition before `git log`/`blame`.
+5. Capture evidence verbatim (file:line, exit codes, rows). Read-only probes need no
    authorization, even against production; only a write crosses the line.
-5. Name the producer of the bad value: currently buggy, was buggy, wrong expectation, or
+6. Name the producer of the bad value: currently buggy, was buggy, wrong expectation, or
    external. A green neighbour is not the failing path — observe the exact artifact the
    consumer sees. Two plausible producers → read each one's code; green after fixing one
    proves nothing about the other.
-6. Fix the mechanism, not the symptom (mechanism > architectural > observability co-shipped
+7. Fix the mechanism, not the symptom (mechanism > architectural > observability co-shipped
    > defense). Retry as the primary fix is forbidden.
-7. Before the first edit, quote the `file:line` that enforces the rule your fix must satisfy.
+8. Before the first edit, quote the `file:line` that enforces the rule your fix must satisfy.
    Can't cite it → keep reading; doubly so when validation is expensive.
 
 A claim over N items needs N items read. Answer the question asked, then stop.
@@ -267,6 +280,19 @@ A claim over N items needs N items read. Answer the question asked, then stop.
 Every user-facing bug report, one block per bug:
 `## #N — <name>` then **Affects**, **Env**, **Scenario** (exact steps), **Expected**,
 **Actual** (exact symptom) — never Expected and Actual in one sentence.
+
+**Evidence records.** An Evidence record (`EV-<n>`) is the answer to a question about how a system works,
+performs or fails. It is one of three things: proof that a planned thing is viable, an experiment that decides
+between real options, or how a running system behaves (debugging it included). Checking how to
+build something already decided is implementation: it belongs in the building card's tests and AC,
+never an Evidence record. Record what you find as an Evidence record when a decision record, plan
+record or answer to a person rests on it, or when finding out takes more than a quick check (an
+experiment, a measurement, a reproduction). A quick read used only inside your own work stays in
+your agent note. The record goes on the card it is about. Its routes are under
+`/api/issues/<id>/evidence-records` (`50arms_api_list`; read a route's spec before calling it). Its
+hypothesis, gather and verdict steps, its block types and the way a decision cites it
+(`{source: "evidence", source_ref: "<n>"}`) are in the served card procedure's "Evidence records"
+section of the card procedure the dashboard serves, and any Evidence policy it binds you to; never restate them here.
 
 ## Delivery: push or pull request
 
