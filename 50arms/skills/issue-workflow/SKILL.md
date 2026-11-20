@@ -39,7 +39,7 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
 4. Tick every AC/checklist item, write the tests your change needs, browser-test user-facing
    changes. Run no test while you write, and none before the code reviews: push the code-complete commit, its tests written
    but not run, and let its POST gates judge it (step 5).
-   Never run a type check, lint or build by hand, in any form (a make target, a bare compiler or linter, the script behind a target), as a builder, lander or reviewer or in a brief: the landing check runs them once per batch, and only the fixer of a red batch re-runs the checks that failed. A command's refusal to run one is the answer, never something to route around. A repo with no land command checks as "Delivery" says.
+   Never run a type check, lint or build by hand, in any form (a make target, a bare compiler or linter, the script behind a target), as a builder, lander or reviewer or in a brief: the landing check runs them once per batch, and only the fixer of a red batch re-runs the checks that failed, fixing each forward, whatever made it fail, until every test the changes affect is green. A command's refusal to run one is the answer, never something to route around. A repo with no land command checks as "Delivery" says.
 5. Pass its POST gates ("Gates" below): a `fail` is fixed and pushed, again running no test, and the gate runs again.
    Once every POST gate has passed (a card under 3 points carries none: once its code is done), run the repo's
    affected-test command once on the final commit (with none, the touched files' own tests and their direct
