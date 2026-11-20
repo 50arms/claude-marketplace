@@ -284,6 +284,9 @@ terminal), citing the sha now on the target branch (on a pull request: the pull 
 the branch tip). A docs change of the card's own never delays this: complete the card once its code is on the target
 branch, whatever state the docs review is in (open, waiting or landing); a person approves or withdraws the docs change after the card is Done.
 
+A change that makes a running path need a new setting sets or defaults it for every connected repo in the same deploy.
+An operator-ordered push to the target branch never runs `make publish`: the release follows the landing.
+
 Read the card's resolved controls: `GET /api/issues/<id>` with `fields {"controls":true}`, then
 take the value of each key from the entry with that `key`:
 
