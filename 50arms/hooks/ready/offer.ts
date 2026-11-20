@@ -67,7 +67,7 @@ export function jobPrompt(itemId: number, answer: unknown, prepared: { path: str
   return `50 Arms assigned this session queued job ${itemId}, and the session has already taken it for you: never call its take route. ${where} Do what its \`instruction\` says. The job, as its take answered it:\n${JSON.stringify(answer, null, 2)}`
 }
 
-// What the model is told when a job the plugin took is handed back (CP-148): the job it was offered, the error it was left with (which names the command, its exit and the tail of its output, or why no
+// What the model is told when a job the plugin took is handed back: the job it was offered, the error it was left with (which names the command, its exit and the tail of its output, or why no
 // command ran) and that the job is no longer this session's, so the model repairs a local cause and never works the job. `answer` is the take's whole answer; its branch, commit and cards name the job.
 function jobLabel(itemId: number, answer: any): string {
   const cards = Array.isArray(answer?.cards) ? answer.cards.map((c: any) => c?.card).filter(isText) : []
@@ -82,7 +82,7 @@ export function jobHandedBack(itemId: number, answer: unknown, error: string): s
   return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and the session took it, but could not prepare it: ${error}. The session handed the job back to the queue, so it no longer holds it: do not work it and never call its take route. If the cause is on this machine (a damaged install, a stale worktree, a missing tool), repair it now, before 50 Arms offers the job again; otherwise tell the person what failed.`
 }
 
-// The failures already told to the model, one entry per job and error, so an identical failure at the next offer of the same job wakes the session no more (PLAN-116 R-13). The newest FAILURES_TOLD_MAX are kept.
+// The failures already told to the model, one entry per job and error, so an identical failure at the next offer of the same job wakes the session no more. The newest FAILURES_TOLD_MAX are kept.
 export type FailureTold = { item_id: number; error: string }
 export const FAILURES_TOLD_MAX = 20
 export const failureWasTold = (told: readonly FailureTold[], itemId: number, error: string) => told.some(t => t.item_id === itemId && t.error === error)

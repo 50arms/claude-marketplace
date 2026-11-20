@@ -2791,7 +2791,7 @@ async function leaveQueueJob($: any, itemId: number, error: string, quietWhenNot
   } else if (!(quietWhenNotHeld && left.body?.error === NOT_HOLDER)) $.ui.toast(leaveFailedToast(itemId, error, errText(left)).slice(0, TOAST_ERROR_MAX))
 }
 
-// CP-148: the model of the session that took a job it could not prepare hears what failed, so it can repair a local cause at once (a person away reads no toast). Told once per job and error (PLAN-116 R-13):
+// The model of the session that took a job it could not prepare hears what failed, so it can repair a local cause at once (a person away reads no toast). Told once per job and error:
 // the mark is written before the telling, so a repeat of the identical failure at the next offer adds no model turn. Detached: the prompt may wait behind a running turn, and the next offer must not wait for it.
 async function tellHandedBack($: any, itemId: number, answer: unknown, error: string): Promise<void> {
   let first = false
