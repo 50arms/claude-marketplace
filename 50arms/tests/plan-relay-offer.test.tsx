@@ -1,7 +1,8 @@
 import "./run-tests-with-npm-test.generated"
 // CP-145 (DX-7748 DEC-1297, DEC-1340): a queued job offered to a ready session is taken by the plugin, not the model. The relay record carries `offer: {item_id, assignment_id}`;
 // the plugin takes the job with the assignment id, runs the repo's `worktree_command` (tokens filled) from the session's checkout, and only then tells the model one prompt with the
-// take's whole answer and the worktree's path. A failed command leaves the job (DELETE .../take with {error}), so it goes back to the queue, and the model is told nothing.
+// take's whole answer and the worktree's path. A failed command leaves the job (DELETE .../take with {error}), so it goes back to the queue, and the model is told what failed (CP-148),
+// once per job and error: it no longer holds the job, so it repairs a local cause and never works the job.
 import { describe, expect } from 'claude-code/testing'
 
 import { NOT_HOLDER, RELOADED_WHILE_PREPARING, type Offer } from '../hooks/ready/offer'
@@ -76,7 +77,7 @@ for (const surface of SURFACES) {
       expect(calls(d, 'DELETE')).toEqual([])
     })
 
-    test('a take answer whose worktree names no commit is left, and nothing runs or is told', async ($, on) => {
+    test('a take answer whose worktree names no commit is left, and the model is told why no command ran', async ($, on) => {
       const d = dashboard(on)
       d.world.takeReplies[ITEM] = { body: { ...ANSWER, worktree: { branch: 'landing-fix' } } }
       await startSession($, d, surface)
@@ -84,10 +85,12 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(makeRuns(d)).toEqual([])
       expect(calls(d, 'DELETE')).toHaveLength(1)
-      expect(told(d)).toEqual([])
+      expect(told(d)).toHaveLength(1)
+      expect(told(d)[0]).toContain('the take answered a worktree with no branch or commit')
+      expect(told(d)[0]).toContain(`queued job ${ITEM}`)
     })
 
-    test('a worktree command that cannot run (the engine rejects it) leaves the job with that error', async ($, on) => {
+    test('a worktree command that cannot run (the engine rejects it) leaves the job with that error, and the model is told it', async ($, on) => {
       const d = dashboard(on)
       d.world.takeReplies[ITEM] = { body: ANSWER }
       d.world.processes['make'] = { stdout: '', throws: 'spawn make ENOENT' }
@@ -97,7 +100,8 @@ for (const surface of SURFACES) {
       const left = calls(d, 'DELETE')
       expect(left).toHaveLength(1)
       expect(left[0].body.error).toContain('spawn make ENOENT')
-      expect(told(d)).toEqual([])
+      expect(told(d)).toHaveLength(1)
+      expect(told(d)[0]).toContain('spawn make ENOENT')
     })
 
     test('a job prompt the session refuses leaves the job', async ($, on) => {
@@ -121,10 +125,11 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
       await d.clock.settle()
       expect(d.toasts.some((t: string) => t.includes('leave boom'))).toBe(true)
+      // the session still holds the job: it was not handed back, so the model is not told it was
       expect(told(d)).toEqual([])
     })
 
-    test('a failed worktree command leaves the job with its error and tells the model nothing', async ($, on) => {
+    test('a failed worktree command leaves the job with its error and tells the model the job, the command, its exit and output, and that the job is no longer its', async ($, on) => {
       const d = dashboard(on)
       d.world.takeReplies[ITEM] = { body: ANSWER }
       d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'fatal: origin has no commit abc123' }
@@ -134,10 +139,71 @@ for (const surface of SURFACES) {
       const left = calls(d, 'DELETE')
       expect(left).toHaveLength(1)
       expect(left[0].body.error).toContain('fatal: origin has no commit abc123')
-      expect(told(d)).toEqual([])
+      expect(told(d)).toHaveLength(1)
+      const note = told(d)[0]
+      expect(note).toContain(`queued job ${ITEM} (branch landing-fix at abc123; cards DX-1)`)
+      expect(note).toContain('`make add-worktree BRANCH=landing-fix AT=abc123`')
+      expect(note).toContain('exited 2')
+      expect(note).toContain('fatal: origin has no commit abc123')
+      expect(note).toContain('handed the job back')
+      expect(note).toContain('no longer holds it: do not work it and never call its take route')
+      expect(note).toContain('repair it now')
+      // the take's answer is not repeated: the job is not the model's
+      expect(note).not.toContain('Fix every listed failure together.')
     })
 
-    test('a command whose last line is no absolute path is a failed command: the job is left', async ($, on) => {
+    test('the model hears the same failure of the same job once: the next offers of it are handed back again and tell nothing', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: ANSWER }
+      d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      d.relay.push({ cursor: 'c2', text: OFFER_TEXT, offer: { item_id: ITEM, assignment_id: 8 } })
+      await d.clock.settle()
+      d.relay.push({ cursor: 'c3', text: OFFER_TEXT, offer: { item_id: ITEM, assignment_id: 9 } })
+      await d.clock.settle()
+      expect(calls(d, 'DELETE')).toHaveLength(3)
+      expect(told(d)).toHaveLength(1)
+    })
+
+    test('a different failure of the same job, and the same failure of another job, are each told', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: ANSWER }
+      d.world.takeReplies[ITEM + 1] = { body: { ...ANSWER, item_id: ITEM + 1 } }
+      d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'no space left on device' }
+      d.relay.push({ cursor: 'c2', text: OFFER_TEXT, offer: { item_id: ITEM, assignment_id: 8 } })
+      await d.clock.settle()
+      d.relay.push({ cursor: 'c3', text: OFFER_TEXT, offer: { item_id: ITEM + 1, assignment_id: 9 } })
+      await d.clock.settle()
+      expect(told(d)).toHaveLength(3)
+      expect(told(d)[1]).toContain('no space left on device')
+      expect(told(d)[2]).toContain(`queued job ${ITEM + 1}`)
+    })
+
+    test('a job the model was told that then fails again with the same error is told again', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: ANSWER }
+      d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+      d.relay.push({ cursor: 'c2', text: OFFER_TEXT, offer: { item_id: ITEM, assignment_id: 8 } })
+      await d.clock.settle()
+      d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
+      d.relay.push({ cursor: 'c3', text: OFFER_TEXT, offer: { item_id: ITEM, assignment_id: 9 } })
+      await d.clock.settle()
+      expect(told(d)).toHaveLength(3)
+      expect(told(d)[1]).toContain(WORKTREE_PATH)
+      expect(told(d)[2]).toContain('shared install damaged')
+    })
+
+    test('a command whose last line is no absolute path is a failed command: the job is left and the model is told', async ($, on) => {
       const d = dashboard(on)
       d.world.takeReplies[ITEM] = { body: ANSWER }
       d.world.processes['make'] = { stdout: 'worktree ready at: somewhere\n' }
@@ -145,10 +211,11 @@ for (const surface of SURFACES) {
       d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
       await d.clock.settle()
       expect(calls(d, 'DELETE')).toHaveLength(1)
-      expect(told(d)).toEqual([])
+      expect(told(d)).toHaveLength(1)
+      expect(told(d)[0]).toContain('printed no worktree path as its last line')
     })
 
-    test('a refused take holds nothing: no command runs, nothing is left, the model is told nothing', async ($, on) => {
+    test('a refused take holds nothing: no command runs, nothing is left, the model is told nothing (the person has the toast)', async ($, on) => {
       const d = dashboard(on)
       // no scripted reply: the take answers 403 dispatch_queue_take_not_offered
       await startSession($, d, surface)
