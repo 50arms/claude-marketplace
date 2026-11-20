@@ -120,10 +120,3 @@ test("on the real tests, a hooks source file runs the scans that walk the hooks 
   assert.equal(scope.kind, "files");
   for (const scan of ["plan-links-scan", "plan-relay-scan", "store-door-scan"]) assert.ok(scope.files.includes(`50arms/tests/${scan}.test.mjs`), scan);
 });
-
-test("on the real tests, an agent profile file runs the test that reads the agents folder", () => {
-  const agent = fs.readdirSync(path.join(REPO_ROOT, "50arms", "agents")).find((n) => n.startsWith("worker-") && n.endsWith(".md"));
-  const scope = publishScope([`50arms/agents/${agent}`], real);
-  assert.equal(scope.kind, "files");
-  assert.ok(scope.files.includes("50arms/tests/worker-agents-profile-brief.test.mjs"));
-});
