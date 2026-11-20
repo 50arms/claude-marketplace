@@ -36,10 +36,16 @@ The dispatched worker's own mechanics (how it ends, halts and merges) are in the
    step, the card is already yours.
 3. Its PRE gates have passed ("Gates" below); build to the rules under
    "Building" below.
-4. Tick every AC/checklist item, pass the tests your change affects, browser-test user-facing
-   changes. Run no test while you write: on your final commit run the repo's affected-test command once (with none, the touched files' own tests and their direct dependents; a prose edit needs only the repo's text checks), then only the files that failed until green; never a whole suite, never module by module. A bug fix's test runs only there too: never first to see it fail, no pasted failure, no revert proof.
+4. Tick every AC/checklist item, write the tests your change needs, browser-test user-facing
+   changes. Run no test while you write, and none before the code reviews: push the code-complete commit, its tests written
+   but not run, and let its POST gates judge it (step 5).
    Never run a type check, lint or build by hand, in any form (a make target, a bare compiler or linter, the script behind a target), as a builder, lander or reviewer or in a brief: the landing check runs them once per batch, and only the fixer of a red batch re-runs the checks that failed. A command's refusal to run one is the answer, never something to route around. A repo with no land command checks as "Delivery" says.
-5. Pass its POST gates ("Gates" below).
+5. Pass its POST gates ("Gates" below): a `fail` is fixed and pushed, again running no test, and the gate runs again.
+   Once every POST gate has passed (a card under 3 points carries none: once its code is done), run the repo's
+   affected-test command once on the final commit (with none, the touched files' own tests and their direct
+   dependents; a prose edit needs only the repo's text checks), then only the files that failed until green, and push
+   those fixes; a test fix made after the reviews needs no new review. Never a whole suite, never module by module. A
+   bug fix's test runs only there too: never first to see it fail, no pasted failure, no revert proof.
 6. End: a dispatched worker follows the end order its dispatch instructions give. An
    operator-session builder stops at its pushed card branch: it reports the tip SHA and ends,
    and never lands the branch, transitions `complete` or writes the retro. Landing is the
@@ -61,9 +67,11 @@ carries, and each board keeps its own text for what a gate does.
 The operator session runs each gate not yet `pass` (all but `plan-design`, below) through its own gate worker, at the gate's review
 grade, which the board sets: the gate instruction route answers it with its model and effort when the worker starts, and the worker is the matching `50arms:worker-<model>-<effort>`. PRE gates run
 before the builder starts; POST gates run on its pushed tip. The builder only builds, at its card's build
-grade, and a gate never changes that grade. A builder pushes its card branch, reports the tip SHA and stops.
+grade, and a gate never changes that grade. A builder pushes its code-complete commit, its tests written but not
+run, reports the tip SHA and stops; a reviewer never runs tests and never checks whether they ran.
 Gate workers are briefed by profile and card (plan-workflow "Sub-agents"); the operator session sends the
-builder only the blocking findings to fix, and has the branch landed once every gate passes ("Delivery" below). Whoever runs a gate:
+builder only the blocking findings to fix, and once every gate passes sends it back to run the affected tests, make
+them green and push (Flow step 5), then has the branch landed ("Delivery" below). Whoever runs a gate:
 
 1. Fetch the board's gate text through `50arms_api`:
    `GET /api/quality-gates/<gate>/instruction?board=<the board the card lives on, by its ref number>`.
