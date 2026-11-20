@@ -4263,12 +4263,12 @@ async function movesOffReportedPlan($: any, planId: number): Promise<boolean> {
 
 async function report($: any, what: string, method: string, path: string, body: object, quietWhenNoRow = false): Promise<void> {
   const r = await api($, method, path, { body })
-  // CP-149: a signed-in session on no plan and no card may hold no `plan_sessions` row (404): that is no failure, it has nothing to report on
+  // a signed-in session on no plan and no card may hold no `plan_sessions` row (404): that is no failure, it has nothing to report on
   if (!r.ok && !(quietWhenNoRow && r.status === 404)) $.ui.toast(`50 Arms ${what} report failed: ${errText(r).slice(0, TOAST_ERROR_MAX)}`)
 }
 
 // the session's activity (idle, in a turn, compacting) and when it began, for the dashboard's Comments drawer. A session on a plan or holding a
-// stand-alone card has a row to report it on; so may a signed-in session holding only a queued job (CP-149: its job nudge and stall alarm read these), and one with no
+// stand-alone card has a row to report it on; so may a signed-in session holding only a queued job (its job nudge and stall alarm read these), and one with no
 // row is answered 404, which is quiet. A session not signed in sends nothing. Detached like the other reports; a send the dashboard does not take is one toast (`report`), never swallowed.
 async function reportTurnActivity($: any, activity: TurnActivity): Promise<void> {
   const v = await read($, view)
