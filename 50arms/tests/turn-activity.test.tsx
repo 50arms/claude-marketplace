@@ -187,6 +187,12 @@ for (const surface of SURFACES) {
 
     test('a signed-in session holding neither a plan nor a card (a queued job only) sends in_turn and idle for its turn (CP-149)', async ($, on) => {
       const d = await started($, on, () => COMPACTED, false)
+      // a ready session on nothing: its first turn has no row to report on
+      await $.turn.start(START)
+      await $.turn.complete(TURN)
+      await d.clock.settle()
+      expect(sent(d)).toEqual([])
+      // the job is taken after the session connected: its next turn is reported from the live read, not from anything seen at connect
       d.world.holdsQueuedJob = true
       await $.turn.start(START)
       await d.clock.settle()
