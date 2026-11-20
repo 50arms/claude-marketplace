@@ -66,8 +66,9 @@ records; card (on the board it changes) = actionable work; decision record on th
 consequential choice; card description = the background of the ask, never a
 decision or a solution detail (the card page lists the card's decisions under it); AC item = a
 step finishing an existing card; agent note on the card
-(`POST /api/issues/:id/notes`) = your working log: progress, evidence, status, local state,
-handoffs, blockers; card comment = talking with a person (a reply to what they wrote or
+(`POST /api/issues/:id/notes`) = your working log: progress, status, local state,
+handoffs, blockers, citing `EV-<n>` refs; Evidence record on the card (`POST /api/issues/:id/evidence-records`) =
+evidence (a measurement, a reproduced cause, a proof), never only a note; card comment = talking with a person (a reply to what they wrote or
 asked); problem on the card it concerns = user question (while designs are on, a question about how something looks or behaves on screen is a design, never a text problem: mantra item 3); steps a person must perform (a
 live check, a manual task) = an `action` problem whose solution steps are the procedure,
 each with a short title and a description saying where (exact link), what to do and what to

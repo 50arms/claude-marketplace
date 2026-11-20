@@ -153,7 +153,8 @@ first, then end `failed`.
   `comments: {"expanded": true}` in a card's `fields` (`?expanded=true` on
   `GET /api/plans/:planId/comments`); `q: "<words>"` in the same place searches them.
 - **Agent notes** — your working log on the card, `POST /api/issues/:id/notes` `{text}`:
-  progress, evidence, gate results, handoffs, blockers; trace, audit and
+  progress, gate results, handoffs, blockers, citing `EV-<n>` refs (evidence, such as a measurement, a
+  reproduced cause or a proof, is an Evidence record on the card, `POST /api/issues/:id/evidence-records`); trace, audit and
   context for the next agent. Append-only; read them as `agent_notes` on a card read.
 - **Decisions** — a decision record holds one consequential choice (a business rule, an
   architecture choice, a design) on its card; a plan's architecture goes in its architecture
