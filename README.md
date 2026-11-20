@@ -39,7 +39,7 @@ This is the session's one dashboard server: a connected repo declares no dashboa
 
 ## Tests
 
-`npm test` runs the whole suite inside a Linux Docker container (it needs Docker): the node suites, then the plugin's function-hook tests (`claude plugin test 50arms`). `npm test -- 50arms/tests/mantra.test.mjs 50arms/tests/plan-band.test.tsx` runs named files. A test file run any other way refuses and names this command. `scripts/publish.sh` runs the same command before it bumps.
+`npm test` runs the whole suite inside a Linux Docker container (it needs Docker): the node suites, then the plugin's function-hook tests (`claude plugin test 50arms`). `npm test -- 50arms/tests/capture-screenshot.test.mjs 50arms/tests/plan-band.test.tsx` runs named files. A test file run any other way refuses and names this command. `scripts/publish.sh` runs the same command before it bumps.
 
 ## Editing a plugin — MANDATORY version bump
 

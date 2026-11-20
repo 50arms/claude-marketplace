@@ -4,7 +4,7 @@
  * (50arms/tests/designated-test-container.mjs).
  *
  *   npm test                                       the whole suite: the node suites, then `claude plugin test 50arms`
- *   npm test -- 50arms/tests/mantra.test.mjs      named files: .mjs files run under `node --test`, .tsx files under `claude plugin test`
+ *   npm test -- 50arms/tests/capture-screenshot.test.mjs      named files: .mjs files run under `node --test`, .tsx files under `claude plugin test`
  *
  * HOW THE SOURCE GETS IN. Nothing from this machine is mounted. The image holds the installed dependencies and the claude CLI; the
  * source is streamed in on stdin as a tar archive of a single `docker run --rm -i`, whose bootstrap unpacks it (CP-2). The copy is exactly the files git sees here
