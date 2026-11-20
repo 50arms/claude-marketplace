@@ -404,7 +404,7 @@ test("CP-16: a narrow change runs only the test files that name it", () => {
     const r = publish(dir);
     assert.equal(r.status, 0, r.out);
     assert.equal(r.npmCalls.length, 1);
-    assert.match(r.npmCalls[0], /^test --silent -- .*50arms\/tests\/issue-workflow-gates\.test\.mjs/);
+    assert.match(r.npmCalls[0], /^test --silent -- .*scripts\/tests\/publish\.test\.mjs/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
