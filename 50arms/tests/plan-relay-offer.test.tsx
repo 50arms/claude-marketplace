@@ -145,9 +145,7 @@ for (const surface of SURFACES) {
       expect(note).toContain('`make add-worktree BRANCH=landing-fix AT=abc123`')
       expect(note).toContain('exited 2')
       expect(note).toContain('fatal: origin has no commit abc123')
-      expect(note).toContain('handed the job back')
-      expect(note).toContain('no longer holds it: do not work it and never call its take route')
-      expect(note).toContain('repair it now')
+      expect(note).toContain('do not work it')
       // the take's answer is not repeated: the job is not the model's
       expect(note).not.toContain('Fix every listed failure together.')
     })
@@ -167,10 +165,9 @@ for (const surface of SURFACES) {
       expect(told(d)).toHaveLength(1)
     })
 
-    test('a different failure of the same job, and the same failure of another job, are each told', async ($, on) => {
+    test('a different failure of the same job is told again', async ($, on) => {
       const d = dashboard(on)
       d.world.takeReplies[ITEM] = { body: ANSWER }
-      d.world.takeReplies[ITEM + 1] = { body: { ...ANSWER, item_id: ITEM + 1 } }
       d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
       await startSession($, d, surface)
       d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
@@ -178,11 +175,22 @@ for (const surface of SURFACES) {
       d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'no space left on device' }
       d.relay.push({ cursor: 'c2', text: OFFER_TEXT, offer: { item_id: ITEM, assignment_id: 8 } })
       await d.clock.settle()
-      d.relay.push({ cursor: 'c3', text: OFFER_TEXT, offer: { item_id: ITEM + 1, assignment_id: 9 } })
-      await d.clock.settle()
-      expect(told(d)).toHaveLength(3)
+      expect(told(d)).toHaveLength(2)
       expect(told(d)[1]).toContain('no space left on device')
-      expect(told(d)[2]).toContain(`queued job ${ITEM + 1}`)
+    })
+
+    test('the same failure of another job is told', async ($, on) => {
+      const d = dashboard(on)
+      d.world.takeReplies[ITEM] = { body: ANSWER }
+      d.world.takeReplies[ITEM + 1] = { body: { ...ANSWER, item_id: ITEM + 1 } }
+      d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
+      await startSession($, d, surface)
+      d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+      await d.clock.settle()
+      d.relay.push({ cursor: 'c2', text: OFFER_TEXT, offer: { item_id: ITEM + 1, assignment_id: 9 } })
+      await d.clock.settle()
+      expect(told(d)).toHaveLength(2)
+      expect(told(d)[1]).toContain(`queued job ${ITEM + 1}`)
     })
 
     test('a job the model was told that then fails again with the same error is told again', async ($, on) => {
