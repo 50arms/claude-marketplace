@@ -68,6 +68,11 @@ describe('reading a folder repo, a session row and a clear file', () => {
     }
     expect(readyWorkTaken({ kind: 'behavior_policy', id: 'BP-3' })).toContain('behavior policy BP-3')
     expect(readyWorkTaken({ kind: 'behavior_policy_group', id: 'BPG-2' })).toContain('behavior policy group BPG-2')
+    const landJob = { kind: 'docs_land', accept_id: 41 } as const
+    expect(serverLoopOf({ ready_loop: { repo: REPO, job: landJob, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: landJob, ended: false, releaseId: null })
+    expect(() => serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'docs_land', accept_id: '41' }, ended: false, release_id: null } }, ME)).toThrow('bad_response')
+    expect(markAnswerOf({ ready: null, ready_loop: { repo: REPO, job: landJob, ended: false, release_id: null } })).toEqual({ kind: 'joined', job: landJob })
+    expect(readyWorkTaken(landJob)).toContain('docs land job 41')
     expect(() => serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'lock', id: 9 }, ended: false, release_id: null } }, ME)).toThrow('bad_response')
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'plan', id: 23 }, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: { kind: 'plan', id: 23 }, ended: false, releaseId: null })
     for (const body of [

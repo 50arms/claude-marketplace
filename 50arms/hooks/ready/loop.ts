@@ -44,7 +44,7 @@ export const readyAgentRefusalNote = (refusal: { instruction: string; cap?: unkn
   return `Ready list: ${refusal.instruction}${cap}`
 }
 export const READY_NO_AGENT_AGAIN = `No team agent is free for this session. Run /${READY_TYPED} when one is.`
-const jobName = (job: ReadyJob): string => (job.kind === 'card' ? job.id : job.kind === 'plan' ? `plan ${job.id}` : job.kind === 'job' ? `queue job ${job.queue_item_id}` : job.kind === 'behavior_policy' ? `behavior policy ${job.id}` : `behavior policy group ${job.id}`)
+const jobName = (job: ReadyJob): string => (job.kind === 'card' ? job.id : job.kind === 'plan' ? `plan ${job.id}` : job.kind === 'job' ? `queue job ${job.queue_item_id}` : job.kind === 'behavior_policy' ? `behavior policy ${job.id}` : job.kind === 'docs_land' ? `docs land job ${job.accept_id}` : `behavior policy group ${job.id}`)
 export const readyWorkTaken = (job: ReadyJob) =>
   `This session no longer holds ${jobName(job)}, and that work has not finished, so it left the ready list and kept its conversation. Run /${READY_TYPED} to rejoin.`
 export const readyJoinedOnWork = (repo: string, job: ReadyJob) => `This session is in the ready loop for ${repo}: once ${jobName(job)} has ended, it clears and joins the list.`
@@ -141,7 +141,8 @@ export function serverLoopOf(body: any, route: string): ServerLoop | null {
   if (job?.kind === 'plan' && typeof job.id === 'number') return { repo: loop.repo, job: { kind: 'plan', id: job.id }, ended: loop.ended, releaseId }
   if (job?.kind === 'job' && typeof job.queue_item_id === 'number') return { repo: loop.repo, job: { kind: 'job', queue_item_id: job.queue_item_id }, ended: loop.ended, releaseId }
   if ((job?.kind === 'behavior_policy' || job?.kind === 'behavior_policy_group') && typeof job.id === 'string' && job.id !== '') return { repo: loop.repo, job: { kind: job.kind, id: job.id }, ended: loop.ended, releaseId }
-  throw bad('whose job is not a card, a plan, a queue job, a behavior policy or a behavior policy group')
+  if (job?.kind === 'docs_land' && Number.isInteger(job.accept_id)) return { repo: loop.repo, job: { kind: 'docs_land', accept_id: job.accept_id }, ended: loop.ended, releaseId }
+  throw bad('whose job is not a card, a plan, a queue job, a docs land job, a behavior policy or a behavior policy group')
 }
 
 // What `PUT /api/plan-sessions/me/ready` did: marked the session ready (`ready: true`), or, for a session that holds a plan or a card, joined the ready loop with that work as its job and
