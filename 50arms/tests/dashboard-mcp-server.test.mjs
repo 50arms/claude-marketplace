@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DASHBOARD_MCP_PACKAGE_NAME, NPM_CLI_ENV, appendRefreshLog, drainRefreshLog, refreshLogFile, STALE_INSTALL_MS, installedBin, leaseVersion, recordedVersionOrNull, writeRecordedVersion } from "../scripts/lib/dashboard-mcp-package.mjs";
-import { REFRESH_FLAG, START_WAIT_ENV, START_WAIT_MS, dashboardChoice, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
+import { PLUGIN_VERSION_ENV, REFRESH_FLAG, START_WAIT_ENV, START_WAIT_MS, dashboardChoice, dashboardUrl, launch, runRefresh, runRefreshProcess } from "../scripts/dashboard-mcp-server.mjs";
 import { REGISTRY_BASE_URL_ENV, startFakeRegistry } from "./fixtures/fake-registry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -251,6 +251,15 @@ describe("launch: the version the server starts from (DX-4235)", () => {
     const h = harness();
     await launch(h.options);
     assert.deepEqual(h.timeline, [`npm install ${DASHBOARD_MCP_PACKAGE_NAME}@${A}`, `refresh ${A}`, "registry request", `server ${A}`]);
+  });
+
+  test("the server process is started with the installed plugin's plugin.json version (CP-150)", async () => {
+    recordAt(A);
+    const h = harness();
+    await launch(h.options);
+    const server = h.spawns.find((s) => s.args[0].includes(A) && s.args[1] !== REFRESH_FLAG);
+    const manifest = JSON.parse(readFileSync(path.join(here, "..", ".claude-plugin", "plugin.json"), "utf8"));
+    assert.equal(server.options.env[PLUGIN_VERSION_ENV], manifest.version);
   });
 
   test("with no record it resolves from the registry first, installs and records that version, then starts the server", async () => {

@@ -58,6 +58,17 @@ const PREFIX = "[50 Arms dashboard MCP]";
 export const REFRESH_FLAG = "--run-refresh";
 const SELF = fileURLToPath(import.meta.url);
 
+/** The env var that carries the installed plugin's `plugin.json` version to the platform MCP process, which reports it on every dashboard call (CP-150, DX-7956). */
+export const PLUGIN_VERSION_ENV = "DANXBOT_PLUGIN_VERSION";
+const PLUGIN_MANIFEST = path.resolve(path.dirname(SELF), "..", ".claude-plugin", "plugin.json");
+
+/** The installed plugin's version, read from the `plugin.json` this launcher ships in. A manifest without one fails loudly. */
+export function pluginVersion(manifestPath = PLUGIN_MANIFEST) {
+  const { version } = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (!/^\d+\.\d+\.\d+/.test(version ?? "")) throw new Error(`${manifestPath} has no valid version: ${JSON.stringify(version ?? null)}`);
+  return version;
+}
+
 /**
  * how long a start waits for the refresh (the registry check and the install of a newer version) before it starts the recorded
  * one. Under Claude Code's 30 s MCP start limit; a first install after a publish took ~18 s on this machine with three sessions installing
@@ -245,7 +256,7 @@ export async function launch({ env = process.env, spawnFn = spawn, fetchFn = fet
   // the refresh installs the newer version before it records it, so a recorded version other than the one started is installed
   const latest = refreshed ? recordedVersionOrNull(env) : null;
   const { version, bin } = latest !== null && latest !== started.version ? { version: latest, bin: installedBin(dataDirOf(env), latest) } : started;
-  const serverEnv = { ...env, DANXBOT_DASHBOARD_URL: url };
+  const serverEnv = { ...env, DANXBOT_DASHBOARD_URL: url, [PLUGIN_VERSION_ENV]: pluginVersion() };
   // A dispatch's credential declaration (it often names the LOCAL dev dashboard) must never reach the hosted one.
   delete serverEnv.DANX_DASHBOARD_CREDENTIAL;
   const release = leaseVersion(version, { env });
