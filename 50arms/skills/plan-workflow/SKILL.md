@@ -127,7 +127,7 @@ nuance, a question 50 Arms already answers, or your own mistake.
 
 ## Scope
 
-Before adding a card to the plan, name the `G-n` it advances — can't → not this plan. A bug
+Before adding a card to the plan, name the `GOAL-n` it advances — can't → not this plan. A bug
 found while working goes to the plan whose goal it serves, or none. Enabling work joins only while it
 blocks a goal today. Drift audit at start, after each card lands and in every status report:
 idle goal cards while side work got effort → stop the side work; a goalless cluster → split
