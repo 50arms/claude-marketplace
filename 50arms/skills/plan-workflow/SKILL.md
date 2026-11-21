@@ -200,8 +200,9 @@ From the dashboard:
   problems are the person's alone: no provenance and no permission lets you answer one.
   Only one that states no outcome (it asks, thinks aloud or says it is unsure) decides nothing, however concrete its idea:
   answer what it asks in full (the exact calculation, a worked example) and leave the problem
-  open. An option you write from it names every point you added and is never marked
-  recommended until they confirm it.
+  open. An option you write from it names every point you added. Mark it recommended when it is
+  your own pick on the evidence; leave it unmarked only when it just restates an idea the person
+  floated and you hold no view of your own.
 - `opened a problem` → needs a human. Batches can arrive 10 min late — read the card; `…` →
   read it for the full text. A card's design problem (the one listing its designs to choose
   from) is the person's alone: nothing to do but tell them it waits in Needs You.
