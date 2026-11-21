@@ -54,6 +54,17 @@ describe('reading a folder repo, a session row and a clear file', () => {
     for (const row of [{ plan_id: null, card_id: null, queue_item_id: '70' }, null, undefined, {}, { plan_id: null }, { plan_id: '23', card_id: null }, { plan_id: null, card_id: 7 }]) expect(() => holdsWork(row)).toThrow('bad_response')
   })
 
+  test('a row with no plan, card or queue job holds a behavior policy or group job while the loop says it has not ended (DX-7658)', () => {
+    const row = { plan_id: null, card_id: null, queue_item_id: null }
+    for (const [kind, id] of [['behavior_policy', 'BP-3'], ['behavior_policy_group', 'BPG-2']] as const) {
+      const body = (ended: boolean) => ({ session: row, ready_loop: { repo: 'a/b', job: { kind, id }, ended, release_id: null } })
+      expect(holdsWork(row, serverLoopOf(body(false), 'GET /api/plan-sessions/me'))).toBe(true)
+      expect(holdsWork(row, serverLoopOf(body(true), 'GET /api/plan-sessions/me'))).toBe(false)
+    }
+    expect(holdsWork(row, serverLoopOf({ ready_loop: { repo: 'a/b', job: null, ended: false, release_id: null } }, 'GET /api/plan-sessions/me'))).toBe(false)
+    expect(holdsWork(row, null)).toBe(false)
+  })
+
   test("the server's ready loop reads as it answers it: no loop, a loop between jobs, or a job with the server's verdict; anything else is a failure, never no loop", () => {
     expect(serverLoopOf({ ready_loop: null }, ME)).toBe(null)
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: null, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: null, ended: false, releaseId: null })
@@ -1276,6 +1287,35 @@ describe('the ready-agent loop', () => {
       expect(readyDeletes(d)).toBe(0)
       expect(d.toasts.filter((t: string) => t.includes('no longer holds'))).toEqual([])
     })
+  })
+
+  // DX-7658: the server hands a policy comment to a ready session, and the row keeps plan_id, card_id and queue_item_id null while the loop's job is the policy
+  describe('a behavior policy or group job (the row holds no plan, card or queue job)', () => {
+    for (const [kind, id] of [['behavior_policy', 'BP-3'], ['behavior_policy_group', 'BPG-2']] as const) {
+      const job = { kind, id }
+      test(`${kind}: an open job is held, so the tick neither leaves nor marks; once it ends the session clears and rejoins like a finished card`, async ($, on) => {
+        const d = await started($, on)
+        await ready($, d)
+        d.world.readyMark = null
+        d.world.readyLoop = { repo: REPO, job, ended: false }
+        d.world.readyMarks.length = 0
+        await tick(d)
+        await tick(d)
+        await turnEnds($, d)
+        expect(readyDeletes(d)).toBe(0)
+        expect(d.world.readyCleared).toBe(0)
+        expect(d.toasts.filter((t: string) => t.includes('no longer holds'))).toEqual([])
+        expect(d.world.readyMarks).toEqual([])
+        expect(d.world.readyLoop).toEqual({ repo: REPO, job, ended: false })
+        // ended and released: the same clear and rejoin a finished card gets, and the mark is the loop's
+        released(d)
+        await tick(d)
+        expect(readyDeletes(d)).toBe(0)
+        expect(d.clearRuns.length).toBe(1)
+        expect(d.world.readyMark).toBe(REPO)
+        expect(d.toasts).toContain(readyRejoined(REPO))
+      })
+    }
   })
 
   describe('a session that already holds work when /50arms:ready runs joins the loop with that work as its job (the dashboard keeps no loop for it until then)', () => {

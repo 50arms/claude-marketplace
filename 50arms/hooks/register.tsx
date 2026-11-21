@@ -2514,7 +2514,7 @@ async function syncReadyOnce($: any, token: LookToken, again = true): Promise<vo
   let ownId: string
   let clear: ClearState
   try {
-    holds = holdsWork(session)
+    holds = holdsWork(session, server)
     ownId = sessionIdOf(session)
   } catch (err: any) {
     await tellReadyOnce($, readyFailed('reading this session', errMessage(err)))
