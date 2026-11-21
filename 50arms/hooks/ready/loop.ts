@@ -111,7 +111,7 @@ export function sessionIdOf(session: any): string {
 }
 
 // Whether the row holds a plan, a card or a queue job with neither (`queue_item_id`). A server that does not yet serve `queue_item_id` leaves it out: that reads as no job. A row it cannot read is a failure, never "no work".
-// A behavior policy or policy group job (DX-7658) is held by the loop alone: the row's plan_id, card_id and queue_item_id stay null while it is open, so `server` (the row's `ready_loop`) settles it.
+// A behavior policy or policy group job is held by the loop alone: the row's plan_id, card_id and queue_item_id stay null while it is open, so `server` (the row's `ready_loop`) settles it.
 export function holdsWork(session: any, server: ServerLoop | null = null): boolean {
   const policyJob = server?.job?.kind === 'behavior_policy' || server?.job?.kind === 'behavior_policy_group'
   const job = session?.queue_item_id
