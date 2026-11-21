@@ -59,6 +59,15 @@ describe('reading a folder repo, a session row and a clear file', () => {
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: null, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: null, ended: false, releaseId: null })
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: true, release_id: 'r1' } }, ME)).toEqual({ repo: REPO, job: { kind: 'card', id: 'DX-1' }, ended: true, releaseId: 'r1' })
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'job', queue_item_id: 70 }, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: { kind: 'job', queue_item_id: 70 }, ended: false, releaseId: null })
+    for (const [kind, id] of [['behavior_policy', 'BP-3'], ['behavior_policy_group', 'BPG-2']] as const) {
+      expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind, id }, ended: true, release_id: 'r2' } }, ME)).toEqual({ repo: REPO, job: { kind, id }, ended: true, releaseId: 'r2' })
+      expect(() => serverLoopOf({ ready_loop: { repo: REPO, job: { kind, id: 7 }, ended: false, release_id: null } }, ME)).toThrow('bad_response')
+      expect(markAnswerOf({ ready: null, ready_loop: { repo: REPO, job: { kind, id }, ended: false, release_id: null } })).toEqual({ kind: 'joined', job: { kind, id } })
+      expect(readyJoinedOnWork(REPO, { kind, id })).toContain(id)
+      expect(readyWorkTaken({ kind, id })).toContain(id)
+    }
+    expect(readyWorkTaken({ kind: 'behavior_policy', id: 'BP-3' })).toContain('behavior policy BP-3')
+    expect(readyWorkTaken({ kind: 'behavior_policy_group', id: 'BPG-2' })).toContain('behavior policy group BPG-2')
     expect(() => serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'lock', id: 9 }, ended: false, release_id: null } }, ME)).toThrow('bad_response')
     expect(serverLoopOf({ ready_loop: { repo: REPO, job: { kind: 'plan', id: 23 }, ended: false, release_id: null } }, ME)).toEqual({ repo: REPO, job: { kind: 'plan', id: 23 }, ended: false, releaseId: null })
     for (const body of [
