@@ -58,8 +58,8 @@ const PREFIX = "[50 Arms dashboard MCP]";
 export const REFRESH_FLAG = "--run-refresh";
 const SELF = fileURLToPath(import.meta.url);
 
-/** The env var that carries the installed plugin's `plugin.json` version to the platform MCP process, which reports it on every dashboard call (CP-150, DX-7956). */
-export const PLUGIN_VERSION_ENV = "DANXBOT_PLUGIN_VERSION";
+/** The env var that carries the installed plugin's `plugin.json` version to the platform MCP process, which reports it on every dashboard call. */
+export const PLUGIN_VERSION_ENV = "ARMS50_PLUGIN_VERSION";
 const PLUGIN_MANIFEST = path.resolve(path.dirname(SELF), "..", ".claude-plugin", "plugin.json");
 
 /** The installed plugin's version, read from the `plugin.json` this launcher ships in. A manifest without one fails loudly. */
