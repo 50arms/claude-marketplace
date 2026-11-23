@@ -53,7 +53,7 @@ Review is triage-only.
 
 A card carries its board's default gates for its type; `quality_gates` adds more, each with a
 `note` saying why, at creation or later. Each gate's own guidance
-(`quality_gate.<gate>.when_to_add`, listed in the reply to a card create) says when to add it;
+arrives as a reminder in the reply to a card create and says when to add it;
 add only what the card's risk needs. `plan-design` builds the card's designs with the repo's own
 mini app, and only a person choosing one passes it. A repo whose designs are off refuses the
 gate: raise that as an `action` problem for a person to turn designs on, never drop the UI work.
