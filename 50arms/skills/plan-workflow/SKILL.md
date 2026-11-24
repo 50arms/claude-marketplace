@@ -416,8 +416,7 @@ One screen or component gets ONE design on one card, showing every part that cha
 options, however many cards change it: the other cards build from that card's choice. Never a
 design per card or per element of the same screen.
 
-Partition files before fanning out. Never background a long test run and
-end the turn — wait bounded, or `rollback_pickup` and report. Run tests once, after the edits
+Partition files before fanning out. A test run always goes to the background with a timeout, so it never hangs; never wait on one. Do all other available work while it runs, check in on a long run to verify it is not stuck, and read its actual result before acting on it. Run tests once, after the edits
 land. Never brief a hand-run type check, lint or build, or a way around a command's refusal to run one: the landing
 check runs them (the issue-workflow skill's "Flow" step 4). Every brief makes the sub-agent stop each background task it started before reporting,
 or name it. Stop a dispatch once its report is consumed. A report is a lead, not a finding:
