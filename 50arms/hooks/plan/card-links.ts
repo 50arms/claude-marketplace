@@ -45,7 +45,7 @@ function* segments(text: string): Generator<{ prose: boolean; text: string }> {
   yield* flush(fence === null)
 }
 
-// CP-157, DX-8089: plan record numbers restart in every plan, so a bare `RULE-27` names no plan. In a session connected to a plan, a ref with one of
+// Plan record numbers restart in every plan, so a bare plan record ref names no plan. In a session connected to a plan, a ref with one of
 // these prefixes is drawn with that plan (`?plan=PLAN-<n>`); every other kind of ref is plan-free.
 const PLAN_RECORD_PREFIXES = new Set(['RULE', 'GOAL', 'CAV'])
 
