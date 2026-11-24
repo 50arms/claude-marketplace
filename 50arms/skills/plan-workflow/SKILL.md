@@ -192,9 +192,9 @@ From the dashboard:
   it and answer it yourself as below, never asking them to accept it. Never delete the
   problem. If they have already said the answer (in this comment, an earlier one, or in your
   session thread with them) or told you to accept it for them, answer a question or action
-  problem yourself with `provenance` on the answer route: `source` `comment` with `source_ref`
-  the person's comment id, or `session_thread` with `source_ref` the ISO time of their message
-  in your own session, and `quote` their words verbatim. The server records them as the one who
+  problem yourself with `provenance` on the answer: the person's own words quoted verbatim, and
+  where they said them (their comment, or their message in your own session); the answer
+  route's served spec (`50arms_api_spec`) gives the body. The server records them as the one who
   decided and you as who recorded it. Do not call `request_permission` for `cards.answer` for
   this, and never ask them to click it when they have already said it. Design and docs-review
   problems are the person's alone: no provenance and no permission lets you answer one.
