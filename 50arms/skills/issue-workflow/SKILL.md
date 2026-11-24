@@ -8,7 +8,7 @@ description: 'The one workflow for working a card, and every dev rule that appli
 Dashboard Postgres is the only source of card truth; `50arms_api` is the whole surface
 (routes: `50arms_api_list`; contracts: `50arms_api_spec`) — never file operations.
 Creating a card: load `references/card-creation-and-reference.md` first. The type's rules come only from
-`GET /api/card-types?fields={"when_to_use":true,"facts":true}`, and the create quotes the part it relies on as its `justification`.
+`GET /api/card-types?fields={"when_to_use":true,"facts":true}`, and the create cites the part it relies on and why the card matches it; the create route's served spec gives the body.
 
 ## Two callers
 

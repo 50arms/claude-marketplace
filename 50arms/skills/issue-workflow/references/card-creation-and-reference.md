@@ -6,8 +6,9 @@ Load before creating a card, or before choosing a card's type or build grade.
 
 Before creating a card, read its type's rules from `50arms_api` `GET /api/card-types?fields={"when_to_use":true,"facts":true}`: each type's
 `when_to_use` says when to create a card of that type and when to create none, and its `facts` say
-what it may hold. Quote the part of those rules you rely on as the create's `justification`
-(`quote`, `reasoning`), with your reasoning, on the card and on every `phase_children[]` item.
+what it may hold. The create cites the part of those rules you rely on and why the card matches
+it, on the card and on every `phase_children[]` item; read the body from the create route's
+served spec (`50arms_api_spec` for `POST /api/issues`) before you write it.
 
 **What goes where.** A card's description is the background of the ask; what it must do goes in its
 AC and decision records, which the card page lists under the description (the skill's "Mechanics",
