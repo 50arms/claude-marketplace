@@ -147,6 +147,8 @@ session unless the user asks. Their work goes to them as a card on the right pla
 (create it with `plan: null`, then `POST /api/plans/:id/cards`), readied, `depends_on` from
 your waiting card. Then wait. A new plan you write from the person's request is not yours
 either: once it is written, it goes to a session of its own, and you go back to your own plan.
+The one exception: a red landing batch that holds a landing you wait on is yours to clear at
+once, whichever plan its cards are on (the orchestrator role text's "Landing a card").
 
 ## Before a plan is ready
 
