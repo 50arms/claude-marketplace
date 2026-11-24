@@ -6,10 +6,21 @@ import { describe, expect } from 'claude-code/testing'
 import { linkRefs } from '../hooks/plan/card-links'
 import { test, DASHBOARD_URL, SURFACES, dashboard, startSession } from './plan-kit'
 
-const link = (text: string) => linkRefs(text, DASHBOARD_URL)
+const link = (text: string, planId: number | null = null) => linkRefs(text, DASHBOARD_URL, planId)
 const REF = (id: string) => `[${id}](${DASHBOARD_URL}/api/ref/${id})`
 
 describe('linkRefs', () => {
+  // CP-158 (DX-8089): plan record numbers restart in every plan, so a bare RULE-27 names no plan; the link carries the plan the session holds
+  test('in a plan session a plan record ref (RULE, GOAL, CAV) carries the plan; every other ref is unchanged', () => {
+    expect(link('RULE-27, GOAL-2, CAV-9, DX-1, DEC-5 and PLAN-3', 151)).toBe(
+      `[RULE-27](${DASHBOARD_URL}/api/ref/RULE-27?plan=PLAN-151), [GOAL-2](${DASHBOARD_URL}/api/ref/GOAL-2?plan=PLAN-151), [CAV-9](${DASHBOARD_URL}/api/ref/CAV-9?plan=PLAN-151), ${REF('DX-1')}, ${REF('DEC-5')} and ${REF('PLAN-3')}`,
+    )
+  })
+
+  test('in a session on no plan a plan record ref is drawn bare', () => {
+    expect(link('RULE-27', null)).toBe(REF('RULE-27'))
+  })
+
   test('every kind of ref links to the redirect, whatever its prefix', () => {
     expect(link('See DX-1, PBLM-3722, DEC-5, DSGN-6, PLAN-3 and FB-30.')).toBe(`See ${REF('DX-1')}, ${REF('PBLM-3722')}, ${REF('DEC-5')}, ${REF('DSGN-6')}, ${REF('PLAN-3')} and ${REF('FB-30')}.`)
   })
@@ -81,6 +92,12 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       expect(await drawnText(await $.ui.mount({ ...message('Nothing here, no ids.'), surface }))).toBe('Nothing here, no ids.')
+    })
+
+    test('a plan session links a plan record ref with the plan it holds', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      expect(await drawnText(await $.ui.mount({ ...message('RULE-27 DX-1'), surface }))).toBe(`[RULE-27](${DASHBOARD_URL}/api/ref/RULE-27?plan=PLAN-23) ${REF('DX-1')}`)
     })
 
     test('a session on no plan links too', async ($, on) => {

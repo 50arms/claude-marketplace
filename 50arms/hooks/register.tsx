@@ -4131,7 +4131,7 @@ async function drawAssistantMessage($: any, e: any, next: any) {
   // a view not loaded or with no dashboard origin: the reply is drawn as written. So is a text that is not a string (the engine's declarations type it `string`;
   // this only guards the engine one day sending a block with none, which `linkRefs` would throw on)
   if (v.phase !== 'ready' || v.dashboardUrl === null || typeof e.props.text !== 'string') return next(e)
-  const text = linkRefs(e.props.text, v.dashboardUrl)
+  const text = linkRefs(e.props.text, v.dashboardUrl, v.connected?.id ?? null)
   return next(text === e.props.text ? e : { ...e, props: { ...e.props, text } })
 }
 

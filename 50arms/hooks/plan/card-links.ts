@@ -45,9 +45,13 @@ function* segments(text: string): Generator<{ prose: boolean; text: string }> {
   yield* flush(fence === null)
 }
 
+// CP-157, DX-8089: plan record numbers restart in every plan, so a bare `RULE-27` names no plan. In a session connected to a plan, a ref with one of
+// these prefixes is drawn with that plan (`?plan=PLAN-<n>`); every other kind of ref is plan-free.
+const PLAN_RECORD_PREFIXES = new Set(['RULE', 'GOAL', 'CAV'])
+
 // Every `PREFIX-123` (1 to 4 capital letters, a dash, digits) becomes `[PREFIX-123](<dashboard>/api/ref/PREFIX-123)`, with no list of known prefixes, so a new
 // kind of ref needs no change here. Anything inside code, fences, links or URLs is left as written.
-export function linkRefs(text: string, dashboardUrl: string): string {
+export function linkRefs(text: string, dashboardUrl: string, planId: number | null): string {
   // a word char, `-`, `/` or `.` before it, or a word char after it, makes it part of something else (a path, an id with a longer prefix); a `-suffix` after the digits
   // leaves the ref linked (ABC-12-IMPORTED links ABC-12)
   const ref = String.raw`(?<![A-Za-z0-9_\-/.])(?<ref>[A-Z]{1,4}-\d+)(?![A-Za-z0-9_])`
@@ -58,7 +62,9 @@ export function linkRefs(text: string, dashboardUrl: string): string {
       ? seg.text.replace(re, (hit: string, ...rest: any[]) => {
           // the named group is the last argument; it is set only when the ref alternative matched (a protected construct is kept)
           const found: string | undefined = rest[rest.length - 1].ref
-          return found === undefined ? hit : `[${found}](${dashboardUrl}/api/ref/${found})`
+          if (found === undefined) return hit
+          const plan = planId !== null && PLAN_RECORD_PREFIXES.has(found.slice(0, found.indexOf('-'))) ? `?plan=PLAN-${planId}` : ''
+          return `[${found}](${dashboardUrl}/api/ref/${found}${plan})`
         })
       : seg.text
   }
