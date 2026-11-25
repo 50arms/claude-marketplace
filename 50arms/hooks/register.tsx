@@ -3482,7 +3482,7 @@ async function onPromptStamp($: any, e: any, next: any) {
   const pending = await takePendingStart($)
   const signedIn = await signedInWithAgent($)
   // a prompt of the main conversation: what the bundle tells at a prompt (the time stamp is its `clock_time` slot; the start texts it was owed before this hook ride with it), or the line that holds it. It comes first: what a prompt carries begins with its time
-  const bundled = signedIn ? textsOrRefusal(await tellEvent($, 'prompt.submit', null, budget, { owed: 'with' })) : []
+  const bundled = signedIn ? textsOrRefusal(await tellEvent($, 'prompt.submit', null, budget, { owed: 'with', waitMs: pending === null ? BUNDLE_WAIT_MS : CONTEXT_DEADLINE_MS })) : []
   const entries = await noticeStartEntries($, pending, 'prompt', MAIN_AGENT, budget)
   const side = isSideSessionNotice(e.text) && signedIn ? textsOf(await tellEvent($, 'side_session.turn_end', null, budget)) : []
   const finished = await finishNoticeLabel($, taskNoticeOf(e.origin, e.text))
@@ -5132,7 +5132,8 @@ async function cacheBundle($: any, bundle: Bundle): Promise<void> {
   await pruneSessionRecords($, BUNDLE_CACHE_PREFIX)
 }
 
-type FetchOutcome = { kind: 'ok' } | { kind: 'signed-out' } | { kind: 'failed'; failure: Failure }
+// `ok` carries the bundle the answer left held: a hook that waited on another hook's fetch reads no state to learn it (a read may predate that fetch)
+type FetchOutcome = { kind: 'ok'; bundle: Bundle } | { kind: 'signed-out' } | { kind: 'failed'; failure: Failure }
 
 // a failed fetch as the hold reads it (`relayDown`: whether the failed fetch was also the plugin's only check for a change)
 async function fetchFailure($: any, f: { status: number; body: unknown; serverNotConnected?: boolean; classifierRefused?: boolean; keyRevoked?: boolean }): Promise<FetchOutcome> {
@@ -5186,7 +5187,7 @@ async function runFetch($: any): Promise<FetchOutcome> {
   }
   await queueFloorIfStale($, bundle, version)
   keepPolling($)
-  return { kind: 'ok' }
+  return { kind: 'ok', bundle }
 }
 
 // a hold that ended: reported with its end when its hold line had started (one that ended inside the 2 minutes was only ever loading)
@@ -5330,11 +5331,7 @@ async function ensureBundle($: any, key: string, event: string, waitMs: number, 
   }
   budget.waited = true
   const outcome = await withinDeadline<FetchOutcome | null>($, waitMs, fetchBundle($), () => null)
-  if (outcome !== null && outcome.kind === 'ok') {
-    const held = (await read($, behavior)).held
-    if (held === null) throw new Error('the bundle fetch answered and no bundle is held')
-    return { kind: 'ready', bundle: held.bundle }
-  }
+  if (outcome !== null && outcome.kind === 'ok') return { kind: 'ready', bundle: outcome.bundle }
   if (outcome !== null && outcome.kind === 'signed-out') return { kind: 'signed-out' }
   return holdContext($, key, event, outcome === null ? timeoutFailure(relayDown) : outcome.failure)
 }

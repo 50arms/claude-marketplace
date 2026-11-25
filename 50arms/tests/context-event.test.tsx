@@ -21,6 +21,7 @@ for (const surface of SURFACES) {
     async function started($: any, on: any, options: Parameters<typeof dashboard>[1] = {}) {
       on('classic.SessionStart', () => ({}) as any)
       on('classic.SubagentStart', () => ({}) as any)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       const d = dashboard(on, options)
       await startSession($, d, surface)
       d.contextReads.length = 0

@@ -137,8 +137,9 @@ for (const surface of SURFACES) {
       const d = await started($, on)
       await finish($, 'a1')
       await d.clock.settle()
-      await d.clock.advance(2 * MIN)
+      // the fetch hangs from now on: the minute check hangs with it, so the bundle is stale after 90 s
       d.world.contextHangs = true
+      await d.clock.advance(2 * MIN)
       const pending = tool($)
       await d.clock.settle()
       await d.clock.advance(CONTEXT_DEADLINE_MS)

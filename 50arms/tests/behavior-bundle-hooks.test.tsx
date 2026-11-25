@@ -157,7 +157,8 @@ for (const surface of SURFACES) {
       test('a delivery report that fails is retried at 1, 2 and 4 minutes, then fails loudly: the context is told once, the band shows it, and one report_failed item is sent in a request of its own', async ($, on) => {
         const d = await started($, on)
         d.world.reportReplies['POST /api/plan-sessions/me/behavior-events'] = { status: 500, body: { error: 'report boom' } }
-        await firstPrompt($, 'startup')
+        // one delivery, so one report fails
+        await $.classic.SubagentStart(SUB)
         await d.clock.settle()
         const before = d.world.deliveryReports.length
         await d.clock.advance(MIN)
@@ -176,7 +177,8 @@ for (const surface of SURFACES) {
       test('a 400 is a contract mismatch: not retried, failed loudly at once', async ($, on) => {
         const d = await started($, on)
         d.world.reportReplies['POST /api/plan-sessions/me/behavior-events'] = { status: 400, body: { error: 'bad_report' } }
-        await firstPrompt($, 'startup')
+        // one delivery, so one report fails
+        await $.classic.SubagentStart(SUB)
         await d.clock.settle()
         const sends = d.world.deliveryReports.length
         await d.clock.advance(10 * MIN)
