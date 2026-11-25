@@ -169,6 +169,8 @@ export type AckRef = { eventId: number; attempt: number }
 // the acknowledgement-requiring events this module has issued and no acknowledgement has confirmed yet, as [event id, attempt] pairs oldest first, capped (ACK_IN_FLIGHT_MAX).
 export type AckInFlight = [number, number][]
 
+import type { Behavior } from '../hooks/bundle/state'
+
 declare module 'claude-code' {
   interface PluginState {
     '50arms': {
@@ -274,6 +276,8 @@ declare module 'claude-code' {
       agentBriefs: { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
       // what the plugin kept of each sub-agent at its spawn (description, background, spawned by the main loop), by agent id, the newest 200 (see hooks/context/record.ts).
       spawnedAgents: Record<string, { description: string; background: boolean; direct: boolean }>
+      // the policy bundle's state: the bundle held, what each agent context was told, the holds, the owed start events and the report queue (see hooks/bundle/state.ts).
+      behavior: Behavior
     }
   }
 }

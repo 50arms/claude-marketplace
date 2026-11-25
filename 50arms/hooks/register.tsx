@@ -2,8 +2,17 @@ import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, AppVersionState, DiskHome, DiskMeasured, DiskTold } from '../types'
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, SERVER_UNREACHABLE_REASON, SESSION_HELD_REASON, eventFailureLine, eventPath, eventText, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_INVITATION, SIGN_IN_SOURCE, sessionEvent } from './context/events'
-import type { DashboardEvent, RestartAsk, Told } from './context/events'
+import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_SOURCE, sessionEvent } from './context/events'
+import type { RestartAsk, Told } from './context/events'
+import { BUNDLE_PATH, BundleShapeError, FLOOR_PATH, REPORTS_PATH, bundleFileOf, bundleQuery, decide, deliveredText, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody } from './bundle/bundle'
+import type { Bundle, BundleFile, BundleRead, Decision, Delivery } from './bundle/bundle'
+import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
+import { OWED_ARRIVED, failureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf } from './bundle/hold'
+import type { Failure, Hold } from './bundle/hold'
+import { dueRequests, deliveryItem, enqueueDelivery, enqueueFloor, enqueueHold, failureLine, bandLine, hasFloorPending, settleFailure, settleOk, toTell } from './bundle/reports'
+import type { Loud } from './bundle/reports'
+import { NO_BEHAVIOR, owe, takeOwed } from './bundle/state'
+import type { Behavior } from './bundle/state'
 import { stamp as nextStamp } from './context/stamp'
 import { announcedBy, finishedAgentLabel, finishedAgentsText, isRecordWrite, spawnedAfter } from './context/record'
 import type { SpawnedAgents } from './context/record'
@@ -13,8 +22,8 @@ import type { HeldNotice, TaskNotice } from './context/interim-notice'
 import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
 import { APP_VERSION_FILE, appVersionLine, versionFaultLine } from './context/app-version'
-import { COMPACTING_NOTE_TTL_MS, RESUME_TEXTS, briefingText, parseGitStatus, subagentBriefingText } from './compaction/briefing'
-import type { BriefingAgent, BriefingCard, BriefingKind, GitState, OwedComment, Source } from './compaction/briefing'
+import { COMPACTING_NOTE_TTL_MS, agentListSlot, cardListSlot, gitStatusSlot, owedListSlot, parseGitStatus, planIdSlot, planNameSlot } from './compaction/briefing'
+import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from './compaction/briefing'
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, CLEAR_MARK_TTL_MS, ENGINE_VERSION_NOTICE, clearMarkOf, compactionClearMarkKey, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleReleaseKeys, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
 import type { AgentSize, AgentVerdict, ControlFile, Verdict } from './compaction/control'
 import { machineRegisteredNote, registrationFailedToast, registrationOf, registrationShownNote, registrationStep } from './plan/registration'
@@ -86,7 +95,7 @@ import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERV
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
 import { agentFileModel, ownAgentFile, spawnGuard } from './plan/pacing-guard'
-import { pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
+import { pacingLevel, pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
@@ -154,8 +163,8 @@ const lastStamp = atom({ plugin: '50arms', key: 'lastStamp' } as const, null as 
 // session when SessionStart runs, so `$.mcp.call` and `$.tool.list` throw there: SessionStart only records the start here, and the next
 // prompt.submit or tool result (bound) takes it and tells the model what the start has to say.
 const pendingStart = atom({ plugin: '50arms', key: 'pendingStart' } as const, null as PendingStart)
-// the mantra this conversation is still owed: a start that found the session without a usable key (signed out, or its key revoked) could not ask 50 Arms for it. The first load that finds the
-// session signed in turns this into a pending start (`source: 'sign-in'`), so the mantra reaches the model on its next prompt or tool result, from the moment it signs in.
+// the start texts this conversation is still owed: a start that found the session without a usable key (signed out, or its key revoked) could not ask 50 Arms for them. The first load that finds the
+// session signed in turns this into a pending start (`source: 'sign-in'`), so the start texts reach the model on its next prompt or tool result, from the moment it signs in.
 const mantraOwed = atom({ plugin: '50arms', key: 'mantraOwed' } as const, false)
 // the interim sub-agent notices held back from the model (hooks/context/interim-notice.ts), kept by $.state across a reload of the module
 const heldNotices = atom({ plugin: '50arms', key: 'heldNotices' } as const, [] as HeldNotice[])
@@ -219,6 +228,8 @@ const recentBriefs = atom({ plugin: '50arms', key: 'recentBriefs' } as const, NO
 const agentBriefs = atom({ plugin: '50arms', key: 'agentBriefs' } as const, NO_BRIEFS as Briefs)
 // what the plugin kept of each sub-agent when it spawned: its description, whether it runs in the background, whether the main loop spawned it (context/record.ts); the finish notice reads it.
 const spawnedAgents = atom({ plugin: '50arms', key: 'spawnedAgents' } as const, {} as SpawnedAgents)
+// the policy bundle's state: the bundle held, what each agent context was told, the holds, the owed start events and the report queue (hooks/bundle/state.ts)
+const behavior = atom({ plugin: '50arms', key: 'behavior' } as const, NO_BEHAVIOR as Behavior)
 const relayOutbox = atom({ plugin: '50arms', key: 'relayOutbox' } as const, [] as PendingEvent[])
 const queueJobTaking = atom({ plugin: '50arms', key: 'queueJobTaking' } as const, null as Offer | null)
 // the failures of a taken job already told to the model (ready/offer.ts, FailureTold): a repeat of the same job's identical failure wakes the session no more
@@ -290,6 +301,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     ackInFlight: read($, ackInFlight),
     queueJobTaking: read($, queueJobTaking),
     queueFailuresTold: read($, queueFailuresTold),
+    behavior: read($, behavior),
   }
   carriedState = Object.fromEntries(await Promise.all(Object.entries(reads).map(async ([key, value]) => [key, await value] as const)))
 }
@@ -353,6 +365,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, ackInFlight, () => carried.ackInFlight),
     update($, queueJobTaking, () => carried.queueJobTaking),
     update($, queueFailuresTold, () => carried.queueFailuresTold),
+    update($, behavior, () => carried.behavior),
   ])
   // a fresh conversation (or another session taking this one's place) in the same process: what the dashboard shows may have moved while they were in the old one. Loaded from here, so
   // the load and its lock live in the new conversation's $.state, never across the emptying
@@ -2740,6 +2753,12 @@ async function takeQueueJob($: any, offer: Offer, urgent: boolean): Promise<void
     $.ui.toast(busyToast(offer.item_id, queueJobBusy).slice(0, TOAST_ERROR_MAX))
     return
   }
+  // a held main conversation takes no new work: it gives the job back at once with the hold's reason, so the job returns to the queue
+  const holding = (await read($, behavior)).holds[mainContext]
+  if (leavesQueue(holding)) {
+    await leaveQueueJob($, offer.item_id, `the session is held (${(holding as Hold).detail}), so it takes no new work`, true)
+    return
+  }
   queueJobBusy = offer.item_id
   try {
     await update($, queueJobTaking, () => offer)
@@ -3227,18 +3246,13 @@ async function takeFinishedAgents($: any): Promise<string[]> {
   return taken
 }
 
-// a registry reminder's line: the event's text, or one failure line (a lookup that breaks or passes the deadline is never silence)
-async function eventReminder($: any, event: DashboardEvent): Promise<string | null> {
-  return withinDeadline($, CONTEXT_DEADLINE_MS, readEventContext($, event), () => eventFailureLine(event, DEADLINE_REASON))
-}
-
 // the finish of sub-agents, handed with the main session's next action (a prompt or a tool result): who finished (`extra`: one whose final task notice is this very prompt), then the
-// registry's `sub_agent_stop` text once; none when nothing finished since the last action
+// bundle's `subagent.stop` texts once; none when nothing finished since the last action
 async function subagentStopEntries($: any, extra: string[] = []): Promise<string[]> {
   const labels = [...(await takeFinishedAgents($)), ...extra]
   if (labels.length === 0) return []
-  const text = await eventReminder($, 'sub_agent_stop')
-  return text === null ? [] : [finishedAgentsText(labels, text)]
+  const texts = textsOf(await tellEvent($, 'subagent.stop', null, { extra: { sub_agent_id: labels.join('; ') } }))
+  return texts.length === 0 ? [] : [finishedAgentsText(labels, texts.join('\n\n'))]
 }
 
 async function takeEndedSession($: any): Promise<string | null> {
@@ -3257,17 +3271,14 @@ async function renderStart($: any, start: NonNullable<PendingStart>): Promise<st
   try {
     return await sessionContext($, start)
   } catch (err: any) {
-    const event = startEventOf(start)
-    return event === null ? null : eventFailureLine(event, `error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}`)
+    return startEventOf(start) === null ? null : `⚠ 50 Arms could not tell this session what its start carries (error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}). Tell the person.`
   }
 }
 
 // A conversation the plugin's own /clear opened (the ready loop's, or a compaction by clear) is fresh: it is told what a new session is told. Any other start is told by its source.
 const isFreshStart = (start: NonNullable<PendingStart>): boolean => start.loopReset === true || start.compactionClear === true
-// which resume briefing follows a start: a compaction by clear's (whatever source the new process's first start has) or a compaction's (null: a start nothing resumes)
-const briefingKindOf = (start: NonNullable<PendingStart>): BriefingKind | null => (start.compactionClear === true ? 'cleared' : start.source === 'compact' ? 'compacted' : null)
-// the dashboard event whose text a start is told (null: a start with no event text, such as a person's own /clear): the one answer for the start's text and for the line that stands for it when its reads fail
-const startEventOf = (start: NonNullable<PendingStart>): DashboardEvent | null => (isFreshStart(start) ? 'session_start' : sessionEvent(start.source))
+// the bundle event a start is told (null: a start with no text of its own). A fresh conversation the plugin's own /clear opened for the ready loop is told what a new session is told; a clear (a person's, or a compaction by clear) is told the after-clear event
+const startEventOf = (start: NonNullable<PendingStart>): string | null => (start.compactionClear === true ? 'session.after_clear' : start.loopReset === true ? 'session.start' : sessionEvent(start.source))
 
 // the entries a hook adds to the model's context: the time stamp (a prompt's only: a tool call is never stamped), the disk notice and, when there is one, the session start line.
 // the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
@@ -3452,9 +3463,12 @@ async function onPromptStamp($: any, e: any, next: any) {
   const held = await holdInterimNotice($, e)
   if (held !== null) return { drop: held }
   const entries = await clockDiskStartEntries($, true, 'prompt', MAIN_AGENT)
-  const side = isSideSessionNotice(e.text) && (await signedInWithAgent($)) ? await eventReminder($, 'side_session_turn_end') : null
+  const signedIn = await signedInWithAgent($)
+  // a prompt of the main conversation: what the bundle tells at a prompt (the start texts it was owed ride with it), or the line that holds it
+  const bundled = signedIn ? textsOf(await tellEvent($, 'prompt.submit', null)) : []
+  const side = isSideSessionNotice(e.text) && signedIn ? textsOf(await tellEvent($, 'side_session.turn_end', null)) : []
   const finished = await finishNoticeLabel($, taskNoticeOf(e.origin, e.text))
-  return next({ ...e, context: [...(e.context ?? []), ...entries, ...(side === null ? [] : [side]), ...(await subagentStopEntries($, finished))] })
+  return next({ ...e, context: [...(e.context ?? []), ...entries, ...bundled, ...side, ...(await subagentStopEntries($, finished))] })
 }
 
 // An interim sub-agent notice (the sub-agent ended a turn with a command of its own still running) is kept from the model: it notifies again with its
@@ -3505,9 +3519,26 @@ async function releaseDueNotices($: any): Promise<void> {
   }
 }
 
+// the texts the bundle tells for a finished tool call of a signed-in session: the matcher fields are the tool, its command and its path
+async function toolBundleTexts($: any, e: any): Promise<string[]> {
+  if (!(await signedInWithAgent($))) return []
+  const matchers: Record<string, string> = { tool_name: String(e.tool) }
+  if (typeof e.command === 'string') matchers.tool_command = e.command
+  const path = typeof e.file_path === 'string' ? e.file_path : typeof e.path === 'string' ? e.path : null
+  if (path !== null) matchers.tool_path = path
+  const texts = [...textsOf(await tellEvent($, 'tool.before', e.agentId, { matchers })), ...textsOf(await tellEvent($, 'tool.after', e.agentId, { matchers }))]
+  if (e.tool === 'Skill' && typeof e.skill === 'string') texts.push(...textsOf(await tellEvent($, 'skill.loaded', e.agentId, { extra: { skill_name: e.skill } })))
+  return texts
+}
+
 // a tool call's result is never stamped (the time rides prompts only); the MAIN loop's result carries the session start, if any, the disk notice, and
 // a finished sub-agent's reminder to record its result; a denied call has no result to put them beside. A call with an `agentId` is a sub-agent's or an engine fork's, and the start and the reminder are the main session's
 async function onToolStamp($: any, e: any, next: any) {
+  // a held agent context runs no tool but `session_connect`, which lets the person sign in again; the plugin's own calls are never held
+  if (!raisedByPlugin(next.origin) && e.tool !== toolName('session_connect')) {
+    const refusal = await refuseWhileHeld($, e.agentId)
+    if (refusal !== null) return { deny: refusal }
+  }
   const r = await next(e)
   // a plugin's own `$.mcp.call` (this one's dashboard reads) is raised as a `tool.call` too, with no agentId. Its result goes to the plugin,
   // never the model, so the start text or a reminder put beside it is lost. The signal is the
@@ -3527,9 +3558,11 @@ async function onToolStamp($: any, e: any, next: any) {
   if (r.deny !== undefined) return r
   // a sub-agent's compaction briefs that sub-agent, in its own tool result
   const briefing = e.agentId === undefined ? null : await takeAgentBriefing($, e.agentId)
+  // what the bundle tells at this call: the tool events (matched by the tool, its command and its path) and, for a skill, the skill's own
+  const bundled = await toolBundleTexts($, e)
   // a finished sub-agent's reminder to record its result is the MAIN session's, handed with its next action
   const stopped = e.agentId === undefined ? await subagentStopEntries($) : []
-  return { ...r, context: [...(r.context ?? []), ...(await clockDiskStartEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...stopped] }
+  return { ...r, context: [...(r.context ?? []), ...(await clockDiskStartEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...bundled, ...stopped] }
 }
 
 // what the dashboard says of this session's plan. `signed-out`: the session holds no usable key (never approved, or lapsed): a session start gives it the one sign-in invitation. `silent`:
@@ -3677,12 +3710,6 @@ const toldLine = (t: Told, failure: (reason: string) => string): string | null =
   return t.kind === 'failed' ? failure(t.reason) : null
 }
 
-// The registry's text for `event`, for every signed-in session (the dashboard leaves the plan-only line out for a session on no plan). A read
-// that broke: one line naming the event and why.
-async function eventContext($: any, event: DashboardEvent): Promise<string | null> {
-  return toldLine(eventText(await api($, 'GET', eventPath(event))), reason => eventFailureLine(event, reason))
-}
-
 // a session that is not on a plan (or has no key yet) but replaced one that was is told which plan and what waits there. The
 // session's own dashboard server finds the earlier session and answers; its `restart_notice` tool works before sign-in and owns its
 // lookup's 8 s deadline (a `lookup_timeout` stop carries the server's fix text), so the plugin sets no deadline of its own around the call. A stop
@@ -3723,52 +3750,51 @@ async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<st
 // the plan read answers, a session KNOWN to be on a plan (its record on disk) is told in one warning line; any other stays silent and, on a start
 // or resume, still asks the restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, start: NonNullable<PendingStart>): Promise<string | null> {
-  // the ready-agent loop's reset opens a fresh conversation in a session that is still working: it is told what a new session is told
   const event = startEventOf(start)
-  if (event === null) return start.source === 'clear' ? clearNotice($, start) : null
+  // a clear a person typed is told the after-clear texts and, when it ended a session on a plan, the restart notice
+  const clear = start.source === 'clear' && !isFreshStart(start) ? await clearNotice($, start) : null
+  if (event === null) return clear
   const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
   const connected = await isPlanConnected($, start.sessionId)
-  // a sign-in's start is the same session going on: it asks no restart notice
-  const askRestart = start.source !== 'compact' && start.source !== SIGN_IN_SOURCE && !isFreshStart(start)
-  const fault = (reason: string): StartReads => ({ line: connected ? eventFailureLine(event, reason) : null, askRestart: !connected && askRestart })
+  // a sign-in's start is the same session going on: it asks no restart notice; a compaction and a clear are the same session too
+  const askRestart = start.source !== 'compact' && start.source !== 'clear' && start.source !== SIGN_IN_SOURCE && !isFreshStart(start)
+  // a start the plugin cannot read for: a session known to be signed in has no bundle for this context, so the start is owed and the context held (the loading line); any other stays silent
+  const fault = async (failure: Failure): Promise<StartReads> => ({ line: connected || (await signedInWithAgent($)) ? await owedStart($, event, failure) : null, askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
-  if (server === 'unloaded') return null
-  if (server === 'not-yet') return connected ? eventFailureLine(event, SERVER_NOT_CONNECTED_REASON) : null
+  if (server === 'unloaded') return clear
+  if (server === 'not-yet') return joined([(await fault(failureOf({ status: 0, body: {}, serverNotConnected: true, classifierRefused: false, keyRevoked: false }))).line, clear])
   const reads = async (): Promise<StartReads> => {
     const plan = await sessionPlan($)
-    // a key that works asks for the mantra now; one that does not leaves the conversation owing it (giveOwedMantra)
+    // a key that works asks for the start texts now; one that does not leaves the conversation owing them (giveOwedMantra)
     if (plan.kind !== 'failed' && plan.kind !== 'unreachable') await update($, mantraOwed, () => plan.kind === 'signed-out' || plan.kind === 'silent')
-    if (plan.kind === 'connected') {
-      const line = await eventContext($, event)
-      // a compaction, and a compaction by clear, are followed by the resume briefing, in the same first turn as the registry's text
-      const briefed = briefingKindOf(start)
-      return { line: briefed !== null ? [line, await compactionBriefing($, briefed)].filter(x => x !== null).join('\n') : line, askRestart: false }
+    if (plan.kind === 'connected' || plan.kind === 'not-connected') {
+      // the bundle's texts for this start; a session on no plan also asks the restart notice, if it replaced one that was on a plan
+      const outcome = await tellEvent($, event, null, { owes: true, waitMs: Math.max(deadlineAt - (await $.clock.now()), 1_000) })
+      return { line: textsOf(outcome).join('\n') || null, askRestart: plan.kind === 'not-connected' && askRestart }
     }
-    if (plan.kind === 'failed') return fault(plan.reason)
-    // signed in on no plan: its own event text (the agent-scoped lines), and the notice if it replaced a session that was on one
-    if (plan.kind === 'not-connected') return { line: await eventContext($, event), askRestart }
+    if (plan.kind === 'failed') return fault({ reason: 'fetch_failed', detail: `the session could not be read (${plan.reason.slice(0, CALL_ERROR_MAX)})`, values: {} })
     // a signed-out resume is the one a restart leaves without a key: the notice is for it. A signed-out startup carries the one invitation to sign in and nothing else: no notice, no lookup, no failure line
     if (plan.kind === 'signed-out') return start.source === 'startup' ? { line: SIGN_IN_INVITATION, askRestart: false } : { line: null, askRestart }
     return { line: null, askRestart }
   }
-  const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => fault(DEADLINE_REASON))
-  if (!done.askRestart) return done.line
-  const notice = await restartNotice($, restartAsk(start))
-  return done.line === null ? notice : notice === null ? done.line : [done.line, notice].join('\n')
+  const done = await withinDeadline($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => ({ line: null, askRestart: false }) as StartReads)
+  const notice = done.askRestart ? await restartNotice($, restartAsk(start)) : null
+  return joined([done.line, notice, clear])
 }
 
-// the registry's text for an event told outside a session start (a sub-agent's start or stop, a side session's turn end): every signed-in session, on a plan or not.
-// A read that fails is quiet for a session not known to be on a plan, except at a sub-agent's start: the dashboard leaves the mantra out of a plugin sub-agent's own
-// text because this start delivers it, so every failed read there is one failure line that says where to fetch it (a signed-out session has no key to fetch with).
-async function readEventContext($: any, event: DashboardEvent): Promise<string | null> {
-  const plan = await sessionPlan($)
-  if (plan.kind === 'connected' || plan.kind === 'not-connected') return eventContext($, event)
-  if (event === 'sub_agent_start') {
-    if (plan.kind === 'failed') return eventFailureLine(event, plan.reason)
-    if (plan.kind === 'unreachable') return eventFailureLine(event, SERVER_UNREACHABLE_REASON)
-    return plan.kind === 'silent' ? eventFailureLine(event, SESSION_HELD_REASON) : null
-  }
-  return plan.kind === 'failed' && (await isPlanConnected($, await $.session.id())) ? eventFailureLine(event, plan.reason) : null
+const joined = (lines: (string | null)[]): string | null => lines.filter((l): l is string => l !== null).join('\n') || null
+
+// A start the plugin could not read for: the context is held with the failure, the start is owed, and the line told is the loading line (never nothing).
+async function owedStart($: any, event: string, failure: Failure): Promise<string> {
+  const at = await $.clock.now()
+  let hold!: Hold
+  await update($, behavior, cur => {
+    const holds = holdOn(cur.holds, mainContext, failure, event, at)
+    hold = holds[mainContext] as Hold
+    return { ...cur, holds, owed: owe(cur.owed, mainContext, event) }
+  })
+  keepRetrying($)
+  return refusalOf(hold, at)
 }
 
 // the entries still within COMPACTING_NOTE_TTL_MS
@@ -3832,7 +3858,7 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
     const { [agentId]: _taken, ...rest } = live.agents
     return { ...live, agents: rest }
   })
-  if (!waiting || !(await isPlanConnected($, String(await $.session.id())))) return null
+  if (!waiting || !(await signedInWithAgent($))) return null
   let listed: { id: string; type: string; description: string }[] = []
   try {
     listed = await $.agent.list()
@@ -3840,7 +3866,9 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
     $.ui.toast(`The sub-agent briefing could not read the agent list: ${errMessage(err).slice(0, TOAST_ERROR_MAX)}`)
   }
   const found = listed.find(a => a.id === agentId)
-  return subagentBriefingText({ id: agentId, type: found?.type ?? null, description: found?.description ?? null })
+  // the sub-agent's own compaction, told to it by its id: the bundle's texts for the event, owed and held like a start when there is no bundle
+  const outcome = await tellEvent($, 'subagent.compacted', agentId, { owes: true, extra: { sub_agent_id: agentId, sub_agent_name: found === undefined ? agentId : `${found.type} ${found.description}`.trim() } })
+  return textsOf(outcome).join('\n\n') || null
 }
 
 // SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. The session is not bound yet on a
@@ -3915,11 +3943,9 @@ async function resumeAfterCompaction($: any): Promise<void> {
   if (start === null) return
   // a clear that left the session unconnected (the new conversation has no connection record): it is connected again to what it held, and told when that was refused
   const reconnectFailures = connected ? [] : await reconnectHeld($, owed)
-  // the procedure needs no dashboard read: a start whose reads failed (only a warning line) or said nothing (no text at all: a key the dashboard is quiet for, a plugin server that is not loaded) still tells the agent how to resume
-  const { procedure, opening } = RESUME_TEXTS[briefingKindOf(start) ?? 'compacted']
-  const rendered = await renderStart($, start)
-  const briefing = rendered === null ? opening : rendered.includes(procedure) ? rendered : `${rendered}
-${opening}`
+  // the briefing is the bundle's texts for the start (the loading line when there is no bundle: the start is owed and told when one arrives); a start that said nothing starts no turn
+  const briefing = await renderStart($, start)
+  if (briefing === null) return
   const text = reconnectFailures.length === 0 ? briefing : `${briefing}
 The clear left you unconnected and reconnecting failed (${reconnectFailures.join('; ')}): call session_connect for what you held first.`
   if ((await read($, turn)).isRunning) {
@@ -3950,9 +3976,9 @@ async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
   // its activity row opens
   detach($, '50 Arms activity report', reportSubagentStart($, e))
-  const eventLine = await eventReminder($, 'sub_agent_start')
+  const started = (await signedInWithAgent($)) ? textsOf(await tellEvent($, 'subagent.start', e.agent_id, { owes: true, extra: { sub_agent_id: String(e.agent_id), profile: String(e.agent_type ?? ''), ...(pacingLevel(await $.clock.now()) === null ? {} : { pacing_level: pacingLevel(await $.clock.now()) as string }) } })) : []
   const pacing = await pacingLine(pacingEnv($))
-  return withLine(withLine(r, eventLine), pacing)
+  return withLine(started.reduce((acc, text) => withLine(acc, text), r), pacing)
 }
 
 // a sub-agent's brief ends; its cards stay worked for a few minutes (briefRecent)
@@ -4098,7 +4124,9 @@ async function drawBand($: any, e: any, next: any) {
   const permissions = await read($, permissionRequests)
   const newestPermission = permissions.at(-1)
   const relayState: RelayState = await read($, relay)
-  const held = relayState.phase === 'held' && v.connected !== null && relayState.planId === v.connected.id ? HELD_FOR_INPUT_BAND : null
+  const heldInput = relayState.phase === 'held' && v.connected !== null && relayState.planId === v.connected.id ? HELD_FOR_INPUT_BAND : null
+  // a report to 50 Arms that failed loudly shows here for the rest of the session
+  const held = heldInput ?? bandLine((await read($, behavior)).queue)
   return renderBand(
     $.ui.resolve(e),
     handlers($),
@@ -4454,6 +4482,11 @@ async function onReportStop($: any, e: any, next: any) {
   // one block carries both reasons, each only when it has cards
   const reasons = verdict.kind === 'cards' ? [...(verdict.held.length > 0 ? [heldIdleReason(verdict.held)] : []), ...(verdict.cards.length > 0 ? [blockReason(verdict.cards)] : []), ...(verdict.reviewable.length > 0 ? [reviewReason(verdict.reviewable)] : [])] : []
   if (reasons.length > 0) return { ...r, block: reasons.join('\n\n') }
+  // the bundle's `turn.stop` texts block a stop once, never one that a Stop hook already blocked (`stop_hook_active`), so no attached policy can keep a session from stopping
+  if (e.agent_id === undefined && e.stop_hook_active !== true && (await signedInWithAgent($))) {
+    const stopTexts = textsOf(await tellEvent($, 'turn.stop', null), ['plugin.stop_block'])
+    if (stopTexts.length > 0) return { ...r, block: stopTexts.join('\n\n') }
+  }
   return r
 }
 
@@ -4962,15 +4995,385 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
 }
 
 // The briefing's sources, each read on its own: one that cannot be read says so in the briefing and does not take the others with it.
-async function briefingSource<T>(readSource: () => Promise<T>): Promise<Source<T>> {
+// ---- the policy bundle: every text an agent is told at a hook moment comes from it ---------------------------------------------------------
+// 50 Arms renders one bundle per session (`GET /api/behavior-events/bundle`); the plugin caches it, decides each event from it locally (hooks/bundle/bundle.ts), fills the slots it owns,
+// reports what it delivered, and keeps only the floor (hooks/bundle/floor.ts). An agent context (the main conversation, or a sub-agent by its id) with no current bundle is held.
+
+const BUNDLE_WAIT_MS = 4_000
+const RETRY_GAP_MS = 5_000
+const BUNDLE_CACHE_PREFIX = 'bundle-cache:'
+const bundleCacheKey = (sessionId: string): string => `${BUNDLE_CACHE_PREFIX}${sessionId}`
+const MAIN_KEY = mainContext
+const agentKeyOf = (agentId: unknown): string => (typeof agentId === 'string' && agentId !== '' ? agentId : MAIN_KEY)
+
+// the plugin's own version, read once from its manifest: the bundle read names it (a call below the bundle's floor is refused 426) and the floor and the reports carry it
+let ownVersion: string | null = null
+async function pluginVersion($: any): Promise<string> {
+  if (ownVersion !== null) return ownVersion
+  const text = await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)
+  const version = typeof text === 'string' ? JSON.parse(text).version : undefined
+  if (typeof version !== 'string') throw new Error('the plugin manifest names no version')
+  ownVersion = version
+  return version
+}
+
+// the session's bundle file, which the relay writes beside its other per-session files: it names the bundle's current version
+async function readBundleFile($: any): Promise<BundleFile> {
+  const home = await homeDir($)
+  if (home === null) return { kind: 'unreadable', reason: 'no home directory' }
+  const { id, fault } = await mcpSessionId($, String(await $.session.id()))
+  if (fault !== null) return { kind: 'unreadable', reason: `the session's id on the dashboard could not be read: ${fault}` }
+  const path = sessionFilePath(home, 'behavior-bundle', id)
+  if (path === null) return { kind: 'unreadable', reason: `the session id ${JSON.stringify(id)} names no file` }
+  if (!(await $.fs.exists(path))) return { kind: 'absent' }
+  return bundleFileOf(await $.fs.read(path), id)
+}
+
+// The bundle kept on disk for this session and dashboard (the store), read when the process holds none: a resumed session finds it again, and it is current only while the session file names its version or an answer confirms it.
+async function loadCachedBundle($: any): Promise<void> {
+  const cached: any = await storeOp($, { op: 'get', key: bundleCacheKey(String(await $.session.id())) })
+  if (cached === undefined || cached === null) return
+  const origin = await storeOp($, { op: 'get', key: DASHBOARD_ORIGIN_KEY })
+  if (cached.origin !== (typeof origin === 'string' ? origin : null)) return
+  let answer: BundleRead
   try {
-    return { ok: true, value: await readSource() }
+    answer = readBundleBody(cached.bundle)
+  } catch {
+    return
+  }
+  if (answer.kind !== 'bundle') return
+  const bundle = answer.bundle
+  await update($, behavior, cur => (cur.held === null ? { ...cur, held: { bundle, confirmedAt: 0 } } : cur))
+}
+
+async function cacheBundle($: any, bundle: Bundle): Promise<void> {
+  const origin = await storeOp($, { op: 'get', key: DASHBOARD_ORIGIN_KEY })
+  await storeOp($, { op: 'set', key: bundleCacheKey(String(await $.session.id())), value: { origin: typeof origin === 'string' ? origin : null, bundle, at: await $.clock.now() } })
+  await pruneSessionRecords($, BUNDLE_CACHE_PREFIX)
+}
+
+type FetchOutcome = { kind: 'ok' } | { kind: 'signed-out' } | { kind: 'failed'; failure: Failure }
+
+const fetchFailure = (detail: string): FetchOutcome => ({ kind: 'failed', failure: { reason: 'fetch_failed', detail, values: {} } })
+
+let bundleFetch: Promise<FetchOutcome> | null = null
+
+// ONE fetch at a time, whoever asks: the answer applies to the whole session, so a second caller waits for the one in flight
+function fetchBundle($: any): Promise<FetchOutcome> {
+  if (bundleFetch === null) bundleFetch = runFetch($).finally(() => void (bundleFetch = null))
+  return bundleFetch
+}
+
+async function runFetch($: any): Promise<FetchOutcome> {
+  let version: string
+  try {
+    version = await pluginVersion($)
   } catch (err: any) {
-    return { ok: false, reason: errMessage(err) }
+    return fetchFailure(`the plugin version could not be read: ${errMessage(err).slice(0, CALL_ERROR_MAX)}`)
+  }
+  const before = (await read($, behavior)).held
+  const r = await api($, 'GET', BUNDLE_PATH, { query: bundleQuery(version, before === null ? null : before.bundle.version) })
+  if (!r.ok) {
+    // no key, or the agent gate: the session's own tools tell the model, and nothing here holds it
+    if (isSignedOut(r) || agentBlockOf(r) !== null) return { kind: 'signed-out' }
+    return { kind: 'failed', failure: failureOf({ status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null }) }
+  }
+  let answer: BundleRead
+  try {
+    answer = readBundleBody(r.body)
+  } catch (err: any) {
+    return fetchFailure(errMessage(err).slice(0, CALL_ERROR_MAX))
+  }
+  if (answer.kind === 'unchanged' && (before === null || before.bundle.version !== answer.version)) return fetchFailure('bad_response: the dashboard answered unchanged for a bundle the plugin does not hold')
+  const now = await $.clock.now()
+  const bundle: Bundle = answer.kind === 'bundle' ? answer.bundle : { ...(before as { bundle: Bundle }).bundle, floor_lines_plugin_version: answer.floorLinesPluginVersion }
+  let ended: [string, Hold][] = []
+  await update($, behavior, cur => {
+    ended = Object.entries(cur.holds)
+    return { ...cur, held: { bundle, confirmedAt: now }, holds: {} }
+  })
+  // an answer ends every hold of the session: each one that had reached the hold line is reported ended
+  for (const [key, hold] of ended) await reportHoldEnd($, key, hold, now, version)
+  if (answer.kind === 'bundle') await cacheBundle($, bundle)
+  await queueFloorIfStale($, bundle, version)
+  return { kind: 'ok' }
+}
+
+// a hold that ended: reported with its end when its hold line had started (one that ended inside the 2 minutes was only ever loading)
+async function reportHoldEnd($: any, key: string, hold: Hold, now: number, version: string): Promise<void> {
+  if (reportStepOf(hold, phaseOf(hold, now), true) !== 'ended') return
+  const item = holdReport(hold, key === MAIN_KEY ? null : key, version, new Date(now).toISOString())
+  await update($, behavior, cur => ({ ...cur, queue: enqueueHold(cur.queue, item, key, now) }))
+  detach($, 'Reporting a hold', flushReports($))
+}
+
+async function queueFloorIfStale($: any, bundle: Bundle, version: string): Promise<void> {
+  if (!floorIsStale(bundle.floor_lines_plugin_version, version)) return
+  const now = await $.clock.now()
+  await update($, behavior, cur => (cur.floorLoud || hasFloorPending(cur.queue) ? cur : { ...cur, queue: enqueueFloor(cur.queue, floorBody(version), now) }))
+  detach($, 'Reporting the floor lines', flushReports($))
+}
+
+// ---- sending the reports ----
+
+let flushing: Promise<void> | null = null
+let flushTimer: { cancel: () => void } | null = null
+
+function flushReports($: any): Promise<void> {
+  if (flushing === null) flushing = runFlush($).finally(() => void (flushing = null))
+  return flushing
+}
+
+async function runFlush($: any): Promise<void> {
+  const version = await pluginVersion($)
+  const now = await $.clock.now()
+  for (const request of dueRequests((await read($, behavior)).queue, now)) {
+    const floor = request.path === 'floor'
+    const sent = await api($, floor ? 'PUT' : 'POST', floor ? FLOOR_PATH : REPORTS_PATH, { body: request.body })
+    if (sent.ok) {
+      // the answer to a floor send names the version the team now holds
+      const teamVersion = floor && typeof sent.body?.plugin_version === 'string' ? sent.body.plugin_version : null
+      await update($, behavior, cur => ({ ...cur, queue: settleOk(cur.queue, request.ids), held: teamVersion !== null && cur.held !== null ? { ...cur.held, bundle: { ...cur.held.bundle, floor_lines_plugin_version: teamVersion } } : cur.held }))
+      continue
+    }
+    await settleSendFailure($, request.ids, sent, version)
+  }
+  const next = (await read($, behavior)).queue.entries.reduce<number | null>((soonest, e) => (soonest === null || e.nextAt < soonest ? e.nextAt : soonest), null)
+  flushTimer?.cancel()
+  flushTimer = next === null ? null : $.clock.after(Math.max(next - (await $.clock.now()), 1_000), () => detach($, 'Reporting what the plugin delivered', flushReports($)))
+}
+
+async function settleSendFailure($: any, ids: number[], sent: Api, version: string): Promise<void> {
+  const at = await $.clock.now()
+  let loud: Loud[] = []
+  let contexts: string[] = []
+  await update($, behavior, cur => {
+    const settled = settleFailure(cur.queue, ids, sent.status, errText(sent).slice(0, CALL_ERROR_MAX), at, version)
+    const told = toTell(settled.queue, settled.loud)
+    loud = settled.loud
+    contexts = told.contexts
+    return { ...cur, queue: told.queue, floorLoud: cur.floorLoud || settled.loud.some(l => l.what === 'floor send') }
+  })
+  // a report that failed loudly: each agent context it concerned is told once, and the band shows it for the rest of the session
+  for (const l of loud) for (const key of l.contexts) if (contexts.includes(key)) await tellContext($, key, failureLine(l.reason))
+}
+
+// a line for an agent context outside its own hook: the main conversation by the relay's delivery, a sub-agent by a message to it
+async function tellContext($: any, key: string, text: string): Promise<void> {
+  if (key === MAIN_KEY) return tellModelAwake($, text)
+  try {
+    await $.session.send({ to: { agentId: key }, text })
+  } catch (err: any) {
+    notToldToast($, errMessage(err), text)
   }
 }
 
-async function compactionBriefing($: any, kind: BriefingKind): Promise<string> {
+// ---- the retry window ----
+
+let retryTimer: { cancel: () => void } | null = null
+
+// While any context is within its 2 minutes, the plugin asks again every few seconds; after them only a prompt or a tool call of a held context asks, never a timer
+function keepRetrying($: any): void {
+  if (retryTimer !== null) return
+  retryTimer = $.clock.after(RETRY_GAP_MS, () => detach($, 'Fetching the policy bundle again', retryTick($)))
+}
+
+async function retryTick($: any): Promise<void> {
+  retryTimer = null
+  const now = await $.clock.now()
+  const state = await read($, behavior)
+  const holds = Object.values(state.holds)
+  await leaveReadyWhenHeld($, state.holds[mainContext], now)
+  if (!holds.some(h => phaseOf(h, now) === 'loading')) return
+  const outcome = await fetchBundle($)
+  // a failure during the window is kept as the newest reason of every hold
+  if (outcome.kind === 'failed') await update($, behavior, cur => ({ ...cur, holds: Object.fromEntries(Object.entries(cur.holds).map(([k, h]) => [k, holdOn({ [k]: h }, k, outcome.failure, h.event, now)[k] as Hold])) }))
+  keepRetrying($)
+}
+
+// Once the hold line starts, a held main conversation leaves the ready list as a session held by a person's Stop does; during the loading window it stays listed, so a deploy restart never empties the list
+async function leaveReadyWhenHeld($: any, hold: Hold | undefined, now: number): Promise<void> {
+  if (!leavesReadyList(hold, now) || (await read($, readyLoop)) === null) return
+  detach($, 'Ready list', leaveReady($, `This session left the ready list: 50 Arms could not deliver its instructions (${(hold as Hold).detail}).`))
+}
+
+// ---- asking whether an agent context may go on ----
+
+type Ensured = { kind: 'ready'; bundle: Bundle } | { kind: 'signed-out' } | { kind: 'held'; hold: Hold }
+
+async function ensureBundle($: any, key: string, event: string, waitMs: number): Promise<Ensured> {
+  if ((await read($, behavior)).held === null) await loadCachedBundle($)
+  const state = await read($, behavior)
+  const now = await $.clock.now()
+  const file = await readBundleFile($)
+  if (isCurrent(state.held, file, now)) {
+    const bundle = (state.held as { bundle: Bundle }).bundle
+    if (state.holds[key] !== undefined) await endHold($, key, now)
+    return { kind: 'ready', bundle }
+  }
+  const outcome = await withinDeadline<FetchOutcome | null>($, waitMs, fetchBundle($), () => null)
+  if (outcome !== null && outcome.kind === 'ok') {
+    const held = (await read($, behavior)).held
+    if (held === null) throw new Error('the bundle fetch answered and no bundle is held')
+    return { kind: 'ready', bundle: held.bundle }
+  }
+  if (outcome !== null && outcome.kind === 'signed-out') return { kind: 'signed-out' }
+  const failure: Failure = outcome === null ? { reason: 'fetch_failed', detail: 'the bundle fetch had not answered within the hook deadline', values: {} } : outcome.failure
+  const at = await $.clock.now()
+  let hold!: Hold
+  await update($, behavior, cur => {
+    const holds = holdOn(cur.holds, key, failure, event, at)
+    hold = holds[key] as Hold
+    return { ...cur, holds }
+  })
+  keepRetrying($)
+  await openHoldReport($, key, hold, at)
+  if (key === MAIN_KEY) await leaveReadyWhenHeld($, hold, at)
+  return { kind: 'held', hold }
+}
+
+async function endHold($: any, key: string, now: number): Promise<void> {
+  let ended: Hold | null = null
+  await update($, behavior, cur => {
+    const r = release(cur.holds, key)
+    ended = r.ended
+    return { ...cur, holds: r.holds }
+  })
+  if (ended !== null) await reportHoldEnd($, key, ended, now, await pluginVersion($))
+}
+
+// The open report of a hold whose 50 Arms answered (an outdated plugin, a revoked key): the hold stays, so its report is sent once the hold line starts
+async function openHoldReport($: any, key: string, hold: Hold, now: number): Promise<void> {
+  if (hold.reported !== 'none' || phaseOf(hold, now) !== 'held' || !(hold.reason === 'plugin_outdated' || hold.reason === 'key_revoked')) return
+  const item = holdReport(hold, key === MAIN_KEY ? null : key, await pluginVersion($), null)
+  await update($, behavior, cur => {
+    const held = cur.holds[key]
+    return held === undefined ? cur : { ...cur, holds: { ...cur.holds, [key]: { ...held, reported: 'open' as const } }, queue: enqueueHold(cur.queue, item, key, now) }
+  })
+  detach($, 'Reporting a hold', flushReports($))
+}
+
+// ---- telling an event ----
+
+type Rendered = { mechanism: string; text: string }
+type EventOutcome = { kind: 'texts'; entries: Rendered[] } | { kind: 'signed-out' } | { kind: 'refused'; text: string }
+
+type MomentIn = { matchers?: Record<string, string>; extra?: Record<string, string>; owes?: boolean; waitMs?: number }
+
+// the slots the plugin owns, filled for the ones an event's texts name
+async function slotsOf($: any, names: string[], extra: Record<string, string>): Promise<Record<string, string>> {
+  const slots: Record<string, string> = { ...extra }
+  const has = (n: string) => names.includes(n) && slots[n] === undefined
+  if (has('clock_time')) {
+    const now = await $.clock.now()
+    slots.clock_time = nextStamp(now, -new Date(now).getTimezoneOffset(), null).line.replace(/ \+0$/, '')
+  }
+  const sources = names.some(n => ['owed_list', 'plan_id', 'plan_name', 'card_list', 'agent_list', 'git_status'].includes(n)) ? await briefingSources($) : null
+  if (sources !== null) {
+    if (has('owed_list')) slots.owed_list = owedListSlot(sources.owed)
+    if (has('plan_id')) slots.plan_id = planIdSlot(sources.plan)
+    if (has('plan_name')) slots.plan_name = planNameSlot(sources.plan)
+    if (has('card_list')) slots.card_list = cardListSlot(sources.cards)
+    if (has('agent_list')) slots.agent_list = agentListSlot(sources.agents)
+    if (has('git_status')) slots.git_status = gitStatusSlot(sources.git)
+  }
+  if (has('context_tokens')) {
+    const tokens = (await contextReading($)).tokens
+    if (tokens !== null) slots.context_tokens = String(tokens)
+  }
+  return slots
+}
+
+// The carrier of a text over its mechanism's cap: the full text goes to a file and the bundle's pointer names it
+async function carrierFile($: any, d: Delivery): Promise<string | null> {
+  const home = await homeDir($)
+  if (home === null) return null
+  const path = `${home}/.config/danxbot/behavior-text/${String(await $.session.id())}-${d.event.replace(/[^a-z0-9_.-]/g, '_')}-${await $.clock.now()}.txt`
+  try {
+    await $.fs.write(path, d.text)
+  } catch {
+    return null
+  }
+  return path
+}
+
+async function renderDelivery($: any, d: Delivery): Promise<Rendered> {
+  if (d.overCap === null) return { mechanism: d.mechanism, text: d.text }
+  const file = await carrierFile($, d)
+  // a full text that could not be saved is said, never cut or dropped
+  if (file === null) return { mechanism: d.mechanism, text: `⚠ 50 Arms: a text of the "${d.event}" event (${d.overCap.fullChars} characters) is over what this channel carries and could not be saved to a file. Tell the person.` }
+  return { mechanism: d.mechanism, text: deliveredText(d, file) }
+}
+
+// The one way an event is told. The main conversation or a sub-agent (by its id) is held when no current bundle can be had: the answer is then the line that refuses (`owes`: a start event, owed and told once a bundle arrives).
+async function tellEvent($: any, event: string, agentId: unknown, moment: MomentIn = {}): Promise<EventOutcome> {
+  const key = agentKeyOf(agentId)
+  const ensured = await ensureBundle($, key, event, moment.waitMs ?? BUNDLE_WAIT_MS)
+  if (ensured.kind === 'signed-out') return { kind: 'signed-out' }
+  if (ensured.kind === 'held') {
+    if (moment.owes === true) await update($, behavior, cur => ({ ...cur, owed: owe(cur.owed, key, event) }))
+    return { kind: 'refused', text: refusalOf(ensured.hold, await $.clock.now()) }
+  }
+  const bundle = ensured.bundle
+  const card = (await read($, view)).card?.id ?? null
+  let owed: string[] = []
+  await update($, behavior, cur => {
+    const taken = takeOwed(cur.owed, key)
+    owed = taken.events
+    return { ...cur, owed: taken.owed }
+  })
+  const events = [...owed.map(o => ({ event: o, matchers: {} as Record<string, string> })), { event, matchers: moment.matchers ?? {} }]
+  const rendered: Rendered[] = []
+  try {
+    for (const m of events) {
+      const slots = await slotsOf($, namedSlots(bundle, m.event), m.event === event ? moment.extra ?? {} : {})
+      let decision!: Decision
+      await update($, behavior, cur => {
+        decision = decide(bundle, { event: m.event, matchers: m.matchers, slots, card }, cur.told[key] ?? {})
+        return { ...cur, told: { ...cur.told, [key]: decision.told } }
+      })
+      const at = await $.clock.now()
+      for (const d of decision.deliveries) {
+        rendered.push(await renderDelivery($, d))
+        await update($, behavior, cur => ({ ...cur, queue: enqueueDelivery(cur.queue, deliveryItem(bundle.version, d, new Date(at).toISOString()), key, at) }))
+      }
+    }
+  } catch (err: any) {
+    if (!(err instanceof BundleShapeError)) throw err
+    // a bundle that cannot be evaluated is no bundle: the context is held, as for a fetch that failed
+    const at = await $.clock.now()
+    let hold!: Hold
+    await update($, behavior, cur => {
+      const holds = holdOn(cur.holds, key, { reason: 'fetch_failed', detail: err.message.slice(0, CALL_ERROR_MAX), values: {} }, event, at)
+      hold = holds[key] as Hold
+      return { ...cur, holds, owed: moment.owes === true ? owe(cur.owed, key, event) : cur.owed }
+    })
+    keepRetrying($)
+    return { kind: 'refused', text: refusalOf(hold, at) }
+  }
+  if (rendered.length > 0) detach($, 'Reporting what the plugin delivered', flushReports($))
+  return { kind: 'texts', entries: rendered }
+}
+
+// the texts of an outcome for a hook that carries them as context: the entries' texts, or the line that refuses
+const textsOf = (outcome: EventOutcome, mechanisms?: string[]): string[] => (outcome.kind === 'texts' ? outcome.entries.filter(e => mechanisms === undefined || mechanisms.includes(e.mechanism)).map(e => e.text) : outcome.kind === 'refused' ? [outcome.text] : [])
+
+// A tool call of a held context is refused with the loading or the hold line, and a context whose owed start texts just arrived reads them as the refusal of its next call (so it reads them, then retries the step).
+async function refuseWhileHeld($: any, agentId: unknown): Promise<string | null> {
+  if (!(await signedInWithAgent($))) return null
+  const key = agentKeyOf(agentId)
+  const ensured = await ensureBundle($, key, 'tool.before', BUNDLE_WAIT_MS)
+  if (ensured.kind === 'held') return refusalOf(ensured.hold, await $.clock.now())
+  if (ensured.kind !== 'ready') return null
+  if ((await read($, behavior)).owed[key] === undefined) return null
+  const outcome = await tellEvent($, 'tool.before', agentId)
+  if (outcome.kind === 'refused') return outcome.text
+  if (outcome.kind !== 'texts' || outcome.entries.length === 0) return null
+  return `${OWED_ARRIVED}\n\n${outcome.entries.map(e => e.text).join('\n\n')}`
+}
+
+// the sources of the live data a start after a compaction or a clear fills in
+async function briefingSources($: any): Promise<{ plan: { ref: string; name: string } | null; owed: Source<OwedComment[]>; cards: Source<BriefingCard[]>; agents: Source<BriefingAgent[]>; git: Source<GitState> }> {
   const v = await read($, view)
   const owed = await briefingSource<OwedComment[]>(async () => {
     const r = await api($, 'GET', '/api/plan-sessions/me/owed-comments')
@@ -4994,7 +5397,15 @@ async function compactionBriefing($: any, kind: BriefingKind): Promise<string> {
     if (state === null) throw new Error('git status printed nothing readable')
     return state
   })
-  return briefingText({ plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, owed, cards, agents, git }, kind)
+  return { plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, owed, cards, agents, git }
+}
+
+async function briefingSource<T>(readSource: () => Promise<T>): Promise<Source<T>> {
+  try {
+    return { ok: true, value: await readSource() }
+  } catch (err: any) {
+    return { ok: false, reason: errMessage(err) }
+  }
 }
 
 // the plugin's `dashboard_url` option, as the engine passed it to register (the last resort of blockedOrigin)

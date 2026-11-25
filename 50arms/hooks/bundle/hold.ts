@@ -88,6 +88,9 @@ export function refusalOf(hold: Hold, now: number): string {
   return floorText(hold.reason as FloorReason, { reason: hold.detail, since, ...hold.values })
 }
 
+// What a context reads, ahead of the texts it was owed, as the refusal of its next tool call once its bundle arrived.
+export const OWED_ARRIVED = '[50 ARMS] Your instructions from 50 Arms have arrived. This tool call was not run: read them, then retry this same step.'
+
 // The one tool a held context may still call: it lets the person sign in again.
 export const ALLOWED_WHILE_HELD = 'session_connect'
 

@@ -197,6 +197,16 @@ const length = (text: string): number => [...text].length
 
 const SLOT_NAMED = /\{\{slot:([a-z_][a-z0-9_]*)\}\}/g
 
+// The slots an event's texts name (its attachments' sections and its computed sections), so the plugin reads only what a text needs.
+export function namedSlots(bundle: Bundle, event: string): string[] {
+  const e = bundle.events.find(x => x.event === event)
+  if (e === undefined) return []
+  const names = new Set<string>()
+  for (const a of e.attachments) for (const s of a.sections) for (const n of s.slots) names.add(n)
+  for (const c of e.computed) for (const m of c.text.matchAll(SLOT_NAMED)) names.add(m[1] as string)
+  return [...names]
+}
+
 // A text with each slot filled; a slot the plugin cannot fill is named inline and in `missing`, never left blank.
 export function fillSlots(text: string, slots: Record<string, string>): { text: string; missing: string[] } {
   const missing: string[] = []

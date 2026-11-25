@@ -1,7 +1,6 @@
-// the resume briefing an operator session reads in its first turn after a compaction. A compaction replaces the
-// conversation with a summary; this hands back what the summary tends to lose and what only the machine knows: the plan, the cards in flight, the
-// sub-agents still running (they carry on through a compaction) and the work not yet pushed. Pure: register.tsx reads each source (the plan view, the
-// engine's agent list, git) and hands them here; a source that could not be read arrives as `unavailable` with its reason, never as an empty one.
+// What a session's start after a compaction or a clear fills into the bundle's texts: the live data only the machine knows (the comments still owed an answer, the plan, the cards in
+// flight, the sub-agents still running, the work not yet pushed), each the value of one slot. The words around a value are the bundle's. Pure: register.tsx reads each source (the plan
+// view, the engine's agent list, git) and hands it here; a source that could not be read arrives as a failure with its reason, never as an empty one.
 
 export type Source<T> = { ok: true; value: T } | { ok: false; reason: string }
 
@@ -11,14 +10,6 @@ export type GitState = { branch: string | null; changed: number; ahead: number |
 
 // One person comment the agent still owes an answer, as GET /api/plan-sessions/me/owed-comments (the dashboard's `OwedComment`) hands it over. Only the fields the briefing words.
 export type OwedComment = { cardId: string; cardTitle: string; commentId: number; author: { name: string }; excerpt: { text: string }; state: 'sent' | 'seen'; waitedMs: number }
-
-export type BriefingInput = {
-  plan: { ref: string; name: string } | null
-  owed: Source<OwedComment[]>
-  cards: Source<BriefingCard[]>
-  agents: Source<BriefingAgent[]>
-  git: Source<GitState>
-}
 
 const CARDS_SHOWN = 8
 const AGENTS_SHOWN = 8
@@ -59,80 +50,47 @@ function waitedText(ms: number): string {
   return `${Math.floor(ms / DAY_MS)} d`
 }
 
-// A comment survives a compaction only as a line in the summary, so every comment still owed is listed first (oldest first, the order the route answers), with the
-// dashboard's two-step reply (acknowledge, then reply into the same message). A `seen` comment is already acknowledged, so its ack is skipped. A failed read is said as a failure: an omitted list would read as "nothing owed".
-// The list is never capped (unlike the cards and agents lists): a comment dropped from the briefing is a comment nobody answers.
-function owedLine(owed: Source<OwedComment[]>): string {
-  if (!owed.ok) return `Comments you still owe an answer: NOT KNOWN, the read failed (${oneLine(owed.reason, REASON_MAX)}). Read your plan's cards for person comments with no reply of yours before you continue the step that was in progress.`
-  if (owed.value.length === 0) return 'Comments you still owe an answer: none.'
-  const items = owed.value.map(c => `${c.cardId} ${oneLine(c.cardTitle, TITLE_MAX)}, comment ${c.commentId} from ${oneLine(c.author.name, AUTHOR_MAX)} [${OWED_STATE_LABEL[c.state]}, waiting ${waitedText(c.waitedMs)}]: "${oneLine(c.excerpt.text, EXCERPT_MAX)}"`)
-  return `Comments you still owe an answer, oldest first: ${items.join('; ')}. Answer them right after steps (1)-(3) above (skills, handoff note, cards) and before you continue the step that was in progress. For each, acknowledge it (POST /api/issues/<card>/comments/<commentId>/reply with phase "ack" and your short acknowledgement as body; skip this for one that is Seen, already acknowledged), then write your answer into that same message (the same route with phase "reply" and the answer as body).`
+// The `owed_list` slot: every comment still owed an answer, oldest first (the order the route answers), never capped (a comment dropped is a comment nobody answers). A failed read is said as a
+// failure: an omitted list would read as "nothing owed".
+export function owedListSlot(owed: Source<OwedComment[]>): string {
+  if (!owed.ok) return `NOT KNOWN, the read failed (${oneLine(owed.reason, REASON_MAX)})`
+  if (owed.value.length === 0) return 'none'
+  return owed.value.map(c => `${c.cardId} ${oneLine(c.cardTitle, TITLE_MAX)}, comment ${c.commentId} from ${oneLine(c.author.name, AUTHOR_MAX)} [${OWED_STATE_LABEL[c.state]}, waiting ${waitedText(c.waitedMs)}]: "${oneLine(c.excerpt.text, EXCERPT_MAX)}"`).join('; ')
 }
 
-function cardsLine(cards: Source<BriefingCard[]>): string {
-  if (!cards.ok) return `Cards in flight: not known (${oneLine(cards.reason, REASON_MAX)}).`
-  if (cards.value.length === 0) return 'Cards in flight: none on your plan.'
+// The `card_list` slot: the cards in flight on the session's plan.
+export function cardListSlot(cards: Source<BriefingCard[]>): string {
+  if (!cards.ok) return `not known (${oneLine(cards.reason, REASON_MAX)})`
+  if (cards.value.length === 0) return 'none on your plan'
   const shown = cards.value.slice(0, CARDS_SHOWN).map(c => `${c.id} ${oneLine(c.title, 60)}`)
   const more = cards.value.length - shown.length
-  return `Cards in flight on your plan: ${shown.join('; ')}${more > 0 ? `, and ${more} more` : ''}. Read each card before you act on it.`
+  return `${shown.join('; ')}${more > 0 ? `, and ${more} more` : ''}`
 }
 
-function agentsLine(agents: Source<BriefingAgent[]>): string {
-  if (!agents.ok) return `Sub-agents: not known (${oneLine(agents.reason, REASON_MAX)}).`
-  if (agents.value.length === 0) return 'Sub-agents running: none.'
+// The `agent_list` slot: the sub-agents still running (they carry on through a compaction).
+export function agentListSlot(agents: Source<BriefingAgent[]>): string {
+  if (!agents.ok) return `not known (${oneLine(agents.reason, REASON_MAX)})`
+  if (agents.value.length === 0) return 'none running'
   const shown = agents.value.slice(0, AGENTS_SHOWN).map(a => `${a.id} (${a.type}) ${oneLine(a.description, 60)}`)
   const more = agents.value.length - shown.length
-  return `Sub-agents still running (they carried on through the compaction): ${shown.join('; ')}${more > 0 ? `, and ${more} more` : ''}.`
+  return `${shown.join('; ')}${more > 0 ? `, and ${more} more` : ''}`
 }
 
-function gitLine(git: Source<GitState>): string {
-  if (!git.ok) return `Work not pushed: not known (${oneLine(git.reason, REASON_MAX)}).`
+// The `git_status` slot: the work not yet pushed, in the session's own checkout.
+export function gitStatusSlot(git: Source<GitState>): string {
+  if (!git.ok) return `not known (${oneLine(git.reason, REASON_MAX)})`
   const g = git.value
   const where = g.branch === null ? 'a detached checkout' : `branch ${g.branch}`
   const parts = [
     g.changed === 0 ? 'no uncommitted changes' : `${g.changed} uncommitted ${g.changed === 1 ? 'path' : 'paths'}`,
     g.upstream === null ? 'no upstream branch (nothing on it is pushed)' : g.ahead === 0 ? 'nothing unpushed' : `${g.ahead} unpushed ${g.ahead === 1 ? 'commit' : 'commits'}`,
   ]
-  return `Work not pushed, in the session's own checkout (${where}): ${parts.join(', ')}.`
+  return `in the session's own checkout (${where}): ${parts.join(', ')}`
 }
 
-// how the main agent picks up after a compaction, in order; the resume prompt (register.tsx resumeAfterCompaction) carries it inside the briefing.
-export const RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress."
-
-// the briefing's opening, alone: a resume prompt whose dashboard reads failed still carries it
-export const RESUME_OPENING = `[50 ARMS] Your conversation was just compacted. ${RESUME_PROCEDURE}`
-
-// how the main agent picks up after a compaction that CLEARED the conversation (a control mode of `clear`): nothing of the work before it is left in the conversation, so the
-// handoff note and the cards are the whole memory, and no skill is loaded. The clear only ever runs with no sub-agent working, so there is no step for them (and `briefingText` leaves the sub-agents line out).
-export const CLEAR_RESUME_PROCEDURE = "Resume now, without asking the person, in this order: (1) load again the skills your work needs, because a cleared conversation has none loaded; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) continue the step that was in progress."
-
-export const CLEAR_RESUME_OPENING = `[50 ARMS] Your conversation was just cleared, so it holds nothing of the work before it: the handoff you wrote lives on your cards. ${CLEAR_RESUME_PROCEDURE}`
-
-// how the conversation was replaced: 'compacted' (a summary stands in for it) or 'cleared' (nothing does)
-export type BriefingKind = 'compacted' | 'cleared'
-
-// the one lookup from a kind to what the resume prompt carries for it: the procedure (a start text that holds it needs no opening) and the opening that stands alone when the start text could not be read
-export const RESUME_TEXTS: Record<BriefingKind, { procedure: string; opening: string }> = {
-  compacted: { procedure: RESUME_PROCEDURE, opening: RESUME_OPENING },
-  cleared: { procedure: CLEAR_RESUME_PROCEDURE, opening: CLEAR_RESUME_OPENING },
-}
-
-// the sub-agents line is left out of a cleared briefing (see CLEAR_RESUME_PROCEDURE)
-export function briefingText(input: BriefingInput, kind: BriefingKind = 'compacted'): string {
-  const plan = input.plan === null ? 'You are on no plan.' : `Your plan is ${input.plan.ref} ${oneLine(input.plan.name, 80)}.`
-  const opening = RESUME_TEXTS[kind].opening
-  const agents = kind === 'cleared' ? '' : `${agentsLine(input.agents)} `
-  return `${opening} ${owedLine(input.owed)} ${plan} ${cardsLine(input.cards)} ${agents}${gitLine(input.git)}`
-}
-
-// a sub-agent's own compaction is followed by its own briefing, never the main agent's (the plan, the cards and the checkout belong to the session that spawned it). A sub-agent resumes
-// from its summary and the progress notes it kept before compacting, so the briefing names who it is and points at them. `type` and `description` are null when the engine no longer lists the agent.
-export type SubagentBriefingInput = { id: string; type: string | null; description: string | null }
+// The `plan_id` and `plan_name` slots: the plan the session is on, or that it is on none.
+export const planIdSlot = (plan: { ref: string } | null): string => (plan === null ? 'none' : plan.ref)
+export const planNameSlot = (plan: { name: string } | null): string => (plan === null ? 'no plan' : oneLine(plan.name, 80))
 
 // How long the plugin keeps the note of an agent whose compaction proposal passed: a compaction that never delivered a start must not name the agent for a later, different compaction.
 export const COMPACTING_NOTE_TTL_MS = 10 * 60_000
-
-export function subagentBriefingText(input: SubagentBriefingInput): string {
-  const label = `${input.id}${input.type === null ? '' : ` (${input.type})`}${input.description === null ? '' : ` ${oneLine(input.description, 80)}`}`
-  return `[50 ARMS] Your conversation was just compacted. You are sub-agent ${label}. Resume from your summary and from the progress notes you kept before compacting, then carry on with the task you were given and report back to the session that spawned you. The plan and cards are your parent's, not yours.`
-}
