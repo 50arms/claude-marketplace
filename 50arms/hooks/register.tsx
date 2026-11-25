@@ -3284,9 +3284,8 @@ const startEventOf = (start: NonNullable<PendingStart>): string | null => (start
 
 // the entries a hook adds to the model's context: the disk notice, the checkout-behind notice and, when there is one, the session start line. The time stamp is no entry of the
 // plugin's: it is the `clock_time` slot of the bundle's `prompt.submit` texts (CP-146, AC 72124).
-// The start is TAKEN before the start's own slow reads, in the one order of arrival, so two hooks landing together (a fresh desktop session's first prompt runs the hook twice) never both tell it.
-async function noticeStartEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string, budget: Budget): Promise<string[]> {
-  const pending = takeStart ? await takePendingStart($) : null
+// The start is TAKEN by the hook (`takePendingStart`) before the start's own slow reads, in the one order of arrival, so two hooks landing together (a fresh desktop session's first prompt runs the hook twice) never both tell it.
+async function noticeStartEntries($: any, pending: PendingStart, trigger: 'prompt' | 'tool', agent: string, budget: Budget): Promise<string[]> {
   const disk = await diskLine($, trigger, agent)
   // only the main agent is told its checkout is behind (the plugin knows the session's folder, never a sub-agent's own)
   const behind = agent === MAIN_AGENT ? await appVersionNotice($) : null
@@ -3479,10 +3478,12 @@ async function onPromptStamp($: any, e: any, next: any) {
   const held = await holdInterimNotice($, e)
   if (held !== null) return { drop: held }
   const budget = hookBudget()
-  const entries = await noticeStartEntries($, true, 'prompt', MAIN_AGENT, budget)
+  // the start is taken and the clock stamped in the one order of arrival, before the start's own slow reads (DX-4736): of two prompts landing together, whoever takes the start also takes the first stamp
+  const pending = await takePendingStart($)
   const signedIn = await signedInWithAgent($)
-  // a prompt of the main conversation: what the bundle tells at a prompt (the time stamp is its `clock_time` slot; the start texts it was owed ride with it), or the line that holds it. It comes first: what a prompt carries begins with its time
+  // a prompt of the main conversation: what the bundle tells at a prompt (the time stamp is its `clock_time` slot; the start texts it was owed before this hook ride with it), or the line that holds it. It comes first: what a prompt carries begins with its time
   const bundled = signedIn ? textsOrRefusal(await tellEvent($, 'prompt.submit', null, budget, { owed: 'with' })) : []
+  const entries = await noticeStartEntries($, pending, 'prompt', MAIN_AGENT, budget)
   const side = isSideSessionNotice(e.text) && signedIn ? textsOf(await tellEvent($, 'side_session.turn_end', null, budget)) : []
   const finished = await finishNoticeLabel($, taskNoticeOf(e.origin, e.text))
   return next({ ...e, context: [...(e.context ?? []), ...bundled, ...entries, ...side, ...(await subagentStopEntries($, budget, finished))] })
@@ -3580,7 +3581,7 @@ async function onToolStamp($: any, e: any, next: any) {
   const bundled = await toolBundleTexts($, e, budget)
   // a finished sub-agent's reminder to record its result is the MAIN session's, handed with its next action
   const stopped = e.agentId === undefined ? await subagentStopEntries($, budget) : []
-  return { ...r, context: [...(r.context ?? []), ...(await noticeStartEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT, budget)), ...(briefing === null ? [] : [briefing]), ...bundled, ...stopped] }
+  return { ...r, context: [...(r.context ?? []), ...(await noticeStartEntries($, e.agentId === undefined ? await takePendingStart($) : null, 'tool', e.agentId ?? MAIN_AGENT, budget)), ...(briefing === null ? [] : [briefing]), ...bundled, ...stopped] }
 }
 
 // what the dashboard says of this session's plan. `signed-out`: the session holds no usable key (never approved, or lapsed): a session start gives it the one sign-in invitation. `silent`:

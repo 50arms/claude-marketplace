@@ -258,7 +258,7 @@ describe('the floor', () => {
     expect(floorText('loading', { reason: 'a 503' })).toContain('(a 503)')
     expect(floorText('plugin_outdated', { reason: 'r', since: 's' })).toContain('[need_version unknown]')
     expect(HOLD_LINES.key_revoked).toContain('sign in again')
-    expect(LOADING_LINE).toContain('retry')
+    expect(LOADING_LINE).toContain('Retry')
   })
 })
 

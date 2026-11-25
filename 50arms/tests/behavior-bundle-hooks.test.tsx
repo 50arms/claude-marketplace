@@ -5,7 +5,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { floorLines } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
-import { test, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, answerReportEvents, bundleEvent, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const MIN = 60_000
 const SUB = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
@@ -17,6 +17,8 @@ for (const surface of SURFACES) {
     async function started($: any, on: any, options: Parameters<typeof dashboard>[1] = {}) {
       on('classic.SessionStart', () => ({}) as any)
       on('classic.SubagentStart', () => ({}) as any)
+      on('classic.Stop', () => ({}) as any)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       const d = dashboard(on, options)
       await startSession($, d, surface)
       return d
@@ -243,8 +245,9 @@ for (const surface of SURFACES) {
     test('one hook waits for the bundle fetch once: a prompt over a hung fetch takes one wait, not one per event it tells, and a context never borrows another context\'s hold', async ($, on) => {
       const d = await started($, on)
       await firstPrompt($, 'startup')
-      await d.clock.advance(2 * MIN)
+      // the fetch hangs from now on: the minute check hangs with it, so the bundle is stale after 90 s
       d.world.contextHangs = true
+      await d.clock.advance(2 * MIN)
       // the bundle is stale and the fetch hangs: the prompt tells the role, the prompt text and more, yet waits for the fetch once
       const pending = $.prompt.submit({ text: 'next' })
       await d.clock.settle()
@@ -265,7 +268,6 @@ for (const surface of SURFACES) {
       const READY_CARD = { id: 'DX-1', type: 'Story', title: 'A card', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, review_runnable: false, next_pre_gate: null }
 
       test('is never also told by a pick-up-cards block, and a stop never uses up the start texts it is owed: the next prompt tells them', async ($, on) => {
-        answerReportEvents(on)
         const d = await started($, on)
         d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
         await firstPrompt($, 'startup')

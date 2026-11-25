@@ -901,7 +901,7 @@ export function dashboard(
     const query = a.query ?? {}
     world.bundleReads.push({ plugin_version: query.plugin_version, known_version: query.known_version })
     if (world.bundle.override !== undefined) return reply(world.bundle.override.body ?? { error: 'bundle boom' }, world.bundle.override.status)
-    if (typeof query.plugin_version === 'string' && query.plugin_version.localeCompare(world.bundle.minPlugin, undefined, { numeric: true }) < 0) return reply({ error: 'plugin_too_old', update_to: world.bundle.minPlugin }, 426)
+    if (typeof query.plugin_version === 'string' && query.plugin_version.localeCompare(world.bundle.minPlugin, undefined, { numeric: true }) < 0) return reply({ error: 'mcp_outdated', plugin: { have: query.plugin_version, need: world.bundle.minPlugin } }, 426)
     if (query.known_version === world.bundle.version) return reply({ version: world.bundle.version, unchanged: true, floor_lines_plugin_version: world.bundle.floorVersion })
     const names = Object.keys(BUNDLE_EVENT_KEY)
     // a session on a plan is followed by the briefing after a compaction, and its sub-agent by the sub-agent's own: the bundle is rendered for the session, and a session on no plan carries neither
