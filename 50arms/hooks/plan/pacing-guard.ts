@@ -147,22 +147,34 @@ export function claimFailedReason(failure: string): string {
 }
 
 // The `agent.spawn` hook.
+// The model a plugin agent type runs on, read from its agent file (`agentModel`). A failed read refuses the spawn (fail closed): the model it
+// would run on cannot be judged.
+type OwnModel = { model: string | null } | { deny: string }
+async function readOwnModel(env: PacingEnv, e: AgentSpawnInput): Promise<OwnModel> {
+  try {
+    return { model: await env.agentModel(e.subagentType) }
+  } catch (err) {
+    return { deny: agentModelFailedReason(e.subagentType, err instanceof Error ? err.message : String(err)) }
+  }
+}
+
+// The agent type's model is read only where its answer can matter, and only when the call names no model (a fork never reads it): a designer's
+// start (refused below Opus before any claim), or a claimed start on a tight budget (moved to haiku or not, decided after the claim). A signed-out
+// session and a start with free slots read nothing.
+const readsOwnModel = (e: AgentSpawnInput): boolean => !e.fork && e.model === undefined
+
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
-    // the model the agent type names is read only when the call names none (and it is not a fork): a type this plugin does not define names none
-    let ownModel: string | null = null
-    if (!e.fork && e.model === undefined) {
-      try {
-        ownModel = await env.agentModel(e.subagentType)
-      } catch (err) {
-        return { deny: agentModelFailedReason(e.subagentType, err instanceof Error ? err.message : String(err)) }
-      }
-    }
-    const requested = requestedModelOf(e, ownModel)
     const designer = isDesignerBrief(e.prompt)
+    let ownModel: string | null = null
+    if (designer && readsOwnModel(e)) {
+      const read = await readOwnModel(env, e)
+      if ('deny' in read) return { deny: read.deny }
+      ownModel = read.model
+    }
     // a designer below Opus is refused before any slot is claimed: nothing is counted, nothing is started
     if (designer) {
-      const refusal = designerModelRefusal(requested)
+      const refusal = designerModelRefusal(requestedModelOf(e, ownModel))
       if (refusal !== null) return { deny: refusal }
     }
     const claim = await claimSlot(env)
@@ -173,7 +185,18 @@ export function spawnGuard(env: PacingEnv) {
     // 50 Arms refused the claim, so the spawn is refused, worded from 50 Arms' own cause whatever the plugin's reading of the verdict says
     if (claim.kind === 'refused') return { deny: denyReason(claim.pacing.verdict, claim.why) }
     let decision: SpawnDecision = { kind: 'allow' }
-    if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, requested, designer)
+    if (claim.kind === 'claimed') {
+      const verdict = claim.pacing.verdict
+      if (!designer && readsOwnModel(e) && isTight(verdict.budget, verdict.subAgents, verdict.reservedAgents)) {
+        const read = await readOwnModel(env, e)
+        if ('deny' in read) {
+          await releaseClaim(env, claim.claimId)
+          return { deny: read.deny }
+        }
+        ownModel = read.model
+      }
+      decision = decideSpawn(verdict, requestedModelOf(e, ownModel), designer)
+    }
     try {
       // a fork ignores `model`, so there is nothing to rewrite
       const started = await next(decision.kind === 'downgrade' && !e.fork ? { ...e, model: decision.model } : e)

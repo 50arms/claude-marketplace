@@ -257,6 +257,68 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($, { model: 'opus' })).model).toBe('haiku')
   })
 
+  // CP-162 round 2: a plugin agent type's model is read from its agent file under `$.plugin.root`, which the test runtime gives as /app/50arms (the
+  // plugin folder holding agents/; plan-kit.tsx). The fixture's fs.read answers only the files seeded in `d.world.files`.
+  const PLUGIN_ROOT = '/app/50arms'
+  const agentFile = (name: string) => `${PLUGIN_ROOT}/agents/${name}.md`
+  const agentReads = (d: any) => d.world.fsReads.filter((p: string) => p.includes('/agents/'))
+  const DESIGN = { prompt: 'gate-designer CP-1\n\nDraw the screen.' }
+
+  test('a designer started as 50arms:worker-sonnet-high under an Opus parent is refused before any claim, reading that agent file under the plugin root', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+    d.world.files[agentFile('worker-sonnet-high')] = '---\nname: worker-sonnet-high\nmodel: sonnet\n---\n'
+    const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-high', parentModel: 'opus' })
+    expect(r.deny).toMatch(/this designer start runs on sonnet/)
+    expect(agentReads(d)).toEqual([agentFile('worker-sonnet-high')])
+    expect(d.claimsAllowed).toEqual([])
+  })
+
+  test('a designer started as 50arms:worker-opus-high under a Sonnet parent is started, its agent file read (Opus is never refused)', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+    d.world.files[agentFile('worker-opus-high')] = '---\nname: worker-opus-high\nmodel: opus\n---\n'
+    const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-opus-high', parentModel: 'sonnet' })
+    expect(r.deny).toBeUndefined()
+    expect(agentReads(d)).toEqual([agentFile('worker-opus-high')])
+  })
+
+  test('a designer whose agent file cannot be read is refused: the model it runs on cannot be judged (fail closed)', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+    const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-high' })
+    expect(r.deny).toMatch(/could not be read from its agent file/)
+    expect(d.claimsAllowed).toEqual([])
+  })
+
+  test('a start with free slots reads no agent file, so an unreadable one cannot refuse it', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+    expect((await spawn($, { subagentType: '50arms:worker-sonnet-high' })).deny).toBeUndefined()
+    expect(d.claimsAllowed).toHaveLength(1)
+    expect(agentReads(d)).toEqual([])
+  })
+
+  test('a signed-out session reads no agent file and lets the spawn through, however tight its verdict would be', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ level: 'critical', budget: 0 }) } })
+    d.world.signedOut = 'lapsed'
+    expect((await spawn($, { subagentType: '50arms:worker-sonnet-high' })).deny).toBeUndefined()
+    expect(agentReads(d)).toEqual([])
+  })
+
+  test('a tight start on a plugin agent type that runs on Sonnet is moved to Haiku, its agent file read', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
+    d.world.files[agentFile('worker-sonnet-high')] = '---\nname: worker-sonnet-high\nmodel: sonnet\n---\n'
+    const r = await spawn($, { subagentType: '50arms:worker-sonnet-high', parentModel: 'haiku' })
+    expect(r.deny).toBeUndefined()
+    expect(r.model).toBe('haiku')
+    expect(agentReads(d)).toEqual([agentFile('worker-sonnet-high')])
+  })
+
+  test('a tight start whose agent file cannot be read is refused and its claim given back: the model it runs on cannot be judged', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
+    const r = await spawn($, { subagentType: '50arms:worker-sonnet-high' })
+    expect(r.deny).toMatch(/could not be read from its agent file/)
+    expect(d.claimsAllowed).toHaveLength(1)
+    expect(d.claimsReleased).toEqual(d.claimsAllowed)
+  })
+
   test('a designer start that takes the last free slot is started on the model it asked for (DEC-2387)', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
     const r = await spawn($, { prompt: 'gate-designer CP-1\n\nDraw the screen.', model: 'opus' })
