@@ -161,7 +161,7 @@ async function readOwnModel(env: PacingEnv, e: AgentSpawnInput): Promise<OwnMode
 }
 
 // The agent type's model is read only for a designer start whose call names no model (a fork never reads it): it is refused below Opus before any claim.
-// Every other start reads nothing, a tight one included (CP-162).
+// Every other start reads nothing, a tight one included.
 const readsOwnModel = (e: AgentSpawnInput): boolean => !e.fork && e.model === undefined
 
 export function spawnGuard(env: PacingEnv) {
