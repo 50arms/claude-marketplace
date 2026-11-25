@@ -4146,11 +4146,11 @@ async function liveServer($: any): Promise<string> {
   }
 }
 
-// the model a plugin's own agent type runs on: the model its agent file (`agents/<name>.md` under the plugin's root) names. Another type's model is
-// not read here (null: the call's model or the parent's decides), since only this plugin's agent files are in reach.
-async function ownAgentModel($: any, subagentType: string): Promise<string | null> {
+// the model a plugin's own agent type runs on: the model its agent file (`agents/<name>.md` under the plugin's root) names, null when it names none.
+// Another type's model is not read here (undefined: its model cannot be told), since only this plugin's agent files are in reach.
+async function ownAgentModel($: any, subagentType: string): Promise<string | null | undefined> {
   const file = ownAgentFile($.plugin.name, $.plugin.root, subagentType)
-  return file === null ? null : (agentFileModel(String(await $.fs.read(file))) ?? null)
+  return file === null ? undefined : (agentFileModel(String(await $.fs.read(file))) ?? null)
 }
 
 // the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).

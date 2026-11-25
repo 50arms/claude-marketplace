@@ -39,9 +39,9 @@ export type PacingEnv = {
   signedIn: () => Promise<boolean>
   // the wait between looks for a server that has not connected yet; rejects when the plugin is unloaded
   sleep: (ms: number) => Promise<void>
-  // the model an agent type of this plugin names in its own agent file, null when it names none or the type is not one this plugin defines.
-  // Rejects when the file cannot be read.
-  agentModel: (subagentType: string) => Promise<string | null>
+  // the model an agent type of this plugin names in its own agent file: null when the type is this plugin's own and its file names none (the parent's
+  // model), undefined when the type is not one this plugin defines (its model cannot be read here). Rejects when the file cannot be read.
+  agentModel: (subagentType: string) => Promise<string | null | undefined>
   toast: (text: string) => void
   // called when the slot-refused state (slotWaiting) changes, so the session title is redrawn at once; a host that draws no title leaves it out
   onSlotChange?: () => void

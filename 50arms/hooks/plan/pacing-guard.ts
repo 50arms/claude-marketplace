@@ -140,6 +140,14 @@ export function agentModelFailedReason(subagentType: string, failure: string): s
   return `The model the agent type ${subagentType} runs on could not be read from its agent file (${failure}), so this spawn cannot be judged against the budget and is refused.`
 }
 
+// Why a designer start that names no model is refused when its agent type is not one of the plugin's own: the plugin cannot read the model it runs on.
+export function unknownAgentTypeModelReason(subagentType: string): string {
+  return (
+    `A screen design runs on Opus or a better model, and the plugin cannot tell which model the agent type ${subagentType} runs on. ` +
+    'Start the designer on one of the plugin\'s Opus or better agent types (50arms:worker-opus-high, 50arms:worker-fable-high), or name Opus or better in the call\'s model parameter.'
+  )
+}
+
 // Why a spawn is refused when its claim could not be made (fail closed).
 export function claimFailedReason(failure: string): string {
   return (
@@ -150,8 +158,8 @@ export function claimFailedReason(failure: string): string {
 
 // The `agent.spawn` hook.
 // The model a plugin agent type runs on, read from its agent file (`agentModel`) for a designer start. A failed read refuses the spawn (fail closed): the
-// model it would run on cannot be judged.
-type OwnModel = { model: string | null } | { deny: string }
+// model it would run on cannot be judged. An undefined model is a type that is not the plugin's own: its model cannot be told, so the caller refuses.
+type OwnModel = { model: string | null | undefined } | { deny: string }
 async function readOwnModel(env: PacingEnv, e: AgentSpawnInput): Promise<OwnModel> {
   try {
     return { model: await env.agentModel(e.subagentType) }
@@ -173,6 +181,7 @@ export function spawnGuard(env: PacingEnv) {
       if (readsOwnModel(e)) {
         const read = await readOwnModel(env, e)
         if ('deny' in read) return { deny: read.deny }
+        if (read.model === undefined) return { deny: unknownAgentTypeModelReason(e.subagentType) }
         ownModel = read.model
       }
       const refusal = designerModelRefusal(requestedModelOf(e, ownModel))

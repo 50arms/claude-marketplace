@@ -192,6 +192,29 @@ describe('decideSpawn (the decision table)', () => {
     expect(r.deny).toBeUndefined()
     expect(started?.model).toBeUndefined()
   })
+
+  test('a designer whose agent type is not the plugin\'s own, and names no model, is refused before any claim: the plugin cannot tell its model', async () => {
+    resetPacing()
+    const env = guardEnv(undefined, () => Promise.reject(new Error('never reached: a refused designer claims nothing')))
+    const e = { prompt: 'gate-designer CP-1\n\nDraw.', subagentType: 'general-purpose', description: 'd', tool_use_id: 't', fork: false, parentModel: 'opus', background: false } as any
+    let started = false
+    const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
+    expect(started).toBe(false)
+    expect(r.deny).toMatch(/the plugin cannot tell which model the agent type general-purpose runs on/)
+    expect(r.deny).toMatch(/Opus or better agent types/)
+    expect(r.deny).toMatch(/name Opus or better in the call/)
+    expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
+  })
+
+  test('a designer on a non-plugin agent type that names Opus or better in the call is started on that model, its type unread', async () => {
+    resetPacing()
+    const env = guardEnv(undefined, () => Promise.resolve({ ok: true, status: 200, body: claimedBody }))
+    const e = { prompt: 'gate-designer CP-1\n\nDraw.', subagentType: 'general-purpose', model: 'opus', description: 'd', tool_use_id: 't', fork: false, parentModel: 'sonnet', background: false } as any
+    let started: any = null
+    const r = await spawnGuard(env)(e, async (x: any) => { started = x; return { model: 'opus', agentId: 'a' } as any })
+    expect(r.deny).toBeUndefined()
+    expect(started?.model).toBe('opus')
+  })
 })
 
 describe('the agent.spawn hook', () => {
@@ -288,6 +311,22 @@ describe('the agent.spawn hook', () => {
     const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-high' })
     expect(r.deny).toMatch(/could not be read from its agent file/)
     expect(d.claimsAllowed).toEqual([])
+  })
+
+  test('a designer on a non-plugin agent type with no model named is refused before any claim, with the plugin unable to read its model', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+    const r = await spawn($, { ...DESIGN, subagentType: 'general-purpose', parentModel: 'opus' })
+    expect(r.deny).toMatch(/the plugin cannot tell which model the agent type general-purpose runs on/)
+    expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
+    expect(agentReads(d)).toEqual([])
+    expect(d.claimsAllowed).toEqual([])
+  })
+
+  test('a designer on a non-plugin agent type that names Opus in the call is started, a non-designer on one is unchanged', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
+    expect((await spawn($, { ...DESIGN, subagentType: 'general-purpose', model: 'opus', parentModel: 'sonnet' })).deny).toBeUndefined()
+    expect((await spawn($, { subagentType: 'general-purpose', parentModel: 'sonnet' })).deny).toBeUndefined()
+    expect(d.claimsAllowed).toHaveLength(2)
   })
 
   test('a start with free slots reads no agent file, so an unreadable one cannot refuse it', async ($, on) => {
