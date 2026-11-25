@@ -5,8 +5,8 @@ import "./run-tests-with-npm-test.generated"
 // fake `$` of the earlier suites could not.
 import { describe, expect } from 'claude-code/testing'
 
-import { SIGN_IN_INVITATION, eventFailureLine } from '../hooks/context/events'
-import { test, TOLD, OTHER_SESSION, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { SIGN_IN_INVITATION } from '../hooks/bundle/floor'
+import { test, BUNDLE_EVENT_KEY, EVENT_TEXT, TOLD, OTHER_SESSION, SURFACES, dashboard, deliveredReports, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const SOURCES = ['startup', 'resume', 'fork', 'clear', 'compact'] as const
@@ -43,7 +43,8 @@ for (const surface of SURFACES) {
         const first = await $.prompt.submit({ text: 'hello' })
         expect(first.context).toHaveLength(2)
         expect(first.context![1]).toBe(TOLD(event))
-        expect(d.contextReads.filter((p: string) => p.startsWith('/api/reminders/event/'))).toEqual([`/api/reminders/event/${event}`])
+        await d.clock.settle()
+        expect(deliveredReports(d, BUNDLE_EVENT_KEY[event]!)).toHaveLength(1)
         const second = await $.prompt.submit({ text: 'again' })
         expect(second.context).toHaveLength(1)
       })
@@ -54,17 +55,17 @@ for (const surface of SURFACES) {
         const { d } = await unboundStart($, on, source, { connected: false, signedOut: 'signed-out' })
         d.world.restart.json = { notice: NOTICE }
         const first = await $.prompt.submit({ text: 'hello' })
-        // a signed-out startup is told the one sign-in invitation and nothing else (CP-75); a resume is told the notice
-        expect(first.context!.slice(1)).toEqual([source === 'startup' ? SIGN_IN_INVITATION : NOTICE])
-        expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
+        // a signed-out startup is told the one sign-in invitation and nothing else (CP-75); a resume is told the notice. A signed-out prompt has no time stamp: the stamp is the bundle's
+        expect(first.context).toEqual([source === 'startup' ? SIGN_IN_INVITATION : NOTICE])
+        expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(0)
         expect(d.restartCalls).toEqual(source === 'resume' ? [{ transcript_path: '/work/main.jsonl' }] : [])
       })
     }
 
-    test('fork has nothing to tell: the first prompt carries only its stamp', async ($, on) => {
+    test('fork has nothing to tell: the first prompt carries nothing', async ($, on) => {
       const { d } = await unboundStart($, on, 'fork', { connected: false, signedOut: 'signed-out' })
       d.world.restart.json = { notice: NOTICE }
-      expect((await $.prompt.submit({ text: 'hello' })).context).toHaveLength(1)
+      expect((await $.prompt.submit({ text: 'hello' })).context).toHaveLength(0)
       expect(d.restartCalls).toEqual([])
     })
 
@@ -124,28 +125,29 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       d.world.sessionReadStatus = 500
-      // the connection record on disk is for sess-own; the start is for sess-other, which holds none: a dashboard fault is silent for it
+      d.world.restart.json = { notice: 'NOTICE-SENTINEL' }
+      // the connection record on disk is for sess-own; the start is for sess-other, which holds none: it is a session that may have replaced one, so the restart notice is asked
       const other = await firstPrompt($, 'startup', { session_id: OTHER_SESSION.session_id })
-      expect(other.startLines).toBeUndefined()
+      expect((other.startLines ?? []).join('\n')).toContain('NOTICE-SENTINEL')
+      expect(d.restartCalls).toHaveLength(1)
+      // sess-own holds a record: it is on a plan, so the notice is not asked for it
       const own = await firstPrompt($, 'startup')
-      expect(own.startLines).toEqual([eventFailureLine('session_start', '500: session boom')])
+      expect((own.startLines ?? []).join('\n')).not.toContain('NOTICE-SENTINEL')
+      expect(d.restartCalls).toHaveLength(1)
     })
 
-    test('work that throws after the start was taken is one warning line; the stamp stays and the prompt and the tool result go on', async ($, on) => {
+    test('work that throws after the start was taken holds the context with the loading line, and the start is owed: the prompt and the tool result go on', async ($, on) => {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       on('classic.SessionStart', () => ({}) as any)
       const d = dashboard(on)
       await startSession($, d, surface)
       d.world.fsError = 'disk gone'
       const r = await firstPrompt($, 'startup')
-      expect(r.context).toHaveLength(2)
-      expect(r.context[0]).toMatch(/\d\d:\d\d:\d\d/)
-      expect(r.startLines![0]).toMatch(/^⚠ Could not load the "session_start" event text from the 50 Arms reminder registry \(.*disk gone.*\)/)
-      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'sess-own' })
-      const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
-      expect(tool.text).toBe('done')
-      expect(tool.context).toHaveLength(1)
-      expect(tool.context![0]).toContain('after_compaction')
+      expect(r.context.join('\n')).toMatch(/loading/)
+      d.world.fsError = undefined
+      // the first call after the bundle arrives is refused with the owed start text (read it, then retry); the next one runs
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).deny).toContain(EVENT_TEXT('session_start'))
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).text).toBe('done')
     })
   })
 }

@@ -1,15 +1,19 @@
 import "./run-tests-with-npm-test.generated"
-// DX-4234 / DX-5554: the registry's event text for every signed-in session (SessionStart startup / resume / compact, and every sub-agent's start),
-// fetched through the session's own dashboard server (R-2: `50arms_api`, never the package's CLI), and the silence rules: one warning line for a
-// fetch that failed, one invitation to sign in for a session with no usable key (nothing at its sub-agents, nothing for a revoked key). The dashboard decides the lines: a plan-connected session's text carries the plan-only
-// line, a session on no plan's the agent-scoped lines alone.
+// DX-4234 / DX-5554 / CP-146: the bundle's text for every signed-in session (SessionStart startup / resume / compact, and every sub-agent's start), read from the policy bundle through the session's own dashboard server
+// (R-2: `50arms_api`, never the package's CLI), and the silence rules: a session with no usable key is told one invitation to sign in (nothing at its sub-agents, nothing for a revoked key); a signed-in session that
+// cannot be given the bundle is held (the loading line, then the hold line) and owed its start. The bundle decides the words: a plan-connected session's after-compaction text carries the briefing, a session on no plan's does not.
 import { describe, expect } from 'claude-code/testing'
 
-import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, SERVER_UNREACHABLE_REASON, SESSION_HELD_REASON, SIGN_IN_INVITATION, eventFailureLine } from '../hooks/context/events'
-import { test, BAD_SESSION_ID, BAD_SESSION_ID_PATH, EVENT_TEXT, TOLD, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { SIGN_IN_INVITATION } from '../hooks/bundle/floor'
+import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
+import { CONTEXT_DEADLINE_MS } from '../hooks/context/events'
+import { test, BUNDLE_EVENT_KEY, EVENT_TEXT, TOLD, SURFACES, clearedEvent, dashboard, deliveredReports, firstPrompt, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
-const EVENT_PATHS = (reads: string[]) => reads.filter(p => p.startsWith('/api/reminders/event/'))
+const BUNDLE_PATH = '/api/behavior-events/bundle'
+const MIN = 60_000
+const tool = async ($: any) => (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)) as any
+const joined = (lines: string[] | undefined) => (lines ?? []).join('\n')
 
 for (const surface of SURFACES) {
   describe(`the event text on ${surface}`, () => {
@@ -23,21 +27,27 @@ for (const surface of SURFACES) {
     }
 
     for (const [source, event] of [['startup', 'session_start'], ['resume', 'session_resume'], ['compact', 'after_compaction']] as const) {
-      test(`a connected session's ${source} is told the ${event} text`, async ($, on) => {
+      test(`a connected session's ${source} is told the ${event} text, and the delivery is reported`, async ($, on) => {
         const d = await started($, on)
         const r = await firstPrompt($, source)
         expect(r.startLines).toEqual([TOLD(event)])
-        expect(EVENT_PATHS(d.contextReads)).toEqual([`/api/reminders/event/${event}`])
+        await d.clock.settle()
+        expect(deliveredReports(d, BUNDLE_EVENT_KEY[event]!)).toHaveLength(1)
       })
     }
 
-    test('clear and fork have no event: nothing is read, nothing is told', async ($, on) => {
+    test('a fork has no event and a clear is told the bundle\'s after-clear text only when it has one', async ($, on) => {
       const d = await started($, on)
-      for (const source of ['clear', 'fork'] as const) {
-        const r = await firstPrompt($, source)
-        expect(r.startLines).toBeUndefined()
-      }
-      expect(d.contextReads).toEqual([])
+      expect((await firstPrompt($, 'fork')).startLines).toBeUndefined()
+      // the default bundle carries no text for a clear
+      expect((await firstPrompt($, 'clear')).startLines).toBeUndefined()
+      d.world.bundle.events['session.after_clear'] = clearedEvent()
+      d.world.bundle.version = 'c'.repeat(63) + '3'
+      await d.clock.advance(2 * MIN)
+      const cleared = await firstPrompt($, 'clear')
+      expect(cleared.startLines).toHaveLength(1)
+      expect(cleared.startLines![0]).toContain(EVENT_TEXT('after_clear'))
+      expect((await firstPrompt($, 'fork')).startLines).toBeUndefined()
     })
 
     test("a connected session's sub-agent is told the sub_agent_start text", async ($, on) => {
@@ -45,10 +55,10 @@ for (const surface of SURFACES) {
       const r = await $.classic.SubagentStart(START)
       await d.clock.settle()
       expect(r.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])
-      expect(EVENT_PATHS(d.contextReads)).toEqual(['/api/reminders/event/sub_agent_start'])
+      expect(deliveredReports(d, 'subagent.start')).toHaveLength(1)
     })
 
-    // DX-5554: the plan-only line is the dashboard's to leave out; the plugin asks for every signed-in session
+    // DX-5554: the plan-only text is the bundle's to leave out; the plugin tells every signed-in session what its bundle holds
     for (const [label, world] of [
       ['with no session row', {}],
       ['holding a team agent', { agent: { id: 6, name: 'Tendai', avatar_url: null } }],
@@ -59,13 +69,13 @@ for (const surface of SURFACES) {
         Object.assign(d.world, world)
         for (const [source, event] of [['startup', 'session_start'], ['resume', 'session_resume'], ['compact', 'after_compaction']] as const) {
           const r = await firstPrompt($, source)
-          // no compaction briefing: it is about the plan's cards
+          // no compaction briefing: the bundle of a session on no plan has none
           expect(r.startLines).toEqual([EVENT_TEXT(event)])
         }
         const r = await $.classic.SubagentStart(START)
         await d.clock.settle()
         expect(r.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])
-        expect(EVENT_PATHS(d.contextReads)).toEqual(['/api/reminders/event/session_start', '/api/reminders/event/session_resume', '/api/reminders/event/after_compaction', '/api/reminders/event/sub_agent_start'])
+        for (const event of ['session.start', 'session.resume', 'session.after_compaction', 'subagent.start']) expect(deliveredReports(d, event)).toHaveLength(1)
       })
     }
 
@@ -78,79 +88,51 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect(d.restartCalls).toEqual([{}])
     })
 
-    test('a signed-in session on no plan whose event read fails is told one warning line, at start and at a sub-agent start', async ($, on) => {
+    // CP-146: a bundle that cannot be read is no failure line naming the event: the context is held (the loading line for 2 minutes, then the hold line) and its start is owed
+    test('a start whose bundle cannot be read holds the context with the loading line, then the hold line, and the owed text is told once a bundle arrives', async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.override = { status: 500, body: { error: 'event boom' } }
+      const r = await firstPrompt($, 'startup')
+      expect(joined(r.context)).toMatch(/loading/)
+      expect(joined(r.context)).not.toMatch(/CRITICAL/)
+      expect(joined(r.context)).not.toContain(EVENT_TEXT('session_start'))
+      expect((await tool($)).deny).toMatch(/loading/)
+      await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+      expect((await tool($)).deny).toMatch(/CRITICAL/)
+      d.world.bundle.override = undefined
+      await d.clock.advance(MIN)
+      // the refusal of the next call carries the start it was owed, so the context reads it before it runs a tool; the call after it runs
+      expect((await tool($)).deny).toContain(EVENT_TEXT('session_start'))
+      expect((await tool($)).deny).toBeUndefined()
+    })
+
+    test('a sub-agent start whose bundle cannot be read is told the loading line, never nothing, and is owed its start', async ($, on) => {
       const d = await started($, on, { connected: false })
-      d.world.eventText.session_start = { status: 500 }
-      d.world.eventText.sub_agent_start = { status: 500 }
-      expect((await firstPrompt($, 'startup')).startLines).toEqual([eventFailureLine('session_start', '500: event boom')])
+      d.world.bundle.override = { status: 500, body: { error: 'event boom' } }
       const r = await $.classic.SubagentStart(START)
       await d.clock.settle()
-      expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: event boom')])
+      expect(joined(r.additionalContext)).toMatch(/loading/)
+      d.world.bundle.override = undefined
+      await d.clock.advance(MIN)
+      expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)) as any).deny).toContain(EVENT_TEXT('sub_agent_start'))
     })
 
-    test('a fetch that fails is one warning line naming the event and the reason', async ($, on) => {
-      const d = await started($, on)
-      d.world.eventText.session_resume = { status: 500 }
-      const r = await firstPrompt($, 'resume')
-      expect(r.startLines).toEqual([eventFailureLine('session_resume', '500: event boom')])
-      expect(r.startLines![0]).toBe('⚠ Could not load the "session_resume" event text from the 50 Arms reminder registry (500: event boom). Tell the operator this event hook fetch failed.')
-    })
-
-    test('CP-82: an empty text is nothing to tell, not a failed lookup', async ($, on) => {
-      const d = await started($, on)
-      d.world.eventText.sub_agent_start = ''
-      const r = await $.classic.SubagentStart(START)
-      await d.clock.settle()
-      expect(r.additionalContext).toBeUndefined()
-    })
-
-    test('a CONNECTED session (its record is on disk) whose plans read fails is told one warning line, at start and at a sub-agent start', async ($, on) => {
+    test('a CONNECTED session (its record is on disk) whose plans read fails is held with its start owed', async ($, on) => {
       const d = await started($, on)
       d.world.sessionReadStatus = 500
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines).toEqual([eventFailureLine('session_start', '500: session boom')])
-      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: session boom')])
-      await d.clock.settle()
-      expect(EVENT_PATHS(d.contextReads)).toEqual([])
+      expect(joined(r.context)).toMatch(/loading/)
+      expect(joined(r.context)).not.toContain(EVENT_TEXT('session_start'))
     })
 
-    test('DX-3421: a session with no record on disk whose plans read fails is quiet at its start and resume: it is not known to be on a plan', async ($, on) => {
-      const d = await started($, on, { connected: false })
-      d.world.sessionReadStatus = 500
-      expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
-      await d.clock.settle()
-      expect(EVENT_PATHS(d.contextReads)).toEqual([])
-    })
-
-    // the dashboard leaves the mantra out of a plugin sub-agent's profile because this start delivers it, so a start that cannot is never silent
-    test('a session with no record on disk whose plans read fails tells its sub-agent the mantra could not be loaded and where to fetch it', async ($, on) => {
-      const d = await started($, on, { connected: false })
-      d.world.sessionReadStatus = 500
-      const r = await $.classic.SubagentStart(START)
-      await d.clock.settle()
-      expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: session boom')])
-      expect(r.additionalContext![0]).toContain('Could not load the mantra')
-      expect(r.additionalContext![0]).toContain('`50arms_api` `GET /api/reminders/event/sub_agent_start`')
-      expect(EVENT_PATHS(d.contextReads)).toEqual([])
-    })
-
-    test('a session whose id is not a plain id has no connection record, even with one at the path such an id would name: a failed plans read is still told to its sub-agent', async ($, on) => {
-      const d = await started($, on)
-      d.world.sessionId = BAD_SESSION_ID
-      // a record at the path such an id would name, as the runtime resolves it, so a check that built the path would find it
-      d.world.files[BAD_SESSION_ID_PATH] = '{}'
-      d.world.sessionReadStatus = 500
-      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', '500: session boom')])
-    })
-
-    test('a connected session whose call is rejected (the dashboard times out) is told the one warning line too', async ($, on) => {
+    test('a connected session whose call is rejected (the dashboard times out) is held too, never told a plugin text of its own', async ($, on) => {
       const d = await started($, on, { mcp: 'flaky' })
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines).toEqual([eventFailureLine('session_start', 'mcp: 50arms: $.mcp.call: request timed out after 60000ms')])
-      expect(EVENT_PATHS(d.contextReads)).toEqual([])
+      expect(joined(r.context)).toMatch(/loading/)
+      expect(joined(r.context)).not.toContain(EVENT_TEXT('session_start'))
     })
 
-    // a session with no usable key cannot ask 50 Arms for anything: its start carries the plugin's one invitation, and a sub-agent's start nothing
+    // a session with no usable key cannot ask 50 Arms for anything: its start carries the floor's one invitation, and a sub-agent's start nothing
     for (const signedOut of ['signed-out', 'lapsed'] as const) {
       test(`a ${signedOut} session is told the one sign-in invitation at its start, and its sub-agent nothing`, async ($, on) => {
         const d = await started($, on, { signedOut })
@@ -158,51 +140,42 @@ This session replaced one on PLAN-23; 3 events wait.`])
         expect(r.startLines).toEqual([SIGN_IN_INVITATION])
         expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
         await d.clock.settle()
-        expect(EVENT_PATHS(d.contextReads)).toEqual([])
+        expect(d.contextReads).toEqual([])
       })
 
       test(`a ${signedOut} session's resume and compaction are quiet: the invitation is for a start`, async ($, on) => {
         const d = await started($, on, { signedOut })
         for (const source of ['resume', 'compact'] as const) expect((await firstPrompt($, source)).startLines).toBeUndefined()
         await d.clock.settle()
-        expect(EVENT_PATHS(d.contextReads)).toEqual([])
+        expect(d.contextReads).toEqual([])
       })
     }
 
-    test('a session whose key a person revoked is quiet at its start: its own tools tell the model; its sub-agent is told the mantra could not be loaded', async ($, on) => {
+    test('a session whose key a person revoked is quiet at its start and at its sub-agent: its own tools tell the model', async ($, on) => {
       const d = await started($, on, { signedOut: 'revoked' })
       expect((await firstPrompt($, 'startup')).startLines).toBeUndefined()
-      expect((await $.classic.SubagentStart(START)).additionalContext).toEqual([eventFailureLine('sub_agent_start', SESSION_HELD_REASON)])
+      expect((await $.classic.SubagentStart(START)).additionalContext).toBeUndefined()
       await d.clock.settle()
+      expect(d.contextReads).toEqual([])
     })
 
     for (const gate of ['agent_needed', 'agent_not_held'] as const) {
-      test(`a session the agent gate holds (${gate}) is quiet at its start; its sub-agent is told the mantra could not be loaded`, async ($, on) => {
+      test(`a session the agent gate holds (${gate}) is quiet at its start and its sub-agent: the dashboard's own answer tells the model`, async ($, on) => {
         const d = await started($, on)
         d.world.agentGate = gate
         expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
         const r = await $.classic.SubagentStart(START)
         await d.clock.settle()
-        expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', SESSION_HELD_REASON)])
-        expect(EVENT_PATHS(d.contextReads)).toEqual([])
+        expect(r.additionalContext).toBeUndefined()
       })
     }
 
-    test("a failed read adds the mantra's failure line only for the sub-agent's start: the other events keep their silence rules", async ($, on) => {
-      expect(eventFailureLine('sub_agent_start', 'x')).toContain('GET /api/reminders/event/sub_agent_start')
-      for (const event of ['session_start', 'session_resume', 'after_compaction', 'sub_agent_stop', 'side_session_turn_end'] as const) {
-        expect(eventFailureLine(event, 'x')).toBe(`⚠ Could not load the "${event}" event text from the 50 Arms reminder registry (x). Tell the operator this event hook fetch failed.`)
-      }
-    })
-
-    test('a CONNECTED session whose plugin server is not connected at the deadline is told so in one warning line, and the poll stops there', async ($, on) => {
+    test('a CONNECTED session whose plugin server is not connected at the deadline is held with its start owed, and the poll stops there', async ($, on) => {
       const d = await started($, on, { mcp: 'down' })
       const pending = firstPrompt($, 'startup')
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       const r = await pending
-      expect(r.startLines).toEqual([eventFailureLine('session_start', SERVER_NOT_CONNECTED_REASON)])
-      // no event text is read (the relay's own plan reads, DX-4233, are not this lookup's)
-      expect(EVENT_PATHS(d.contextReads)).toEqual([])
+      expect(joined(r.context)).toMatch(/loading/)
       // the poll is not left running in the background: a poll left going would read the tool list every 500 ms (about 60 more reads in 30 s);
       // the few reads the plugin's own load retries make are not it
       const polled = d.toolLists.n
@@ -215,8 +188,6 @@ This session replaced one on PLAN-23; 3 events wait.`])
       const pending = firstPrompt($, 'startup')
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       expect((await pending).startLines).toBeUndefined()
-      // no event text is read (the relay's own plan reads, DX-4233, are not this lookup's)
-      expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
     test('a session whose plugin server comes up during the wait is told its text', async ($, on) => {
@@ -229,7 +200,7 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect(r.startLines).toEqual([EVENT_TEXT('session_resume')])
     })
 
-    test('ONE deadline: a dashboard that never answers is one timeout line at the deadline, not a held start', async ($, on) => {
+    test('ONE deadline: a dashboard that never answers holds the start with the loading line, it does not hold the prompt for good', async ($, on) => {
       const d = await started($, on)
       d.world.contextHangs = true
       const pending = firstPrompt($, 'startup')
@@ -238,54 +209,29 @@ This session replaced one on PLAN-23; 3 events wait.`])
       void pending.then(() => (settled = true))
       await d.clock.settle()
       expect(settled).toBe(false)
-      await d.clock.advance(1)
+      await d.clock.advance(30_000)
       const r = await pending
-      expect(r.startLines).toEqual([eventFailureLine('session_start', DEADLINE_REASON)])
-      expect(r.startLines![0]).toContain('timeout: no response within 8s')
-    })
-
-    test('a hung dashboard for a session with no record on disk is quiet at the deadline', async ($, on) => {
-      const d = await started($, on, { connected: false })
-      d.world.contextHangs = true
-      const pending = firstPrompt($, 'startup')
-      await d.clock.advance(CONTEXT_DEADLINE_MS)
-      expect((await pending).startLines).toBeUndefined()
-    })
-
-    test('the wait for the server and the reads share ONE deadline: about 5 s of waiting leaves too little for a read that takes 4', async ($, on) => {
-      const d = await started($, on, { mcp: 'down' })
-      d.world.contextDelayMs = 4_000
-      const pending = firstPrompt($, 'resume')
-      await d.clock.advance(5_000)
-      d.setMcp('up')
-      await d.clock.advance(CONTEXT_DEADLINE_MS)
-      expect((await pending).startLines).toEqual([eventFailureLine('session_resume', DEADLINE_REASON)])
+      expect(joined(r.context)).toMatch(/loading/)
+      expect(joined(r.context)).not.toContain(EVENT_TEXT('session_start'))
+      expect((await tool($)).deny).toMatch(/loading/)
     })
 
     test('ONE deadline over the SUM of the reads: each read is quick, the lookup together is not', async ($, on) => {
       const d = await started($, on)
       d.world.contextDelayMs = 3_000
       const pending = firstPrompt($, 'resume')
-      // the plan read answers at 3 s, the event read at 6 s: inside the deadline
+      // the plan read answers at 3 s, the bundle read at 6 s: inside the deadline
       await d.clock.advance(6_000)
       expect((await pending).startLines).toEqual([EVENT_TEXT('session_resume')])
     })
 
-    test('a sub-agent start has the same deadline', async ($, on) => {
+    test('a sub-agent start whose bundle never answers is told the loading line at its own deadline', async ($, on) => {
       const d = await started($, on)
       d.world.contextHangs = true
       const pending = $.classic.SubagentStart(START)
       await d.clock.advance(CONTEXT_DEADLINE_MS)
-      expect((await pending).additionalContext).toEqual([eventFailureLine('sub_agent_start', DEADLINE_REASON)])
+      expect(joined((await pending).additionalContext)).toMatch(/loading/)
       await d.clock.settle()
-    })
-
-    test('a sub-agent start does not wait for a server that is not connected: it is told the mantra could not be loaded at once', async ($, on) => {
-      const d = await started($, on, { mcp: 'down' })
-      const r = await $.classic.SubagentStart(START)
-      await d.clock.settle()
-      expect(r.additionalContext).toEqual([eventFailureLine('sub_agent_start', SERVER_UNREACHABLE_REASON)])
-      expect(EVENT_PATHS(d.contextReads)).toEqual([])
     })
 
     test('R-2: the reads go through the session’s own server; nothing spawns the platform-mcp CLI', async ($, on) => {
@@ -293,7 +239,7 @@ This session replaced one on PLAN-23; 3 events wait.`])
       await firstPrompt($, 'startup')
       await $.classic.SubagentStart({ ...START, transcript_path: '/work/main.jsonl' })
       await d.clock.settle()
-      expect(d.contextReads).toContain('/api/reminders/event/session_start')
+      expect(d.contextReads).toContain(BUNDLE_PATH)
       expect(d.spawns).toEqual([])
     })
   })

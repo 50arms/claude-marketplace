@@ -3,6 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // and reports what it delivered and held. Written for the kit's stand-in dashboard (`plan-kit.tsx`: `world.bundle`, `world.deliveryReports`, `world.floorSends`); the pure parts are in `bundle-pure.test.tsx`.
 import { describe, expect } from 'claude-code/testing'
 
+import { floorLines } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
 import { test, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, dashboard, firstPrompt, startSession } from './plan-kit'
 
@@ -44,6 +45,28 @@ for (const surface of SURFACES) {
       await $.prompt.submit({ text: 'again' })
       await d.clock.settle()
       expect(d.world.floorSends).toHaveLength(1)
+    })
+
+    // CP-146 (DEC-1453): the sign-in and outage floor is more than the hold lines: what to do when the session is not connected to 50 Arms, and how to report an error to the person
+    test('the floor send carries the relay failure lines, the revoke and sign-in notes, the expired permission, the failed report, the foreground-lock notice and the disk fault lines, each with its placeholders and no one session value', async ($, on) => {
+      const d = await started($)
+      await firstPrompt($, 'startup')
+      await d.clock.settle()
+      const sent = d.world.floorSends[0].body.lines as { reason: string; event: string; text: string }[]
+      const NOTICE_REASONS = ['relay_stopped', 'relay_refused', 'relay_delayed', 'relay_stalled', 'revoke_note', 'revoke_note_failed', 'sign_in_note_no_target', 'sign_in_note_refused', 'sign_in_note_connected', 'sign_in_approved', 'sign_in_approved_no_target', 'sign_in_denied', 'sign_in_expired', 'permission_expired', 'report_failed', 'foreground_lock', 'disk_check_failed', 'disk_floors_unavailable']
+      for (const reason of NOTICE_REASONS) {
+        const line = sent.find(l => l.reason === reason)
+        expect(line, `the floor send lacks ${reason}`).toBeDefined()
+        expect(line!.text.length).toBeGreaterThan(0)
+        expect([...line!.text].length).toBeLessThanOrEqual(10_000)
+      }
+      // a value of the session stands as a placeholder, never as a value
+      expect(sent.find(l => l.reason === 'relay_stopped')!.text).toContain('{{slot:detail}}')
+      expect(sent.find(l => l.reason === 'sign_in_denied')!.text).toContain('{{slot:code}}')
+      expect(sent.find(l => l.reason === 'disk_check_failed')!.text).toContain('{{slot:detail}}')
+      // the set sent is the set the plugin holds, one line per (reason, event)
+      expect(sent).toEqual(floorLines())
+      expect(new Set(sent.map(l => `${l.reason}/${l.event}`)).size).toBe(sent.length)
     })
 
     test('a once-only text is told once per agent context: the main conversation and each sub-agent count apart', async ($, on) => {

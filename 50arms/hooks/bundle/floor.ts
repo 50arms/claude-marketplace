@@ -1,3 +1,9 @@
+import { foregroundLockNotice } from '../context/foreground'
+import { diskFault, noticeText } from '../context/disk'
+import { delayedLine, refusedLine, stalledLine, stoppedLine } from '../relay/text'
+import { permissionExpiredNote, revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from '../plan/notes'
+import { failureLine } from './reports'
+
 // The floor: the few texts the plugin ships for the moments no bundle can exist. Everything else an agent is told at a hook moment comes from the
 // bundle. The plugin is the floor's one home: it reports the set to 50 Arms (so the app can list it read-only) and never reads one back.
 // Pure: each value a line carries (a reason, a date, a version) is a `{{slot:name}}` placeholder filled at run time, never one session's value baked in.
@@ -43,15 +49,51 @@ const TEXTS: Record<FloorReason, string> = { signed_out: SIGN_IN_INVITATION, loa
 
 const REASONS = Object.keys(TEXTS) as FloorReason[]
 
-export type FloorLine = { reason: FloorReason; event: string; text: string }
+// CP-146 (DEC-1453, PBLM-4588): the other texts the plugin must be able to say when the server cannot be reached or the session is not signed in. Each is the plugin's own function, called with a
+// `{{slot:name}}` placeholder where the session's value goes, so the set carries the very words the plugin tells and never a copy. Two kinds: what to do when the session is not connected to 50 Arms
+// (the relay failure lines, the revoked-key note, the sign-in notes, the expired permission request) and how to report an error to the person (the failed report, the foreground-lock notice, the disk
+// check's fault lines). Told under the catalog event nearest to when each is told.
+const slot = (name: string): string => `{{slot:${name}}}`
+
+export type NoticeReason =
+  | 'relay_stopped' | 'relay_refused' | 'relay_delayed' | 'relay_stalled'
+  | 'revoke_note' | 'revoke_note_failed'
+  | 'sign_in_note_no_target' | 'sign_in_note_refused' | 'sign_in_note_connected' | 'sign_in_approved' | 'sign_in_approved_no_target' | 'sign_in_denied' | 'sign_in_expired'
+  | 'permission_expired'
+  | 'report_failed' | 'foreground_lock' | 'disk_check_failed' | 'disk_floors_unavailable'
+
+const NOTICES: { reason: NoticeReason; event: string; text: string }[] = [
+  { reason: 'relay_stopped', event: 'relay.broken', text: stoppedLine(slot('detail'), slot('fix')) },
+  { reason: 'relay_refused', event: 'relay.broken', text: refusedLine(slot('detail'), slot('fix')) },
+  { reason: 'relay_delayed', event: 'relay.broken', text: delayedLine(slot('message')) },
+  // the notice takes a count of seconds; the placeholder stands where the number goes
+  { reason: 'relay_stalled', event: 'relay.broken', text: stalledLine(slot('seconds') as unknown as number) },
+  { reason: 'revoke_note', event: 'key.revoked', text: revokeNote({ ended: true }) },
+  { reason: 'revoke_note_failed', event: 'key.revoked', text: revokeNote({ ended: false }) },
+  { reason: 'sign_in_note_no_target', event: 'signed_out', text: signInNote(null, true) },
+  { reason: 'sign_in_note_refused', event: 'signed_out', text: signInNote(slot('target'), false) },
+  { reason: 'sign_in_note_connected', event: 'signed_out', text: signInNote(slot('target'), true) },
+  { reason: 'sign_in_approved', event: 'signed_out', text: signInApprovedNote(slot('code'), slot('target')) },
+  { reason: 'sign_in_approved_no_target', event: 'signed_out', text: signInApprovedNote(slot('code'), null) },
+  { reason: 'sign_in_denied', event: 'signed_out', text: signInDeniedNote(slot('code')) },
+  { reason: 'sign_in_expired', event: 'signed_out', text: signInExpiredNote(slot('code')) },
+  { reason: 'permission_expired', event: 'key.revoked', text: permissionExpiredNote({ code: slot('code'), permissions: [slot('permissions')] }) },
+  { reason: 'report_failed', event: 'dashboard.unreachable', text: failureLine(slot('reason')) },
+  { reason: 'foreground_lock', event: 'session.start', text: foregroundLockNotice(slot('reason')) },
+  { reason: 'disk_check_failed', event: 'session.start', text: diskFault(new Error(slot('detail'))) },
+  { reason: 'disk_floors_unavailable', event: 'session.start', text: noticeText({ freeBytes: 0, floors: null, floorsPath: slot('floors_path'), window: null }) },
+]
+
+export type FloorLine = { reason: FloorReason | NoticeReason; event: string; text: string }
 
 // The whole set, one line per (reason, event): a reason with an event of its own under it, any other under each moment it is told on. Sent as PUT /api/plan-sessions/me/plugin-floor.
 export function floorLines(): FloorLine[] {
-  return REASONS.flatMap(reason => {
+  const held = REASONS.flatMap(reason => {
     const own = OWN_EVENT[reason]
     const events: readonly string[] = own === undefined ? TOLD_ON : [own]
     return events.map(event => ({ reason, event, text: TEXTS[reason] }))
   })
+  return [...held, ...NOTICES]
 }
 
 export const floorBody = (pluginVersion: string) => ({ plugin_version: pluginVersion, lines: floorLines() })

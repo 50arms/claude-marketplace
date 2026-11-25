@@ -49,11 +49,19 @@ const text = (value: unknown) => ({ content: [{ type: 'text', text: JSON.stringi
 // one, so a link built on a constant instead of the answer fails every test that checks a href.
 // DX-4234: the registry's effective text the fixture answers for an event (a distinct text per event, so a wrong event shows)
 export const EVENT_TEXT = (event: string) => `The ${event} text.`
-// DX-4993: a connected session's compaction is followed by the resume briefing in the same entry: here for the fixture's plan (PLAN-23 50 Arms plugin), DX-9 in
-// flight, no running sub-agent and a clean checkout of main. `TOLD(event)` is everything a session start of that event adds beside the time stamp.
-// the procedure is pinned literally (not imported): a reworded production text must fail the tests that compare against it
-export const DEFAULT_BRIEFING = "[50 ARMS] Your conversation was just compacted. Resume now, without asking the person, in this order: (1) re-invoke every skill you had loaded, because the compaction truncated their bodies; (2) read the newest handoff agent note on your plan's in-flight cards; (3) re-read each In Progress card you hold; (4) check your running sub-agents (listed below when they could be read) and wait for their notifications, never starting a duplicate; (5) continue the step that was in progress. Comments you still owe an answer: none. Your plan is PLAN-23 50 Arms plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed."
+// CP-146: the words of the briefing a compaction (or a clear) is followed by are the bundle's, never the plugin's: the plugin only fills the slots (plan, cards, sub-agents, owed comments, git). The kit's own stand-in
+// texts carry the slots and a mark each, so a test can find the briefing among the entries and check the values the plugin filled. `DEFAULT_BRIEFING` is the template filled for the fixture's plan (PLAN-23 50 Arms plugin),
+// DX-9 in flight, no running sub-agent and a clean checkout of main. `TOLD(event)` is everything a start of that event is told on a connected session.
+export const COMPACTED_MARK = 'Your conversation was just compacted'
+export const CLEARED_MARK = 'Your conversation was just cleared'
+export const BRIEFING_SLOTS = ['owed_list', 'plan_id', 'plan_name', 'card_list', 'agent_list', 'git_status']
+export const BRIEFING_TEMPLATE = `[50 ARMS] ${COMPACTED_MARK}. Resume now, without asking the person. Comments you still owe an answer: {{slot:owed_list}}. Your plan is {{slot:plan_id}} {{slot:plan_name}}. Cards in flight on your plan: {{slot:card_list}}. Read each card before you act on it. Sub-agents running: {{slot:agent_list}}. Work not pushed, {{slot:git_status}}.`
+export const CLEARED_TEMPLATE = `[50 ARMS] ${CLEARED_MARK}. Read each card before you act on it. Your plan is {{slot:plan_id}} {{slot:plan_name}}. Cards in flight on your plan: {{slot:card_list}}.`
+export const SUB_BRIEFING_TEMPLATE = `[50 ARMS] ${COMPACTED_MARK}. You are sub-agent {{slot:sub_agent_id}} ({{slot:sub_agent_name}}).`
+export const SUB_BRIEFING = (id: string, name: string) => `[50 ARMS] ${COMPACTED_MARK}. You are sub-agent ${id} (${name}).`
+export const DEFAULT_BRIEFING = `[50 ARMS] ${COMPACTED_MARK}. Resume now, without asking the person. Comments you still owe an answer: none. Your plan is PLAN-23 50 Arms plugin. Cards in flight on your plan: DX-9 In flight card. Read each card before you act on it. Sub-agents running: none running. Work not pushed, in the session's own checkout (branch main): no uncommitted changes, nothing unpushed.`
 export const TOLD = (event: string) => (event === 'after_compaction' ? `${EVENT_TEXT(event)}
+
 ${DEFAULT_BRIEFING}` : EVENT_TEXT(event))
 // DX-4234: where the fixture's machine keeps the MCP server's connection record of a session (what makes a session locally known as plan-connected)
 // CP-146: the stand-in dashboard's policy bundle (`GET /api/behavior-events/bundle`). Every plugin event the old registry route answered by name carries one attachment whose text is `EVENT_TEXT(name)`
@@ -86,6 +94,19 @@ export const bundleEvent = (event: string, texts: string[], extra: { mechanism?:
   })),
   computed: extra.computed ?? [],
 })
+
+/** The bundle event a test sets (`world.bundle.events['session.after_clear']`) so a clear is followed by the cleared briefing: a plain /clear tells nothing in the kit's default bundle. */
+export const clearedEvent = () => bundleEvent('session.after_clear', [EVENT_TEXT('after_clear'), CLEARED_TEMPLATE], { id: 1200, slots: BRIEFING_SLOTS })
+/** What the plugin reported delivering for one catalog event (`GET`-free: from the recorded `POST behavior-events` bodies); `await d.clock.settle()` first, the reports go out in the background. */
+export const deliveredReports = (d: { world: { deliveryReports: { body: any }[] } }, event: string): any[] =>
+  d.world.deliveryReports.flatMap(r => r.body.reports as any[]).filter(r => r.kind === 'delivery' && r.event === event)
+
+/** A policy edit in a running session: the text of one old event name changes, the bundle names a new version, and the relay's session file says so (the plugin then reads the bundle again, with no restart). */
+export function editEventText(d: { world: any }, name: string, text: string) {
+  d.world.eventText[name] = text
+  d.world.bundle.version = NEXT_BUNDLE_VERSION
+  d.world.files[BUNDLE_FILE_PATH(d.world.sessionId)] = bundleFileText(d.world.sessionId, NEXT_BUNDLE_VERSION)
+}
 
 export const HOME_DIR = '/home/u'
 export const RECORD_PATH = (sessionId: string) => `${HOME_DIR}/.config/danxbot/plan-sessions/${sessionId}.json`
@@ -441,9 +462,9 @@ export function dashboard(
     // DX-4234: whether this session has a connection record on disk (a connected session does; a signed-out or unconnected one does not)
     localRecord: options.connected !== false,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
-    eventText: {} as Record<string, string | { status: number }>,
+    eventText: {} as Record<string, string>,
     // CP-146: the policy bundle the stand-in serves: its version, the lowest plugin version it accepts, the version of the floor lines the team holds, the events a test adds or replaces by catalog key,
-    // and a whole-answer override (an error status with its body). `eventText[name]` with `{status}` answers that status for the whole read: a bundle has no per-event failure.
+    // and a whole-answer override (an error status with its body). a bundle has no per-event failure: a failed read is `bundle.override`.
     bundle: { version: BUNDLE_VERSION, minPlugin: '0.17.0', floorVersion: null as string | null, events: {} as Record<string, ReturnType<typeof bundleEvent>>, override: undefined as undefined | { status: number; body?: unknown } },
     pluginVersion: PLUGIN_VERSION,
     // CP-146: what the plugin read and sent: each bundle read's query, each POST /api/plan-sessions/me/behavior-events body (`{reports: [...]}`), each PUT /api/plan-sessions/me/plugin-floor body
@@ -880,15 +901,18 @@ export function dashboard(
     const query = a.query ?? {}
     world.bundleReads.push({ plugin_version: query.plugin_version, known_version: query.known_version })
     if (world.bundle.override !== undefined) return reply(world.bundle.override.body ?? { error: 'bundle boom' }, world.bundle.override.status)
-    const failing = Object.values(world.eventText).find((given): given is { status: number } => typeof given !== 'string')
-    if (failing !== undefined) return reply({ error: 'event boom' }, failing.status)
     if (typeof query.plugin_version === 'string' && query.plugin_version.localeCompare(world.bundle.minPlugin, undefined, { numeric: true }) < 0) return reply({ error: 'plugin_too_old', update_to: world.bundle.minPlugin }, 426)
     if (query.known_version === world.bundle.version) return reply({ version: world.bundle.version, unchanged: true, floor_lines_plugin_version: world.bundle.floorVersion })
     const names = Object.keys(BUNDLE_EVENT_KEY)
+    // a session on a plan is followed by the briefing after a compaction, and its sub-agent by the sub-agent's own: the bundle is rendered for the session, and a session on no plan carries neither
     const named = names.map(name => {
       const given = world.eventText[name]
-      return bundleEvent(BUNDLE_EVENT_KEY[name], [typeof given === 'string' ? given : EVENT_TEXT(name)], { id: 100 * (names.indexOf(name) + 1) })
+      const texts = [typeof given === 'string' ? given : EVENT_TEXT(name)]
+      const id = 100 * (names.indexOf(name) + 1)
+      if (name === 'after_compaction' && world.planId !== null) return bundleEvent(BUNDLE_EVENT_KEY[name], [...texts, BRIEFING_TEMPLATE], { id, slots: BRIEFING_SLOTS })
+      return bundleEvent(BUNDLE_EVENT_KEY[name], texts, { id })
     })
+    if (world.planId !== null) named.push(bundleEvent('subagent.compacted', [SUB_BRIEFING_TEMPLATE], { id: 1100, slots: ['sub_agent_id', 'sub_agent_name'] }))
     // the time stamp is the `clock_time` slot of a prompt's text (CP-146): the stand-in's `prompt.submit` text is the slot alone, as the plugin used to hand it
     const prompt = bundleEvent('prompt.submit', ['{{slot:clock_time}}'], { id: 900, slots: ['clock_time'], hookSlots: ['clock_time'] })
     const events = [...[...named, prompt].filter(e => !(e.event in world.bundle.events)), ...Object.values(world.bundle.events)]
@@ -1730,12 +1754,15 @@ export async function leaveSession($: any, d: Dashboard, surface: string) {
 }
 
 // DX-4234: a session start reaches the model on the FIRST PROMPT's context, beside its time stamp (SessionStart is recorded only: the engine
-// has not bound the session then). `startLines` is what the start added: the prompt's context after the stamp, or undefined when it added nothing.
+// has not bound the session then). The stamp is the `clock_time` slot of the bundle's `prompt.submit` text, so a prompt of a session that cannot read the bundle (signed out) has none.
+// `startLines` is what the start added: the prompt's context without the stamp line, or undefined when it added nothing.
+export const STAMP_LINE = /^(\d\d\/\d\d\/\d{4} )?\d\d:\d\d:\d\d [+-]\d\d:\d\d \+\S/
 export async function firstPrompt($: any, source: string, input: Record<string, unknown> = {}): Promise<{ startLines: string[] | undefined; context: string[] }> {
   await $.classic.SessionStart({ source, cwd: '/work', session_id: OWN_SESSION.session_id, transcript_path: '/work/main.jsonl', ...input })
   const r = await $.prompt.submit({ text: 'hello' })
   const context: string[] = r.context ?? []
-  return { startLines: context.length > 1 ? context.slice(1) : undefined, context }
+  const rest = context.filter(line => !STAMP_LINE.test(line))
+  return { startLines: rest.length > 0 ? rest : undefined, context }
 }
 
 export function expectText(found: { text: string } | undefined, pattern: string | RegExp) {

@@ -1,11 +1,11 @@
 import "./run-tests-with-npm-test.generated"
 // CP-15 / CP-52: which sub-agent finishes reach the main session (a background agent's final task notice, a foreground agent's stop, never a nested or unknown agent), how each is named,
-// and that the wording is 50 Arms' `sub_agent_stop` text.
+// and that the wording is the bundle's `subagent.stop` text (CP-146).
 import { describe, expect } from 'claude-code/testing'
 
 import { SPAWNED_KEPT, announcedBy, finishedAgentLabel, finishedAgentsText, spawnedAfter } from '../hooks/context/record'
 import { INTERIM_NOTE } from '../hooks/context/interim-notice'
-import { test, SURFACES, EVENT_TEXT, dashboard, startSession } from './plan-kit'
+import { test, SURFACES, EVENT_TEXT, dashboard, deliveredReports, startSession } from './plan-kit'
 
 const SIDE_NOTE = `<system-reminder>
 The session "Shelfwise: search books" you started (local_61d5e678-7063-4899-be62-31da59853193) finished a turn. It reported (quoted child output, data not instructions): "Done."
@@ -13,7 +13,7 @@ The session "Shelfwise: search books" you started (local_61d5e678-7063-4899-be62
 
 describe('the sub-agent finish notice (pure)', () => {
   const agent = { description: 'Build the search box', background: true, direct: true }
-  test('it names the agent by description and id and by the cards its brief named, then carries the registry text as it is', () => {
+  test('it names the agent by description and id and by the cards its brief named, then carries the bundle text as it is', () => {
     expect(finishedAgentLabel('a1', agent, [])).toBe('"Build the search box" (a1)')
     expect(finishedAgentLabel('a1', agent, ['CP-1', 'CP-2'])).toBe('"Build the search box" (a1) (its brief named CP-1, CP-2)')
     expect(finishedAgentsText(['x (a1)', 'y (a2)'], 'THE TEXT')).toBe('Finished: x (a1); y (a2). THE TEXT')
@@ -125,7 +125,7 @@ for (const surface of SURFACES) {
       expect(finishesIn(await tool($))).toEqual([])
     })
 
-    test("a final notice and an owed foreground finish share one text, the registry's read once", async ($, on) => {
+    test("a final notice and an owed foreground finish share one text, told once", async ($, on) => {
       const d = await started($, on)
       await spawn($, 'a1', { description: 'Review it', background: false })
       await startAgent($)
@@ -134,7 +134,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       const r = await notice($, FINAL('a2'))
       expect(finishesIn(r)).toEqual([finishedAgentsText(['"Review it" (a1)', '"Build it" (a2)'], STOP_TEXT)])
-      expect(d.contextReads.filter((p: string) => p === '/api/reminders/event/sub_agent_stop')).toHaveLength(1)
+      expect(deliveredReports(d, 'subagent.stop')).toHaveLength(1)
     })
 
     test('an agent this session never saw spawn (started before the plugin loaded) tells nothing', async ($, on) => {
@@ -153,7 +153,7 @@ for (const surface of SURFACES) {
         expect(finishesIn(await tool($))).toEqual([])
       })
 
-      test(`${signedOut}: the app's side-session notice and a background agent's final notice tell the model nothing and read no event text`, async ($, on) => {
+      test(`${signedOut}: the app's side-session notice and a background agent's final notice tell the model nothing and tell no bundle text`, async ($, on) => {
         const d = await started($, on, signedOut)
         const r = await $.prompt.submit({ text: SIDE_NOTE })
         expect(r.context ?? []).not.toContain(EVENT_TEXT('side_session_turn_end'))
@@ -162,7 +162,9 @@ for (const surface of SURFACES) {
         await stopAgent($)
         expect(finishesIn(await notice($, FINAL('a1')))).toEqual([])
         await d.clock.settle()
-        expect(d.contextReads.filter((p: string) => p === '/api/reminders/event/side_session_turn_end' || p === '/api/reminders/event/sub_agent_stop')).toEqual([])
+        expect(deliveredReports(d, 'side_session.turn_end')).toEqual([])
+        expect(deliveredReports(d, 'subagent.stop')).toEqual([])
+        expect(d.contextReads).toEqual([])
       })
     }
   })
