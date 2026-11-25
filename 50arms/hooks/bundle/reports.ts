@@ -7,35 +7,17 @@
 // `report_failed` goes to 50 Arms in a request of its own. A hold or `report_failed` report that fails loudly reports nothing further.
 
 import type { Delivery } from './bundle'
+import type { Entry, Item, Queue, ReportWhat } from '../../types'
+
+export type { Entry, Item, Queue, ReportWhat }
 
 export const RETRY_DELAYS_MS = [60_000, 120_000, 240_000] as const
 // the most reports one request carries (50 Arms refuses a longer list whole)
 export const MAX_PER_REQUEST = 100
 
-export type ReportWhat = 'delivery report' | 'hold report' | 'report_failed report' | 'floor send'
 
-export type Item = Record<string, unknown>
 
-export type Entry = {
-  id: number
-  what: ReportWhat
-  // `reports`: one item for the behavior-events route; `floor`: the whole floor body for the plugin-floor route
-  route: 'reports' | 'floor'
-  item: Item
-  // the agent context the report concerns (told once if it fails loudly); null for one that concerns none
-  context: string | null
-  failures: number
-  nextAt: number
-}
 
-export type Queue = {
-  next: number
-  entries: Entry[]
-  // the failure the band shows for the rest of the session (the newest loud failure), null while none has failed loudly
-  failed: string | null
-  // the contexts already told of a loud failure, so each is told once
-  told: string[]
-}
 
 export const EMPTY_QUEUE: Queue = { next: 1, entries: [], failed: null, told: [] }
 

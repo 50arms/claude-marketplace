@@ -3,15 +3,15 @@ import { diskFault, noticeText } from '../context/disk'
 import { delayedLine, refusedLine, stalledLine, stoppedLine } from '../relay/text'
 import { permissionExpiredNote, revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from '../plan/notes'
 import { failureLine } from './reports'
+import type { FloorReason, HoldReason } from '../../types'
+
+export type { FloorReason, HoldReason }
 
 // The floor: the few texts the plugin ships for the moments no bundle can exist. Everything else an agent is told at a hook moment comes from the
 // bundle. The plugin is the floor's one home: it reports the set to 50 Arms (so the app can list it read-only) and never reads one back.
 // Pure: each value a line carries (a reason, a date, a version) is a `{{slot:name}}` placeholder filled at run time, never one session's value baked in.
 
-export type FloorReason = 'signed_out' | 'loading' | 'dashboard_unreachable' | 'fetch_failed' | 'plugin_outdated' | 'key_revoked' | 'relay_broken' | 'classifier_refused'
 
-// Why an agent context has no current bundle (a hold's reason): every floor reason but signed out, which holds nothing, and loading, which is the first phase of every hold.
-export type HoldReason = Exclude<FloorReason, 'signed_out' | 'loading'>
 
 // What a person who is not signed in is told at a startup, in place of every 50 Arms text: 50 Arms cannot be asked before the sign-in.
 export const SIGN_IN_INVITATION =

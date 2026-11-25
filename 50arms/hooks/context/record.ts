@@ -1,6 +1,10 @@
 // Pure: nothing here reads a clock, a file or a session. The wording the model is told for a finished sub-agent is the 50 Arms registry's (`sub_agent_stop`);
 // this file only works out WHICH agent finished and names it.
 
+import type { FinishedAgent } from '../../types'
+
+export type { FinishedAgent }
+
 const DESCRIPTION_MAX = 80
 
 /**
@@ -32,9 +36,6 @@ export function announcedBy(agent: SpawnedAgent | undefined): 'notice' | 'stop' 
   if (agent === undefined || !agent.direct) return null
   return agent.background ? 'notice' : 'stop'
 }
-
-/** A sub-agent that finished and whose finish the main session has not been told yet: its id (the `sub_agent_id` slot of the bundle's `subagent.stop` texts) and the label the `Finished:` line names it by. */
-export type FinishedAgent = { id: string; label: string }
 
 /** A finished sub-agent named by its description and id, and by the cards its brief named. */
 export function finishedAgentLabel(id: string, agent: SpawnedAgent, cards: readonly string[]): string {

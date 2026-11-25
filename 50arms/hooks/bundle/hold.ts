@@ -3,6 +3,9 @@
 // reason. The hold ends only on a successful fetch. Pure: register.tsx reads the answers and applies the verdicts.
 
 import type { FloorReason, HoldReason } from './floor'
+import type { Hold, Holds } from '../../types'
+
+export type { Hold, Holds }
 import { floorText } from './floor'
 
 // How long the plugin keeps asking after the first failure before the loading line becomes the hold line.
@@ -62,20 +65,7 @@ export function failureOf(f: FetchFailure): Failure {
   return f.serverNotConnected ? { reason: 'dashboard_unreachable', detail: cause, values: {} } : { reason: 'fetch_failed', detail: cause, values: {} }
 }
 
-// A hold: since when (epoch ms, the first failure of this context's run of failures), why, and what its report needs.
-export type Hold = {
-  reason: HoldReason
-  detail: string
-  values: Record<string, string>
-  since: number
-  startedAt: string
-  // the plugin event the hold began on
-  event: string
-  // where the report of this hold stands: not sent, sent still running, or sent with its end
-  reported: 'none' | 'open' | 'ended'
-}
 
-export type Holds = Record<string, Hold>
 
 export const NO_HOLDS: Holds = {}
 

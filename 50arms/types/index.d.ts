@@ -169,8 +169,93 @@ export type AckRef = { eventId: number; attempt: number }
 // the acknowledgement-requiring events this module has issued and no acknowledgement has confirmed yet, as [event id, attempt] pairs oldest first, capped (ACK_IN_FLIGHT_MAX).
 export type AckInFlight = [number, number][]
 
-import type { Behavior } from '../hooks/bundle/state'
-import type { FinishedAgent } from '../hooks/context/record'
+// ---- the policy bundle's state (hooks/bundle/*, hooks/context/record.ts): a contract file holds every shape the plugin keeps in `$.state`, and the hooks modules re-export the ones they used to define ----
+
+export type Frequency = 'every' | 'once_per_session' | 'once_per_card_per_session'
+
+export type BundleRule = { ref: string; content_hash: string }
+
+export type BundleSection = { label: string; kind: string; text: string; chars: number; rules: BundleRule[]; slots: string[] }
+
+export type BundleAttachment = { attachment_id: number; mechanism: string; frequency: Frequency; matcher: Record<string, string> | null; sections: BundleSection[] }
+
+export type BundleMechanism = { mechanism: string; cap: number | null; over_cap_pointer: string | null }
+
+export type BundleComputed = { key: string; mechanism: string; frequency: Frequency; text: string; chars: number; rules: BundleRule[] }
+
+export type BundleEvent = { event: string; matchers: string[]; hook_slots: string[]; mechanisms: BundleMechanism[]; attachments: BundleAttachment[]; computed: BundleComputed[] }
+
+export type Bundle = { version: string; min_plugin_version: string; floor_lines_plugin_version: string | null; events: BundleEvent[] }
+
+export type Held = { bundle: Bundle; confirmedAt: number }
+
+// What an agent context (the main conversation, or a sub-agent by its id) was already told: `told[key]` lists the cards a once-only text was told under (`''` for no card). A compaction or clear of the context empties it.
+export type Told = Record<string, string[]>
+
+export type FloorReason = 'signed_out' | 'loading' | 'dashboard_unreachable' | 'fetch_failed' | 'plugin_outdated' | 'key_revoked' | 'relay_broken' | 'classifier_refused'
+
+// Why an agent context has no current bundle (a hold's reason): every floor reason but signed out, which holds nothing, and loading, which is the first phase of every hold.
+export type HoldReason = Exclude<FloorReason, 'signed_out' | 'loading'>
+
+// A hold: since when (epoch ms, the first failure of this context's run of failures), why, and what its report needs.
+export type Hold = {
+  reason: HoldReason
+  detail: string
+  values: Record<string, string>
+  since: number
+  startedAt: string
+  // the plugin event the hold began on
+  event: string
+  // where the report of this hold stands: not sent, sent still running, or sent with its end
+  reported: 'none' | 'open' | 'ended'
+}
+
+export type Holds = Record<string, Hold>
+
+export type ReportWhat = 'delivery report' | 'hold report' | 'report_failed report' | 'floor send'
+
+export type Item = Record<string, unknown>
+
+export type Entry = {
+  id: number
+  what: ReportWhat
+  // `reports`: one item for the behavior-events route; `floor`: the whole floor body for the plugin-floor route
+  route: 'reports' | 'floor'
+  item: Item
+  // the agent context the report concerns (told once if it fails loudly); null for one that concerns none
+  context: string | null
+  failures: number
+  nextAt: number
+}
+
+export type Queue = {
+  next: number
+  entries: Entry[]
+  // the failure the band shows for the rest of the session (the newest loud failure), null while none has failed loudly
+  failed: string | null
+  // the contexts already told of a loud failure, so each is told once
+  told: string[]
+}
+
+export type Behavior = {
+  // the bundle held, with when an answer last confirmed it; null before the first fetch
+  held: Held | null
+  // by agent context (`main` or a sub-agent's id): what a once-only text was already told under
+  told: Record<string, Told>
+  // by agent context: the contexts that have no current bundle
+  holds: Holds
+  // by agent context: the start events that fired while it had no bundle, in the order they fired; delivered once a bundle arrives
+  owed: Record<string, string[]>
+  // the reports kept to send, and the failure the band shows
+  queue: Queue
+  // the floor send failed loudly in this session: it is not started again
+  floorLoud: boolean
+  // the role the main conversation was last told (`session.bind`, AC 76950): `plan:<id>`, `card:<id>` or `none`; null before it was told one and after each compaction or clear of it
+  roleTold: string | null
+}
+
+// a sub-agent that finished and whose finish the main session has not been told yet: its id (the `sub_agent_id` slot of the bundle's `subagent.stop` texts) and the label the `Finished:` line names it by
+export type FinishedAgent = { id: string; label: string }
 
 declare module 'claude-code' {
   interface PluginState {

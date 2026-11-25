@@ -3,18 +3,12 @@
 // start, resume, compaction and sub-agent texts, the role pointer, the plan's own event text); this file composes none of them, it only
 // decides which attachments apply to a moment, fills the slots the plugin owns, and keeps a once-only text from being told twice.
 
-import type { RelayState } from '../../types'
+import type { Bundle, BundleAttachment, BundleComputed, BundleEvent, BundleMechanism, BundleRule, BundleSection, Frequency, Held, RelayState, Told } from '../../types'
 
-export type BundleRule = { ref: string; content_hash: string }
-export type BundleSection = { label: string; kind: string; text: string; chars: number; rules: BundleRule[]; slots: string[] }
-export type BundleAttachment = { attachment_id: number; mechanism: string; frequency: Frequency; matcher: Record<string, string> | null; sections: BundleSection[] }
-export type BundleMechanism = { mechanism: string; cap: number | null; over_cap_pointer: string | null }
-export type BundleComputed = { key: string; mechanism: string; frequency: Frequency; text: string; chars: number; rules: BundleRule[] }
-export type BundleEvent = { event: string; matchers: string[]; hook_slots: string[]; mechanisms: BundleMechanism[]; attachments: BundleAttachment[]; computed: BundleComputed[] }
-export type Bundle = { version: string; min_plugin_version: string; floor_lines_plugin_version: string | null; events: BundleEvent[] }
+export type { Bundle, BundleAttachment, BundleComputed, BundleEvent, BundleMechanism, BundleRule, BundleSection, Frequency, Held, Told }
+
 
 export const FREQUENCIES = ['every', 'once_per_session', 'once_per_card_per_session'] as const
-export type Frequency = (typeof FREQUENCIES)[number]
 
 // What a bundle read answered: the bundle, or `{unchanged: true}` for the `known_version` the call sent.
 export type BundleRead = { kind: 'bundle'; bundle: Bundle } | { kind: 'unchanged'; version: string; floorLinesPluginVersion: string | null }
@@ -152,7 +146,6 @@ export function bundleFileOf(text: string | null, sessionId: string): BundleFile
 export const BUNDLE_CONFIRM_MS = 90_000
 export const BUNDLE_POLL_MS = 60_000
 
-export type Held = { bundle: Bundle; confirmedAt: number }
 
 // The plugin's relay is up only while it streams (or is held for a person's input, its stream still open): any other phase, including `off` (no plan), leaves the session file a copy nobody keeps current, since the MCP never removes it when its stream stops.
 export const relayStreams = (phase: RelayState['phase']): boolean => phase === 'streaming' || phase === 'held'
@@ -175,8 +168,6 @@ export function isCurrent(held: Held | null, signal: ChangeSignal, now: number):
 
 // ---- evaluating one event ----
 
-// What an agent context (the main conversation, or a sub-agent by its id) was already told: `told[key]` lists the cards a once-only text was told under (`''` for no card). A compaction or clear of the context empties it.
-export type Told = Record<string, string[]>
 export const NO_TOLD: Told = {}
 export const mainContext = 'main'
 export const contextKey = (agentId: string | null): string => agentId ?? mainContext
