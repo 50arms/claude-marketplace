@@ -164,6 +164,8 @@ for (const surface of SURFACES) {
         await d.clock.advance(MIN)
         await d.clock.advance(2 * MIN)
         await d.clock.advance(4 * MIN)
+        // the report_failed item is sent by the flush the loud failure schedules, a second later
+        await d.clock.advance(2_000)
         await d.clock.settle()
         expect(d.world.deliveryReports.length).toBeGreaterThan(before)
         const failed = reports(d).filter(r => r.kind === 'report_failed')
