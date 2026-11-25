@@ -73,12 +73,14 @@ export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved
 }
 
 // The budget's unit is the ACCOUNT's running sub-agents (main threads and worker dispatches are counted as `mainAgents` but never compared), which the claim's
-// answer carries as `subAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone (`requestedModelOf`). A
-// refusal never reaches here (50 Arms refuses the claim itself); this picks the haiku downgrade for a claimed spawn taking the last free slot, unless the
-// spawn is a designer (never moved).
+// answer carries as `subAgents` (the count before this claim). `requested` is the model the call names (a fork: the parent's), or undefined when the call
+// names none: the start then runs on its agent type's model, and haiku is the lowest tier, so it is moved to haiku whatever that model is (no agent file is
+// read). A refusal never reaches here (50 Arms refuses the claim itself); this picks the haiku downgrade for a claimed spawn taking the last free slot,
+// unless the spawn is a designer (never moved).
 export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined, designer: boolean): SpawnDecision {
   if (verdict === null || designer) return { kind: 'allow' }
   if (isTight(verdict.budget, verdict.subAgents, verdict.reservedAgents)) {
+    if (requested === undefined) return { kind: 'downgrade', model: 'haiku' }
     const tier = tierOf(requested)
     // an unknown model name is left alone: it cannot be placed on the tier list, so "below it" is not knowable
     if (tier !== null && tier !== 'haiku') return { kind: 'downgrade', model: 'haiku' }
@@ -147,8 +149,8 @@ export function claimFailedReason(failure: string): string {
 }
 
 // The `agent.spawn` hook.
-// The model a plugin agent type runs on, read from its agent file (`agentModel`). A failed read refuses the spawn (fail closed): the model it
-// would run on cannot be judged.
+// The model a plugin agent type runs on, read from its agent file (`agentModel`) for a designer start. A failed read refuses the spawn (fail closed): the
+// model it would run on cannot be judged.
 type OwnModel = { model: string | null } | { deny: string }
 async function readOwnModel(env: PacingEnv, e: AgentSpawnInput): Promise<OwnModel> {
   try {
@@ -158,22 +160,21 @@ async function readOwnModel(env: PacingEnv, e: AgentSpawnInput): Promise<OwnMode
   }
 }
 
-// The agent type's model is read only where its answer can matter, and only when the call names no model (a fork never reads it): a designer's
-// start (refused below Opus before any claim), or a claimed start on a tight budget (moved to haiku or not, decided after the claim). A signed-out
-// session and a start with free slots read nothing.
+// The agent type's model is read only for a designer start whose call names no model (a fork never reads it): it is refused below Opus before any claim.
+// Every other start reads nothing, a tight one included (CP-162).
 const readsOwnModel = (e: AgentSpawnInput): boolean => !e.fork && e.model === undefined
 
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
     const designer = isDesignerBrief(e.prompt)
-    let ownModel: string | null = null
-    if (designer && readsOwnModel(e)) {
-      const read = await readOwnModel(env, e)
-      if ('deny' in read) return { deny: read.deny }
-      ownModel = read.model
-    }
     // a designer below Opus is refused before any slot is claimed: nothing is counted, nothing is started
     if (designer) {
+      let ownModel: string | null = null
+      if (readsOwnModel(e)) {
+        const read = await readOwnModel(env, e)
+        if ('deny' in read) return { deny: read.deny }
+        ownModel = read.model
+      }
       const refusal = designerModelRefusal(requestedModelOf(e, ownModel))
       if (refusal !== null) return { deny: refusal }
     }
@@ -187,15 +188,7 @@ export function spawnGuard(env: PacingEnv) {
     let decision: SpawnDecision = { kind: 'allow' }
     if (claim.kind === 'claimed') {
       const verdict = claim.pacing.verdict
-      if (!designer && readsOwnModel(e) && isTight(verdict.budget, verdict.subAgents, verdict.reservedAgents)) {
-        const read = await readOwnModel(env, e)
-        if ('deny' in read) {
-          await releaseClaim(env, claim.claimId)
-          return { deny: read.deny }
-        }
-        ownModel = read.model
-      }
-      decision = decideSpawn(verdict, requestedModelOf(e, ownModel), designer)
+      decision = decideSpawn(verdict, e.fork ? e.parentModel : e.model, designer)
     }
     try {
       // a fork ignores `model`, so there is nothing to rewrite

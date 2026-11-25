@@ -83,7 +83,9 @@ describe('decideSpawn (the decision table)', () => {
     }
     expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'haiku', false)).toEqual({ kind: 'allow' })
     expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'mystery-model', false)).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), undefined, false)).toEqual({ kind: 'allow' })
+    // a call that names no model runs on its agent type's model: moved to haiku, the lowest tier, with no agent file read
+    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), undefined, false)).toEqual({ kind: 'downgrade', model: 'haiku' })
+    expect(decideSpawn(v({ budget: 5, subAgents: 2 }), undefined, false)).toEqual({ kind: 'allow' })
     expect(decideSpawn(v({ budget: 5, subAgents: 2 }), 'opus', false)).toEqual({ kind: 'allow' })
   })
 
@@ -302,21 +304,13 @@ describe('the agent.spawn hook', () => {
     expect(agentReads(d)).toEqual([])
   })
 
-  test('a tight start on a plugin agent type that runs on Sonnet is moved to Haiku, its agent file read', async ($, on) => {
+  test('a tight non-designer start on a plugin agent type is moved to Haiku and reads no agent file', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
-    d.world.files[agentFile('worker-sonnet-high')] = '---\nname: worker-sonnet-high\nmodel: sonnet\n---\n'
-    const r = await spawn($, { subagentType: '50arms:worker-sonnet-high', parentModel: 'haiku' })
+    const r = await spawn($, { subagentType: '50arms:worker-sonnet-high', parentModel: 'opus' })
     expect(r.deny).toBeUndefined()
     expect(r.model).toBe('haiku')
-    expect(agentReads(d)).toEqual([agentFile('worker-sonnet-high')])
-  })
-
-  test('a tight start whose agent file cannot be read is refused and its claim given back: the model it runs on cannot be judged', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
-    const r = await spawn($, { subagentType: '50arms:worker-sonnet-high' })
-    expect(r.deny).toMatch(/could not be read from its agent file/)
-    expect(d.claimsAllowed).toHaveLength(1)
-    expect(d.claimsReleased).toEqual(d.claimsAllowed)
+    expect(d.claimsReleased).toEqual([])
+    expect(agentReads(d)).toEqual([])
   })
 
   test('a designer start that takes the last free slot is started on the model it asked for (DEC-2387)', async ($, on) => {
