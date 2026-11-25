@@ -4,7 +4,7 @@ import type { Register, SessionRateLimit } from 'claude-code'
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, AppVersionState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { RestartAsk, Told } from './context/events'
-import { BUNDLE_PATH, BundleShapeError, FLOOR_PATH, REPORTS_PATH, bundleFileOf, bundleQuery, decide, deliveredText, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody } from './bundle/bundle'
+import { BUNDLE_PATH, BundleShapeError, FLOOR_PATH, REPORTS_PATH, bundleFileOf, bundleQuery, decide, deliveredText, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, startsNewContext } from './bundle/bundle'
 import type { Bundle, BundleFile, BundleRead, Decision, Delivery } from './bundle/bundle'
 import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
 import { OWED_ARRIVED, failureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf } from './bundle/hold'
@@ -3212,7 +3212,7 @@ async function onSubagentChange($: any, e: any, next: any, isStart: boolean) {
   return r
 }
 
-// the time line. One stamp per prompt (never a tool call), counted from the last one.
+// the `clock_time` slot of a prompt's texts. One stamp per prompt (never a tool call), counted from the last one.
 async function timeLine($: any): Promise<string> {
   const now = await $.clock.now()
   const offsetMinutes = -new Date(now).getTimezoneOffset()
@@ -3271,7 +3271,9 @@ async function renderStart($: any, start: NonNullable<PendingStart>): Promise<st
   try {
     return await sessionContext($, start)
   } catch (err: any) {
-    return startEventOf(start) === null ? null : `⚠ 50 Arms could not tell this session what its start carries (error: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}). Tell the person.`
+    // CP-146: a start that could not be read is no start told: the context is held with the failure and the start owed (the floor's loading line), never a line of the plugin's own
+    const event = startEventOf(start)
+    return event === null || !(await signedInWithAgent($)) ? null : owedStart($, event, { reason: 'fetch_failed', detail: `reading what this start carries failed (${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)})`, values: {} })
   }
 }
 
@@ -3280,20 +3282,33 @@ const isFreshStart = (start: NonNullable<PendingStart>): boolean => start.loopRe
 // the bundle event a start is told (null: a start with no text of its own). A fresh conversation the plugin's own /clear opened for the ready loop is told what a new session is told; a clear (a person's, or a compaction by clear) is told the after-clear event
 const startEventOf = (start: NonNullable<PendingStart>): string | null => (start.compactionClear === true ? 'session.after_clear' : start.loopReset === true ? 'session.start' : sessionEvent(start.source))
 
-// the entries a hook adds to the model's context: the time stamp (a prompt's only: a tool call is never stamped), the disk notice and, when there is one, the session start line.
-// the start is TAKEN and the clock STAMPED in the one order of arrival, before the start's own slow reads. Two hooks landing together
-// (a fresh desktop session's first prompt runs the hook twice) otherwise let the one without the start stamp first (the full date) while the one
-// the model reads, holding the start, stamped second: no date and +0s. Whoever takes the start now also takes the first stamp.
-async function clockDiskStartEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
+// the entries a hook adds to the model's context: the disk notice, the checkout-behind notice and, when there is one, the session start line. The time stamp is no entry of the
+// plugin's: it is the `clock_time` slot of the bundle's `prompt.submit` texts (CP-146, AC 72124).
+// The start is TAKEN before the start's own slow reads, in the one order of arrival, so two hooks landing together (a fresh desktop session's first prompt runs the hook twice) never both tell it.
+async function noticeStartEntries($: any, takeStart: boolean, trigger: 'prompt' | 'tool', agent: string): Promise<string[]> {
   const pending = takeStart ? await takePendingStart($) : null
-  const line = trigger === 'prompt' ? await timeLine($) : null
   const disk = await diskLine($, trigger, agent)
   // only the main agent is told its checkout is behind (the plugin knows the session's folder, never a sub-agent's own)
   const behind = agent === MAIN_AGENT ? await appVersionNotice($) : null
-  const head = [...(line === null ? [] : [line]), ...(disk === null ? [] : [disk]), ...(behind === null ? [] : [behind])]
-  if (pending === null) return head
-  const start = await renderStart($, pending)
-  return start === null ? head : [...head, start]
+  const head = [...(disk === null ? [] : [disk]), ...(behind === null ? [] : [behind])]
+  const start = pending === null ? null : await renderStart($, pending)
+  // the role is an entry of its own, never joined with an event text
+  const role = agent === MAIN_AGENT ? await roleEntries($) : []
+  return [...head, ...(start === null ? [] : [start]), ...role]
+}
+
+// The session's role (AC 76950): the bundle's `session.bind` texts, told to the main conversation once per role it holds (a plan, a card, or neither) and again after each compaction or clear of it, each as an entry of its own.
+// The plugin never fetches the role itself. A bundle with no `session.bind` event tells nothing, and the role is then still owed to nobody: the role pointer the start carries is the bundle's own.
+async function roleEntries($: any): Promise<string[]> {
+  if (!(await signedInWithAgent($))) return []
+  const v = await read($, view)
+  const key = v.card !== null ? `card:${v.card.id}` : v.connected !== null ? `plan:${v.connected.id}` : 'none'
+  if ((await read($, behavior)).roleTold === key) return []
+  const outcome = await tellEvent($, 'session.bind', null)
+  // a held context is refused at its next tool call; the role is told once a bundle answers
+  if (outcome.kind !== 'texts') return []
+  await update($, behavior, cur => ({ ...cur, roleTold: key }))
+  return outcome.entries.map(e => e.text)
 }
 
 // remember the app version a dashboard answer carried (`app_version`, which the MCP copies from the `X-50Arms-Version` header). It adds no request: only answers the session already got
@@ -3370,10 +3385,10 @@ function sharedRun<T>(running: Map<string, Promise<T>>, key: string, run: () => 
 
 async function probeDisk($: any): Promise<string> {
   return sharedRun(diskProbes, String(await $.session.id()), async () => {
-    const text = await measureDisk($)
+    const measured = await measureDisk($)
     const at = await $.clock.now()
-    await update($, diskMeasured, () => ({ text, at }))
-    return text
+    await update($, diskMeasured, () => ({ text: measured.text, freeBytes: measured.freeBytes, at }))
+    return measured.text
   })
 }
 
@@ -3383,7 +3398,7 @@ const WSL_USERS_DIR = '/mnt/c/Users'
 
 // '' for a machine this policy does not concern (no C:, or no Windows home holding a `.danxbot` directory: the machine has not opted in to 50 Arms'
 // machine tooling) or when all is well; else the notice. Every fault is ONE line, never silence.
-async function measureDisk($: any): Promise<string> {
+async function measureDisk($: any): Promise<{ text: string; freeBytes: number | null }> {
   try {
     // each variable by its own literal name: `$.env.get` takes a literal so the variables a module reads can be listed
     const env: DiskEnv = {
@@ -3394,9 +3409,9 @@ async function measureDisk($: any): Promise<string> {
       DANXBOT_DISK_HARD_MINIMUM_GIB: await $.env.get('DANXBOT_DISK_HARD_MINIMUM_GIB'),
     }
     const kind = hostKindOf(env)
-    if (kind === null) return ''
+    if (kind === null) return { text: '', freeBytes: null }
     const home = await machineHome($, kind, env)
-    if (home === null) return ''
+    if (home === null) return { text: '', freeBytes: null }
     const dir = joinPath(kind, home, '.danxbot')
     const floorsPath = joinPath(kind, dir, 'machine-disk-floors')
     const windowPath = joinPath(kind, dir, 'compaction-window')
@@ -3405,9 +3420,10 @@ async function measureDisk($: any): Promise<string> {
     // `$` has no statfs: the system drive's free space is asked of a bounded process (powershell.exe, or df in WSL)
     const free = await $.process.run(freeSpaceArgv(kind, env), { timeoutMs: DISK_PROBE_TIMEOUT_MS })
     if (free.exitCode !== 0) throw new Error(`the free-space command exited ${free.exitCode}`)
-    return diskNotice({ env, freeBytes: parseFreeBytes(free.stdout), floorsText, floorsPath, windowText })
+    const freeBytes = parseFreeBytes(free.stdout)
+    return { text: diskNotice({ env, freeBytes, floorsText, floorsPath, windowText }), freeBytes }
   } catch (err) {
-    return diskFault(err)
+    return { text: diskFault(err), freeBytes: null }
   }
 }
 
@@ -3462,13 +3478,13 @@ async function wslHome($: any): Promise<string | null> {
 async function onPromptStamp($: any, e: any, next: any) {
   const held = await holdInterimNotice($, e)
   if (held !== null) return { drop: held }
-  const entries = await clockDiskStartEntries($, true, 'prompt', MAIN_AGENT)
+  const entries = await noticeStartEntries($, true, 'prompt', MAIN_AGENT)
   const signedIn = await signedInWithAgent($)
-  // a prompt of the main conversation: what the bundle tells at a prompt (the start texts it was owed ride with it), or the line that holds it
+  // a prompt of the main conversation: what the bundle tells at a prompt (the time stamp is its `clock_time` slot; the start texts it was owed ride with it), or the line that holds it. It comes first: what a prompt carries begins with its time
   const bundled = signedIn ? textsOf(await tellEvent($, 'prompt.submit', null)) : []
   const side = isSideSessionNotice(e.text) && signedIn ? textsOf(await tellEvent($, 'side_session.turn_end', null)) : []
   const finished = await finishNoticeLabel($, taskNoticeOf(e.origin, e.text))
-  return next({ ...e, context: [...(e.context ?? []), ...entries, ...bundled, ...side, ...(await subagentStopEntries($, finished))] })
+  return next({ ...e, context: [...(e.context ?? []), ...bundled, ...entries, ...side, ...(await subagentStopEntries($, finished))] })
 }
 
 // An interim sub-agent notice (the sub-agent ended a turn with a command of its own still running) is kept from the model: it notifies again with its
@@ -3531,7 +3547,7 @@ async function toolBundleTexts($: any, e: any): Promise<string[]> {
   return texts
 }
 
-// a tool call's result is never stamped (the time rides prompts only); the MAIN loop's result carries the session start, if any, the disk notice, and
+// a tool call's result is never stamped; the MAIN loop's result carries the session start, if any, the disk notice, and
 // a finished sub-agent's reminder to record its result; a denied call has no result to put them beside. A call with an `agentId` is a sub-agent's or an engine fork's, and the start and the reminder are the main session's
 async function onToolStamp($: any, e: any, next: any) {
   // a held agent context runs no tool but `session_connect`, which lets the person sign in again; the plugin's own calls are never held
@@ -3562,7 +3578,7 @@ async function onToolStamp($: any, e: any, next: any) {
   const bundled = await toolBundleTexts($, e)
   // a finished sub-agent's reminder to record its result is the MAIN session's, handed with its next action
   const stopped = e.agentId === undefined ? await subagentStopEntries($) : []
-  return { ...r, context: [...(r.context ?? []), ...(await clockDiskStartEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...bundled, ...stopped] }
+  return { ...r, context: [...(r.context ?? []), ...(await noticeStartEntries($, e.agentId === undefined, 'tool', e.agentId ?? MAIN_AGENT)), ...(briefing === null ? [] : [briefing]), ...bundled, ...stopped] }
 }
 
 // what the dashboard says of this session's plan. `signed-out`: the session holds no usable key (never approved, or lapsed): a session start gives it the one sign-in invitation. `silent`:
@@ -3867,12 +3883,14 @@ async function takeAgentBriefing($: any, agentId: string): Promise<string | null
   }
   const found = listed.find(a => a.id === agentId)
   // the sub-agent's own compaction, told to it by its id: the bundle's texts for the event, owed and held like a start when there is no bundle
-  const outcome = await tellEvent($, 'subagent.compacted', agentId, { owes: true, extra: { sub_agent_id: agentId, sub_agent_name: found === undefined ? agentId : `${found.type} ${found.description}`.trim() } })
+  // the sub-agent's own context size (`context_tokens`) is the last one its model requests noted; none is a slot left unfilled and named
+  const size = agentSizes.get(subagentKey(agentId))
+  const outcome = await tellEvent($, 'subagent.compacted', agentId, { owes: true, extra: { sub_agent_id: agentId, sub_agent_name: found === undefined ? agentId : `${found.type} ${found.description}`.trim(), ...(size === undefined ? {} : { context_tokens: String(size.tokens) }) } })
   return textsOf(outcome).join('\n\n') || null
 }
 
 // SessionStart: the session title is noted and the start is recorded for the next prompt or tool result. The session is not bound yet on a
-// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see clockDiskStartEntries).
+// desktop or headless startup, resume or fork, so no `$.mcp.call` or `$.tool.list` here (the next prompt or tool result tells the model, see noticeStartEntries).
 // The one exception: a compaction that ends with no turn running detaches the resume prompt, whose reads wait for the session to bind.
 async function onClassicSessionStart($: any, e: any, next: any) {
   // first, so every read below (the ended session, the start's own `loopReset`) sees what the ended conversation held
@@ -4481,12 +4499,13 @@ async function onReportStop($: any, e: any, next: any) {
   if (verdict.kind === 'cards' && verdict.heldSkipped !== null) $.ui.toast(heldSkippedLine(verdict.heldSkipped))
   // one block carries both reasons, each only when it has cards
   const reasons = verdict.kind === 'cards' ? [...(verdict.held.length > 0 ? [heldIdleReason(verdict.held)] : []), ...(verdict.cards.length > 0 ? [blockReason(verdict.cards)] : []), ...(verdict.reviewable.length > 0 ? [reviewReason(verdict.reviewable)] : [])] : []
-  if (reasons.length > 0) return { ...r, block: reasons.join('\n\n') }
-  // the bundle's `turn.stop` texts block a stop once, never one that a Stop hook already blocked (`stop_hook_active`), so no attached policy can keep a session from stopping
-  if (e.agent_id === undefined && e.stop_hook_active !== true && (await signedInWithAgent($))) {
-    const stopTexts = textsOf(await tellEvent($, 'turn.stop', null), ['plugin.stop_block'])
-    if (stopTexts.length > 0) return { ...r, block: stopTexts.join('\n\n') }
-  }
+  if (reasons.length === 0) return r
+  const own = reasons.join('\n\n')
+  // `turn.stop` is the moment ready cards or held work are idle (its catalog description): the bundle's texts for it join the plugin's own refusal, which they name as `next_step`. Never a stop that a Stop hook already
+  // blocked (`stop_hook_active`), so no attached policy can keep a session from stopping
+  if (e.agent_id !== undefined || e.stop_hook_active === true || !(await signedInWithAgent($))) return { ...r, block: own }
+  const stopTexts = textsOf(await tellEvent($, 'turn.stop', null, { extra: { next_step: own } }), ['plugin.stop_block'])
+  return { ...r, block: [own, ...stopTexts].join('\n\n') }
   return r
 }
 
@@ -5261,12 +5280,16 @@ type EventOutcome = { kind: 'texts'; entries: Rendered[] } | { kind: 'signed-out
 type MomentIn = { matchers?: Record<string, string>; extra?: Record<string, string>; owes?: boolean; waitMs?: number }
 
 // the slots the plugin owns, filled for the ones an event's texts name
-async function slotsOf($: any, names: string[], extra: Record<string, string>): Promise<Record<string, string>> {
+async function slotsOf($: any, event: string, names: string[], extra: Record<string, string>): Promise<Record<string, string>> {
   const slots: Record<string, string> = { ...extra }
   const has = (n: string) => names.includes(n) && slots[n] === undefined
   if (has('clock_time')) {
-    const now = await $.clock.now()
-    slots.clock_time = nextStamp(now, -new Date(now).getTimezoneOffset(), null).line.replace(/ \+0$/, '')
+    // CP-146: the time stamp is a computed value, never a plugin text: a prompt's stamp counts from the last one stamped, every other event gets the clock alone
+    if (event === 'prompt.submit') slots.clock_time = await timeLine($)
+    else {
+      const now = await $.clock.now()
+      slots.clock_time = nextStamp(now, -new Date(now).getTimezoneOffset(), null).line.replace(/ \+0$/, '')
+    }
   }
   const sources = names.some(n => ['owed_list', 'plan_id', 'plan_name', 'card_list', 'agent_list', 'git_status'].includes(n)) ? await briefingSources($) : null
   if (sources !== null) {
@@ -5276,6 +5299,11 @@ async function slotsOf($: any, names: string[], extra: Record<string, string>): 
     if (has('card_list')) slots.card_list = cardListSlot(sources.cards)
     if (has('agent_list')) slots.agent_list = agentListSlot(sources.agents)
     if (has('git_status')) slots.git_status = gitStatusSlot(sources.git)
+  }
+  if (has('disk_free')) {
+    // the `disk_free` slot (a `tool.after` text's): the free bytes of the last measurement; a machine that has not opted in to the disk notice has none, and the slot is then named as unfilled
+    const freeBytes = (await read($, diskMeasured))?.freeBytes ?? null
+    if (freeBytes !== null) slots.disk_free = String(freeBytes)
   }
   if (has('context_tokens')) {
     const tokens = (await contextReading($)).tokens
@@ -5323,10 +5351,12 @@ async function tellEvent($: any, event: string, agentId: unknown, moment: Moment
     return { ...cur, owed: taken.owed }
   })
   const events = [...owed.map(o => ({ event: o, matchers: {} as Record<string, string> })), { event, matchers: moment.matchers ?? {} }]
+  // a compaction or a clear of the main conversation starts it again: its role is told again (AC 76950)
+  if (key === mainContext && events.some(m => startsNewContext(m.event))) await update($, behavior, cur => ({ ...cur, roleTold: null }))
   const rendered: Rendered[] = []
   try {
     for (const m of events) {
-      const slots = await slotsOf($, namedSlots(bundle, m.event), m.event === event ? moment.extra ?? {} : {})
+      const slots = await slotsOf($, m.event, namedSlots(bundle, m.event), m.event === event ? moment.extra ?? {} : {})
       let decision!: Decision
       await update($, behavior, cur => {
         decision = decide(bundle, { event: m.event, matchers: m.matchers, slots, card }, cur.told[key] ?? {})

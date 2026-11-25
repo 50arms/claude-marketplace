@@ -2,7 +2,9 @@
 // A type and its empty value only; the rules that change it are in bundle.ts, hold.ts and reports.ts.
 
 import type { Held, Told } from './bundle'
+import { NO_HOLDS } from './hold'
 import type { Holds } from './hold'
+import { EMPTY_QUEUE } from './reports'
 import type { Queue } from './reports'
 
 export type Behavior = {
@@ -18,7 +20,11 @@ export type Behavior = {
   queue: Queue
   // the floor send failed loudly in this session: it is not started again
   floorLoud: boolean
+  // the role the main conversation was last told (`session.bind`, AC 76950): `plan:<id>`, `card:<id>` or `none`; null before it was told one and after each compaction or clear of it
+  roleTold: string | null
 }
+
+export const NO_BEHAVIOR: Behavior = { held: null, told: {}, holds: NO_HOLDS, owed: {}, queue: EMPTY_QUEUE, floorLoud: false, roleTold: null }
 
 export const owe = (owed: Record<string, string[]>, key: string, event: string): Record<string, string[]> => {
   const list = owed[key] ?? []

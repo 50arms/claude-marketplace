@@ -56,6 +56,37 @@ export const DEFAULT_BRIEFING = "[50 ARMS] Your conversation was just compacted.
 export const TOLD = (event: string) => (event === 'after_compaction' ? `${EVENT_TEXT(event)}
 ${DEFAULT_BRIEFING}` : EVENT_TEXT(event))
 // DX-4234: where the fixture's machine keeps the MCP server's connection record of a session (what makes a session locally known as plan-connected)
+// CP-146: the stand-in dashboard's policy bundle (`GET /api/behavior-events/bundle`). Every plugin event the old registry route answered by name carries one attachment whose text is `EVENT_TEXT(name)`
+// (or the text a test sets in `world.eventText`), so a suite that asserts on what a session is told keeps its words. A catalog key by the old event name:
+export const BUNDLE_EVENT_KEY: Record<string, string> = {
+  session_start: 'session.start',
+  session_resume: 'session.resume',
+  after_compaction: 'session.after_compaction',
+  sub_agent_start: 'subagent.start',
+  sub_agent_stop: 'subagent.stop',
+  side_session_turn_end: 'side_session.turn_end',
+}
+export const BUNDLE_VERSION = `${'a'.repeat(63)}1`
+export const NEXT_BUNDLE_VERSION = `${'b'.repeat(63)}2`
+export const PLUGIN_VERSION = '0.17.170'
+export const bundleFileText = (sessionId: string, version: string) => JSON.stringify({ v: 1, sessionId, version })
+export const BUNDLE_FILE_PATH = (sessionId: string) => `${HOME_DIR}/.config/danxbot/behavior-bundle/${sessionId}.json`
+/** One bundle event with one attachment per text: `texts` are the sections, by mechanism (`plugin.context` unless named). */
+export const bundleEvent = (event: string, texts: string[], extra: { mechanism?: string; frequency?: string; matcher?: Record<string, string> | null; id?: number; slots?: string[]; hookSlots?: string[]; computed?: unknown[] } = {}) => ({
+  event,
+  matchers: ['tool_name', 'tool_command', 'tool_path'],
+  hook_slots: extra.hookSlots ?? [],
+  mechanisms: [{ mechanism: extra.mechanism ?? 'plugin.context', cap: null, over_cap_pointer: null }],
+  attachments: texts.map((text, i) => ({
+    attachment_id: (extra.id ?? 1000) + i,
+    mechanism: extra.mechanism ?? 'plugin.context',
+    frequency: extra.frequency ?? 'every',
+    matcher: extra.matcher ?? null,
+    sections: [{ label: 'rule', kind: 'rule', text, chars: text.length, rules: [{ ref: `BPR-${(extra.id ?? 1000) + i}`, content_hash: 'c'.repeat(64) }], slots: extra.slots ?? [] }],
+  })),
+  computed: extra.computed ?? [],
+})
+
 export const HOME_DIR = '/home/u'
 export const RECORD_PATH = (sessionId: string) => `${HOME_DIR}/.config/danxbot/plan-sessions/${sessionId}.json`
 // CP-43: a session id that is not plain, and the one file every per-session kind would name for it. The runtime resolves `..` before a path reaches the fs hooks, so
@@ -411,6 +442,14 @@ export function dashboard(
     localRecord: options.connected !== false,
     // DX-4234: what GET /api/reminders/event/<event> answers: the default EVENT_TEXT(event), a text, or a status
     eventText: {} as Record<string, string | { status: number }>,
+    // CP-146: the policy bundle the stand-in serves: its version, the lowest plugin version it accepts, the version of the floor lines the team holds, the events a test adds or replaces by catalog key,
+    // and a whole-answer override (an error status with its body). `eventText[name]` with `{status}` answers that status for the whole read: a bundle has no per-event failure.
+    bundle: { version: BUNDLE_VERSION, minPlugin: '0.17.0', floorVersion: null as string | null, events: {} as Record<string, ReturnType<typeof bundleEvent>>, override: undefined as undefined | { status: number; body?: unknown } },
+    pluginVersion: PLUGIN_VERSION,
+    // CP-146: what the plugin read and sent: each bundle read's query, each POST /api/plan-sessions/me/behavior-events body (`{reports: [...]}`), each PUT /api/plan-sessions/me/plugin-floor body
+    bundleReads: [] as { plugin_version?: string; known_version?: string }[],
+    deliveryReports: [] as { body: any }[],
+    floorSends: [] as { body: any }[],
     // DX-4234: what the server's `restart_notice` tool answers (DX-4632): `{notice: null}` unless a test sets a JSON answer (`json`), a raw
     // result (`raw`), or a rejection (`deny`). `delayMs` / `hangs`: it answers late / never.
     restart: {} as { json?: unknown; raw?: unknown; deny?: string; delayMs?: number; hangs?: boolean },
@@ -835,14 +874,25 @@ export function dashboard(
     )
     return reply({ issues: rows, total: rows.length })
   }
-  const isContextRead = (a: any) => a.method === 'GET' && a.path.startsWith('/api/reminders/event/')
-  function contextAnswer(path: string) {
-    const event = /^\/api\/reminders\/event\/(.+)$/.exec(path)
-    if (event) {
-      const given = world.eventText[event[1]]
-      if (given === undefined) return reply({ event: event[1], effective_text: EVENT_TEXT(event[1]) })
-      return typeof given === 'string' ? reply({ event: event[1], effective_text: given }) : reply({ error: 'event boom' }, given.status)
-    }
+  const isContextRead = (a: any) => a.method === 'GET' && a.path === '/api/behavior-events/bundle'
+  // the bundle: one attachment per old registry event (its text a test may set), the events a test adds or replaces by catalog key, `{version, unchanged: true}` for the known version, and a 426 below the floor
+  function contextAnswer(a: any) {
+    const query = a.query ?? {}
+    world.bundleReads.push({ plugin_version: query.plugin_version, known_version: query.known_version })
+    if (world.bundle.override !== undefined) return reply(world.bundle.override.body ?? { error: 'bundle boom' }, world.bundle.override.status)
+    const failing = Object.values(world.eventText).find((given): given is { status: number } => typeof given !== 'string')
+    if (failing !== undefined) return reply({ error: 'event boom' }, failing.status)
+    if (typeof query.plugin_version === 'string' && query.plugin_version.localeCompare(world.bundle.minPlugin, undefined, { numeric: true }) < 0) return reply({ error: 'plugin_too_old', update_to: world.bundle.minPlugin }, 426)
+    if (query.known_version === world.bundle.version) return reply({ version: world.bundle.version, unchanged: true, floor_lines_plugin_version: world.bundle.floorVersion })
+    const names = Object.keys(BUNDLE_EVENT_KEY)
+    const named = names.map(name => {
+      const given = world.eventText[name]
+      return bundleEvent(BUNDLE_EVENT_KEY[name], [typeof given === 'string' ? given : EVENT_TEXT(name)], { id: 100 * (names.indexOf(name) + 1) })
+    })
+    // the time stamp is the `clock_time` slot of a prompt's text (CP-146): the stand-in's `prompt.submit` text is the slot alone, as the plugin used to hand it
+    const prompt = bundleEvent('prompt.submit', ['{{slot:clock_time}}'], { id: 900, slots: ['clock_time'], hookSlots: ['clock_time'] })
+    const events = [...[...named, prompt].filter(e => !(e.event in world.bundle.events)), ...Object.values(world.bundle.events)]
+    return reply({ version: world.bundle.version, min_plugin_version: world.bundle.minPlugin, floor_lines_plugin_version: world.bundle.floorVersion, events })
   }
   // ... every attempt, including the ones the MCP being down refuses
   const pacingAttempts = { n: 0 }
@@ -1000,7 +1050,18 @@ export function dashboard(
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
-      return { value: contextAnswer(e.args.path) }
+      return { value: contextAnswer(e.args) }
+    }
+    // CP-146: the plugin's reports of what it delivered and held (POST behavior-events) and its floor lines (PUT plugin-floor), kept in their own lists; a `reportReplies` entry for the route answers an error or a delay
+    if (e.server === SERVER && e.tool === '50arms_api' && ((e.args.method === 'POST' && e.args.path === '/api/plan-sessions/me/behavior-events') || (e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/plugin-floor'))) {
+      const floor = e.args.method === 'PUT'
+      const over = world.reportReplies[`${e.args.method} ${e.args.path}`]
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
+      if (over?.delayMs !== undefined) await clock.sleep(over.delayMs)
+      if (over?.deny !== undefined) return { deny: over.deny }
+      ;(floor ? world.floorSends : world.deliveryReports).push({ body: e.args.body })
+      if (over?.status !== undefined) return { value: reply(over.body ?? { error: 'report boom' }, over.status) }
+      return { value: floor ? reply({ plugin_version: e.args.body.plugin_version }) : reply({ recorded: e.args.body.reports?.length ?? 0 }) }
     }
     // DX-5694: the turn activity sends (PUT /api/plan-sessions/me/turn-activity), kept in their own list so every suite that asserts on `reports` stays about its own subject
     if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/turn-activity') {
@@ -1394,6 +1455,8 @@ export function dashboard(
   on('fs.read', (_$: any, e: any) => {
     const path = fsKey(e.path)
     world.fsReads.push(path)
+    // CP-146: the plugin names its own version from its manifest (`<plugin root>/.claude-plugin/plugin.json`), whatever the root is
+    if (path.endsWith('/.claude-plugin/plugin.json')) return { value: JSON.stringify({ name: '50arms', version: world.pluginVersion }) } as any
     return (path in world.files ? { value: world.files[path] } : { deny: `ENOENT: no such file ${path}` }) as any
   })
   // a directory listing from the fixture's disk: the first path segment under it of every file held there. An entry is a dir when something lies deeper or its text is empty
