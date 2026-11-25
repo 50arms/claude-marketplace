@@ -170,6 +170,7 @@ export type AckRef = { eventId: number; attempt: number }
 export type AckInFlight = [number, number][]
 
 import type { Behavior } from '../hooks/bundle/state'
+import type { FinishedAgent } from '../hooks/context/record'
 
 declare module 'claude-code' {
   interface PluginState {
@@ -210,7 +211,7 @@ declare module 'claude-code' {
       // the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState
       // the sub-agents that finished and whose finish the main session has not been told yet: it rides the main loop's next tool result or prompt, one text however many finished.
-      finishedAgents: string[]
+      finishedAgents: FinishedAgent[]
       // the disk notice last told to each agent (see DiskTold), so a tool call repeats it only on a change or after a few minutes.
       diskTold: DiskTold
       // the last disk measurement (see DiskMeasured), reused by tool calls for a minute.

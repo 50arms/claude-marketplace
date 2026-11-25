@@ -213,7 +213,27 @@ This session replaced one on PLAN-23; 3 events wait.`])
       const r = await pending
       expect(joined(r.context)).toMatch(/loading/)
       expect(joined(r.context)).not.toContain(EVENT_TEXT('session_start'))
+      // the start is owed and the context held: a call of the same hook budget is refused at once, with no wait of its own on the fetch still in flight
       expect((await tool($)).deny).toMatch(/loading/)
+      // the hung read ends, so no timer of this test waits on it
+      d.world.contextHangs = false
+      d.release()
+      await d.clock.settle()
+    })
+
+    test('a start whose reads outlast the deadline is owed, never dropped: the texts arrive with the next prompt once the bundle answers', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextHangs = true
+      const first = firstPrompt($, 'startup')
+      await d.clock.advance(CONTEXT_DEADLINE_MS - 1)
+      await d.clock.settle()
+      await d.clock.advance(30_000)
+      expect(joined((await first).context)).not.toContain(EVENT_TEXT('session_start'))
+      d.world.contextHangs = false
+      d.release()
+      await d.clock.settle()
+      await d.clock.advance(MIN)
+      expect(joined(((await $.prompt.submit({ text: 'again' })).context ?? []) as string[])).toContain(EVENT_TEXT('session_start'))
     })
 
     test('ONE deadline over the SUM of the reads: each read is quick, the lookup together is not', async ($, on) => {
@@ -231,6 +251,8 @@ This session replaced one on PLAN-23; 3 events wait.`])
       const pending = $.classic.SubagentStart(START)
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       expect(joined((await pending).additionalContext)).toMatch(/loading/)
+      d.world.contextHangs = false
+      d.release()
       await d.clock.settle()
     })
 

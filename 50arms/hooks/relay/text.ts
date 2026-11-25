@@ -17,9 +17,9 @@ export const delayedLine = (message: string) => `${RELAY_MARKER} events delayed:
 
 // the relay's loop made no step for a long time (a call it waits on never settled): events were NOT reaching this session meanwhile. It is
 // started again on its own; the line is for the person (a toast) and the session (a note), never silence.
-export const stalledNotice = (seconds: number) =>
+export const stalledNotice = (seconds: number | string) =>
   `Plan events stalled: the listener made no progress for ${seconds} s, so events were NOT reaching this session. It was started again on its own; if events stay silent, call session_connect.`
-export const stalledLine = (seconds: number) => `${RELAY_MARKER} ${stalledNotice(seconds)}`
+export const stalledLine = (seconds: number | string) => `${RELAY_MARKER} ${stalledNotice(seconds)}`
 
 // how a delivery the session refused reads (a dropped or throwing prompt, a refused or throwing row)
 export const notTakenLine = (why: string) => `the session did not take the event: ${why}`

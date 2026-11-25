@@ -3,6 +3,8 @@
 // start, resume, compaction and sub-agent texts, the role pointer, the plan's own event text); this file composes none of them, it only
 // decides which attachments apply to a moment, fills the slots the plugin owns, and keeps a once-only text from being told twice.
 
+import type { RelayState } from '../../types'
+
 export type BundleRule = { ref: string; content_hash: string }
 export type BundleSection = { label: string; kind: string; text: string; chars: number; rules: BundleRule[]; slots: string[] }
 export type BundleAttachment = { attachment_id: number; mechanism: string; frequency: Frequency; matcher: Record<string, string> | null; sections: BundleSection[] }
@@ -146,24 +148,29 @@ export function bundleFileOf(text: string | null, sessionId: string): BundleFile
   return { kind: 'version', version: parsed.version }
 }
 
-// While the relay is down a held bundle is current for this long after the last answer that confirmed it, and it is asked again no more often than the poll gap.
+// While the relay cannot tell this session its bundle changed, a held bundle is current for BUNDLE_CONFIRM_MS after the last answer that confirmed it, and the plugin asks again every BUNDLE_POLL_MS in the background.
 export const BUNDLE_CONFIRM_MS = 90_000
 export const BUNDLE_POLL_MS = 60_000
 
 export type Held = { bundle: Bundle; confirmedAt: number }
 
-// Whether the bundle held is current: while the session file names its version (the relay is up, and says when a policy changes), else, relay down, for BUNDLE_CONFIRM_MS after the answer that confirmed it. A bundle that is not current is no bundle (the agent is not run on it).
-export function isCurrent(held: Held | null, file: BundleFile, now: number): boolean {
-  if (held === null) return false
-  if (file.kind === 'version') return file.version === held.bundle.version
-  return now - held.confirmedAt < BUNDLE_CONFIRM_MS
+// The plugin's relay is up only while it streams (or is held for a person's input, its stream still open): any other phase, including `off` (no plan), leaves the session file a copy nobody keeps current, since the MCP never removes it when its stream stops.
+export const relayStreams = (phase: RelayState['phase']): boolean => phase === 'streaming' || phase === 'held'
+
+// What tells this session its bundle changed: the session file naming the version the relay says is current (`file`), or nothing (`down`, with why when the file could not be read, a failure the person is told).
+export type ChangeSignal = { kind: 'file'; version: string } | { kind: 'down'; why: string | null }
+
+export function changeSignalOf(relayLive: boolean, file: BundleFile): ChangeSignal {
+  if (!relayLive) return { kind: 'down', why: null }
+  if (file.kind === 'version') return { kind: 'file', version: file.version }
+  return { kind: 'down', why: file.kind === 'unreadable' ? file.reason : null }
 }
 
-// Whether a read is due: nothing held, the file names another version, or (relay down) the poll gap has passed since the last answer.
-export function readIsDue(held: Held | null, file: BundleFile, now: number): boolean {
-  if (held === null) return true
-  if (file.kind === 'version') return file.version !== held.bundle.version
-  return now - held.confirmedAt >= BUNDLE_POLL_MS
+// Whether the bundle held is current: while the relay streams and its session file names its version (the relay says when a policy changes), else, with no change signal, for BUNDLE_CONFIRM_MS after the answer that confirmed it. A bundle that is not current is no bundle (the agent is not run on it).
+export function isCurrent(held: Held | null, signal: ChangeSignal, now: number): boolean {
+  if (held === null) return false
+  if (signal.kind === 'file') return signal.version === held.bundle.version
+  return now - held.confirmedAt < BUNDLE_CONFIRM_MS
 }
 
 // ---- evaluating one event ----
@@ -178,8 +185,9 @@ export const contextKey = (agentId: string | null): string => agentId ?? mainCon
 export const CONTEXT_STARTS = ['session.after_compaction', 'session.after_clear', 'subagent.compacted'] as const
 export const startsNewContext = (event: string): boolean => (CONTEXT_STARTS as readonly string[]).includes(event)
 
-// The moment as the hook saw it: the matcher fields (`tool_name`, `tool_command`, `tool_path`), the slots the plugin fills, and the session's current card (for `once_per_card_per_session`).
-export type Moment = { event: string; matchers: Record<string, string>; slots: Record<string, string>; card: string | null }
+// The moment as the hook saw it: the matcher fields (`tool_name`, `tool_command`, `tool_path`), the slots the plugin fills, the session's current card (for `once_per_card_per_session`) and the mechanisms the hook can carry (`null`: every one).
+// A text of a mechanism the hook does not carry is never decided: deciding it would count it told and report it delivered.
+export type Moment = { event: string; matchers: Record<string, string>; slots: Record<string, string>; card: string | null; mechanisms: readonly string[] | null }
 
 // `*` any run of characters, `?` one character; everything else literal.
 export function globMatches(glob: string, value: string): boolean {
@@ -276,8 +284,9 @@ export function decide(bundle: Bundle, moment: Moment, told: Told): Decision {
   const next: Told = { ...base }
   const deliveries: Delivery[] = []
   const groups = new Map<string, { parts: { text: string; chars: number; rules: BundleRule[] }[]; ids: number[] }>()
+  const carried = (mechanism: string): boolean => moment.mechanisms === null || moment.mechanisms.includes(mechanism)
   for (const a of event.attachments) {
-    if (!matcherHolds(a.matcher, moment.matchers)) continue
+    if (!carried(a.mechanism) || !matcherHolds(a.matcher, moment.matchers)) continue
     const key = `att:${a.attachment_id}`
     if (!applies(a.frequency, key, moment.card, next)) continue
     noted(next, key, a.frequency, moment.card)
@@ -290,7 +299,7 @@ export function decide(bundle: Bundle, moment: Moment, told: Told): Decision {
   // after the event's attachments: its computed sections (the plan's own text for it, the endpoints requested before a compaction), each by the mechanism and frequency the bundle names
   for (const c of event.computed) {
     const key = `computed:${c.key}`
-    if (!applies(c.frequency, key, moment.card, next)) continue
+    if (!carried(c.mechanism) || !applies(c.frequency, key, moment.card, next)) continue
     noted(next, key, c.frequency, moment.card)
     deliveries.push(delivery(event, c.mechanism, [{ text: c.text, chars: c.chars, rules: c.rules }], [], c.key, moment.slots))
   }

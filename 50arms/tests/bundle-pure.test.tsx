@@ -4,10 +4,11 @@ import "./run-tests-with-npm-test.generated"
 // functions facts and reads their verdicts.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { BundleShapeError, bundleFileOf, bundleQuery, compareVersions, contextKey, decide, deliveredText, fillSlots, floorIsStale, globMatches, isCurrent, matcherHolds, readBundleBody, readIsDue, startsNewContext } from '../hooks/bundle/bundle'
+import { BundleShapeError, bundleFileOf, bundleQuery, changeSignalOf, compareVersions, contextKey, decide, deliveredText, fillSlots, floorIsStale, globMatches, isCurrent, matcherHolds, readBundleBody, relayStreams, startsNewContext } from '../hooks/bundle/bundle'
 import type { Bundle, BundleAttachment, BundleEvent } from '../hooks/bundle/bundle'
-import { HOLD_LINES, LOADING_LINE, SIGN_IN_INVITATION, floorBody, floorLines, floorText } from '../hooks/bundle/floor'
-import { RETRY_WINDOW_MS, failureOf, holdOn, holdReport, leavesReadyList, phaseOf, refusalOf, release, reportStepOf } from '../hooks/bundle/hold'
+import { HOLD_LINES, LOADING_LINE, SIGN_IN_INVITATION, TOLD_ON, floorBody, floorLines, floorText } from '../hooks/bundle/floor'
+import { RETRY_WINDOW_MS, failureOf, holdOn, holdReport, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from '../hooks/bundle/hold'
+import { settleOwed } from '../hooks/bundle/state'
 import { EMPTY_QUEUE, RETRY_DELAYS_MS, dueRequests, enqueueDelivery, enqueueFloor, enqueueHold, hasFloorPending, settleFailure, settleOk, toTell, deliveryItem } from '../hooks/bundle/reports'
 
 const V1 = 'a'.repeat(64)
@@ -26,7 +27,7 @@ const event = (key: string, attachments: BundleAttachment[], over: Partial<Bundl
   ...over,
 })
 const bundle = (events: BundleEvent[], version = V1): Bundle => ({ version, min_plugin_version: '0.17.167', floor_lines_plugin_version: null, events })
-const moment = (key: string, over = {}) => ({ event: key, matchers: {}, slots: {}, card: null as string | null, ...over })
+const moment = (key: string, over = {}) => ({ event: key, matchers: {}, slots: {}, card: null as string | null, mechanisms: null as readonly string[] | null, ...over })
 
 describe('reading a bundle answer', () => {
   const body = { version: V1, min_plugin_version: '0.17.167', floor_lines_plugin_version: null, events: [{ event: 'session.start', matchers: [], hook_slots: ['clock_time'], mechanisms: [{ mechanism: 'plugin.context', cap: 10000, over_cap_pointer: 'p' }], attachments: [{ attachment_id: 7, mechanism: 'plugin.context', frequency: 'once_per_session', matcher: null, sections: [section('hello')] }], computed: [] }] }
@@ -75,29 +76,32 @@ describe('versions', () => {
 
 describe('when a held bundle may be used', () => {
   const held = (confirmedAt: number) => ({ bundle: bundle([]), confirmedAt })
-  const file = (version: string) => ({ kind: 'version' as const, version })
+  const file = (version: string) => ({ kind: 'file' as const, version })
+  const down = { kind: 'down' as const, why: null }
 
-  test('current while the session file names its version', () => {
+  test('current while the relay streams and its session file names its version', () => {
     expect(isCurrent(held(0), file(V1), 10 * 60_000)).toBe(true)
     expect(isCurrent(held(0), file(V2), 1)).toBe(false)
   })
 
-  test('relay down: current for 90 s after the answer that confirmed it, then not', () => {
-    expect(isCurrent(held(1000), { kind: 'absent' }, 1000 + 89_999)).toBe(true)
-    expect(isCurrent(held(1000), { kind: 'absent' }, 1000 + 90_000)).toBe(false)
-    expect(isCurrent(held(1000), { kind: 'unreadable', reason: 'x' }, 1000 + 90_000)).toBe(false)
+  test('no change signal: current for 90 s after the answer that confirmed it, then not', () => {
+    expect(isCurrent(held(1000), down, 1000 + 89_999)).toBe(true)
+    expect(isCurrent(held(1000), down, 1000 + 90_000)).toBe(false)
+    expect(isCurrent(held(1000), { kind: 'down', why: 'x' }, 1000 + 90_000)).toBe(false)
   })
 
   test('no bundle held is never current', () => {
     expect(isCurrent(null, file(V1), 0)).toBe(false)
   })
 
-  test('a read is due when the file names another version, or with the relay down at most every 60 s', () => {
-    expect(readIsDue(null, file(V1), 0)).toBe(true)
-    expect(readIsDue(held(0), file(V2), 1)).toBe(true)
-    expect(readIsDue(held(0), file(V1), 10 * 60_000)).toBe(false)
-    expect(readIsDue(held(0), { kind: 'absent' }, 59_999)).toBe(false)
-    expect(readIsDue(held(0), { kind: 'absent' }, 60_000)).toBe(true)
+  test('the session file counts only while the plugin relay streams: the MCP never removes it when its stream stops', () => {
+    expect(relayStreams('streaming')).toBe(true)
+    expect(relayStreams('held')).toBe(true)
+    for (const phase of ['off', 'retrying', 'stopped'] as const) expect(relayStreams(phase)).toBe(false)
+    expect(changeSignalOf(true, { kind: 'version', version: V1 })).toEqual({ kind: 'file', version: V1 })
+    expect(changeSignalOf(false, { kind: 'version', version: V1 })).toEqual({ kind: 'down', why: null })
+    expect(changeSignalOf(true, { kind: 'absent' })).toEqual({ kind: 'down', why: null })
+    expect(changeSignalOf(true, { kind: 'unreadable', reason: 'not JSON' })).toEqual({ kind: 'down', why: 'not JSON' })
   })
 
   test('reads the relay session file, and refuses one of another session or another shape', () => {
@@ -106,6 +110,21 @@ describe('when a held bundle may be used', () => {
     expect(bundleFileOf(JSON.stringify({ v: 1, sessionId: 's2', version: V1 }), 's1').kind).toBe('unreadable')
     expect(bundleFileOf('{', 's1').kind).toBe('unreadable')
     expect(bundleFileOf(JSON.stringify({ v: 2, sessionId: 's1', version: V1 }), 's1').kind).toBe('unreadable')
+  })
+})
+
+describe('owed start events', () => {
+  const owed = { main: ['session.start', 'session.after_compaction'], a1: ['subagent.start'] }
+
+  test('a prompt tells them with its own event, the refusal of a tool call tells only them, any other call leaves them owed', () => {
+    expect(settleOwed(owed, 'main', 'prompt.submit', 'with')).toEqual({ events: ['session.start', 'session.after_compaction'], owed: { a1: ['subagent.start'] } })
+    expect(settleOwed(owed, 'main', 'tool.before', 'only')).toEqual({ events: ['session.start', 'session.after_compaction'], owed: { a1: ['subagent.start'] } })
+    expect(settleOwed(owed, 'main', 'turn.stop', 'none')).toEqual({ events: [], owed })
+  })
+
+  test('an owed event a call tells itself is told once: it leaves the list and is not told again with the owed ones', () => {
+    expect(settleOwed(owed, 'main', 'session.start', 'none')).toEqual({ events: [], owed: { main: ['session.after_compaction'], a1: ['subagent.start'] } })
+    expect(settleOwed(owed, 'main', 'session.start', 'with')).toEqual({ events: ['session.after_compaction'], owed: { a1: ['subagent.start'] } })
   })
 })
 
@@ -202,6 +221,13 @@ describe('deciding an event from the bundle', () => {
     expect(deliveredText(d, '/tmp/full.txt')).toBe('It is 150 characters: read /tmp/full.txt.')
   })
 
+  test('a text of a mechanism the hook does not carry is never decided: it is not counted told and not delivered', () => {
+    const b = bundle([event('turn.stop', [attachment(1, 'context text'), attachment(2, 'stop text', { mechanism: 'plugin.subagent_start' })])])
+    const first = decide(b, moment('turn.stop', { mechanisms: ['plugin.subagent_start'] }), {})
+    expect(first.deliveries.map(d => d.text)).toEqual(['stop text'])
+    expect(first.told['att:1']).toBeUndefined()
+  })
+
   test('a mechanism the event does not list is a shape error, not a guess', () => {
     const b = bundle([event('session.start', [attachment(1, 'x', { mechanism: 'plugin.nope' })])])
     expect(() => decide(b, moment('session.start'), {})).toThrow(BundleShapeError)
@@ -219,7 +245,8 @@ describe('the floor', () => {
     expect(lines.find(l => l.reason === 'key_revoked')?.event).toBe('key.revoked')
     expect(lines.find(l => l.reason === 'dashboard_unreachable')?.event).toBe('dashboard.unreachable')
     expect(lines.find(l => l.reason === 'relay_broken')?.event).toBe('relay.broken')
-    expect(lines.filter(l => l.reason === 'loading').map(l => l.event)).toContain('subagent.start')
+    expect(lines.filter(l => l.reason === 'loading').map(l => l.event)).toEqual([...TOLD_ON])
+    expect(TOLD_ON).toContain('prompt.submit')
     expect(floorBody('0.17.167').plugin_version).toBe('0.17.167')
   })
 
@@ -236,7 +263,7 @@ describe('the floor', () => {
 })
 
 describe('holds', () => {
-  const fail = (over = {}) => ({ status: 0, body: {}, serverNotConnected: false, classifierRefused: false, keyRevoked: false, ...over })
+  const fail = (over = {}) => ({ status: 0, body: {}, serverNotConnected: false, classifierRefused: false, keyRevoked: false, relayDown: null as { why: string | null } | null, ...over })
 
   test('reads why the fetch failed', () => {
     expect(failureOf(fail({ keyRevoked: true })).reason).toBe('key_revoked')
@@ -249,6 +276,29 @@ describe('holds', () => {
     expect(outdated.reason).toBe('plugin_outdated')
     expect(outdated.values.need_version).toBe('0.17.167')
     expect(failureOf(fail({ status: 500, body: { error: 'boom' } })).reason).toBe('fetch_failed')
+  })
+
+  test('a value the plugin does not know is left out of the hold line, so the line names it unknown', () => {
+    const notConnected = failureOf(fail({ serverNotConnected: true }))
+    expect(notConnected.values).toEqual({})
+    expect(refusalOf(holdOn({}, 'main', notConnected, 'tool.before', 0).main!, RETRY_WINDOW_MS)).toContain('[unreachable_since unknown]')
+    const noNeed = failureOf(fail({ status: 426, body: {} }))
+    expect(noNeed.values).toEqual({})
+    expect(refusalOf(holdOn({}, 'main', noNeed, 'tool.before', 0).main!, RETRY_WINDOW_MS)).toContain('[need_version unknown]')
+    expect(failureOf(fail({ status: 503, body: { error: 'dashboard_unreachable' } })).values).toEqual({})
+  })
+
+  test('relay down while a bundle is held: a fetch that fails is the failed check for a change, the relay_broken hold, naming why when the session file could not be read', () => {
+    const f = failureOf(fail({ status: 500, body: { error: 'boom' }, relayDown: { why: 'the session file is not JSON' } }))
+    expect(f.reason).toBe('relay_broken')
+    expect(f.detail).toContain('the session file is not JSON')
+    expect(failureOf(fail({ serverNotConnected: true, relayDown: { why: null } })).reason).toBe('relay_broken')
+    expect(timeoutFailure({ why: null }).reason).toBe('relay_broken')
+    expect(timeoutFailure(null).reason).toBe('fetch_failed')
+    // a failure whose own line tells the fix keeps its reason
+    expect(failureOf(fail({ keyRevoked: true, relayDown: { why: null } })).reason).toBe('key_revoked')
+    expect(failureOf(fail({ status: 426, body: { plugin: { need: '1.0.0' } }, relayDown: { why: null } })).reason).toBe('plugin_outdated')
+    expect(failureOf(fail({ status: 503, body: { error: 'dashboard_unreachable' }, relayDown: { why: null } })).reason).toBe('dashboard_unreachable')
   })
 
   test('the loading line for the first 2 minutes, then the hold line naming the reason and since when', () => {

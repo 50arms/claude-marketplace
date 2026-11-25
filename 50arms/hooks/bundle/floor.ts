@@ -34,8 +34,9 @@ export const HOLD_LINES: Record<HoldReason, string> = {
   classifier_refused: `${HELD_OPENING} The permission classifier refused the plugin's own call to 50 Arms: tell the person to allow the plugin's server in their permissions.`,
 }
 
-// The plugin events a line that has no event of its own is told on: every moment an agent context is started or its tool calls are refused.
-export const TOLD_ON = ['session.start', 'session.resume', 'session.after_compaction', 'session.after_clear', 'subagent.start', 'subagent.compacted', 'tool.before'] as const
+// The plugin events a line that has no event of its own is told on: every moment an agent context is started or its tool calls are refused, and the prompt that tells a held main conversation. A hook that tells any
+// other event never passes a refusal line through (`textsOf`), so this list is the only source of the moments a loading or hold line is told on.
+export const TOLD_ON = ['session.start', 'session.resume', 'session.after_compaction', 'session.after_clear', 'subagent.start', 'subagent.compacted', 'tool.before', 'prompt.submit'] as const
 
 // The catalog events that name a reason of their own; the line is told under that event.
 const OWN_EVENT: Partial<Record<FloorReason, string>> = {
@@ -66,8 +67,7 @@ const NOTICES: { reason: NoticeReason; event: string; text: string }[] = [
   { reason: 'relay_stopped', event: 'relay.broken', text: stoppedLine(slot('detail'), slot('fix')) },
   { reason: 'relay_refused', event: 'relay.broken', text: refusedLine(slot('detail'), slot('fix')) },
   { reason: 'relay_delayed', event: 'relay.broken', text: delayedLine(slot('message')) },
-  // the notice takes a count of seconds; the placeholder stands where the number goes
-  { reason: 'relay_stalled', event: 'relay.broken', text: stalledLine(slot('seconds') as unknown as number) },
+  { reason: 'relay_stalled', event: 'relay.broken', text: stalledLine(slot('seconds')) },
   { reason: 'revoke_note', event: 'key.revoked', text: revokeNote({ ended: true }) },
   { reason: 'revoke_note_failed', event: 'key.revoked', text: revokeNote({ ended: false }) },
   { reason: 'sign_in_note_no_target', event: 'signed_out', text: signInNote(null, true) },

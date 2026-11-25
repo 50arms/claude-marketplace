@@ -31,9 +31,15 @@ export const owe = (owed: Record<string, string[]>, key: string, event: string):
   return list.includes(event) ? owed : { ...owed, [key]: [...list, event] }
 }
 
-export const takeOwed = (owed: Record<string, string[]>, key: string): { events: string[]; owed: Record<string, string[]> } => {
-  const events = owed[key] ?? []
-  if (events.length === 0) return { events, owed }
+// What a call that tells `event` does with the context's owed start events. `with`: it tells them too (the next prompt), `only`: it tells nothing but them (the refusal of the next tool call).
+// Any other call leaves them owed: it has no right to use them up. An owed event the call tells itself is told once, so it leaves the list either way.
+export type OwedTaking = 'none' | 'with' | 'only'
+
+export const settleOwed = (owed: Record<string, string[]>, key: string, event: string, taking: OwedTaking): { events: string[]; owed: Record<string, string[]> } => {
+  const list = owed[key] ?? []
+  const events = taking === 'none' ? [] : list.filter(o => o !== event || taking === 'only')
+  const left = list.filter(o => !events.includes(o) && o !== event)
+  if (left.length === list.length) return { events, owed }
   const { [key]: _taken, ...rest } = owed
-  return { events, owed: rest }
+  return { events, owed: left.length === 0 ? rest : { ...rest, [key]: left } }
 }

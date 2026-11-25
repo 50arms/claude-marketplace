@@ -5,7 +5,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { floorLines } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
-import { test, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, answerReportEvents, bundleEvent, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const MIN = 60_000
 const SUB = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
@@ -23,7 +23,7 @@ for (const surface of SURFACES) {
     }
 
     test('the session start is told from the bundle, the read names the plugin version, and the delivery is reported in the background', async ($, on) => {
-      const d = await started($)
+      const d = await started($, on)
       expect((await firstPrompt($, 'startup')).startLines).toEqual([EVENT_TEXT('session_start')])
       await d.clock.settle()
       expect(d.world.bundleReads[0]).toEqual({ plugin_version: PLUGIN_VERSION, known_version: undefined })
@@ -34,7 +34,7 @@ for (const surface of SURFACES) {
     })
 
     test('the floor lines are sent once after the first bundle answer, while the team holds none, and not again once it holds this plugin version', async ($, on) => {
-      const d = await started($)
+      const d = await started($, on)
       await firstPrompt($, 'startup')
       await d.clock.settle()
       expect(d.world.floorSends).toHaveLength(1)
@@ -49,7 +49,7 @@ for (const surface of SURFACES) {
 
     // CP-146 (DEC-1453): the sign-in and outage floor is more than the hold lines: what to do when the session is not connected to 50 Arms, and how to report an error to the person
     test('the floor send carries the relay failure lines, the revoke and sign-in notes, the expired permission, the failed report, the foreground-lock notice and the disk fault lines, each with its placeholders and no one session value', async ($, on) => {
-      const d = await started($)
+      const d = await started($, on)
       await firstPrompt($, 'startup')
       await d.clock.settle()
       const sent = d.world.floorSends[0].body.lines as { reason: string; event: string; text: string }[]
@@ -70,7 +70,7 @@ for (const surface of SURFACES) {
     })
 
     test('a once-only text is told once per agent context: the main conversation and each sub-agent count apart', async ($, on) => {
-      const d = await started($)
+      const d = await started($, on)
       d.world.bundle.events['subagent.start'] = bundleEvent('subagent.start', ['Mantra.'], { id: 300, frequency: 'once_per_session', mechanism: 'plugin.context' })
       await firstPrompt($, 'startup')
       const first = await $.classic.SubagentStart(SUB)
@@ -82,7 +82,7 @@ for (const surface of SURFACES) {
     })
 
     test('a stop that a Stop hook already blocked is never blocked by an attached text', async ($, on) => {
-      const d = await started($)
+      const d = await started($, on)
       d.world.bundle.events['turn.stop'] = bundleEvent('turn.stop', ['Keep going.'], { id: 400, mechanism: 'plugin.stop_block' })
       await firstPrompt($, 'startup')
       const stop = await $.classic.Stop({ stop_hook_active: true })
@@ -91,7 +91,7 @@ for (const surface of SURFACES) {
 
     describe('a bundle that cannot be had', () => {
       test('a session holding a bundle is held once it is no longer current: the loading line for 2 minutes (a deploy), then the hold line, and session_connect always runs', async ($, on) => {
-        const d = await started($)
+        const d = await started($, on)
         await firstPrompt($, 'startup')
         expect((await tool($)).deny).toBeUndefined()
         d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable', unreachable_since: '2026-10-03T08:00:00.000Z' } }
@@ -109,7 +109,7 @@ for (const surface of SURFACES) {
       })
 
       test('a start with no bundle is owed: the start hook tells the loading line, every tool call is refused, and once a bundle arrives the owed texts are delivered before the context runs a tool', async ($, on) => {
-        const d = await started($)
+        const d = await started($, on)
         d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
         await firstPrompt($, 'startup')
         const sub = await $.classic.SubagentStart(SUB)
@@ -124,7 +124,7 @@ for (const surface of SURFACES) {
       })
 
       test('a plugin below the floor is held with the version to update to, and the open hold is reported, then ended', async ($, on) => {
-        const d = await started($)
+        const d = await started($, on)
         d.world.bundle.minPlugin = '9.0.0'
         await $.prompt.submit({ text: 'hello' })
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
@@ -143,7 +143,7 @@ for (const surface of SURFACES) {
       })
 
       test('a bundle that cannot be read holds the context like a failed fetch', async ($, on) => {
-        const d = await started($)
+        const d = await started($, on)
         d.world.bundle.override = { status: 200, body: { version: 'not a version' } }
         await $.prompt.submit({ text: 'hello' })
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
@@ -153,7 +153,7 @@ for (const surface of SURFACES) {
 
     describe('the reports', () => {
       test('a delivery report that fails is retried at 1, 2 and 4 minutes, then fails loudly: the context is told once, the band shows it, and one report_failed item is sent in a request of its own', async ($, on) => {
-        const d = await started($)
+        const d = await started($, on)
         d.world.reportReplies['POST /api/plan-sessions/me/behavior-events'] = { status: 500, body: { error: 'report boom' } }
         await firstPrompt($, 'startup')
         await d.clock.settle()
@@ -172,7 +172,7 @@ for (const surface of SURFACES) {
       })
 
       test('a 400 is a contract mismatch: not retried, failed loudly at once', async ($, on) => {
-        const d = await started($)
+        const d = await started($, on)
         d.world.reportReplies['POST /api/plan-sessions/me/behavior-events'] = { status: 400, body: { error: 'bad_report' } }
         await firstPrompt($, 'startup')
         await d.clock.settle()
@@ -186,7 +186,7 @@ for (const surface of SURFACES) {
 
     describe('the role from session.bind', () => {
       test('a bundle that carries a session.bind event delivers the role as an entry of its own, once per role, never joined with an event text', async ($, on) => {
-        const d = await started($)
+        const d = await started($, on)
         d.world.bundle.events['session.bind'] = bundleEvent('session.bind', ['Your role: work the card.'], { id: 500, frequency: 'once_per_session' })
         const first = await firstPrompt($, 'startup')
         expect(first.context).toContain('Your role: work the card.')
@@ -197,7 +197,7 @@ for (const surface of SURFACES) {
       })
 
       test('a bundle with no session.bind event delivers no role', async ($, on) => {
-        const d = await started($)
+        const d = await started($, on)
         const first = await firstPrompt($, 'startup')
         expect(first.context.some(c => c.includes('role'))).toBe(false)
         expect(d.world.bundleReads.length).toBeGreaterThan(0)
@@ -205,16 +205,59 @@ for (const surface of SURFACES) {
     })
 
     test('a policy edit reaches the running session through the behavior-bundle session file, with no restart', async ($, on) => {
-      const d = await started($)
+      const d = await started($, on)
       await firstPrompt($, 'startup')
       d.world.bundle.version = NEXT_BUNDLE_VERSION
       d.world.eventText['sub_agent_start'] = 'Edited mantra.'
       const reads = d.world.bundleReads.length
-      // the relay writes the file naming the new version; the next call refetches with the known version
+      // the relay writes the file naming the new version; the next call refetches with the known version (while the relay streams the file is read at once, otherwise the minute check finds the edit)
       d.world.files[`/home/u/.config/danxbot/behavior-bundle/${d.world.sessionId}.json`] = JSON.stringify({ v: 1, sessionId: d.world.sessionId, version: NEXT_BUNDLE_VERSION })
+      await d.clock.advance(MIN)
       const sub = await $.classic.SubagentStart(SUB)
       expect(d.world.bundleReads.length).toBeGreaterThan(reads)
       expect(sub.additionalContext).toEqual(['Edited mantra.'])
+    })
+
+    test('with nothing telling the session its bundle changed, the plugin asks 50 Arms again every minute in the background, and no call waits for the answer', async ($, on) => {
+      const d = await started($, on)
+      await firstPrompt($, 'startup')
+      d.world.bundle.version = NEXT_BUNDLE_VERSION
+      d.world.eventText['sub_agent_start'] = 'Edited mantra.'
+      const reads = d.world.bundleReads.length
+      await d.clock.advance(MIN + 1_000)
+      expect(d.world.bundleReads.length).toBeGreaterThan(reads)
+      expect(d.world.bundleReads.at(-1)).toMatchObject({ known_version: expect.any(String) })
+      expect((await $.classic.SubagentStart(SUB)).additionalContext).toEqual(['Edited mantra.'])
+    })
+
+    test('a bundle that cannot be confirmed because the minute check fails is held as a broken relay once 90 s pass', async ($, on) => {
+      const d = await started($, on)
+      await firstPrompt($, 'startup')
+      d.world.bundle.override = { status: 500, body: { error: 'boom' } }
+      await d.clock.advance(2 * MIN)
+      expect((await tool($)).deny).toMatch(/loading/)
+      await d.clock.advance(RETRY_WINDOW_MS + MIN)
+      expect((await tool($)).deny).toMatch(/relay that tells this session when its instructions change is broken/)
+    })
+
+    describe('a held main conversation at a stop', () => {
+      const STOP = { stop_hook_active: false, background_tasks: [] } as any
+      const READY_CARD = { id: 'DX-1', type: 'Story', title: 'A card', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, review_runnable: false, next_pre_gate: null }
+
+      test('is never also told by a pick-up-cards block, and a stop never uses up the start texts it is owed: the next prompt tells them', async ($, on) => {
+        answerReportEvents(on)
+        const d = await started($, on)
+        d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
+        await firstPrompt($, 'startup')
+        d.world.readyRows[7] = [READY_CARD]
+        expect((await $.classic.Stop(STOP))?.block).toBeUndefined()
+        d.world.bundle.override = undefined
+        await d.clock.advance(MIN)
+        // the bundle is back: the stop now blocks for the ready card, and the owed start texts are still owed
+        expect((await $.classic.Stop(STOP))?.block).toMatch(/DX-1/)
+        const next = ((await $.prompt.submit({ text: 'again' })).context ?? []) as string[]
+        expect(next.join('\n')).toContain(EVENT_TEXT('session_start'))
+      })
     })
   })
 }
