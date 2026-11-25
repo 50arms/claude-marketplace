@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { PACED_STOP, REFUSAL_PREFIX, decideSpawn, denyReason, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { PACED_STOP, REFUSAL_PREFIX, decideSpawn, denyReason, designerModelRefusal, isDesignerBrief, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -34,7 +34,7 @@ const UNKNOWN = { account: null, level: null, budget: null, resets_at: null, mai
 
 describe('decideSpawn (the decision table)', () => {
   test('no verdict allows: pacing never blocks work it cannot see', () => {
-    expect(decideSpawn(null, 'opus')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(null, 'opus', false)).toEqual({ kind: 'allow' })
   })
 
   test('the refusal names level, budget and reset, and says not to retry', () => {
@@ -59,14 +59,19 @@ describe('decideSpawn (the decision table)', () => {
   })
 
   test('a claimed verdict with room, or no cap, allows', () => {
-    expect(decideSpawn(v({ budget: 3, subAgents: 1 }), 'haiku')).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: null, subAgents: 40 }), 'opus')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 3, subAgents: 1 }), 'haiku', false)).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: null, subAgents: 40 }), 'opus', false)).toEqual({ kind: 'allow' })
   })
 
   test('a held slot counts toward tight: one free slot left after the hold downgrades', () => {
     expect(isTight(5, 2, 2)).toBe(true)
     expect(isTight(5, 2, 1)).toBe(false)
-    expect(decideSpawn(v({ budget: 5, subAgents: 2, reservedAgents: 2 }), 'opus')).toEqual({ kind: 'downgrade', model: 'haiku' })
+    expect(decideSpawn(v({ budget: 5, subAgents: 2, reservedAgents: 2 }), 'opus', false)).toEqual({ kind: 'downgrade', model: 'haiku' })
+  })
+
+  // CP-162 (DEC-2387): a designer start is never moved to a smaller model, however tight the budget
+  test('a designer start that takes the last free slot keeps the model it asked for', () => {
+    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'opus', true)).toEqual({ kind: 'allow' })
   })
 
   test('tight (budget - running <= 1) downgrades to haiku, never upward and never an unknown model', () => {
@@ -74,18 +79,63 @@ describe('decideSpawn (the decision table)', () => {
     expect(isTight(3, 1, 0)).toBe(false)
     expect(isTight(null, 99, 0)).toBe(false)
     for (const model of ['opus', 'sonnet', 'claude-opus-4-8', 'fable']) {
-      expect(decideSpawn(v({ budget: 3, subAgents: 2 }), model)).toEqual({ kind: 'downgrade', model: 'haiku' })
+      expect(decideSpawn(v({ budget: 3, subAgents: 2 }), model, false)).toEqual({ kind: 'downgrade', model: 'haiku' })
     }
-    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'haiku')).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'mystery-model')).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), undefined)).toEqual({ kind: 'allow' })
-    expect(decideSpawn(v({ budget: 5, subAgents: 2 }), 'opus')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'haiku', false)).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), 'mystery-model', false)).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 3, subAgents: 2 }), undefined, false)).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 5, subAgents: 2 }), 'opus', false)).toEqual({ kind: 'allow' })
   })
 
   test('tierOf places aliases and ids', () => {
     expect(tierOf('claude-haiku-4-5')).toBe('haiku')
     expect(tierOf('OPUS')).toBe('opus')
     expect(tierOf('gpt')).toBeNull()
+  })
+
+  test('a designer is never downgraded, however tight the budget and whatever it asks for (DEC-2387)', () => {
+    for (const model of ['opus', 'sonnet', 'haiku', 'fable', 'claude-opus-4-8', undefined]) {
+      expect(decideSpawn(v({ budget: 3, subAgents: 2 }), model, true)).toEqual({ kind: 'allow' })
+    }
+    expect(decideSpawn(v({ budget: 1, subAgents: 1, reservedAgents: 0 }), 'opus', true)).toEqual({ kind: 'allow' })
+  })
+
+  test('a designer start is told by the first non-empty line of its brief naming the designer profile', () => {
+    expect(isDesignerBrief('gate-designer CP-1\n\nDraw the screen.')).toBe(true)
+    expect(isDesignerBrief('gate-designer CP-1')).toBe(true)
+    // leading blank lines (and blank lines of spaces) are skipped, and CRLF line endings are read the same
+    expect(isDesignerBrief('\n\n  \ngate-designer CP-1\r\nDraw.')).toBe(true)
+    expect(isDesignerBrief('gate-designer\tCP-1')).toBe(false)
+    expect(isDesignerBrief('Draw the screen with a gate-designer CP-1 brief.\ngate-designer CP-1')).toBe(false)
+    expect(isDesignerBrief('work CP-1\ngate-designer CP-1')).toBe(false)
+    expect(isDesignerBrief('gate-designerX CP-1')).toBe(false)
+    expect(isDesignerBrief('gate-reviewer CP-1')).toBe(false)
+    expect(isDesignerBrief('')).toBe(false)
+    expect(isDesignerBrief('\n \n')).toBe(false)
+  })
+
+  test('a brief that is not a string is never a designer start', () => {
+    for (const prompt of [undefined, null, 42, ['gate-designer CP-1'], { prompt: 'gate-designer CP-1' }]) {
+      expect(isDesignerBrief(prompt)).toBe(false)
+    }
+  })
+
+  test('a designer asked for a model below Opus is refused with a reason that names it and is not a pacing refusal', () => {
+    for (const model of ['haiku', 'sonnet', 'claude-sonnet-4-6', 'claude-haiku-5-5']) {
+      const reason = designerModelRefusal(model)
+      expect(reason).toContain(model)
+      expect(reason).toMatch(/runs on Opus or a better model/)
+      expect(reason).toMatch(/Start it again with an agent type that runs on Opus/)
+      expect(reason?.startsWith(REFUSAL_PREFIX)).toBe(false)
+    }
+  })
+
+  test('a designer on Opus, Fable or an unknown model name is not refused before its claim', () => {
+    expect(designerModelRefusal('opus')).toBeNull()
+    expect(designerModelRefusal('claude-opus-4-8')).toBeNull()
+    expect(designerModelRefusal('fable')).toBeNull()
+    expect(designerModelRefusal('mystery-model')).toBeNull()
+    expect(designerModelRefusal(undefined)).toBeNull()
   })
 })
 
@@ -152,6 +202,43 @@ describe('the agent.spawn hook', () => {
   test('rewrites the model down to haiku when the budget is tight, never up', async ($, on) => {
     await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
     expect((await spawn($, { model: 'opus' })).model).toBe('haiku')
+  })
+
+  test('a designer start that takes the last free slot is started on the model it asked for (DEC-2387)', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
+    const r = await spawn($, { prompt: 'gate-designer CP-1\n\nDraw the screen.', model: 'opus' })
+    expect(r.deny).toBeUndefined()
+    expect(r.model).toBe('opus')
+    expect(d.claimsAllowed).toHaveLength(1)
+  })
+
+  test('a designer asked for Sonnet or Haiku is refused before any slot is claimed, and starts nothing (DEC-2387)', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
+    for (const model of ['sonnet', 'haiku']) {
+      const r = await spawn($, { prompt: 'gate-designer CP-1\n\nDraw the screen.', model })
+      expect(r.deny).toContain(model)
+      expect(r.deny).toMatch(/runs on Opus or a better model/)
+      expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
+    }
+    expect(d.claimAttempts.n).toBe(0)
+    expect(d.claimsAllowed).toEqual([])
+  })
+
+  test('a designer on Fable is started on it, tight budget or not (DEC-2387)', async ($, on) => {
+    await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
+    expect((await spawn($, { prompt: 'gate-designer CP-1\n\nDraw.', model: 'fable' })).model).toBe('fable')
+  })
+
+  test('a non-designer start on Sonnet with the last free slot is still downgraded, and a brief that names the designer profile only on a later line is not a designer', async ($, on) => {
+    await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
+    expect((await spawn($, { prompt: 'work CP-1\ngate-designer CP-1', model: 'sonnet' })).model).toBe('haiku')
+  })
+
+  test('a non-designer start on Sonnet with room is started on Sonnet: the model rule only moves a tight start', async ($, on) => {
+    await session($, on, { pacingLine: { body: wire({ budget: 5, sub_agents: 1 }) } })
+    const r = await spawn($, { prompt: 'gate-reviewer CP-1', model: 'sonnet' })
+    expect(r.deny).toBeUndefined()
+    expect(r.model).toBe('sonnet')
   })
 
   test('allows when 50 Arms answers unknown (the claim carries a reason): nothing is claimed, nothing is said', async ($, on) => {
@@ -625,7 +712,7 @@ describe('the agent.spawn hook', () => {
   })
 
   test('the main agent count never decides a spawn: only the sub-agent count does (CP-13)', () => {
-    expect(decideSpawn(v({ budget: 5, mainAgents: 99, subAgents: 1 }), 'opus')).toEqual({ kind: 'allow' })
+    expect(decideSpawn(v({ budget: 5, mainAgents: 99, subAgents: 1 }), 'opus', false)).toEqual({ kind: 'allow' })
   })
 
   test('a tool call of any tool is never denied under a critical verdict: saving work stays possible', async ($, on) => {

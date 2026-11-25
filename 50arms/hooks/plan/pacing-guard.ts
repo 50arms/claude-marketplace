@@ -7,8 +7,12 @@ import type { PacingEnv } from './pacing-line'
 // The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap on SUB-AGENTS: N means exactly N sub-agents at all times; main threads are never paced.
 // So a spawn does not read a count and decide for itself: it CLAIMS its slot from 50 Arms (POST /api/pacing/agents/claim, which places the
 // session on its account itself and, under one lock, reads the live count and budget and takes the slot or refuses), and the plugin acts on the
-// answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn (`decideSpawn`, pure) and wires
-// the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
+// answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn
+// (`decideSpawn`, pure) and wires the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
+//
+// A SCREEN DESIGNER is a spawn whose brief names the designer profile (`isDesignerBrief`). A design is always drawn by Opus or a better model, so a
+// designer is never moved to a smaller one: `decideSpawn` never downgrades it, and a designer asked for a model below Opus is refused before any claim
+// (`designerModelRefusal`), with a reason that is not a pacing refusal (it does not start with the prefix below).
 //
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
 // writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
@@ -69,15 +73,37 @@ export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved
 // The budget's unit is the ACCOUNT's running sub-agents (main threads and worker dispatches are counted as `mainAgents` but never compared), which the claim's
 // answer carries as `subAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone: the call's
 // `model`, else the parent's (a fork always inherits the parent's). A refusal never reaches here (50 Arms refuses the claim itself); this picks the haiku
-// downgrade for a claimed spawn taking the last free slot.
-export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined): SpawnDecision {
-  if (verdict === null) return { kind: 'allow' }
+// downgrade for a claimed spawn taking the last free slot, unless the spawn is a designer (never moved).
+export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined, designer: boolean): SpawnDecision {
+  if (verdict === null || designer) return { kind: 'allow' }
   if (isTight(verdict.budget, verdict.subAgents, verdict.reservedAgents)) {
     const tier = tierOf(requested)
     // an unknown model name is left alone: it cannot be placed on the tier list, so "below it" is not knowable
     if (tier !== null && tier !== 'haiku') return { kind: 'downgrade', model: 'haiku' }
   }
   return { kind: 'allow' }
+}
+
+// The designer profile's name: a spawn whose brief's first non-empty line starts with it followed by a space (`gate-designer <card id>`).
+const DESIGNER_PROFILE = 'gate-designer'
+export function isDesignerBrief(prompt: unknown): boolean {
+  if (typeof prompt !== 'string') return false
+  const first = prompt
+    .split(/\r?\n/)
+    .map(line => line.trimStart())
+    .find(line => line !== '')
+  return first !== undefined && first.startsWith(`${DESIGNER_PROFILE} `)
+}
+
+// A designer asked for a model below Opus is refused before any slot is claimed. An unknown model name is not on the tier list, so it is left alone.
+// The reason names the model asked for; it is not a pacing refusal, so it does not start with REFUSAL_PREFIX.
+export function designerModelRefusal(requested: string | undefined): string | null {
+  const tier = tierOf(requested)
+  if (tier === null || tier === 'opus' || tier === 'fable') return null
+  return (
+    `A screen design runs on Opus or a better model, and this designer start asks for ${requested}. ` +
+    'Start it again with an agent type that runs on Opus.'
+  )
 }
 
 // Why a spawn is refused when its claim could not be made (fail closed).
@@ -91,6 +117,14 @@ export function claimFailedReason(failure: string): string {
 // The `agent.spawn` hook.
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
+    // the model the spawn would run on if left alone (a fork always inherits the parent's)
+    const requested = e.fork ? e.parentModel : (e.model ?? e.parentModel)
+    const designer = isDesignerBrief(e.prompt)
+    // a designer below Opus is refused before any slot is claimed: nothing is counted, nothing is started
+    if (designer) {
+      const refusal = designerModelRefusal(requested)
+      if (refusal !== null) return { deny: refusal }
+    }
     const claim = await claimSlot(env)
     if (claim.kind === 'failed') {
       reportClaimFailure(env, claim.failure)
@@ -99,7 +133,7 @@ export function spawnGuard(env: PacingEnv) {
     // 50 Arms refused the claim, so the spawn is refused, worded from 50 Arms' own cause whatever the plugin's reading of the verdict says
     if (claim.kind === 'refused') return { deny: denyReason(claim.pacing.verdict, claim.why) }
     let decision: SpawnDecision = { kind: 'allow' }
-    if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, e.fork ? e.parentModel : (e.model ?? e.parentModel))
+    if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing.verdict, requested, designer)
     try {
       // a fork ignores `model`, so there is nothing to rewrite
       const started = await next(decision.kind === 'downgrade' && !e.fork ? { ...e, model: decision.model } : e)
