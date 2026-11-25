@@ -240,6 +240,26 @@ for (const surface of SURFACES) {
       expect((await tool($)).deny).toMatch(/relay that tells this session when its instructions change is broken/)
     })
 
+    test('one hook waits for the bundle fetch once: a prompt over a hung fetch takes one wait, not one per event it tells, and a context never borrows another context\'s hold', async ($, on) => {
+      const d = await started($, on)
+      await firstPrompt($, 'startup')
+      await d.clock.advance(2 * MIN)
+      d.world.contextHangs = true
+      // the bundle is stale and the fetch hangs: the prompt tells the role, the prompt text and more, yet waits for the fetch once
+      const pending = $.prompt.submit({ text: 'next' })
+      await d.clock.settle()
+      await d.clock.advance(4_000)
+      expect(((await pending).context ?? []).join('\n')).toMatch(/loading/)
+      // a sub-agent has no hold of its own: its call waits its own first wait, and its refusal names the fetch not answering, not the main context's reason
+      const sub = tool($, 'a1')
+      await d.clock.settle()
+      await d.clock.advance(4_000)
+      expect((await sub).deny).toMatch(/had not answered within the hook deadline/)
+      d.world.contextHangs = false
+      d.release()
+      await d.clock.settle()
+    })
+
     describe('a held main conversation at a stop', () => {
       const STOP = { stop_hook_active: false, background_tasks: [] } as any
       const READY_CARD = { id: 'DX-1', type: 'Story', title: 'A card', assigned_agent: null, dispatch: null, blocked: null, open_problem_count: 0, waiting_on: false, conflict_on_active_count: 0, review_runnable: false, next_pre_gate: null }

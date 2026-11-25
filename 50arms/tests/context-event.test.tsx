@@ -12,6 +12,7 @@ import { test, BUNDLE_EVENT_KEY, EVENT_TEXT, TOLD, SURFACES, clearedEvent, dashb
 const START = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
 const BUNDLE_PATH = '/api/behavior-events/bundle'
 const MIN = 60_000
+const BUNDLE_WAIT_MS = 4_000
 const tool = async ($: any) => (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)) as any
 const joined = (lines: string[] | undefined) => (lines ?? []).join('\n')
 
@@ -213,8 +214,11 @@ This session replaced one on PLAN-23; 3 events wait.`])
       const r = await pending
       expect(joined(r.context)).toMatch(/loading/)
       expect(joined(r.context)).not.toContain(EVENT_TEXT('session_start'))
-      // the start is owed and the context held: a call of the same hook budget is refused at once, with no wait of its own on the fetch still in flight
-      expect((await tool($)).deny).toMatch(/loading/)
+      // the start is owed and the context held: the next hook's first call waits for the fetch in flight, once, then is refused
+      const refused = tool($)
+      await d.clock.settle()
+      await d.clock.advance(BUNDLE_WAIT_MS)
+      expect((await refused).deny).toMatch(/loading/)
       // the hung read ends, so no timer of this test waits on it
       d.world.contextHangs = false
       d.release()

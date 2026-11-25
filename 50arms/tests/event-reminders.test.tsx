@@ -143,12 +143,13 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       await d.clock.advance(CONTEXT_DEADLINE_MS)
       expect((await pending).deny).toMatch(/loading/)
+      // the hung read ends: the held context is released by the answer, and the finish it was owed is told once
       d.world.contextHangs = false
-      // the context is held and the hung fetch is still in flight: the call is refused at once, with no wait of its own
-      expect((await tool($)).deny).toMatch(/loading|CRITICAL/)
-      // the hung read ends, so no timer of this test waits on it
       d.release()
       await d.clock.settle()
+      await d.clock.advance(MIN)
+      expect(doneReminders((await tool($)).context)).toEqual([toldFor(STOP_TEXT, 'a1')])
+      expect(doneReminders((await tool($)).context)).toEqual([])
     })
 
     test('a reminder owed when a /clear empties the state is told once after it, never lost or doubled', async ($, on) => {
