@@ -3271,7 +3271,7 @@ async function renderStart($: any, start: NonNullable<PendingStart>, budget: Bud
   try {
     return await sessionContext($, start, budget)
   } catch (err: any) {
-    // CP-146: a start that could not be read is no start told: the context is held with the failure and the start owed (the floor's loading line), never a line of the plugin's own
+    // a start that could not be read is no start told: the context is held with the failure and the start owed (the floor's loading line), never a line of the plugin's own
     const event = startEventOf(start)
     return event === null || !(await signedInWithAgent($)) ? null : owedStart($, event, { reason: 'fetch_failed', detail: `reading what this start carries failed (${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)})`, values: {} })
   }
@@ -3283,7 +3283,7 @@ const isFreshStart = (start: NonNullable<PendingStart>): boolean => start.loopRe
 const startEventOf = (start: NonNullable<PendingStart>): string | null => (start.compactionClear === true ? 'session.after_clear' : start.loopReset === true ? 'session.start' : sessionEvent(start.source))
 
 // the entries a hook adds to the model's context: the disk notice, the checkout-behind notice and, when there is one, the session start line. The time stamp is no entry of the
-// plugin's: it is the `clock_time` slot of the bundle's `prompt.submit` texts (CP-146, AC 72124).
+// plugin's: it is the `clock_time` slot of the bundle's `prompt.submit` texts (AC 72124).
 // The start is TAKEN by the hook (`takePendingStart`) before the start's own slow reads, in the one order of arrival, so two hooks landing together (a fresh desktop session's first prompt runs the hook twice) never both tell it.
 async function noticeStartEntries($: any, pending: PendingStart, trigger: 'prompt' | 'tool', agent: string, budget: Budget): Promise<string[]> {
   const disk = await diskLine($, trigger, agent)
@@ -3478,7 +3478,7 @@ async function onPromptStamp($: any, e: any, next: any) {
   const held = await holdInterimNotice($, e)
   if (held !== null) return { drop: held }
   const budget = hookBudget()
-  // the start is taken and the clock stamped in the one order of arrival, before the start's own slow reads (DX-4736): of two prompts landing together, whoever takes the start also takes the first stamp
+  // the start is taken and the clock stamped in the one order of arrival, before the start's own slow reads: of two prompts landing together, whoever takes the start also takes the first stamp
   const pending = await takePendingStart($)
   const signedIn = await signedInWithAgent($)
   // a prompt of the main conversation: what the bundle tells at a prompt (the time stamp is its `clock_time` slot; the start texts it was owed before this hook ride with it), or the line that holds it. It comes first: what a prompt carries begins with its time
@@ -5385,7 +5385,7 @@ async function slotsOf($: any, event: string, names: string[], extra: Record<str
   const slots: Record<string, string> = { ...extra }
   const has = (n: string) => names.includes(n) && slots[n] === undefined
   if (has('clock_time')) {
-    // CP-146: the time stamp is a computed value, never a plugin text: a prompt's stamp counts from the last one stamped, every other event gets the clock alone
+    // the time stamp is a computed value, never a plugin text: a prompt's stamp counts from the last one stamped, every other event gets the clock alone
     if (event === 'prompt.submit') slots.clock_time = await timeLine($)
     else {
       const now = await $.clock.now()

@@ -50,7 +50,7 @@ const TEXTS: Record<FloorReason, string> = { signed_out: SIGN_IN_INVITATION, loa
 
 const REASONS = Object.keys(TEXTS) as FloorReason[]
 
-// CP-146 (DEC-1453, PBLM-4588): the other texts the plugin must be able to say when the server cannot be reached or the session is not signed in. Each is the plugin's own function, called with a
+// The other texts the plugin must be able to say when the server cannot be reached or the session is not signed in. Each is the plugin's own function, called with a
 // `{{slot:name}}` placeholder where the session's value goes, so the set carries the very words the plugin tells and never a copy. Two kinds: what to do when the session is not connected to 50 Arms
 // (the relay failure lines, the revoked-key note, the sign-in notes, the expired permission request) and how to report an error to the person (the failed report, the foreground-lock notice, the disk
 // check's fault lines). Told under the catalog event nearest to when each is told.
