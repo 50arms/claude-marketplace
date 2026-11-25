@@ -8,7 +8,9 @@ import type { Bundle, BundleAttachment, BundleComputed, BundleEvent, BundleMecha
 export type { Bundle, BundleAttachment, BundleComputed, BundleEvent, BundleMechanism, BundleRule, BundleSection, Frequency, Held, Told }
 
 
-export const FREQUENCIES = ['every', 'once_per_session', 'once_per_card_per_session'] as const
+// every frequency this plugin knows, keyed by the contract's `Frequency` union (types/index.d.ts): a member of the union missing here is a type error, so the list can never drift from it
+const KNOWN_FREQUENCIES: Record<Frequency, true> = { every: true, once_per_session: true, once_per_card_per_session: true }
+const isFrequency = (v: unknown): v is Frequency => typeof v === 'string' && Object.hasOwn(KNOWN_FREQUENCIES, v)
 
 // What a bundle read answered: the bundle, or `{unchanged: true}` for the `known_version` the call sent.
 export type BundleRead = { kind: 'bundle'; bundle: Bundle } | { kind: 'unchanged'; version: string; floorLinesPluginVersion: string | null }
@@ -64,7 +66,7 @@ function rulesOf(v: unknown, where: string): BundleRule[] {
 
 function frequencyOf(v: unknown, where: string): Frequency {
   // an unknown frequency is refused: guessing "every" would tell a once-only text on every call
-  return (FREQUENCIES as readonly unknown[]).includes(v) ? (v as Frequency) : shape(`${where} has the frequency ${JSON.stringify(v)}, which this plugin does not know`)
+  return isFrequency(v) ? v : shape(`${where} has the frequency ${JSON.stringify(v)}, which this plugin does not know`)
 }
 
 function sectionOf(v: unknown, where: string): BundleSection {

@@ -3477,7 +3477,7 @@ async function wslHome($: any): Promise<string | null> {
 async function onPromptStamp($: any, e: any, next: any) {
   const held = await holdInterimNotice($, e)
   if (held !== null) return { drop: held }
-  const budget = hookBudget()
+  const budget = await hookBudget($)
   // the start is taken and the clock stamped in the one order of arrival, before the start's own slow reads: of two prompts landing together, whoever takes the start also takes the first stamp
   const pending = await takePendingStart($)
   const signedIn = await signedInWithAgent($)
@@ -3552,7 +3552,7 @@ async function toolBundleTexts($: any, e: any, budget: Budget): Promise<string[]
 // a tool call's result is never stamped; the MAIN loop's result carries the session start, if any, the disk notice, and
 // a finished sub-agent's reminder to record its result; a denied call has no result to put them beside. A call with an `agentId` is a sub-agent's or an engine fork's, and the start and the reminder are the main session's
 async function onToolStamp($: any, e: any, next: any) {
-  const budget = hookBudget()
+  const budget = await hookBudget($)
   // a held agent context runs no tool but `session_connect`, which lets the person sign in again; the plugin's own calls are never held
   if (!raisedByPlugin(next.origin) && e.tool !== toolName('session_connect')) {
     const refusal = await refuseWhileHeld($, e.agentId, budget)
@@ -3684,7 +3684,7 @@ async function readLegacySettings($: any): Promise<string[]> {
 type ServerState = 'ready' | 'unloaded' | 'not-yet'
 
 // A session START may reach its hook before the plugin's own server has connected: the server's `50arms_api` shows in the
-// session's tool list once it has. Polled until `deadlineAt`, the start's one deadline (CONTEXT_DEADLINE_MS from its beginning), and not a tick
+// session's tool list once it has. Polled until `deadlineAt`, the hook's one deadline (its `Budget`), and not a tick
 // after. A
 // sub-agent's start is mid-session and does not call this.
 async function serverState($: any, deadlineAt: number): Promise<ServerState> {
@@ -3755,25 +3755,25 @@ type StartReads = { line: string | null; askRestart: boolean }
 
 // A /clear: it has no event text, and it is a restart only when the session it ended was on a plan (that session's connection record is on disk),
 // which is also what names the predecessor to the server. Any other clear is quiet, the server is never asked.
-async function clearNotice($: any, start: NonNullable<PendingStart>): Promise<string | null> {
+async function clearNotice($: any, start: NonNullable<PendingStart>, deadlineAt: number): Promise<string | null> {
   const ended = start.predecessorId
   if (ended === null || !(await isPlanConnected($, ended)) || (await isPlanConnected($, start.sessionId, false))) return null
-  const server = await serverState($, (await $.clock.now()) + CONTEXT_DEADLINE_MS)
+  const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return null
   if (server === 'not-yet') return restartFailureLine(SERVER_NOT_CONNECTED_REASON)
   return restartNotice($, { kind: 'ask', args: { predecessor_id: ended } })
 }
 
-// The reads a pending start asks of the dashboard: the wait for the plugin's server, the plan read and the event text read share ONE deadline. A session
+// The reads a pending start asks of the dashboard: the wait for the plugin's server, the plan read and the event text read share ONE deadline, the hook's (`budget.deadlineAt`), which the hook's own bundle wait obeys too. A session
 // the plan read finds signed in is told the event text, on a plan or not; one on no plan then also asks the restart notice. Whatever fails before
 // the plan read answers, a session KNOWN to be on a plan (its record on disk) is told in one warning line; any other stays silent and, on a start
 // or resume, still asks the restart notice, which is the server's own lookup and needs neither the dashboard read nor a key.
 async function sessionContext($: any, start: NonNullable<PendingStart>, budget: Budget): Promise<string | null> {
   const event = startEventOf(start)
   // a clear a person typed is told the after-clear texts and, when it ended a session on a plan, the restart notice
-  const clear = start.source === 'clear' && !isFreshStart(start) ? await clearNotice($, start) : null
+  const clear = start.source === 'clear' && !isFreshStart(start) ? await clearNotice($, start, budget.deadlineAt) : null
   if (event === null) return clear
-  const deadlineAt = (await $.clock.now()) + CONTEXT_DEADLINE_MS
+  const deadlineAt = budget.deadlineAt
   const connected = await isPlanConnected($, start.sessionId)
   // a sign-in's start is the same session going on: it asks no restart notice; a compaction and a clear are the same session too
   const askRestart = start.source !== 'compact' && start.source !== 'clear' && start.source !== SIGN_IN_SOURCE && !isFreshStart(start)
@@ -3784,13 +3784,13 @@ async function sessionContext($: any, start: NonNullable<PendingStart>, budget: 
   if (server === 'not-yet') return joined([(await fault(fetchFailureOf({ status: 0, body: {}, serverNotConnected: true, classifierRefused: false, keyRevoked: false, relayDown: await relayDownOf($) }))).line, clear])
   // set when the deadline passes: the reads then go on in the background and tell nothing, since their texts would be used up with nobody to read them
   let expired = false
-  const reads = async (): Promise<StartReads> => {
+  const reads = async (): Promise<StartReads | null> => {
     const plan = await sessionPlan($)
     // a key that works asks for the start texts now; one that does not leaves the conversation owing them (giveOwedMantra)
     if (plan.kind !== 'failed' && plan.kind !== 'unreachable') await update($, mantraOwed, () => plan.kind === 'signed-out' || plan.kind === 'silent')
     // the bundle read waits only for what is left of the deadline: a lookup that ended after it would decide the start (count its once-only texts told) with no hook left to show them
     const left = deadlineAt - (await $.clock.now())
-    if (expired || left <= 0) return { line: null, askRestart: false }
+    if (expired || left <= 0) return null
     if (plan.kind === 'connected' || plan.kind === 'not-connected') {
       // the bundle's texts for this start; a session on no plan also asks the restart notice, if it replaced one that was on a plan
       const outcome = await tellEvent($, event, null, budget, { owes: true, waitMs: left })
@@ -3801,6 +3801,7 @@ async function sessionContext($: any, start: NonNullable<PendingStart>, budget: 
     if (plan.kind === 'signed-out') return start.source === 'startup' ? { line: SIGN_IN_INVITATION, askRestart: false } : { line: null, askRestart }
     return { line: null, askRestart }
   }
+  // `null`: the deadline passed, whether its timer fired first or a read ended after it
   const done = await withinDeadline<StartReads | null>($, Math.max(deadlineAt - (await $.clock.now()), 0), reads(), () => {
     expired = true
     return null
@@ -3975,7 +3976,7 @@ async function resumeAfterCompaction($: any): Promise<void> {
   // a clear that left the session unconnected (the new conversation has no connection record): it is connected again to what it held, and told when that was refused
   const reconnectFailures = connected ? [] : await reconnectHeld($, owed)
   // the briefing is the bundle's texts for the start (the loading line when there is no bundle: the start is owed and told when one arrives); a start that said nothing starts no turn
-  const briefing = await renderStart($, start, hookBudget())
+  const briefing = await renderStart($, start, await hookBudget($))
   if (briefing === null) return
   const text = reconnectFailures.length === 0 ? briefing : `${briefing}
 The clear left you unconnected and reconnecting failed (${reconnectFailures.join('; ')}): call session_connect for what you held first.`
@@ -4007,7 +4008,7 @@ async function onSubagentStart($: any, e: any, next: any) {
   const r = await onSubagentChange($, e, next, true)
   // its activity row opens
   detach($, '50 Arms activity report', reportSubagentStart($, e))
-  const started = (await signedInWithAgent($)) ? textsOrRefusal(await tellEvent($, 'subagent.start', e.agent_id, hookBudget(), { owes: true, extra: { sub_agent_id: String(e.agent_id), profile: String(e.agent_type ?? ''), ...(pacingLevel(await $.clock.now()) === null ? {} : { pacing_level: pacingLevel(await $.clock.now()) as string }) } })) : []
+  const started = (await signedInWithAgent($)) ? textsOrRefusal(await tellEvent($, 'subagent.start', e.agent_id, await hookBudget($), { owes: true, extra: { sub_agent_id: String(e.agent_id), profile: String(e.agent_type ?? ''), ...(pacingLevel(await $.clock.now()) === null ? {} : { pacing_level: pacingLevel(await $.clock.now()) as string }) } })) : []
   const pacing = await pacingLine(pacingEnv($))
   return withLine(started.reduce((acc, text) => withLine(acc, text), r), pacing)
 }
@@ -4520,7 +4521,7 @@ async function onReportStop($: any, e: any, next: any) {
   // blocked (`stop_hook_active`), so no attached policy can keep a session from stopping
   if (e.agent_id !== undefined || e.stop_hook_active === true || !(await signedInWithAgent($))) return { ...r, block: own }
   // only the Stop block carries it: a text of another mechanism is never decided here, and a stop is no channel for the start texts a context is owed
-  const told = await tellEvent($, 'turn.stop', null, hookBudget(), { extra: { next_step: own }, mechanisms: ['plugin.stop_block'] })
+  const told = await tellEvent($, 'turn.stop', null, await hookBudget($), { extra: { next_step: own }, mechanisms: ['plugin.stop_block'] })
   // a context that turned out held at this stop is told so by its tool refusals, never by a pick-up-cards block
   if (told.kind === 'refused') return r
   return { ...r, block: [own, ...textsOf(told)].join('\n\n') }
@@ -5037,10 +5038,11 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
 
 const BUNDLE_WAIT_MS = 4_000
 
-// One hook call waits for the bundle fetch at most once, however many events it tells: the first call that finds no current bundle waits for the fetch in flight, and a later call of the same hook is refused at once with
-// what that wait found, so the hook's total stays inside its deadline. A hook starts its own budget; no hook shares one with another.
-type Budget = { waited: boolean }
-const hookBudget = (): Budget => ({ waited: false })
+// One hook call has ONE deadline (`deadlineAt`, CONTEXT_DEADLINE_MS from its start) for everything it waits on: the bundle fetch and a session start's own reads both end by it, so a hung dashboard never holds a hook past it.
+// A hook waits for the bundle fetch at most once, however many events it tells: the first call that finds no current bundle waits for the fetch in flight, and a later call of the same hook is answered
+// from what that wait found (`waited.outcome`: null when it timed out), never refused at once with a timeout that may be false. A hook starts its own budget; no hook shares one with another.
+type Budget = { deadlineAt: number; waited: { outcome: FetchOutcome | null } | null }
+const hookBudget = async ($: any): Promise<Budget> => ({ deadlineAt: (await $.clock.now()) + CONTEXT_DEADLINE_MS, waited: null })
 const RETRY_GAP_MS = 5_000
 const BUNDLE_CACHE_PREFIX = 'bundle-cache:'
 const bundleCacheKey = (sessionId: string): string => `${BUNDLE_CACHE_PREFIX}${sessionId}`
@@ -5324,16 +5326,19 @@ async function ensureBundle($: any, key: string, event: string, waitMs: number, 
     return { kind: 'ready', bundle }
   }
   const relayDown = state.held === null || signal.kind !== 'down' ? null : { why: signal.why }
-  // a call of a hook that already waited is refused at once: with the hold its own context stands in, else with the fetch not having answered
-  if (budget.waited) {
+  // the hook waits once: a later call is answered from what that wait found, and only a wait that really timed out is refused with a timeout (the hold its own context stands in, else the fetch not having answered)
+  if (budget.waited === null) {
+    // at most what is left of the hook's one deadline
+    budget.waited = { outcome: await withinDeadline<FetchOutcome | null>($, Math.min(waitMs, Math.max(budget.deadlineAt - (await $.clock.now()), 0)), fetchBundle($), () => null) }
+  }
+  const outcome = budget.waited.outcome
+  if (outcome === null) {
     const own = state.holds[key]
     return holdContext($, key, event, own === undefined ? timeoutFailure(relayDown) : { reason: own.reason, detail: own.detail, values: own.values })
   }
-  budget.waited = true
-  const outcome = await withinDeadline<FetchOutcome | null>($, waitMs, fetchBundle($), () => null)
-  if (outcome !== null && outcome.kind === 'ok') return { kind: 'ready', bundle: outcome.bundle }
-  if (outcome !== null && outcome.kind === 'signed-out') return { kind: 'signed-out' }
-  return holdContext($, key, event, outcome === null ? timeoutFailure(relayDown) : outcome.failure)
+  if (outcome.kind === 'ok') return { kind: 'ready', bundle: outcome.bundle }
+  if (outcome.kind === 'signed-out') return { kind: 'signed-out' }
+  return holdContext($, key, event, outcome.failure)
 }
 
 // An agent context with no current bundle: held with the failure (a new hold, or the standing one refreshed), kept asking for, and its report opened once the hold line starts.

@@ -6,9 +6,11 @@ import { describe, expect } from 'claude-code/testing'
 import { floorLines } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
 import { RETRY_DELAYS_MS } from '../hooks/bundle/reports'
-import { test, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, dashboard, firstPrompt, startSession } from './plan-kit'
+import { CONTEXT_DEADLINE_MS } from '../hooks/context/events'
+import { test, BUNDLE_FILE_PATH, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, bundleFileText, dashboard, deliveredReports, firstPrompt, startSession } from './plan-kit'
 
 const MIN = 60_000
+const NEWER_THAN_ANSWER = `${'c'.repeat(63)}3`
 const SUB = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
 const tool = async ($: any, agentId?: string) => (await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)) as any
 const reports = (d: any) => d.world.deliveryReports.flatMap((r: any) => r.body.reports) as any[]
@@ -268,6 +270,56 @@ for (const surface of SURFACES) {
       d.world.contextHangs = false
       d.release()
       await d.clock.settle()
+    })
+
+    // CP-146: a hook has ONE deadline. The bundle wait and a pending start's own reads (the plan read, then the event text) share it, so a dashboard that answers nothing holds a prompt for 8 s, never 16
+    test('one deadline per hook: a prompt carrying a pending start over a dashboard whose bundle read and plan read both hang settles at the 8 s deadline, and the start is owed', async ($, on) => {
+      const d = await started($, on)
+      d.world.contextDelayMs = 60 * MIN
+      const pending = firstPrompt($, 'startup')
+      let settled = false
+      void pending.then(() => (settled = true))
+      await d.clock.advance(CONTEXT_DEADLINE_MS - 1_000)
+      await d.clock.settle()
+      expect(settled).toBe(false)
+      // the bundle wait ends at 8 s with the whole of the budget used: the start's plan read has no time of its own to add
+      await d.clock.advance(1_000 + 500)
+      await d.clock.settle()
+      expect(settled).toBe(true)
+      const r = await pending
+      expect((r.context ?? []).join('\n')).toMatch(/loading/)
+      expect((r.context ?? []).join('\n')).not.toContain(EVENT_TEXT('session_start'))
+      d.world.contextDelayMs = 0
+      await d.clock.advance(60 * MIN)
+    })
+
+    const holdsWritten = (d: any) => d.stateWrites.filter((w: any) => w.key === 'behavior' && Object.keys(w.value?.holds ?? {}).length > 0)
+
+    // a bundle read answers `signed-out` for a key that lapsed after the session view was drawn: the session is no outage, so no call of the hook holds it
+    test('a hook whose one wait found the session signed out holds nothing at its later calls', async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.events['tool.after'] = bundleEvent('tool.after', ['After a tool.'], { id: 310 })
+      await firstPrompt($, 'startup')
+      d.world.bundle.version = NEXT_BUNDLE_VERSION
+      d.world.files[BUNDLE_FILE_PATH(d.world.sessionId)] = bundleFileText(d.world.sessionId, NEXT_BUNDLE_VERSION)
+      d.world.signedOut = 'lapsed'
+      // the call's first event waits for the fetch (signed-out), and its later events (the tool's own) run in the same hook
+      expect((await tool($)).deny).toBeUndefined()
+      await d.clock.settle()
+      expect(holdsWritten(d)).toEqual([])
+      expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
+    })
+
+    // the fetch answered, yet the relay's file names a version still newer than the answer: the hook goes on with what its one wait got, it does not hold the context for a timeout that never happened
+    test('a hook whose one wait found a bundle goes on with it when the relay names a newer version than the answer', async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.events['tool.after'] = bundleEvent('tool.after', ['After a tool.'], { id: 310 })
+      await firstPrompt($, 'startup')
+      d.world.files[BUNDLE_FILE_PATH(d.world.sessionId)] = bundleFileText(d.world.sessionId, NEWER_THAN_ANSWER)
+      expect((await tool($)).deny).toBeUndefined()
+      await d.clock.settle()
+      expect(holdsWritten(d)).toEqual([])
+      expect(deliveredReports(d, 'tool.after')).toHaveLength(1)
     })
 
     describe('a held main conversation at a stop', () => {
