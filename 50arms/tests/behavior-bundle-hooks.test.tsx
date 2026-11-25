@@ -5,6 +5,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { floorLines } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
+import { RETRY_DELAYS_MS } from '../hooks/bundle/reports'
 import { test, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const MIN = 60_000
@@ -171,9 +172,11 @@ for (const surface of SURFACES) {
         const failed = reports(d).filter(r => r.kind === 'report_failed')
         expect(failed).toHaveLength(1)
         expect(failed[0]).toMatchObject({ kind: 'report_failed', plugin_version: PLUGIN_VERSION })
-        // a failed report_failed is dropped without a further report about it
+        // the report_failed item follows the same bound (the send and 3 retries) and, once they are spent, is dropped without a further report about it
         await d.clock.advance(10 * MIN)
-        expect(reports(d).filter(r => r.kind === 'report_failed')).toHaveLength(1)
+        const attempts = reports(d).filter(r => r.kind === 'report_failed')
+        expect(attempts).toHaveLength(1 + RETRY_DELAYS_MS.length)
+        expect(new Set(attempts.map(r => r.at)).size).toBe(1)
       })
 
       test('a 400 is a contract mismatch: not retried, failed loudly at once', async ($, on) => {
