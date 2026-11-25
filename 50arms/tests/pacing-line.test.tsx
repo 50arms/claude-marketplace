@@ -85,6 +85,7 @@ describe('a session whose MCP server becomes unreachable', () => {
     // DX-5593: the first read succeeds (an unreachable server is silent until one has), every later one finds the server gone
     const answers = [{ ok: true, status: 200, body: known }, { ok: false, status: 0, body: null, unreachable: true }]
     const env: PacingEnv = {
+      agentModel: () => Promise.resolve(null),
       now: () => Promise.resolve(0),
       within: (_ms, work) => work,
       call: () => Promise.resolve(answers.length > 1 ? answers.shift()! : answers[0]),

@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { PACED_STOP, REFUSAL_PREFIX, decideSpawn, denyReason, designerModelRefusal, isDesignerBrief, isTight, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { PACED_STOP, REFUSAL_PREFIX, agentFileModel, decideSpawn, denyReason, designerModelRefusal, isDesignerBrief, isTight, ownAgentFile, requestedModelOf, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -136,6 +136,59 @@ describe('decideSpawn (the decision table)', () => {
     expect(designerModelRefusal('fable')).toBeNull()
     expect(designerModelRefusal('mystery-model')).toBeNull()
     expect(designerModelRefusal(undefined)).toBeNull()
+  })
+
+  // CP-162 fix pass (code-architecture round 1): the model a spawn runs on is the call's `model`, else the agent type's own model, else the parent's
+  test('the model a spawn runs on is the call\'s model, else the agent type\'s own, else the parent\'s; a fork always inherits the parent\'s', () => {
+    const base = { fork: false, parentModel: 'opus' }
+    expect(requestedModelOf({ ...base, model: 'haiku' }, 'sonnet')).toBe('haiku')
+    expect(requestedModelOf({ ...base, model: undefined }, 'sonnet')).toBe('sonnet')
+    expect(requestedModelOf({ ...base, model: undefined }, null)).toBe('opus')
+    expect(requestedModelOf({ fork: true, parentModel: 'opus', model: 'haiku' }, 'sonnet')).toBe('opus')
+  })
+
+  test('a plugin\'s own agent type is read from its agent file under the plugin root; any other type has none', () => {
+    expect(ownAgentFile('50arms', '/p/50arms', '50arms:worker-sonnet-high')).toBe('/p/50arms/agents/worker-sonnet-high.md')
+    expect(ownAgentFile('50arms', '/p/50arms', '50arms:team:worker-sonnet-high')).toBe('/p/50arms/agents/team/worker-sonnet-high.md')
+    expect(ownAgentFile('50arms', '/p/50arms', 'general-purpose')).toBeNull()
+    expect(ownAgentFile('50arms', '/p/50arms', 'Explore')).toBeNull()
+    expect(ownAgentFile('50arms', '/p/50arms', 'other:worker-sonnet-high')).toBeNull()
+  })
+
+  test('the model an agent file names is read from its frontmatter; inherit or none names the parent\'s', () => {
+    expect(agentFileModel('---\nname: worker-sonnet-high\nmodel: sonnet\neffort: high\n---\n\nbody model: haiku')).toBe('sonnet')
+    expect(agentFileModel('---\r\nmodel: "claude-opus-4-8"\r\n---\r\n')).toBe('claude-opus-4-8')
+    expect(agentFileModel('---\nmodel: inherit\n---\n')).toBeUndefined()
+    expect(agentFileModel('---\nname: x\n---\n')).toBeUndefined()
+    expect(agentFileModel('no frontmatter, model: sonnet')).toBeUndefined()
+  })
+
+  // a claim the plugin can make (the figures carry no cap) and an env whose agent file names `agentModel`
+  const guardEnv = (agentModel: string | null, call: () => Promise<unknown>): PacingEnv => ({
+    now: () => Promise.resolve(0), within: (_ms, work) => work, call: call as PacingEnv['call'], reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true),
+    sleep: () => Promise.resolve(), toast: () => {}, agentModel: () => Promise.resolve(agentModel),
+  })
+  const claimedBody = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 2, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [], worst_limit: null, reason: null, claimed: true, claim_id: 'claim-1' }
+
+  test('a designer whose agent type runs on Sonnet is refused under an Opus session when it names no model: no claim is made (CP-162 fix pass)', async () => {
+    resetPacing()
+    const env = guardEnv('sonnet', () => Promise.reject(new Error('never reached: a refused designer claims nothing')))
+    const e = { prompt: 'gate-designer CP-1\n\nDraw.', subagentType: '50arms:worker-sonnet-high', description: 'd', tool_use_id: 't', fork: false, parentModel: 'opus', background: false } as any
+    let started = false
+    const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
+    expect(started).toBe(false)
+    expect(r.deny).toMatch(/this designer start runs on sonnet/)
+    expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
+  })
+
+  test('a designer whose agent type runs on Opus is started under a Sonnet session when it names no model (CP-162 fix pass)', async () => {
+    resetPacing()
+    const env = guardEnv('opus', () => Promise.resolve({ ok: true, status: 200, body: claimedBody }))
+    const e = { prompt: 'gate-designer CP-1\n\nDraw.', subagentType: '50arms:worker-opus-high', description: 'd', tool_use_id: 't', fork: false, parentModel: 'sonnet', background: false } as any
+    let started: any = null
+    const r = await spawnGuard(env)(e, async (x: any) => { started = x; return { model: 'opus', agentId: 'a' } as any })
+    expect(r.deny).toBeUndefined()
+    expect(started?.model).toBeUndefined()
   })
 })
 
@@ -463,6 +516,7 @@ describe('the agent.spawn hook', () => {
         resetPacing()
         const toasts: string[] = []
         const env: PacingEnv = {
+        agentModel: () => Promise.resolve(null),
           now: () => Promise.resolve(0),
           within: mode === 'times out' ? (_ms, _work, onTimeout) => onTimeout() : (_ms, work) => work,
           call: mode === 'times out' ? () => new Promise<never>(() => {}) : () => Promise.reject(new Error('boom')),
@@ -486,6 +540,7 @@ describe('the agent.spawn hook', () => {
       let clock = 0
       let n = 0
       const env: PacingEnv = {
+        agentModel: () => Promise.resolve(null),
         now: () => Promise.resolve(clock),
         within: (_ms, work) => work,
         call: () => {
@@ -511,7 +566,7 @@ describe('the agent.spawn hook', () => {
     test('a give-back still in flight across a new session start tells nothing', async () => {
       resetPacing()
       const toasts: string[] = []
-      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => { resetPacing(); return Promise.reject(new Error('boom')) }, reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+      const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => { resetPacing(); return Promise.reject(new Error('boom')) }, reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
       await releaseClaim(env, 'c1')
       expect(toasts).toEqual([])
     })
@@ -520,7 +575,7 @@ describe('the agent.spawn hook', () => {
       resetPacing()
       const toasts: string[] = []
       const answers = [{ ok: false, status: 500, body: { error: 'boom' } }, { ok: true, status: 200, body: { released: true } }, { ok: false, status: 500, body: { error: 'boom' } }]
-      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve(answers.shift()!), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+      const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve(answers.shift()!), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
       await releaseClaim(env, 'c1')
       await releaseClaim(env, 'c2')
       await releaseClaim(env, 'c3')
@@ -730,7 +785,7 @@ describe('failures of the guard itself', () => {
   test('a hook error (a rejecting clock) is told once per text, never a toast per spawn, and the spawn is refused: it could not claim its slot', async () => {
     resetPacing()
     const toasts: string[] = []
-    const env: PacingEnv = { now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+    const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
     const started = { model: 'm', agentId: 'a' }
     const guard = spawnGuard(env)
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
@@ -744,7 +799,7 @@ describe('failures of the guard itself', () => {
   test('a claim 50 Arms refused whose verdict the plugin would allow is still refused, worded as held slots', async () => {
     resetPacing()
     const refused = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal: 'reserved' }
-    const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: refused } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+    const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: refused } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
     let started = false
     const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
@@ -759,7 +814,7 @@ describe('failures of the guard itself', () => {
     const answer = (refusal: unknown) => ({ account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal })
     const deny = async (refusal: unknown) => {
       resetPacing()
-      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: answer(refusal) } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+      const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: answer(refusal) } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
       const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
       return (await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny
     }
@@ -772,7 +827,7 @@ describe('failures of the guard itself', () => {
     for (const refusal of [undefined, null, 'full']) {
       resetPacing()
       const body = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal }
-      const env: PacingEnv = { now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+      const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
       const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
       expect((await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny).toMatch(/could not claim its slot.*without naming a valid cause/)
     }

@@ -456,7 +456,7 @@ any state not yet recorded on its card (an agent note), then call `PUT /api/plan
 `waits_on: "pacing"` ("Pausing") and go idle. 50 Arms wakes you with the message that lets you continue (a slot it
 offered you is held for you for 60 seconds), and you then carry on where you were. A usage-pacing pause needs no manual wake.
 
-- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full, except a screen designer, which is never moved: a designer asked for below Opus is refused, and is started again on an agent type that runs on Opus.
+- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full, except a screen designer, which is never moved: a designer whose spawn runs below Opus (the model it names, else its agent type's own model) is refused, and is started again on an agent type that runs on Opus with no smaller model parameter.
 - **Over pace, or the budget full**: pause on `pacing` as above. Agents already running are left to finish.
 - **Critical**: pause as above after telling each running sub-agent to stop where it is and report back (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused); once told to continue, continue each with `SendMessage`.
 

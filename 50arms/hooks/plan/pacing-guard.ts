@@ -11,8 +11,10 @@ import type { PacingEnv } from './pacing-line'
 // (`decideSpawn`, pure) and wires the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
 //
 // A SCREEN DESIGNER is a spawn whose brief names the designer profile (`isDesignerBrief`). A design is always drawn by Opus or a better model, so a
-// designer is never moved to a smaller one: `decideSpawn` never downgrades it, and a designer asked for a model below Opus is refused before any claim
-// (`designerModelRefusal`), with a reason that is not a pacing refusal (it does not start with the prefix below).
+// designer is never moved to a smaller one: `decideSpawn` never downgrades it, and a designer whose spawn runs on a model below Opus is refused before
+// any claim (`designerModelRefusal`), with a reason that is not a pacing refusal (it does not start with the prefix below). The model a spawn runs on
+// is read as the engine resolves it (`requestedModelOf`): the call's `model`, else the agent type's own model from its agent file (`agentFileModel`),
+// else the parent's.
 //
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
 // writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
@@ -71,9 +73,9 @@ export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved
 }
 
 // The budget's unit is the ACCOUNT's running sub-agents (main threads and worker dispatches are counted as `mainAgents` but never compared), which the claim's
-// answer carries as `subAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone: the call's
-// `model`, else the parent's (a fork always inherits the parent's). A refusal never reaches here (50 Arms refuses the claim itself); this picks the haiku
-// downgrade for a claimed spawn taking the last free slot, unless the spawn is a designer (never moved).
+// answer carries as `subAgents` (the count before this claim). `requested` is the model the spawn would run on if left alone (`requestedModelOf`). A
+// refusal never reaches here (50 Arms refuses the claim itself); this picks the haiku downgrade for a claimed spawn taking the last free slot, unless the
+// spawn is a designer (never moved).
 export function decideSpawn(verdict: PacingVerdict | null, requested: string | undefined, designer: boolean): SpawnDecision {
   if (verdict === null || designer) return { kind: 'allow' }
   if (isTight(verdict.budget, verdict.subAgents, verdict.reservedAgents)) {
@@ -95,15 +97,45 @@ export function isDesignerBrief(prompt: unknown): boolean {
   return first !== undefined && first.startsWith(`${DESIGNER_PROFILE} `)
 }
 
-// A designer asked for a model below Opus is refused before any slot is claimed. An unknown model name is not on the tier list, so it is left alone.
-// The reason names the model asked for; it is not a pacing refusal, so it does not start with REFUSAL_PREFIX.
+// A designer whose spawn runs on a model below Opus is refused before any slot is claimed. An unknown model name is not on the tier list, so it is left
+// alone. The reason names the model the spawn runs on; it is not a pacing refusal, so it does not start with REFUSAL_PREFIX.
 export function designerModelRefusal(requested: string | undefined): string | null {
   const tier = tierOf(requested)
   if (tier === null || tier === 'opus' || tier === 'fable') return null
   return (
-    `A screen design runs on Opus or a better model, and this designer start asks for ${requested}. ` +
-    'Start it again with an agent type that runs on Opus.'
+    `A screen design runs on Opus or a better model, and this designer start runs on ${requested}. ` +
+    'Start it again with an agent type that runs on Opus, and drop or change any model parameter so it runs on Opus.'
   )
+}
+
+// The model a spawn runs on if left alone: a fork always inherits the parent's; else the call's `model` (the Agent tool's parameter, which outranks the
+// agent type's own model); else the agent type's own model (`ownModel`, null for a type whose model the plugin does not read); else the parent's.
+export function requestedModelOf(e: { fork: boolean; parentModel: string; model?: string }, ownModel: string | null): string {
+  if (e.fork) return e.parentModel
+  return e.model ?? ownModel ?? e.parentModel
+}
+
+// The agent file of a plugin's own agent type: `<plugin>:<name>` is `<root>/agents/<name>.md` (a nested folder is a `:` in the type). Null for a type
+// another plugin or the engine defines, whose file this plugin does not read.
+export function ownAgentFile(pluginName: string, pluginRoot: string, subagentType: string): string | null {
+  const prefix = `${pluginName}:`
+  if (!subagentType.startsWith(prefix)) return null
+  return `${pluginRoot}/agents/${subagentType.slice(prefix.length).split(':').join('/')}.md`
+}
+
+// The `model` an agent file's frontmatter names (`model: sonnet`). Undefined when it names none or `inherit` (the parent's model), or when the file has no
+// frontmatter.
+export function agentFileModel(text: string): string | undefined {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
+  const line = frontmatter === null ? null : /^model:[ \t]*(.*?)[ \t]*$/m.exec(frontmatter[1])
+  if (line === null) return undefined
+  const model = line[1].replace(/^(['"])(.*)\1$/, '$2')
+  return model === '' || model === 'inherit' ? undefined : model
+}
+
+// Why a spawn is refused when the model its agent type runs on cannot be read from the agent file (fail closed: the spawn cannot be judged).
+export function agentModelFailedReason(subagentType: string, failure: string): string {
+  return `The model the agent type ${subagentType} runs on could not be read from its agent file (${failure}), so this spawn cannot be judged against the budget and is refused.`
 }
 
 // Why a spawn is refused when its claim could not be made (fail closed).
@@ -117,8 +149,16 @@ export function claimFailedReason(failure: string): string {
 // The `agent.spawn` hook.
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
-    // the model the spawn would run on if left alone (a fork always inherits the parent's)
-    const requested = e.fork ? e.parentModel : (e.model ?? e.parentModel)
+    // the model the agent type names is read only when the call names none (and it is not a fork): a type this plugin does not define names none
+    let ownModel: string | null = null
+    if (!e.fork && e.model === undefined) {
+      try {
+        ownModel = await env.agentModel(e.subagentType)
+      } catch (err) {
+        return { deny: agentModelFailedReason(e.subagentType, err instanceof Error ? err.message : String(err)) }
+      }
+    }
+    const requested = requestedModelOf(e, ownModel)
     const designer = isDesignerBrief(e.prompt)
     // a designer below Opus is refused before any slot is claimed: nothing is counted, nothing is started
     if (designer) {
