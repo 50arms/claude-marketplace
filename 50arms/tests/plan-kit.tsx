@@ -397,6 +397,8 @@ export function dashboard(
     usageReadFails?: string
     // DX-4340: what GET /api/pacing/line answers (the session's pacing verdict and line): a body (any shape) or an error status; the dashboard's 404 (unrouted) by default
     pacingLine?: { body: unknown } | { status: number }
+    // CP-167: the board's plan-design review grade the gate instruction route answers (model and effort; opus at high by default), or an error status
+    designerGrade?: { model: unknown; effort: unknown } | { status: number }
     // DX-4631: each pacing line read answers only after this long on the harness clock (a slow or hung dashboard); the read is counted when it starts
     pacingHoldMs?: number
     // DX-5593 (C1): what DELETE /api/pacing/agents/claim (the claim given back) answers instead of the real release: an error status, or any body (a 200)
@@ -968,6 +970,7 @@ export function dashboard(
   const pacingReads: number[] = []
   // DX-5593: the spawn claim (POST /api/pacing/agents/claim) and its give-back (DELETE ...?claim_id=): every attempt, the ids 50 Arms allowed, the ids given back
   const claimAttempts = { n: 0 }
+  const designerGradeReads: string[] = []
   const claimsAllowed: string[] = []
   const claimsReleased: string[] = []
   // DX-5593 (N2): the body of every claim POST, to see what reading it carried
@@ -1122,6 +1125,14 @@ export function dashboard(
       }
       if (e.args.background !== true) unmarked.push(`${e.args.method} ${e.args.path}`)
       serverPauseRule(e.args)
+    }
+    // CP-167: what the spawn guard reads to learn a designer's floor: the card's board, then that board's plan-design review grade
+    if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'GET' && (/^\/api\/issues\/[^/]+$/.test(e.args.path) && String(e.args.query?.fields).includes('board_id') || e.args.path === '/api/quality-gates/plan-design/instruction')) {
+      designerGradeReads.push(`${e.args.path} ${JSON.stringify(e.args.query)}`)
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
+      const given = options.designerGrade ?? { model: 'opus', effort: 'high' }
+      if ('status' in given) return { value: reply({ error: 'grade boom' }, given.status) }
+      return { value: reply(e.args.path === '/api/quality-gates/plan-design/instruction' ? { gate: 'plan-design', board: Number(e.args.query?.board), review_grade: 'high', ...given } : { id: 'CP-1', board_id: 9 }) }
     }
     if (pacingPath(e, '/api/pacing/line')) {
       pacingAttempts.n++
@@ -1853,7 +1864,7 @@ export function dashboard(
     }, suspend: (ms: number) => void (asleepMs += ms), wipeState, beforeNextRead: (key: string, step: () => Promise<void>) => {
       if (!stateGetHooked) throw new Error('beforeNextRead needs dashboard(on, { stateSteps: true })')
       beforeStateRead.set(key, step)
-    }, serversCalled, beforeNextWrite:(key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, turnActivity: turnActivityCalls, loadPauseReads: [] as typeof reportCalls, unmarked, backgroundRefusals, replyToFileRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, personDisconnects, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys' | 'beforeReplyToFile') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.sessionReadFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
+    }, serversCalled, beforeNextWrite:(key: string, step: () => Promise<void>) => void beforeStateWrite.set(key, step), refuseNextWrite: (key: string) => void refuseNextWrite.add(key), reports: reportCalls, turnActivity: turnActivityCalls, loadPauseReads: [] as typeof reportCalls, unmarked, backgroundRefusals, replyToFileRefusals, agentCall: (method: string, path: string) => { serverPauseRule({ method, path }) }, sequence, unbind: () => void (world.bound = false), bind: () => void (world.bound = true), unboundCalls, holdApi: (ms: number) => void (flags.apiHoldMs = ms), issueReads, stored, relay, seedPending: (texts: string[]) => void (seededPending = texts), seedState, seedRelay: (state: { phase: string; planId: number | null; detail: string | null }) => void (seededRelay = state), release: hung.release, ageLiveAgent: (id: string, ms: number) => void aged.set(id, ms), pacingReads, claimAttempts, designerGradeReads, setDesignerGrade: (given: typeof options.designerGrade) => void (options.designerGrade = given), claimsAllowed, claimsReleased, claimBodies, heldClaims, contextReads, restartCalls, releaseCalls, personDisconnects, toolLists, pacingAttempts, setPacingLine: (given: { body: unknown } | { status: number } | undefined) => void (options.pacingLine = given), setEnv: (name: string, value: string) => void (liveEnv[name] = value), env: (name: string) => liveEnv[name], failUsage: (reason: string | undefined) => void (options.usageReadFails = reason), spawns, runCalls, toastTimeouts, setMcp: (mode: 'up' | 'down' | 'flaky' | 'refused' | 'stale' | 'strictKeys' | 'beforeReplyToFile') => void (options.mcp = mode), failInProgress: (on = true) => void (options.inProgressFails = on), failViewWrite: (on = true) => void (flags.viewWriteFails = on), setListener: (state: string | null) => void (world.listener = state), refusedViewWrites: () => flags.refusedViewWrites, stateWrites, viewClaims: () => new Set(stateWrites.filter(w => w.key === 'gate' && (w.value as any)?.inFlight === true).map(w => (w.value as any).at)).size, failList: (on = true) => void (options.sessionReadFails = on), roster, calls, api, toasts, get versionReads() { return versionReads }, statuses, commands, compactRuns, world, clock, writes: () => api.filter(a => a.method !== 'GET') }
 }
 
 // DX-5605: the session's stored events warning (the text its one toast is built from): the latest value the plugin wrote, null while events flow.

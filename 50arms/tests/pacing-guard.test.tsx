@@ -4,7 +4,11 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { PACED_STOP, REFUSAL_PREFIX, agentFileModel, decideSpawn, denyReason, designerModelRefusal, isDesignerBrief, isTight, ownAgentFile, requestedModelOf, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { PACED_STOP, REFUSAL_PREFIX, agentFileEffort, agentFileModel, decideSpawn, denyReason, designerCardOf, designerRefusal, isDesignerBrief, isTight, ownAgentFile, requestedModelOf, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+// CP-167: boards' plan-design review grades the designer floor follows
+const SONNET_MEDIUM = { model: 'sonnet', effort: 'medium' } as const
+const OPUS_HIGH = { model: 'opus', effort: 'high' } as const
+
 import { register } from '../hooks/register'
 import { claimSlot, PACING_READ_DEADLINE_MS, PACING_REFRESH_MS, releaseClaim, resetPacing } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
@@ -138,22 +142,48 @@ describe('decideSpawn (the decision table)', () => {
     }
   })
 
-  test('a designer asked for a model below Opus is refused with a reason that names it and is not a pacing refusal', () => {
-    for (const model of ['haiku', 'sonnet', 'claude-sonnet-4-6', 'claude-haiku-5-5']) {
-      const reason = designerModelRefusal(model)
-      expect(reason).toContain(model)
-      expect(reason).toMatch(/runs on Opus or a better model/)
-      expect(reason).toMatch(/Start it again with an agent type that runs on Opus/)
+  // CP-167: the floor is the board's plan-design review grade, never a fixed model
+
+  test('a designer below the grade on model is refused with a reason naming the grade, what it runs on and what to change; it is not a pacing refusal', () => {
+    for (const model of ['haiku', 'claude-haiku-5-5']) {
+      const reason = designerRefusal(SONNET_MEDIUM, model, 'high', '50arms:worker-haiku-high')
+      expect(reason).toContain('grade is sonnet at medium effort')
+      expect(reason).toContain(`runs on ${model} at high effort`)
+      expect(reason).toContain('50arms:worker-sonnet-medium')
       expect(reason?.startsWith(REFUSAL_PREFIX)).toBe(false)
     }
+    expect(designerRefusal(OPUS_HIGH, 'sonnet', 'high', 'x')).toContain('grade is opus at high effort')
   })
 
-  test('a designer on Opus, Fable or an unknown model name is not refused before its claim', () => {
-    expect(designerModelRefusal('opus')).toBeNull()
-    expect(designerModelRefusal('claude-opus-4-8')).toBeNull()
-    expect(designerModelRefusal('fable')).toBeNull()
-    expect(designerModelRefusal('mystery-model')).toBeNull()
-    expect(designerModelRefusal(undefined)).toBeNull()
+  test('a designer below the grade on effort only is refused, and one at or above the grade on both is not', () => {
+    expect(designerRefusal(OPUS_HIGH, 'opus', 'medium', 'x')).toContain('runs on opus at medium effort')
+    expect(designerRefusal(OPUS_HIGH, 'opus', 'high', 'x')).toBeNull()
+    expect(designerRefusal(OPUS_HIGH, 'claude-opus-4-8', 'xhigh', 'x')).toBeNull()
+    expect(designerRefusal(OPUS_HIGH, 'fable', 'max', 'x')).toBeNull()
+  })
+
+  test('a board whose grade names a non-Opus model floors the designer there: Sonnet at the grade passes, Haiku does not', () => {
+    expect(designerRefusal(SONNET_MEDIUM, 'sonnet', 'medium', 'x')).toBeNull()
+    expect(designerRefusal(SONNET_MEDIUM, 'opus', 'low', 'x')).not.toBeNull()
+    expect(designerRefusal(SONNET_MEDIUM, 'haiku', 'high', 'x')).not.toBeNull()
+  })
+
+  test('an effort the plugin cannot tell is refused; an unknown model name is left alone as before', () => {
+    expect(designerRefusal(SONNET_MEDIUM, 'sonnet', null, 'general-purpose')).toMatch(/cannot tell which effort the agent type general-purpose runs on/)
+    expect(designerRefusal(SONNET_MEDIUM, 'mystery-model', 'medium', 'x')).toBeNull()
+    expect(designerRefusal(SONNET_MEDIUM, undefined, 'medium', 'x')).toBeNull()
+  })
+
+  test('the card a designer brief names is the word after the profile on its first line', () => {
+    expect(designerCardOf('gate-designer CP-167\n\nDraw.')).toBe('CP-167')
+    expect(designerCardOf('\n gate-designer  CP-1 extra')).toBe('CP-1')
+    expect(designerCardOf('gate-designer ')).toBeNull()
+    expect(designerCardOf('work CP-1')).toBeNull()
+  })
+
+  test('an agent file names its effort in the frontmatter only', () => {
+    expect(agentFileEffort('---\nmodel: sonnet\neffort: high\n---\neffort: low')).toBe('high')
+    expect(agentFileEffort('---\nmodel: sonnet\n---\n')).toBeUndefined()
   })
 
   // CP-162 fix pass (code-architecture round 1): the model a spawn runs on is the call's `model`, else the agent type's own model, else the parent's
@@ -181,27 +211,31 @@ describe('decideSpawn (the decision table)', () => {
     expect(agentFileModel('no frontmatter, model: sonnet')).toBeUndefined()
   })
 
-  // a claim the plugin can make (the figures carry no cap) and an env whose agent file names `agentModel`
-  const guardEnv = (agentModel: string | null, call: () => Promise<unknown>): PacingEnv => ({
-    now: () => Promise.resolve(0), within: (_ms, work) => work, call: call as PacingEnv['call'], reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true),
-    sleep: () => Promise.resolve(), toast: () => {}, agentModel: () => Promise.resolve(agentModel),
+  // a claim the plugin can make (the figures carry no cap), the board's grade (Opus at high) and an env whose agent file names `agentGrade`
+  const guardEnv = (agentGrade: { model: string | null; effort: string | null } | undefined, call: () => Promise<unknown>): PacingEnv => ({
+    now: () => Promise.resolve(0), within: (_ms, work) => work, reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true),
+    call: ((method: string, path: string) =>
+      path === '/api/quality-gates/plan-design/instruction' ? Promise.resolve({ ok: true, status: 200, body: OPUS_HIGH })
+      : path.startsWith('/api/issues/') ? Promise.resolve({ ok: true, status: 200, body: { board_id: 9 } })
+      : call()) as PacingEnv['call'],
+    sleep: () => Promise.resolve(), toast: () => {}, agentGrade: () => Promise.resolve(agentGrade),
   })
   const claimedBody = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 2, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [], worst_limit: null, reason: null, claimed: true, claim_id: 'claim-1' }
 
   test('a designer whose agent type runs on Sonnet is refused under an Opus session when it names no model: no claim is made (CP-162 fix pass)', async () => {
     resetPacing()
-    const env = guardEnv('sonnet', () => Promise.reject(new Error('never reached: a refused designer claims nothing')))
+    const env = guardEnv({ model: 'sonnet', effort: 'high' }, () => Promise.reject(new Error('never reached: a refused designer claims nothing')))
     const e = { prompt: 'gate-designer CP-1\n\nDraw.', subagentType: '50arms:worker-sonnet-high', description: 'd', tool_use_id: 't', fork: false, parentModel: 'opus', background: false } as any
     let started = false
     const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
     expect(started).toBe(false)
-    expect(r.deny).toMatch(/this designer start runs on sonnet/)
+    expect(r.deny).toMatch(/runs on sonnet at high effort/)
     expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
   })
 
   test('a designer whose agent type runs on Opus is started under a Sonnet session when it names no model (CP-162 fix pass)', async () => {
     resetPacing()
-    const env = guardEnv('opus', () => Promise.resolve({ ok: true, status: 200, body: claimedBody }))
+    const env = guardEnv({ model: 'opus', effort: 'high' }, () => Promise.resolve({ ok: true, status: 200, body: claimedBody }))
     const e = { prompt: 'gate-designer CP-1\n\nDraw.', subagentType: '50arms:worker-opus-high', description: 'd', tool_use_id: 't', fork: false, parentModel: 'sonnet', background: false } as any
     let started: any = null
     const r = await spawnGuard(env)(e, async (x: any) => { started = x; return { model: 'opus', agentId: 'a' } as any })
@@ -216,20 +250,8 @@ describe('decideSpawn (the decision table)', () => {
     let started = false
     const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
     expect(started).toBe(false)
-    expect(r.deny).toMatch(/the plugin cannot tell which model the agent type general-purpose runs on/)
-    expect(r.deny).toMatch(/Opus or better agent types/)
-    expect(r.deny).toMatch(/name Opus or better in the call/)
+    expect(r.deny).toMatch(/cannot tell which effort the agent type general-purpose runs on/)
     expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
-  })
-
-  test('a designer on a non-plugin agent type that names Opus or better in the call is started on that model, its type unread', async () => {
-    resetPacing()
-    const env = guardEnv(undefined, () => Promise.resolve({ ok: true, status: 200, body: claimedBody }))
-    const e = { prompt: 'gate-designer CP-1\n\nDraw.', subagentType: 'general-purpose', model: 'opus', description: 'd', tool_use_id: 't', fork: false, parentModel: 'sonnet', background: false } as any
-    let started: any = null
-    const r = await spawnGuard(env)(e, async (x: any) => { started = x; return { model: 'opus', agentId: 'a' } as any })
-    expect(r.deny).toBeUndefined()
-    expect(started?.model).toBe('opus')
   })
 })
 
@@ -271,7 +293,6 @@ describe('the agent.spawn hook', () => {
     expect(r.deny).toContain(RESET)
     expect(d.claimsAllowed).toEqual([])
   })
-
   test('denies when the account is at its budget, by the live account count the claim carries', async ($, on) => {
     await session($, on, { pacingLine: { body: wire({ budget: 2, sub_agents: 2 }) } })
     expect((await spawn($)).deny).toMatch(/2 sub-agent\(s\) already run/)
@@ -298,51 +319,82 @@ describe('the agent.spawn hook', () => {
     expect((await spawn($, { model: 'opus' })).model).toBe('haiku')
   })
 
-  // CP-162 round 2: a plugin agent type's model is read from its agent file under `$.plugin.root`, which the test runtime gives as /app/50arms (the
+  // CP-162 round 2: a plugin agent type's model and effort are read from its agent file under `$.plugin.root`, which the test runtime gives as /app/50arms (the
   // plugin folder holding agents/; plan-kit.tsx). The fixture's fs.read answers only the files seeded in `d.world.files`.
   const PLUGIN_ROOT = '/app/50arms'
   const agentFile = (name: string) => `${PLUGIN_ROOT}/agents/${name}.md`
   const agentReads = (d: any) => d.world.fsReads.filter((p: string) => p.includes('/agents/'))
   const DESIGN = { prompt: 'gate-designer CP-1\n\nDraw the screen.' }
+  const seed = (d: any, name: string, model: string, effort: string) => { d.world.files[agentFile(name)] = `---\nname: ${name}\nmodel: ${model}\neffort: ${effort}\n---\n` }
 
-  test('a designer started as 50arms:worker-sonnet-high under an Opus parent is refused before any claim, reading that agent file under the plugin root', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
-    d.world.files[agentFile('worker-sonnet-high')] = '---\nname: worker-sonnet-high\nmodel: sonnet\n---\n'
+  test('a designer whose agent type runs below the board grade on model is refused before any claim, reading that agent file and the board grade', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) }, designerGrade: OPUS_HIGH })
+    seed(d, 'worker-sonnet-high', 'sonnet', 'high')
     const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-high', parentModel: 'opus' })
-    expect(r.deny).toMatch(/this designer start runs on sonnet/)
+    expect(r.deny).toMatch(/grade is opus at high effort/)
+    expect(r.deny).toMatch(/runs on sonnet at high effort/)
+    expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
     expect(agentReads(d)).toEqual([agentFile('worker-sonnet-high')])
+    expect(d.designerGradeReads.map((x: string) => x.split(' ')[0])).toEqual(['/api/issues/CP-1', '/api/quality-gates/plan-design/instruction'])
     expect(d.claimsAllowed).toEqual([])
   })
 
-  test('a designer started as 50arms:worker-opus-high under a Sonnet parent is started, its agent file read (Opus is never refused)', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
-    d.world.files[agentFile('worker-opus-high')] = '---\nname: worker-opus-high\nmodel: opus\n---\n'
+  test('a designer below the board grade on effort only is refused', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) }, designerGrade: OPUS_HIGH })
+    seed(d, 'worker-opus-medium', 'opus', 'medium')
+    const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-opus-medium' })
+    expect(r.deny).toMatch(/runs on opus at medium effort/)
+    expect(d.claimsAllowed).toEqual([])
+  })
+
+  test('a designer at the board grade is started, its agent file read', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) }, designerGrade: OPUS_HIGH })
+    seed(d, 'worker-opus-high', 'opus', 'high')
     const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-opus-high', parentModel: 'sonnet' })
     expect(r.deny).toBeUndefined()
     expect(agentReads(d)).toEqual([agentFile('worker-opus-high')])
   })
 
-  test('a designer whose agent file cannot be read is refused: the model it runs on cannot be judged (fail closed)', async ($, on) => {
+  test('a board whose grade is Sonnet at medium starts a Sonnet-medium designer and refuses a Haiku one', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) }, designerGrade: SONNET_MEDIUM })
+    seed(d, 'worker-sonnet-medium', 'sonnet', 'medium')
+    seed(d, 'worker-haiku-high', 'haiku', 'high')
+    expect((await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-medium' })).deny).toBeUndefined()
+    expect((await spawn($, { ...DESIGN, subagentType: '50arms:worker-haiku-high' })).deny).toMatch(/grade is sonnet at medium effort/)
+  })
+
+  test('a grade the plugin cannot read refuses the designer start, with no default floor and no claim', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) }, designerGrade: { status: 500 } })
+    seed(d, 'worker-opus-high', 'opus', 'high')
+    expect((await spawn($, { ...DESIGN, subagentType: '50arms:worker-opus-high' })).deny).toMatch(/plan-design review grade of the board of CP-1 could not be read/)
+    d.setDesignerGrade({ model: 'mystery', effort: 'high' })
+    expect((await spawn($, { ...DESIGN, subagentType: '50arms:worker-opus-high' })).deny).toMatch(/could not be read \(the grade names model "mystery"/)
+    expect(d.claimsAllowed).toEqual([])
+  })
+
+  test('a designer whose agent file cannot be read is refused: what it runs on cannot be judged (fail closed)', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
     const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-high' })
     expect(r.deny).toMatch(/could not be read from its agent file/)
     expect(d.claimsAllowed).toEqual([])
   })
 
-  test('a designer on a non-plugin agent type with no model named is refused before any claim, with the plugin unable to read its model', async ($, on) => {
+  test('a designer on a non-plugin agent type is refused before any claim, with the plugin unable to read its effort, even when it names a model', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
-    const r = await spawn($, { ...DESIGN, subagentType: 'general-purpose', parentModel: 'opus' })
-    expect(r.deny).toMatch(/the plugin cannot tell which model the agent type general-purpose runs on/)
-    expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
+    for (const extra of [{}, { model: 'opus' }]) {
+      const r = await spawn($, { ...DESIGN, subagentType: 'general-purpose', parentModel: 'opus', ...extra })
+      expect(r.deny).toMatch(/cannot tell which effort the agent type general-purpose runs on/)
+      expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
+    }
     expect(agentReads(d)).toEqual([])
     expect(d.claimsAllowed).toEqual([])
   })
 
-  test('a designer on a non-plugin agent type that names Opus in the call is started, a non-designer on one is unchanged', async ($, on) => {
+  test('a non-designer on a non-plugin agent type is unchanged and reads no grade', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) } })
-    expect((await spawn($, { ...DESIGN, subagentType: 'general-purpose', model: 'opus', parentModel: 'sonnet' })).deny).toBeUndefined()
     expect((await spawn($, { subagentType: 'general-purpose', parentModel: 'sonnet' })).deny).toBeUndefined()
-    expect(d.claimsAllowed).toHaveLength(2)
+    expect(d.claimsAllowed).toHaveLength(1)
+    expect(d.designerGradeReads).toEqual([])
   })
 
   test('a start with free slots reads no agent file, so an unreadable one cannot refuse it', async ($, on) => {
@@ -368,29 +420,13 @@ describe('the agent.spawn hook', () => {
     expect(agentReads(d)).toEqual([])
   })
 
-  test('a designer start that takes the last free slot is started on the model it asked for (DEC-2387)', async ($, on) => {
+  test('a designer start that takes the last free slot is started on the agent type it asked for, and is never moved to a smaller model (DEC-2387)', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
-    const r = await spawn($, { prompt: 'gate-designer CP-1\n\nDraw the screen.', model: 'opus' })
+    seed(d, 'worker-opus-high', 'opus', 'high')
+    const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-opus-high', model: 'opus' })
     expect(r.deny).toBeUndefined()
     expect(r.model).toBe('opus')
     expect(d.claimsAllowed).toHaveLength(1)
-  })
-
-  test('a designer asked for Sonnet or Haiku is refused before any slot is claimed, and starts nothing (DEC-2387)', async ($, on) => {
-    const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
-    for (const model of ['sonnet', 'haiku']) {
-      const r = await spawn($, { prompt: 'gate-designer CP-1\n\nDraw the screen.', model })
-      expect(r.deny).toContain(model)
-      expect(r.deny).toMatch(/runs on Opus or a better model/)
-      expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
-    }
-    expect(d.claimAttempts.n).toBe(0)
-    expect(d.claimsAllowed).toEqual([])
-  })
-
-  test('a designer on Fable is started on it, tight budget or not (DEC-2387)', async ($, on) => {
-    await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2 }) } })
-    expect((await spawn($, { prompt: 'gate-designer CP-1\n\nDraw.', model: 'fable' })).model).toBe('fable')
   })
 
   test('a non-designer start on Sonnet with the last free slot is still downgraded, and a brief that names the designer profile only on a later line is not a designer', async ($, on) => {
@@ -627,7 +663,7 @@ describe('the agent.spawn hook', () => {
         resetPacing()
         const toasts: string[] = []
         const env: PacingEnv = {
-        agentModel: () => Promise.resolve(null),
+        agentGrade: () => Promise.resolve(undefined),
           now: () => Promise.resolve(0),
           within: mode === 'times out' ? (_ms, _work, onTimeout) => onTimeout() : (_ms, work) => work,
           call: mode === 'times out' ? () => new Promise<never>(() => {}) : () => Promise.reject(new Error('boom')),
@@ -651,7 +687,7 @@ describe('the agent.spawn hook', () => {
       let clock = 0
       let n = 0
       const env: PacingEnv = {
-        agentModel: () => Promise.resolve(null),
+        agentGrade: () => Promise.resolve(undefined),
         now: () => Promise.resolve(clock),
         within: (_ms, work) => work,
         call: () => {
@@ -677,7 +713,7 @@ describe('the agent.spawn hook', () => {
     test('a give-back still in flight across a new session start tells nothing', async () => {
       resetPacing()
       const toasts: string[] = []
-      const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => { resetPacing(); return Promise.reject(new Error('boom')) }, reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+      const env: PacingEnv = { agentGrade: () => Promise.resolve(undefined), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => { resetPacing(); return Promise.reject(new Error('boom')) }, reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
       await releaseClaim(env, 'c1')
       expect(toasts).toEqual([])
     })
@@ -686,7 +722,7 @@ describe('the agent.spawn hook', () => {
       resetPacing()
       const toasts: string[] = []
       const answers = [{ ok: false, status: 500, body: { error: 'boom' } }, { ok: true, status: 200, body: { released: true } }, { ok: false, status: 500, body: { error: 'boom' } }]
-      const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve(answers.shift()!), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+      const env: PacingEnv = { agentGrade: () => Promise.resolve(undefined), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve(answers.shift()!), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
       await releaseClaim(env, 'c1')
       await releaseClaim(env, 'c2')
       await releaseClaim(env, 'c3')
@@ -896,7 +932,7 @@ describe('failures of the guard itself', () => {
   test('a hook error (a rejecting clock) is told once per text, never a toast per spawn, and the spawn is refused: it could not claim its slot', async () => {
     resetPacing()
     const toasts: string[] = []
-    const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
+    const env: PacingEnv = { agentGrade: () => Promise.resolve(undefined), now: () => Promise.reject(new Error('clock down')), within: (_ms, work) => work, call: () => Promise.reject(new Error('never reached')), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(false), sleep: () => Promise.resolve(), toast: t => void toasts.push(t) }
     const started = { model: 'm', agentId: 'a' }
     const guard = spawnGuard(env)
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
@@ -910,7 +946,7 @@ describe('failures of the guard itself', () => {
   test('a claim 50 Arms refused whose verdict the plugin would allow is still refused, worded as held slots', async () => {
     resetPacing()
     const refused = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal: 'reserved' }
-    const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: refused } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+    const env: PacingEnv = { agentGrade: () => Promise.resolve(undefined), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: refused } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
     const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
     let started = false
     const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
@@ -925,7 +961,7 @@ describe('failures of the guard itself', () => {
     const answer = (refusal: unknown) => ({ account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal })
     const deny = async (refusal: unknown) => {
       resetPacing()
-      const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: answer(refusal) } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+      const env: PacingEnv = { agentGrade: () => Promise.resolve(undefined), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body: answer(refusal) } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
       const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
       return (await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny
     }
@@ -938,7 +974,7 @@ describe('failures of the guard itself', () => {
     for (const refusal of [undefined, null, 'full']) {
       resetPacing()
       const body = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 1, reserved_agents: 1, line: 'Pacing line.', spend: null, limits: [{ limit: 'five_hour', level: 'on_pace', state: 'spare', headroom_minutes: 60, resets_in_minutes: 100, used_percent: 3, target_percent: 95, critical_percent: 99, resets_at: RESET }], worst_limit: 'five_hour', reason: null, claimed: false, claim_id: null, refusal }
-      const env: PacingEnv = { agentModel: () => Promise.resolve(null), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
+      const env: PacingEnv = { agentGrade: () => Promise.resolve(undefined), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} }
       const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
       expect((await spawnGuard(env)(e, async () => ({ model: 'm', agentId: 'a' }) as any)).deny).toMatch(/could not claim its slot.*without naming a valid cause/)
     }

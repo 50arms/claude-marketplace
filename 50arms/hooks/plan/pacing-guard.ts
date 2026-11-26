@@ -2,6 +2,7 @@ import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
 import type { PacingVerdict } from '../../types'
 import { claimSlot, releaseClaim, reportClaimFailure } from './pacing-line'
+import { PACING_READ_DEADLINE_MS } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
 // The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap on SUB-AGENTS: N means exactly N sub-agents at all times; main threads are never paced.
@@ -10,11 +11,13 @@ import type { PacingEnv } from './pacing-line'
 // answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn
 // (`decideSpawn`, pure) and wires the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
 //
-// A SCREEN DESIGNER is a spawn whose brief names the designer profile (`isDesignerBrief`). A design is always drawn by Opus or a better model, so a
-// designer is never moved to a smaller one: `decideSpawn` never downgrades it, and a designer whose spawn runs on a model below Opus is refused before
-// any claim (`designerModelRefusal`), with a reason that is not a pacing refusal (it does not start with the prefix below). The model a spawn runs on
-// is read as the engine resolves it (`requestedModelOf`): the call's `model`, else the agent type's own model from its agent file (`agentFileModel`),
-// else the parent's.
+// A SCREEN DESIGNER is a spawn whose brief names the designer profile (`isDesignerBrief`). Its floor is the board's plan-design review grade (CP-167): the
+// model and effort that `GET /api/quality-gates/plan-design/instruction?board=<the card's board>` answers. A designer is never moved to a smaller model:
+// `decideSpawn` never downgrades it, and a designer whose spawn runs below the grade on model or effort is refused before any claim (`designerRefusal`),
+// with a reason that is not a pacing refusal (it does not start with the prefix below). A grade that cannot be read refuses the start too
+// (`designerGradeFailedReason`): no default floor stands in for it. The model a spawn runs on is read as the engine resolves it (`requestedModelOf`): the
+// call's `model`, else the agent type's own model from its agent file (`agentFileModel`), else the parent's. Its effort is the agent type's own
+// (`agentFileEffort`): a spawn call names no effort.
 //
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
 // writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
@@ -104,15 +107,64 @@ export function isDesignerBrief(prompt: unknown): boolean {
   return first !== undefined && first.startsWith(`${DESIGNER_PROFILE} `)
 }
 
-// A designer whose spawn runs on a model below Opus is refused before any slot is claimed. An unknown model name is not on the tier list, so it is left
-// alone. The reason names the model the spawn runs on; it is not a pacing refusal, so it does not start with REFUSAL_PREFIX.
-export function designerModelRefusal(requested: string | undefined): string | null {
-  const tier = tierOf(requested)
-  if (tier === null || tier === 'opus' || tier === 'fable') return null
-  return (
-    `A screen design runs on Opus or a better model, and this designer start runs on ${requested}. ` +
-    'Start it again with an agent type that runs on Opus, and drop or change any model parameter so it runs on Opus.'
-  )
+// Effort levels, lowest first.
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+type Effort = (typeof EFFORTS)[number]
+const effortOf = (v: unknown): Effort | null => EFFORTS.find(x => x === String(v).toLowerCase()) ?? null
+
+// The designer's floor: the model tier and effort of the board's plan-design review grade.
+export type DesignerGrade = { model: Tier; effort: Effort }
+
+// The card a designer brief names: the word after the profile on its first line (`gate-designer CP-167`), or null when there is none.
+export function designerCardOf(prompt: unknown): string | null {
+  if (!isDesignerBrief(prompt)) return null
+  const first = String(prompt).split(/\r?\n/).map(line => line.trim()).find(line => line !== '') as string
+  return first.slice(DESIGNER_PROFILE.length).trim().split(/\s+/)[0] || null
+}
+
+// Why a designer start is refused when the board's grade cannot be read (fail closed: no default floor stands in for it).
+export function designerGradeFailedReason(card: string, failure: string): string {
+  return `The plan-design review grade of the board of ${card} could not be read (${failure}), so this designer start cannot be judged against it and is refused. Start it again once the dashboard answers.`
+}
+
+// Reads the grade of the board the card lives on: two dashboard calls under the one pacing deadline. Never rejects.
+async function readDesignerGrade(env: PacingEnv, card: string): Promise<{ grade: DesignerGrade } | { deny: string }> {
+  const failed = (why: string) => ({ deny: designerGradeFailedReason(card, why) })
+  try {
+    return await env.within(
+      PACING_READ_DEADLINE_MS,
+      (async () => {
+        const issue = await env.call('GET', `/api/issues/${encodeURIComponent(card)}`, undefined, { fields: JSON.stringify({ board_id: true }) })
+        if (!issue.ok || typeof issue.body?.board_id !== 'number') return failed(`the card's board was not answered: status ${issue.status}`)
+        const gate = await env.call('GET', '/api/quality-gates/plan-design/instruction', undefined, { board: String(issue.body.board_id) })
+        if (!gate.ok) return failed(`the gate instruction was not answered: status ${gate.status}`)
+        const model = tierOf(typeof gate.body?.model === 'string' ? gate.body.model : undefined)
+        const effort = effortOf(gate.body?.effort)
+        if (model === null || effort === null) return failed(`the grade names model ${JSON.stringify(gate.body?.model)} and effort ${JSON.stringify(gate.body?.effort)}`)
+        return { grade: { model, effort } }
+      })(),
+      () => failed('no answer within the deadline'),
+    )
+  } catch (err) {
+    return failed(err instanceof Error ? err.message : String(err))
+  }
+}
+
+// A designer whose spawn runs below the grade, on model or effort, is refused before any slot is claimed. An unknown model name is not on the tier list, so it
+// is left alone. An effort that is not known (null) is refused: the plugin cannot tell it. The reason names the grade, what the start runs on and what to
+// change; it is not a pacing refusal, so it does not start with REFUSAL_PREFIX.
+export function designerRefusal(grade: DesignerGrade, requestedModel: string | undefined, requestedEffort: string | null, subagentType: string): string | null {
+  const tier = tierOf(requestedModel)
+  const effort = effortOf(requestedEffort)
+  const gradeText = `${grade.model} at ${grade.effort} effort`
+  const fix = `Start the designer again on an agent type that runs on ${grade.model} or better at ${grade.effort} effort or higher (50arms:worker-${grade.model}-${grade.effort}), and drop or change any model parameter so it is not below ${grade.model}.`
+  if (effort === null) {
+    return `The board's plan-design review grade is ${gradeText}, and the plugin cannot tell which effort the agent type ${subagentType} runs on. ${fix}`
+  }
+  const modelBelow = tier !== null && TIERS.indexOf(tier) < TIERS.indexOf(grade.model)
+  const effortBelow = EFFORTS.indexOf(effort) < EFFORTS.indexOf(grade.effort)
+  if (!modelBelow && !effortBelow) return null
+  return `The board's plan-design review grade is ${gradeText}, and this designer start runs on ${requestedModel ?? 'an unknown model'} at ${effort} effort. ${fix}`
 }
 
 // The model a spawn runs on if left alone: a fork always inherits the parent's; else the call's `model` (the Agent tool's parameter, which outranks the
@@ -130,27 +182,21 @@ export function ownAgentFile(pluginName: string, pluginRoot: string, subagentTyp
   return `${pluginRoot}/agents/${subagentType.slice(prefix.length).split(':').join('/')}.md`
 }
 
-// The `model` an agent file's frontmatter names (`model: sonnet`). Undefined when it names none or `inherit` (the parent's model), or when the file has no
+// The value an agent file's frontmatter names for `key` (`model: sonnet`). Undefined when it names none or `inherit` (the parent's), or when the file has no
 // frontmatter.
-export function agentFileModel(text: string): string | undefined {
+function frontmatterValue(text: string, key: 'model' | 'effort'): string | undefined {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
-  const line = frontmatter === null ? null : /^model:[ \t]*(.*?)[ \t]*$/m.exec(frontmatter[1])
+  const line = frontmatter === null ? null : new RegExp(`^${key}:[ \\t]*(.*?)[ \\t]*$`, 'm').exec(frontmatter[1])
   if (line === null) return undefined
-  const model = line[1].replace(/^(['"])(.*)\1$/, '$2')
-  return model === '' || model === 'inherit' ? undefined : model
+  const value = line[1].replace(/^(['"])(.*)\1$/, '$2')
+  return value === '' || value === 'inherit' ? undefined : value
 }
+export const agentFileModel = (text: string): string | undefined => frontmatterValue(text, 'model')
+export const agentFileEffort = (text: string): string | undefined => frontmatterValue(text, 'effort')
 
 // Why a spawn is refused when the model its agent type runs on cannot be read from the agent file (fail closed: the spawn cannot be judged).
 export function agentModelFailedReason(subagentType: string, failure: string): string {
   return `The model the agent type ${subagentType} runs on could not be read from its agent file (${failure}), so this spawn cannot be judged against the budget and is refused.`
-}
-
-// Why a designer start that names no model is refused when its agent type is not one of the plugin's own: the plugin cannot read the model it runs on.
-export function unknownAgentTypeModelReason(subagentType: string): string {
-  return (
-    `A screen design runs on Opus or a better model, and the plugin cannot tell which model the agent type ${subagentType} runs on. ` +
-    'Start the designer on one of the plugin\'s Opus or better agent types (50arms:worker-opus-high, 50arms:worker-fable-high), or name Opus or better in the call\'s model parameter.'
-  )
 }
 
 // Why a spawn is refused when its claim could not be made (fail closed).
@@ -163,34 +209,34 @@ export function claimFailedReason(failure: string): string {
 }
 
 // The `agent.spawn` hook.
-// The model a plugin agent type runs on, read from its agent file (`agentModel`) for a designer start. A failed read refuses the spawn (fail closed): the
-// model it would run on cannot be judged. An undefined model is a type that is not the plugin's own: its model cannot be told, so the caller refuses.
-type OwnModel = { model: string | null | undefined } | { deny: string }
-async function readOwnModel(env: PacingEnv, e: AgentSpawnInput): Promise<OwnModel> {
+// What a plugin agent type runs on, read from its agent file (`agentGrade`) for a designer start. A failed read refuses the spawn (fail closed): what it
+// would run on cannot be judged. An undefined answer is a type that is not the plugin's own: its model and effort cannot be told.
+type Own = { model: string | null; effort: string | null }
+async function readOwnGrade(env: PacingEnv, e: AgentSpawnInput): Promise<{ own: Own | undefined } | { deny: string }> {
   try {
-    return { model: await env.agentModel(e.subagentType) }
+    return { own: await env.agentGrade(e.subagentType) }
   } catch (err) {
     return { deny: agentModelFailedReason(e.subagentType, err instanceof Error ? err.message : String(err)) }
   }
 }
 
-// The agent type's model is read only for a designer start whose call names no model (a fork never reads it): it is refused below Opus before any claim.
-// Every other start reads nothing, a tight one included.
-const readsOwnModel = (e: AgentSpawnInput): boolean => !e.fork && e.model === undefined
-
 export function spawnGuard(env: PacingEnv) {
   return async (e: AgentSpawnInput, next: (e: AgentSpawnInput) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> => {
     const designer = isDesignerBrief(e.prompt)
-    // a designer below Opus is refused before any slot is claimed: nothing is counted, nothing is started
+    // a designer below the board's grade is refused before any slot is claimed: nothing is counted, nothing is started
     if (designer) {
-      let ownModel: string | null = null
-      if (readsOwnModel(e)) {
-        const read = await readOwnModel(env, e)
+      const card = designerCardOf(e.prompt)
+      if (card === null) return { deny: "A designer brief names its card on its first line (gate-designer <card id>); this one names none, so its board's grade cannot be read and the start is refused." }
+      const graded = await readDesignerGrade(env, card)
+      if ('deny' in graded) return { deny: graded.deny }
+      // a fork inherits the parent's model and runs on no agent file of its own: its effort cannot be told
+      let own: Own | undefined = { model: null, effort: null }
+      if (!e.fork) {
+        const read = await readOwnGrade(env, e)
         if ('deny' in read) return { deny: read.deny }
-        if (read.model === undefined) return { deny: unknownAgentTypeModelReason(e.subagentType) }
-        ownModel = read.model
+        own = read.own
       }
-      const refusal = designerModelRefusal(requestedModelOf(e, ownModel))
+      const refusal = designerRefusal(graded.grade, requestedModelOf(e, own?.model ?? null), own?.effort ?? null, e.subagentType)
       if (refusal !== null) return { deny: refusal }
     }
     const claim = await claimSlot(env)

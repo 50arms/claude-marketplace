@@ -25,7 +25,7 @@ const LEVELS: readonly PacingLevel[] = ['on_pace', 'over_pace', 'critical']
 // The verdict as the guard reads it (`PacingVerdict`, types/index.d.ts, shared with the usage pacing) and 50 Arms' one-sentence line.
 export type Pacing = { verdict: PacingVerdict; line: string }
 
-export type PacingCall = (method: string, path: string, body?: object) => Promise<Api>
+export type PacingCall = (method: string, path: string, body?: object, query?: object) => Promise<Api>
 // The engine calls pacing makes, as closures built in register.tsx (the engine follows `$` only into a function in that file).
 // `within` is the plugin's one deadline helper (register.tsx `withinDeadline`): `work`'s answer, or `late()` when `ms` pass first.
 export type PacingEnv = {
@@ -39,9 +39,9 @@ export type PacingEnv = {
   signedIn: () => Promise<boolean>
   // the wait between looks for a server that has not connected yet; rejects when the plugin is unloaded
   sleep: (ms: number) => Promise<void>
-  // the model an agent type of this plugin names in its own agent file: null when the type is this plugin's own and its file names none (the parent's
-  // model), undefined when the type is not one this plugin defines (its model cannot be read here). Rejects when the file cannot be read.
-  agentModel: (subagentType: string) => Promise<string | null | undefined>
+  // the model and effort an agent type of this plugin names in its own agent file (null: the file names none), undefined when the type is not one this plugin
+  // defines (they cannot be read here). Rejects when the file cannot be read.
+  agentGrade: (subagentType: string) => Promise<{ model: string | null; effort: string | null } | undefined>
   toast: (text: string) => void
   // called when the slot-refused state (slotWaiting) changes, so the session title is redrawn at once; a host that draws no title leaves it out
   onSlotChange?: () => void

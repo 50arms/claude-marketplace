@@ -96,7 +96,7 @@ import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, i
 import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
-import { agentFileModel, ownAgentFile, spawnGuard } from './plan/pacing-guard'
+import { agentFileEffort, agentFileModel, ownAgentFile, spawnGuard } from './plan/pacing-guard'
 import { pacingLevel, pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
@@ -4301,21 +4301,23 @@ async function liveServer($: any): Promise<string> {
   }
 }
 
-// the model a plugin's own agent type runs on: the model its agent file (`agents/<name>.md` under the plugin's root) names, null when it names none.
-// Another type's model is not read here (undefined: its model cannot be told), since only this plugin's agent files are in reach.
-async function ownAgentModel($: any, subagentType: string): Promise<string | null | undefined> {
+// the model and effort a plugin's own agent type runs on: what its agent file (`agents/<name>.md` under the plugin's root) names, null for each it names none.
+// Another type's are not read here (undefined: they cannot be told), since only this plugin's agent files are in reach.
+async function ownAgentGrade($: any, subagentType: string): Promise<{ model: string | null; effort: string | null } | undefined> {
   const file = ownAgentFile($.plugin.name, $.plugin.root, subagentType)
-  return file === null ? undefined : (agentFileModel(String(await $.fs.read(file))) ?? null)
+  if (file === null) return undefined
+  const text = String(await $.fs.read(file))
+  return { model: agentFileModel(text) ?? null, effort: agentFileEffort(text) ?? null }
 }
 
 // the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
 function pacingEnv($: any) {
   return {
-    agentModel: (subagentType: string) => ownAgentModel($, subagentType),
+    agentGrade: (subagentType: string) => ownAgentGrade($, subagentType),
     now: () => $.clock.now(),
     within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
     // the pacing calls go to the server the session has: a dispatched agent's is `platform`, not the plugin's (DASHBOARD_SERVERS)
-    call: async (method: string, path: string, body?: object) => api($, method, path, body === undefined ? {} : { body }, await liveServer($)),
+    call: async (method: string, path: string, body?: object, query?: object) => api($, method, path, { ...(body === undefined ? {} : { body }), ...(query === undefined ? {} : { query }) }, await liveServer($)),
     reading: () => currentUsageBody($),
     signedIn: async () => dashboardAnswered || isSignedIn(await read($, view)),
     sleep: (ms: number) => $.clock.sleep(ms),
