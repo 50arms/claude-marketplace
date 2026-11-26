@@ -48,7 +48,8 @@ export const timeoutFailure = (relayDown: { why: string | null } | null): Failur
 }
 
 // Why the bundle could not be fetched: one reason, with a few words of detail and the values its hold line names. A value the plugin does not know is left out, so the line names it unknown (`floorText`), never a guess. A signed-out session is no failure (the caller never asks).
-export function failureOf(f: FetchFailure): Failure {
+// `what` names the fetch that failed in the hold line (the bundle's by default).
+export function failureOf(f: FetchFailure, what = 'bundle fetch'): Failure {
   if (f.keyRevoked) return { reason: 'key_revoked', detail: 'the session key was revoked', values: {} }
   if (f.classifierRefused) return { reason: 'classifier_refused', detail: 'the auto mode classifier refused the plugin call', values: {} }
   if (f.status === 503 && f.body?.error === 'dashboard_unreachable') {
@@ -60,7 +61,7 @@ export function failureOf(f: FetchFailure): Failure {
     const need = typeof f.body?.plugin?.need === 'string' ? f.body.plugin.need : null
     return { reason: 'plugin_outdated', detail: need === null ? 'the plugin is below the bundle floor' : `the plugin is below the bundle floor ${need}`, values: need === null ? {} : { need_version: need } }
   }
-  const cause = f.serverNotConnected ? 'the 50 Arms dashboard server is not connected' : f.status > 0 ? `the bundle fetch answered ${f.status}: ${said(f)}` : `the bundle fetch failed: ${said(f)}`
+  const cause = f.serverNotConnected ? 'the 50 Arms dashboard server is not connected' : f.status > 0 ? `the ${what} answered ${f.status}: ${said(f)}` : `the ${what} failed: ${said(f)}`
   if (f.relayDown !== null) return relayBroken(f.relayDown, cause)
   return f.serverNotConnected ? { reason: 'dashboard_unreachable', detail: cause, values: {} } : { reason: 'fetch_failed', detail: cause, values: {} }
 }

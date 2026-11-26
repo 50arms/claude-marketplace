@@ -3338,7 +3338,7 @@ async function fetchRole($: any, budget: Budget): Promise<BundleComputed[]> {
   const source = await boundedBy($, budget.deadlineAt, briefingSource<BundleComputed | null>(async () => {
     const r = await api($, 'GET', ROLE_PATH, { query: roleQuery(await pluginVersion($)), reply_to_file: true })
     if (!r.ok) {
-      failure = fetchFailureOf({ status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null, relayDown: await relayDownOf($) })
+      failure = await answerFailure($, r, 'role fetch')
       throw new Error(errText(r))
     }
     return readRoleBody(r.body)
@@ -5204,6 +5204,11 @@ async function fetchFailure($: any, f: { status: number; body: unknown; serverNo
   return { kind: 'failed', failure: fetchFailureOf({ serverNotConnected: false, classifierRefused: false, keyRevoked: false, ...f, relayDown: await relayDownOf($) }) }
 }
 
+// The hold a failed dashboard answer makes (the one mapping of an answer to a hold reason, for the bundle fetch and the role fetch): `what` names the fetch in the hold line
+async function answerFailure($: any, r: Api, what: string): Promise<Failure> {
+  return fetchFailureOf({ status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null, relayDown: await relayDownOf($) }, what)
+}
+
 let bundleFetch: Promise<FetchOutcome> | null = null
 
 // ONE fetch at a time, whoever asks: the answer applies to the whole session, so a second caller waits for the one in flight
@@ -5229,7 +5234,7 @@ async function runFetch($: any): Promise<FetchOutcome> {
       await releaseHolds($, null, await $.clock.now(), version, cur => cur, true)
       return { kind: 'signed-out' }
     }
-    return fetchFailure($, { status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null })
+    return { kind: 'failed', failure: await answerFailure($, r, 'bundle fetch') }
   }
   let answer: BundleRead
   try {
@@ -5562,6 +5567,8 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
   // The role is fetched only while the bundle lists `session.bind` (a dashboard that does not carries none), and the key the main conversation holds is claimed before the fetch, so two hooks landing together (or a hook and a retell) fetch and tell it once.
   // A role that is not delivered gives the claim back.
   let roleClaim: { before: string | null } | null = null
+  // the key is already told (or being told by another hook): this call delivers nothing, and still ends a hold that nothing keeps
+  let roleLost = false
   if (event === BIND_EVENT && key === mainContext && bundle.events.some(e => e.event === BIND_EVENT)) {
     const roleKey = roleKeyOf(await read($, view))
     const claim: { won: boolean; before: string | null } = { won: false, before: null }
@@ -5571,8 +5578,8 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
       claim.before = cur.roleTold
       return { ...cur, roleTold: roleKey }
     })
-    if (!claim.won) return { kind: 'texts', entries: [] }
-    roleClaim = { before: claim.before }
+    roleLost = !claim.won
+    if (claim.won) roleClaim = { before: claim.before }
   }
   const giveBackRole = async (): Promise<void> => {
     if (roleClaim === null) return
@@ -5590,7 +5597,7 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
   const made: { d: Delivery; at: number }[] = []
   let rendered: string[]
   try {
-    for (const m of events) {
+    for (const m of roleLost ? events.filter(e => e.event !== event) : events) {
       const slots = await slotsOf($, m.event, namedSlots(bundle, m.event), m.event === event ? moment.extra ?? {} : {}, budget.deadlineAt)
       // the slot reads may have ended after the lookup was given up (a start's deadline): nothing is then counted told or reported, and the start stays owed
       if (moment.abandoned !== undefined && (await moment.abandoned())) {

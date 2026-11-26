@@ -13,6 +13,7 @@ const MIN = 60_000
 const NEWER_THAN_ANSWER = `${'c'.repeat(63)}3`
 const SUB = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
 const tool = async ($: any, agentId?: string) => (await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)) as any
+const holdsNow = (d: any) => Object.keys((d.stateWrites.filter((w: any) => w.key === 'behavior').at(-1)?.value as any)?.holds ?? {})
 const reports = (d: any) => d.world.deliveryReports.flatMap((r: any) => r.body.reports) as any[]
 
 for (const surface of SURFACES) {
@@ -311,6 +312,87 @@ for (const surface of SURFACES) {
         const next = ((await $.prompt.submit({ text: 'next' })).context ?? []) as string[]
         expect(roleTold(next)).toEqual([])
         expect(d.world.roleReads).toHaveLength(2)
+      })
+
+      test('a change of plan fetches the role again and tells it once', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        await firstPrompt($, 'startup')
+        expect(d.world.roleReads).toHaveLength(1)
+        d.world.planId = 24
+        d.world.role = ROLE('Your role: plan 24.')
+        await startSession($, d, surface)
+        await d.clock.settle()
+        const changed = (((await $.prompt.submit({ text: 'changed' })).context ?? []) as string[])
+        expect(roleTold(changed)).toEqual(['Your role: plan 24.'])
+        expect(d.world.roleReads).toHaveLength(2)
+        const next = ((await $.prompt.submit({ text: 'next' })).context ?? []) as string[]
+        expect(roleTold(next)).toEqual([])
+        expect(d.world.roleReads).toHaveLength(2)
+      })
+
+      test('a clear tells the role again, and the next prompt for the same key does not', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        d.world.bundle.events['session.after_clear'] = bundleEvent('session.after_clear', ['Cleared.'], { id: 340 })
+        await firstPrompt($, 'startup')
+        const cleared = await firstPrompt($, 'clear')
+        expect(roleTold(cleared.context)).toEqual(['Your role: work the card.'])
+        expect(d.world.roleReads).toHaveLength(2)
+        const next = ((await $.prompt.submit({ text: 'next' })).context ?? []) as string[]
+        expect(roleTold(next)).toEqual([])
+        expect(d.world.roleReads).toHaveLength(2)
+      })
+
+      test('a key that changed, failed and came back before the next tool call: the retell finds the key told and ends the hold', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        await firstPrompt($, 'startup')
+        d.world.planId = 24
+        d.world.roleOverride = { status: 503, body: { error: 'dashboard_unreachable' } }
+        await startSession($, d, surface)
+        await d.clock.settle()
+        await $.prompt.submit({ text: 'changed' })
+        expect(holdsNow(d)).toEqual(['main'])
+        d.world.planId = 23
+        d.world.roleOverride = undefined
+        await startSession($, d, surface)
+        await d.clock.settle()
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        const reads = d.world.roleReads.length
+        expect((await tool($)).deny).toBeUndefined()
+        expect(d.world.roleReads).toHaveLength(reads)
+        expect(holdsNow(d)).toEqual([])
+      })
+
+      test('a retell racing a prompt fetches and tells the role once', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        d.world.roleOverride = { status: 503, body: { error: 'dashboard_unreachable' } }
+        await firstPrompt($, 'startup')
+        d.world.roleOverride = undefined
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        const reads = d.world.roleReads.length
+        const [refused, prompted] = await Promise.all([tool($), $.prompt.submit({ text: 'together' })])
+        const told = [(refused.deny ?? '') as string, ...((prompted.context ?? []) as string[])]
+        expect(told.filter(c => c.includes('Your role: work the card.'))).toHaveLength(1)
+        expect(d.world.roleReads).toHaveLength(reads + 1)
+      })
+
+      test('a role fetch that fails names the role fetch in the hold line, never the bundle fetch', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        d.world.roleOverride = { status: 500, body: { error: 'role boom' } }
+        await firstPrompt($, 'startup')
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        const refused = (await tool($)).deny as string
+        expect(refused).toContain('the role fetch answered 500')
+        expect(refused).not.toContain('the bundle fetch')
       })
 
       test('two hooks landing together fetch and tell the role once', async ($, on) => {
@@ -683,7 +765,6 @@ for (const surface of SURFACES) {
         expect(deliveredReports(d, 'session.after_compaction')).toHaveLength(1)
       })
 
-      const holdsNow = (d: any) => Object.keys((d.stateWrites.filter((w: any) => w.key === 'behavior').at(-1)?.value as any)?.holds ?? {})
 
       test('a tool text no start owes whose file cannot be written is told as the hold line, kept on the hold and told again at the next tool call, and the hold is reported once when it is delivered', async ($, on) => {
         const d = await started($, on)
