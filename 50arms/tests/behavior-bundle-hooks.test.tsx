@@ -367,6 +367,54 @@ for (const surface of SURFACES) {
       expect(deliveredReports(d, 'session.start')).toHaveLength(1)
     })
 
+    // a signed-in session on no plan whose view has not loaded when its first prompt comes: no connection record, no loaded view, so the deadline fallback owes nothing for it. The start is owed by whoever finds it
+    // signed in (the plan read's answer), once, and told once whichever order the deadline, the plan read and the slot reads come in
+    async function startedViewHeld($: any, on: any) {
+      on('classic.SessionStart', () => ({}) as any)
+      on('classic.SubagentStart', () => ({}) as any)
+      on('classic.Stop', () => ({}) as any)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      const d = dashboard(on, { connected: false })
+      // the view's own load (the same plan read) is held for 20 s: the view is not loaded at the first prompt
+      d.holdApi(20_000)
+      await startSession($, d, surface)
+      return d
+    }
+
+    test('no connection record, view not loaded, plan read answering signed in after the deadline: the start is owed by that answer and told once', async ($, on) => {
+      const d = await startedViewHeld($, on)
+      const pending = firstPrompt($, 'startup')
+      await d.clock.advance(CONTEXT_DEADLINE_MS + 500)
+      await d.clock.settle()
+      expect(((await pending).context ?? []).join('\n')).not.toContain(EVENT_TEXT('session_start'))
+      // the held reads answer: the view loads signed in, and the start's plan read says signed in
+      await d.clock.advance(30_000)
+      await d.clock.settle()
+      expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain(EVENT_TEXT('session_start'))
+      expect(((await $.prompt.submit({ text: 'more' })).context ?? []).join('\n')).not.toContain(EVENT_TEXT('session_start'))
+      await d.clock.settle()
+      expect(deliveredReports(d, 'session.start')).toHaveLength(1)
+    })
+
+    test('no connection record, view not loaded, plan read in time and the briefing slot reads past the deadline: the start is owed once and told once', async ($, on) => {
+      const d = await startedViewHeld($, on)
+      // only the view's load is held; the start's own reads answer at once, but its owed-comments slot read does not
+      d.holdApi(0)
+      d.world.bundle.events['session.after_compaction'] = bundleEvent('session.after_compaction', ['Compacted: {{slot:owed_list}}'], { id: 330, slots: ['owed_list'] })
+      d.world.reportReplies['GET /api/plan-sessions/me/owed-comments'] = { delayMs: 60 * MIN }
+      const pending = firstPrompt($, 'compact')
+      await d.clock.advance(CONTEXT_DEADLINE_MS + 500)
+      await d.clock.settle()
+      expect(((await pending).context ?? []).join('\n')).not.toContain('Compacted:')
+      delete d.world.reportReplies['GET /api/plan-sessions/me/owed-comments']
+      await d.clock.advance(30_000)
+      await d.clock.settle()
+      expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain('Compacted:')
+      expect(((await $.prompt.submit({ text: 'more' })).context ?? []).join('\n')).not.toContain('Compacted:')
+      await d.clock.settle()
+      expect(deliveredReports(d, 'session.after_compaction')).toHaveLength(1)
+    })
+
     // one release for every hold, by what the hold had reported: a hold whose open report went out (an outdated plugin) is closed with its end when a signed-out answer lets it go, or the alert 50 Arms opened for it never closes
     test('a signed-out answer ends a hold whose open report was sent with an end report', async ($, on) => {
       const d = await started($, on)

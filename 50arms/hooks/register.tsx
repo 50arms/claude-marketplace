@@ -3777,8 +3777,16 @@ async function sessionContext($: any, start: NonNullable<PendingStart>, budget: 
   const connected = await isPlanConnected($, start.sessionId)
   // a sign-in's start is the same session going on: it asks no restart notice; a compaction and a clear are the same session too
   const askRestart = start.source !== 'compact' && start.source !== 'clear' && start.source !== SIGN_IN_SOURCE && !isFreshStart(start)
+  // THE owner of "this start is owed": the first caller owes it and holds the context (the loading line), every later one finds the flag set and owes nothing, so the start is owed exactly once on every ordering
+  // of the deadline fallback, the plan read's answer and the slot reads. The flag is set before any await.
+  let owed = false
+  const oweOnce = async (failure: Failure): Promise<string | null> => {
+    if (owed) return null
+    owed = true
+    return owedStart($, event, failure)
+  }
   // a start the plugin cannot read for: a session known to be signed in has no bundle for this context, so the start is owed and the context held (the loading line); any other stays silent
-  const fault = async (failure: Failure): Promise<StartReads> => ({ line: connected || (await signedInWithAgent($)) ? await owedStart($, event, failure) : null, askRestart: !connected && askRestart })
+  const fault = async (failure: Failure): Promise<StartReads> => ({ line: connected || (await signedInWithAgent($)) ? await oweOnce(failure) : null, askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return clear
   if (server === 'not-yet') return joined([(await fault(fetchFailureOf({ status: 0, body: {}, serverNotConnected: true, classifierRefused: false, keyRevoked: false, relayDown: await relayDownOf($) }))).line, clear])
@@ -3790,9 +3798,8 @@ async function sessionContext($: any, start: NonNullable<PendingStart>, budget: 
     if (plan.kind !== 'failed' && plan.kind !== 'unreachable') await update($, mantraOwed, () => plan.kind === 'signed-out' || plan.kind === 'silent')
     // the bundle read waits only for what is left of the deadline: a lookup that ended after it would decide the start (count its once-only texts told) with no hook left to show them
     const left = deadlineAt - (await $.clock.now())
-    // the plan read has said the session is signed in: a start given up from here, with the hook still waiting, is owed on that answer, whatever the view or the connection record say (`fault` owes only on those).
-    // Once the deadline fallback has run (`expired`) it is the one owner of the start: a read that answers after it owes and holds nothing, or a start already told would be owed again
-    const gaveUp = async (): Promise<StartReads | null> => (expired ? null : { line: await owedStart($, event, timeoutFailure(await relayDownOf($))), askRestart: false })
+    // the plan read has said the session is signed in: a start given up from here, in time or late, is owed on that answer, whatever the view or the connection record say (`fault` owes only on those); the flag says whether the fallback already did
+    const gaveUp = async (): Promise<StartReads | null> => ({ line: await oweOnce(timeoutFailure(await relayDownOf($))), askRestart: false })
     const signedIn = plan.kind === 'connected' || plan.kind === 'not-connected'
     if (expired || left <= 0) return signedIn ? gaveUp() : null
     if (signedIn) {
