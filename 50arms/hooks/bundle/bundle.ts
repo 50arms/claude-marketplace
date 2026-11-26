@@ -146,7 +146,7 @@ export function readRequestedEndpointsBody(body: unknown): BundleComputed | null
   return o.computed === null ? null : computedOf(o.computed, 'computed')
 }
 
-// The session's role (CP-166): fetched when `session.bind` is told, as a file like the bundle. The plugin names its own version (a call below the floor is refused 426).
+// The session's role: fetched when `session.bind` is told, as a file like the bundle. The plugin names its own version (a call below the floor is refused 426).
 export const ROLE_PATH = '/api/plan-sessions/me/role'
 export const ROLE_COMPUTED_KEY = 'role'
 export const roleQuery = (pluginVersion: string): Record<string, string> => ({ plugin_version: pluginVersion })

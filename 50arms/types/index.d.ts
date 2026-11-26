@@ -258,7 +258,7 @@ export type Behavior = {
   queue: Queue
   // the floor send failed loudly in this session: it is not started again
   floorLoud: boolean
-  // the role the main conversation was last told (`session.bind`, CP-166): `plan:<id>`, `card:<id>` or `none`; null before it was told one and after each compaction or clear of it
+  // the role the main conversation was last told (`session.bind`): `plan:<id>`, `card:<id>` or `none`; null before it was told one and after each compaction or clear of it
   roleTold: string | null
 }
 

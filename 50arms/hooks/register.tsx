@@ -3310,7 +3310,7 @@ async function noticeStartEntries($: any, pending: PendingStart, trigger: 'promp
   return [...head, ...(start === null ? [] : [start]), ...role]
 }
 
-// The session's role (CP-166): fetched from the dashboard (`GET /api/plan-sessions/me/role`, as a file) and told as the `session.bind` event, to the main conversation once per role it holds (a plan, a card, or neither),
+// The session's role: fetched from the dashboard (`GET /api/plan-sessions/me/role`, as a file) and told as the `session.bind` event, to the main conversation once per role it holds (a plan, a card, or neither),
 // again after each compaction or clear of it, and each time as an entry of its own. The role text is never part of the bundle and the plugin keeps no copy of it.
 const BIND_EVENT = 'session.bind'
 const roleKeyOf = (v: { card: { id: unknown } | null; connected: { id: unknown } | null }): string => (v.card !== null ? `card:${v.card.id}` : v.connected !== null ? `plan:${v.connected.id}` : 'none')
