@@ -58,6 +58,22 @@ describe('decideSpawn (the decision table)', () => {
     expect(reason).not.toContain('already run')
   })
 
+  // CP-164: a refused session must act on a LATER pacing message that names free slots (DX-8227's on-pace text: "N of M sub-agents run now, K free: start your waiting sub-agents now, whatever an earlier refusal counted"), whatever count the refusal itself named
+  test('every refusal says a later pacing message naming free sub-agents means start the waiting work at once', () => {
+    const refusals = [
+      denyReason(v({ level: 'over_pace', budget: 0 }), 'level'),
+      denyReason(v({ budget: 3, subAgents: 3 }), 'budget'),
+      denyReason(v({ budget: 3, subAgents: 2, reservedAgents: 1 }), 'reserved'),
+    ]
+    for (const reason of refusals) {
+      expect(reason).toContain('K free')
+      expect(reason).toContain('start the waiting work at once')
+      expect(reason).toContain('whatever count this refusal named')
+      expect(reason).not.toContain('until the verdict changes')
+      expect(reason.startsWith(REFUSAL_PREFIX)).toBe(true)
+    }
+  })
+
   test('a claimed verdict with room, or no cap, allows', () => {
     expect(decideSpawn(v({ budget: 3, subAgents: 1 }), 'haiku', false)).toEqual({ kind: 'allow' })
     expect(decideSpawn(v({ budget: null, subAgents: 40 }), 'opus', false)).toEqual({ kind: 'allow' })

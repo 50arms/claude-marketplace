@@ -439,7 +439,9 @@ sibling checkout. Remove each once `git status --porcelain` and `git cherry orig
 
 A pacing message (`Usage pacing for your Claude account changed: …`) or a spawn refused with
 `Usage pacing: …` states the level, the sub-agent budget of the whole account and the reset
-time; trust those numbers, never your own estimate. Never retry a refused spawn.
+time; trust those numbers, never your own estimate. Never retry a refused spawn: it waits for the next pacing message. A pacing
+message that says sub-agents are free (`N of M sub-agents run now, K free`) means start the waiting work at once, whatever count an
+earlier refusal named; 50 Arms refuses the start itself if the slots are gone again.
 
 The budget is a strict cap on sub-agents: exactly that many sub-agents run on the account at
 once, never one more. Main threads (every session's own thread and each running worker
@@ -456,7 +458,7 @@ any state not yet recorded on its card (an agent note), then call `PUT /api/plan
 `waits_on: "pacing"` ("Pausing") and go idle. 50 Arms wakes you with the message that lets you continue (a slot it
 offered you is held for you for 60 seconds), and you then carry on where you were. A usage-pacing pause needs no manual wake.
 
-- **On pace**: carry on. A spawn may be moved to haiku when the budget is nearly full, except a screen designer, which is never moved: a designer whose spawn runs below Opus (the model it names, else its agent type's own model) is refused, and is started again on an agent type that runs on Opus with no smaller model parameter.
+- **On pace**: carry on, and start any sub-agent work waiting on a slot now when the message says sub-agents are free. A spawn may be moved to haiku when the budget is nearly full, except a screen designer, which is never moved: a designer whose spawn runs below Opus (the model it names, else its agent type's own model) is refused, and is started again on an agent type that runs on Opus with no smaller model parameter.
 - **Over pace, or the budget full**: pause on `pacing` as above. Agents already running are left to finish.
 - **Critical**: pause as above after telling each running sub-agent to stop where it is and report back (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused); once told to continue, continue each with `SendMessage`.
 
