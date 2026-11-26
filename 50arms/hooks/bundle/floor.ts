@@ -22,11 +22,9 @@ export const SIGN_IN_INVITATION =
 export const LOADING_LINE =
   '[50 ARMS] Your instructions from 50 Arms are loading: they could not be delivered yet ({{slot:reason}}). This tool call was not run. Retry this same step shortly, and run nothing else meanwhile.'
 
-const HELD_OPENING =
-  '[50 ARMS] CRITICAL: 50 Arms could not deliver this agent its instructions ({{slot:reason}}), and has tried since {{slot:since}}. This is a critical 50 Arms bug. Tell the person now that this agent is held, name the reason and the time, and wait: run no tool until the person says it is fixed.'
+const HELD_FIRST = '[50 ARMS] CRITICAL: 50 Arms could not deliver this agent its instructions ({{slot:reason}}), and has tried since {{slot:since}}.'
 
-// CP-169: the desktop app's tool that re-dials one MCP server by name (EV-205). While a hold's reason is stale_mcp, a call to it naming the plugin's platform server is the one tool besides session_connect that runs.
-export const RECONNECT_TOOL = 'mcp__ccd_connectors__reconnect_session_connector'
+const HELD_OPENING = `${HELD_FIRST} This is a critical 50 Arms bug. Tell the person now that this agent is held, name the reason and the time, and wait: run no tool until the person says it is fixed.`
 
 // The hold line of each reason: the opening, then what is specific to it.
 export const HOLD_LINES: Record<HoldReason, string> = {
@@ -35,8 +33,9 @@ export const HOLD_LINES: Record<HoldReason, string> = {
   plugin_outdated: `${HELD_OPENING} The 50 Arms plugin is too old to read them: it must be updated to version {{slot:need_version}} or later (tell the person to update it, then start a new session).`,
   key_revoked: `${HELD_OPENING} This session's 50 Arms key was revoked: the person must sign in again.`,
   relay_broken: `${HELD_OPENING} The relay that tells this session when its instructions change is broken and the check for a change also failed: tell the person to reconnect the 50 Arms dashboard server (/mcp) or start a new session.`,
-  // CP-169: the running MCP server is older than the plugin, so the fetch's `reply_to_file` was refused. The reconnect starts the newest one; it runs when the agent's turn ends.
-  stale_mcp: `[50 ARMS] CRITICAL: 50 Arms could not deliver this agent its instructions ({{slot:reason}}), and has tried since {{slot:since}}. The 50 Arms platform MCP server this session is running is older than the plugin. Fix it now: call ${RECONNECT_TOOL} with server "${SERVER}", then end your turn (the reconnect runs when it ends) and retry; the instructions arrive by themselves once the server is current. If that does not clear it, tell the person to reconnect the server (/mcp) or restart the session. Until then only that reconnect and session_connect run.`,
+  // CP-169: the running MCP server is older than the plugin, so the fetch's `reply_to_file` was refused. What the context does next depends on who it is and on whether the plugin could ask the desktop app to
+  // reconnect the server (`staleMcpNextStep`): the reconnect serves desktop operator sessions only, so a dispatched agent (server `platform`) or a command-line session is told to restart alone.
+  stale_mcp: `${HELD_FIRST} {{slot:next_step}}`,
   classifier_refused: `${HELD_OPENING} The permission classifier refused the plugin's own call to 50 Arms: tell the person to allow the plugin's server in their permissions.`,
 }
 

@@ -40,13 +40,14 @@ for (const surface of SURFACES) {
       const d = dashboard(on, { mcp: 'beforeReplyToFile' })
       await startSession($, d, surface)
       const first = await firstPrompt($, 'startup')
-      expect(first.context.join('\n')).toContain(STALE_MCP_LINE)
+      expect(first.context.join('\n')).toMatch(/MCP server this session runs is older than the plugin/)
       expect(first.context.join('\n')).not.toMatch(/unrecognized/i)
       expect(d.replyToFileRefusals).toContain('GET /api/behavior-events/bundle')
       // no fallback: the bundle is not asked for again without the key, and the session stays held
       await d.clock.advance(RETRY_WINDOW_MS + 10_000)
       const held = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)) as any
-      expect(held.deny).toContain(STALE_MCP_LINE)
+      expect(held.deny).toMatch(/MCP server this session runs is older than the plugin/)
+      expect(held.deny).toMatch(/restart the session/)
       expect(held.deny).not.toMatch(/are loading/)
       expect(held.deny).not.toMatch(/unrecognized/i)
     })

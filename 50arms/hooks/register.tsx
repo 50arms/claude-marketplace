@@ -8,7 +8,7 @@ import { sha256Hex } from './bundle/sha256'
 import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, REQUESTED_ENDPOINTS_PATH, ROLE_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, entriesOf, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, readRequestedEndpointsBody, readRoleBody, relayStreams, requestedEndpointsQuery, rewindTold, roleQuery, startsNewContext } from './bundle/bundle'
 import type { Bundle, BundleComputed, BundleFile, BundleRead, ChangeSignal, Decision, Delivery, Entry, Told } from './bundle/bundle'
 import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
-import { OWED_ARRIVED, reconnectsStaleMcp, dropRetell, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
+import { CONNECTORS_SERVER, OWED_ARRIVED, RECONNECT_TOOL, reconnectsStaleMcp, staleMcpNextStep, type ReconnectAsk, dropRetell, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
 import type { Failure, Hold, Retell } from './bundle/hold'
 import { dueRequests, deliveryItem, enqueueDelivery, enqueueFloor, enqueueHold, failureLine, bandLine, hasFloorPending, settleFailure, settleOk, toTell } from './bundle/reports'
 import type { Loud } from './bundle/reports'
@@ -5426,7 +5426,12 @@ async function retryTick($: any): Promise<void> {
   if (!holds.some(h => phaseOf(h, now) === 'loading')) return
   const outcome = await fetchBundle($)
   // a failure during the window is kept as the newest reason of every hold
-  if (outcome.kind === 'failed') await update($, behavior, cur => ({ ...cur, holds: Object.fromEntries(Object.entries(cur.holds).map(([k, h]) => [k, holdOn({ [k]: h }, k, outcome.failure, h.event, now)[k] as Hold])) }))
+  if (outcome.kind === 'failed') {
+    // a stale-MCP failure keeps (or, once, takes) the reconnect answer each hold's line is worded from
+    const ask = outcome.failure.reason === 'stale_mcp' ? await reconnectAsk($) : null
+    const failureFor = (k: string): Failure => (ask === null ? outcome.failure : staleFailure(outcome.failure, ask, k))
+    await update($, behavior, cur => ({ ...cur, holds: Object.fromEntries(Object.entries(cur.holds).map(([k, h]) => [k, holdOn({ [k]: h }, k, failureFor(k), h.event, now)[k] as Hold])) }))
+  }
   keepRetrying($)
 }
 
@@ -5487,8 +5492,37 @@ async function ensureBundle($: any, key: string, event: string, waitMs: number, 
   return holdContext($, key, event, outcome.failure)
 }
 
+// CP-169, BPR-24: the reconnect of a stale MCP server is a fixed call, so the hook makes it, once per stale-MCP hold: a context whose session already holds one for this reason reuses its answer. The answer
+// (`ask`) and the line's next step for this context (the main conversation or a sub-agent) are kept on the hold, so every refusal tells the same thing.
+async function reconnectAsk($: any): Promise<ReconnectAsk> {
+  const standing = Object.values((await read($, behavior)).holds).find(h => h.reason === 'stale_mcp')
+  return standing?.values.ask === 'requested' || standing?.values.ask === 'unavailable' ? standing.values.ask : requestReconnect($)
+}
+
+const staleFailure = (failure: Failure, ask: ReconnectAsk, key: string): Failure => ({ ...failure, values: { ask, next_step: staleMcpNextStep(ask, key !== MAIN_KEY) } })
+
+// The desktop app's reconnect of the plugin's own server, which starts the newest installed MCP (EV-205). A session with no `ccd_connectors` server (a dispatched agent, a command-line session) or a refused call is `unavailable`: the line then names the restart alone.
+async function requestReconnect($: any): Promise<ReconnectAsk> {
+  try {
+    const answer = await $.mcp.call(CONNECTORS_SERVER, RECONNECT_TOOL, { server: SERVER })
+    return answer?.isError === true ? 'unavailable' : 'requested'
+  } catch {
+    return 'unavailable'
+  }
+}
+
 // An agent context with no current bundle: held with the failure (a new hold, or the standing one refreshed), kept asking for, and its report opened once the hold line starts.
 async function holdContext($: any, key: string, event: string, failure: Failure, undelivered = false, retell: Retell | null = null): Promise<{ kind: 'held'; hold: Hold }> {
+  // the contexts of one hook are held together: the first stale-MCP hold must be stored before the next reads whether one stands
+  if (failure.reason !== 'stale_mcp') return placeHold($, key, event, failure, undelivered, retell)
+  const run = staleHoldChain.then(async () => placeHold($, key, event, staleFailure(failure, await reconnectAsk($), key), undelivered, retell))
+  staleHoldChain = run.then(() => undefined, () => undefined)
+  return run
+}
+
+let staleHoldChain: Promise<void> = Promise.resolve()
+
+async function placeHold($: any, key: string, event: string, failure: Failure, undelivered: boolean, retell: Retell | null): Promise<{ kind: 'held'; hold: Hold }> {
   const at = await $.clock.now()
   let hold!: Hold
   await update($, behavior, cur => {

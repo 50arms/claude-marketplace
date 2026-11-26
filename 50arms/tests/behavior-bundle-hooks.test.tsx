@@ -122,8 +122,12 @@ for (const surface of SURFACES) {
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
         const reconnect = (server: string) => $.tool.call({ tool: 'mcp__ccd_connectors__reconnect_session_connector', server } as any) as Promise<any>
         const held = await tool($)
-        expect(held.deny).toMatch(/reconnect/i)
+        // the hook asks for the reconnect itself, once, however many calls are refused; the line has the main session tell the person
+        expect(held.deny).toMatch(/asked for the reconnect/)
+        expect(held.deny).toMatch(/next message resumes the work/)
         expect(held.deny).toMatch(/restart/i)
+        expect((await tool($)).deny).toMatch(/CRITICAL/)
+        expect(d.world.connectors.reconnects).toEqual(['plugin:50arms:platform'])
         expect(((await $.tool.call({ tool: 'mcp__plugin_50arms_platform__50arms_api', method: 'GET', path: '/api/auth/me' } as any)) as any).deny).toMatch(/CRITICAL/)
         expect((await reconnect('Google Drive')).deny).toMatch(/CRITICAL/)
         expect((await reconnect('plugin:50arms:platform')).deny).toBeUndefined()
@@ -137,6 +141,39 @@ for (const surface of SURFACES) {
         await d.clock.settle()
         expect((await tool($)).deny).toBeUndefined()
         expect(reports(d).filter(r => r.kind === 'hold' && r.ended_at !== undefined)).toHaveLength(1)
+      })
+
+      test('a sub-agent held for a stale MCP is told to end with a report to its parent, never to end its turn and retry, and the reconnect is not asked a second time', async ($, on) => {
+        const d = await started($, on, { mcp: 'beforeReplyToFile' })
+        await $.prompt.submit({ text: 'hello' })
+        await $.classic.SubagentStart(SUB)
+        await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+        const main = await tool($)
+        const sub = await tool($, 'a1')
+        expect(main.deny).toMatch(/next message resumes the work/)
+        expect(sub.deny).toMatch(/report that names this hold/)
+        expect(sub.deny).not.toMatch(/turn|next message/)
+        expect(d.world.connectors.reconnects).toEqual(['plugin:50arms:platform'])
+      })
+
+      test('a session with no desktop connectors server (a dispatched agent, a command-line session) is held as stale_mcp and told to restart alone', async ($, on) => {
+        const d = await started($, on, { mcp: 'beforeReplyToFile' })
+        d.world.connectors.absent = true
+        await $.prompt.submit({ text: 'hello' })
+        await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+        const held = await tool($)
+        expect(held.deny).toMatch(/must restart the session/)
+        expect(held.deny).not.toMatch(/asked for the reconnect|next message/)
+        expect(d.world.connectors.reconnects).toEqual([])
+      })
+
+      test('a hold of another reason still refuses the platform server reconnect', async ($, on) => {
+        const d = await started($, on)
+        d.world.bundle.minPlugin = '9.0.0'
+        await $.prompt.submit({ text: 'hello' })
+        await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+        const refused = (await $.tool.call({ tool: 'mcp__ccd_connectors__reconnect_session_connector', server: 'plugin:50arms:platform' } as any)) as any
+        expect(refused.deny).toMatch(/CRITICAL/)
       })
 
       test('a start with no bundle is owed: the start hook tells the loading line, every tool call is refused, and once a bundle arrives the owed texts are delivered before the context runs a tool', async ($, on) => {

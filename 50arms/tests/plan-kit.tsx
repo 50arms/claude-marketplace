@@ -556,6 +556,8 @@ export function dashboard(
     // plugin set, in order
     // `afterRead`: one function per get_session, in order, run right after that read answered (the app is renamed between a reader's read and its write, as a model's set_session_title does)
     appSession: { title: 'Tendai: PLAN-23 Agent mode', set: [] as string[], reads: 0, afterRead: [] as (() => void)[], failSet: undefined as string | undefined, setDelayMs: 0 },
+    // CP-169: the desktop app's connectors server (`ccd_connectors`): each `reconnect_session_connector` call's `server`, in order; `absent` is a session with no such server (a dispatched agent, a command-line session)
+    connectors: { reconnects: [] as string[], absent: false },
     // DX-4233: the plugin server's tools the session lists (see toolListAnswer)
     tools: 'full' as 'full' | 'old' | 'none',
     // DX-4234: the engine's file-exists check rejects with this text (a disk fault), when set
@@ -1297,6 +1299,13 @@ export function dashboard(
         const was = app.title
         app.title = e.args.title
         return { value: { content: [{ type: 'text', text: `Renamed this session to "${app.title}" (was "${was}").` }], isError: false } }
+      }
+    }
+    if (e.server === 'ccd_connectors') {
+      if (world.connectors.absent) return { deny: `$.mcp.call: no connected MCP tool "${e.tool}" on a server named "${e.server}"` }
+      if (e.tool === 'reconnect_session_connector') {
+        world.connectors.reconnects.push(e.args.server)
+        return { value: { content: [{ type: 'text', text: `Reconnect of ${e.args.server} queued.` }], isError: false } }
       }
     }
     if (e.server === SERVER && e.tool === 'session_connect' && e.args.registration_only === true) {

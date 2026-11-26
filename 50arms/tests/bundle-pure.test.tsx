@@ -7,7 +7,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { BundleShapeError, bundleFileOf, bundleQuery, changeSignalOf, compareVersions, contextKey, decide, deliveredText, entriesOf, fillSlots, floorIsStale, globMatches, isCurrent, matcherHolds, readBundleBody, readRequestedEndpointsBody, readRoleBody, relayStreams, roleQuery, requestedEndpointsQuery, rewindTold, startsNewContext } from '../hooks/bundle/bundle'
 import type { Bundle, BundleAttachment, BundleEvent, BundleMechanism, BundleSection } from '../hooks/bundle/bundle'
 import { HOLD_LINES, LOADING_LINE, SIGN_IN_INVITATION, TOLD_ON, floorBody, floorLines, floorText } from '../hooks/bundle/floor'
-import { RETRY_WINDOW_MS, failureOf, holdOn, holdReport, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from '../hooks/bundle/hold'
+import { RETRY_WINDOW_MS, failureOf, reconnectsStaleMcp, holdOn, holdReport, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from '../hooks/bundle/hold'
 import { settleOwed } from '../hooks/bundle/state'
 import { EMPTY_QUEUE, RETRY_DELAYS_MS, dueRequests, enqueueDelivery, enqueueFloor, enqueueHold, hasFloorPending, settleFailure, settleOk, toTell, deliveryItem } from '../hooks/bundle/reports'
 
@@ -331,6 +331,21 @@ describe('the floor', () => {
     expect(floorText('plugin_outdated', { reason: 'r', since: 's' })).toContain('[need_version unknown]')
     expect(HOLD_LINES.key_revoked).toContain('sign in again')
     expect(LOADING_LINE).toContain('Retry')
+  })
+})
+
+describe('the reconnect a stale-MCP hold lets through', () => {
+  const RECONNECT = 'mcp__ccd_connectors__reconnect_session_connector'
+  const holdOf = (reason: any) => holdOn({}, 'main', { reason, detail: 'd', values: {} }, 'prompt.submit', 1_000)['main'] as any
+
+  test('runs only under a stale_mcp hold, only for the platform server', () => {
+    expect(reconnectsStaleMcp(holdOf('stale_mcp'), RECONNECT, 'plugin:50arms:platform')).toBe(true)
+    expect(reconnectsStaleMcp(holdOf('stale_mcp'), RECONNECT, 'Google Drive')).toBe(false)
+    expect(reconnectsStaleMcp(holdOf('stale_mcp'), 'mcp__plugin_50arms_platform__50arms_api', 'plugin:50arms:platform')).toBe(false)
+  })
+
+  test('is refused under a hold of any other reason', () => {
+    for (const reason of ['fetch_failed', 'dashboard_unreachable', 'plugin_outdated', 'key_revoked', 'relay_broken', 'classifier_refused']) expect(reconnectsStaleMcp(holdOf(reason), RECONNECT, 'plugin:50arms:platform')).toBe(false)
   })
 })
 

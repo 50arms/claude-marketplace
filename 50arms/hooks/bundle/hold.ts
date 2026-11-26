@@ -6,9 +6,8 @@ import type { FloorReason, HoldReason } from './floor'
 import type { Hold, Holds, Retell } from '../../types'
 
 export type { Hold, Holds, Retell }
-import { RECONNECT_TOOL, floorText } from './floor'
+import { floorText } from './floor'
 import { SERVER } from '../plan/config'
-import { STALE_MCP_LINE } from '../relay/refusal'
 
 // How long the plugin keeps asking after the first failure before the loading line becomes the hold line.
 export const RETRY_WINDOW_MS = 120_000
@@ -56,7 +55,7 @@ export const timeoutFailure = (relayDown: { why: string | null } | null): Failur
 export function failureOf(f: FetchFailure, what = 'bundle fetch'): Failure {
   if (f.keyRevoked) return { reason: 'key_revoked', detail: 'the session key was revoked', values: {} }
   if (f.classifierRefused) return { reason: 'classifier_refused', detail: 'the auto mode classifier refused the plugin call', values: {} }
-  if (f.staleMcp) return { reason: 'stale_mcp', detail: STALE_MCP_LINE, values: {} }
+  if (f.staleMcp) return { reason: 'stale_mcp', detail: 'the 50 Arms MCP server this session runs is older than the plugin and refused the fetch', values: {} }
   if (f.status === 503 && f.body?.error === 'dashboard_unreachable') {
     const detail = `the 50 Arms dashboard is unreachable (${oneLine(String(f.body.detail ?? 'no detail'), 80)})`
     return { reason: 'dashboard_unreachable', detail, values: typeof f.body.unreachable_since === 'string' ? { unreachable_since: f.body.unreachable_since } : {} }
@@ -113,8 +112,28 @@ export function refusalOf(hold: Hold, now: number): string {
 // What a context reads, ahead of the texts it was owed, as the refusal of its next tool call once its bundle arrived.
 export const OWED_ARRIVED = '[50 ARMS] Your instructions from 50 Arms have arrived. This tool call was not run: read them, then retry this same step.'
 
+// CP-169: the desktop app's tool that re-dials one MCP server by name (EV-205). The plugin's hook calls it itself, once per stale-MCP hold (`requestReconnect`, register.tsx).
+export const CONNECTORS_SERVER = 'ccd_connectors'
+export const RECONNECT_TOOL = 'reconnect_session_connector'
+const RECONNECT_TOOL_FULL_NAME = `mcp__${CONNECTORS_SERVER}__${RECONNECT_TOOL}`
+
+// Whether the reconnect of the stale server was asked of the desktop app: `requested`, or `unavailable` (no such server or a refusal: a dispatched agent, a command-line session).
+export type ReconnectAsk = 'requested' | 'unavailable'
+
+// What a stale-MCP hold tells its context to do next (the `next_step` slot of its line). The reconnect takes effect when the main session's turn ends and nothing wakes it, so the person's next message resumes it; a sub-agent that ends is finished, so it reports the hold to its parent.
+export function staleMcpNextStep(ask: ReconnectAsk, subagent: boolean): string {
+  if (subagent) {
+    return ask === 'requested'
+      ? 'The plugin asked the desktop app to reconnect that server. Stop and end with a report that names this hold, so your parent can resume you with SendMessage once the server is current. If it stays held, the person must restart the session.'
+      : 'The plugin could not ask for a reconnect from here. Stop and end with a report that names this hold, so your parent can tell the person to restart the session.'
+  }
+  return ask === 'requested'
+    ? 'The plugin asked the desktop app to reconnect that server; it takes effect when your turn ends. Tell the person now that this agent is held and that you asked for the reconnect, that their next message resumes the work, and that if it stays held they must restart the session. Run no tool until then.'
+    : 'The plugin could not ask for a reconnect from here. Tell the person now that this agent is held and that they must restart the session. Run no tool until then.'
+}
+
 // CP-169: besides `session_connect` (onToolStamp), a context whose hold is a stale MCP may run the one call that re-dials the plugin's platform server, which clears the hold (EV-205). `server` is the argument the call names: a call naming any other server is refused.
-export const reconnectsStaleMcp = (hold: Hold, tool: string, server: unknown): boolean => hold.reason === 'stale_mcp' && tool === RECONNECT_TOOL && server === SERVER
+export const reconnectsStaleMcp = (hold: Hold, tool: string, server: unknown): boolean => hold.reason === 'stale_mcp' && tool === RECONNECT_TOOL_FULL_NAME && server === SERVER
 
 // The report of a hold: `agent_id` is null for the main conversation. With `endedAt` once the hold has ended.
 export function holdReport(hold: Hold, agentId: string | null, pluginVersion: string, endedAt: string | null): Record<string, unknown> {
