@@ -197,22 +197,130 @@ for (const surface of SURFACES) {
     })
 
     describe('the role from session.bind', () => {
-      test('a bundle that carries a session.bind event delivers the role as an entry of its own, once per role, never joined with an event text', async ($, on) => {
+      const ROLE = (text = 'Your role: work the card.') => ({ key: 'role', mechanism: 'plugin.context', frequency: 'every', text, chars: text.length, rules: [{ ref: 'BPR-9', content_hash: 'e'.repeat(64) }] })
+      const BOUND = (d: any) => (d.world.bundle.events['session.bind'] = bundleEvent('session.bind', []))
+      const roleTold = (c: string[]) => c.filter(x => x.includes('Your role'))
+
+      test('the role is fetched as a file when session.bind is told and delivered as an entry of its own, once per role, never joined with an event text', async ($, on) => {
         const d = await started($, on)
-        d.world.bundle.events['session.bind'] = bundleEvent('session.bind', ['Your role: work the card.'], { id: 500, frequency: 'once_per_session' })
+        BOUND(d)
+        d.world.role = ROLE()
         const first = await firstPrompt($, 'startup')
-        expect(first.context).toContain('Your role: work the card.')
-        expect(first.context.filter(c => c.includes('Your role'))).toEqual(['Your role: work the card.'])
+        expect(roleTold(first.context)).toEqual(['Your role: work the card.'])
         expect(first.context.some(c => c.includes('Your role') && c.includes(EVENT_TEXT('session_start')))).toBe(false)
+        expect(d.world.roleReads).toEqual([{ plugin_version: PLUGIN_VERSION, reply_to_file: true }])
+        expect(d.world.repliedAsFile).toContain('/api/plan-sessions/me/role')
         const next = ((await $.prompt.submit({ text: 'next' })).context ?? []) as string[]
-        expect(next.some(c => c.includes('Your role'))).toBe(false)
+        expect(roleTold(next)).toEqual([])
+        expect(d.world.roleReads).toHaveLength(1)
+        await d.clock.settle()
+        expect(deliveredReports(d, 'session.bind').map(r => r.attachment_ids)).toEqual([[]])
       })
 
-      test('a bundle with no session.bind event delivers no role', async ($, on) => {
+      test('a null answer (a session on neither a plan nor a card) delivers nothing and holds nothing', async ($, on) => {
         const d = await started($, on)
+        BOUND(d)
+        d.world.role = null
         const first = await firstPrompt($, 'startup')
-        expect(first.context.some(c => c.includes('role'))).toBe(false)
-        expect(d.world.bundleReads.length).toBeGreaterThan(0)
+        expect(roleTold(first.context)).toEqual([])
+        expect((await tool($)).deny).toBeUndefined()
+      })
+
+      test('a bundle with no session.bind event makes no role fetch', async ($, on) => {
+        const d = await started($, on)
+        d.world.role = ROLE()
+        const first = await firstPrompt($, 'startup')
+        expect(roleTold(first.context)).toEqual([])
+        expect(d.world.roleReads).toEqual([])
+      })
+
+      test('a role over the entry cap is delivered through the temporary file the agent is told to read', async ($, on) => {
+        const d = await started($, on)
+        d.world.bundle.events['session.bind'] = bundleEvent('session.bind', [], { cap: 10_000 })
+        const big = `Your role: ${'work. '.repeat(3_000)}`
+        d.world.role = ROLE(big)
+        const first = await firstPrompt($, 'startup')
+        const file = /read (\/home\/u\/\.config\/danxbot\/behavior-text\/\S+\.txt)\./.exec(first.context.join('\n'))?.[1]
+        expect(file).toBeDefined()
+        expect(d.world.files[file as string]).toBe(big)
+      })
+
+      test('a body whose sha256 differs from the one the answer names is a failed fetch: the context is held and the role is told once it can be fetched', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        d.world.bundle.events['session.after_compaction'] = bundleEvent('session.after_compaction', ['Compacted.'], { id: 330 })
+        await firstPrompt($, 'startup')
+        d.world.replySha256 = 'f'.repeat(64)
+        const compacted = await firstPrompt($, 'compact')
+        expect(roleTold(compacted.context)).toEqual([])
+        expect(compacted.context.join('\n')).toMatch(/loading/)
+        d.world.replySha256 = undefined
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        const refused = (await tool($)).deny as string
+        expect(refused).toContain('\n\nYour role: work the card.')
+      })
+
+      test('a failed fetch holds the main conversation: the next tool call is refused and fetches again, a prompt text told meanwhile leaves the hold, and the retold role ends it and is not told again', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        d.world.roleOverride = { status: 503, body: { error: 'dashboard_unreachable' } }
+        const first = await firstPrompt($, 'startup')
+        expect(first.context.join('\n')).toMatch(/are loading/)
+        expect(roleTold(first.context)).toEqual([])
+        // a prompt text delivered meanwhile does not end the hold, and no second fetch starts from the prompt
+        const reads = d.world.roleReads.length
+        const between = (await $.prompt.submit({ text: 'again' })).context as string[] | undefined
+        expect(roleTold(between ?? [])).toEqual([])
+        expect(d.world.roleReads).toHaveLength(reads)
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        const refused = (await tool($)).deny as string
+        expect(refused).toContain('could not deliver this agent its instructions')
+        d.world.roleOverride = undefined
+        const arrived = (await tool($)).deny as string
+        expect(arrived).toMatch(/have arrived/)
+        expect(arrived).toContain('\n\nYour role: work the card.')
+        expect((await tool($)).deny).toBeUndefined()
+        const next = ((await $.prompt.submit({ text: 'next' })).context ?? []) as string[]
+        expect(roleTold(next)).toEqual([])
+        await d.clock.settle()
+        expect(reports(d).filter(r => r.kind === 'hold').map(r => r.event)).toEqual(['session.bind'])
+      })
+
+      test('a role route that answers 426 holds the context with the plugin version to update to', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        d.world.roleOverride = { status: 426, body: { plugin: { need: '9.9.9' } } }
+        await firstPrompt($, 'startup')
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        expect((await tool($)).deny as string).toContain('9.9.9')
+      })
+
+      test('the role is told again after a compaction, and not on the next prompt for the same key', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        d.world.bundle.events['session.after_compaction'] = bundleEvent('session.after_compaction', ['Compacted.'], { id: 330 })
+        await firstPrompt($, 'startup')
+        expect(d.world.roleReads).toHaveLength(1)
+        const compacted = await firstPrompt($, 'compact')
+        expect(roleTold(compacted.context)).toEqual(['Your role: work the card.'])
+        expect(d.world.roleReads).toHaveLength(2)
+        const next = ((await $.prompt.submit({ text: 'next' })).context ?? []) as string[]
+        expect(roleTold(next)).toEqual([])
+        expect(d.world.roleReads).toHaveLength(2)
+      })
+
+      test('two hooks landing together fetch and tell the role once', async ($, on) => {
+        const d = await started($, on)
+        BOUND(d)
+        d.world.role = ROLE()
+        const [a, b] = await Promise.all([$.prompt.submit({ text: 'one' }), $.prompt.submit({ text: 'two' })])
+        const told = [...((a.context ?? []) as string[]), ...((b.context ?? []) as string[])]
+        expect(roleTold(told)).toEqual(['Your role: work the card.'])
+        expect(d.world.roleReads).toHaveLength(1)
       })
     })
 

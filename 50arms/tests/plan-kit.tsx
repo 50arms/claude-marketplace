@@ -554,6 +554,10 @@ export function dashboard(
     requestedEndpoints: null as unknown,
     requestedEndpointReads: [] as { plugin_version?: string; reply_to_file?: boolean }[],
     requestedEndpointsOverride: undefined as undefined | { status: number; body?: unknown },
+    // CP-166: what the role read (`GET /api/plan-sessions/me/role`) answers as its `computed` (null: a session on neither a plan nor a card), each read's query and whether it asked for a file, and a whole-answer override
+    role: null as unknown,
+    roleReads: [] as { plugin_version?: string; reply_to_file?: boolean }[],
+    roleOverride: undefined as undefined | { status: number; body?: unknown },
     // DX-8226: the stand-in MCP answers a `reply_to_file` call inline instead of with the file form (a broken MCP), or names a sha256 that is not the file's
     inlineReplies: false,
     // the paths the stand-in MCP answered with the file form, in order; and whether the machine refuses the plugin's write of an over-cap text's carrier file
@@ -1011,7 +1015,14 @@ export function dashboard(
     const events = [...[...named, prompt].filter(e => !(e.event in world.bundle.events)), ...Object.values(world.bundle.events)]
     return reply({ version: world.bundle.version, min_plugin_version: world.bundle.minPlugin, floor_lines_plugin_version: world.bundle.floorVersion, ...assembleBundle(events) })
   }
-  const isRequestedEndpointsRead = (a: any) => a.method === 'GET' && a.path === '/api/behavior-events/requested-endpoints'
+  const isRoleRead = (a: any) => a.method === 'GET' && a.path === '/api/plan-sessions/me/role'
+  function roleAnswer(a: any) {
+    const query = a.query ?? {}
+    world.roleReads.push({ plugin_version: query.plugin_version, reply_to_file: a.reply_to_file })
+    if (world.roleOverride !== undefined) return reply(world.roleOverride.body ?? { error: 'role boom' }, world.roleOverride.status)
+    return reply({ computed: world.role })
+  }
+  const isRequestedEndpointsRead =(a: any) => a.method === 'GET' && a.path === '/api/behavior-events/requested-endpoints'
   function requestedEndpointsAnswer(a: any) {
     const query = a.query ?? {}
     world.requestedEndpointReads.push({ plugin_version: query.plugin_version, reply_to_file: a.reply_to_file })
@@ -1200,6 +1211,13 @@ export function dashboard(
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       return { value: replied(e.args, requestedEndpointsAnswer(e.args)) }
+    }
+    // CP-166: the session's role, read only when `session.bind` is told: kept out of `calls` and of the context reads
+    if (e.server === SERVER && e.tool === '50arms_api' && isRoleRead(e.args)) {
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
+      if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
+      return { value: replied(e.args, roleAnswer(e.args)) }
     }
     // CP-146: the plugin's reports of what it delivered and held (POST behavior-events) and its floor lines (PUT plugin-floor), kept in their own lists; a `reportReplies` entry for the route answers an error or a delay
     if (e.server === SERVER && e.tool === '50arms_api' && ((e.args.method === 'POST' && e.args.path === '/api/plan-sessions/me/behavior-events') || (e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/plugin-floor'))) {

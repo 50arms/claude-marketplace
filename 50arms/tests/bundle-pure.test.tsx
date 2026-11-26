@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // functions facts and reads their verdicts.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { BundleShapeError, bundleFileOf, bundleQuery, changeSignalOf, compareVersions, contextKey, decide, deliveredText, entriesOf, fillSlots, floorIsStale, globMatches, isCurrent, matcherHolds, readBundleBody, readRequestedEndpointsBody, relayStreams, requestedEndpointsQuery, rewindTold, startsNewContext } from '../hooks/bundle/bundle'
+import { BundleShapeError, bundleFileOf, bundleQuery, changeSignalOf, compareVersions, contextKey, decide, deliveredText, entriesOf, fillSlots, floorIsStale, globMatches, isCurrent, matcherHolds, readBundleBody, readRequestedEndpointsBody, readRoleBody, relayStreams, roleQuery, requestedEndpointsQuery, rewindTold, startsNewContext } from '../hooks/bundle/bundle'
 import type { Bundle, BundleAttachment, BundleEvent, BundleMechanism, BundleSection } from '../hooks/bundle/bundle'
 import { HOLD_LINES, LOADING_LINE, SIGN_IN_INVITATION, TOLD_ON, floorBody, floorLines, floorText } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS, failureOf, holdOn, holdReport, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from '../hooks/bundle/hold'
@@ -66,6 +66,15 @@ describe('reading a bundle answer', () => {
     expect(() => readRequestedEndpointsBody({})).toThrow(/no computed/)
     expect(() => readRequestedEndpointsBody({ computed: { key: 'requested_endpoints' } })).toThrow(BundleShapeError)
     expect(requestedEndpointsQuery('0.17.169')).toEqual({ plugin_version: '0.17.169' })
+  })
+
+  test('reads the role answer: its computed role text, or null for a session on neither a plan nor a card', () => {
+    const computed = { key: 'role', mechanism: 'plugin.context', frequency: 'every', text: 'Your role', chars: 9, rules: [RULE] }
+    expect(readRoleBody({ computed })).toEqual(computed)
+    expect(readRoleBody({ computed: null })).toBeNull()
+    expect(() => readRoleBody({})).toThrow(/no computed/)
+    expect(() => readRoleBody({ computed: { ...computed, key: 'other' } })).toThrow(BundleShapeError)
+    expect(roleQuery('0.17.170')).toEqual({ plugin_version: '0.17.170' })
   })
 
   test('reads the unchanged answer with the floor version', () => {

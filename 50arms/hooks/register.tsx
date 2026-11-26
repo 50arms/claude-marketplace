@@ -5,7 +5,7 @@ import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanVie
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { RestartAsk, Told } from './context/events'
 import { sha256Hex } from './bundle/sha256'
-import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, REQUESTED_ENDPOINTS_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, entriesOf, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, readRequestedEndpointsBody, relayStreams, requestedEndpointsQuery, rewindTold, startsNewContext } from './bundle/bundle'
+import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, REQUESTED_ENDPOINTS_PATH, ROLE_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, entriesOf, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, readRequestedEndpointsBody, readRoleBody, relayStreams, requestedEndpointsQuery, rewindTold, roleQuery, startsNewContext } from './bundle/bundle'
 import type { Bundle, BundleComputed, BundleFile, BundleRead, ChangeSignal, Decision, Delivery, Entry, Told } from './bundle/bundle'
 import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
 import { OWED_ARRIVED, dropRetell, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
@@ -3307,18 +3307,47 @@ async function noticeStartEntries($: any, pending: PendingStart, trigger: 'promp
   return [...head, ...(start === null ? [] : [start]), ...role]
 }
 
-// The session's role (AC 76950): the bundle's `session.bind` texts, told to the main conversation once per role it holds (a plan, a card, or neither) and again after each compaction or clear of it, each as an entry of its own.
-// The plugin never fetches the role itself. A bundle with no `session.bind` event tells nothing, and the role is then still owed to nobody: the role pointer the start carries is the bundle's own.
+// The session's role (CP-166): fetched from the dashboard (`GET /api/plan-sessions/me/role`, as a file) and told as the `session.bind` event, to the main conversation once per role it holds (a plan, a card, or neither),
+// again after each compaction or clear of it, and each time as an entry of its own. The role text is never part of the bundle and the plugin keeps no copy of it.
+const BIND_EVENT = 'session.bind'
+const roleKeyOf = (v: { card: { id: unknown } | null; connected: { id: unknown } | null }): string => (v.card !== null ? `card:${v.card.id}` : v.connected !== null ? `plan:${v.connected.id}` : 'none')
+
 async function roleEntries($: any, budget: Budget): Promise<string[]> {
   if (!(await signedInWithAgent($))) return []
-  const v = await read($, view)
-  const key = v.card !== null ? `card:${v.card.id}` : v.connected !== null ? `plan:${v.connected.id}` : 'none'
-  if ((await read($, behavior)).roleTold === key) return []
-  const outcome = await tellEvent($, 'session.bind', null, budget)
-  // a held context is refused at its next tool call; the role is told once a bundle answers
-  if (outcome.kind !== 'texts') return []
-  await update($, behavior, cur => ({ ...cur, roleTold: key }))
-  return outcome.entries
+  const key = roleKeyOf(await read($, view))
+  const now = await read($, behavior)
+  if (now.roleTold === key) return []
+  // a role that failed is told again by the hold's retell, the one retry (the next tool call): this hook starts no fetch of its own
+  if ((now.holds[mainContext]?.retell ?? []).some(r => r.event === BIND_EVENT)) return []
+  const outcome = await tellEvent($, BIND_EVENT, null, budget)
+  // a role that could not be fetched holds the context: the hook tells the loading or hold line, and the next tool call is refused with it
+  return outcome.kind === 'texts' ? outcome.entries : outcome.kind === 'refused' ? [outcome.text] : []
+}
+
+// A role fetch that failed: a text that cannot be delivered, held with the failure it met (a 426 names the version to update to).
+class RoleFetchError extends BundleShapeError {
+  constructor(message: string, readonly failure: Failure) {
+    super(message)
+  }
+}
+
+// The role, fetched when `session.bind` is told: the answer's one computed entry, or none for a session on neither a plan nor a card. `api()` reads the reply file and checks it against the sha256 the answer names, so a body that fails
+// the check is a failed call. A fetch that fails or ends past the hook's deadline throws, and the caller holds the context.
+async function fetchRole($: any, budget: Budget): Promise<BundleComputed[]> {
+  let failure: Failure | null = null
+  const source = await boundedBy($, budget.deadlineAt, briefingSource<BundleComputed | null>(async () => {
+    const r = await api($, 'GET', ROLE_PATH, { query: roleQuery(await pluginVersion($)), reply_to_file: true })
+    if (!r.ok) {
+      failure = fetchFailureOf({ status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null, relayDown: await relayDownOf($) })
+      throw new Error(errText(r))
+    }
+    return readRoleBody(r.body)
+  }))
+  if (!source.ok) {
+    const message = `bad_response: the role could not be fetched (${source.reason.slice(0, CALL_ERROR_MAX)})`
+    throw new RoleFetchError(message, failure ?? { reason: 'fetch_failed', detail: message, values: {} })
+  }
+  return source.value === null ? [] : [source.value]
 }
 
 // remember the app version a dashboard answer carried (`app_version`, which the MCP copies from the `X-50Arms-Version` header). It adds no request: only answers the session already got
@@ -5530,6 +5559,26 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
   const events = [...owed.map(o => ({ event: o, matchers: {} as Record<string, string>, mechanisms: null as readonly string[] | null })), ...(taking === 'only' ? [] : [{ event, matchers: moment.matchers ?? {}, mechanisms: moment.mechanisms ?? null }])]
   // a compaction or a clear of the main conversation starts it again: its role is told again (AC 76950)
   if (key === mainContext && events.some(m => startsNewContext(m.event))) await update($, behavior, cur => ({ ...cur, roleTold: null }))
+  // The role is fetched only while the bundle lists `session.bind` (a dashboard that does not carries none), and the key the main conversation holds is claimed before the fetch, so two hooks landing together (or a hook and a retell) fetch and tell it once.
+  // A role that is not delivered gives the claim back.
+  let roleClaim: { before: string | null } | null = null
+  if (event === BIND_EVENT && key === mainContext && bundle.events.some(e => e.event === BIND_EVENT)) {
+    const roleKey = roleKeyOf(await read($, view))
+    const claim: { won: boolean; before: string | null } = { won: false, before: null }
+    await update($, behavior, cur => {
+      if (cur.roleTold === roleKey) return cur
+      claim.won = true
+      claim.before = cur.roleTold
+      return { ...cur, roleTold: roleKey }
+    })
+    if (!claim.won) return { kind: 'texts', entries: [] }
+    roleClaim = { before: claim.before }
+  }
+  const giveBackRole = async (): Promise<void> => {
+    if (roleClaim === null) return
+    const { before } = roleClaim
+    await update($, behavior, cur => ({ ...cur, roleTold: before }))
+  }
   // what this call decided, so a call that delivers nothing (the lookup was given up, or a text could not be delivered) puts back what it counted told: the owed event is then told in full when the context is released
   let toldBefore: Told | null = null
   let toldAfter: Told = {}
@@ -5546,10 +5595,11 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
       // the slot reads may have ended after the lookup was given up (a start's deadline): nothing is then counted told or reported, and the start stays owed
       if (moment.abandoned !== undefined && (await moment.abandoned())) {
         await rewind()
+        await giveBackRole()
         return { kind: 'abandoned' }
       }
       // a compaction is followed by the session's requested endpoints, which only 50 Arms can build at this moment
-      const fetched = m.event === COMPACTION_EVENT ? await requestedEndpoints($, budget) : []
+      const fetched = m.event === COMPACTION_EVENT ? await requestedEndpoints($, budget) : roleClaim !== null && m.event === BIND_EVENT ? await fetchRole($, budget) : []
       let decision!: Decision
       await update($, behavior, cur => {
         if (toldBefore === null) toldBefore = cur.told[key] ?? {}
@@ -5562,6 +5612,7 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
     }
     rendered = await renderEntries($, bundle, event, made.map(x => x.d))
   } catch (err: any) {
+    await giveBackRole()
     if (!(err instanceof BundleShapeError)) throw err
     await rewind()
     // a text that cannot be delivered (a bundle that cannot be evaluated, requested endpoints that could not be fetched, a file that could not be written) is no text: the context is held, as for a fetch that failed, and every start event this call took or told is owed again
@@ -5570,7 +5621,8 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
     await update($, behavior, cur => ({ ...cur, owed: owedAgain.reduce((acc, o) => owe(acc, key, o), cur.owed) }))
     // an event no start owes (a tool or sub-agent stop text, a prompt's) is kept on the hold to be told again at the context's next tool call: no failed delivery is dropped
     const retell: Retell | null = taking === 'only' || moment.owes === true ? null : { event, matchers: moment.matchers ?? {}, extra: moment.extra ?? {}, mechanisms: moment.mechanisms === undefined ? null : [...moment.mechanisms] }
-    const held = await holdContext($, key, event, { reason: 'fetch_failed', detail: err.message.slice(0, CALL_ERROR_MAX), values: {} }, true, retell)
+    const failure: Failure = err instanceof RoleFetchError ? err.failure : { reason: 'fetch_failed', detail: err.message.slice(0, CALL_ERROR_MAX), values: {} }
+    const held = await holdContext($, key, event, failure, true, retell)
     return { kind: 'refused', text: refusalOf(held.hold, await $.clock.now()) }
   }
   // reported only once the entries are delivered: a delivery whose file could not be written was never made

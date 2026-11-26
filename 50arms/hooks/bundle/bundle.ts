@@ -146,6 +146,21 @@ export function readRequestedEndpointsBody(body: unknown): BundleComputed | null
   return o.computed === null ? null : computedOf(o.computed, 'computed')
 }
 
+// The session's role (CP-166): fetched when `session.bind` is told, as a file like the bundle. The plugin names its own version (a call below the floor is refused 426).
+export const ROLE_PATH = '/api/plan-sessions/me/role'
+export const ROLE_COMPUTED_KEY = 'role'
+export const roleQuery = (pluginVersion: string): Record<string, string> => ({ plugin_version: pluginVersion })
+
+// The body of a role read: `{computed}`, the one computed text of the session's role, or `computed: null` for a session on neither a plan nor a card (no role). Anything else is a BundleShapeError.
+export function readRoleBody(body: unknown): BundleComputed | null {
+  const o = record(body, 'role answer')
+  if (!Object.prototype.hasOwnProperty.call(o, 'computed')) shape('role answer has no computed (a text or null)')
+  if (o.computed === null) return null
+  const computed = computedOf(o.computed, 'computed')
+  if (computed.key !== ROLE_COMPUTED_KEY) shape(`role answer's computed entry has the key "${computed.key}", not "${ROLE_COMPUTED_KEY}"`)
+  return computed
+}
+
 // ---- when a held bundle may be used ----
 
 // The relay writes the session file `behavior-bundle/<session id>.json` (`{v: 1, sessionId, version}`) naming the bundle's current version. A file the plugin cannot read is a failure the caller tells, never "no file".
