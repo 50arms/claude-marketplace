@@ -3790,11 +3790,14 @@ async function sessionContext($: any, start: NonNullable<PendingStart>, budget: 
     if (plan.kind !== 'failed' && plan.kind !== 'unreachable') await update($, mantraOwed, () => plan.kind === 'signed-out' || plan.kind === 'silent')
     // the bundle read waits only for what is left of the deadline: a lookup that ended after it would decide the start (count its once-only texts told) with no hook left to show them
     const left = deadlineAt - (await $.clock.now())
-    if (expired || left <= 0) return null
-    if (plan.kind === 'connected' || plan.kind === 'not-connected') {
+    // the plan read has said the session is signed in: a start given up from here is owed on that answer, whatever the view or the connection record say (`fault` owes only on those)
+    const gaveUp = async (): Promise<StartReads> => ({ line: await owedStart($, event, timeoutFailure(await relayDownOf($))), askRestart: false })
+    const signedIn = plan.kind === 'connected' || plan.kind === 'not-connected'
+    if (expired || left <= 0) return signedIn ? gaveUp() : null
+    if (signedIn) {
       // the bundle's texts for this start; a session on no plan also asks the restart notice, if it replaced one that was on a plan
       const outcome = await tellEvent($, event, null, budget, { owes: true, waitMs: left, abandoned: async () => expired || deadlineAt - (await $.clock.now()) <= 0 })
-      if (outcome.kind === 'abandoned') return null
+      if (outcome.kind === 'abandoned') return gaveUp()
       return { line: textsOrRefusal(outcome).join('\n') || null, askRestart: plan.kind === 'not-connected' && askRestart }
     }
     if (plan.kind === 'failed') return fault({ reason: 'fetch_failed', detail: `the session could not be read (${plan.reason.slice(0, CALL_ERROR_MAX)})`, values: {} })
@@ -5165,8 +5168,8 @@ async function runFetch($: any): Promise<FetchOutcome> {
   if (!r.ok) {
     // no key, or the agent gate: the session's own tools tell the model, and nothing here holds it
     if (isSignedOut(r) || agentBlockOf(r) !== null) {
-      // a session no key or the agent gate answers for holds nothing: a hold placed while the answer was unknown is let go, with no report (nothing was ever down)
-      await update($, behavior, cur => (Object.keys(cur.holds).length === 0 ? cur : { ...cur, holds: {} }))
+      // a session no key or the agent gate answers for holds nothing: every hold ends, each reported as any answer reports its end (a hold placed while the answer was unknown is dropped as one that was only ever loading)
+      await releaseHolds($, null, await $.clock.now(), version)
       return { kind: 'signed-out' }
     }
     return fetchFailure($, { status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null })
@@ -5180,13 +5183,8 @@ async function runFetch($: any): Promise<FetchOutcome> {
   if (answer.kind === 'unchanged' && (before === null || before.bundle.version !== answer.version)) return fetchFailure($, { status: 0, body: { message: 'bad_response: the dashboard answered unchanged for a bundle the plugin does not hold' } })
   const now = await $.clock.now()
   const bundle: Bundle = answer.kind === 'bundle' ? answer.bundle : { ...(before as { bundle: Bundle }).bundle, floor_lines_plugin_version: answer.floorLinesPluginVersion }
-  let ended: [string, Hold][] = []
-  await update($, behavior, cur => {
-    ended = Object.entries(cur.holds)
-    return { ...cur, held: { bundle, confirmedAt: now }, holds: {} }
-  })
-  // an answer ends every hold of the session: each one that had reached the hold line is reported ended
-  for (const [key, hold] of ended) await reportHoldEnd($, key, hold, now, version)
+  // an answer ends every hold of the session, in the same write that holds the bundle
+  await releaseHolds($, null, now, version, cur => ({ ...cur, held: { bundle, confirmedAt: now } }))
   if (answer.kind === 'bundle') {
     try {
       await cacheBundle($, bundle)
@@ -5199,7 +5197,30 @@ async function runFetch($: any): Promise<FetchOutcome> {
   return { kind: 'ok', bundle }
 }
 
-// a hold that ended: reported with its end when its hold line had started (one that ended inside the 2 minutes was only ever loading)
+// THE way holds end: a current bundle for one context (`keys`), an answer for the whole session (`null`: every hold), a signed-out or agent-gate answer (every hold). A hold leaves the state and is reported by what it had
+// reported, never by why it ended (`reportStepOf`):
+//   never reported, still loading (inside the 2 minutes) ... dropped, nothing was reported and nothing is owed
+//   never reported, past the hold line (any reason) ....... its one report, with its end time
+//   reported open (`plugin_outdated`, `key_revoked` only) ... its end report, which closes the alert episode 50 Arms opened for it
+//   already ended .............................................. nothing
+// `patch` is applied in the same write (the bundle an answer holds).
+async function releaseHolds($: any, keys: readonly string[] | null, now: number, version: string, patch: (cur: Behavior) => Behavior = cur => cur): Promise<void> {
+  let ended: [string, Hold][] = []
+  await update($, behavior, cur => {
+    const next = patch(cur)
+    let holds = next.holds
+    ended = []
+    for (const key of keys ?? Object.keys(holds)) {
+      const r = release(holds, key)
+      holds = r.holds
+      if (r.ended !== null) ended.push([key, r.ended])
+    }
+    return { ...next, holds }
+  })
+  for (const [key, hold] of ended) await reportHoldEnd($, key, hold, now, version)
+}
+
+// a hold that ended: reported with its end when its hold line had started or its open report was sent (one that ended inside the 2 minutes was only ever loading)
 async function reportHoldEnd($: any, key: string, hold: Hold, now: number, version: string): Promise<void> {
   if (reportStepOf(hold, phaseOf(hold, now), true) !== 'ended') return
   const item = holdReport(hold, key === MAIN_KEY ? null : key, version, new Date(now).toISOString())
@@ -5363,15 +5384,7 @@ async function holdContext($: any, key: string, event: string, failure: Failure)
   return { kind: 'held', hold }
 }
 
-async function endHold($: any, key: string, now: number): Promise<void> {
-  let ended: Hold | null = null
-  await update($, behavior, cur => {
-    const r = release(cur.holds, key)
-    ended = r.ended
-    return { ...cur, holds: r.holds }
-  })
-  if (ended !== null) await reportHoldEnd($, key, ended, now, await pluginVersion($))
-}
+const endHold = async ($: any, key: string, now: number): Promise<void> => releaseHolds($, [key], now, await pluginVersion($))
 
 // The open report of a hold whose 50 Arms answered (an outdated plugin, a revoked key): the hold stays, so its report is sent once the hold line starts
 async function openHoldReport($: any, key: string, hold: Hold, now: number): Promise<void> {
@@ -5413,8 +5426,8 @@ async function slotsOf($: any, event: string, names: string[], extra: Record<str
     if (has('plan_name')) slots.plan_name = planNameSlot(plan)
   }
   if (has('card_list')) slots.card_list = cardListSlot(await cardsSource($))
-  if (has('agent_list')) slots.agent_list = agentListSlot(await agentsSource($, deadlineAt))
-  if (has('git_status')) slots.git_status = gitStatusSlot(await gitSource($, deadlineAt))
+  if (has('agent_list')) slots.agent_list = agentListSlot(await agentsSource($))
+  if (has('git_status')) slots.git_status = gitStatusSlot(await gitSource($))
   if (has('disk_free')) {
     // the `disk_free` slot (a `tool.after` text's): the free bytes of the last measurement; a machine that has not opted in to the disk notice has none, and the slot is then named as unfilled
     const freeBytes = (await read($, diskMeasured))?.freeBytes ?? null
@@ -5524,7 +5537,7 @@ const briefingPlan = async ($: any): Promise<{ ref: string; name: string } | nul
 }
 
 const owedSource = ($: any, deadlineAt: number): Promise<Source<OwedComment[]>> =>
-  briefingSource<OwedComment[]>($, deadlineAt, async () => {
+  boundedBy($, deadlineAt, briefingSource<OwedComment[]>(async () => {
     const r = await api($, 'GET', '/api/plan-sessions/me/owed-comments')
     if (!r.ok) throw new Error(errText(r))
     const list = r.body?.owedComments
@@ -5533,21 +5546,22 @@ const owedSource = ($: any, deadlineAt: number): Promise<Source<OwedComment[]>> 
     const bad = list.findIndex(c => typeof c?.cardId !== 'string' || typeof c.cardTitle !== 'string' || typeof c.commentId !== 'number' || typeof c.author?.name !== 'string' || typeof c.excerpt?.text !== 'string' || !(c.state === 'sent' || c.state === 'seen') || typeof c.waitedMs !== 'number')
     if (bad !== -1) throw new Error(`bad_response: owed-comments element ${bad} is not an owed comment`)
     return list
-  })
+  }))
 
 const cardsSource = async ($: any): Promise<Source<BriefingCard[]>> => {
   const v = await read($, view)
   return { ok: true, value: v.inProgress.map(c => ({ id: c.id, title: c.title })) }
 }
 
-const agentsSource = ($: any, deadlineAt: number): Promise<Source<BriefingAgent[]>> =>
-  briefingSource<BriefingAgent[]>($, deadlineAt, async () => {
+// the engine's own list and a local `git status` (with its own time limit) are not dashboard reads: they keep their own limits and never share the hook's deadline
+const agentsSource = ($: any): Promise<Source<BriefingAgent[]>> =>
+  briefingSource<BriefingAgent[]>(async () => {
     const listed: { id: string; type: string; description: string; status: string }[] = await $.agent.list()
     return listed.filter(a => a.type !== 'teammate' && a.status === 'running').map(a => ({ id: a.id, type: a.type, description: a.description }))
   })
 
-const gitSource = ($: any, deadlineAt: number): Promise<Source<GitState>> =>
-  briefingSource<GitState>($, deadlineAt, async () => {
+const gitSource = ($: any): Promise<Source<GitState>> =>
+  briefingSource<GitState>(async () => {
     const out = await $.process.run(['git', 'status', '--porcelain=v1', '-b'], { cwd: await $.session.cwd(), timeoutMs: GIT_STATUS_TIMEOUT_MS })
     if (out.exitCode !== 0) throw new Error(`git status exited ${out.exitCode}`)
     const state = parseGitStatus(out.stdout)
@@ -5555,16 +5569,17 @@ const gitSource = ($: any, deadlineAt: number): Promise<Source<GitState>> =>
     return state
   })
 
-// a source that has not answered by the hook's deadline is a stated failure, never a wait past it
-async function briefingSource<T>($: any, deadlineAt: number, readSource: () => Promise<T>): Promise<Source<T>> {
-  const answer = (async (): Promise<Source<T>> => {
-    try {
-      return { ok: true, value: await readSource() }
-    } catch (err: any) {
-      return { ok: false, reason: errMessage(err) }
-    }
-  })()
-  return withinDeadline<Source<T>>($, Math.max(deadlineAt - (await $.clock.now()), 0), answer, () => ({ ok: false, reason: 'timeout: no answer by the hook deadline' }))
+async function briefingSource<T>(readSource: () => Promise<T>): Promise<Source<T>> {
+  try {
+    return { ok: true, value: await readSource() }
+  } catch (err: any) {
+    return { ok: false, reason: errMessage(err) }
+  }
+}
+
+// a dashboard read that has not answered by the hook's deadline is a stated failure, never a wait past it
+async function boundedBy<T>($: any, deadlineAt: number, read: Promise<Source<T>>): Promise<Source<T>> {
+  return withinDeadline<Source<T>>($, Math.max(deadlineAt - (await $.clock.now()), 0), read, () => ({ ok: false, reason: 'timeout: no answer by the hook deadline' }))
 }
 
 // the plugin's `dashboard_url` option, as the engine passed it to register (the last resort of blockedOrigin)

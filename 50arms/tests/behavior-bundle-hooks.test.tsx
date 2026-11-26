@@ -349,6 +349,42 @@ for (const surface of SURFACES) {
       expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
     })
 
+    // one release for every hold, by what the hold had reported: a hold whose open report went out (an outdated plugin) is closed with its end when a signed-out answer lets it go, or the alert 50 Arms opened for it never closes
+    test('a signed-out answer ends a hold whose open report was sent with an end report', async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.minPlugin = '9.0.0'
+      await $.prompt.submit({ text: 'hello' })
+      await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+      expect((await tool($)).deny).toMatch(/9\.0\.0/)
+      await d.clock.settle()
+      expect(reports(d).filter(r => r.kind === 'hold')).toHaveLength(1)
+      d.world.bundle.minPlugin = '0.17.0'
+      d.world.signedOut = 'lapsed'
+      expect((await tool($)).deny).toBeUndefined()
+      await d.clock.settle()
+      const holdReports = reports(d).filter(r => r.kind === 'hold')
+      expect(holdReports.map(r => r.ended_at !== undefined)).toEqual([false, true])
+      expect(holdReports[1].started_at).toBe(holdReports[0].started_at)
+      expect(holdKeys(d)).toEqual([])
+    })
+
+    // a real outage that lasted past the hold line is reported with its end like an ordinary answer would, though the answer that ends it is signed out
+    test('a signed-out answer ends a hold from an outage past the hold line with its one report', async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
+      await firstPrompt($, 'startup')
+      await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+      expect((await tool($)).deny).toMatch(/CRITICAL/)
+      d.world.bundle.override = undefined
+      d.world.signedOut = 'lapsed'
+      expect((await tool($)).deny).toBeUndefined()
+      await d.clock.settle()
+      const holdReports = reports(d).filter(r => r.kind === 'hold')
+      expect(holdReports).toHaveLength(1)
+      expect(holdReports[0].ended_at).toBeDefined()
+      expect(holdKeys(d)).toEqual([])
+    })
+
     // the briefing slots of an after-compaction start read the dashboard: a read past the hook's deadline gives the start up before anything is counted told, so no delivery is reported that nobody saw
     test('a start whose briefing slots read past the deadline is owed, with nothing told or reported for it, and the next prompt tells it once', async ($, on) => {
       const d = await started($, on)
