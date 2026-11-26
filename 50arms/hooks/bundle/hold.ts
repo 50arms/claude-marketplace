@@ -112,13 +112,14 @@ export function refusalOf(hold: Hold, now: number): string {
 // What a context reads, ahead of the texts it was owed, as the refusal of its next tool call once its bundle arrived.
 export const OWED_ARRIVED = '[50 ARMS] Your instructions from 50 Arms have arrived. This tool call was not run: read them, then retry this same step.'
 
-// CP-169: the desktop app's tool that re-dials one MCP server by name (EV-205). The plugin's hook calls it itself, once per stale-MCP hold (`requestReconnect`, register.tsx).
+// CP-169: the desktop app's tool that re-dials one MCP server by name (EV-205, no verdict yet). The plugin's hook asks for it itself, once per stale-MCP hold (`requestReconnect`, register.tsx).
 export const CONNECTORS_SERVER = 'ccd_connectors'
 export const RECONNECT_TOOL = 'reconnect_session_connector'
 const RECONNECT_TOOL_FULL_NAME = `mcp__${CONNECTORS_SERVER}__${RECONNECT_TOOL}`
 
 // Whether the reconnect of the stale server was asked of the desktop app: `requested`, or `unavailable` (no such server or a refusal: a dispatched agent, a command-line session).
-export type ReconnectAsk = 'requested' | 'unavailable'
+export type ReconnectResult = { ask: 'requested' } | { ask: 'unavailable'; why: string }
+export type ReconnectAsk = ReconnectResult['ask']
 
 // What a stale-MCP hold tells its context to do next (the `next_step` slot of its line). The reconnect takes effect when the main session's turn ends and nothing wakes it, so the person's next message resumes it; a sub-agent that ends is finished, so it reports the hold to its parent.
 export function staleMcpNextStep(ask: ReconnectAsk, subagent: boolean): string {
@@ -132,7 +133,7 @@ export function staleMcpNextStep(ask: ReconnectAsk, subagent: boolean): string {
     : 'The plugin could not ask for a reconnect from here. Tell the person now that this agent is held and that they must restart the session. Run no tool until then.'
 }
 
-// CP-169: besides `session_connect` (onToolStamp), a context whose hold is a stale MCP may run the one call that re-dials the plugin's platform server, which clears the hold (EV-205). `server` is the argument the call names: a call naming any other server is refused.
+// CP-169: besides `session_connect` (onToolStamp), a context whose hold is a stale MCP may run the one call that re-dials the plugin's platform server, which is the recovery this plugin offers (whether it clears the hold is UNVERIFIED until EV-205 has a verdict). `server` is the argument the call names: a call naming any other server is refused.
 export const reconnectsStaleMcp = (hold: Hold, tool: string, server: unknown): boolean => hold.reason === 'stale_mcp' && tool === RECONNECT_TOOL_FULL_NAME && server === SERVER
 
 // The report of a hold: `agent_id` is null for the main conversation. With `endedAt` once the hold has ended.

@@ -163,6 +163,8 @@ for (const surface of SURFACES) {
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
         const held = await tool($)
         expect(held.deny).toMatch(/must restart the session/)
+        // the refusal the reconnect call met is kept on the hold, so the line names why it was not asked
+        expect(held.deny).toMatch(/the reconnect could not be asked: .*no connected MCP tool/)
         expect(held.deny).not.toMatch(/asked for the reconnect|next message/)
         expect(d.world.connectors.reconnects).toEqual([])
       })
