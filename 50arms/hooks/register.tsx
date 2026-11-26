@@ -5261,9 +5261,9 @@ async function reportHoldEnd($: any, key: string, hold: Hold, now: number, versi
   detach($, 'Reporting a hold', flushReports($))
 }
 
-// DX-8223: the process ends while a hold's open report is out (`plugin_outdated`, `key_revoked`): the alert 50 Arms opened for it closes only on the hold's end report, and nothing runs after this hook, so the end is reported
+// The process ends while a hold's open report is out (`plugin_outdated`, `key_revoked`): the alert 50 Arms opened for it closes only on the hold's end report, and nothing runs after this hook, so the end is reported
 // here, bounded as the agent's release is. Only holds already reported open: a hold never reported (inside its 2 minutes, or an outage no open report was sent for) reports nothing, as it did before the session ended. A session
-// with no key (signed out, revoked) cannot send it: 50 Arms closes the alert of a session that has been silent for good (`plugin-hold-session-end.ts`, dashboard repo).
+// with no key (signed out, revoked) cannot send it: 50 Arms closes the alert of a session that has been silent for good.
 async function endOpenHolds($: any): Promise<void> {
   const v: PlanView = await read($, view)
   if (v.phase === 'signed-out' || v.phase === 'key-revoked') return
