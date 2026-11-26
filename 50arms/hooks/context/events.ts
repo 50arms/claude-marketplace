@@ -1,32 +1,24 @@
-import type { Api } from '../plan/load'
-import { errText } from '../plan/load'
 import { ERROR_BODY_MAX } from '../plan/config'
 import { mcpText } from '../plan/mcp'
 
-// the event text a plan-connected session is told, and the restart notice a session that replaced a connected one is told.
-// The wording is a 50 Arms registry row (`GET /api/reminders/event/:event`, the `plan_restart.waiting_events` reminder); this file
-// carries no wording of its own but the two failure lines.
-
-// 50 Arms' events whose text the plugin tells. A SessionStart `source` of `clear` or `fork` has none: it is told nothing. A session that signs in after its start is told `session_start`.
-// The last two are reminders that ride the main session's next action: a sub-agent stopped, a side session ended a turn.
-export type DashboardEvent = 'session_start' | 'session_resume' | 'after_compaction' | 'sub_agent_start' | 'sub_agent_stop' | 'side_session_turn_end'
+// How a session start maps to the bundle's events, and the restart notice a session that replaced a connected one is told.
+// The wording of every event text is the bundle's; this file carries none.
 
 // The `source` of the pending start a sign-in leaves: the conversation began without a usable key, so the session start's text was not told then and is told now.
 export const SIGN_IN_SOURCE = 'sign-in'
 
-// What a session that has no usable key is told at its start, in place of every 50 Arms event text: the plugin's own line, because 50 Arms cannot be asked before the sign-in.
-export const SIGN_IN_INVITATION =
-  "50 Arms is installed in this session. When the person wants to plan or build something, you may mention once that 50 Arms can track it as a plan with cards, and that the Sign in button on the 50 Arms band connects this session. Don't push it, and continue normally if they don't sign in."
-
-export function sessionEvent(source: unknown): DashboardEvent | null {
+// The bundle event a SessionStart `source` is told as: a `fork` has none. A session that signs in after its start is told `session.start`.
+export function sessionEvent(source: unknown): string | null {
   switch (source) {
     case 'startup':
     case SIGN_IN_SOURCE:
-      return 'session_start'
+      return 'session.start'
     case 'resume':
-      return 'session_resume'
+      return 'session.resume'
     case 'compact':
-      return 'after_compaction'
+      return 'session.after_compaction'
+    case 'clear':
+      return 'session.after_clear'
     default:
       return null
   }
@@ -52,22 +44,11 @@ export function isSideSessionNotice(text: unknown): boolean {
   return typeof text === 'string' && (text.includes('<side-sessions-event>') || /The session ".*" you started \(local_[\w-]+\) finished a turn/.test(text))
 }
 
-export const eventPath = (event: DashboardEvent) => `/api/reminders/event/${event}`
-
 // The session's own dashboard server answers the restart notice itself, as a tool.
 export const RESTART_NOTICE_TOOL = 'restart_notice'
 
 // What a lookup came to: text to say, nothing to say, or a failure whose reason names why (one line, never silence).
 export type Told = { kind: 'text'; text: string } | { kind: 'nothing' } | { kind: 'failed'; reason: string }
-
-export function eventText(r: Api): Told {
-  if (!r.ok) return { kind: 'failed', reason: errText(r) }
-  const text = r.body?.effective_text
-  if (typeof text !== 'string') return { kind: 'failed', reason: 'bad_response: the dashboard answered no effective_text' }
-  // an empty text is the registry saying there is nothing to tell for this event (e.g. sub_agent_start), not a failed lookup
-  if (text === '') return { kind: 'nothing' }
-  return { kind: 'text', text }
-}
 
 // The three answers of the server's `restart_notice` tool (JSON text): say the notice, say nothing, or the lookup could not answer. `fix`
 // is the server's own remedy text (it tells the session to continue and to call session_connect).
@@ -106,12 +87,6 @@ export function restartNoticeText(result: { content?: { type: string; text?: str
   return answer.notice === null ? { kind: 'nothing' } : { kind: 'text', text: answer.notice }
 }
 
-// A sub-agent's start is the one event whose text is the mantra the sub-agent works by, so its failure line also says where to fetch it.
-export const eventFailureLine = (event: DashboardEvent, reason: string) =>
-  event === 'sub_agent_start'
-    ? `⚠ Could not load the mantra (the "${event}" event text) from the 50 Arms reminder registry (${reason}). Fetch it now with \`50arms_api\` \`GET ${eventPath(event)}\`, and tell the operator this event hook fetch failed.`
-    : `⚠ Could not load the "${event}" event text from the 50 Arms reminder registry (${reason}). Tell the operator this event hook fetch failed.`
-
 export const restartFailureLine = (reason: string) =>
   `⚠ Could not load the restart notice (${reason}). Tell the operator if this session should be plan-connected.`
 
@@ -122,6 +97,3 @@ export const CONTEXT_DEADLINE_MS = 8_000
 // The plugin's own server was not in the session's tool list by the deadline (said only for a session known to be on a plan).
 export const SERVER_NOT_CONNECTED_REASON = `server_not_connected: the 50 Arms dashboard server was not connected within ${CONTEXT_DEADLINE_MS / 1000}s`
 export const DEADLINE_REASON = `timeout: no response within ${CONTEXT_DEADLINE_MS / 1000}s`
-// A sub-agent's start found the plugin's server not connected (it never waits for one) or the session held (a revoked key, or the agent gate).
-export const SERVER_UNREACHABLE_REASON = 'server_not_connected: the 50 Arms dashboard server is not connected'
-export const SESSION_HELD_REASON = 'session_held: 50 Arms holds this session (its key was revoked, or it has no team agent yet)'

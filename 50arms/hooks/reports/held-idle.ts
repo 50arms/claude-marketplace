@@ -101,6 +101,7 @@ function truncate(title: string): string {
 }
 
 // The block reason for `cards` (at least one): the first few named, the rest counted, and the one instruction.
+// Refusal (section 565 "Refusals" of the event-system plan): a Stop block that refuses a stop while a held card is worked by nothing; the check decides it, so it stays code.
 export function heldIdleReason(cards: readonly HeldCard[]): string {
   const listed = cards.slice(0, MAX_LISTED_CARDS).map(c => `${c.id} ${truncate(c.title)}`)
   const more = cards.length > listed.length ? `, and ${cards.length - listed.length} more` : ''

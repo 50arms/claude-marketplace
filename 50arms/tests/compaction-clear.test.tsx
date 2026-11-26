@@ -1,14 +1,13 @@
 import "./run-tests-with-npm-test.generated"
 // DX-7106 (PLAN-116): a compaction of a desktop session is a CLEAR when the control's mode says `clear` (the main agent's own choice on its ready, DX-7133). The dashboard sends the choice as `mode` in the
 // session's compaction control (`compact` | `clear`), the MCP relay writes it into the compaction file, and the plugin reads it there: with `clear` the agent's ready makes the plugin run
-// the ready loop's own /clear (not /compact), and the fresh conversation is told what a new session is told plus a resume briefing that points at the cards. With `compact` (or a relay that
+// the ready loop's own /clear (not /compact), and the fresh conversation is told the bundle's `session.after_clear` texts (CP-146: the cleared briefing that points at the cards; the plugin fills its slots). With `compact` (or a relay that
 // predates the choice and writes no mode) nothing changes: /compact.
 import { describe, expect } from 'claude-code/testing'
 
-import { CLEAR_RESUME_OPENING, CLEAR_RESUME_PROCEDURE, briefingText } from '../hooks/compaction/briefing'
 import { CLEAR_MARK_PREFIX, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, compactionClearMarkKey, parseControlFile, usedReleaseKey } from '../hooks/compaction/control'
 import { relayLine } from '../hooks/relay/delivery'
-import { CLEARED_SESSION_ID, CLOCK_START, EVENT_TEXT, OWN_SESSION, RECORD_PATH, SESSION_ID, HOME_DIR, SURFACES, dashboard, startSession, test } from './plan-kit'
+import { CLEARED_MARK, CLEARED_SESSION_ID, CLOCK_START, EVENT_TEXT, OWN_SESSION, RECORD_PATH, SESSION_ID, HOME_DIR, SURFACES, clearedEvent, dashboard, startSession, test } from './plan-kit'
 
 // the desktop's own session id, which every process of the session sees and the sidebar names it by (the engine's session id changes at a clear; this one does not)
 const HOST_VAR = 'CLAUDE_CODE_HOST_SESSION_ID'
@@ -35,21 +34,6 @@ describe('the control file carries the compaction mode (pure)', () => {
   })
 })
 
-describe('the resume briefing of a cleared conversation (pure)', () => {
-  const ok = <T,>(value: T) => ({ ok: true as const, value })
-  const input = { plan: { ref: 'PLAN-23', name: 'the plugin' }, owed: ok([]), cards: ok([{ id: 'DX-9', title: 'card' }]), agents: ok([]), git: ok({ branch: 'main', changed: 0, upstream: 'origin/main', ahead: 0 }) }
-
-  test('says the conversation was cleared, points at the cards, and never talks of a summary or loaded skills it lost', () => {
-    const text = briefingText(input, 'cleared')
-    expect(text).toContain(CLEAR_RESUME_PROCEDURE)
-    expect(text).toContain('was just cleared')
-    expect(text).toContain('Your plan is PLAN-23 the plugin.')
-    expect(text).toContain('Cards in flight on your plan: DX-9 card.')
-    expect(text).not.toContain('compact')
-    expect(text).not.toContain('Sub-agents')
-  })
-})
-
 for (const surface of SURFACES) {
   describe(`a compaction by clear on ${surface}`, () => {
     const TURN = { reason: 'answer', answer: 'done', durationMs: 10, isAborted: false, turnId: 't1' } as any
@@ -64,6 +48,8 @@ for (const surface of SURFACES) {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       const d = dashboard(on, { stateSteps: true })
       d.world.context = { tokens: 120_000, window: 1_000_000 }
+      // a plain /clear tells nothing in the kit's default bundle; the cleared briefing is the bundle's text for the clear the plugin opens
+      d.world.bundle.events['session.after_clear'] = clearedEvent()
       setup(d)
       await startSession($, d, surface)
       return d
@@ -182,9 +168,9 @@ for (const surface of SURFACES) {
       })
     }
 
-    const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('Your conversation was just cleared'))
+    const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes(CLEARED_MARK))
 
-    test('the fresh conversation is told a new session start and gets ONE resume prompt: the cleared procedure, the plan and its cards', async ($, on) => {
+    test('the fresh conversation is told the after-clear text of the bundle and gets ONE resume prompt: the cleared briefing with the plan and its cards', async ($, on) => {
       const d = await started($, on)
       let release = () => {}
       d.world.clearHold = new Promise<void>(resolve => (release = resolve))
@@ -197,8 +183,8 @@ for (const surface of SURFACES) {
       expect(resumes(d)).toHaveLength(1)
       const [prompt] = resumes(d)
       expect(prompt.startsWith(relayLine(''))).toBe(true)
-      expect(prompt).toContain(EVENT_TEXT('session_start').split('\n')[0])
-      expect(prompt).toContain(CLEAR_RESUME_PROCEDURE)
+      expect(prompt).toContain(EVENT_TEXT('after_clear'))
+      expect(prompt).toContain(CLEARED_MARK)
       expect(prompt).toContain('Your plan is PLAN-23 50 Arms plugin.')
       expect(prompt).toContain('Cards in flight on your plan: DX-9')
       // told once: the next prompt and tool result add no second start text
@@ -243,23 +229,21 @@ for (const surface of SURFACES) {
       expect(resumes(d)).toHaveLength(1)
     })
 
-    // the cleared session's turn is started with the opening whatever the start text could not be read as: the start is already taken, so nothing else would tell it how to resume
-    const OPENING = relayLine(CLEAR_RESUME_OPENING)
-
-    test('a start text that cannot be read (the dashboard answers nothing for it) still submits the resume opening', async ($, on) => {
+    // CP-146: a start the plugin cannot tell is no text of its own. A cleared conversation whose key lapsed is told nothing by 50 Arms (no key can read the bundle), and no turn is started for it
+    test('a cleared conversation whose key lapsed is told nothing and starts no turn', async ($, on) => {
       const d = await started($, on)
       let release = () => {}
       d.world.clearHold = new Promise<void>(resolve => (release = resolve))
       d.world.files[CONTROL_FILE] = READY('clear')
       await $.turn.complete(TURN)
       await d.clock.settle()
-      // a lapsed key: the dashboard is quiet for it, so the start has no text, while the connection record on disk still says the session is on a plan
+      // a lapsed key: the dashboard is quiet for it, while the connection record on disk still says the session is on a plan
       d.world.signedOut = 'lapsed'
       await engineClearsDuring($, d, release)
-      expect(d.relay.submitted.filter((t: string) => t === OPENING)).toHaveLength(1)
+      expect(d.relay.submitted).toEqual([])
     })
 
-    test('a start text whose reads throw is one warning line before the resume opening, and the opening is still submitted', async ($, on) => {
+    test('a start whose reads throw tells no briefing of the plugin itself: the cleared text is the bundle alone', async ($, on) => {
       const d = await started($, on)
       let release = () => {}
       d.world.clearHold = new Promise<void>(resolve => (release = resolve))
@@ -273,10 +257,7 @@ for (const surface of SURFACES) {
       }
       await engineClearsDuring($, d, release)
       expect(looks).toBeGreaterThanOrEqual(2)
-      const [prompt] = d.relay.submitted.filter((t: string) => t.includes('was just cleared'))
-      // the kit answers a hook that threw as `no implementation`; what matters is that the reads failed and said so, in the event's own line
-      expect(prompt).toContain('Could not load the "session_start" event text')
-      expect(prompt).toContain(CLEAR_RESUME_OPENING)
+      expect(resumes(d)).toHaveLength(0)
     })
 
     // The clear ends the process in the desktop app: the next conversation runs in a NEW process of the same desktop session. It has an empty $.state, a new engine id that its `session.start` makes the boot id, and the
@@ -359,7 +340,7 @@ for (const surface of SURFACES) {
         d.stored.set(compactionClearMarkKey(HOST), mark())
         await newProcessStarts($, d, source)
         expect(resumes(d)).toHaveLength(1)
-        expect(resumes(d)[0]).toContain(CLEAR_RESUME_PROCEDURE)
+        expect(resumes(d)[0]).toContain(CLEARED_MARK)
         expect(markKeys(d)).toEqual([])
         await $.classic.SessionStart({ source: 'resume', cwd: '/work', session_id: NEW_PROCESS_ID, transcript_path: '/work/new.jsonl' })
         await d.clock.settle()

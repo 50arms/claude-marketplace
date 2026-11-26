@@ -4,10 +4,9 @@ import "./run-tests-with-npm-test.generated"
 // is still waiting on its plan. Anything still running (a sub-agent, a background command) means nothing new happens.
 import { describe, expect } from 'claude-code/testing'
 
-import { CLEAR_RESUME_PROCEDURE } from '../hooks/compaction/briefing'
 import { isModelLeave } from '../hooks/relay/refusal'
 import { DISCONNECT_GLYPH } from '../hooks/plan/config'
-import { CLEARED_SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
+import { CLEARED_MARK, CLEARED_SESSION_ID, SURFACES, clearedEvent, dashboard, startSession, test } from './plan-kit'
 
 const API = 'mcp__plugin_50arms_platform__50arms_api'
 const CONNECT = 'mcp__plugin_50arms_platform__session_connect'
@@ -32,6 +31,8 @@ for (const surface of SURFACES) {
       on('tool.call', { tool: API }, () => ({ result: {}, text: OK, isError: false }) as any)
       on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg1' }, text: 'running' }) as any)
       const d = dashboard(on, options as any)
+      // the cleared briefing is the bundle's text for the clear the plugin opens (CP-146); the kit's default bundle tells a plain clear nothing
+      d.world.bundle.events['session.after_clear'] = clearedEvent()
       await startSession($, d, surface)
       return d
     }
@@ -169,7 +170,7 @@ for (const surface of SURFACES) {
 
     // A clear of a session that still holds a plan or card opens a conversation that holds nothing: it is briefed (the cleared resume prompt) and, when the clear left it unconnected, reconnected to what it held.
     const STEPS = { stateSteps: true }
-    const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('Your conversation was just cleared'))
+    const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes(CLEARED_MARK))
     const connects = (d: any) => d.calls.filter((c: any) => c.tool === 'session_connect' && !c.args.disconnect)
     async function clearedAfterLeave($: any, d: any, leftWorld: () => void) {
       let release = () => {}
@@ -195,7 +196,7 @@ for (const surface of SURFACES) {
       expect(d.clearRuns).toHaveLength(1)
       expect(record(d).find(r => r.stage === 'clear-attempted').holds).toEqual(['PLAN-23'])
       expect(resumes(d)).toHaveLength(1)
-      expect(resumes(d)[0]).toContain(CLEAR_RESUME_PROCEDURE)
+      expect(resumes(d)[0]).toContain(CLEARED_MARK)
       expect(resumes(d)[0]).toContain('Your plan is PLAN-23')
       expect(connects(d)).toHaveLength(0)
     })

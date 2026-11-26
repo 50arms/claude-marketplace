@@ -1,16 +1,16 @@
 import "./run-tests-with-npm-test.generated"
-// A session that starts without a usable key is told one invitation to sign in and no 50 Arms text besides; the mantra (the registry's session_start text)
+// A session that starts without a usable key is told one invitation to sign in (the floor's) and no 50 Arms text besides; the mantra (the bundle's session.start text)
 // arrives once the session is signed in, on its next prompt or tool result, and its sub-agents get theirs from then on. A session that starts signed in is never
 // told the mantra a second time by a later load.
 import { describe, expect } from 'claude-code/testing'
 
-import { SIGN_IN_INVITATION } from '../hooks/context/events'
-import { test, EVENT_TEXT, SURFACES, dashboard, firstPrompt, forceRefresh, startSession } from './plan-kit'
+import { SIGN_IN_INVITATION } from '../hooks/bundle/floor'
+import { test, EVENT_TEXT, SURFACES, dashboard, deliveredReports, firstPrompt, forceRefresh, startSession, STAMP_LINE } from './plan-kit'
 
 const START = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as any
-const EVENT_PATHS = (reads: string[]) => reads.filter(p => p.startsWith('/api/reminders/event/'))
-const prompt = async ($: any) => ((await $.prompt.submit({ text: 'next' })).context ?? []).slice(1) as string[]
+// the prompt's context without its time stamp (a signed-out prompt has none: the stamp is the bundle's)
+const prompt = async ($: any) => ((await $.prompt.submit({ text: 'next' })).context ?? []).filter((l: string) => !STAMP_LINE.test(l)) as string[]
 
 for (const surface of SURFACES) {
   describe(`the mantra after a sign-in on ${surface}`, () => {
@@ -40,7 +40,8 @@ for (const surface of SURFACES) {
 
       expect(await prompt($)).toEqual([EVENT_TEXT('session_start')])
       expect(await prompt($)).toEqual([])
-      expect(EVENT_PATHS(d.contextReads)).toEqual(['/api/reminders/event/session_start'])
+      await d.clock.settle()
+      expect(deliveredReports(d, 'session.start')).toHaveLength(1)
       // the signed-out startup asked no restart notice, and the sign-in's start asks none
       expect(d.restartCalls).toEqual([])
       const sub = await $.classic.SubagentStart(START)
@@ -74,7 +75,8 @@ for (const surface of SURFACES) {
       d.world.signedOut = null
       await forceRefresh($, d)
       expect(await prompt($)).toEqual([])
-      expect(EVENT_PATHS(d.contextReads)).toEqual(['/api/reminders/event/session_start'])
+      await d.clock.settle()
+      expect(deliveredReports(d, 'session.start')).toHaveLength(1)
     })
 
     test('a session that starts signed in after having been owed (a second start) is told once, not twice', async ($, on) => {

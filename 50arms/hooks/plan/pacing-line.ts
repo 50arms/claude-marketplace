@@ -344,6 +344,11 @@ export async function pacingLine(env: PacingEnv): Promise<string | null> {
   }
 }
 
+// The level of the session's current pacing verdict (the `pacing_level` slot of a sub-agent's start), null while 50 Arms has none.
+export function pacingLevel(nowMs: number): string | null {
+  return peekPacing(nowMs)?.verdict.level ?? null
+}
+
 // `result` of the SubagentStart chain with the line appended to its additionalContext (one entry per hook).
 export function withLine<R extends { additionalContext?: string[] }>(result: R, line: string | null): R {
   return line === null ? result : { ...result, additionalContext: [...(result.additionalContext ?? []), line] }
