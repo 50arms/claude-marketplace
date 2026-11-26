@@ -10,7 +10,7 @@ import { serverLoopOf, type ServerLoop } from '../ready/loop'
 // the dashboard call arrives as `call`, built from `$.mcp.call` in register.tsx.
 // `refusal`: the call was refused by auto mode's classifier (its words and the fix); `body.error` carries both.
 // `sentence`: `body.error` is already one whole sentence for a person (a classifier refusal; an MCP older than the plugin)
-export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean; refusal?: Refusal; sentence?: true; replyFile?: string; replySha256?: string }
+export type Api = { ok: boolean; status: number; body: any; unreachable?: boolean; refusal?: Refusal; sentence?: true; staleMcp?: true; replyFile?: string; replySha256?: string }
 export type Call = (method: string, path: string, extra?: { query?: object; body?: object }) => Promise<Api>
 
 // the host's notice for a result over its size limit (written for the model, never shown to a person).

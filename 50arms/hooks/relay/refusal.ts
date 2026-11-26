@@ -45,7 +45,7 @@ const API_CALL_KEYS: readonly string[] = ['method', 'path', 'background', ...Obj
 // MCP error -32602, `unrecognized_keys`, `keys: ["reply_to_file"]`). The call is not retried without the key (one path); the failure is STALE_MCP_LINE,
 // short enough to stay whole in every toast this failure reaches. It is recognised by the keys the refusal names: any key `api()` sends makes it one, never one key by name;
 // a refusal of a key the plugin does not send, or a message that is no unrecognized-keys refusal, is some other failure.
-export const STALE_MCP_LINE = `50 Arms' MCP is older than the plugin: restart this session to update it.`
+export const STALE_MCP_LINE = `50 Arms' MCP is older than the plugin: reconnect the 50 Arms server (/mcp), or restart this session, to update it.`
 
 const KEYS_LIST = /"keys":\s*\[([^\]]*)\]/
 const KEYS_SENTENCE = /Unrecognized keys?(?:\(s\))? in object:\s*((?:'[^']*'(?:,\s*)?)+)/i

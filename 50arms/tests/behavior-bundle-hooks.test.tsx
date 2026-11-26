@@ -115,6 +115,30 @@ for (const surface of SURFACES) {
         expect((await tool($)).deny).toBeUndefined()
       })
 
+      // CP-169: an MCP server older than the plugin refuses the bundle fetch's `reply_to_file`; the hold has its own reason, and the one call that reconnects that server runs
+      test('a session whose running MCP is older than the plugin is held as stale_mcp: 50arms_api stays refused, the reconnect of the platform server and session_connect run, and the hold ends once the server is current', async ($, on) => {
+        const d = await started($, on, { mcp: 'beforeReplyToFile' })
+        await $.prompt.submit({ text: 'hello' })
+        await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+        const reconnect = (server: string) => $.tool.call({ tool: 'mcp__ccd_connectors__reconnect_session_connector', server } as any) as Promise<any>
+        const held = await tool($)
+        expect(held.deny).toMatch(/reconnect/i)
+        expect(held.deny).toMatch(/restart/i)
+        expect(((await $.tool.call({ tool: 'mcp__plugin_50arms_platform__50arms_api', method: 'GET', path: '/api/auth/me' } as any)) as any).deny).toMatch(/CRITICAL/)
+        expect((await reconnect('Google Drive')).deny).toMatch(/CRITICAL/)
+        expect((await reconnect('plugin:50arms:platform')).deny).toBeUndefined()
+        expect(((await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect' } as any)) as any).deny).toBeUndefined()
+        await d.clock.settle()
+        const open = reports(d).filter(r => r.kind === 'hold')
+        expect(open).toHaveLength(1)
+        expect(open[0]).toMatchObject({ reason: 'stale_mcp' })
+        d.setMcp('up')
+        await $.prompt.submit({ text: 'reconnected' })
+        await d.clock.settle()
+        expect((await tool($)).deny).toBeUndefined()
+        expect(reports(d).filter(r => r.kind === 'hold' && r.ended_at !== undefined)).toHaveLength(1)
+      })
+
       test('a start with no bundle is owed: the start hook tells the loading line, every tool call is refused, and once a bundle arrives the owed texts are delivered before the context runs a tool', async ($, on) => {
         const d = await started($, on)
         d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }

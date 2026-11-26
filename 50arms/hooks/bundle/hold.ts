@@ -6,7 +6,9 @@ import type { FloorReason, HoldReason } from './floor'
 import type { Hold, Holds, Retell } from '../../types'
 
 export type { Hold, Holds, Retell }
-import { floorText } from './floor'
+import { RECONNECT_TOOL, floorText } from './floor'
+import { SERVER } from '../plan/config'
+import { STALE_MCP_LINE } from '../relay/refusal'
 
 // How long the plugin keeps asking after the first failure before the loading line becomes the hold line.
 export const RETRY_WINDOW_MS = 120_000
@@ -21,6 +23,8 @@ export type FetchFailure = {
   classifierRefused: boolean
   // the MCP's halt for a key a person revoked
   keyRevoked: boolean
+  // CP-169: the running MCP server refused a key the plugin sends (`isStaleMcpRefusal`), so it is older than the plugin
+  staleMcp: boolean
   // the plugin holds a bundle and the relay cannot tell it when that bundle changes (`why`: the session file's failure, when it was one): the check for a change is this fetch, and it failed
   relayDown: { why: string | null } | null
 }
@@ -52,6 +56,7 @@ export const timeoutFailure = (relayDown: { why: string | null } | null): Failur
 export function failureOf(f: FetchFailure, what = 'bundle fetch'): Failure {
   if (f.keyRevoked) return { reason: 'key_revoked', detail: 'the session key was revoked', values: {} }
   if (f.classifierRefused) return { reason: 'classifier_refused', detail: 'the auto mode classifier refused the plugin call', values: {} }
+  if (f.staleMcp) return { reason: 'stale_mcp', detail: STALE_MCP_LINE, values: {} }
   if (f.status === 503 && f.body?.error === 'dashboard_unreachable') {
     const detail = `the 50 Arms dashboard is unreachable (${oneLine(String(f.body.detail ?? 'no detail'), 80)})`
     return { reason: 'dashboard_unreachable', detail, values: typeof f.body.unreachable_since === 'string' ? { unreachable_since: f.body.unreachable_since } : {} }
@@ -108,8 +113,8 @@ export function refusalOf(hold: Hold, now: number): string {
 // What a context reads, ahead of the texts it was owed, as the refusal of its next tool call once its bundle arrived.
 export const OWED_ARRIVED = '[50 ARMS] Your instructions from 50 Arms have arrived. This tool call was not run: read them, then retry this same step.'
 
-// The one tool a held context may still call: it lets the person sign in again.
-export const ALLOWED_WHILE_HELD = 'session_connect'
+// CP-169: besides `session_connect` (onToolStamp), a context whose hold is a stale MCP may run the one call that re-dials the plugin's platform server, which clears the hold (EV-205). `server` is the argument the call names: a call naming any other server is refused.
+export const reconnectsStaleMcp = (hold: Hold, tool: string, server: unknown): boolean => hold.reason === 'stale_mcp' && tool === RECONNECT_TOOL && server === SERVER
 
 // The report of a hold: `agent_id` is null for the main conversation. With `endedAt` once the hold has ended.
 export function holdReport(hold: Hold, agentId: string | null, pluginVersion: string, endedAt: string | null): Record<string, unknown> {

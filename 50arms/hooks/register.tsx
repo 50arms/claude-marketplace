@@ -8,7 +8,7 @@ import { sha256Hex } from './bundle/sha256'
 import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, REQUESTED_ENDPOINTS_PATH, ROLE_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, entriesOf, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, readRequestedEndpointsBody, readRoleBody, relayStreams, requestedEndpointsQuery, rewindTold, roleQuery, startsNewContext } from './bundle/bundle'
 import type { Bundle, BundleComputed, BundleFile, BundleRead, ChangeSignal, Decision, Delivery, Entry, Told } from './bundle/bundle'
 import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
-import { OWED_ARRIVED, dropRetell, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
+import { OWED_ARRIVED, reconnectsStaleMcp, dropRetell, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
 import type { Failure, Hold, Retell } from './bundle/hold'
 import { dueRequests, deliveryItem, enqueueDelivery, enqueueFloor, enqueueHold, failureLine, bandLine, hasFloorPending, settleFailure, settleOk, toTell } from './bundle/reports'
 import type { Loud } from './bundle/reports'
@@ -469,7 +469,7 @@ function failedCall(err: any): Api {
   // a 50 Arms MCP older than the plugin refuses a key the hooks send; its failure is one whole sentence naming the fix (`sentence`, so errText adds no prefix)
   const failed: Api =
     refusal !== null ? { ok: false, status: 0, body: { error: BLOCKED_LINE }, refusal, sentence: true }
-    : isStaleMcpRefusal(message) ? { ok: false, status: 0, body: { error: STALE_MCP_LINE }, sentence: true }
+    : isStaleMcpRefusal(message) ? { ok: false, status: 0, body: { error: STALE_MCP_LINE }, sentence: true, staleMcp: true }
     : { ok: false, status: 0, body: { error: message.slice(0, CALL_ERROR_MAX) } }
   if (!notConnected) return failed
   failed.unreachable = true
@@ -3632,7 +3632,7 @@ async function onToolStamp($: any, e: any, next: any) {
   const budget = await hookBudget($)
   // a held agent context runs no tool but `session_connect`, which lets the person sign in again; the plugin's own calls are never held
   if (!raisedByPlugin(next.origin) && e.tool !== toolName('session_connect')) {
-    const refusal = await refuseWhileHeld($, e.agentId, budget)
+    const refusal = await refuseWhileHeld($, e.agentId, budget, { tool: String(e.tool), server: e.server })
     if (refusal !== null) return { deny: refusal }
   }
   const r = await next(e)
@@ -3866,7 +3866,7 @@ async function sessionContext($: any, start: NonNullable<PendingStart>, budget: 
   const fault = async (failure: Failure): Promise<StartReads> => ({ line: connected || (await signedInWithAgent($)) ? await oweOnce(failure) : null, askRestart: !connected && askRestart })
   const server = await serverState($, deadlineAt)
   if (server === 'unloaded') return clear
-  if (server === 'not-yet') return joined([(await fault(fetchFailureOf({ status: 0, body: {}, serverNotConnected: true, classifierRefused: false, keyRevoked: false, relayDown: await relayDownOf($) }))).line, clear])
+  if (server === 'not-yet') return joined([(await fault(fetchFailureOf({ status: 0, body: {}, serverNotConnected: true, classifierRefused: false, keyRevoked: false, staleMcp: false, relayDown: await relayDownOf($) }))).line, clear])
   // set when the deadline passes: the reads then go on in the background and tell nothing, since their texts would be used up with nobody to read them
   let expired = false
   const reads = async (): Promise<StartReads | null> => {
@@ -5236,13 +5236,13 @@ async function cacheBundle($: any, bundle: Bundle): Promise<void> {
 type FetchOutcome = { kind: 'ok'; bundle: Bundle } | { kind: 'signed-out' } | { kind: 'failed'; failure: Failure }
 
 // a failed fetch as the hold reads it (`relayDown`: whether the failed fetch was also the plugin's only check for a change)
-async function fetchFailure($: any, f: { status: number; body: unknown; serverNotConnected?: boolean; classifierRefused?: boolean; keyRevoked?: boolean }): Promise<FetchOutcome> {
-  return { kind: 'failed', failure: fetchFailureOf({ serverNotConnected: false, classifierRefused: false, keyRevoked: false, ...f, relayDown: await relayDownOf($) }) }
+async function fetchFailure($: any, f: { status: number; body: unknown; serverNotConnected?: boolean; classifierRefused?: boolean; keyRevoked?: boolean; staleMcp?: boolean }): Promise<FetchOutcome> {
+  return { kind: 'failed', failure: fetchFailureOf({ serverNotConnected: false, classifierRefused: false, keyRevoked: false, staleMcp: false, ...f, relayDown: await relayDownOf($) }) }
 }
 
 // The hold a failed dashboard answer makes (the one mapping of an answer to a hold reason, for the bundle fetch and the role fetch): `what` names the fetch in the hold line
 async function answerFailure($: any, r: Api, what: string): Promise<Failure> {
-  return fetchFailureOf({ status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null, relayDown: await relayDownOf($) }, what)
+  return fetchFailureOf({ status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null, staleMcp: r.staleMcp === true, relayDown: await relayDownOf($) }, what)
 }
 
 let bundleFetch: Promise<FetchOutcome> | null = null
@@ -5299,7 +5299,7 @@ async function runFetch($: any): Promise<FetchOutcome> {
 // reported, never by why it ended (`reportStepOf`):
 //   never reported, still loading (inside the 2 minutes) ... dropped, nothing was reported and nothing is owed
 //   never reported, past the hold line (any reason) ....... its one report, with its end time
-//   reported open (`plugin_outdated`, `key_revoked` only) ... its end report, which closes the alert episode 50 Arms opened for it
+//   reported open (`plugin_outdated`, `key_revoked` and `stale_mcp` only: the reasons whose fetch 50 Arms answered, or any other call of it did) ... its end report, which closes the alert episode 50 Arms opened for it
 //   already ended .............................................. nothing
 // `patch` is applied in the same write (the bundle an answer holds).
 // A hold placed for a text that could not be delivered (`undelivered`) is not ended by a bundle answer, which proves nothing about that text: only `withUndelivered` ends it (the owed text was delivered, or the session turned out signed out).
@@ -5506,7 +5506,7 @@ const endHold = async ($: any, key: string, now: number): Promise<void> => relea
 
 // The open report of a hold whose 50 Arms answered (an outdated plugin, a revoked key): the hold stays, so its report is sent once the hold line starts
 async function openHoldReport($: any, key: string, hold: Hold, now: number): Promise<void> {
-  if (hold.reported !== 'none' || phaseOf(hold, now) !== 'held' || !(hold.reason === 'plugin_outdated' || hold.reason === 'key_revoked')) return
+  if (hold.reported !== 'none' || phaseOf(hold, now) !== 'held' || !(hold.reason === 'plugin_outdated' || hold.reason === 'key_revoked' || hold.reason === 'stale_mcp')) return
   const item = holdReport(hold, key === MAIN_KEY ? null : key, await pluginVersion($), null)
   await update($, behavior, cur => {
     const held = cur.holds[key]
@@ -5711,11 +5711,11 @@ const textsOrRefusal = (outcome: EventOutcome): string[] => (outcome.kind === 'r
 
 // A tool call of a held context is refused with the loading or the hold line, and a context whose owed start texts just arrived reads them as the refusal of its next call (so it reads them, then retries the step).
 // That refusal tells the owed events, and the events whose delivery failed and that no start owes (the hold's `retell`), one at a time with the moment they failed on; the tool event's own texts are told with the result of the call that runs.
-async function refuseWhileHeld($: any, agentId: unknown, budget: Budget): Promise<string | null> {
+async function refuseWhileHeld($: any, agentId: unknown, budget: Budget, call: { tool: string; server: unknown }): Promise<string | null> {
   if (!(await signedInWithAgent($))) return null
   const key = agentKeyOf(agentId)
   const ensured = await ensureBundle($, key, 'tool.before', BUNDLE_WAIT_MS, budget)
-  if (ensured.kind === 'held') return refusalOf(ensured.hold, await $.clock.now())
+  if (ensured.kind === 'held') return reconnectsStaleMcp(ensured.hold, call.tool, call.server) ? null : refusalOf(ensured.hold, await $.clock.now())
   if (ensured.kind !== 'ready') return null
   const told: string[] = []
   // a text already told on this call is counted told and reported delivered, so a later failure answers with it and the hold line together, never the hold line alone

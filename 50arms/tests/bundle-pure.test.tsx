@@ -335,10 +335,11 @@ describe('the floor', () => {
 })
 
 describe('holds', () => {
-  const fail = (over = {}) => ({ status: 0, body: {}, serverNotConnected: false, classifierRefused: false, keyRevoked: false, relayDown: null as { why: string | null } | null, ...over })
+  const fail = (over = {}) => ({ status: 0, body: {}, serverNotConnected: false, classifierRefused: false, keyRevoked: false, staleMcp: false, relayDown: null as { why: string | null } | null, ...over })
 
   test('reads why the fetch failed', () => {
     expect(failureOf(fail({ keyRevoked: true })).reason).toBe('key_revoked')
+    expect(failureOf(fail({ staleMcp: true, relayDown: { why: null } })).reason).toBe('stale_mcp')
     expect(failureOf(fail({ classifierRefused: true })).reason).toBe('classifier_refused')
     expect(failureOf(fail({ serverNotConnected: true })).reason).toBe('dashboard_unreachable')
     const unreachable = failureOf(fail({ status: 503, body: { error: 'dashboard_unreachable', unreachable_since: '2026-01-01T00:00:00.000Z', detail: 'HTTP 503' } }))

@@ -195,7 +195,7 @@ export type Held = { bundle: Bundle; confirmedAt: number }
 // What an agent context (the main conversation, or a sub-agent by its id) was already told: `told[key]` lists the cards a once-only text was told under (`''` for no card). A compaction or clear of the context empties it.
 export type Told = Record<string, string[]>
 
-export type FloorReason = 'signed_out' | 'loading' | 'dashboard_unreachable' | 'fetch_failed' | 'plugin_outdated' | 'key_revoked' | 'relay_broken' | 'classifier_refused'
+export type FloorReason = 'signed_out' | 'loading' | 'dashboard_unreachable' | 'fetch_failed' | 'plugin_outdated' | 'key_revoked' | 'relay_broken' | 'classifier_refused' | 'stale_mcp'
 
 // Why an agent context has no current bundle (a hold's reason): every floor reason but signed out, which holds nothing, and loading, which is the first phase of every hold.
 export type HoldReason = Exclude<FloorReason, 'signed_out' | 'loading'>
