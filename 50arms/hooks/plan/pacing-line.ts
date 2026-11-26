@@ -42,6 +42,8 @@ export type PacingEnv = {
   // the model and effort an agent type of this plugin names in its own agent file (null: the file names none), undefined when the type is not one this plugin
   // defines (they cannot be read here). Rejects when the file cannot be read.
   agentGrade: (subagentType: string) => Promise<{ model: string | null; effort: string | null } | undefined>
+  // every agent type this plugin defines, listed from its agent files with what each names. Rejects when the files cannot be listed or read.
+  ownAgentTypes: () => Promise<{ type: string; model: string | null; effort: string | null }[]>
   toast: (text: string) => void
   // called when the slot-refused state (slotWaiting) changes, so the session title is redrawn at once; a host that draws no title leaves it out
   onSlotChange?: () => void
@@ -275,25 +277,23 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
       /* a reading that cannot be taken is sent without: the claim is judged on what 50 Arms already holds */
     }
     const late = `the spawn claim took longer than its ${PACING_READ_DEADLINE_MS} ms deadline`
-    {
-      const reached = await reachDashboard(env, startedAt, late, () => env.call('POST', CLAIM_PATH, usage === null ? undefined : { usage }))
-      if (reached.kind === 'failed') return { kind: 'failed', failure: reached.failure }
-      if (reached.kind === 'unloaded') return { kind: 'unknown' }
-      const r = reached.r
-      // signed out: outside pacing (50 Arms counts none of this session's agents, so there is no cap to hold its spawns to)
-      if (isSignedOut(r)) return { kind: 'unknown' }
-      if (!r.ok) return { kind: 'failed', failure: r.status === 0 ? errText(r) : `the spawn claim answered ${r.status}` }
-      const claim = parseClaim(r.body)
-      if ((claim.kind === 'claimed' || claim.kind === 'refused') && gen === generation) {
-        cache = { pacing: claim.pacing, fetchedAt: startedAt }
-        hasSucceeded = true
-        lastError = null
-        lastClaimError = null
-        // a refused claim waits for a slot; an admitted one is the spawn that takes it
-        setSlotRefused(env, claim.kind === 'refused')
-      }
-      return claim
+    const reached = await reachDashboard(env, startedAt, late, () => env.call('POST', CLAIM_PATH, usage === null ? undefined : { usage }))
+    if (reached.kind === 'failed') return { kind: 'failed', failure: reached.failure }
+    if (reached.kind === 'unloaded') return { kind: 'unknown' }
+    const r = reached.r
+    // signed out: outside pacing (50 Arms counts none of this session's agents, so there is no cap to hold its spawns to)
+    if (isSignedOut(r)) return { kind: 'unknown' }
+    if (!r.ok) return { kind: 'failed', failure: r.status === 0 ? errText(r) : `the spawn claim answered ${r.status}` }
+    const claim = parseClaim(r.body)
+    if ((claim.kind === 'claimed' || claim.kind === 'refused') && gen === generation) {
+      cache = { pacing: claim.pacing, fetchedAt: startedAt }
+      hasSucceeded = true
+      lastError = null
+      lastClaimError = null
+      // a refused claim waits for a slot; an admitted one is the spawn that takes it
+      setSlotRefused(env, claim.kind === 'refused')
     }
+    return claim
   } catch (err: any) {
     return { kind: 'failed', failure: String(err?.message ?? err) }
   }

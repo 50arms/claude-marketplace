@@ -4310,10 +4310,25 @@ async function ownAgentGrade($: any, subagentType: string): Promise<{ model: str
   return { model: agentFileModel(text) ?? null, effort: agentFileEffort(text) ?? null }
 }
 
+// every agent type this plugin defines: each `.md` file under `agents/` of the plugin's root, with the model and effort it names (the same read as ownAgentGrade).
+async function ownAgentTypes($: any): Promise<{ type: string; model: string | null; effort: string | null }[]> {
+  const dir = `${$.plugin.root}/agents`
+  const entries = await $.fs.list(dir)
+  return Promise.all(
+    entries
+      .filter((f: any) => f.kind === 'file' && f.name.endsWith('.md'))
+      .map(async (f: any) => {
+        const text = String(await $.fs.read(`${dir}/${f.name}`))
+        return { type: `${$.plugin.name}:${f.name.slice(0, -3)}`, model: agentFileModel(text) ?? null, effort: agentFileEffort(text) ?? null }
+      }),
+  )
+}
+
 // the engine calls the pacing guard makes, as closures (the engine follows `$` only into a function in this file).
 function pacingEnv($: any) {
   return {
     agentGrade: (subagentType: string) => ownAgentGrade($, subagentType),
+    ownAgentTypes: () => ownAgentTypes($),
     now: () => $.clock.now(),
     within: <T,>(ms: number, work: Promise<T>, late: () => T) => withinDeadline($, ms, work, late),
     // the pacing calls go to the server the session has: a dispatched agent's is `platform`, not the plugin's (DASHBOARD_SERVERS)

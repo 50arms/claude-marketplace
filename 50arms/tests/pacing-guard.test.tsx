@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // `agent.spawn` only: no tool call is ever held, so an agent can still commit, push and write its card.
 import { describe, expect } from 'claude-code/testing'
 
-import { OWN_AGENT_TYPES, PACED_STOP, REFUSAL_PREFIX, designerFloor, agentFileEffort, agentFileModel, decideSpawn, denyReason, designerCardOf, designerRefusal, isDesignerBrief, isTight, ownAgentFile, requestedModelOf, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
+import { PACED_STOP, REFUSAL_PREFIX, designerFloor, agentFileEffort, agentFileModel, decideSpawn, denyReason, designerCardOf, designerRefusal, designerShortfall, isDesignerBrief, isTight, ownAgentFile, requestedModelOf, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
 // CP-167: boards' plan-design review grades the designer floor follows
 const SONNET_MEDIUM = { model: 'sonnet', effort: 'medium' } as const
 const OPUS_HIGH = { model: 'opus', effort: 'high' } as const
@@ -146,44 +146,54 @@ describe('decideSpawn (the decision table)', () => {
 
   test('a designer below the grade on model is refused with a reason naming the grade, what it runs on and what to change; it is not a pacing refusal', () => {
     for (const model of ['haiku', 'claude-haiku-5-5']) {
-      const reason = designerRefusal(SONNET_MEDIUM, model, 'high', '50arms:worker-haiku-high')
+      const reason = designerShortfall(SONNET_MEDIUM, model, 'high', '50arms:worker-haiku-high')
       expect(reason).toContain('grade is sonnet at medium effort')
       expect(reason).toContain(`runs on ${model} at high effort`)
-      expect(reason).toContain('50arms:worker-opus-high')
       expect(reason?.startsWith(REFUSAL_PREFIX)).toBe(false)
     }
-    expect(designerRefusal(OPUS_HIGH, 'sonnet', 'high', 'x')).toContain('grade is opus at high effort')
+    expect(designerShortfall(OPUS_HIGH, 'sonnet', 'high', 'x')).toContain('grade is opus at high effort')
   })
 
   test('a designer below the grade on effort only is refused, and one at or above the grade on both is not', () => {
-    expect(designerRefusal(OPUS_HIGH, 'opus', 'medium', 'x')).toContain('runs on opus at medium effort')
-    expect(designerRefusal(OPUS_HIGH, 'opus', 'high', 'x')).toBeNull()
-    expect(designerRefusal(OPUS_HIGH, 'claude-opus-4-8', 'xhigh', 'x')).toBeNull()
-    expect(designerRefusal(OPUS_HIGH, 'fable', 'max', 'x')).toBeNull()
+    expect(designerShortfall(OPUS_HIGH, 'opus', 'medium', 'x')).toContain('runs on opus at medium effort')
+    expect(designerShortfall(OPUS_HIGH, 'opus', 'high', 'x')).toBeNull()
+    expect(designerShortfall(OPUS_HIGH, 'claude-opus-4-8', 'xhigh', 'x')).toBeNull()
+    expect(designerShortfall(OPUS_HIGH, 'fable', 'max', 'x')).toBeNull()
   })
 
   test('the floor is the higher of Opus and the grade\'s model, at the grade\'s effort: a board naming Sonnet still refuses a designer below Opus', () => {
     expect(designerFloor(SONNET_MEDIUM)).toEqual({ model: 'opus', effort: 'medium' })
     expect(designerFloor({ model: 'haiku', effort: 'low' })).toEqual({ model: 'opus', effort: 'low' })
     expect(designerFloor({ model: 'fable', effort: 'high' })).toEqual({ model: 'fable', effort: 'high' })
-    expect(designerRefusal(SONNET_MEDIUM, 'sonnet', 'high', 'x')).toContain('runs on opus or better at medium effort or higher')
-    expect(designerRefusal(SONNET_MEDIUM, 'haiku', 'high', 'x')).not.toBeNull()
-    expect(designerRefusal(SONNET_MEDIUM, 'opus', 'medium', 'x')).toBeNull()
-    expect(designerRefusal(SONNET_MEDIUM, 'opus', 'low', 'x')).not.toBeNull()
-    expect(designerRefusal({ model: 'fable', effort: 'high' }, 'opus', 'high', 'x')).not.toBeNull()
+    expect(designerShortfall(SONNET_MEDIUM, 'sonnet', 'high', 'x')).toContain('runs on opus or better at medium effort or higher')
+    expect(designerShortfall(SONNET_MEDIUM, 'haiku', 'high', 'x')).not.toBeNull()
+    expect(designerShortfall(SONNET_MEDIUM, 'opus', 'medium', 'x')).toBeNull()
+    expect(designerShortfall(SONNET_MEDIUM, 'opus', 'low', 'x')).not.toBeNull()
+    expect(designerShortfall({ model: 'fable', effort: 'high' }, 'opus', 'high', 'x')).not.toBeNull()
   })
 
-  test('the refusal names the cheapest of the plugin\'s own agent types that meets the floor, or says none does', () => {
-    expect(designerRefusal({ model: 'opus', effort: 'medium' }, 'sonnet', 'high', 'x')).toContain('50arms:worker-opus-high')
-    expect(designerRefusal(SONNET_MEDIUM, 'haiku', 'high', 'x')).toContain('50arms:worker-opus-high')
-    expect(designerRefusal({ model: 'fable', effort: 'high' }, 'opus', 'high', 'x')).toContain('50arms:worker-fable-high')
-    expect(designerRefusal({ model: 'opus', effort: 'max' }, 'opus', 'high', 'x')).toMatch(/None of the plugin's agent types runs at that floor/)
+  // what the plugin's agent files name, as the env lists them
+  const TYPES = [
+    { type: '50arms:worker-haiku-low', model: 'haiku', effort: 'low' },
+    { type: '50arms:worker-fable-high', model: 'fable', effort: 'high' },
+    { type: '50arms:worker-opus-high', model: 'opus', effort: 'high' },
+    { type: '50arms:worker-sonnet-medium', model: 'sonnet', effort: 'medium' },
+    { type: '50arms:worker-sonnet-high', model: 'sonnet', effort: 'high' },
+  ]
+  test('the refusal names the cheapest of the plugin own agent types that meets the floor, whatever order they are listed in, or says none does', () => {
+    const word = (grade: any) => designerRefusal(grade, 'It is below.', TYPES)
+    expect(word({ model: 'opus', effort: 'medium' })).toContain('50arms:worker-opus-high')
+    expect(word(SONNET_MEDIUM)).toContain('50arms:worker-opus-high')
+    expect(word({ model: 'fable', effort: 'high' })).toContain('50arms:worker-fable-high')
+    expect(word({ model: 'opus', effort: 'max' })).toMatch(/None of the plugin's agent types runs at that floor/)
+    expect(word(SONNET_MEDIUM).startsWith('It is below.')).toBe(true)
+    expect(word(SONNET_MEDIUM).startsWith(REFUSAL_PREFIX)).toBe(false)
   })
 
   test('an effort the plugin cannot tell is refused; an unknown model name is left alone as before', () => {
-    expect(designerRefusal(SONNET_MEDIUM, 'sonnet', null, 'general-purpose')).toMatch(/cannot tell which effort the agent type general-purpose runs on/)
-    expect(designerRefusal(SONNET_MEDIUM, 'mystery-model', 'medium', 'x')).toBeNull()
-    expect(designerRefusal(SONNET_MEDIUM, undefined, 'medium', 'x')).toBeNull()
+    expect(designerShortfall(SONNET_MEDIUM, 'sonnet', null, 'general-purpose')).toMatch(/cannot tell which effort the agent type general-purpose runs on/)
+    expect(designerShortfall(SONNET_MEDIUM, 'mystery-model', 'medium', 'x')).toBeNull()
+    expect(designerShortfall(SONNET_MEDIUM, undefined, 'medium', 'x')).toBeNull()
   })
 
   test('the card a designer brief names is the word after the profile on its first line', () => {
@@ -230,6 +240,7 @@ describe('decideSpawn (the decision table)', () => {
       path.endsWith('/quality-gates/plan-design/instruction') ? Promise.resolve({ ok: true, status: 200, body: OPUS_HIGH })
       : call()) as PacingEnv['call'],
     sleep: () => Promise.resolve(), toast: () => {}, agentGrade: () => Promise.resolve(agentGrade),
+    ownAgentTypes: () => Promise.resolve([{ type: '50arms:worker-opus-high', model: 'opus', effort: 'high' }]),
   })
   const claimedBody = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 2, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [], worst_limit: null, reason: null, claimed: true, claim_id: 'claim-1' }
 
@@ -345,7 +356,7 @@ describe('the agent.spawn hook', () => {
     expect(r.deny).toMatch(/grade is opus at high effort/)
     expect(r.deny).toMatch(/runs on sonnet at high effort/)
     expect(r.deny?.startsWith(REFUSAL_PREFIX)).toBe(false)
-    expect(agentReads(d)).toEqual([agentFile('worker-sonnet-high')])
+    expect(agentReads(d)).toContain(agentFile('worker-sonnet-high'))
     expect(d.designerGradeReads).toEqual(['/api/issues/CP-1/quality-gates/plan-design/instruction'])
     expect(d.claimsAllowed).toEqual([])
   })
@@ -375,6 +386,18 @@ describe('the agent.spawn hook', () => {
     expect(refused.deny).toContain('50arms:worker-opus-high')
     expect(d.claimsAllowed).toEqual([])
     expect((await spawn($, { ...DESIGN, subagentType: '50arms:worker-opus-high' })).deny).toBeUndefined()
+  })
+
+  test('the refusal lists the agent files and names the cheapest that meets the floor; files that cannot be listed still refuse', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) }, designerGrade: SONNET_MEDIUM })
+    seed(d, 'worker-sonnet-medium', 'sonnet', 'medium')
+    seed(d, 'worker-opus-high', 'opus', 'high')
+    seed(d, 'worker-fable-high', 'fable', 'high')
+    const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-medium' })
+    expect(r.deny).toContain('Start the designer again on 50arms:worker-opus-high')
+    delete d.world.files[agentFile('worker-opus-high')]
+    delete d.world.files[agentFile('worker-fable-high')]
+    expect((await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-medium' })).deny).toMatch(/None of the plugin's agent types runs at that floor/)
   })
 
   test('a grade the plugin cannot read refuses the designer start, with no default floor and no claim', async ($, on) => {

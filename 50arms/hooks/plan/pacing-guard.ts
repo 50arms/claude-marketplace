@@ -14,7 +14,7 @@ import type { PacingEnv } from './pacing-line'
 // A SCREEN DESIGNER is a spawn whose brief names the designer profile (`isDesignerBrief`). A design is always drawn by Opus or a better model, whatever the
 // board says, so its floor is the higher of Opus and the model of the board's plan-design review grade, at that grade's effort: the model and effort that
 // `GET /api/issues/<card>/quality-gates/plan-design/instruction` answers. A designer is never moved to a smaller model: `decideSpawn` never downgrades it,
-// and a designer whose spawn runs below the floor on model or effort is refused before any claim (`designerRefusal`), with a reason that is not a pacing
+// and a designer whose spawn runs below the floor on model or effort is refused before any claim (`designerShortfall`, `designerRefusal`), with a reason that is not a pacing
 // refusal (it does not start with the prefix below). A grade that cannot be read refuses the start too (`designerGradeFailedReason`): no default floor
 // stands in for it. The model a spawn runs on is read as the engine resolves it (`requestedModelOf`): the call's `model`, else the agent type's own model
 // from its agent file (`agentFileModel`), else the parent's. Its effort is the agent type's own (`agentFileEffort`): the Agent tool's own `effort`
@@ -116,15 +116,6 @@ const effortOf = (v: unknown): Effort | null => EFFORTS.find(x => x === String(v
 // The board's plan-design review grade: a model tier and an effort.
 export type DesignerGrade = { model: Tier; effort: Effort }
 
-// The plugin's own agent types, cheapest first, with what each runs on (a test holds this table equal to the agent files).
-export const OWN_AGENT_TYPES = [
-  { type: '50arms:worker-sonnet-low', model: 'sonnet', effort: 'low' },
-  { type: '50arms:worker-sonnet-medium', model: 'sonnet', effort: 'medium' },
-  { type: '50arms:worker-sonnet-high', model: 'sonnet', effort: 'high' },
-  { type: '50arms:worker-opus-high', model: 'opus', effort: 'high' },
-  { type: '50arms:worker-fable-high', model: 'fable', effort: 'high' },
-] as const
-
 // The designer's floor: the higher of Opus and the grade's model, at the grade's effort.
 export function designerFloor(grade: DesignerGrade): DesignerGrade {
   return { model: TIERS.indexOf(grade.model) < TIERS.indexOf('opus') ? 'opus' : grade.model, effort: grade.effort }
@@ -163,25 +154,44 @@ async function readDesignerGrade(env: PacingEnv, card: string): Promise<{ grade:
   }
 }
 
-// A designer whose spawn runs below the floor (`designerFloor` of the board's grade), on model or effort, is refused before any slot is claimed. An unknown
-// model name is not on the tier list, so it is left alone. An effort that is not known (null) is refused: the plugin cannot tell it. The reason names the
-// grade, what the start runs on and the cheapest of the plugin's own agent types that meets the floor (or that none does); it is not a pacing refusal,
-// so it does not start with REFUSAL_PREFIX.
-export function designerRefusal(grade: DesignerGrade, requestedModel: string | undefined, requestedEffort: string | null, subagentType: string): string | null {
+// A designer whose spawn runs below the floor (`designerFloor` of the board's grade), on model or effort: the sentence saying how, or null when it does not. An
+// unknown model name is not on the tier list, so it is left alone. An effort that is not known (null) is below: the plugin cannot tell it.
+export function designerShortfall(grade: DesignerGrade, requestedModel: string | undefined, requestedEffort: string | null, subagentType: string): string | null {
   const floor = designerFloor(grade)
   const tier = tierOf(requestedModel)
   const effort = effortOf(requestedEffort)
-  const meets = OWN_AGENT_TYPES.find(t => TIERS.indexOf(t.model) >= TIERS.indexOf(floor.model) && EFFORTS.indexOf(t.effort) >= EFFORTS.indexOf(floor.effort))
-  const floorText = `${floor.model} or better at ${floor.effort} effort or higher`
-  const fix = meets === undefined
-    ? `None of the plugin's agent types runs at that floor, so no designer can start on this board until one does.`
-    : `Start the designer again on ${meets.type} (the cheapest of the plugin's agent types that meets it), and drop or change any model parameter so it is not below ${floor.model}.`
-  const head = `The board's plan-design review grade is ${grade.model} at ${grade.effort} effort, so a screen design runs on ${floorText}`
-  if (effort === null) return `${head}, and the plugin cannot tell which effort the agent type ${subagentType} runs on. ${fix}`
+  const head = `The board's plan-design review grade is ${grade.model} at ${grade.effort} effort, so a screen design runs on ${floor.model} or better at ${floor.effort} effort or higher`
+  if (effort === null) return `${head}, and the plugin cannot tell which effort the agent type ${subagentType} runs on.`
   const modelBelow = tier !== null && TIERS.indexOf(tier) < TIERS.indexOf(floor.model)
   const effortBelow = EFFORTS.indexOf(effort) < EFFORTS.indexOf(floor.effort)
   if (!modelBelow && !effortBelow) return null
-  return `${head}, and this designer start runs on ${requestedModel ?? 'an unknown model'} at ${effort} effort. ${fix}`
+  return `${head}, and this designer start runs on ${requestedModel ?? 'an unknown model'} at ${effort} effort.`
+}
+
+// What the plugin's own agent types run on, as listed from the agent files when a refusal is worded.
+export type OwnAgentType = { type: string; model: string | null; effort: string | null }
+
+// The refusal the model reads: the shortfall, then the cheapest of the plugin's own agent types that meets the floor (lowest model, then lowest effort), or that
+// none does. It is not a pacing refusal, so it does not start with REFUSAL_PREFIX.
+export function designerRefusal(grade: DesignerGrade, shortfall: string, types: OwnAgentType[]): string {
+  const floor = designerFloor(grade)
+  const rank = (t: OwnAgentType): [number, number] | null => {
+    const tier = tierOf(t.model ?? undefined)
+    const effort = effortOf(t.effort)
+    return tier === null || effort === null ? null : [TIERS.indexOf(tier), EFFORTS.indexOf(effort)]
+  }
+  const meets = types
+    .flatMap(t => { const k = rank(t); return k !== null && k[0] >= TIERS.indexOf(floor.model) && k[1] >= EFFORTS.indexOf(floor.effort) ? [{ t, k }] : [] })
+    .sort((a, b) => a.k[0] - b.k[0] || a.k[1] - b.k[1])[0]
+  const fix = meets === undefined
+    ? "None of the plugin's agent types runs at that floor, so no designer can start on this board until one does."
+    : `Start the designer again on ${meets.t.type} (the cheapest of the plugin's agent types that meets it), and drop or change any model parameter so it is not below ${floor.model}.`
+  return `${shortfall} ${fix}`
+}
+
+// Why a refusal cannot name an agent type: the agent files could not be listed. The start is still refused.
+export function ownAgentsFailedReason(shortfall: string, failure: string): string {
+  return `${shortfall} The plugin's agent types could not be listed (${failure}), so the start is refused without naming one: use one of the plugin's worker agent types of the grade's model and effort or higher.`
 }
 
 // The model a spawn runs on if left alone: a fork always inherits the parent's; else the call's `model` (the Agent tool's parameter, which outranks the
@@ -253,8 +263,14 @@ export function spawnGuard(env: PacingEnv) {
         if ('deny' in read) return { deny: read.deny }
         own = read.own
       }
-      const refusal = designerRefusal(graded.grade, requestedModelOf(e, own?.model ?? null), own?.effort ?? null, e.subagentType)
-      if (refusal !== null) return { deny: refusal }
+      const shortfall = designerShortfall(graded.grade, requestedModelOf(e, own?.model ?? null), own?.effort ?? null, e.subagentType)
+      if (shortfall !== null) {
+        try {
+          return { deny: designerRefusal(graded.grade, shortfall, await env.ownAgentTypes()) }
+        } catch (err) {
+          return { deny: ownAgentsFailedReason(shortfall, err instanceof Error ? err.message : String(err)) }
+        }
+      }
     }
     const claim = await claimSlot(env)
     if (claim.kind === 'failed') {
